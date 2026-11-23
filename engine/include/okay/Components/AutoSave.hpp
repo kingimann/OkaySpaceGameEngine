@@ -8,7 +8,8 @@ namespace okay {
 
 /// Saves the whole game (SaveGame) to a slot every `interval` seconds of play,
 /// and optionally as soon as the scene starts (a checkpoint when a level loads).
-/// Drop one in a scene; nothing else to set up.
+/// Drop one in a scene; nothing else to set up. The slot is an autosave (kind "auto") in the
+/// save framework's store, so Continue and the Save Slots screen see it.
 class AutoSave : public Behaviour {
 public:
     float interval = 120.0f;          ///< seconds between saves (0 = only on start)
@@ -30,7 +31,10 @@ public:
         m_timer = 0.0f;
         Scene* s = GetScene();
         std::string err;
-        if (!s || !SaveGame::Save(*s, slot, label, &err)) { Log::Warning("Autosave failed: ", err); return false; }
+        SaveOptions options;
+        options.label = label;
+        options.kind = "auto";   // SlotKind::Auto
+        if (!s || !SaveGame::Save(*s, slot, options, &err)) { Log::Warning("Autosave failed: ", err); return false; }
         return true;
     }
     float SecondsUntilSave() const { return interval > 0.0f ? interval - m_timer : 0.0f; }

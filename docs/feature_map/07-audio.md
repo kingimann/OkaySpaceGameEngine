@@ -8,6 +8,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 ## 7. Audio
 
 ### 7.1 Mixer and Audio Mixer
+- **System:** Audio - Plays sound and music in 2D and 3D, mixes it in groups and saves the player's volume settings.
 - **What:** The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice, distance panning, and (when asked) doppler, occlusion, distance muffling and a reverb zone, and reports peak levels for the editor meters.
 - **Parts:**
   - 7.1.1 Mixer core - `Audio/AudioMixer` - `RenderStereo` and `Render`: voices, resampling to the device rate, stereo voices, pan gains (balance for stereo 2D, mono-then-pan for 3D), one-pole low-pass per channel, streaming voices, clamping
@@ -30,6 +31,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Ask me like:** "make the music quieter while someone is talking"; "why is the game silent in the build?"
 
 ### 7.2 Formats and clips
+- **System:** Audio
 - **What:** Audio files (WAV, OGG, MP3, FLAC) are decoded once into float clips that keep their channels (mono or stereo; downmix only on request, or when the file's import setting says to mix down to one channel) at the mixer's rate and shared between sources; long sounds can instead be streamed from disk in a fixed small amount of memory (the source's Stream box, or the file's "read it while it plays" import setting); generators make simple test tones.
 - **Parts:**
   - 7.2.1 Clip data and WAV - `Audio/AudioClip` - interleaved samples, channels (1 or 2) and rate; load and save WAV (8/16/24/32-bit PCM and float), `Downmixed`, per-channel resample, sine/square/noise/silence generators
@@ -53,6 +55,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Ask me like:** "add a FLAC loader"; "my ogg file will not load"
 
 ### 7.3 Audio sources and music player
+- **System:** Audio
 - **What:** The AudioSource component plays a clip or, with Stream, a file read as it plays, with volume, pitch, pan or balance, loop, seek, 3D falloff, low-pass, fades and overlapping one-shots; the Music Player plays a playlist (streamed by default) with crossfades.
 - **Parts:**
   - 7.3.1 Audio source - `Components/AudioSource` - volume, pitch, pan (balance for stereo 2D clips), group, loop, play on awake, `stream` (Inspector checkbox), rolloff (linear, inverse, logarithmic), `lowPass`; doppler, occlusion and distance low-pass (each off by default, 3D only); C++ `Seek`, `Time`, `Duration`
@@ -71,6 +74,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Ask me like:** "add footstep sounds that overlap"; "crossfade between two music tracks"
 
 ### 7.4 Saved volume settings
+- **System:** Audio
 - **What:** The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen sliders drive them.
 - **Parts:**
   - 7.4.1 Settings load and save - `Audio/AudioMixer` - `LoadSettings` and `SaveSettings` under `audio.*` Prefs keys

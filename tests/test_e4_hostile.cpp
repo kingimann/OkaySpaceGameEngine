@@ -11,6 +11,7 @@
 #include <algorithm>
 #include "model_fixture_util.hpp"
 #include "reader_hostile_common.hpp"
+#include "alloc_budget.hpp"
 #include "e4_fixtures.hpp"
 #include <atomic>
 #include <chrono>
@@ -20,61 +21,14 @@
 
 using namespace okay;
 
-// ---- a counting allocator: bytes live now and the peak since the last reset ----------------------------------------------
-static std::atomic<std::size_t> g_live{0}, g_peak{0};
-static void* CountedAlloc(std::size_t n) {
-    void* raw = std::malloc(n + 16);
-    if (!raw) throw std::bad_alloc();
-    *static_cast<std::size_t*>(raw) = n;
-    const std::size_t now = g_live.fetch_add(n) + n;
-    std::size_t p = g_peak.load();
-    while (now > p && !g_peak.compare_exchange_weak(p, now)) {}
-    return static_cast<char*>(raw) + 16;
-}
-static void CountedFree(void* q) noexcept {
-    if (!q) return;
-    void* raw = static_cast<char*>(q) - 16;
-    g_live.fetch_sub(*static_cast<std::size_t*>(raw));
-    std::free(raw);
-}
-void* operator new(std::size_t n) { return CountedAlloc(n); }
-void* operator new[](std::size_t n) { return CountedAlloc(n); }
-void* operator new(std::size_t n, const std::nothrow_t&) noexcept { try { return CountedAlloc(n); } catch (...) { return nullptr; } }   // std::stable_sort takes its buffer this way
-void* operator new[](std::size_t n, const std::nothrow_t&) noexcept { try { return CountedAlloc(n); } catch (...) { return nullptr; } }
-void operator delete(void* p, const std::nothrow_t&) noexcept { CountedFree(p); }
-void operator delete[](void* p, const std::nothrow_t&) noexcept { CountedFree(p); }
-void operator delete(void* p) noexcept { CountedFree(p); }
-void operator delete[](void* p) noexcept { CountedFree(p); }
-void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
-void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
-
 // The most memory any case below may hold at once, on top of the file text itself. The sanitizer build is slower and bigger.
 static constexpr std::size_t kCapBytes = 640u * 1024u * 1024u;
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-static constexpr double kMaxSeconds = 40.0;
-#else
-static constexpr double kMaxSeconds = 8.0;
-#endif
+static constexpr double kMaxSeconds = budget::kSanitizerBuild ? 40.0 : 8.0;
 
-static double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
-
-struct Run { bool ok; double secs; std::size_t peakMB; std::string err; ImportedModel m; };
-template <class F> static Run Measure(const char* what, F&& f) {
-    Run r;
-    const std::size_t base = g_live.load();
-    g_peak.store(base);
-    const double t = Now();
-    r.ok = f(r.m, r.err);
-    r.secs = Now() - t;
-    const std::size_t extra = g_peak.load() - base;
-    r.peakMB = extra >> 20;
-    std::fprintf(stderr, "  %s: %s in %.2f s, peak %zu MB%s%s\n", what, r.ok ? "read" : "refused", r.secs, r.peakMB, r.ok ? "" : ": ", r.ok ? "" : r.err.c_str());
-    CHECK(r.secs < kMaxSeconds);
-    CHECK(extra < kCapBytes);
-    CHECK(r.ok ? hostile::Sane(r.m) : (r.m.parts.empty() && r.m.nodes.empty() && !r.err.empty()));
-    return r;
-}
+using budget::Now;
+using budget::Run;
+using hostile::HasNote;
+template <class F> static Run Measure(const char* what, F&& f) { return budget::Measure(what, f, kCapBytes, kMaxSeconds); }
 static Run OgexRun(const char* what, const std::string& t, const std::string& dir = "") {
     return Measure(what, [&](ImportedModel& m, std::string& e) { return ReadOgexBuffer(t, dir, m, &e); });
 }

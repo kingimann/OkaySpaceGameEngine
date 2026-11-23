@@ -108,6 +108,10 @@ public:
                                     std::vector<std::string>* notes = nullptr);
     /// Upgrade stored pairs from `fromVersion` to the current layout of `kind`.
     static Pairs Migrate(AssetType kind, int fromVersion, Pairs pairs, std::vector<std::string>* notes = nullptr);
+    /// Pairs of a current-version block that still use an older layout's names (texture `mips`, `filter nearest` /
+    /// `filter linear`; audio `stream`, `mono`), as hand-edited or early files have them: translated by the same
+    /// migration steps, unless the block also has the current key (which wins). FromPairs applies it.
+    static Pairs AcceptOlderKeys(AssetType kind, Pairs pairs);
 
     /// Pull every value into its legal range.
     void Clamp();

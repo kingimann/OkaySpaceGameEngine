@@ -9,6 +9,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 ## 37. Platform & windowing
 
 ### 37.1 Window, fullscreen and display settings
+- **System:** Display Settings
 - **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, and applies the Settings screen's monitor, display mode, resolution, refresh rate, vsync and quality. A shared SDL helper lists monitors and modes for the player and the editor.
 - **Parts:**
   - 37.1.1 Window creation - `player/main.cpp` - flags, centered position, minimum size, window icon PNG, hidden-then-reveal to avoid a black flash, optional boot splash
@@ -31,6 +32,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "make the game window resizable with a minimum size"; "add a fullscreen toggle on F11 to my build"
 
 ### 37.2 Focus, cursor and clipboard
+- **System:** Platform Layer
 - **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard games and scripts use to copy and paste text.
 - **Parts:**
   - 37.2.1 Focus handling - `player/main.cpp` - `runInBackground`, `muteOnFocusLoss` (sets `AudioMixer::focusMuted`), focus loss releases a locked cursor until the next click
@@ -50,6 +52,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "let players paste into the chat box"; "pause the game when the window loses focus"
 
 ### 37.3 File dialogs
+- **System:** Platform Layer
 - **What:** Open, save and choose-folder dialogs in the editor (animation clips, dialogue, quests, sequences, behavior trees, fonts, CSV, assets, scenes, build settings) and the launcher (chat attachments, project folders, marketplace files), written for OkaySpace in `shared/FileDialog.*` (no third-party library). The system's own dialog is used when there is one; otherwise a built-in ImGui browser opens, so picking a file never needs an outside tool. The shipped game has no file dialog.
 - **Parts:**
   - 37.3.1 Dialog API - `shared/FileDialog.hpp`, `shared/FileDialog.cpp` - `okay::filedialog::Open`, `Save`, `Folder` (and the `*One` forms) with a callback, filters, multi-select, extension enforcing on save; path, glob and result-parsing helpers
@@ -69,6 +72,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "remember the last folder in file dialogs"; "let a script open a file picker"
 
 ### 37.4 System fonts
+- **System:** Fonts and Images
 - **What:** When the chosen UI font lacks the characters a text needs (accents, Cyrillic, Japanese, Korean, Chinese), the engine finds installed OS fonts by well-known paths and draws the text with one of them.
 - **Parts:**
   - 37.4.1 Installed font list - `Graphics/TtfFont` - `SystemFallbackFonts` checks Windows, macOS and Linux candidate paths and keeps the ones that exist
@@ -87,6 +91,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "bundle a CJK font so every platform looks the same"; "text shows boxes on Linux"
 
 ### 37.5 Web and mobile shims
+- **System:** Platform Layer
 - **What:** The same player compiles for the browser through Emscripten (frame callback loop, SDL2 port) and is documented for Android and iOS with the standard SDL2 templates; platform differences are `#ifdef` blocks in the player.
 - **Parts:**
   - 37.5.1 Web build - `scripts/build-web.sh`, `player/main.cpp` - `emscripten_set_main_loop`, no hidden window, no UDP networking in the browser, scene preloaded into the virtual file system
@@ -105,6 +110,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "export my game to the browser"; "set up an Android project for the player"
 
 ### 37.6 Native HTTP and the game-to-launcher link
+- **System:** Platform Layer
 - **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl is the fallback and the default elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
   - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/platform/own_http.md`) so callers use the curl path; `RequestEx` (own client only) adds progress, cancel, resume and a size cap and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` holds the download, HEAD and prefix helpers the launcher, editor and PlayFab call first (readiness: `docs/platform/own_http.md`); thread safe
@@ -122,6 +128,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "why does the launcher take a second to load the friend list?"; "add a Linux in-process HTTP client"
 
 ### 37.7 Steam backend
+- **System:** Steam Integration
 - **What:** One Steam interface with two backends: an in-memory simulation (default, no SDK needed) and the real Steamworks backend when built with `OKAY_WITH_STEAM`; covers achievements, stats, leaderboards, cloud files, Workshop, friends, lobbies and overlay.
 - **Parts:**
   - 37.7.1 Interface - `Platform/Steam/SteamService` - `ISteamService`, `SteamConfig`, leaderboard, Workshop and lobby structs with harmless defaults
@@ -142,6 +149,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "unlock a Steam achievement when the boss dies"; "ship my game on Steam"
 
 ### 37.8 Per-user folders
+- **System:** Platform Layer
 - **What:** Where per-user data goes: saves in the user's app folder (via SDL), launcher data under the OS config folder, and achievements in a folder shared by games and the launcher.
 - **Parts:**
   - 37.8.1 Save folder - `player/main.cpp` - `SDL_GetPrefPath(company, app)` when "save to user folder" is on
@@ -160,6 +168,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "where do my saves go on Linux?"; "put saves in the Documents folder"
 
 ### 37.9 Online service clients (shared with area 17)
+- **System:** Accounts
 - **What:** Header-only clients for the online services: a local or remote account service, local-first achievements, friends, parties, direct messages and servers, forums, Workshop, public profiles, admin tools and PlayFab. They all drive one `AccountService` and no-op when offline or signed out.
 - **Parts:**
   - 37.9.1 Accounts - `Platform/Account/Account`, `Platform/Account/AccountService`, `engine/src/Platform/Account/Account.cpp` - sign in, register, session, local on-disk or Supabase backend, `account_*` script builtins

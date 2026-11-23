@@ -791,7 +791,7 @@ inline const VsRule kBuiltinRules[] = {
     {"is_hanging", "Character Actions", ""}, {"seat_prompt", "Character Actions", ""},
     {"can_dive", "Character Actions", ""}, {"crouch", "Character Actions", "Stances & Ragdoll"},
     {"prone", "Character Actions", "Stances & Ragdoll"}, {"set_stance", "Character Actions", "Stances & Ragdoll"},
-    {"ragdoll*", "Character Actions", "Stances & Ragdoll"}, {"is_ragdoll", "Character Actions", "Stances & Ragdoll"},
+    {"ragdoll*", "Character Actions", "Stances & Ragdoll"}, {"active_ragdoll*", "Character Actions", "Stances & Ragdoll"}, {"is_ragdoll", "Character Actions", "Stances & Ragdoll"},
     {"ik_*", "Inverse Kinematics", ""}, {"anim_get_*", "Animation", "Animator Parameters"},
     {"anim_set_*", "Animation", "Animator Parameters"}, {"anim_trigger", "Animation", "Animator Parameters"},
     {"anim_state*", "Animation", "Animator Parameters"}, {"anim_prev_state", "Animation", "Animator Parameters"},

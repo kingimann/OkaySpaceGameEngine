@@ -3272,7 +3272,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
-            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
+            << " " << (in->multiline ? 1 : 0);   // grok/ui-controls
+        // pad / keyboard menu navigation: written only when off, so default scenes stay byte for byte the same (absent = on)
+        if (!in->focusable) out << " 0";
+        out << "\n";
     }
     for (auto* tb : go->GetComponents<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -8414,6 +8417,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     in >> std::ws; // grok/ui-controls: optional multiline
                     if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
+                    in >> std::ws; // optional focusable (older scenes: stays on)
+                    if (std::isdigit(in.peek())) { int fo = 1; in >> fo; inp->focusable = (fo != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;
@@ -10779,7 +10784,7 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(tbtn));
     // Last, so every record written before keeps its place. Saved from their PropertyRegistry entries, no code of their own (none of them was saved before).
-    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion"})
+    for (const char* type : {"CheckpointTrigger", "TimedDestroy", "NetworkAvatarMotion", "ActiveRagdoll"})
         ComponentSerializerRegistry::RegisterFromProperties(type);
 }
 } // namespace detail

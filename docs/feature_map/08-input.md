@@ -8,6 +8,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 ## 8. Input
 
 ### 8.1 Keyboard and mouse
+- **System:** Input - Reads the keyboard, mouse, gamepads and touch, and plays controller rumble.
 - **What:** Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows axis, all fed by the host each frame.
 - **Parts:**
   - 8.1.1 Keys - `Input/Input` - `GetKey`, `GetKeyDown`, `GetKeyUp`, `AnyKey`, `FirstKeyDown`, `KeyFromName`, `KeyName`; one `char` per key, synthetic codes for Shift, Ctrl and arrows
@@ -28,6 +29,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"
 
 ### 8.2 Gamepad (SDL)
+- **System:** Input
 - **What:** Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
@@ -47,11 +49,15 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add a dead zone setting for the right stick"; "support two controllers for couch co-op"
 
 ### 8.3 Input actions and rebinding UI
+- **System:**
+  - Input Actions - Named actions such as Jump and Fire that work with any key or button, can be rebound by the player, and support several local players. Code: `Input/ActionSet`, `Input/InputAsset`, `Input/PlayerInput`, `Input/InputRuntime`, `Input/InputBuffer`, `Input/RemapModel`, `Components/UIKeybindField`
+  - Simple Input Actions - The older text-based action table (`InputActions`) the built-in controllers read - being merged into Input Actions (PR #1139) Code: `Input/InputActions`, `engine/src/Input/InputActions.cpp`
 - **What:** Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and player rebinding saved in Prefs.
 - **Parts:**
   - 8.3.1 Bindings - `Input/InputActions` - `InputBinding` text forms `key:`, `mouse:`, `pad:`, `keys:w,s,a,d`, `stick:`, `dpad`, `mouse:delta` with display labels
   - 8.3.2 Action table - `Input/InputActions` - `Define`, `Get`, `Down`, `Up`, `Value`, `Vector`, sampled once a frame by `Tick`; built-ins Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause
   - 8.3.3 Rebinding and saving - `Input/InputActions` - `Rebind`, `Current`, `Reset`, `Load`, `Save` under `input.<action>` Prefs keys; only changed bindings are saved
+  - 8.3.9 One rebinding store (#422 duplicate audit, item 2) - `Input/InputActions`, `Input/InputRuntime` - the typed ActionSet is the canonical store; InputActions is the text layer the built-in controllers read. Actions the live default ActionSet (InputRuntime player 0) also has with the same authored bindings (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause with the shipped asset) are linked binding for binding once player 0 joins (the asset in use is known then: saved typed rebinds come to InputActions, saved `input.<action>` rebinds go to the typed layer). After that a rebind on either Controls screen, `RemapBind`, `Rebind`, a profile, an `ia:` Keybind field, `ia_rebind` or `Input.PlayerRebind` reaches both readers. A value one side cannot hold (a pad button inside the Move keys, a lone key for Look) is left alone on both sides; a rebind that would give the typed layer a clash InputActions does not have (Unbind) is not mirrored; only the mirrored `inputov.player0` lines are rewritten and pending typed rebinds stay unsaved until `ia_save` (`InputActions::SyncFrom`, `LinkJoined`, `SaveWithStore`, `InputRuntime::Rebind` / `ResetBinding` / `SaveOverrides` / `LinkedSet`); test `input_one_store`
   - 8.3.4 Keybind field - `Components/UIKeybindField` - a UI widget that shows an action's binding and listens for a new key or pad button
   - 8.3.5 Input contexts (#571) - `Input/InputActions` - `DefineIn`, `PushContext`, `PopContext` with Consume, Block and Passthrough modes so a menu takes keys from gameplay
   - 8.3.6 Remap model for a Controls screen (#574) - `Input/RemapModel` - rows with keyboard and gamepad columns, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions, on top of `InputActions`
@@ -61,15 +67,16 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `InputActions::Define`, `InputActions::Down`, `InputActions::Vector`, `InputActions::Rebind`, `InputBinding::Parse`, script `Input.GetButtonDown("Jump")`, `Input.GetActionVector("Move")`, `Input.RebindAction`, `action_down`, `rebind`; "UI Keybind Field" component
 - **Editor:** Add Component > UI > UI Keybind Field (Input Action, Gamepad and Direction Key fields)
 - **Docs:** `docs/engine/input.md`
-- **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`, `controller_actions`
+- **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`, `controller_actions`, `input_one_store`
 - **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
-- **Open:** still on raw keys: vehicle driving, pause menu, free roam, builders, UI widgets; lean and prone have no action; the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; chords (`chord:ctrl+z`) and wheel bindings exist since the input upgrade (8.7)
+- **Open:** still on raw keys: vehicle driving, pause menu, free roam, builders, UI widgets; lean and prone have no action; the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; the two action layers share one rebinding store only for linked actions of player 0 after it joins (8.3.9): actions only InputActions has (Dig, Prone, the Vehicle keys, a game's own) stay there; an Unbind, a four-key binding changed into another shape, and a typed value InputActions cannot hold leave the two layers different for that binding; InputActions still evaluates its own actions (it is not yet a full facade over ActionSet::Update); chords (`chord:ctrl+z`) and wheel bindings exist since the input upgrade (8.7)
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
 - **Ask me like:** "let players rebind Interact on keyboard and gamepad"; "a menu that stops the jump key from working"
 
 ### 8.4 Cursor and touch
+- **System:** Input
 - **What:** Gameplay asks for the mouse cursor to be hidden and locked (shooters) and the host applies it; finger touches are fed from SDL finger events and finger drag-scrolling is provided for scroll and list views.
 - **Parts:**
   - 8.4.1 Cursor lock and visibility - `Input/Cursor` - `Cursor::Capture`, `SetLock`, `SetVisible`; the player turns it into SDL relative mouse mode and releases it on Esc, focus loss or an open menu
@@ -88,6 +95,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "add pinch to zoom"; "put an on-screen joystick on mobile"
 
 ### 8.5 Gameplay input blocking
+- **System:** Input
 - **What:** One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal, dialogue, a pointer on UI or a cutscene.
 - **Parts:**
   - 8.5.1 Block masks - `Input/GameInput` - `GameInputMask` with `World` (clicks, swings, digging) and `Keys` (hotbar, bag toggle) presets; `GameInputBlocked`, `GameInputBlockReason`
@@ -106,6 +114,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "stop the player from shooting while my shop menu is open"; "why does the bag toggle when I pick something up?"
 
 ### 8.6 Rumble and haptics
+- **System:** Input
 - **What:** Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad.
 - **Parts:**
   - 8.6.1 Rumble request - `Input/Input` - `Input::Rumble(low, high, seconds)` and `TakeRumble`
@@ -123,6 +132,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Ask me like:** "shake the controller when the player takes damage"; "add a vibration on/off setting"
 
 ### 8.7 Input upgrade: timing, curves, per-player actions, recording, the Input panel
+- **System:** Input Actions
 - **What:** Fixes found by the input audit (fast taps, typing moving the player, layouts without Latin letters, rebinding Move) and new features built on 8.1-8.3: chord and wheel bindings, per-action dead zone / curve / sensitivity / invert, input buffering and double tap and hold-to-confirm, per-player actions, rebind conflicts and swap, profiles and one-handed presets, controller picture names by family, the last-used device, input recording and replay, and an editor Input panel.
 - **Parts:**
   - 8.7.1 Fast taps and typing - `Input/Input` - `FeedKeyTap`, `FeedMouseTap` (a press shorter than a poll still counts); `SetTextFocused`, `GetKeyGame`, `GetKeyDownGame` (a text field keeps its keys from the game); `Touch::began`

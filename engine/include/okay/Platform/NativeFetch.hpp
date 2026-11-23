@@ -16,7 +16,8 @@
 // the curl fallback off. The checksum and signature checks stay with the callers (UpdaterCore, VersionsManager); this
 // seam only fetches bytes.
 //
-// The Own* helpers below are the own client's half (POSIX with -DOKAY_OWN_HTTP=ON); FetchToFile and friends call them.
+// OwnDownload is the own client's half (POSIX with -DOKAY_OWN_HTTP=ON); OwnHeadDump and OwnFetchPrefix run on either
+// native client (RequestEx). FetchToFile and friends call them.
 // docs/platform/own_http.md lists which call sites use what.
 // ---------------------------------------------------------------------------
 #include "okay/Platform/NativeHttp.hpp"
@@ -147,6 +148,9 @@ inline OwnDownloadResult OwnDownload(const std::string& url, const std::string& 
     return out;
 }
 
+#endif // OKAY_OWN_HTTP_ACTIVE
+
+// OwnHeadDump and OwnFetchPrefix run on whichever native client RequestEx has (the own client, or WinHTTP).
 /// A HEAD request that follows redirects, like `curl -sIL`: true when a final answer arrived (any status, as curl -I
 /// does without -f). `dump` is that answer's status line and headers as text, so a caller's existing Content-Length
 /// parser works on it unchanged. false = no usable answer (run curl).
@@ -186,7 +190,6 @@ inline OwnOutcome OwnFetchPrefix(const std::string& url, const std::string& user
     return OwnOutcome::HttpError;   // 416 included: curl -f fails on it too
 }
 
-#endif // OKAY_OWN_HTTP_ACTIVE
 
 // ---------------------------------------------------------------------------
 // The seam: native first, curl last (every platform).
@@ -446,16 +449,7 @@ inline OwnDownloadResult FetchToFile(const std::string& url, const std::filesyst
 inline bool HeadDump(const std::string& url, const std::string& userAgent, std::string& dump, int totalMs = 60000) {
     dump.clear();
     if (NativeAvailable()) {
-#if defined(OKAY_OWN_HTTP_ACTIVE)
         if (OwnHeadDump(url, userAgent, dump, totalMs)) return true;
-#elif defined(OKAY_HTTP_WINHTTP)
-        RequestOptions ro;
-        ro.connectMs = 20000; ro.ioMs = 30000; ro.totalMs = totalMs; ro.maxRedirects = 20;
-        std::vector<std::string> hdrs;
-        if (!userAgent.empty()) hdrs.push_back("User-Agent: " + userAgent);
-        const ExResult r = detail::WinRequestEx("HEAD", url, hdrs, std::string(), std::string(), std::filesystem::path(), ro);
-        if (r.reached) { dump = r.rawHead; return true; }
-#endif
     }
     std::error_code ec;
     const std::filesystem::path hdr = fetch_detail::TempFile("okay_head_", ".txt");
@@ -482,24 +476,8 @@ inline OwnOutcome FetchPrefix(const std::string& url, const std::string& userAge
     body.clear();
     if (status) *status = 0;
     if (NativeAvailable()) {
-#if defined(OKAY_OWN_HTTP_ACTIVE)
         const OwnOutcome o = OwnFetchPrefix(url, userAgent, maxBytes, lastByte, totalMs, body, status);
         if (o != OwnOutcome::NotHandled) return o;
-#elif defined(OKAY_HTTP_WINHTTP)
-        RequestOptions ro;
-        ro.maxBytes = maxBytes; ro.maxRedirects = 10;
-        ro.connectMs = totalMs < 8000 ? totalMs : 8000; ro.ioMs = totalMs; ro.totalMs = totalMs;
-        std::vector<std::string> hdrs;
-        if (!userAgent.empty()) hdrs.push_back("User-Agent: " + userAgent);
-        hdrs.push_back("Range: bytes=0-" + std::to_string((unsigned long long)lastByte));
-        ExResult r = detail::WinRequestEx("GET", url, hdrs, std::string(), std::string(), std::filesystem::path(), ro);
-        if (status) *status = r.status;
-        if (r.reached) {
-            if (r.status == 200 || r.status == 206) { body = std::move(r.body); return OwnOutcome::Ok; }
-            return OwnOutcome::HttpError;
-        }
-        if (r.error.rfind("too-large", 0) == 0) return OwnOutcome::TooBig;
-#endif
     }
     std::error_code ec;
     const std::filesystem::path tmp = fetch_detail::TempFile("okay_prefix_", ".bin");
@@ -542,7 +520,9 @@ inline Result Send(const std::string& method, const std::string& url, const std:
     const fs::path code = fetch_detail::TempFile("okay_http_", ".code");
     const fs::path bodyF = fetch_detail::TempFile("okay_http_", ".body");
     const fs::path cfgF = fetch_detail::TempFile("okay_http_", ".cfg");
-    std::vector<std::string> a = {"-s", "-X", method};
+    std::vector<std::string> a = {"-s"};
+    if (method == "HEAD") a.push_back("-I");   // (-X HEAD would wait for a body that never comes)
+    else { a.push_back("-X"); a.push_back(method); }
     if (timeoutMs > 0) {
         const int secs = (timeoutMs + 999) / 1000;
         a.push_back("--connect-timeout"); a.push_back(std::to_string(secs < 5 ? secs : 5));

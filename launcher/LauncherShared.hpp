@@ -27,6 +27,9 @@ namespace fs = std::filesystem;   // the same alias as main.cpp's
 
 namespace okay { struct JoinLink; }
 
+// An RGBA8 picture as a texture of `renderer` (main.cpp, global scope); null when it cannot be made.
+SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h);
+
 namespace okl {
 
 // Look and messages (main.cpp).
@@ -50,6 +53,9 @@ bool PrimaryButton(const char* label, const ImVec2& size);   // the accent-colou
 std::string FormatDate(long t);                // a date for lists
 // State and config (main.cpp).
 extern std::string g_exeDir;                   // the folder the launcher runs from
+extern SDL_Renderer* g_renderer;               // the renderer textures are uploaded to (switched while the chat window draws)
+extern int g_rslot;                            // render slot: 0 = launcher window, 1 = chat window (each texture cache keeps one copy per slot)
+bool Download(const std::string& url, const fs::path& out);   // fetch a URL to a file (blocking)
 extern std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for worker threads (set once at startup)
 // Multiplayer (main.cpp).
 void MpLaunch(const okay::JoinLink& in);       // start the game to join a server

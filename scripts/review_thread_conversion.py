@@ -18,7 +18,7 @@ BASELINE = os.path.join(ROOT, 'tests', 'data', 'thread_conversion_baseline.json'
 # launcher/main.cpp is being split into smaller files by pure moves (docs/engine/modularization_plan.md, Part C). The code moved out
 # of it is counted with it, so a move keeps the counts. (--base lines the files up in this order, so it only matches for revisions
 # from before the split.)
-SPLIT_FROM = {'launcher/main.cpp': ['launcher/ChatText.cpp', 'launcher/AntiCheatPages.cpp']}
+SPLIT_FROM = {'launcher/main.cpp': ['launcher/ChatText.cpp', 'launcher/AntiCheatPages.cpp', 'launcher/CoverArtAvatars.cpp']}
 MAP = [(r'\bSDL_CreateThread\b', 'okay::thr::CreateThread'), (r'\bSDL_DetachThread\b', 'okay::thr::DetachThread'),
        (r'\bSDL_WaitThread\b', 'okay::thr::WaitThread'), (r'\bSDL_CreateMutex\b', 'okay::thr::CreateMutex'),
        (r'\bSDL_DestroyMutex\b', 'okay::thr::DestroyMutex'), (r'\bSDL_LockMutex\b', 'okay::thr::LockMutex'),

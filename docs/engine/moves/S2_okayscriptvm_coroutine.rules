@@ -1,0 +1,37 @@
+# S2 follow-up (docs/engine/modularization_plan.md, section 3.1): the coroutine engine of `Runtime` (a thread, a mutex and a
+# condition variable per coroutine) must not sit in a header that the Windows build compiles (branch_lint rule 21a), so it moves
+# from engine/src/Scripting/OkayScriptVMInternal.hpp to OkayScriptVM_Coroutine.cpp. The header keeps the declarations.
+#   python3 scripts/check_pure_move.py --base <commit before> --head <this commit> \
+#       --source engine/src/Scripting/OkayScriptVMInternal.hpp --dest engine/src/Scripting/OkayScriptVM_Coroutine.cpp \
+#       --rules docs/engine/moves/S2_okayscriptvm_coroutine.rules
+# The in-class functions become out-of-class members of Runtime (their bodies stay, with the default arguments left in the header):
+change: struct Coroutine { ==> struct Runtime::Coroutine {
+change: Coroutine* FindCo(int id) { for (auto& c : coroutines) if (c->id == id) return c.get(); return nullptr; } ==> Runtime::Coroutine* Runtime::FindCo(int id) { for (auto& c : coroutines) if (c->id == id) return c.get(); return nullptr; }
+change: void Resume(Coroutine* co) { ==> void Runtime::Resume(Coroutine* co) {
+change: void YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond = Value{}, bool condWhile = false, bool real = false) { ==> void Runtime::YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond, bool condWhile, bool real) {
+change: int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {}) { ==> int Runtime::StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames) {
+change: void StopCoroutine(Coroutine* co) { ==> void Runtime::StopCoroutine(Coroutine* co) {
+change: void StopCoroutines(const std::string& fn) {   // "" = all ==> void Runtime::StopCoroutines(const std::string& fn) {   // "" = all
+change: void ReapCoroutines() { ==> void Runtime::ReapCoroutines() {
+change: void TickCoroutines(float dt) { ==> void Runtime::TickCoroutines(float dt) {
+add: ^\s*Runtime::(Runtime|~Runtime)\(\) = default;$
+add: ^\s*\}$
+add: ^\s*\};$
+drop: ^\s*\}$
+drop: ^\s*\};$
+# declarations that stay in the header
+add: ^\s*(Runtime|~Runtime)\(\);$
+add: ^\s*(Coroutine\* FindCo\(int id\)|void (Resume|StopCoroutine)\(Coroutine\* co\)|int StartCoroutine\(|void (YieldCoroutine|StopCoroutines|ReapCoroutines|TickCoroutines)\()
+drop: ^\s*(std::vector<std::unique_ptr<Coroutine>> coroutines;|Coroutine\* currentCo = nullptr;|int nextCoId = 1;|long long frame = 0;|const std::vector<std::string>\* activeArgNames = nullptr;)$
+add: ^\s*(struct Coroutine;|std::vector<std::unique_ptr<Coroutine>> coroutines;|Coroutine\* currentCo = nullptr;|int nextCoId = 1;|long long frame = 0;|const std::vector<std::string>\* activeArgNames = nullptr;)
+# the thread lines carry the branch_lint opt-out: they are the coroutine code that was already in OkayScriptVM.cpp
+change: std::thread th; ==> std::thread th;   // lint-allow: win32-thread
+change: std::mutex m; std::condition_variable cv; ==> std::mutex m; std::condition_variable cv;   // lint-allow: win32-thread
+change: co->th = std::thread([this, co] { ==> co->th = std::thread([this, co] {   // lint-allow: win32-thread
+change: { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); } ==> { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); }   // lint-allow: win32-thread
+change: std::lock_guard<std::mutex> lk(co->m); ==> std::lock_guard<std::mutex> lk(co->m);   // lint-allow: win32-thread
+change: std::unique_lock<std::mutex> lk(co->m); ==> std::unique_lock<std::mutex> lk(co->m);   // lint-allow: win32-thread
+change: std::unique_lock<std::mutex> lk(co->m); ==> std::unique_lock<std::mutex> lk(co->m);   // lint-allow: win32-thread
+change: #include <condition_variable> ==> #include <condition_variable>   // lint-allow: win32-thread
+change: #include <mutex> ==> #include <mutex>   // lint-allow: win32-thread
+change: #include <thread> ==> #include <thread>   // lint-allow: win32-thread

@@ -12,8 +12,7 @@
    "engine/src/AI/BehaviorTreeRunner.cpp": 2,
    "engine/src/AI/NavMeshAgent.cpp": 1,
    "engine/src/Components/MeleeAttacker.cpp": 1,
-   "engine/src/Components/RangedWeapon.cpp": 1,
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
+   "engine/src/Components/RangedWeapon.cpp": 1
   },
   "base64": {
    "engine/include/okay/Platform/Account/AccountService.hpp": 1,
@@ -55,9 +54,6 @@
    "engine/src/Core/ImageWrite.cpp": 1,
    "okayui/tests/OkayUITestKit.hpp": 1,
    "tests/inflate_reference_slow.hpp": 1
-  },
-  "easing-back": {
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
   },
   "fnv1a": {
    "editor/ContentEditors.cpp": 1,

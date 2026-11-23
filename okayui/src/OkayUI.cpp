@@ -5,6 +5,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
+#include "OkayUIInternal.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -27,18 +28,12 @@ void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock la
 void ColorPickerReset();
 void ChannelsMergeAll();   // the window draw list's channels (below)
 void StateStorageReset();   // okayui/src/OkayUICompat.cpp: the state store and key owners (OkayUIInternals.hpp)   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
-namespace {
+namespace ui_core {
 
-// Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
-// pixel, so size generously for several labelled buttons per frame; on overflow we
-// silently drop further geometry rather than grow/allocate.
-constexpr int kMaxVerts = 262144;   // per batch (main and overlay): about 5 MB of vertices each
-constexpr int kMaxIdx   = 393216;
 // Geometry that did not fit is counted, not hidden: DrawData::dropped, DroppedGeometry() and a message on stderr.
 int g_dropped = 0;
 bool g_rowClipper = true;   // the table row clipper (SetTableRowClipping)
 bool g_cullRow = false;   // a table row wholly outside the clip: its geometry is skipped, not emitted (see TableNextRow)
-inline void noteDrop() { ++g_dropped; }
 SDL_Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
@@ -66,9 +61,6 @@ SDL_Renderer* g_atlasR = nullptr;
 // carry the font's address as a placeholder; EndFrame binds the font's atlas.
 okay::TtfFont* g_fbFonts[8];
 int            g_nfb = 0;
-// Texture changes inside the overlay batch (fallback-font text in toasts and
-// popups): the overlay index each starts at. mergeOverlay turns them into spans.
-struct OverlaySpan { int startIdx; SDL_Texture* tex; };
 OverlaySpan g_ovSpans[32];
 int         g_novSpans = 0;
 SDL_Texture* fallbackTex(okay::TtfFont* f) {
@@ -78,12 +70,6 @@ SDL_Texture* fallbackTex(okay::TtfFont* f) {
     return (SDL_Texture*)(void*)f;
 }
 
-// Draw spans: the main batch is split into contiguous index ranges, each carrying a
-// clip state and a texture, so scrolling child regions can clip and Image() can bind a
-// texture. A span records the index where a state begins; EndFrame draws each range
-// with the matching clip rect + texture. The overlay batch is never clipped.
-struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
-constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
 DrawSpan g_spans[kMaxSpans];
 int      g_nspans = 0;
 SDL_Rect g_clipStack[16];
@@ -127,11 +113,6 @@ bool  g_mPrevDown = false, g_mPressed = false, g_mReleased = false;   // the mid
 float g_dragOriginX[3] = {0, 0, 0}, g_dragOriginY[3] = {0, 0, 0};    // where each button went down (GetMouseDragDelta measures from here; ResetMouseDragDelta moves it)
 double g_lastMouseMove = 0.0;    // g_clock when the pointer last moved (the Stationary hover flag)
 
-// Popup/context-menu registry. Each open popup remembers where it opened and its
-// measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; bool fixedW = false;   // w <= 0: the default width; modal: a click outside does not close it
-                   unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
-                   bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
 PopupSlot g_popups[32];
 extern unsigned long long g_frameCount;
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
@@ -230,20 +211,6 @@ Theme g_theme;
 struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
 ColorSave g_colStack[64];
 int       g_colTop = 0;
-// Map a Col enum to the theme's 4-byte color field.
-inline unsigned char* themeColor(int which) {
-    switch (which) {
-        case 0: return g_theme.bg;      case 1: return g_theme.bgHover;
-        case 2: return g_theme.bgDown;  case 3: return g_theme.border;
-        case 4: return g_theme.text;    case 5: return g_theme.panel;
-        case 6: return g_theme.track;   case 7: return g_theme.accent;
-        default: return g_theme.text;
-    }
-}
-// The colours beyond the original eight: set (Theme::colorSet) or following the base theme.
-inline bool colorIsSet(int id) { return id >= 8 && id < 64 && ((g_theme.colorSet >> id) & 1ull) != 0; }
-// `dflt` unless the colour was set: how a widget honours an override while keeping its own default look.
-inline const unsigned char* pick(int id, const unsigned char* dflt) { return colorIsSet(id) ? g_theme.colors[id] : dflt; }
 // The base-theme value of a colour that was never set (what GetStyleColorVec4 answers; the classic look's default).
 void deriveColor(int id, unsigned char out[4]) {
     auto cp = [&](const unsigned char* c) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3]; };
@@ -290,40 +257,11 @@ void deriveColor(int id, unsigned char out[4]) {
         default: rgba(0, 0, 0, 0); break;
     }
 }
-// Any colour as bytes: the original eight, a set one, or the derived default (valid until the next call with `tmp`).
-inline const unsigned char* styleColor(int id, unsigned char tmp[4]) {
-    if (id >= 0 && id < 8) return themeColor(id);
-    if (id < 8 || id >= Col_COUNT) { tmp[0] = tmp[1] = tmp[2] = tmp[3] = 0; return tmp; }
-    if (colorIsSet(id)) return g_theme.colors[id];
-    deriveColor(id, tmp);
-    return tmp;
-}
 
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
 inline int cstrlen(const char* s) { int n = 0; if (s) while (s[n]) ++n; return n; }
 
-// ---- Auto-layout state (ImGui-style window + cursor) ---------------------------
-struct LayoutState {
-    bool  active   = false;
-    bool  winClip  = false;           // Begin() clipped the content to the window (launcher look)
-    float ox = 0, oy = 0;            // content origin (top-left of the content area)
-    float cx = 0, cy = 0;            // cursor: top-left where the next item goes
-    float contentW = 0;             // usable content width
-    float spacingX = 8.0f, spacingY = 6.0f;
-    float prevX = 0, prevY = 0, prevW = 0, prevH = 0;   // last placed item
-    // a text centred on the taller item before it on its line (textLine) keeps the line's top here: the next SameLine item starts at
-    // the line's top as in Dear ImGui, not at the text's lowered top (a drag after a labelled drag sat 8 px low, section 19)
-    bool hasLineTop = false; float lineTopY = 0;
-    bool  pendingSameLine = false;
-    float sameLineSpacing = -1.0f;
-    float indent = 0.0f;            // TreeNode indentation of the content's left edge
-    float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
-    float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
-    int   seed = 0;                 // window id, mixed into label->id hashing
-};
 LayoutState g_lay;
-// BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
-struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
 GroupBox g_grp[8];
 int      g_grpTop = 0;
 inline void groupAdd(float x, float y, float w, float h) {
@@ -362,24 +300,8 @@ ChildSave g_childStack[8];
 int       g_childTop = 0;
 constexpr float kScrollbarW = 10.0f;
 
-// Multi-column layout state (Columns/NextColumn/EndColumns).
-struct ColumnState {
-    bool  active = false;
-    int   count = 1, index = 0;
-    float x0 = 0, fullW = 0;   // content origin + full width when Columns() began
-    float rowTop = 0, rowBottom = 0;
-};
 ColumnState g_col;
 
-// Table layout state (BeginTable/TableNextRow/TableNextColumn/EndTable).
-// Per-table memory that outlives a frame: the sort keys and the row heights of the last frame (for row backgrounds).
-constexpr int kTblRows = 256, kTblSortKeys = 4;
-struct TblStore {
-    int id = 0; bool used = false; unsigned long long lastFrame = 0;
-    float rowH[kTblRows] = {};
-    int sortN = 0; int sortCol[kTblSortKeys] = {}; bool sortDesc[kTblSortKeys] = {};
-    bool dirty = false, inited = false;
-};
 TblStore g_tstore[8];
 TblStore* tblStoreFor(int id) {
     TblStore* free = nullptr; TblStore* oldest = &g_tstore[0];
@@ -392,40 +314,6 @@ TblStore* tblStoreFor(int id) {
     *t = TblStore(); t->used = true; t->id = id;
     return t;
 }
-struct TableState {
-    bool  active = false;
-    int   id = 0, count = 0, index = -1;
-    float x0 = 0, fullW = 0;
-    float rowTop = 0, rowBottom = 0, rowStart = 0;
-    float minRowH = 0;          // TableNextRow(flags, minRowHeight): the row being built is at least this tall
-    float* w[16] = {nullptr};   // persisted per-column widths (pixels)
-    float headerBottom = 0;     // y below the header row (for the resize handles)
-    float topY = 0;             // y of the table's top edge (borders and resize handles start here)
-    // The flag-style API (BeginTable(id, n, flags) + TableSetupColumn): columns are described after Begin and sized on first use.
-    int   flags = 0, rowIndex = -1, nSetup = 0;
-    bool  setupDone = true;
-    const char* sLabel[16] = {nullptr};
-    int   sFlags[16] = {0};
-    float sVal[16] = {0};
-    unsigned sUser[16] = {0};
-    TblStore* store = nullptr;
-    // scrolling boxes (Table_ScrollX / Table_ScrollY): the outer rectangle, the scroll offsets and the frozen part
-    bool  scrollX = false, scrollY = false, needV = false, needH = false;
-    float ox = 0, oy = 0, ow = 0, oh = 0, viewW = 0, contentW = 0, innerWidth = 0;
-    float* pSX = nullptr; float* pSY = nullptr; float* pMaxY = nullptr; float* pH = nullptr;
-    float sx = 0, sy = 0;                 // this frame's scroll
-    int   freezeCols = 0, freezeRows = 0, rowsDone = 0;
-    float frozenW = 0, frozenBottom = 0;
-    bool  bodyStarted = false, rowFrozen = true, headerDrawn = false;
-    float shiftY = 0;                     // added to the logical row top to get the screen y (minus the scroll, for body rows)
-    bool  clipOn = false; float clipR[4] = {0, 0, 0, 0};   // the clip rectangle in force (nothing changes when the next one is the same)
-    float rowBgH = 0;                     // height of the band the current row's background got
-    bool  rowCulled = false;              // the current row is wholly outside the visible clip: its geometry is skipped (the row clipper)
-    LayoutState saved;                    // the parent layout, restored by EndTable of a scrolling box
-    unsigned hidden = 0;                  // bit i: column i is hidden (flag-style tables: Col_DefaultHide, the header menu, TableSetColumnEnabled)
-    float*   pHidden = nullptr;           // its persisted copy (a float holding the mask; negative before the first frame)
-    float    zeroW[16] = {0};             // what a hidden column's width points at, so no layout loop touches its remembered width
-};
 TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
@@ -525,7 +413,7 @@ inline void popIdSeed() {
 }
 
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
-inline int hashLabel(const char* s) {
+int hashLabel(const char* s) {
     unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
@@ -539,7 +427,6 @@ const Font kFontDefault{8, 8, defGlyph};
 const Font kFontBold{8, 8, boldGlyph};
 const Font* g_font = &kFontDefault;
 inline int  fW() { return g_font->width; }
-inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
 // The glyph for the character at *p, and *p moved past it: an ASCII byte is looked up in the size's table right here (text is
 // nearly all ASCII), anything else is decoded and searched.
@@ -550,7 +437,7 @@ inline const fontatlas::Glyph* asciiGlyph(const fontatlas::Size& z, const char*&
 }
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
-inline float fMeasure(const char* s) {
+float fMeasure(const char* s) {
     if (g_font->ttf && s) return static_cast<const okay::TtfFont*>(g_font->ttf)->Measure(s, 8.0f);   // a user font (AddFontTtf): its width at the 8-unit cell
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
@@ -596,9 +483,6 @@ bool g_framedWidgets = false;
 // A pushed StyleVar_WindowPadding (y; < 0 = none pushed): a framed or padded child (the flags form of BeginChild) then pads its content by
 // the window padding (x, y) instead of 6 pixels each way.
 float g_childPadY = -1.0f;
-inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (g_look ? 15.0f : 12.0f)); }
-inline float textH() { return fH() * g_theme.textScale; }
-inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
 struct VisLabel {
     char b[128];
@@ -632,7 +516,7 @@ float g_itemWStack[16];
 int   g_itemWTop = 0;
 int   g_winItemWDepth = 0;   // item-width stack height just above the default SetWindowItemWidthDefault pushed (0: none pushed)
 // Remaining width from the next item's left edge to the content's right edge.
-inline float availW() {
+float availW() {
     float real = g_lay.ox + g_lay.contentW - cursorX();
     float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : -1.0f);
     if (over > 0.0f && over < real) return over;
@@ -645,7 +529,6 @@ inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
 inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
-inline bool hit(float x, float y, float w, float h);
 void place(float w, float h, float& x, float& y) {
     bool sameLine = false;
     const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
@@ -679,14 +562,6 @@ void place(float w, float h, float& x, float& y) {
     g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
-inline SDL_Color toColor(const unsigned char c[4]) {
-    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
-    if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
-        const unsigned char* p = g_theme.panel;   // (so stacked layers of one widget do not blend through each other)
-        sc.r = (unsigned char)((sc.r + p[0]) / 2); sc.g = (unsigned char)((sc.g + p[1]) / 2); sc.b = (unsigned char)((sc.b + p[2]) / 2);
-    }
-    return sc;
-}
 
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
 // batch is active (main, or overlay when g_toOverlay is set).
@@ -824,7 +699,7 @@ const float* unitCircle(int n) {
 }
 // A filled circle as a triangle fan of `segments` wedges that share the centre and rim vertices (the same triangles as one
 // tri() per wedge, with a third of the vertices).
-void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
+void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments) {
     if (segments < 3) segments = 3;
     if (segments > 128) segments = 128;
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
@@ -1029,9 +904,6 @@ const unsigned char* withAlpha(const unsigned char c[4], float a, unsigned char 
     return out;
 }
 
-inline bool pointIn(float px, float py, float x, float y, float w, float h) {
-    return px >= x && px < x + w && py >= y && py < y + h;
-}
 
 // ---- Mouse hit testing with overlays ---------------------------------------------
 // Overlays (combo lists, popups, menu dropdowns) draw on top of later widgets, so
@@ -1141,7 +1013,7 @@ inline bool inClip() {
     const SDL_Rect& c = g_clipStack[g_clipTop - 1];
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
-inline bool hit(float x, float y, float w, float h) {
+bool hit(float x, float y, float w, float h) {
     if (g_disCount > 0) return false;   // inside BeginDisabled: no hover, no click
     if (!hitOverlay(x, y, w, h)) return false;
     if (g_popupTop > 0) {   // a widget inside a popup body: only a deeper popup above it can take the pointer
@@ -1174,12 +1046,9 @@ inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; 
 constexpr int kMaxHexSlots = 16;
 
 } // namespace
+using namespace ui_core;
 
 
-namespace {
-void flushTooltip();   // the frame's tooltip (asked for with SetTooltip / Tooltip), drawn last by finalizeFrame
-void dropTooltip();
-} // namespace
 void BeginFrame(const Input& in) {
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
@@ -2498,7 +2367,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
 // A scroll bar's track (classic look, or when ScrollbarBg is set) and thumb in the Col_Scrollbar* colours.
 // With a pushed StyleVar_ScrollbarSize the bar is that wide and the grab sits 2 pixels inside it on every side, fully rounded.
-static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track = true) {
+void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track) {
     const float bw = g_sbSize > 0.0f ? g_sbSize : kScrollbarW;
     if (track && (!g_look || colorIsSet(Col_ScrollbarBg))) quad(sbx, top, bw, trackH, pick(Col_ScrollbarBg, g_theme.track));
     if (g_look || g_sbSize > 0.0f) {   // thin rounded thumb, faint until hovered
@@ -2592,7 +2461,9 @@ unsigned decodeOne(const char*& p) {   // one UTF-8 code point (invalid bytes gi
     for (int i = 0; i < n; ++i) { if (((unsigned char)*p & 0xC0) != 0x80) return 0xFFFDu; cp = (cp << 6) | ((unsigned char)*p++ & 63u); }
     return cp;
 }
-bool ioTypedTextConsumed() { return g_ioQueueFrame == (long long)g_frameCount && g_io.InputQueueCharacters.Size < g_ioQueueFilled; }
+} // namespace
+namespace ui_core { bool ioTypedTextConsumed() { return g_ioQueueFrame == (long long)g_frameCount && g_io.InputQueueCharacters.Size < g_ioQueueFilled; } }
+namespace {
 }
 void IO::AddKeyEvent(int key, bool down) {
     if (key <= 0 || key >= KeyId_COUNT) return;
@@ -3159,7 +3030,9 @@ namespace {
 float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a frame's height (rowH)
 // StyleVar_CellPadding: the gap inside a cell, across (default 4) and above and below (default -1: none, and the row ends after the
 // last item's spacing, as it always did; 0 or more: that much above the first item and below the last one, without its spacing).
-float g_cellPadX = 4.0f, g_cellPadY = -1.0f;
+} // namespace
+namespace ui_core { float g_cellPadX = 4.0f, g_cellPadY = -1.0f; }
+namespace {
 // The boxes of Checkbox and RadioButton: a text line + 6, or with StyleVar_FramePadding (y) a text line plus twice it (g_framePadY).
 // OkayUI's own style values for Dear ImGui-looking menus and fields (PushStyleVar; < 0 = the usual OkayUI value):
 // StyleVar_PopupPadding (x, y) inside a popup (default 6, 6), StyleVar_PopupWidth (default 160), StyleVar_ItemInnerSpacing (x only: the gap
@@ -4109,172 +3982,6 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     return *open;
 }
 
-namespace {
-// A tooltip box next to the cursor: several lines ("\n"), kept inside the display (flipped to the left / above when it would run off).
-// A tooltip is drawn at the end of the frame, on top of everything (as Dear ImGui's tooltip window is): drawn where it was asked for, a
-// tooltip inside an open list was painted over by the list's later rows, and it switched the overlay off for them, so they went under
-// the list (stage 9: the First Person Hands presets lost their last three rows while one was hovered). The last one asked for in a
-// frame is the one shown, as Dear ImGui's SetTooltip replaces an earlier one. The text scale it was asked with is kept.
-struct PendingTip { char text[1024]; float scale; bool on; };
-PendingTip g_pendingTip = {{0}, 1.0f, false};
-void paintTooltipBox(const char* text);
-void drawTooltipBox(const char* text) {
-    if (!text || !*text) return;
-    std::snprintf(g_pendingTip.text, sizeof g_pendingTip.text, "%s", text);
-    g_pendingTip.scale = g_theme.textScale;
-    g_pendingTip.on = true;
-}
-void flushTooltip() {
-    if (!g_pendingTip.on) return;
-    g_pendingTip.on = false;
-    const float was = g_theme.textScale;
-    g_theme.textScale = g_pendingTip.scale;
-    paintTooltipBox(g_pendingTip.text);
-    g_theme.textScale = was;
-}
-void dropTooltip() { g_pendingTip.on = false; }
-void paintTooltipBox(const char* text) {
-    if (!text || !*text) return;
-    const float s = g_theme.textScale, th = textH(), lineGap = 2.0f;
-    int lines = 1; float tw = 0.0f;
-    {   // measure: the widest line and the line count
-        char line[256]; int n = 0;
-        for (const char* c = text;; ++c) {
-            if (*c == '\n' || *c == 0) {
-                line[n] = 0; tw = std::max(tw, labelW(line));
-                if (*c == 0) break;
-                ++lines; n = 0;
-            } else if (n < 255) line[n++] = *c;
-        }
-    }
-    const float pad = g_look ? 8.0f : 6.0f;
-    const float bw = tw + pad * 2.0f, bh = th * (float)lines + lineGap * (float)(lines - 1) + pad * 2.0f;
-    float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
-    if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
-    if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
-    g_toOverlay = true;
-    if (g_look) {
-        const unsigned char tip[4] = {38, 42, 51, 250};
-        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-    } else {
-        quad(bx, by, bw, bh, g_theme.border);
-        quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
-    }
-    char line[256]; int n = 0; float ly = by + pad;
-    for (const char* c = text;; ++c) {
-        if (*c == '\n' || *c == 0) {
-            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.text);
-            ly += th + lineGap; n = 0;
-            if (*c == 0) break;
-        } else if (n < 255) line[n++] = *c;
-    }
-    g_toOverlay = false;
-}
-} // namespace
-
-void Tooltip(const char* text) {
-    if (!g_lay.active || !text || !*text || g_in.blocked) return;
-    // Only when the most recent item is hovered.
-    if (!pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) return;
-    drawTooltipBox(text);
-}
-
-void SetTooltip(const char* fmt, ...) {
-    if (!g_lay.active || !fmt || g_in.blocked) return;
-    char buf[1024];
-    va_list ap; va_start(ap, fmt);
-    std::vsnprintf(buf, sizeof buf, fmt, ap);
-    va_end(ap);
-    drawTooltipBox(buf);   // unconditional: the caller decides when (usually `if (IsItemHovered()) SetTooltip(...)`)
-}
-
-// ---- Tooltip scope: BeginTooltip / EndTooltip --------------------------------------------------------------------------
-// The widgets between the two calls are laid out into the overlay batch at a provisional spot next to the cursor, with input
-// switched off. EndTooltip measures what they covered (their group box), moves their vertices to the final spot (flipped to the
-// left / above like SetTooltip when it would run off the display), draws the box and moves its indices in front of the content.
-namespace {
-struct TipScope {
-    bool open = false;
-    int nested = 0;                 // BeginTooltip calls made while one is open: they draw into the outer one
-    LayoutState lay;                // the layout to restore
-    int grpTop = 0, lastId = 0; bool blocked = false, posOverride = false, toOverlay = false, discard = false;
-    float nextItemW = -1.0f;
-    int startV = 0, startI = 0, spanBase = 0;
-};
-TipScope g_tip;
-} // namespace
-
-bool BeginTooltip() {
-    if (g_tip.open) { ++g_tip.nested; return true; }
-    if (!g_lay.active || g_grpTop >= 8) return false;
-    TipScope& t = g_tip;
-    t.open = true; t.nested = 0; t.lay = g_lay; t.grpTop = g_grpTop; t.lastId = g_lastId; t.blocked = g_in.blocked;
-    t.posOverride = g_posOverride; t.toOverlay = g_toOverlay; t.nextItemW = g_nextItemW;
-    t.discard = g_in.blocked;            // input is blocked (a window covers the pointer): the tooltip is not shown, its widgets still run
-    t.spanBase = g_novSpans;
-    g_toOverlay = true;
-    bindTexture(g_defTex);               // the box (drawn last, placed first) is flat: a flat span at the start of the tooltip
-    t.startV = g_onv; t.startI = g_oni;
-    g_in.blocked = true; g_posOverride = false; g_nextItemW = -1.0f;
-    const float pad = g_look ? 8.0f : 6.0f;
-    const float maxW = g_in.displayW > 0.0f ? std::max(120.0f, std::min(480.0f, g_in.displayW - 40.0f)) : 480.0f;
-    g_lay.winClip = false;
-    g_lay.ox = g_in.mouseX + 14.0f + pad; g_lay.oy = g_in.mouseY + 14.0f + pad;
-    g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy; g_lay.contentW = maxW; g_lay.indent = 0.0f;
-    g_lay.bottom = 1e7f; g_lay.maxRight = 0.0f; g_lay.pendingSameLine = false;
-    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
-    g_grp[g_grpTop++] = GroupBox();      // the tooltip's own bounding box
-    return true;
-}
-
-void EndTooltip() {
-    if (!g_tip.open) return;
-    TipScope& t = g_tip;
-    if (t.nested > 0) { --t.nested; return; }
-    const GroupBox box = g_grp[--g_grpTop];
-    const float pad = g_look ? 8.0f : 6.0f;
-    if (!box.any || t.discard) {         // nothing to show: drop whatever was drawn
-        g_onv = t.startV; g_oni = t.startI; g_novSpans = t.spanBase;
-    } else {
-        // A text row is rowH tall (the text plus padding of its own), so the vertical inset is what is left of `pad` after that
-        // padding: a one-line tooltip then has the same box as SetTooltip.
-        const float padY = std::max(0.0f, pad - (rowH() - textH()) * 0.5f);
-        const float bw = (box.x1 - box.x0) + pad * 2.0f, bh = (box.y1 - box.y0) + padY * 2.0f;
-        float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
-        if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);
-        if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);
-        const float dx = bx + pad - box.x0, dy = by + padY - box.y0;
-        for (int i = t.startV; i < g_onv; ++i) { g_ovVerts[i].position.x += dx; g_ovVerts[i].position.y += dy; }
-        const int contentEndI = g_oni, spansBefore = g_novSpans;
-        g_toOverlay = true;
-        if (g_look) {
-            const unsigned char tip[4] = {38, 42, 51, 250};
-            rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-            rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
-        } else {
-            quad(bx, by, bw, bh, g_theme.border);
-            quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
-        }
-        const int boxN = g_oni - contentEndI;
-        g_novSpans = spansBefore;        // the box takes the flat span at the start of the tooltip
-        if (boxN > 0 && contentEndI > t.startI) {
-            std::rotate(g_ovIdx + t.startI, g_ovIdx + contentEndI, g_ovIdx + g_oni);   // box indices first, then the content's
-            // The content's texture changes moved with it: shift them past the box, and keep a flat span at the start.
-            for (int i = t.spanBase; i < g_novSpans; ++i) if (g_ovSpans[i].startIdx >= t.startI) g_ovSpans[i].startIdx += boxN;
-            int first = t.spanBase; while (first < g_novSpans && g_ovSpans[first].startIdx < t.startI) ++first;
-            // after the shift no span starts at startI any more (the flat one from BeginTooltip was shifted too): put a flat one back
-            if (g_novSpans < 32) {
-                for (int i = g_novSpans; i > first; --i) g_ovSpans[i] = g_ovSpans[i - 1];
-                g_ovSpans[first] = OverlaySpan{t.startI, g_defTex}; ++g_novSpans;
-            }
-        }
-    }
-    g_lay = t.lay; g_grpTop = t.grpTop; g_lastId = t.lastId; g_in.blocked = t.blocked; g_posOverride = t.posOverride;
-    g_nextItemW = t.nextItemW; g_toOverlay = t.toOverlay;
-    { const bool keep = g_toOverlay; g_toOverlay = true; bindTexture(g_defTex); g_toOverlay = keep; }   // whatever the overlay draws next starts flat again
-    t.open = false;
-}
 
 // ---- GetStyle: the style as Dear ImGui-shaped fields, read off OkayUI's own settings each call ----------------------------
 StyleInfo& GetStyle() {
@@ -4785,7 +4492,6 @@ bool ColorButton(const char* id, const float rgba[4], int flags, float size) {
 }
 bool ColorButton(const char* id, const float rgba[4], float size) { return ColorButton(id, rgba, 0, size); }
 
-static bool beginPopupBody(int id);
 // ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
 static bool colorEditRow_ed(const char* label, float* c, int n, int flags);
 static bool colorEditRow(const char* label, float* c, int n, int flags) { return noteEdit(colorEditRow_ed(label, c, n, flags)); }
@@ -5302,7 +5008,7 @@ void CloseCurrentPopup() {
 
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
 // drawing the background using last frame's measured height. Returns true if open.
-static bool beginPopupBody(int id) {
+bool ui_core::beginPopupBody(int id) {
     // Depth guard first: past the popup-stack capacity the parent layout cannot
     // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
     // state that was never saved and stomp another popup's measured height.
@@ -5649,673 +5355,9 @@ static bool ListBox_raw(const char* label, int* current, const char* const* item
     return changed;
 }
 
-// ---- Columns -------------------------------------------------------------------
-void Columns(int count) {
-    if (!g_lay.active || count < 1) return;
-    if (count > 16) count = 16;
-    g_col.active = true; g_col.count = count; g_col.index = 0;
-    g_col.x0 = g_lay.ox; g_col.fullW = g_lay.contentW;
-    g_col.rowTop = g_lay.cy; g_col.rowBottom = g_lay.cy;
-    g_lay.ox = g_col.x0;
-    g_lay.contentW = g_col.fullW / count - 6.0f;   // small gutter between columns
-    g_lay.cy = g_col.rowTop;
-}
-
-void NextColumn() {
-    if (!g_lay.active || !g_col.active) return;
-    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;   // track the tallest column
-    ++g_col.index;
-    if (g_col.index >= g_col.count) {          // past the last column: start a new row
-        g_col.index = 0;
-        g_col.rowTop = g_col.rowBottom;
-    }
-    const float colW = g_col.fullW / g_col.count;
-    g_lay.ox = g_col.x0 + g_col.index * colW;
-    g_lay.contentW = colW - 6.0f;
-    g_lay.cy = g_col.rowTop;
-    g_lay.pendingSameLine = false;
-}
-
-void EndColumns() {
-    if (!g_lay.active || !g_col.active) return;
-    if (g_lay.cy > g_col.rowBottom) g_col.rowBottom = g_lay.cy;
-    g_lay.ox = g_col.x0;
-    g_lay.contentW = g_col.fullW;
-    g_lay.cy = g_col.rowBottom;
-    g_col.active = false;
-}
-
-// ---- Tables --------------------------------------------------------------------
-namespace {
-// Left edge of column `i` (sum of prior column widths from the table origin), before any scrolling.
-float tblColX(int i) {
-    float cx = g_tbl.x0;
-    for (int k = 0; k < i && k < g_tbl.count; ++k) cx += *g_tbl.w[k];
-    return cx;
-}
-inline bool tblScrolls() { return g_tbl.scrollX || g_tbl.scrollY; }
-inline bool tblColFrozen(int i) { return g_tbl.scrollX && i < g_tbl.freezeCols; }
-// Where column `i` is on the screen.
-inline float tblRealX(int i) { return tblColX(i) - ((g_tbl.scrollX && i >= g_tbl.freezeCols) ? g_tbl.sx : 0.0f); }
-constexpr float kBarThick = 10.0f;
-// A scrolling table's bars: StyleVar_ScrollbarSize when pushed (then inside the one-pixel outer border), else kBarThick.
-inline float tblBar() { return g_sbSize > 0.0f ? g_sbSize : kBarThick; }
-
-// Clip to a part of the scrolling box: the rows band (frozen rows: the whole box height; body rows: below the frozen rows), and the
-// column band (frozen columns, the scrolling columns, or the full width for a row background). Only changes the clip when it differs.
-void tblSetClip(bool frozenRow, int colBand /*0 frozen cols, 1 scrolling cols, 2 full*/) {
-    if (!tblScrolls()) return;
-    const float hbar = g_tbl.needH ? kBarThick : 0.0f;
-    const float top = frozenRow ? g_tbl.oy : g_tbl.frozenBottom, bottom = g_tbl.oy + g_tbl.oh - hbar;
-    float left = g_tbl.ox, right = g_tbl.ox + g_tbl.viewW;
-    if (colBand == 0) right = g_tbl.ox + std::min(g_tbl.frozenW, g_tbl.viewW);
-    else if (colBand == 1) left = g_tbl.ox + std::min(g_tbl.frozenW, g_tbl.viewW);
-    const float r[4] = {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
-    if (g_tbl.clipOn && r[0] == g_tbl.clipR[0] && r[1] == g_tbl.clipR[1] && r[2] == g_tbl.clipR[2] && r[3] == g_tbl.clipR[3]) return;
-    if (g_tbl.clipOn) PopClipRect();
-    PushClipRect(r[0], r[1], r[2], r[3]);
-    g_tbl.clipOn = true; for (int i = 0; i < 4; ++i) g_tbl.clipR[i] = r[i];
-}
-// The clip of column `col`'s cell in the current row. A body row far outside the box is "culled": it keeps the plain full-width body clip, so
-// its cells draw nowhere and the alternating frozen / scrolling clips do not pile up spans.
-void tblCellClip(int col) {
-    if (!tblScrolls()) return;
-    const float rowRealTop = g_tbl.rowTop + g_tbl.shiftY;
-    const bool culled = !g_tbl.rowFrozen && (rowRealTop + rowH() * 4.0f < g_tbl.frozenBottom || rowRealTop > g_tbl.oy + g_tbl.oh);
-    tblSetClip(g_tbl.rowFrozen, culled ? 2 : (tblColFrozen(col) ? 0 : 1));
-}
-// The row clipper. Is the row whose top is at screen y `top` (and about `h` tall) wholly outside what can be seen? Then its cells still
-// lay out (so the row heights, widths and ids stay exact) but nothing is emitted for them: no quads, no glyphs, so a table of thousands
-// of rows neither fills the vertex batch nor costs time. Below the visible band is certain (rows only grow downward); above it allows
-// four row heights of slack for a row taller than its remembered height. Frozen rows and overlay content are never culled.
-bool tblRowOutside(float top, float h) {
-    if (g_toOverlay || !g_rowClipper) return false;
-    float clipTop, clipBot;
-    if (tblScrolls()) {
-        if (g_tbl.rowFrozen) return false;
-        clipTop = g_tbl.frozenBottom; clipBot = g_tbl.oy + g_tbl.oh;
-    } else if (g_clipTop > 0) {
-        const SDL_Rect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
-    } else if (g_dispH > 0.0f) {
-        clipTop = 0.0f; clipBot = g_dispH;
-    } else return false;
-    return top > clipBot + 1.0f || top + 4.0f * h < clipTop;
-}
-// Point the layout at the current cell (column g_tbl.index at row g_tbl.rowTop).
-void tblEnterCell() {
-    const float pad = g_cellPadX;
-    const float cx = tblRealX(g_tbl.index);
-    tblCellClip(g_tbl.index);
-    g_lay.ox = cx + pad;
-    g_lay.contentW = *g_tbl.w[g_tbl.index] - 2.0f * pad;
-    if (g_lay.contentW < 8.0f) g_lay.contentW = 8.0f;
-    g_lay.cy = g_tbl.rowTop + g_tbl.shiftY + (g_cellPadY > 0.0f ? g_cellPadY : 0.0f);
-    g_lay.indent = 0.0f;
-    g_lay.pendingSameLine = false;
-    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
-}
-
-// Size the columns of a flag-style table from its TableSetupColumn calls: fixed columns take their pixel width, the rest share what is left by weight.
-inline bool tblHidden(int i) { return i >= 0 && i < 16 && ((g_tbl.hidden >> i) & 1u) != 0; }
-// A column mask kept in a float state slot. It is only a mask when it is a whole number from 0 to 0xFFFF (16 columns at most);
-// anything else (never set, NaN, or a slot another widget wrote to) counts as unset, so it is never cast to unsigned out of range.
-inline bool tblStoredMask(float v, unsigned& out) {
-    if (!(v >= 0.0f && v <= 65535.0f)) return false;   // also false for NaN
-    const unsigned m = (unsigned)v;
-    if ((float)m != v) return false;
-    out = m;
-    return true;
-}
-void tblFinishSetup() {
-    if (g_tbl.setupDone) return;
-    g_tbl.setupDone = true;
-    {   // which columns are hidden: remembered per table; the first time, the Col_DefaultHide ones. The last visible column cannot be hidden.
-        g_tbl.pHidden = floatState(g_tbl.id ^ 0x7a00, -1.0f);
-        unsigned stored = 0;
-        if (!tblStoredMask(*g_tbl.pHidden, stored)) {
-            for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if ((g_tbl.sFlags[i] & Col_DefaultHide) && !(g_tbl.sFlags[i] & Col_NoHide)) stored |= 1u << i;
-            *g_tbl.pHidden = (float)stored;
-        }
-        unsigned m = stored & ((1u << g_tbl.count) - 1u);
-        for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if (g_tbl.sFlags[i] & Col_NoHide) m &= ~(1u << i);
-        if (m == ((1u << g_tbl.count) - 1u)) m &= ~1u;
-        g_tbl.hidden = m; *g_tbl.pHidden = (float)m;
-    }
-    const float avail = g_tbl.scrollX && g_tbl.innerWidth > 0.0f ? g_tbl.innerWidth : g_tbl.fullW;
-    float fixed = 0.0f, wsum = 0.0f; int nstretch = 0;
-    for (int i = 0; i < g_tbl.count; ++i) {
-        if (tblHidden(i)) continue;
-        if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) fixed += g_tbl.sVal[i];
-        else { wsum += (i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f; ++nstretch; }
-    }
-    const float rest = std::max(avail - fixed, 24.0f * (float)nstretch);
-    float sum = 0.0f;
-    for (int i = 0; i < g_tbl.count; ++i) {
-        float seed;
-        if (tblHidden(i)) { g_tbl.zeroW[i] = 0.0f; g_tbl.w[i] = &g_tbl.zeroW[i]; continue; }
-        if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) seed = g_tbl.sVal[i];
-        else seed = rest * ((i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f) / (wsum > 0.0f ? wsum : 1.0f);
-        g_tbl.w[i] = floatState(g_tbl.id ^ (0x7100 + i), seed);
-        if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
-        sum += *g_tbl.w[i];
-    }
-    {   // columns shown again this frame: they come back at the width they had, the others give that back (so hide and show is exact)
-        float* prevM = floatState(g_tbl.id ^ 0x7a02, -1.0f);
-        unsigned prevStored = 0;
-        const unsigned prev = tblStoredMask(*prevM, prevStored) ? (prevStored & ((1u << g_tbl.count) - 1u)) : g_tbl.hidden;
-        const unsigned newly = prev & ~g_tbl.hidden;
-        *prevM = (float)g_tbl.hidden;
-        if (newly && !g_tbl.scrollX) {
-            float total = 0.0f, others = 0.0f;
-            for (int i = 0; i < g_tbl.count; ++i) { if (tblHidden(i)) continue; if ((newly >> i) & 1u) total += *g_tbl.w[i]; else others += *g_tbl.w[i]; }
-            if (others > 0.0f && g_tbl.fullW > total + 24.0f) {
-                const float f = (g_tbl.fullW - total) / others;
-                for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i) && !((newly >> i) & 1u)) *g_tbl.w[i] *= f;
-            }
-            sum = 0.0f;
-            for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i)) sum += *g_tbl.w[i];
-        }
-    }
-    if (g_tbl.scrollX) {   // a box that scrolls sideways keeps its column widths
-        g_tbl.contentW = sum;
-        g_tbl.needH = sum > g_tbl.viewW + 0.5f;
-        g_tbl.fullW = sum;
-        g_tbl.frozenW = 0.0f;
-        for (int i = 0; i < g_tbl.freezeCols && i < g_tbl.count; ++i) g_tbl.frozenW += *g_tbl.w[i];
-        if (g_tbl.frozenW > g_tbl.viewW * 0.9f) g_tbl.frozenW = 0.0f, g_tbl.freezeCols = 0;   // frozen columns that fill the box would leave nothing to scroll
-    } else if (sum > 0.0f) {
-        const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i)) *g_tbl.w[i] *= f;
-    }
-    // the sort keys: the DefaultSort columns the first time the table is seen
-    if ((g_tbl.flags & Table_Sortable) && g_tbl.store && !g_tbl.store->inited) {
-        TblStore& t = *g_tbl.store;
-        t.inited = true; t.sortN = 0;
-        for (int i = 0; i < g_tbl.nSetup && t.sortN < kTblSortKeys; ++i)
-            if ((g_tbl.sFlags[i] & Col_DefaultSort) && !(g_tbl.sFlags[i] & Col_NoSort)) { t.sortCol[t.sortN] = i; t.sortDesc[t.sortN] = (g_tbl.sFlags[i] & Col_PreferSortDescending) != 0; ++t.sortN; }
-        t.dirty = t.sortN > 0;
-    }
-}
-// Sorting by a header click (ImGui's rules): a plain click makes the column the only key (or flips it if it already is the only key,
-// and with tristate removes it after descending); Ctrl+click with SortMulti adds it as a further key or flips / removes it.
-void tblSortClick(int col) {
-    TblStore& t = *g_tbl.store;
-    const bool multi = (g_tbl.flags & Table_SortMulti) != 0 && g_io.keyCtrl, tri = (g_tbl.flags & Table_SortTristate) != 0;
-    const bool pref = (g_tbl.sFlags[col] & Col_PreferSortDescending) != 0;
-    int at = -1;
-    for (int k = 0; k < t.sortN; ++k) if (t.sortCol[k] == col) at = k;
-    auto removeKey = [&](int k) { for (int j = k; j + 1 < t.sortN; ++j) { t.sortCol[j] = t.sortCol[j + 1]; t.sortDesc[j] = t.sortDesc[j + 1]; } --t.sortN; };
-    if (multi) {
-        if (at < 0) { if (t.sortN < kTblSortKeys) { t.sortCol[t.sortN] = col; t.sortDesc[t.sortN] = pref; ++t.sortN; } }
-        else if (t.sortDesc[at] == pref && !(tri && t.sortDesc[at] != pref)) t.sortDesc[at] = !pref;       // first click flipped it
-        else if (tri) removeKey(at);
-        else t.sortDesc[at] = !t.sortDesc[at];
-    } else if (at >= 0 && t.sortN == 1) {
-        if (t.sortDesc[at] == pref) t.sortDesc[at] = !pref;
-        else if (tri) t.sortN = 0;
-        else t.sortDesc[at] = pref;
-    } else { t.sortN = 1; t.sortCol[0] = col; t.sortDesc[0] = pref; }
-    t.dirty = true;
-}
-// The header bar with bold column labels (and sort arrows); moves the row cursor below it.
-void tblDrawHeader(const char* const* labels, bool interactive) {
-    const float hh = rowH();
-    const float rowY = g_tbl.rowTop;                   // headers are never scrolled vertically
-    const bool frozen = g_tbl.rowsDone < g_tbl.freezeRows || !g_tbl.scrollY;
-    if (tblScrolls()) tblSetClip(true, 2);
-    const float fullL = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, fullW2 = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
-    if (g_look) quad(fullL, rowY + hh - 1.0f, fullW2, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
-    else quad(fullL, rowY, fullW2, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
-    const Font* prevF = g_font; g_font = &kFontBold;
-    for (int i = 0; i < g_tbl.count; ++i) {
-        if (tblHidden(i)) continue;
-        const float cx = tblRealX(i), cw = *g_tbl.w[i];
-        if (tblScrolls()) tblSetClip(true, tblColFrozen(i) ? 0 : 1);
-        const bool sortable = interactive && (g_tbl.flags & Table_Sortable) && g_tbl.store && i < g_tbl.nSetup && !(g_tbl.sFlags[i] & Col_NoSort);
-        bool hot = false, down = false;
-        if (sortable) {
-            const int hid = g_tbl.id ^ (0x7c00 + i);
-            const float hitW = cw - (i + 1 < g_tbl.count ? 4.0f : 0.0f);      // the border's resize handle keeps its few pixels
-            hot = hit(cx, rowY, hitW, hh);
-            if (hot) g_hot = hid;
-            if (g_active == hid) { if (g_released) { if (hot) tblSortClick(i); g_active = 0; } else down = true; }
-            else if (hot && g_pressed) { g_active = hid; g_focusClaimed = true; down = true; }
-            if (hot || down) quad(cx, rowY, cw, hh, pick(down ? Col_HeaderActive : Col_HeaderHovered, down ? g_theme.bgDown : g_theme.bgHover));
-        }
-        if (labels[i] && labels[i][0] && !(i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoHeaderLabel)))
-            drawText(cx + 4.0f, rowY + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
-        if (sortable) {
-            const TblStore& t = *g_tbl.store;
-            for (int k = 0; k < t.sortN; ++k) if (t.sortCol[k] == i) {
-                const float ax = cx + cw - 14.0f, ay = rowY + hh * 0.5f, r = 4.0f;
-                if (t.sortDesc[k]) tri(ax - r, ay - r * 0.6f, ax + r, ay - r * 0.6f, ax, ay + r * 0.8f, g_theme.text);
-                else tri(ax, ay - r * 0.8f, ax - r, ay + r * 0.6f, ax + r, ay + r * 0.6f, g_theme.text);
-                if (t.sortN > 1) { char d[4]; std::snprintf(d, sizeof d, "%d", k + 1); drawText(ax - r - 12.0f, rowY + (hh - textH()) * 0.5f, d, g_theme.textScale * 0.7f, g_theme.text); }
-            }
-        }
-    }
-    g_font = prevF;
-    (void)frozen;
-    g_tbl.rowTop += hh;
-    g_tbl.rowBottom = g_tbl.rowTop;
-    g_tbl.rowStart = g_tbl.rowTop;
-    g_tbl.headerBottom = g_tbl.rowTop;
-    g_tbl.headerDrawn = true;
-    ++g_tbl.rowsDone;
-}
-// Close the row in progress: the lowest point its cells reached becomes the row's bottom; its height is remembered for the next frame's band.
-void tblFinishRow() {
-    const float cyLogical = g_lay.cy - g_tbl.shiftY + (g_cellPadY >= 0.0f && g_tbl.index >= 0 ? g_cellPadY - g_lay.spacingY : 0.0f);
-    if (cyLogical > g_tbl.rowBottom) g_tbl.rowBottom = cyLogical;
-    if (g_tbl.rowTop + g_tbl.minRowH > g_tbl.rowBottom) g_tbl.rowBottom = g_tbl.rowTop + g_tbl.minRowH;
-}
-void tblRememberRow() {
-    if (g_tbl.store && g_tbl.rowIndex >= 0 && g_tbl.rowIndex < kTblRows) g_tbl.store->rowH[g_tbl.rowIndex] = std::max(0.0f, g_tbl.rowBottom - g_tbl.rowTop);
-}
-} // namespace
-
-bool BeginTable(const char* id, int columns, const char* const* headers) {
-    return BeginTable(id, columns, headers, nullptr);
-}
-
-float CalcTextWidth(const char* text) { return labelW(text); }
-
-bool BeginTable(const char* id, int columns, const char* const* headers, const float* weights) {
-    if (!g_lay.active || columns < 1) return false;
-    if (columns > 16) columns = 16;
-    const int tid = hashLabel(id);
-    g_tbl = TableState();
-    g_tbl.active = true; g_tbl.id = tid; g_tbl.count = columns; g_tbl.index = -1;
-    g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
-    g_tbl.rowTop = g_lay.cy; g_tbl.rowBottom = g_lay.cy; g_tbl.rowStart = g_lay.cy;
-    g_tbl.topY = g_lay.cy; g_tbl.flags = 0; g_tbl.rowIndex = -1; g_tbl.setupDone = true; g_tbl.nSetup = 0;
-
-    // Fetch/seed persisted column widths, then rescale so they exactly fill fullW
-    // (keeps the table snug when the window is resized).
-    float sum = 0.0f, wsum = 0.0f;
-    if (weights) for (int i = 0; i < columns; ++i) wsum += weights[i] > 0.0f ? weights[i] : 0.0f;
-    for (int i = 0; i < columns; ++i) {
-        const float seed = (weights && wsum > 0.0f) ? g_tbl.fullW * std::max(weights[i], 0.0f) / wsum : g_tbl.fullW / columns;
-        g_tbl.w[i] = floatState(tid ^ (0x7100 + i), seed);
-        if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
-        sum += *g_tbl.w[i];
-    }
-    if (sum > 0.0f) { float f = g_tbl.fullW / sum; for (int i = 0; i < columns; ++i) *g_tbl.w[i] *= f; }
-
-    // Optional header row: a bar with bold column labels.
-    if (headers) {
-        const float hh = rowH();
-        if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
-        else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
-        const Font* prevF = g_font; g_font = &kFontBold;
-        for (int i = 0; i < columns; ++i) {
-            float cx = tblColX(i);
-            if (headers[i] && headers[i][0])
-                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
-        }
-        g_font = prevF;
-        g_tbl.rowTop += hh;
-        g_tbl.rowBottom = g_tbl.rowTop;
-        g_tbl.rowStart = g_tbl.rowTop;
-    }
-    g_tbl.headerBottom = g_tbl.rowTop;
-    return true;
-}
-
-bool BeginTable(const char* id, int columns, TableFlags flags) {
-    return BeginTable(id, columns, flags, Vec2{}, 0.0f);
-}
-
-bool BeginTable(const char* id, int columns, TableFlags flags, Vec2 outerSize, float innerWidth) {
-    if (!g_lay.active || columns < 1) return false;
-    if (columns > 16) columns = 16;
-    const int tid = hashLabel(id);
-    g_tbl = TableState();
-    g_tbl.active = true; g_tbl.id = tid; g_tbl.count = columns; g_tbl.index = -1;
-    g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
-    g_tbl.rowTop = g_tbl.rowBottom = g_tbl.rowStart = g_tbl.headerBottom = g_tbl.topY = g_lay.cy;
-    g_tbl.flags = (int)flags; g_tbl.rowIndex = -1; g_tbl.nSetup = 0; g_tbl.setupDone = false;
-    if (flags & Table_Sortable) { g_tbl.store = tblStoreFor(tid); g_tbl.store->lastFrame = g_frameCount; }
-    else if (flags & Table_RowBg) { g_tbl.store = tblStoreFor(tid); g_tbl.store->lastFrame = g_frameCount; }
-    g_tbl.scrollX = (flags & Table_ScrollX) != 0; g_tbl.scrollY = (flags & Table_ScrollY) != 0;
-    if (g_tbl.scrollX || g_tbl.scrollY) {
-        g_tbl.pSX = floatState(tid ^ 0x7800, 0.0f); g_tbl.pSY = floatState(tid ^ 0x7801, 0.0f);
-        g_tbl.pMaxY = floatState(tid ^ 0x7802, 0.0f); g_tbl.pH = floatState(tid ^ 0x7803, rowH() * 3.0f);
-        const float ow = (outerSize.x > 0.0f && std::isfinite(outerSize.x)) ? outerSize.x : availW();
-        float oh;
-        if (outerSize.y > 0.0f && std::isfinite(outerSize.y)) oh = outerSize.y;
-        else if (g_tbl.scrollY) oh = std::max(rowH() * 4.0f, g_lay.bottom - g_lay.cy);
-        else oh = *g_tbl.pH + (g_tbl.scrollX ? kBarThick : 0.0f);
-        float bx, by; place(ow, oh, bx, by);
-        g_tbl.saved = g_lay;                  // the cursor is already below the box; the cells work from its top
-        g_lay.ox = bx; g_lay.cy = by; g_lay.contentW = ow; g_lay.indent = 0.0f; g_lay.pendingSameLine = false;
-        g_tbl.ox = bx; g_tbl.oy = by; g_tbl.ow = ow; g_tbl.oh = oh;
-        g_tbl.needV = g_tbl.scrollY && *g_tbl.pMaxY > 0.0f;
-        g_tbl.viewW = ow - (g_tbl.needV ? tblBar() + (g_sbSize > 0.0f ? 1.0f : 0.0f) : 0.0f);
-        g_tbl.innerWidth = innerWidth > 0.0f && std::isfinite(innerWidth) ? innerWidth : 0.0f;
-        g_tbl.x0 = bx; g_tbl.fullW = g_tbl.viewW;
-        g_tbl.rowTop = g_tbl.rowBottom = g_tbl.rowStart = g_tbl.headerBottom = g_tbl.topY = by;
-        g_tbl.sx = *g_tbl.pSX; g_tbl.sy = *g_tbl.pSY;
-        g_tbl.frozenBottom = by;
-        // the wheel (Shift+wheel for the sideways direction) scrolls while the pointer is over the box
-        if (g_in.wheel != 0.0f && !g_wheelUsed && hit(bx, by, ow, oh)) {
-            const bool sideways = g_tbl.scrollX && (g_io.keyShift || !g_tbl.scrollY);
-            if (sideways) { g_tbl.sx -= g_in.wheel * rowH() * 2.0f; g_wheelUsed = true; }
-            else if (g_tbl.scrollY && *g_tbl.pMaxY > 0.0f) { g_tbl.sy -= g_in.wheel * rowH(); g_wheelUsed = true; }
-        }
-        g_tbl.sy = std::max(0.0f, std::min(g_tbl.sy, *g_tbl.pMaxY));
-        g_tbl.sx = std::max(0.0f, g_tbl.sx);
-    }
-    return true;
-}
-
-void TableSetupColumn(const char* label, int columnFlags, float widthOrWeight, unsigned userId) {
-    if (!g_tbl.active || g_tbl.setupDone || g_tbl.nSetup >= g_tbl.count) return;
-    if (!std::isfinite(widthOrWeight) || widthOrWeight < 0.0f) widthOrWeight = 0.0f;
-    if (widthOrWeight > 100000.0f) widthOrWeight = 100000.0f;
-    g_tbl.sLabel[g_tbl.nSetup] = label; g_tbl.sFlags[g_tbl.nSetup] = columnFlags; g_tbl.sVal[g_tbl.nSetup] = widthOrWeight; g_tbl.sUser[g_tbl.nSetup] = userId;
-    ++g_tbl.nSetup;
-}
-
-void TableSetupScrollFreeze(int cols, int rows) {
-    if (!g_tbl.active || g_tbl.setupDone) return;
-    g_tbl.freezeCols = std::max(0, std::min(cols, g_tbl.count)); g_tbl.freezeRows = std::max(0, std::min(rows, 32));
-}
-
-void TableHeadersRow() {
-    g_tbl.rowCulled = false; g_cullRow = false;
-    if (!g_lay.active || !g_tbl.active) return;
-    tblFinishSetup();
-    tblFinishRow();
-    g_tbl.rowTop = g_tbl.rowBottom;
-    g_tbl.shiftY = 0.0f;
-    const char* none[16] = {nullptr};
-    for (int i = 0; i < g_tbl.count && i < g_tbl.nSetup; ++i) none[i] = g_tbl.sLabel[i];
-    tblDrawHeader(none, true);
-    if ((g_tbl.flags & Table_Hideable) && g_tbl.pHidden && g_lay.active && !g_tbl.scrollX && !g_tbl.scrollY) {
-        // a right click on the header row opens the show / hide menu (every column with a check box; a NoHide column, and the last visible one, are locked)
-        const float hh = rowH(), rowY = g_tbl.rowTop - hh;
-        const int pid = g_tbl.id ^ 0x7a01;
-        if (g_rPressed && !g_in.blocked && hit(g_tbl.x0, rowY, g_tbl.fullW, hh)) {
-            PopupSlot* ps = popupSlot(pid, true);
-            if (ps) { ps->open = true; ps->x = g_in.mouseX; ps->y = g_in.mouseY; ps->w = 0.0f; g_openPopupThisFrame = pid; }
-        }
-        const TableState keep = g_tbl;   // the menu's widgets use the layout, not the table; the table state is restored after
-        if (beginPopupBody(pid)) {
-            int visible = 0; for (int i = 0; i < keep.count; ++i) if (!((keep.hidden >> i) & 1u)) ++visible;
-            for (int i = 0; i < keep.count; ++i) {
-                const bool on = !((keep.hidden >> i) & 1u);
-                const bool locked = (i < keep.nSetup && (keep.sFlags[i] & Col_NoHide)) || (on && visible <= 1);
-                bool v = on;
-                BeginDisabled(locked);
-                char idb[16]; std::snprintf(idb, sizeof idb, "tc%d", i);
-                PushID(idb);   // two columns may share a label: each check box gets its own id
-                if (Checkbox((i < keep.nSetup && keep.sLabel[i] && keep.sLabel[i][0]) ? keep.sLabel[i] : "(column)", &v) && v != on) { unsigned m = keep.hidden; if (v) m &= ~(1u << i); else m |= 1u << i; *keep.pHidden = (float)m; }
-                PopID();
-                EndDisabled();
-            }
-            EndPopup();
-        }
-    }
-}
-
-bool TableSetColumnEnabled(int column, bool enabled) {
-    if (!g_tbl.active || column < 0 || column >= g_tbl.count) return false;
-    tblFinishSetup();
-    if (!g_tbl.pHidden) return false;
-    if (column < g_tbl.nSetup && (g_tbl.sFlags[column] & Col_NoHide) && !enabled) return false;
-    unsigned m = g_tbl.hidden;
-    if (tblStoredMask(*g_tbl.pHidden, m)) m &= (1u << g_tbl.count) - 1u;   // the pending set (a change made earlier this frame counts)
-    else m = g_tbl.hidden;
-    if (enabled) m &= ~(1u << column); else m |= 1u << column;
-    if (m == ((1u << g_tbl.count) - 1u)) return false;   // never hide them all
-    *g_tbl.pHidden = (float)m;                           // takes effect next frame (this frame's widths are set)
-    return true;
-}
-bool TableGetColumnIsEnabled(int column) { return g_tbl.active && column >= 0 && column < g_tbl.count && !tblHidden(column); }
-int TableGetColumnCount() { return g_tbl.active ? g_tbl.count : 0; }
-const char* TableGetColumnName(int column) {
-    if (!g_tbl.active) return "";
-    if (column < 0) column = g_tbl.index;
-    return (column >= 0 && column < g_tbl.nSetup && g_tbl.sLabel[column]) ? g_tbl.sLabel[column] : "";
-}
-int TableGetColumnFlags(int column) {
-    if (!g_tbl.active) return 0;
-    if (column < 0) column = g_tbl.index;
-    return (column >= 0 && column < g_tbl.nSetup) ? g_tbl.sFlags[column] : 0;
-}
-int TableGetHoveredColumn() {
-    if (!g_tbl.active || g_in.blocked || g_tbl.count <= 0) return -1;
-    tblFinishSetup();                                    // the widths exist once the columns are set up
-    const float top = g_tbl.scrollX || g_tbl.scrollY ? g_tbl.oy : g_tbl.topY;
-    const float bottom = std::max(g_tbl.rowBottom, g_lay.cy);
-    if (g_in.mouseY < top || g_in.mouseY > bottom) return -1;
-    for (int i = 0; i < g_tbl.count; ++i) {
-        if (tblHidden(i)) continue;
-        const float x = tblRealX(i);
-        if (g_in.mouseX >= x && g_in.mouseX < x + *g_tbl.w[i]) return i;
-    }
-    return -1;
-}
-
-void TableNextRow(int, float minRowHeight) { TableNextRow(); if (g_tbl.active && std::isfinite(minRowHeight) && minRowHeight > 0.0f) g_tbl.minRowH = minRowHeight; }
-TableSortSpecs* TableGetSortSpecs() {
-    static TableColumnSortSpecs arr[kTblSortKeys];
-    static TableSortSpecs out;
-    if (!g_tbl.active || !(g_tbl.flags & Table_Sortable) || !g_tbl.store) return nullptr;
-    tblFinishSetup();
-    const TblStore& t = *g_tbl.store;
-    for (int k = 0; k < t.sortN; ++k) { arr[k].columnIndex = t.sortCol[k]; arr[k].sortOrder = k; arr[k].descending = t.sortDesc[k]; arr[k].columnUserId = t.sortCol[k] < g_tbl.nSetup ? g_tbl.sUser[t.sortCol[k]] : 0; arr[k].ColumnUserID = arr[k].columnUserId; arr[k].ColumnIndex = arr[k].columnIndex; arr[k].SortOrder = k; arr[k].SortDirection = arr[k].descending ? 2 : 1; }
-    out.specs = arr; out.specsCount = t.sortN; out.specsDirty = t.dirty; out.SpecsDirty = t.dirty;
-    out.Specs = arr; out.SpecsCount = t.sortN;
-    g_sortSpecsFor = g_tbl.id; g_sortSpecsOut = &out;
-    return &out;
-}
-
-float TableGetScrollX() { return g_tbl.active && g_tbl.scrollX ? g_tbl.sx : 0.0f; }
-float TableGetScrollY() { return g_tbl.active && g_tbl.scrollY ? g_tbl.sy : 0.0f; }
-void TableSetScroll(float x, float y) {
-    if (!g_tbl.active || !(g_tbl.scrollX || g_tbl.scrollY)) return;
-    if (g_tbl.scrollX && std::isfinite(x)) g_tbl.sx = std::max(0.0f, x);
-    if (g_tbl.scrollY && std::isfinite(y)) g_tbl.sy = std::max(0.0f, std::min(y, *g_tbl.pMaxY));
-}
-
-void SetTableRowClipping(bool on) { g_rowClipper = on; }
-bool TableRowIsVisible() { return !(g_tbl.active && g_tbl.rowCulled); }
-bool TableSetColumnIndex(int column) {
-    if (!g_lay.active || !g_tbl.active || column < 0 || column >= g_tbl.count) return false;
-    g_tbl.index = column - 1;
-    return TableNextColumn();
-}
-int TableGetColumnIndex() { return g_tbl.active ? g_tbl.index : -1; }
-int TableGetRowIndex() { return g_tbl.active ? g_tbl.rowIndex : -1; }
-
-void TableNextRow() {
-    if (!g_lay.active || !g_tbl.active) return;
-    tblFinishSetup();
-    tblFinishRow();
-    tblRememberRow();
-    g_tbl.minRowH = 0.0f;
-    g_tbl.rowTop = g_tbl.rowBottom;   // next row starts below the tallest cell so far
-    g_tbl.index = -1;
-    ++g_tbl.rowIndex;
-    // scrolling boxes: rows after the frozen ones are shifted by the scroll and clipped below the frozen part
-    g_tbl.rowFrozen = !g_tbl.scrollY || g_tbl.rowsDone < g_tbl.freezeRows;
-    if (!g_tbl.rowFrozen && !g_tbl.bodyStarted) { g_tbl.bodyStarted = true; g_tbl.frozenBottom = g_tbl.rowTop; }
-    g_tbl.shiftY = (g_tbl.scrollY && !g_tbl.rowFrozen) ? -g_tbl.sy : 0.0f;
-    ++g_tbl.rowsDone;
-    const float bandH = (g_tbl.store && g_tbl.rowIndex < kTblRows && g_tbl.store->rowH[g_tbl.rowIndex] > 0.0f) ? g_tbl.store->rowH[g_tbl.rowIndex] : rowH();
-    g_tbl.rowBgH = bandH;
-    const float by = g_tbl.rowTop + g_tbl.shiftY;
-    g_tbl.rowCulled = tblRowOutside(by, bandH); g_cullRow = g_tbl.rowCulled;
-    const float bx = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, bw = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
-    if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, 2);
-    if ((g_tbl.flags & Table_RowBg) && (g_tbl.rowIndex & 1)) {   // banded rows: drawn first so the cells go on top
-        unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        quad(bx, by, bw, bandH, pick(Col_TableRowBgAlt, withAlpha(white, 0.045f, tmp)));
-    } else if ((g_tbl.flags & Table_RowBg) && colorIsSet(Col_TableRowBg)) {
-        quad(bx, by, bw, bandH, g_theme.colors[Col_TableRowBg]);
-    }
-    if ((g_tbl.flags & Table_BordersInnerH) && g_tbl.rowTop > g_tbl.rowStart + 0.5f) quad(bx, by, bw, 1.0f, pick(Col_TableBorderLight, g_theme.border));
-}
-
-bool TableNextColumn() {
-    if (!g_lay.active || !g_tbl.active) return false;
-    tblFinishSetup();
-    if (g_tbl.index >= 0) tblFinishRow();   // remember how tall the cell we're leaving got
-    ++g_tbl.index;
-    if (g_tbl.index >= g_tbl.count) return false;
-    tblEnterCell();
-    if (tblHidden(g_tbl.index)) { g_lay.ox = -30000.0f; return false; }   // a hidden column's cell lays out far off screen, so widgets drawn there are never seen or hit
-    return true;
-}
-
-void TableSetBgColor(TableBgTarget target, Color32 color, int column) {
-    if (!g_lay.active || !g_tbl.active || g_tbl.rowIndex < 0) return;
-    const unsigned char c[4] = {(unsigned char)(color & 255u), (unsigned char)((color >> 8) & 255u), (unsigned char)((color >> 16) & 255u), (unsigned char)((color >> 24) & 255u)};
-    const float by = g_tbl.rowTop + g_tbl.shiftY;
-    if (target == TableBg_CellBg) {
-        const int col = column >= 0 ? column : g_tbl.index;
-        if (col < 0 || col >= g_tbl.count) return;
-        if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, tblColFrozen(col) ? 0 : 1);
-        quad(tblRealX(col), by, *g_tbl.w[col], g_tbl.rowBgH, c);
-    } else if (target == TableBg_RowBg0 || target == TableBg_RowBg1) {
-        const float bx = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, bw = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
-        if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, 2);
-        quad(bx, by, bw, g_tbl.rowBgH, c);
-    }
-    if (tblScrolls() && g_tbl.index >= 0) tblCellClip(g_tbl.index);
-}
-
-// Table_BordersOuter: a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box).
-static void tblOuterBorder(float x, float y, float w, float h) {
-    if (!(w > 1.0f) || !(h > 1.0f)) return;
-    const unsigned char* c = pick(Col_TableBorderStrong, g_theme.border);
-    quad(x, y, w, 1.0f, c); quad(x, y + h - 1.0f, w, 1.0f, c);
-    quad(x, y + 1.0f, 1.0f, h - 2.0f, c); quad(x + w - 1.0f, y + 1.0f, 1.0f, h - 2.0f, c);
-}
-
-void EndTable() {
-    if (!g_lay.active || !g_tbl.active) return;
-    g_tbl.rowCulled = false; g_cullRow = false;
-    tblFinishSetup();
-    tblFinishRow();
-    tblRememberRow();
-    const float top = g_tbl.scrollX || g_tbl.scrollY ? g_tbl.oy : g_tbl.topY, bottom = g_tbl.rowBottom;
-    if (g_tbl.scrollX || g_tbl.scrollY) {
-        // the body's own height, the scroll limits, then the borders, the bars and the wheel
-        if (g_tbl.clipOn) { PopClipRect(); g_tbl.clipOn = false; }
-        const float hbar = g_tbl.needH ? kBarThick : 0.0f;
-        const float bodyTop = g_tbl.bodyStarted ? g_tbl.frozenBottom : std::max(g_tbl.frozenBottom, g_tbl.rowBottom);
-        const float viewH = g_tbl.oy + g_tbl.oh - hbar - bodyTop;
-        const float contentH = std::max(0.0f, g_tbl.rowBottom - bodyTop);
-        const float maxY = g_tbl.scrollY ? std::max(0.0f, contentH - viewH) : 0.0f;
-        *g_tbl.pMaxY = maxY;
-        if (g_tbl.scrollX) *g_tbl.pH = std::max(rowH(), g_tbl.rowBottom - g_tbl.oy);
-        else *g_tbl.pH = std::max(rowH(), g_tbl.rowBottom - g_tbl.oy);
-        float sy = std::max(0.0f, std::min(g_tbl.sy, maxY)), sx = g_tbl.sx;
-        const float maxX = g_tbl.scrollX ? std::max(0.0f, g_tbl.contentW - g_tbl.viewW) : 0.0f;
-        sx = std::max(0.0f, std::min(sx, maxX));
-        // column borders and the resize handles (clipped to the box; a frozen border stays put)
-        const float bTop = g_tbl.oy, bBot = g_tbl.oy + g_tbl.oh - hbar;
-        PushClipRect(g_tbl.ox, bTop, g_tbl.viewW, std::max(0.0f, bBot - bTop));
-        for (int i = 1; i < g_tbl.count; ++i) {
-            int pj = i - 1; while (pj >= 0 && tblHidden(pj)) --pj;
-            if (tblHidden(i) || pj < 0) continue;                                  // a hidden column has no border of its own
-            const bool noRes = (pj < g_tbl.nSetup && (g_tbl.sFlags[pj] & Col_NoResize)) || (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoResize));
-            const float bx = tblColX(i) - (i > g_tbl.freezeCols || !g_tbl.scrollX ? (g_tbl.scrollX ? sx : 0.0f) : 0.0f);
-            if (g_tbl.scrollX && i > g_tbl.freezeCols && (bx < g_tbl.ox + g_tbl.frozenW || bx > g_tbl.ox + g_tbl.viewW)) continue;   // scrolled under the frozen columns or out of the box
-            quad(bx - 0.5f, bTop, 1.0f, std::min(bBot - bTop, std::max(0.0f, g_tbl.rowBottom - g_tbl.oy)), pick(Col_TableBorderStrong, g_theme.border));
-            const int hid = g_tbl.id ^ (0x7b00 + i);
-            const float grab = 4.0f;
-            const bool over = !(g_tbl.flags & Table_NoResize) && !noRes && hit(bx - grab, bTop, grab * 2.0f, std::max(0.0f, bBot - bTop));
-            if (over) g_hot = hid;
-            if (g_active == hid) {
-                if (!g_in.mouseDown) g_active = 0;
-                else {
-                    float dx = g_mouseDX;
-                    float a = *g_tbl.w[pj] + dx, b2 = *g_tbl.w[i] - dx;
-                    if (g_tbl.scrollX) { if (a >= 20.0f) *g_tbl.w[pj] = a; }   // sideways boxes just grow the column
-                    else if (a >= 20.0f && b2 >= 20.0f) { *g_tbl.w[pj] = a; *g_tbl.w[i] = b2; }
-                }
-            } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
-        }
-        PopClipRect();
-        // the bars
-        if (g_tbl.scrollY && maxY > 0.0f) {
-            const float bar = tblBar(), in = g_sbSize > 0.0f ? 1.0f : 0.0f;
-            const float sbx = g_tbl.ox + g_tbl.ow - bar - in, trackTop = bodyTop, trackH = std::max(8.0f, g_tbl.oy + g_tbl.oh - hbar - bodyTop - in);
-            float frac = viewH / (viewH + maxY); if (frac > 1.0f) frac = 1.0f;
-            float thumbH = std::min(trackH, std::max(16.0f, frac * trackH));
-            const float thumbY = trackTop + (sy / maxY) * (trackH - thumbH);
-            const int bid = g_tbl.id ^ 0x7d10;
-            const bool over = hit(sbx, thumbY, bar, thumbH);
-            if (over) g_hot = bid;
-            if (g_active == bid) { if (!g_in.mouseDown) g_active = 0; else if (trackH - thumbH > 0.0f) sy += g_mouseDY * (maxY / (trackH - thumbH)); }
-            else if (over && g_pressed) { g_active = bid; g_focusClaimed = true; }
-            sy = std::max(0.0f, std::min(sy, maxY));
-            scrollbarThumb(sbx, trackTop, trackH, trackTop + (sy / maxY) * (trackH - thumbH), thumbH, g_active == bid, over);
-        }
-        if (g_tbl.scrollX && maxX > 0.0f) {
-            const float sby = g_tbl.oy + g_tbl.oh - kBarThick, trackW = g_tbl.viewW;
-            float frac = g_tbl.viewW / g_tbl.contentW; if (frac > 1.0f) frac = 1.0f;
-            float thumbW = std::min(trackW, std::max(16.0f, frac * trackW));
-            const float thumbX = g_tbl.ox + (sx / maxX) * (trackW - thumbW);
-            const int bid = g_tbl.id ^ 0x7d11;
-            const bool over = hit(thumbX, sby, thumbW, kBarThick);
-            if (over) g_hot = bid;
-            if (g_active == bid) { if (!g_in.mouseDown) g_active = 0; else if (trackW - thumbW > 0.0f) sx += g_mouseDX * (maxX / (trackW - thumbW)); }
-            else if (over && g_pressed) { g_active = bid; g_focusClaimed = true; }
-            sx = std::max(0.0f, std::min(sx, maxX));
-            const float tx = g_tbl.ox + (sx / maxX) * (trackW - thumbW);
-            if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(g_tbl.ox, sby, trackW, kBarThick, pick(Col_ScrollbarBg, g_theme.track));
-            const bool act = g_active == bid;
-            quad(tx + 1.0f, sby + 1.0f, thumbW - 2.0f, kBarThick - 2.0f, act ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent)));
-        }
-        *g_tbl.pSX = sx; *g_tbl.pSY = sy;
-        if (g_tbl.flags & Table_BordersOuter) tblOuterBorder(g_tbl.ox, g_tbl.oy, g_tbl.ow, g_tbl.oh);
-        if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty && g_sortSpecsOut->SpecsDirty;
-        g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
-        g_lay = g_tbl.saved;                 // the box was placed as one item: the cursor is already below it
-        g_lay.pendingSameLine = false;
-        g_posOverride = false;
-        g_tbl.active = false;
-        return;
-    }
-
-    // Column borders + draggable resize handles (applied next frame).
-    for (int i = 1; i < g_tbl.count; ++i) {
-        int pj = i - 1; while (pj >= 0 && tblHidden(pj)) --pj;
-        if (tblHidden(i) || pj < 0) continue;                                      // a hidden column has no border of its own
-        const bool noRes = (pj < g_tbl.nSetup && (g_tbl.sFlags[pj] & Col_NoResize)) || (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoResize));
-        float bx = tblColX(i);
-        quad(bx - 0.5f, top, 1.0f, bottom - top, pick(Col_TableBorderStrong, g_theme.border));
-        const int hid = g_tbl.id ^ (0x7b00 + i);
-        const float grab = 4.0f;
-        const bool over = !(g_tbl.flags & Table_NoResize) && !noRes && hit(bx - grab, top, grab * 2.0f, bottom - top);
-        if (over) g_hot = hid;
-        if (g_active == hid) {
-            if (!g_in.mouseDown) g_active = 0;
-            else {
-                float dx = g_mouseDX;
-                float a = *g_tbl.w[pj] + dx, b = *g_tbl.w[i] - dx;
-                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[pj] = a; *g_tbl.w[i] = b; }
-            }
-        } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
-    }
-
-    if (g_tbl.flags & Table_BordersOuter) tblOuterBorder(g_tbl.x0, top, g_tbl.fullW, bottom - top);
-    if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty && g_sortSpecsOut->SpecsDirty;
-    g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
-    g_lay.ox = g_tbl.x0;
-    g_lay.contentW = g_tbl.fullW;
-    g_lay.cy = bottom + g_lay.spacingY;
-    g_lay.indent = 0.0f;
-    g_lay.pendingSameLine = false;
-    g_tbl.active = false;
-}
 
 // ---- Launcher-style building blocks ---------------------------------------------
-namespace {
+namespace ui_core {
 float g_textScaleStack[8];
 int   g_textScaleTop = 0;
 struct CardSave { float x, y, w; float* height; float ox, contentW; };
@@ -6576,545 +5618,6 @@ const char* GetClipboardText() {
 // ---------------------------------------------------------------------------------------------
 // Public draw list, cursor and measurement, item state, disabled blocks (docs/ui/own_ui_toolkit.md, section 4)
 // ---------------------------------------------------------------------------------------------
-namespace {
-
-constexpr int kMaxPath = 256;
-Vec2 g_path[kMaxPath];
-int  g_pathN = 0;
-
-inline bool finite1(float v) { return v == v && v > -1.0e7f && v < 1.0e7f; }
-inline bool finite2(Vec2 p) { return finite1(p.x) && finite1(p.y); }
-
-void unpack(Color32 c, unsigned char out[4]) {
-    out[0] = (unsigned char)(c & 0xffu);         out[1] = (unsigned char)((c >> 8) & 0xffu);
-    out[2] = (unsigned char)((c >> 16) & 0xffu); out[3] = (unsigned char)((c >> 24) & 0xffu);
-}
-
-// A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
-struct ListScope {
-    bool prevRaw, prevOv;
-    explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay || prevOv; }   // the window list draws where the widgets around it do: in a popup, that is the overlay
-    ~ListScope() { g_rawDraw = prevRaw; g_toOverlay = prevOv; }
-};
-
-// cos(pi / n) for n = 3..128, worked out once: the mitre of a regular n-gon's stroke.
-float cosHalfTurn(int n) {
-    static float t[129] = {};
-    if (t[n] == 0.0f) t[n] = SDL_cosf(3.14159265f / (float)n);
-    return t[n];
-}
-
-int circleSegments(float r, int requested) {
-    if (requested >= 3) return requested > 128 ? 128 : requested;
-    int n = 10 + (int)(r * 0.9f);
-    return n < 12 ? 12 : (n > 64 ? 64 : n);
-}
-
-// Stroke a polyline as one quad strip with mitred joins (so a translucent stroke never double-blends at a
-// joint). Consecutive duplicate points are dropped; a join sharper than the mitre limit is clamped.
-void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned char c[4]) {
-    if (n < 2 || !(th > 0.0f) || !finite1(th)) return;
-    Vec2 p[kMaxPath]; int m = 0;
-    for (int i = 0; i < n && m < kMaxPath; ++i) {
-        if (m > 0) {
-            const float dx = in[i].x - p[m - 1].x, dy = in[i].y - p[m - 1].y;
-            if (dx * dx + dy * dy < 1.0e-6f) continue;
-        }
-        p[m++] = in[i];
-    }
-    if (closed && m > 2) { const float dx = p[0].x - p[m - 1].x, dy = p[0].y - p[m - 1].y; if (dx * dx + dy * dy < 1.0e-6f) --m; }
-    if (m < 2) { if (m == 1) quad(p[0].x - th * 0.5f, p[0].y - th * 0.5f, th, th, c); return; }
-    if (m == 2) closed = false;
-    const float half = th * 0.5f;
-    Vec2 off[kMaxPath];
-    auto segNormal = [&](int a, int b) {
-        float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
-        const float l = SDL_sqrtf(dx * dx + dy * dy);
-        return Vec2{ -dy / l, dx / l };
-    };
-    for (int i = 0; i < m; ++i) {
-        const bool hasPrev = closed || i > 0, hasNext = closed || i < m - 1;
-        const Vec2 nb = hasNext ? segNormal(i, (i + 1) % m) : segNormal(i - 1, i);
-        const Vec2 na = hasPrev ? segNormal((i + m - 1) % m, i) : nb;
-        float mx = na.x + nb.x, my = na.y + nb.y;
-        const float ml = SDL_sqrtf(mx * mx + my * my);
-        if (ml < 1.0e-4f) { off[i] = Vec2{ na.x * half, na.y * half }; continue; }   // a U-turn: no mitre
-        mx /= ml; my /= ml;
-        float k = mx * na.x + my * na.y;                  // cos of half the turn angle
-        if (k < 0.34f) k = 0.34f;                         // mitre limit about 3x
-        off[i] = Vec2{ mx * half / k, my * half / k };
-    }
-    const int segs = closed ? m : m - 1;
-    for (int i = 0; i < segs; ++i) {
-        const int j = (i + 1) % m;
-        quadPts(p[i].x + off[i].x, p[i].y + off[i].y, p[j].x + off[j].x, p[j].y + off[j].y,
-                p[j].x - off[j].x, p[j].y - off[j].y, p[i].x - off[i].x, p[i].y - off[i].y, c);
-    }
-}
-
-void fillConvex(const Vec2* p, int n, const unsigned char c[4]) {
-    if (n < 3) return;
-    for (int i = 1; i + 1 < n; ++i) tri(p[0].x, p[0].y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y, c);
-}
-
-// The rounded-rectangle outline as a closed path (corner radius `rad`, arcs of 6 segments).
-int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad) {
-    const float w = x1 - x0, h = y1 - y0;
-    if (rad > w * 0.5f) rad = w * 0.5f;
-    if (rad > h * 0.5f) rad = h * 0.5f;
-    int n = 0;
-    if (rad <= 0.5f) {
-        out[n++] = Vec2{ x0, y0 }; out[n++] = Vec2{ x1, y0 }; out[n++] = Vec2{ x1, y1 }; out[n++] = Vec2{ x0, y1 };
-        return n;
-    }
-    // The corners' unit points, worked out once (the same float angles as before: the path is unchanged), not 56 sines and cosines
-    // per rectangle.
-    struct Arcs {
-        float c[4][7], s[4][7];
-        Arcs() {
-            const float PI = 3.14159265f;
-            const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
-            for (int k = 0; k < 4; ++k)
-                for (int i = 0; i <= 6; ++i) { const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f; c[k][i] = SDL_cosf(a); s[k][i] = SDL_sinf(a); }
-        }
-    };
-    static const Arcs A;
-    const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
-    for (int k = 0; k < 4; ++k)
-        for (int i = 0; i <= 6; ++i) out[n++] = Vec2{ cx[k] + rad * A.c[k][i], cy[k] + rad * A.s[k][i] };
-    return n;
-}
-
-} // namespace
-
-Color32 GetColorU32(Col which, float alphaMul) {
-    unsigned char tmp[4];
-    const unsigned char* c = styleColor((int)which, tmp);
-    float a = (float)c[3] * (alphaMul != alphaMul ? 0.0f : (alphaMul < 0.0f ? 0.0f : (alphaMul > 1.0f ? 1.0f : alphaMul)));
-    return RGBA(c[0], c[1], c[2], (unsigned char)(a + 0.5f));
-}
-
-Color32 ColorMulAlpha(Color32 c, float alphaMul) {
-    if (alphaMul != alphaMul) alphaMul = 0.0f;
-    if (alphaMul < 0.0f) alphaMul = 0.0f;
-    if (alphaMul > 1.0f) alphaMul = 1.0f;
-    const unsigned a = (unsigned)((float)(c >> 24) * alphaMul + 0.5f);
-    return (c & 0x00ffffffu) | (a << 24);
-}
-
-// ---- DrawList ---------------------------------------------------------------------------------
-void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
-    if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    line(a.x, a.y, b.x, b.y, th, c);
-}
-
-void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) const {
-    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
-}
-
-void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
-    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    const float w = mx.x - mn.x, h = mx.y - mn.y;
-    if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }   // the stroke fills the box
-    if (!finite1(rounding) || rounding <= 0.5f) {   // four bars, drawn inside the rectangle, no overlap
-        quad(mn.x, mn.y, w, th, c);
-        quad(mn.x, mx.y - th, w, th, c);
-        quad(mn.x, mn.y + th, th, h - 2.0f * th, c);
-        quad(mx.x - th, mn.y + th, th, h - 2.0f * th, c);
-        return;
-    }
-    Vec2 pts[32];
-    const int n = roundedRectPath(pts, mn.x + th * 0.5f, mn.y + th * 0.5f, mx.x - th * 0.5f, mx.y - th * 0.5f,
-                                  rounding - th * 0.5f > 0.0f ? rounding - th * 0.5f : 0.0f);
-    strokePath(pts, n, true, th, c);
-}
-
-void DrawList::AddRectFilledMultiColor(Vec2 mn, Vec2 mx, Color32 tl, Color32 tr, Color32 br, Color32 bl) const {
-    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(overlay); unsigned char a[4], b[4], c[4], d[4];
-    unpack(tl, a); unpack(tr, b); unpack(br, c); unpack(bl, d);
-    gradQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, a, b, c, d);
-}
-
-void DrawList::AddCircleFilled(Vec2 center, float radius, Color32 col, int segments) const {
-    if (!finite2(center) || !finite1(radius) || radius <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    fillCircle(center.x, center.y, radius, c, circleSegments(radius, segments));
-}
-
-void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, float th) const {
-    if (!finite2(center) || !finite1(radius) || radius <= 0.0f || !finite1(th) || th <= 0.0f) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    const int n = circleSegments(radius, segments);
-    float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
-    if (th >= radius) { fillCircle(center.x, center.y, radius, c, n); return; }
-    // A regular polygon's stroke: every mitre is radial, half the thickness over cos(pi / n) long (what strokePath works out per
-    // corner), so the ring is drawn straight from the cached unit points: no sines, cosines or square roots per call.
-    const float* u = unitCircle(n);
-    const float k = cosHalfTurn(n), ro = r + th * 0.5f / k, ri = r - th * 0.5f / k;
-    float px = u[(n - 1) * 2], py = u[(n - 1) * 2 + 1];   // angle 2 pi: the first corner
-    for (int i = 0; i < n; ++i) {
-        const float qx = u[i * 2], qy = u[i * 2 + 1];
-        quadPts(center.x + px * ro, center.y + py * ro, center.x + qx * ro, center.y + qy * ro,
-                center.x + qx * ri, center.y + qy * ri, center.x + px * ri, center.y + py * ri, c);
-        px = qx; py = qy;
-    }
-}
-
-void DrawList::AddTriangleFilled(Vec2 a, Vec2 b, Vec2 c3, Color32 col) const {
-    if (!finite2(a) || !finite2(b) || !finite2(c3)) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    tri(a.x, a.y, b.x, b.y, c3.x, c3.y, c);
-}
-
-void DrawList::AddTriangle(Vec2 a, Vec2 b, Vec2 c3, Color32 col, float th) const {
-    if (!finite2(a) || !finite2(b) || !finite2(c3)) return;
-    const Vec2 p[3] = { a, b, c3 };
-    AddPolyline(p, 3, col, true, th);
-}
-
-void DrawList::AddQuadFilled(Vec2 a, Vec2 b, Vec2 c3, Vec2 d, Color32 col) const {
-    if (!finite2(a) || !finite2(b) || !finite2(c3) || !finite2(d)) return;
-    const Vec2 p[4] = { a, b, c3, d };
-    AddConvexPolyFilled(p, 4, col);
-}
-
-void DrawList::AddQuad(Vec2 a, Vec2 b, Vec2 c3, Vec2 d, Color32 col, float th) const {
-    const Vec2 p[4] = { a, b, c3, d };
-    AddPolyline(p, 4, col, true, th);
-}
-
-void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed, float th) const {
-    if (!pts || count < 2 || count > kMaxPath || !finite1(th) || th <= 0.0f) return;
-    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    strokePath(pts, count, closed, th, c);
-}
-
-void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, int flags, float th) const { AddPolyline(pts, count, col, (flags & DrawFlags_Closed) != 0, th); }
-
-void DrawList::AddConcavePolyFilled(const Vec2* pts, int count, Color32 col) const {
-    if (!pts || count < 3 || count > kMaxPath) return;
-    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
-    int idx[kMaxPath]; for (int i = 0; i < count; ++i) idx[i] = i;
-    float area = 0.0f; for (int i = 0; i < count; ++i) { const Vec2 a = pts[i], b = pts[(i + 1) % count]; area += a.x * b.y - b.x * a.y; }
-    const float sgn = area < 0.0f ? -1.0f : 1.0f;
-    int n = count, guard = 0;
-    auto cross = [&](Vec2 a, Vec2 b, Vec2 c) { return ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * sgn; };
-    while (n > 3 && guard++ < count * count) {
-        bool clipped = false;
-        for (int i = 0; i < n && !clipped; ++i) {
-            const int ia = idx[(i + n - 1) % n], ib = idx[i], ic = idx[(i + 1) % n];
-            const Vec2 a = pts[ia], b = pts[ib], c = pts[ic];
-            if (cross(a, b, c) <= 0.0f) continue;   // a reflex or flat corner is not an ear
-            bool inside = false;
-            for (int j = 0; j < n && !inside; ++j) {
-                const int ip = idx[j]; if (ip == ia || ip == ib || ip == ic) continue;
-                const Vec2 p = pts[ip];
-                if (cross(a, b, p) >= 0.0f && cross(b, c, p) >= 0.0f && cross(c, a, p) >= 0.0f) inside = true;
-            }
-            if (inside) continue;
-            const Vec2 tri[3] = {a, b, c};
-            AddConvexPolyFilled(tri, 3, col);
-            for (int j = i; j + 1 < n; ++j) idx[j] = idx[j + 1];
-            --n; clipped = true;
-        }
-        if (!clipped) break;   // degenerate outline: stop rather than loop
-    }
-    if (n == 3) { const Vec2 tri[3] = {pts[idx[0]], pts[idx[1]], pts[idx[2]]}; AddConvexPolyFilled(tri, 3, col); }
-}
-
-void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {
-    if (!pts || count < 3 || count > kMaxPath) return;
-    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    fillConvex(pts, count, c);
-}
-
-void DrawList::AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float th, int segments) const {
-    if (!finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4)) return;
-    int n = segments > 0 ? segments : 24;
-    if (n > kMaxPath - 1) n = kMaxPath - 1;
-    Vec2 pts[kMaxPath];
-    for (int i = 0; i <= n; ++i) {
-        const float t = (float)i / (float)n, u = 1.0f - t;
-        const float a = u * u * u, b = 3.0f * u * u * t, cc = 3.0f * u * t * t, d = t * t * t;
-        pts[i] = Vec2{ a * p1.x + b * p2.x + cc * p3.x + d * p4.x, a * p1.y + b * p2.y + cc * p3.y + d * p4.y };
-    }
-    AddPolyline(pts, n + 1, col, false, th);
-}
-
-void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) const {
-    if (!text || !*text || !finite2(pos)) return;
-    if (scale == 0.0f) scale = g_theme.textScale;
-    else if (!(scale > 0.0f) || !finite1(scale)) return;
-    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    drawText(pos.x, pos.y, text, scale, c);
-}
-
-void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
-    if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
-    texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
-}
-
-// A textured convex polygon: a fan from point 0, each point with its own texture coordinate.
-static void texPoly(SDL_Texture* tex, const Vec2* p, const Vec2* uv, int n, const unsigned char tint[4]) {
-    if (g_cullRow || n < 3) return;
-    setTexture(tex);
-    if (g_nv + n > kMaxVerts || g_ni + (n - 2) * 3 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
-    const SDL_Color sc = toColor(tint);
-    const int base = g_nv;
-    for (int i = 0; i < n; ++i) {
-        SDL_Vertex v; v.color = sc; v.position.x = p[i].x; v.position.y = p[i].y; v.tex_coord.x = uv[i].x; v.tex_coord.y = uv[i].y;
-        g_verts[g_nv++] = v;
-    }
-    for (int i = 1; i + 1 < n; ++i) { g_idx[g_ni++] = base; g_idx[g_ni++] = base + i; g_idx[g_ni++] = base + i + 1; }
-    setTexture(g_defTex);
-}
-
-Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char** remaining) const {
-    if (remaining) *remaining = text ? text + std::strlen(text) : nullptr;
-    if (!text || !*text || !(size > 0.0f) || !std::isfinite(size)) return Vec2{0, 0};
-    const float scale = size / (height > 0 ? (float)height : 8.0f), cw = (float)width * scale;
-    float best = 0.0f; int lines = 1, cur = 0;
-    for (const char* p = text; *p; ++p) {
-        if (*p == '\n') { if ((float)cur > best) best = (float)cur; cur = 0; ++lines; }
-        else if (((unsigned char)*p & 0xC0) != 0x80) ++cur;   // count characters, not UTF-8 continuation bytes
-    }
-    if ((float)cur > best) best = (float)cur;
-    return Vec2{best * cw, (float)lines * size};
-}
-
-void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const ImVec4*) const {
-    if (!text || !finite1(fontSize) || fontSize <= 0.0f) return;
-    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
-    if (n > sizeof buf - 1) n = sizeof buf - 1;
-    std::memcpy(buf, text, n); buf[n] = 0;
-    const Font* f = font ? font : GetFont();
-    if (f && f->ttf) {   // a user font: draw with it for this call at `fontSize` pixels
-        const Font* prev = GetFont(); SetFont(f); const float saved = g_theme.textScale; g_theme.textScale = fontSize / 8.0f;
-        AddText(pos, col, buf, fontSize / 8.0f);
-        g_theme.textScale = saved; SetFont(prev);
-        return;
-    }
-    const float h = f && f->height > 0 ? (float)f->height : 8.0f;
-    AddText(pos, col, buf, fontSize / h);
-}
-
-// A rounded rectangle as a closed convex path, clockwise from the top-left; `flags` 0 means all four corners, DrawFlags_None none.
-static int rectPath(Vec2 mn, Vec2 mx, float rounding, int flags, Vec2* pts) {
-    const float w = mx.x - mn.x, h = mx.y - mn.y, maxR = 0.5f * (w < h ? w : h);
-    if (!std::isfinite(rounding) || rounding < 0.0f) rounding = 0.0f;
-    if (rounding > maxR) rounding = maxR;
-    if (flags == 0) flags = DrawFlags_RoundCornersAll;
-    if (flags & DrawFlags_None) flags = 0;
-    const int arc = circleSegments(rounding, 0) / 4 + 1 > 16 ? 16 : circleSegments(rounding, 0) / 4 + 1;
-    struct C { float cx, cy, a0; int bit; float px, py; };
-    const C cs[4] = { { mn.x + rounding, mn.y + rounding, 3.14159265f, DrawFlags_RoundCornersTopLeft, mn.x, mn.y },
-                      { mx.x - rounding, mn.y + rounding, 4.71238898f, DrawFlags_RoundCornersTopRight, mx.x, mn.y },
-                      { mx.x - rounding, mx.y - rounding, 0.0f, DrawFlags_RoundCornersBottomRight, mx.x, mx.y },
-                      { mn.x + rounding, mx.y - rounding, 1.57079633f, DrawFlags_RoundCornersBottomLeft, mn.x, mx.y } };
-    int n = 0;
-    for (const C& c : cs) {
-        if (rounding >= 0.5f && (flags & c.bit)) for (int i = 0; i <= arc; ++i) { const float a = c.a0 + 1.57079633f * (float)i / (float)arc; pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) }; }
-        else pts[n++] = Vec2{c.px, c.py};
-    }
-    return n;
-}
-void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding, int flags) const {
-    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    if (flags == 0 || flags == DrawFlags_RoundCornersAll) { AddRectFilled(mn, mx, col, rounding); return; }
-    Vec2 p[4 * 17]; const int n = rectPath(mn, mx, rounding, flags, p);
-    AddConvexPolyFilled(p, n, col);
-}
-void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, int flags, float th) const {
-    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
-    if (flags == 0 || flags == DrawFlags_RoundCornersAll) { AddRect(mn, mx, col, rounding, th); return; }
-    Vec2 p[4 * 17]; const int n = rectPath(mn, mx, rounding, flags, p);
-    AddPolyline(p, n, col, true, th);
-}
-
-void DrawList::AddText(Vec2 pos, Color32 col, const char* text, const char* textEnd) const {
-    if (!text) return;
-    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
-    if (n > sizeof buf - 1) n = sizeof buf - 1;
-    std::memcpy(buf, text, n); buf[n] = 0;
-    AddText(pos, col, static_cast<const char*>(buf), 0.0f);
-}
-
-void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
-    if (!tex || !finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4) || !finite2(uv1) || !finite2(uv2) || !finite2(uv3) || !finite2(uv4)) return;
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);
-    const Vec2 p[4] = {p1, p2, p3, p4}, uv[4] = {uv1, uv2, uv3, uv4};
-    texPoly(tex, p, uv, 4, c);
-}
-
-void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags) const {
-    if (!tex || !finite2(mn) || !finite2(mx) || !finite2(uv0) || !finite2(uv1) || mx.x <= mn.x || mx.y <= mn.y) return;
-    if (!std::isfinite(rounding) || rounding < 0.0f) rounding = 0.0f;
-    const float w = mx.x - mn.x, h = mx.y - mn.y;
-    const float maxR = 0.5f * (w < h ? w : h);
-    if (rounding > maxR) rounding = maxR;
-    if (flags == 0) flags = DrawFlags_RoundCornersAll;
-    if (flags & DrawFlags_None) flags = 0;
-    if (rounding < 0.5f || (flags & DrawFlags_RoundCornersAll) == 0) { AddImage(tex, mn, mx, uv0, uv1, tint); return; }
-    // Corners clockwise from the top-left; each rounded corner is an arc of `arc` steps, a square one is a single point.
-    const int arc = circleSegments(rounding, 0) / 4 + 1 > 16 ? 16 : circleSegments(rounding, 0) / 4 + 1;
-    Vec2 pts[4 * 17]; int n = 0;
-    struct Corner { float cx, cy, a0; int bit; float px, py; };
-    const Corner cs[4] = {
-        { mn.x + rounding, mn.y + rounding, 3.14159265f,        DrawFlags_RoundCornersTopLeft,     mn.x, mn.y },
-        { mx.x - rounding, mn.y + rounding, 4.71238898f,        DrawFlags_RoundCornersTopRight,    mx.x, mn.y },
-        { mx.x - rounding, mx.y - rounding, 0.0f,               DrawFlags_RoundCornersBottomRight, mx.x, mx.y },
-        { mn.x + rounding, mx.y - rounding, 1.57079633f,        DrawFlags_RoundCornersBottomLeft,  mn.x, mx.y },
-    };
-    for (const Corner& c : cs) {
-        if (flags & c.bit) {
-            for (int i = 0; i <= arc; ++i) {
-                const float a = c.a0 + 1.57079633f * (float)i / (float)arc;
-                pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) };
-            }
-        } else pts[n++] = Vec2{c.px, c.py};
-    }
-    Vec2 uv[4 * 17];
-    for (int i = 0; i < n; ++i) {
-        uv[i].x = uv0.x + (uv1.x - uv0.x) * (pts[i].x - mn.x) / w;
-        uv[i].y = uv0.y + (uv1.y - uv0.y) * (pts[i].y - mn.y) / h;
-    }
-    ListScope s(false); unsigned char c[4]; unpack(tint, c);
-    // A fan from the first point is convex-safe for a rounded rectangle, but the first point is on a corner arc: use the centre instead.
-    Vec2 fan[4 * 17 + 2]; Vec2 fuv[4 * 17 + 2]; int m = 0;
-    fan[m] = Vec2{ (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f };
-    fuv[m] = Vec2{ (uv0.x + uv1.x) * 0.5f, (uv0.y + uv1.y) * 0.5f }; ++m;
-    for (int i = 0; i < n; ++i) { fan[m] = pts[i]; fuv[m] = uv[i]; ++m; }
-    fan[m] = pts[0]; fuv[m] = uv[0]; ++m;
-    texPoly(tex, fan, fuv, m, c);
-}
-
-void DrawList::AddNgon(Vec2 center, float radius, Color32 col, int n, float th) const {
-    if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
-    if (n > 128) n = 128;
-    Vec2 p[128];
-    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
-    AddPolyline(p, n, col, true, th);
-}
-static int ellipsePoints(Vec2 c, Vec2 r, float rot, int seg, Vec2* p) {
-    if (seg <= 0) seg = 32;
-    if (seg < 3) seg = 3;
-    if (seg > 128) seg = 128;
-    const float cr = SDL_cosf(rot), sr = SDL_sinf(rot);
-    for (int i = 0; i < seg; ++i) {
-        const float a = 6.28318531f * (float)i / (float)seg, ex = r.x * SDL_cosf(a), ey = r.y * SDL_sinf(a);
-        p[i] = Vec2{ c.x + ex * cr - ey * sr, c.y + ex * sr + ey * cr };
-    }
-    return seg;
-}
-void DrawList::AddEllipse(Vec2 c, Vec2 r, Color32 col, float rot, int seg, float th) const {
-    if (!finite2(c) || !finite2(r) || !finite1(rot) || r.x < 0.0f || r.y < 0.0f) return;
-    Vec2 p[128]; const int n = ellipsePoints(c, r, rot, seg, p);
-    AddPolyline(p, n, col, true, th);
-}
-void DrawList::AddEllipseFilled(Vec2 c, Vec2 r, Color32 col, float rot, int seg) const {
-    if (!finite2(c) || !finite2(r) || !finite1(rot) || r.x < 0.0f || r.y < 0.0f) return;
-    Vec2 p[128]; const int n = ellipsePoints(c, r, rot, seg, p);
-    AddConvexPolyFilled(p, n, col);
-}
-
-void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const {
-    if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
-    if (n > 128) n = 128;
-    Vec2 p[128];
-    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
-    AddConvexPolyFilled(p, n, col);
-}
-
-void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
-    OkayUI::PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
-}
-void DrawList::PushClipRect(Vec2 mn, Vec2 mx, bool) const { PushClipRect(mn, mx); }
-void DrawList::PopClipRect() const { OkayUI::PopClipRect(); }
-
-static void syncPath(const DrawList& d) { d._Path.clear(); for (int i = 0; i < g_pathN; ++i) d._Path.push_back(g_path[i]); }
-void DrawList::PathClear() const { g_pathN = 0; _Path.clear(); }
-void DrawList::PathLineTo(Vec2 p) const { if (g_pathN < kMaxPath && finite2(p)) g_path[g_pathN++] = p; syncPath(*this); }
-void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segments) const {
-    if (!finite2(center) || !finite1(radius) || !finite1(a0) || !finite1(a1) || radius < 0.0f) return;
-    int n = segments > 0 ? segments : circleSegments(radius, 0) / 4 + 1;
-    if (n > 128) n = 128;
-    for (int i = 0; i <= n; ++i) {
-        const float a = a0 + (a1 - a0) * (float)i / (float)n;
-        PathLineTo(Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) });
-    }
-}
-void DrawList::PathRect(Vec2 mn, Vec2 mx, float rounding, int) const {
-    if (!finite2(mn) || !finite2(mx)) return;
-    if (mx.x < mn.x) std::swap(mn.x, mx.x);
-    if (mx.y < mn.y) std::swap(mn.y, mx.y);
-    Vec2 pts[kMaxPath];
-    const int n = roundedRectPath(pts, mn.x, mn.y, mx.x, mx.y, rounding > 0.0f && std::isfinite(rounding) ? rounding : 0.0f);
-    for (int i = 0; i < n && g_pathN < kMaxPath; ++i) g_path[g_pathN++] = pts[i];
-    syncPath(*this);
-}
-void DrawList::PathStroke(Color32 col, bool closed, float th) const {
-    if (g_pathN >= 2) AddPolyline(g_path, g_pathN, col, closed, th);
-    g_pathN = 0; _Path.clear();
-}
-void DrawList::PathFillConvex(Color32 col) const {
-    if (g_pathN >= 3) AddConvexPolyFilled(g_path, g_pathN, col);
-    g_pathN = 0; _Path.clear();
-}
-
-static const DrawListHandle g_windowList(false);
-static const DrawListHandle g_foregroundList(true);
-DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : &g_windowList); }
-// ---- raw geometry ----
-Vec2 GetFontTexUvWhitePixel() { return Vec2{g_whiteU, g_whiteV}; }
-namespace { SDL_Texture* g_texStack[8]; int g_texTop = 0; }
-void DrawList::PrimReserve(int idxCount, int vtxCount) const {
-    (void)idxCount; (void)vtxCount;
-    _VtxCurrentIdx = (unsigned)(overlay ? g_onv : g_nv);
-}
-void DrawList::PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const {
-    ListScope s(overlay);
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
-    int& nv = g_toOverlay ? g_onv : g_nv;
-    if ((g_cullRow && !g_toOverlay)) return;
-    if (nv + 1 > kMaxVerts) { noteDrop(); return; }
-    unsigned char c[4]; unpack(col, c);
-    SDL_Vertex v; v.color = toColor(c);
-    v.position.x = std::isfinite(pos.x) ? pos.x : 0.0f; v.position.y = std::isfinite(pos.y) ? pos.y : 0.0f;
-    v.tex_coord.x = std::isfinite(uv.x) ? uv.x : 0.0f; v.tex_coord.y = std::isfinite(uv.y) ? uv.y : 0.0f;
-    V[nv++] = v;
-}
-void DrawList::PrimWriteIdx(ImDrawIdx idx) const {
-    ListScope s(overlay);
-    int* I = g_toOverlay ? g_ovIdx : g_idx;
-    int& ni = g_toOverlay ? g_oni : g_ni;
-    const int nv = g_toOverlay ? g_onv : g_nv;
-    if ((g_cullRow && !g_toOverlay)) return;
-    if (ni + 1 > kMaxIdx) { noteDrop(); return; }
-    I[ni++] = idx < (unsigned)nv ? (int)idx : 0;   // an index past the vertices written is clamped (it would read garbage)
-}
-void DrawList::PrimVtx(Vec2 pos, Vec2 uv, Color32 col) const {
-    PrimWriteIdx((ImDrawIdx)(overlay ? g_onv : g_nv));
-    PrimWriteVtx(pos, uv, col);
-}
-void DrawList::PushTexture(const ImTextureRef& tex) const {
-    ListScope s(overlay);
-    if (g_texTop < 8) g_texStack[g_texTop++] = tex._TexID;
-    bindTexture(tex._TexID);
-}
-void DrawList::PopTexture() const {
-    ListScope s(overlay);
-    if (g_texTop <= 0) return;
-    --g_texTop;
-    bindTexture(g_texTop > 0 ? g_texStack[g_texTop - 1] : g_defTex);
-}
 
 // ---- channels of the window list ----
 // A split keeps, per channel, the triangles (index runs) and span changes drawn on it, relative to where the split began; the vertices stay

@@ -1,0 +1,26 @@
+# meshes: move of free function bodies out of SoftwareRenderer.hpp (docs/engine/modularization_plan.md M2).
+# Each moved definition loses `inline` and its default arguments (they stay on the declaration).
+drop: ^\s*inline\ void\ FillOcclusionDepth\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+drop: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+drop: ^\s*int\ w,\ int\ h,\ const\ GameObject\*\ ignore\ =\ nullptr\)\ \{$
+add: ^\s*void\ FillOcclusionDepth\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+add: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*int\ w,\ int\ h,\ const\ GameObject\*\ ignore\)\ \{$
+add: ^\s*void\ FillOcclusionDepth\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+add: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*int\ w,\ int\ h,\ const\ GameObject\*\ ignore\ =\ nullptr\);$
+drop: ^\s*inline\ const\ std::uint32_t\*\ RenderMeshesSS\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+drop: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+drop: ^\s*int\ w,\ int\ h,\ int\ ss,\ const\ GameObject\*\ ignore\ =\ nullptr\)\ \{$
+add: ^\s*const\ std::uint32_t\*\ RenderMeshesSS\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+add: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*int\ w,\ int\ h,\ int\ ss,\ const\ GameObject\*\ ignore\)\ \{$
+add: ^\s*const\ std::uint32_t\*\ RenderMeshesSS\(Raster\&\ work,\ std::vector<std::uint32_t>\&\ out,$
+add: ^\s*const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*int\ w,\ int\ h,\ int\ ss,\ const\ GameObject\*\ ignore\ =\ nullptr\);$
+drop: ^\s*inline\ void\ RenderMeshes\(Raster\&\ r,\ const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+drop: ^\s*const\ GameObject\*\ ignore\ =\ nullptr\)\ \{$
+add: ^\s*void\ RenderMeshes\(Raster\&\ r,\ const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*const\ GameObject\*\ ignore\)\ \{$
+add: ^\s*void\ RenderMeshes\(Raster\&\ r,\ const\ Scene\&\ scene,\ const\ Mat4\&\ vp,\ const\ Vec3\&\ eye,$
+add: ^\s*const\ GameObject\*\ ignore\ =\ nullptr\);$

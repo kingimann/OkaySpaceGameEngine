@@ -1,0 +1,35 @@
+# S2 step 1 of the OkayScriptVM split (docs/engine/modularization_plan.md, section 3.1): the shared types of
+# engine/src/Scripting/OkayScriptVM.cpp (includes, Value, JSON, lexer, Runtime, object helpers, SharedApiCall, BuiltinCtx
+# and the Impl class head) move to OkayScriptVMInternal.hpp under okay::script_vm. Checked against the commit before:
+#   python3 scripts/check_pure_move.py --base <commit with RegisterBuiltins already split> --head <this commit> \
+#       --source engine/src/Scripting/OkayScriptVM.cpp --dest engine/src/Scripting/OkayScriptVMInternal.hpp \
+#       --rules docs/engine/moves/S2_okayscriptvm_header.rules
+# The topic functions turn from in-class members into out-of-class members of OkayScriptVM::Impl (their bodies stay):
+drop: ^\s*void Register\w+Builtins\(BuiltinCtx& c\) \{$
+add: ^\s*void OkayScriptVM::Impl::Register\w+Builtins\(BuiltinCtx& c\) \{$
+drop: ^\s*\}$
+add: ^\s*\}$
+drop: ^\s*void RegisterBuiltins\(\) \{$
+add: ^\s*void OkayScriptVM::Impl::RegisterBuiltins\(\) \{$
+add: ^\s*void Register\w+Builtins\(BuiltinCtx& c\);$
+add: ^\s*void RegisterBuiltins\(\);$
+drop: ^\s*\};$
+add: ^\s*\};$
+# six file-static helpers become inline (they are in a header now)
+change: static std::string ScriptReadPath(const std::string& name) { ==> inline std::string ScriptReadPath(const std::string& name) {
+change: static FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) { ==> inline FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) {
+change: static Value FpHandsGet(FirstPersonHands* h, const std::string& p) { ==> inline Value FpHandsGet(FirstPersonHands* h, const std::string& p) {
+change: static bool FpHandsSet(FirstPersonHands* h, const std::string& p, const Value& v) { ==> inline bool FpHandsSet(FirstPersonHands* h, const std::string& p, const Value& v) {
+change: static bool FpHandsCall(FirstPersonHands* h, const std::string& m) { ==> inline bool FpHandsCall(FirstPersonHands* h, const std::string& m) {
+change: static char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); } ==> inline char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); }
+# the named namespace replaces the anonymous one (the closing comment matches the namespace-close scaffolding)
+change: namespace { ==> namespace script_vm {
+# RealFps leaves its anonymous namespace: the `namespace {` line moves below it, and it is declared in the header
+drop: ^\s*namespace \{$
+add: ^\s*float RealFps\(\);
+# the two alias topics did not use the table
+drop: ^\s*auto& b = c\.b;$
+# the shared closures became functors of BuiltinCtx (added in the header)
+drop: ^\s*// =+ OkayScriptVM::Impl =+$
+drop: ^\s*\} // namespace$
+add: ^\s*using namespace script_vm;$

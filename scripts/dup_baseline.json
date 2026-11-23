@@ -12,8 +12,7 @@
    "engine/src/AI/BehaviorTreeRunner.cpp": 2,
    "engine/src/AI/NavMeshAgent.cpp": 1,
    "engine/src/Components/MeleeAttacker.cpp": 1,
-   "engine/src/Components/RangedWeapon.cpp": 1,
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
+   "engine/src/Components/RangedWeapon.cpp": 1
   },
   "base64": {
    "engine/include/okay/Platform/Account/AccountService.hpp": 1,
@@ -56,9 +55,6 @@
    "okayui/tests/OkayUITestKit.hpp": 1,
    "tests/inflate_reference_slow.hpp": 1
   },
-  "easing-back": {
-   "engine/src/Scripting/OkayScriptVM.cpp": 1
-  },
   "fnv1a": {
    "editor/ContentEditors.cpp": 1,
    "editor/EditorState.cpp": 1,
@@ -74,7 +70,6 @@
    "engine/include/okay/Core/SaveData.hpp": 1,
    "engine/include/okay/Inventory/ItemPresentation.hpp": 2,
    "engine/include/okay/Platform/Friends.hpp": 1,
-   "engine/include/okay/Render/Mesh.hpp": 1,
    "engine/include/okay/Render/MeshHash.hpp": 1,
    "engine/include/okay/Render/ShaderBundle.hpp": 2,
    "engine/include/okay/UI/UIIcons.hpp": 2,
@@ -216,7 +211,6 @@
    "engine/include/okay/Platform/Profiles.hpp": 2,
    "engine/include/okay/Platform/Servers.hpp": 1,
    "engine/include/okay/Platform/Workshop.hpp": 1,
-   "engine/include/okay/Render/Mesh.hpp": 2,
    "engine/include/okay/UI/UILibData.hpp": 2,
    "engine/include/okay/VisualScript/NodesBuild.hpp": 1,
    "engine/include/okay/VisualScript/NodesLogic.hpp": 2,

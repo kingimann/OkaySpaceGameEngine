@@ -94,6 +94,9 @@ add_library(okay_engine
     src/Render/TextureCacheFiles.cpp
     src/Render/ModelImportProblem.cpp
     src/Render/ConsoleRenderer.cpp
+    src/Render/SoftwareRendererShadows.cpp
+    src/Render/SoftwareRendererPost.cpp
+    src/Render/SoftwareRendererMeshes.cpp
     src/Render/GLRenderer.cpp
     src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
@@ -158,6 +161,21 @@ add_library(okay_engine
     src/Components/VisualScriptComponent.cpp
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
+    src/Scripting/OkayScriptVM_Ui.cpp
+    src/Scripting/OkayScriptVM_Coroutine.cpp
+    src/Scripting/OkayScriptVM_Scene.cpp
+    src/Scripting/OkayScriptVM_Alias.cpp
+    src/Scripting/OkayScriptVM_Tween.cpp
+    src/Scripting/OkayScriptVM_Physics.cpp
+    src/Scripting/OkayScriptVM_Math.cpp
+    src/Scripting/OkayScriptVM_Network.cpp
+    src/Scripting/OkayScriptVM_Inventory.cpp
+    src/Scripting/OkayScriptVM_Animation.cpp
+    src/Scripting/OkayScriptVM_Navigation.cpp
+    src/Scripting/OkayScriptVM_World.cpp
+    src/Scripting/OkayScriptVM_Camera.cpp
+    src/Scripting/OkayScriptVM_Gameplay.cpp
+    src/Scripting/OkayScriptVM_Input.cpp
     src/Scripting/ScriptVM.cpp
     src/Scripting/ScriptApiRegistry.cpp
     src/Scripting/ScriptApiCore.cpp
@@ -307,6 +325,10 @@ add_library(okay_engine
     src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/MeshModifiers.cpp
+    src/Render/MeshObj.cpp
+    src/Render/MeshUV.cpp
+    src/Render/MeshShapes.cpp
     src/Render/ModelImportCharacter.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp

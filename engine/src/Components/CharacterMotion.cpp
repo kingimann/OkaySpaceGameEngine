@@ -1,5 +1,5 @@
 // Character: procedural locomotion, pose building, skinning and the clip/blend/crossfade playback, moved verbatim out of
-// Character.cpp (docs/engine/modularization_plan.md, S5).
+// Character.cpp (docs/engine/modularization_plan.md, S8).
 #include "CharacterInternal.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Components/Character.hpp"

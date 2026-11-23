@@ -1,9 +1,9 @@
-# Batch S5 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# Batch S8 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
 # engine/src/Components/Character.cpp, the procedural locomotion, pose, skin and clip/blend/crossfade block (MotionInputs to
 # NoteStateChange / CaptureLeavingPose, about 715 lines) moves to engine/src/Components/CharacterMotion.cpp.
 #   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Components/Character.cpp \
 #       --dest engine/src/Components/CharacterMotion.cpp --dest engine/src/Components/CharacterInternal.hpp \
-#       --rules docs/engine/moves/S5_character_motion.rules
+#       --rules docs/engine/moves/S8_character_motion.rules
 # The block's own file-statics (kRad2Deg, clampf, frac, NominalFreq, ClipsBaseDir) move with it and stay file-local. The one
 # helper both files use, FaceMinusZ, leaves Character.cpp's anonymous namespace for okay::character_rig and is declared in
 # CharacterInternal.hpp.

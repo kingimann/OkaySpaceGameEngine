@@ -1,5 +1,5 @@
 // AddStates and the state/transition builders it uses (dive, sit, hits, one-shots, the hit layer), moved verbatim out of
-// HumanoidActions.cpp (docs/engine/modularization_plan.md, S5).
+// HumanoidActions.cpp (docs/engine/modularization_plan.md, S9).
 #include "okay/Animation/HumanoidActions.hpp"
 #include "HumanoidActionsInternal.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"

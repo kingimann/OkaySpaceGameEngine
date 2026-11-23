@@ -1,6 +1,6 @@
-# Batch S5 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# Batch S9 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
 # engine/src/Animation/HumanoidActions.cpp, AddStates and the state/transition builders it uses (dive, sit, hits, one-shots,
 # the hit layer; about 660 lines) move to engine/src/Animation/HumanoidActionsStates.cpp. No code edits.
 #   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Animation/HumanoidActions.cpp \
-#       --dest engine/src/Animation/HumanoidActionsStates.cpp --rules docs/engine/moves/S5_humanoid_actions_states.rules
+#       --dest engine/src/Animation/HumanoidActionsStates.cpp --rules docs/engine/moves/S9_humanoid_actions_states.rules
 add: ^\s*using namespace humanoid_actions;$

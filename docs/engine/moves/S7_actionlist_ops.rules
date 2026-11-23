@@ -1,11 +1,11 @@
-# Batch S5 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# Batch S7 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
 # engine/src/Components/ActionList.cpp, the second half of the instruction chain in ActionList::Update (array_clear to
 # spawn_wave: arrays, maps, strings, scene/object ops, audio, raycasts, math, game flow; about 730 lines) moves to
 # engine/src/Components/ActionListOps.cpp as ActionList::RunMoreOps(it, op, scene, t). Update calls it where the chain was
 # (same position in the else-if chain); it returns 2 where the old code did `return;` out of Update.
 #   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Components/ActionList.cpp \
 #       --dest engine/src/Components/ActionListOps.cpp --dest engine/src/Components/ActionListInternal.hpp \
-#       --rules docs/engine/moves/S5_actionlist_ops.rules
+#       --rules docs/engine/moves/S7_actionlist_ops.rules
 # The argument helpers (Num ... ActionRaycast) leave the anonymous namespace for okay::actionlist_ops, declared in
 # ActionListInternal.hpp.
 change: else if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); } ==> if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); }

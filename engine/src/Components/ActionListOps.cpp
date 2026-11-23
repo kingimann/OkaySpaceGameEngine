@@ -1,5 +1,5 @@
 // ActionList::RunMoreOps: the second half of the instruction chain (arrays, maps, strings, scene, objects, audio,
-// raycasts, math, game flow...), moved verbatim out of ActionList::Update (docs/engine/modularization_plan.md, S5).
+// raycasts, math, game flow...), moved verbatim out of ActionList::Update (docs/engine/modularization_plan.md, S7).
 #include "ActionListInternal.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Core/ScriptPaths.hpp"

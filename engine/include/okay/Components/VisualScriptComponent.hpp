@@ -8,6 +8,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -195,6 +196,16 @@ private:
     struct ActionEntry { std::string entry; std::string action; int edge; };   // 0 pressed, 1 released, 2 held
     std::vector<ActionEntry> m_actionEntries;
     std::vector<std::string> m_gestureEntries;   // OnTap, OnSwipe:up, ...
+    // On Button Clicked: the entry ("OnButtonClicked:Play") and the button object's name ("Play").
+    struct ButtonEntry { std::string entry; std::string name; };
+    std::vector<ButtonEntry> m_buttonEntries;
+public:
+    /// On Damaged: a hit this object took, kept until this graph's next frame runs the event.
+    /// The damage listener (Damage.hpp) queues it; PollGameplay fires "OnDamaged" for each.
+    struct PendingHit { float amount = 0.0f; std::string type; std::uint64_t source = 0; };
+    void QueueDamaged(const PendingHit& h) { if (m_pendingHits.size() < 64) m_pendingHits.push_back(h); }
+private:
+    std::vector<PendingHit> m_pendingHits;
     float m_lastHealth = -1.0f;
     bool  m_sawHealth = false;
     bool  m_deathFired = false;

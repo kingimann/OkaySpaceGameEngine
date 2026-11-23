@@ -14,6 +14,11 @@ node 5 SetVar sprint
 pos 5 560 40
 exec 3 0 5
 data 5 0 4 0
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 110
+exec 110 0 111
 node 100 GlGetHorizontalInput
 pos 100 40 520
 node 101 GlGetVerticalInput
@@ -34,3 +39,11 @@ node 108 GlIsInteractHeld
 pos 108 560 710
 node 109 GlGetMoveStrength
 pos 109 820 710
+node 110 GlRebindAction
+pos 110 1080 710
+default 110 0 "Jump"
+default 110 1 "key:j"
+node 111 GlRumble
+pos 111 1340 710
+default 111 0 0.8
+default 111 1 0.5

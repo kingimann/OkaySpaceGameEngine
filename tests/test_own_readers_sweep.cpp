@@ -27,7 +27,7 @@
 
 using namespace okay;
 
-#include "counting_alloc.hpp"   // the counting allocator (g_live, g_peak), shared by the hostile-input tests
+#include "alloc_budget.hpp"   // the shared counting allocator (g_live, g_peak) of the hostile-input tests
 
 static constexpr std::size_t kCapBytes = 256u * 1024u * 1024u;   // live peak above the start of one read; these fixtures are a few KB
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)

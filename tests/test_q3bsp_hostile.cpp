@@ -9,6 +9,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "reader_hostile_common.hpp"
+#include "alloc_budget.hpp"
 #include "q3bsp_fixtures.hpp"
 #include "ZipLite.hpp"
 #include <algorithm>
@@ -23,31 +24,15 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
-#include "counting_alloc.hpp"   // the counting allocator (g_live, g_peak), shared by the hostile-input tests
-
 static constexpr std::size_t kCapBytes = 1024u * 1024u * 1024u;   // on top of the file itself (the worst allowed case holds 4 million vertices and triangles)
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-static constexpr double kMaxSeconds = 60.0;
-#else
-static constexpr double kMaxSeconds = 10.0;
-#endif
-static double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
+static constexpr double kMaxSeconds = budget::kSanitizerBuild ? 60.0 : 10.0;
+using budget::Now;
+using budget::Run;
+using hostile::HasNote;
 
-struct Run { bool ok; double secs; std::size_t peakMB; std::string err; ImportedModel m; };
 static Run Go(const char* what, const std::string& bytes) {
-    Run r;
-    const std::size_t base = g_live.load();
-    g_peak.store(base);
-    const double t = Now();
-    r.ok = ReadQ3bspBuffer(bytes, r.m, &r.err);
-    r.secs = Now() - t;
-    r.peakMB = (g_peak.load() - base) >> 20;
-    std::fprintf(stderr, "  %s: %s in %.2f s, peak %zu MB (file %zu MB)%s%s\n", what, r.ok ? "read" : "refused", r.secs, r.peakMB, bytes.size() >> 20, r.ok ? "" : ": ", r.ok ? "" : r.err.c_str());
-    CHECK(r.secs < kMaxSeconds);
-    CHECK(g_peak.load() - base < kCapBytes);
-    CHECK(r.ok ? hostile::Sane(r.m) : (r.m.parts.empty() && r.m.nodes.empty() && !r.err.empty()));
-    return r;
+    return budget::Measure(what, [&](ImportedModel& m, std::string& e) { return ReadQ3bspBuffer(bytes, m, &e); }, kCapBytes, kMaxSeconds,
+                           " (file " + std::to_string(bytes.size() >> 20) + " MB)");
 }
 
 // A map with one polygon face of `tris` triangles that all use the same three vertices, and `models` models that each name that face.

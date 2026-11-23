@@ -27,6 +27,7 @@ namespace fs = std::filesystem;   // the same alias as main.cpp's
 
 namespace okay { struct JoinLink; }
 namespace okay { struct MyBanInfo; namespace account { class AccountService; } }
+namespace okay { struct PlaytimeEntry; }
 
 // An RGBA8 picture as a texture of `renderer` (main.cpp, global scope); null when it cannot be made.
 SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h);
@@ -90,4 +91,34 @@ static const MktKind kMktKinds[] = {
 };
 static const int kMktKindN = (int)(sizeof(kMktKinds) / sizeof(kMktKinds[0]));
 int MktKindIndex(const std::string& k);       // the kMktKinds row of a kind key (unknown -> game)
+// Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
+struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
+const AccentPreset kAccentPresets[] = {
+    {"Classic", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // muted selection blue (default)
+    {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
+    {"Teal",   ImVec4(0.18f, 0.78f, 0.74f, 1), ImVec4(0.13f, 0.56f, 0.53f, 1)},
+    {"Violet", ImVec4(0.56f, 0.46f, 0.96f, 1), ImVec4(0.40f, 0.33f, 0.70f, 1)},
+    {"Green",  ImVec4(0.36f, 0.80f, 0.46f, 1), ImVec4(0.26f, 0.58f, 0.33f, 1)},
+    {"Amber",  ImVec4(0.95f, 0.66f, 0.26f, 1), ImVec4(0.70f, 0.48f, 0.19f, 1)},
+    {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
+};
+// Multiplayer (main.cpp): joining and inviting, used by the chat and the profile page.
+void MpJoin(const std::string& link, const std::string& from);   // Multiplayer, below
+bool MpCanInvite();                                             // in a joinable match right now
+std::string MpGameTitle();                                      // the game I'm playing ("" = none)
+void MpInviteUser(const std::string& uid, const std::string& name);
+void MpJoinFriend(const std::string& sessionCode, const std::string& name);
+void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
+std::string MpMyJoin();                                        // my session's public link ("" = none)
+void MpPartyInvite(const std::string& uid, const std::string& name);   // (makes a party if needed)
+void MpPartyJoinFromInvite(const std::string& body);
+std::string MpPartyId();                                       // my party ("" = none)
+// Playtime and state (main.cpp).
+extern std::vector<okay::PlaytimeEntry> g_playtime;   // local playtime totals
+void LoadPlaytime();
+bool PlaytimeRunning(const std::string& key);   // the game is being played right now
+extern bool g_raiseMainReq;                    // something in the chat window wants the launcher in front
+extern bool g_openPublishForm;                 // request the Market tab to open its publish form
+extern bool g_chatInOwnWindow;                 // true while drawing the chat window's own frame
+void OpenChatWith(const std::string& uid, const std::string& name, const std::string& avatar);   // open a chat with someone
 } // namespace okl

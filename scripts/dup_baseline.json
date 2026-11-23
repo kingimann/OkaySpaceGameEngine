@@ -17,8 +17,14 @@
   },
   "base64": {
    "engine/include/okay/Platform/Account/AccountService.hpp": 1,
+   "engine/include/okay/Render/Gltf.hpp": 1,
+   "engine/src/Components/VoxelEdit.cpp": 2,
+   "engine/src/Components/VoxelTerrain.cpp": 2,
+   "engine/src/Net/SessionTicket.cpp": 2,
+   "engine/src/Render/FbxScene.cpp": 1,
    "okayui/tests/OkayUITestKit.hpp": 1,
    "platform/xbox_uwp/XboxAppx.hpp": 1,
+   "shared/OkfDecode.hpp": 1,
    "tests/test_blend_shapes.cpp": 1,
    "tests/test_embedded_font.cpp": 1,
    "tests/test_fbx_exact.cpp": 2,
@@ -42,7 +48,8 @@
    "tests/test_image_hostile.cpp": 1,
    "tests/test_own_http_download.cpp": 1,
    "tests/test_png_hint.cpp": 1,
-   "tests/test_vorbis_decoder.cpp": 1
+   "tests/test_vorbis_decoder.cpp": 1,
+   "tools/guided_pictures.cpp": 1
   },
   "deflate-tables": {
    "engine/src/Core/ImageWrite.cpp": 1,
@@ -87,7 +94,7 @@
    "engine/src/Render/ModelReaders.cpp": 2,
    "engine/src/Testing/Regression.cpp": 2,
    "engine/src/UI/UIRenderer.cpp": 3,
-   "launcher/main.cpp": 2,
+   "launcher/main.cpp": 3,
    "okayui/screens/OkayUIEditorPanels.cpp": 2,
    "okayui/src/OkayUI.cpp": 7,
    "okayui/src/OkayUIDock.cpp": 2,
@@ -270,7 +277,7 @@
    "engine/src/Render/ModelReaders.cpp": 2,
    "engine/src/Render/ReaderCommon.hpp": 1,
    "engine/src/Render/TextReaderUtil.hpp": 4,
-   "engine/src/Scene/PrefabResolve.cpp": 1,
+   "engine/src/Scene/PrefabTools.cpp": 1,
    "engine/src/Scene/Properties.cpp": 2,
    "engine/src/Scene/PropertyRegistry.cpp": 1,
    "engine/src/Scene/SceneSerializer.cpp": 1,

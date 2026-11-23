@@ -30,8 +30,7 @@ std::string Quote(const std::string& s) {
     return out;
 }
 
-// dup-allow: moved unchanged out of PrefabTools.cpp (pure move, docs/engine/moves/P1_prefab_resolve.rules); dedup is a separate change
-std::string Trim(const std::string& s) {
+std::string Trim(const std::string& s) {   // dup-allow: moved unchanged from PrefabTools.cpp (pure move), dedup is separate
     const std::size_t a = s.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return std::string();
     const std::size_t b = s.find_last_not_of(" \t\r\n");

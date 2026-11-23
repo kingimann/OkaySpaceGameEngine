@@ -25,6 +25,8 @@
 
 namespace fs = std::filesystem;   // the same alias as main.cpp's
 
+namespace okay { struct JoinLink; }
+
 namespace okl {
 
 // Look and messages (main.cpp).
@@ -42,4 +44,13 @@ void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string& tok); 
 SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, int* h = nullptr);   // a chat image / GIF frame (cached)
 std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                             const std::vector<std::string>* recentGifs, bool canSendMedia);   // emoji / GIF / sticker picker
+// Shared look helpers (main.cpp).
+std::string RelTime(long when);                // "5 min ago"
+bool PrimaryButton(const char* label, const ImVec2& size);   // the accent-coloured main button
+std::string FormatDate(long t);                // a date for lists
+// State and config (main.cpp).
+extern std::string g_exeDir;                   // the folder the launcher runs from
+extern std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for worker threads (set once at startup)
+// Multiplayer (main.cpp).
+void MpLaunch(const okay::JoinLink& in);       // start the game to join a server
 } // namespace okl

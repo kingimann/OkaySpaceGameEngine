@@ -1,0 +1,41 @@
+# Launcher split, move L2 (docs/engine/modularization_plan.md, Part C section 19): the anti-cheat backend pages
+# (Admin > Anti-cheat, the player's own bans and appeals, "Report cheating", the session-ticket check before a join;
+# launcher/main.cpp 12727-13370 at the base) -> launcher/AntiCheatPages.hpp / .cpp.
+# Check it with (on the move commit):
+#   python3 scripts/check_pure_move.py --base HEAD~1 --head HEAD --source launcher/main.cpp \
+#       --dest launcher/AntiCheatPages.hpp --dest launcher/AntiCheatPages.cpp --dest launcher/LauncherShared.hpp \
+#       --rules docs/engine/moves/L2_anticheat_pages.rules
+# The `acb` namespace alias and `struct AcMeJob` moved unchanged into AntiCheatPages.hpp (main.cpp's "Report cheating"
+# dialog still uses both).
+#
+# What the moved code uses from main.cpp: `static` dropped there, declared in LauncherShared.hpp. main.cpp's forward
+# declaration of TicketPreflightHolds (used by MpLaunch) is replaced by the declaration in AntiCheatPages.hpp.
+drop: ^\s*static std::string g_pollCfgDir, g_pollUrl, g_pollKey;(\s*//.*)?$
+add: ^\s*std::string g_pollCfgDir, g_pollUrl, g_pollKey;(\s*//.*)?$
+drop: ^\s*static bool TicketPreflightHolds\(const okay::JoinLink\& l, const std::string\& scene\);(\s*//.*)?$
+drop: ^\s*static void MpLaunch\(const okay::JoinLink\& in\) \{$
+add: ^\s*void MpLaunch\(const okay::JoinLink\& in\) \{$
+drop: ^\s*static std::string FormatDate\(long t\) \{$
+add: ^\s*std::string FormatDate\(long t\) \{$
+#
+# Names main.cpp uses from the moved code: `static` dropped, declared in AntiCheatPages.hpp.
+change: static void DrawAntiCheatAdmin() { ==> void DrawAntiCheatAdmin() {
+change: static void AcMeQueue(AcMeJob* j) { ==> void AcMeQueue(AcMeJob* j) {
+change: static void PumpAcMyBans(bool signedIn) { ==> void PumpAcMyBans(bool signedIn) {
+change: static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) { ==> bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) {
+change: static void PumpTicketPreflight() { ==> void PumpTicketPreflight() {
+change: static void DrawAcBanBanner() { ==> void DrawAcBanBanner() {
+add: ^\s*void DrawAntiCheatAdmin\(\);(\s*//.*)?$
+add: ^\s*void AcMeQueue\(AcMeJob\* j\);(\s*//.*)?$
+add: ^\s*void PumpAcMyBans\(bool signedIn\);(\s*//.*)?$
+add: ^\s*bool TicketPreflightHolds\(const okay::JoinLink\& l, const std::string\& scene\);(\s*//.*)?$
+add: ^\s*void PumpTicketPreflight\(\);(\s*//.*)?$
+add: ^\s*void DrawAcBanBanner\(\);(\s*//.*)?$
+add: ^\s*namespace okay \{ struct JoinLink; \}$
+add: ^\s*std::string RelTime\(long when\);(\s*//.*)?$
+add: ^\s*bool PrimaryButton\(const char\* label, const ImVec2\& size\);(\s*//.*)?$
+add: ^\s*std::string FormatDate\(long t\);(\s*//.*)?$
+add: ^\s*extern std::string g_exeDir;(\s*//.*)?$
+add: ^\s*extern std::string g_pollCfgDir, g_pollUrl, g_pollKey;(\s*//.*)?$
+add: ^\s*void MpLaunch\(const okay::JoinLink\& in\);(\s*//.*)?$
+

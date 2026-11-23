@@ -186,6 +186,7 @@ fi
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
+active_ragdoll
 behavior_trees
 boat
 camera
@@ -257,6 +258,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/shaders/shader_demo.okayscene" ] || { echo "error: examples/shaders/shader_demo.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/active_ragdoll/active_ragdoll.okayscene" ] || { echo "error: examples/active_ragdoll/active_ragdoll.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/physics_engine/physics_engine.okayscene" ] || { echo "error: examples/physics_engine/physics_engine.okayscene did not make it into the distribution" >&2; exit 1; }
 
@@ -295,6 +297,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
+                        examples\active_ragdoll\active_ragdoll.okayscene (a character that
+                        keeps its balance: J L push, O off the ledge, F shoot, E blast,
+                        T trip, G get up; it gets up by itself).
                         examples\shaders\shader_demo.okayscene (custom .okayshader
                         surfaces: lava, dissolve, rim glow; edit a .okayshader
                         file and the object updates).

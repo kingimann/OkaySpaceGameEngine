@@ -300,6 +300,7 @@ add_library(okay_engine
     src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/ModelImportCharacter.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp

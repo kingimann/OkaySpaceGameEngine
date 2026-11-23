@@ -16,4 +16,10 @@ bool Read(const std::string& path, bool flatten, ImportedModel& out, std::string
 std::string Extensions();
 
 } // namespace assimp_backend
+namespace model_import {
+/// The two small helpers ModelImport.cpp and ModelImportCharacter.cpp both use (defined in ModelImport.cpp).
+std::string Lower(std::string s);
+std::string BaseName(const std::string& path);
+} // namespace model_import
+
 } // namespace okay

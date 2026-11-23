@@ -77,7 +77,7 @@ then this file gets updated. Keep this file short and true.
 7a. **Run the checks before you push, so PRs are not red** (owner, 2026-11-23: "do what needs to be done to prevent
     it"). Before every push, by every Claude and every agent: merge main in, then `bash scripts/precheck.sh` (about a
     minute; the pre-push hook from `bash scripts/install_hooks.sh` runs it for you, once per clone). It catches conflict
-    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, a stale feature map and
+    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, invalid feature map pages and
     copies between open branches; `--build <dir> --tests` also builds what changed and runs every test it touches
     (required before a push, rule 6). A new or changed CI check is first run against every open PR (the integration check,
     or `scripts/precheck.sh --head origin/<branch>` per branch) and fixed until it turns nothing red that was green.

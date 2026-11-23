@@ -7,8 +7,8 @@
 # Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py, dup_lint.py.
 #   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into another lane's open claim,
 #               pasted code or a new copy of a shared helper (dup_lint.py, every language)
-#               feature map pages that are not valid (scripts/gen_feature_map.py --validate)
-#   warnings:   no docs changed, generated docs changed in a branch (they are rebuilt on main by regen-docs.yml),
+#   warnings:   no docs changed, feature map pages not valid (scripts/gen_feature_map.py --validate), generated docs
+#               changed in a branch (they are rebuilt on main by regen-docs.yml),
 #               MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.
 name: Branch lint
@@ -78,11 +78,15 @@ jobs:
         if: always()
         run: python3 scripts/branch_lint.py docs --base "$BASE" --head HEAD
 
-      - name: "Feature map pages valid (fatal)"
+      - name: "Feature map pages valid (warning)"
         # the generated docs (docs/FEATURE_MAP.md, docs/SYSTEMS.md, the code index, docs/try_it.md) are rebuilt on main by
-        # regen-docs.yml; a branch only has to keep the hand-written pages in docs/feature_map/ valid
+        # regen-docs.yml; a branch only has to keep the hand-written pages in docs/feature_map/ valid. A warning here, as
+        # the old "feature map regenerated" step was; scripts/precheck.sh fails on it before the push.
         if: always()
-        run: python3 scripts/gen_feature_map.py --validate
+        run: |
+          if ! python3 scripts/gen_feature_map.py --validate; then
+            echo "::warning title=Feature map::A page in docs/feature_map/ is not valid (see the errors above). Fix it; check with: python3 scripts/gen_feature_map.py --validate"
+          fi
 
       - name: "Generated docs left to main (warning)"
         if: always() && github.ref != 'refs/heads/main'

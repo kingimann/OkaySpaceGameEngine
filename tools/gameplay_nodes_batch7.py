@@ -161,7 +161,8 @@ def define(add, N, B, T, O, R, V, L, A):
         check="CHECK(Var(v, \"branch\").AsString() == \"none\");")
     add("GlHasSave", "Has Save", "Variables", "Saved", "Basic", "True when a slot has a saved game in it.",
         [T("Slot")], [B("Result")], "out = VsValue(SaveGame::Exists(t0.empty() ? std::string(\"1\") : t0));",
-        reg="CAT_LOGIC", defaults=["\"vsnothing\""], expect=False, etype="b", demo="saving")
+        reg="CAT_LOGIC", defaults=["\"vsnothing\""], expect=False, etype="b", demo="saving",
+        alt="CHECK(SaveGame::Save(s, \"vsnothing\", \"x\"));")
 
     # ---- Lights ------------------------------------------------------------------------------
     nolight = "\"its object has no Light\""

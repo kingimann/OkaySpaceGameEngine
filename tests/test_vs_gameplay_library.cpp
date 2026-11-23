@@ -7237,6 +7237,17 @@ int main() {
             if (!g_errs.empty()) { std::printf("  GlHasSave reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
             Input::FeedKeys({});
         }
+    {   // GlHasSave again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        CHECK(SaveGame::Save(s, "vsnothing", "x"));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasSave\ndefault 2 0 \"vsnothing\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlHasSave gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlHasSave");
     }
     {   // GlSetLightColor: the scene must differ from a run of the same graph without the node.

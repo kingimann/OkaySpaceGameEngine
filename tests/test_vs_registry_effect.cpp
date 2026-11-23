@@ -42,6 +42,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/UIButton.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
@@ -658,6 +659,13 @@ static std::vector<Ev> BuildEvents() {
         Gestures::Tick(70.20);
     })});
     e.push_back({"OnNetRpc", "ping", "bus", "Me", raise("OnNetRpc", "ping")});
+    // On Button Clicked: the UI button on the object named Other is pressed; this graph's next frame sees it.
+    e.push_back({"OnButtonClicked", "Other", "real", "Me", [](Scene& s, GameObject*, VC* vc) {
+        auto* b = s.Find("Other")->AddComponent<UIButton>(); b->Press(); vc->Update(0.1f); }});
+    // On Damaged: a hit through the one damage path, heard on this graph's next frame.
+    e.push_back({"OnDamaged", "", "real", "Me", [](Scene&, GameObject* me, VC* vc) {
+        auto* h = me->GetComponent<HealthStat>(); if (!h) h = me->AddComponent<HealthStat>();
+        h->playDeathAnim = false; h->playHitAnim = false; DealDamage(me, 5.0f, DamageType::Fire); vc->Update(0.1f); }});
     return e;
 }
 
@@ -939,7 +947,9 @@ int main() {
         const char* h = VsNodeHelp(d.type);
         const std::string help = h ? h : "";
         const bool mild = std::string(d.type) == "ExitBuildMode";   // only leaves build mode
-        const bool ok = mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
+        const bool seat = std::string(d.type) == "GlExitVehicle";   // only gets out of a vehicle seat
+        const bool ok = seat ? help.find("vehicle") != std::string::npos
+                      : mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
         if (!ok) std::printf("  help for %s does not warn: %s\n", d.type, help.c_str());
         CHECK(ok);
     }

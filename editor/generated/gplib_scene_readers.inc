@@ -98,3 +98,4 @@
     "GlIsDriving",
     "GlGetSliderValue",
     "GlIsGrounded",
+    "GlHasSave",

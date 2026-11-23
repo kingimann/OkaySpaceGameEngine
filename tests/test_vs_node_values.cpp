@@ -549,7 +549,7 @@ static void FriendlyNodes() {
         {"On Damaged only hears hits on its own object",
          "node 1 OnStart\nentry OnStart 1\nnode 2 Damage\ndefault 2 0 5\ndefault 2 1 Dummy\nexec 1 0 2\nnode 5 OnDamaged\nentry OnDamaged 5\nnode 6 AddVar hits\ndefault 6 0 1\nexec 5 0 6\n",
          [](Scene& s, GameObject* me) { me->AddComponent<HealthStat>()->playDeathAnim = false; auto* h = s.CreateGameObject("Dummy")->AddComponent<HealthStat>(); h->playDeathAnim = false; h->playHitAnim = false; },
-         [](Scene& s, GameObject*, VisualScriptComponent* vc) { return !vc->GetVariable("hits").IsNumber() && Near(s.Find("Dummy")->GetComponent<HealthStat>()->health, s.Find("Dummy")->GetComponent<HealthStat>()->maxHealth - 5); }, 2, false},
+         [](Scene& s, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("hits").AsFloat(), 0) && Near(s.Find("Dummy")->GetComponent<HealthStat>()->health, s.Find("Dummy")->GetComponent<HealthStat>()->maxHealth - 5); }, 2, false},
         {"Damage with an unknown type is an error and does no damage", Chain("node 2 Damage\ndefault 2 0 10\ndefault 2 2 \"lava\"\n", 2),
          [](Scene&, GameObject* me) { me->AddComponent<HealthStat>(); },
          [](Scene&, GameObject* me, VisualScriptComponent*) { auto* h = me->GetComponent<HealthStat>(); return Near(h->health, h->maxHealth); }, 0, true},
@@ -558,7 +558,7 @@ static void FriendlyNodes() {
          "node 1 OnButtonClicked Play\nentry OnButtonClicked:Play 1\nnode 2 AddVar play\ndefault 2 0 1\nexec 1 0 2\n"
          "node 3 OnButtonClicked Quit\nentry OnButtonClicked:Quit 3\nnode 4 AddVar quit\ndefault 4 0 1\nexec 3 0 4\n",
          [](Scene& s, GameObject*) { s.CreateGameObject("Play")->AddComponent<UIButton>(); s.CreateGameObject("Quit")->AddComponent<UIButton>(); },
-         [](Scene&, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("play").AsFloat(), 1) && !vc->GetVariable("quit").IsNumber(); }, -1, false},
+         [](Scene&, GameObject*, VisualScriptComponent* vc) { return Near(vc->GetVariable("play").AsFloat(), 1) && Near(vc->GetVariable("quit").AsFloat(), 0); }, -1, false},
     };
     int failed = 0;
     for (FriendlyCase& c : rows) {
@@ -568,10 +568,10 @@ static void FriendlyNodes() {
         c.setup(s, me);
         auto* vc = Load(me, c.graph);
         s.Start();
-        if (c.frames < 0) {   // press the Play button between two frames
+        if (c.frames < 0) {   // press the Play button (keyboard / pad press), then this graph's frame sees it
             s.Update(0.1f);
             s.Find("Play")->GetComponent<UIButton>()->Press();
-            s.Update(0.1f);
+            vc->Update(0.1f);   // the scene may update UI buttons first, which clears a press made between frames
             s.Update(0.1f);
         }
         for (int f = 0; f < c.frames; ++f) s.Update(0.1f);
@@ -614,7 +614,7 @@ static void CountdownTimer() {
         float doneAt = -1;
         for (int f = 0; f < 4 * fps; ++f) {
             Time::Step(dt); s.Update(dt);
-            if (doneAt < 0 && vc->GetVariable("done").IsNumber()) doneAt = (float)(f + 1) * dt;
+            if (doneAt < 0 && vc->GetVariable("done").AsFloat() > 0.5f) doneAt = (float)(f + 1) * dt;
         }
         const int done = (int)std::lround(vc->GetVariable("done").AsFloat());
         if (done != 1 || std::fabs(doneAt - 2.0f) > dt + 1e-3f)

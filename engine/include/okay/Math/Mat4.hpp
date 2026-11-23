@@ -5,6 +5,15 @@
 
 namespace okay {
 
+/// Fill the 3x3 rotation part of `r` (any matrix with `at(col, row)`, such as Mat4 or the readers' double-precision
+/// matrix) from a unit quaternion x y z w; the rest of `r` is left as it is. `T` is the precision the sums are done in.
+template <class M, class T>
+inline void SetRotationFromUnitQuat(M& r, T x, T y, T z, T w) {
+    r.at(0,0) = 1 - 2*(y*y + z*z); r.at(1,0) = 2*(x*y - w*z);     r.at(2,0) = 2*(x*z + w*y);
+    r.at(0,1) = 2*(x*y + w*z);     r.at(1,1) = 1 - 2*(x*x + z*z); r.at(2,1) = 2*(y*z - w*x);
+    r.at(0,2) = 2*(x*z - w*y);     r.at(1,2) = 2*(y*z + w*x);     r.at(2,2) = 1 - 2*(x*x + y*y);
+}
+
 /// Column-major 4x4 matrix, modeled after `Matrix4x4`.
 /// Element m[col][row] -> data index col*4 + row.
 struct Mat4 {
@@ -67,11 +76,8 @@ struct Mat4 {
 
     static Mat4 Rotate(const Quat& q) {
         Quat n = q.Normalized();
-        float x = n.x, y = n.y, z = n.z, w = n.w;
         Mat4 r;
-        r.at(0,0) = 1 - 2*(y*y + z*z); r.at(1,0) = 2*(x*y - w*z);     r.at(2,0) = 2*(x*z + w*y);
-        r.at(0,1) = 2*(x*y + w*z);     r.at(1,1) = 1 - 2*(x*x + z*z); r.at(2,1) = 2*(y*z - w*x);
-        r.at(0,2) = 2*(x*z - w*y);     r.at(1,2) = 2*(y*z + w*x);     r.at(2,2) = 1 - 2*(x*x + y*y);
+        SetRotationFromUnitQuat(r, n.x, n.y, n.z, n.w);
         return r;
     }
 

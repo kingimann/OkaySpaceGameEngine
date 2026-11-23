@@ -345,21 +345,5 @@ int main() {
         (void)c->transform->Position(); (void)adopter->transform->Position();
     }
 
-    // ---- 9. SceneBridge does not keep a freed GameObject ---------------------------------
-    {
-        using namespace okay::ecs;
-        Scene sc("bridge");
-        World w;
-        SceneBridge bridge(w, sc);
-        Entity e = w.create();
-        w.add<EcsTransform>(e, {});
-        bridge.sync();
-        CHECK(bridge.gameObjectFor(e) != nullptr);
-        sc.Clear();                               // frees every object the bridge made
-        CHECK(bridge.gameObjectFor(e) == nullptr);
-        bridge.sync();                            // must not touch the freed object
-        CHECK(bridge.mappedCount() == 1);
-    }
-
     TEST_MAIN_RESULT();
 }

@@ -7,6 +7,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "e4_fixtures.hpp"
+#include "own_seam_checks.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <cstdlib>
@@ -17,22 +18,9 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
-static void SetEnv(const char* n, const char* v) {
-#ifdef _WIN32
-    _putenv_s(n, v);
-#else
-    ::setenv(n, v, 1);
-#endif
-}
-static void UnsetEnv(const char* n) {
-#ifdef _WIN32
-    _putenv_s(n, "");
-#else
-    ::unsetenv(n);
-#endif
-}
-static void Write(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
-static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
+using seam::SetEnv;
+using seam::UnsetEnv;
+using seam::Write;
 
 // True when the build was configured with -DOKAY_OWN_OPENGEX=ON / -DOKAY_OWN_MDL=ON (tests/CMakeLists.txt then defines OKAY_EXPECT_OWN_<FMT> for this
 // test): the format is then ON by default, so the "off by default" checks below must not run for it (they failed on such a build before this was added).
@@ -64,42 +52,21 @@ int main() {
         const std::string path = (dir / c.file).string();
         Write(path, c.bytes);
         CHECK(HasOwnReader(c.ext));
-        SetImportBackend(c.ext, ImportBackend::Own);
-        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-        ImportedModel a, b; std::string err;
-        const bool ok = ImportModelData(path, a, ImportBackend::Default, false, &err);
-        if (!ok) std::fprintf(stderr, "  %s: %s\n", c.file, err.c_str());
-        CHECK(ok && a.backend == "own");
-        CHECK(c.direct(path, b, &err));
-        CHECK(a.parts.size() == b.parts.size() && Verts(a) == Verts(b) && a.nodes.size() == b.nodes.size() && a.materials.size() == b.materials.size() && a.clips.size() == b.clips.size());
-        CHECK(fx::TriCount(a) == c.tris && fx::TriCount(b) == c.tris);
+        seam::CheckSeamMatchesDirect(path, c.file, c.ext, c.direct, c.tris, true);
+        std::string err;
         // flatten: one root node, no skins and no clips, same geometry
-        ImportedModel f;
-        CHECK(ImportModelData(path, f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.clips.empty() && fx::TriCount(f) == c.tris);
-        for (const ImportedPart& p : f.parts) CHECK(p.bones.empty() && p.node == 0);
-        CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
+        seam::CheckFlattened(path, c.tris);
+        CHECK(seam::Listed(c.ext));
         // the format-specific variable decides when nothing was chosen at run time
-        SetImportBackend(c.ext, ImportBackend::Default);
-        SetEnv(c.env, "1");
-        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-        ImportedModel e1;
-        CHECK(ImportModelData(path, e1, ImportBackend::Default, false, &err) && e1.backend == "own");
-        SetEnv(c.env, "0");
-        CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-        UnsetEnv(c.env);
+        seam::CheckEnvSwitch(path, c.ext, c.env);
         if (c.onByDefault) {   // a build with -DOKAY_OWN_<FMT>=ON: ours is the default with nothing set at run time
             CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-            CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
+            CHECK(seam::Listed(c.ext));
             ImportedModel d; std::string e2;
             CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
         }
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable() && !c.onByDefault) {
-            CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-            CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
-            ImportedModel d; std::string e2;
-            CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);
-        }
+        if (!AssimpAvailable() && !c.onByDefault) seam::CheckOffWithoutAssimp(path, c.ext, c.env);
     }
     {   // upper case extension; the other formats' readers do not take these files; GameStudio magics get their own message
         SetImportBackend("*", ImportBackend::Own);

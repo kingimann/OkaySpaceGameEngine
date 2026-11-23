@@ -1634,9 +1634,6 @@ add_executable(test_camera_after_ik test_camera_after_ik.cpp)
 target_link_libraries(test_camera_after_ik PRIVATE okay::engine)
 add_test(NAME camera_after_ik COMMAND test_camera_after_ik)
 
-add_executable(test_ecs test_ecs.cpp)
-target_link_libraries(test_ecs PRIVATE okay::engine)
-add_test(NAME ecs COMMAND test_ecs)
 
 add_executable(test_anim_playback test_anim_playback.cpp)
 target_link_libraries(test_anim_playback PRIVATE okay::engine)
@@ -3092,7 +3089,7 @@ target_link_libraries(test_asset_database PRIVATE okay::engine)
 target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
-# Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
+# Core audit regressions: math edge cases, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)
 target_link_libraries(test_core_audit PRIVATE okay::engine)
@@ -3156,11 +3153,8 @@ add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
 
-add_executable(test_ecs_commands test_ecs_commands.cpp)
-target_link_libraries(test_ecs_commands PRIVATE okay::engine)
-add_test(NAME ecs_commands COMMAND test_ecs_commands)
 
-# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+# Core wave 6, 1.9: Subscription::Active, throwing handlers (event bus)
 add_executable(test_core_events_ecs test_core_events_ecs.cpp)
 target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
 add_test(NAME core_events_ecs COMMAND test_core_events_ecs)

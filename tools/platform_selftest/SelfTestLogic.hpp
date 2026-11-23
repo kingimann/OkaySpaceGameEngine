@@ -176,14 +176,21 @@ inline std::string HardwareDetail(const std::string& why, bool ci) {
 }
 
 /// The event pump check: `pushedBack` = an event given to Backend::PushEvent came back through PollEvent;
-/// `sawResize` / `gotW` x `gotH` = the WindowResized event that arrived after Window::SetSize(wantW, wantH) (that
-/// one goes through the operating system's own message queue). Pass only when both happened with the right size.
-inline Status PumpVerdict(bool pushedBack, bool sawResize, int gotW, int gotH, int wantW, int wantH, std::string& detail) {
-    const std::string want = std::to_string(wantW) + "x" + std::to_string(wantH);
+/// `sawResize` / `evW` x `evH` = the last WindowResized event that arrived after Window::SetSize(askW, askH) (that one
+/// goes through the operating system's own message queue); `nowW` x `nowH` = the size the window reports afterwards;
+/// `beforeW` x `beforeH` = its size before. Pass when the pushed event came back, a resize event arrived, it carries
+/// the size the window reports, and that size changed. The exact size asked for is not required: DPI scaling, a
+/// window manager or a small screen can give another one.
+inline Status PumpVerdict(bool pushedBack, bool sawResize, int evW, int evH, int nowW, int nowH, int beforeW, int beforeH,
+                          int askW, int askH, std::string& detail) {
+    auto sz = [](int w, int h) { return std::to_string(w) + "x" + std::to_string(h); };
     detail = pushedBack ? "a pushed event came back" : "the pushed event did not come back";
-    if (!sawResize) detail += "; asking for " + want + ": no resize event arrived";
-    else detail += "; asking for " + want + " gave a resize event of " + std::to_string(gotW) + "x" + std::to_string(gotH);
-    return pushedBack && sawResize && gotW == wantW && gotH == wantH ? Status::Pass : Status::Fail;
+    detail += "; asked for " + sz(askW, askH) + ", the window reports " + sz(nowW, nowH);
+    const bool changed = nowW != beforeW || nowH != beforeH;
+    if (!sawResize) detail += ": no resize event arrived";
+    else detail += " and the resize event said " + sz(evW, evH);
+    if (!changed) detail += "; the size did not change from " + sz(beforeW, beforeH);
+    return pushedBack && sawResize && changed && evW == nowW && evH == nowH ? Status::Pass : Status::Fail;
 }
 
 } // namespace okay::selftest

@@ -8,8 +8,9 @@
 // context and asks for the GL version string; nothing is drawn with GL.
 //
 // Options: --seconds N (interactive time, default 20), --auto (no waiting for you: 2 s, no pause, no
-// "press Enter"), --ci (--auto on a build machine: OpenGL and audio that the machine does not have are
-// NOT TESTED instead of FAIL, with the reason; windows, events, clipboard and timers still fail for real),
+// "press Enter"), --ci (--auto on a build machine: OpenGL, the software frame, audio playback and capture
+// that the machine cannot do are NOT TESTED instead of FAIL, with the reason; windows, the event pump,
+// the clipboard, timers and a missing glGetString still fail for real),
 // --no-audio, --no-pause, --sdl2 (run the same checks on the SDL2 backend to compare).
 // Exit code: 0 nothing failed, 1 something failed, 2 the backend could not start.
 #include "SelfTestLogic.hpp"
@@ -71,11 +72,13 @@ void CheckGl(Backend* be) {
     if (!w->MakeCurrent()) { g_rep.Add("OpenGL context", HardwareStatus(false, g_ci), HardwareDetail("MakeCurrent failed", g_ci)); return; }
     using GetString = const unsigned char*(OKAY_GLCALL*)(unsigned);
     GetString gs = reinterpret_cast<GetString>(be->GLProcAddress("glGetString"));
+    // Not hardware: opengl32.dll (Windows) and every libGL export glGetString, so not finding it is our fault; FAIL even with --ci.
     if (!gs) { g_rep.Add("OpenGL context", Status::Fail, "context made, but glGetString was not found"); return; }
     const unsigned char* v = gs(0x1F02);   // GL_VERSION
     const unsigned char* r = gs(0x1F01);   // GL_RENDERER
-    g_rep.Add("OpenGL context", v ? Status::Pass : Status::Fail,
-              std::string("version ") + (v ? (const char*)v : "(none)") + ", renderer " + (r ? (const char*)r : "(none)"));
+    // No version string with a current context: the driver gave none (with --ci, the machine's GL, not our code).
+    g_rep.Add("OpenGL context", HardwareStatus(v != nullptr, g_ci),
+              HardwareDetail(std::string("version ") + (v ? (const char*)v : "(none)") + ", renderer " + (r ? (const char*)r : "(none)"), g_ci && !v));
     w->SwapBuffers();
     w->DestroyGLContext();
 }
@@ -91,25 +94,31 @@ void CheckClipboard(Backend* be) {
 // The event pump: an event pushed by the program comes back through PollEvent, and a resize asked of the window
 // comes back as a WindowResized event through the operating system's own queue (Win32 WM_SIZE, X11 ConfigureNotify).
 void CheckEventPump(Backend* be, Window* win) {
-    const int wantW = 520, wantH = 340, marker = 0x5E1F;
+    const int askW = 520, askH = 340, marker = 0x5E1F;
+    int beforeW = 0, beforeH = 0;
+    win->GetSize(beforeW, beforeH);
     Event p;
     p.type = EventType::WindowExposed; p.windowId = win->Id(); p.deviceId = marker;
     const bool pushed = be->PushEvent(p);
-    win->SetSize(wantW, wantH);
+    win->SetSize(askW, askH);
     bool back = false, sawResize = false;
-    int gw = 0, gh = 0;
+    int ew = 0, eh = 0, nw = beforeW, nh = beforeH;
     const uint64_t t0 = be->TicksMs();
-    while (be->TicksMs() - t0 < 2000 && !(back && sawResize && gw == wantW && gh == wantH)) {
+    // Wait (at most 2 s) until the pushed event is back and a resize event matches the size the window reports. The
+    // size may differ from the one asked (DPI scaling, a window manager, a small screen): it only has to change.
+    while (be->TicksMs() - t0 < 2000) {
         Event e;
         while (be->PollEvent(e)) {
             g_tally.Add(e);
             if (e.type == EventType::WindowExposed && e.deviceId == marker) back = true;
-            if (e.type == EventType::WindowResized) { sawResize = true; gw = e.width; gh = e.height; }
+            if (e.type == EventType::WindowResized) { sawResize = true; ew = e.width; eh = e.height; }
         }
+        win->GetSize(nw, nh);
+        if (back && sawResize && ew == nw && eh == nh && (nw != beforeW || nh != beforeH)) break;
         be->DelayMs(10);
     }
     std::string d;
-    const Status s = PumpVerdict(pushed && back, sawResize, gw, gh, wantW, wantH, d);
+    const Status s = PumpVerdict(pushed && back, sawResize, ew, eh, nw, nh, beforeW, beforeH, askW, askH, d);
     g_rep.Add("event pump", s, d);
     win->SetSize(640, 400);
 }
@@ -291,9 +300,10 @@ int main(int argc, char** argv) {
     be->StopTextInput();
 
     // ---- Verdicts ----
-    if (win) g_rep.Add("software frame", presentOk ? Status::Pass : Status::Fail,
+    // PresentPixels fails when the desktop has no drawable surface (a service session, a locked runner): hardware with --ci.
+    if (win) g_rep.Add("software frame", HardwareStatus(presentOk, g_ci),
                        presentOk ? "colour bars, a moving square and a mouse cross were handed to the window with PresentPixels (look at the window: did you see them?)"
-                                 : "PresentPixels returned false");
+                                 : HardwareDetail("PresentPixels returned false", g_ci));
     g_rep.Add("keyboard", g_tally.keyDown ? Status::Pass : Status::Skip,
               g_tally.keyDown ? std::to_string(g_tally.keyDown) + " key presses, " + std::to_string(g_tally.distinctKeys) + " different keys" : "no key was pressed");
     g_rep.Add("text input", g_tally.text ? Status::Pass : Status::Skip, g_tally.text ? std::to_string(g_tally.text) + " text events" : "no text arrived (type letters in the window)");
@@ -307,9 +317,10 @@ int main(int argc, char** argv) {
     if (out) {
         const uint32_t left = out->QueuedBytes();
         const bool consumed = left < queuedAtStart;
-        g_rep.Add("audio playback", consumed ? Status::Pass : Status::Fail,
+        // An endpoint that opens but never plays (a runner's virtual or muted device): hardware with --ci.
+        g_rep.Add("audio playback", HardwareStatus(consumed, g_ci),
                   consumed ? "the device took " + std::to_string(queuedAtStart - left) + " of " + std::to_string(queuedAtStart) + " queued bytes (one second of 440 Hz). Whether you HEARD it, the program cannot know"
-                           : "the device took no data from the queue");
+                           : HardwareDetail("the device took no data from the queue", g_ci));
     }
     if (in) {
         std::vector<uint8_t> buf(1 << 16);
@@ -320,7 +331,9 @@ int main(int argc, char** argv) {
             const int16_t* s = reinterpret_cast<const int16_t*>(buf.data());
             for (uint32_t i = 0; i < n / 2; ++i) peak = std::max(peak, std::abs((int)s[i]));
         }
-        g_rep.Add("audio capture", total ? Status::Pass : Status::Fail, std::to_string(total) + " bytes captured, loudest sample " + std::to_string(peak) + " of 32767");
+        // A capture endpoint that opens but delivers nothing (no microphone behind it): hardware with --ci.
+        g_rep.Add("audio capture", HardwareStatus(total > 0, g_ci),
+                  HardwareDetail(std::to_string(total) + " bytes captured, loudest sample " + std::to_string(peak) + " of 32767", g_ci && !total));
     }
     out.reset(); in.reset(); pad.reset(); win.reset();
     be->Shutdown();

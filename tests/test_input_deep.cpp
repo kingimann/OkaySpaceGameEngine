@@ -348,6 +348,31 @@ int main() {
         held[(int)Key::Escape] = true; d.clear();
         AppendHeldMainKeys(isHeld, us, false, d);
         CHECK(d.empty());
+        // Taps and holds agree (the editor's Play used to tap by CharForKey, which ignores "keys by position"): for
+        // every letter and digit key, on AZERTY, with "keys by position" off and on, a tap of the key gives exactly the
+        // letters that holding it gives.
+        for (int byPos = 0; byPos < 2; ++byPos) {
+            Input::SetKeysByPosition(byPos == 1);
+            int mismatches = 0;
+            for (int k = (int)Key::A; k <= (int)Key::N0; ++k) {
+                for (bool& h : held) h = false;
+                held[k] = true;
+                std::vector<char> hold, tap;
+                AppendHeldMainKeys(isHeld, azerty, false, hold);
+                TapCharsForKey((Key)k, azerty, tap);
+                if (hold != tap) ++mismatches;
+            }
+            CHECK(mismatches == 0);
+        }
+        // AZERTY with "keys by position" on: a tap at the US W place (the key labelled Z) is 'w'; off, it is 'z'.
+        std::vector<char> tap;
+        Input::SetKeysByPosition(true);
+        TapCharsForKey(Key::W, azerty, tap);
+        CHECK(tap.size() == 1 && tap[0] == 'w');
+        Input::SetKeysByPosition(false); tap.clear();
+        TapCharsForKey(Key::W, azerty, tap);
+        CHECK(tap.size() == 1 && tap[0] == 'z');
+        for (bool& h : held) h = false;
     }
     Block("input_deep_quick_touch_tap_still_began");
     {

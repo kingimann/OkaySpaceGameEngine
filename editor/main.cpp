@@ -54249,16 +54249,12 @@ int main(int argc, char** argv) {
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
-                    const PKey sc = e.key;
-                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
-                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
-                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
-                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                    // The same rule as the held keys and the player: letters by the layout, or by position when
+                    // "keys by position" is on (KeyForLetter). Esc is left out: the editor gives it to the game by its
+                    // own release rule (PlayPointerFrame::feedEscapeToGame).
+                    std::vector<char> tapped;
+                    okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*sdlSeam, c); }, tapped);
+                    for (char c : tapped) if (c != (char)27) Input::FeedKeyTap(c);
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the

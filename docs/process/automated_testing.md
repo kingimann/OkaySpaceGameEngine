@@ -261,6 +261,15 @@ itself. A new test that writes files without choosing a temp folder of its own s
 of `main()` after `RUN_SUITE`, and `CHECK(sandbox.Verify())` at the end). The two regeneration switches
 (`OKAY_WRITE_COVERAGE`) write into `docs/` and `examples/` on purpose and are off by default.
 
+## Before you push (so PRs are not red)
+
+`bash scripts/precheck.sh` runs, in about a minute, the checks that turned most PRs red: conflict markers, a branch that
+no longer merges cleanly with main, `branch_lint all` (Windows thread includes, secrets, built programs, duplicate
+code), the feature map, and copies between open branches. `--build <dir>` adds a syntax check of the changed C++ files
+using that build folder's `compile_commands.json`. `bash scripts/install_hooks.sh` installs it as the pre-push hook of
+the clone (all its worktrees share it), so a push with a problem stops before it reaches GitHub; `git push --no-verify`
+skips it once. CLAUDE.md rule 7a.
+
 ## CI speed
 
 Why the "Build & test (Ubuntu)" job was the slowest job (about 62 minutes in run 43950229920: 10 minutes waiting for a

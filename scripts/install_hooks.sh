@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Optional git pre-push hook for this clone only: runs scripts/dup_lint.py check on what is about to be pushed,
-# so a pasted block or a new copy of a shared helper is caught before CI sees it.
+# Git pre-push hook for this clone (and every worktree of it): runs scripts/precheck.sh on what is about to be pushed
+# (conflict markers, clean merge with main, branch_lint incl. duplicates, feature map, copies between open branches,
+# optional C++ syntax check), so the problems that most often turned PRs red are caught before CI sees them
+# (CLAUDE.md rule 7a). Older branches without precheck.sh fall back to scripts/dup_lint.py check.
 #
 #   bash scripts/install_hooks.sh            install (this repository's hooks folder only)
 #   bash scripts/install_hooks.sh --remove   remove it again
@@ -35,13 +37,17 @@ git rev-parse -q --verify "$base" >/dev/null || { echo "dup-lint: no $base here;
 rc=0
 while read -r lref lsha rref rsha; do
   case "$lsha" in 0000000000000000000000000000000000000000) continue ;; esac   # deleting a branch
-  echo "dup-lint: checking $lref ($lsha) against $base"
-  python3 "$root/scripts/dup_lint.py" check --root "$root" --base "$base" --head "$lsha" >/dev/null || rc=1
+  if [ -f "$root/scripts/precheck.sh" ]; then
+    bash "$root/scripts/precheck.sh" --base "$base" --head "$lsha" || rc=1
+  else
+    echo "dup-lint: checking $lref ($lsha) against $base"
+    python3 "$root/scripts/dup_lint.py" check --root "$root" --base "$base" --head "$lsha" >/dev/null || rc=1
+  fi
 done
 if [ $rc -ne 0 ]; then
-  echo "dup-lint: duplicate code found (see above). Fix it, mark a real need with 'dup-allow: <reason>', or push with --no-verify." >&2
+  echo "pre-push: problems found (see above); each would turn a CI job red. Fix them, or push with --no-verify." >&2
 fi
 exit $rc
 EOF
 chmod +x "$hook"
-echo "installed $hook (runs scripts/dup_lint.py check before each push; remove with --remove)"
+echo "installed $hook (runs scripts/precheck.sh before each push; remove with --remove)"

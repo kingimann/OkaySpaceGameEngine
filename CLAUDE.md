@@ -65,6 +65,13 @@ then this file gets updated. Keep this file short and true.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).
+7a. **Run the checks before you push, so PRs are not red** (owner, 2026-11-23: "do what needs to be done to prevent
+    it"). Before every push, by every Claude and every agent: merge main in, then `bash scripts/precheck.sh` (about a
+    minute; the pre-push hook from `bash scripts/install_hooks.sh` runs it for you, once per clone). It catches conflict
+    markers, a branch that no longer merges, Windows thread includes, secrets, duplicate code, a stale feature map and
+    copies between open branches; with `--build <dir>` it also syntax-checks the changed C++. Also run the tests that
+    cover the files you changed. A new or changed CI check is first run against every open PR (the integration check,
+    or `scripts/precheck.sh --head origin/<branch>` per branch) and fixed until it turns nothing red that was green.
 8. **Fix PRs that have conflicts or errors**: merge main into the branch, resolve keeping both sides, build and
    run the relevant tests, push. This includes the `john/` branches (the owner allowed it).
 9. **Keep the open PR count low.** Merge or close. Close PRs that are superseded, with a comment saying by what.

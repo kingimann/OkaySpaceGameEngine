@@ -9,6 +9,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 ## 18. Build, export & release
 
 ### 18.1 Windows build and installer
+- **System:** Windows Build and Installer - Builds the Windows programs (launcher, editor, player, relay) and the installer and zip.
 - **What:** Cross-compiles the whole Windows distribution (launcher, editor, player, relay and `SDL2.dll`) from Linux with MinGW-w64 and wraps it in a one-click installer that installs or updates in place.
 - **Parts:**
   - 18.1.1 Distribution build script - `scripts/build-windows-dist.sh` - configures with the MinGW toolchain, builds launcher, editor, player (Assimp on), copies the layout into `build-win-dist/`; env `SDL2_MINGW_PREFIX` (required), `OKAY_SODIUM_MINGW_PREFIX`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_STEAM_APP_ID` (default 1172560), `STEAMWORKS_SDK_PATH`, `OKAY_IMGUI_SRC`, `JOBS`
@@ -30,6 +31,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "build the Windows folder locally", "why does the installer skip the folder question?"
 
 ### 18.2 Web and mobile export
+- **System:** Web, Mobile and Console Export - Runs games in a web browser, on phones, and (experimental, off by default) on an Xbox in Developer Mode.
 - **What:** Putting a game in a browser (WebAssembly through Emscripten) or on a phone. Web has a real build script and a CI job; Android and iOS are a data export plus instructions.
 - **Parts:**
   - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium and Assimp (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
@@ -49,6 +51,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "build the web version and serve it", "how do I get this on Android?"
 
 ### 18.3 CI jobs
+- **System:** CI - The automatic checks GitHub runs on every change (build, tests, linters).
 - **What:** The five GitHub Actions jobs in `.github/workflows/ci.yml` that every pull request must pass (and every push to main runs). A new push to a PR cancels that PR's older run.
 - **Parts:**
   - 18.3.1 Build & test (Ubuntu) - `.github/workflows/ci.yml` - installs cmake, g++, ninja, libsdl2-dev; Release build and the whole `ctest`; also builds the player, builds the editor and launcher and runs `OkayEngine --selftest` headless, then exports a game and runs `tests/export/verify.sh`
@@ -70,6 +73,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "which CI job failed and why?", "add this test to the sanitizer job"
 
 ### 18.4 Release workflow
+- **System:** Release Pipeline - Turns a version number into a published release, and publishes test builds.
 - **What:** `.github/workflows/release.yml` turns a version into a GitHub Release (and, when a secret exists, an update on Supabase) plus the Linux game server. A release PR bumps the version first.
 - **Parts:**
   - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573; "Release 2.851.0", #583; "Release 2.852.0", #588 in draft) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
@@ -92,6 +96,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "cut release 2.852.0", "what does a release PR change?"
 
 ### 18.5 Update feed
+- **System:** Launcher Updater
 - **What:** What the launcher's and editor's self-updaters read: a public Supabase Storage bucket `releases` (checked first) and GitHub Releases (fallback). They use whichever has the newer version.
 - **Parts:**
   - 18.5.1 Supabase publish script - `scripts/publish-supabase.sh` - uploads `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt`, then `NOTES.txt`, then `VERSION.txt` last; checks each file is a Windows program under 50 MB; keeps the newest 3 versions (`KEEP`); keys from the environment only; `DRY_RUN=1`
@@ -111,6 +116,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "publish 2.852.0 to Supabase with a dry run", "why does the editor changelog differ from the launcher's?"
 
 ### 18.6 Desktop game export (Build Game) and the export check
+- **System:** Game Export - Turns a project into a game folder you can ship (`<Game>.exe`), checks it, and lets shipped games download signed content updates.
 - **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
   - 18.6.1 Build - `editor/main.cpp` (`builder::Build`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
@@ -136,6 +142,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "build the game from the command line", "why isn't my audio file in the build?", "what is in the build and how big is it?"
 
 ### 18.7 Dedicated server export and Linux server build
+- **System:** Dedicated Server
 - **What:** The editor's "Server" platform writes a ready-to-run server folder for Linux or Windows; the release workflow builds and attaches the Linux runtime it needs.
 - **Parts:**
   - 18.7.1 Server export - `editor/main.cpp` (`builder::BuildServer`, near L4007) - game data, runtime, `server.cfg`, start scripts, `deploy.sh` and `deploy.bat` (copy over SSH and install), `install-server.sh` (systemd, firewall), `Dockerfile`, `docker-compose.yml`, README
@@ -154,6 +161,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "export a Linux server for my game", "deploy it to my VPS"
 
 ### 18.8 Steam release (SteamPipe)
+- **System:** Steam Integration
 - **What:** Publishing the whole OkaySpace application (launcher, editor, player, relay) to Steam so installed copies update themselves. Manual: upload a build, then set it live on the Steamworks dashboard.
 - **Parts:**
   - 18.8.1 Build scripts - `steam/app_build_1172560.vdf`, `steam/depot_build_1172561.vdf` - app 1172560, depot 1172561, content root `../build-win-dist/`, `setlive` empty (upload only), `*.pdb` and `*.log` excluded
@@ -172,6 +180,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "upload a new build to Steam and leave it on the beta branch"
 
 ### 18.9 Test builds (the dev channel)
+- **System:** Release Pipeline
 - **What:** A build of any branch that the coordinator publishes to the `dev/` folder of the Supabase release bucket, so the owner can try unmerged work in the launcher in about 15 to 30 minutes, without a pull request, a GitHub Release or a normal release. Off by default in the launcher; never touches "latest" or LTS.
 - **Parts:**
   - 18.9.1 Test build workflow - `.github/workflows/dev-build.yml` - `workflow_dispatch` only (inputs `ref`, `note`), from `main` only; a build job (a copy of release.yml's build steps, no secrets, numbered `<newest release>.<run number>`) and a publish job (the reviewed scripts, one at a time); no release, tag, installer, Linux server or Windows signing
@@ -192,6 +201,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "start a test build of walk-vs-run for the owner", "how do I turn test builds off?"
 
 ### 18.10 Xbox One export (experimental, Developer Mode, UWP)
+- **System:** Web, Mobile and Console Export
 - **What:** An EXPERIMENTAL, OFF-by-default export that lays down a Universal Windows Platform package for an Xbox One in Developer Mode, using only the public Windows SDK. Foundation written, unverified on Windows: nothing was built, signed or run on Windows or a console. It is not a native console game (no GDK) and the app shell does not run the game yet (a test triangle and a gamepad reader).
 - **Parts:**
   - 18.10.1 SDK check - `platform/xbox_uwp/XboxSdkCheck.hpp`, `XboxSdkProbe.hpp`, `scripts/xbox-check-sdk.ps1` - finds Visual Studio 2022 (vswhere), the UWP C++ toolset, a Windows SDK 17763 or newer with UWP headers and libraries, SignTool (MakeAppx optional); pure decision logic tested with fake folders; the editor disables Export with the reason
@@ -215,6 +225,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "make an Xbox One Developer Mode package", "why is Xbox export greyed out?"
 
 ### 18.11 Downloadable game content (content delivery)
+- **System:** Game Export
 - **What:** An exported game can download signed updates of its own data and scripts (models, textures, animations, scenes, audio, dialogue, Visual Script and OkayScript files) from a folder or a server, resume partial downloads, keep the previous version for rollback and look each file up in the downloaded content first, then in the installed files. Never code or programs. Off unless a content URL is configured.
 - **Parts:**
   - 18.11.1 Manifest and signature - `shared/ContentManifest.hpp` - strict text list `{path, size, sha256, kind, group, min-app}` with path, case, size and count limits; ed25519 signature with its own domain, checked through `shared/UpdateSignature.hpp` key and signature parsing; no key means refused

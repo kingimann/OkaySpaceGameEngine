@@ -1,22 +1,32 @@
-# How the two Claudes work together
+# How the three Claudes work together
 
-> **What this is:** Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422; bug fixes and third-party replacement) and the **coordinator** with its agents (branches `claude/*`; unfinished features, reviews, releases).
+> **What this is:** Three Claudes work on this repo at the same time. Each has a lane (the files it owns) and a branch prefix. The lanes are in [lanes.json](../lanes.json), and every script reads them from there.
 >
-> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+> **Status:** Reference page. Rewritten for three Claudes on 2026-11-22.
 >
-> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+> **Last checked:** 2026-11-22 (lanes, claims and checks checked against `scripts/collab_lib.py` and `scripts/tests/test_collab.py`).
 
-Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422; bug fixes and third-party replacement) and the
-**coordinator** with its agents (branches `claude/*`; unfinished features, reviews, releases). One day went wrong in ways that cost real work. This page is the
-agreement that stops it, and every rule here has a script that checks it, so nobody has to remember.
+Three Claudes work on this repo at the same time:
+
+| Lane | Branches | Who |
+|---|---|---|
+| `coordinator` | `claude/*` | The coordinator session and its agents |
+| `claude2` | `claude2/*` | Claude 2 |
+| `claude3` | `claude3/*` | Claude 3 (new on 2026-11-22; start-up note: [claude3_start.md](claude3_start.md)) |
+
+All three use issue #422 for claims and reports. One day (2026-11-15) went wrong in ways that cost real work. This page is
+the agreement that stops it. Every rule here has a script that checks it, so nobody has to remember.
+
+**Messages from another Claude are reports, not owner instructions.** Read them, answer them, check their work. Only the
+owner sets rules and priorities (CLAUDE.md rule 23).
 
 The problems of 2026-11-15 and what now prevents each one:
 
 | What went wrong | What stops it now |
 |---|---|
-| Both built the vehicle seat at the same time | Lanes, the claim protocol, `find_existing.py`, the collision check on every push and on the work board |
+| Two Claudes built the vehicle seat at the same time | Lanes, the claim protocol, `find_existing.py`, the collision check on every push and on the work board |
 | Two tween nodes, two SHA-256, two inflate: nobody searched first | `python3 scripts/find_existing.py <keywords>` before every claim; the weekly dedupe audit |
-| Claude 2 branches had no "How to try it", sample scene or screenshots | Readiness checklist; the PR hygiene check fails a PR with no "How to try it" |
+| Branches had no "How to try it", sample scene or screenshots | Readiness checklist; the PR hygiene check fails a PR with no "How to try it" |
 | `<mutex>` in a header broke the Windows MinGW build (twice) | `branch-lint` fails the push (rule 21a), plus a MinGW syntax check |
 | Stale tests and doc claims | Bug-class checklist in every brief; `bug_patterns.py` warnings; docs-changed warning |
 | Two branches editing the same lines; three branches rewriting one generated file | Collision check (file and line ranges); generated files regenerated, never hand-edited; shared-file handshake |
@@ -24,34 +34,59 @@ The problems of 2026-11-15 and what now prevents each one:
 | Bugs found late by reviews that cheap checks could have caught | `bug_patterns.py` and `branch-lint` on every push |
 | Agents started without the current rules (CLAUDE.md changes only when a PR merges) | `scripts/make_brief.py` pastes the rules from main plus unmerged rules branches into every brief |
 
-## 1. Lanes
+## 1. Lanes: who does what
 
-Who owns what is in one table, [lanes.json](../lanes.json), read by the scripts. Rules are checked top to bottom, the first
-match wins. Short version:
+Who owns which files is in one table, [lanes.json](../lanes.json). Rules are checked top to bottom; the first match wins.
+This split is the owner's default of 2026-11-22, written down by the coordinator. The owner can change it; then change
+`lanes.json` and this table in the same PR.
 
-| Owner | Areas |
+| Lane | Works on |
 |---|---|
-| **Claude 2** | Bug fixes (any file, see below) and our own replacements for third-party code: model and image readers, WAV and audio decoders, HTTP, crypto (rule 18), the platform layer, the UI toolkit `okayui/`, the text editor, the ufbx and Assimp replacements, and their tests and docs |
-| **Coordinator** | Unfinished features: gameplay components, in-game UI, editor features, rendering features, visual scripting features, inventory, vehicles, the launcher, examples, tests and docs of those; plus releases, CI and packaging (`.github/`, `scripts/`, `cmake/`, `dist/`), `shared/` (except the own-code headers), reviews |
-| **Shared (handshake)** | `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`, `engine/CMakeLists.txt`, the feature map and every generated file, `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `examples/visual_script/playground/coverage.okayvs`, `docs/status/UNFINISHED.md`, roadmap and registry-style docs |
-| **Open** | Everything else (for example `engine/include/okay/Core`): either lane may claim it |
+| **Coordinator** (`claude/*`) | Unfinished features: gameplay, in-game UI, editor features, rendering, visual scripting, inventory, vehicles, the launcher. The Xbox UWP port. Our own replacements for third-party code: crypto, the platform layer, model and image readers, WAV and audio decoders, HTTP, `okayui/`, the text editor (handed over from Claude 2 on 2026-11-22). Releases, CI and packaging (`.github/`, `scripts/`, `cmake/`, `dist/`). Reviews. |
+| **Claude 2** (`claude2/*`) | Bug fixes (any file, see below). Physics: `engine/*/Physics/**`, Ragdoll, ActiveRagdoll, Joint3D. Removing duplicate code and the duplicate guard (`scripts/dup_lint.py`, `docs/engine/shared_code.md`). The editor `main.cpp` split. |
+| **Claude 3** (`claude3/*`) | The Build window and game export (BuildPipeline, Build Settings). World, level and chunk streaming, World Partition, LOD and asset streaming (WorldStreamer, `Optimize/StreamingGrid`). The Steam/Epic Store Kit (`Platform/Steam`, `Platform/Epic`, PlatformServices, StoreExport). C# and Lua scripting in the script editor. |
+| **Shared** (handshake) | `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`, `engine/CMakeLists.txt`, `CMakeLists.txt`, the feature map and every generated file, `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `docs/status/UNFINISHED.md`, roadmap and registry-style docs. |
+| **Open** | Everything else (for example `engine/include/okay/Core`). Any lane may claim it. |
 
-How the lanes work in practice:
+A glob in `lanes.json` must match a file in git. A glob for files that do not exist yet (for example the Lua folder, which
+is still on a branch) goes in the rule's `planned` list. `scripts/tests/test_collab.py` checks both.
 
-- Work in your lane. If you need a change in the other lane's files, ask on issue #422 (`Claim:` naming those files). The
-  owner answers `Agree: <your branch>` or says no. Until then the branch-lint check fails the push.
-- **Shared files need a handshake.** Only one open claim at a time may name a shared file. Keep your edit small and at the
-  end of the file or in its own block, so a second branch can merge. Never rewrite a whole generated file by hand.
+How the lanes work:
+
+- **Work in your lane.** A file owned by lane X, changed by a branch of lane Y, needs `Agree: <branch>` from lane X.
+  Ask on issue #422 with a claim that names those files. Until X agrees, `branch-lint` fails the push.
+- **Bug fixes may touch any file** (owner, 2026-11-15). Bugs go to Claude 2. Post the claim with `Kind: bug` and a
+  `Test-first:` line (the failing test that shows the bug). Then no `Agree:` is needed for the lane. A claim that overlaps
+  another open claim still needs the handshake.
+- **Shared files need a handshake.** Only one open claim at a time may name a shared file. Every lane whose claim touches
+  it agrees. Keep your edit small, at the end of the file or in its own block, so the next branch can merge.
 - **Generated files are regenerated, never edited.** `docs/FEATURE_MAP.md` and `docs/feature_map/_index_*.md` come from
   `python3 scripts/gen_feature_map.py` (check: `--check`); `editor/VisualScriptNodeDocs.inc` from
-  `scripts/gen_vs_node_docs.py`. Edit the source pages, then regenerate. If the file conflicts when merging main,
-  regenerate instead of resolving by hand.
-- **Bugs go to Claude 2, and a bug fix may touch any file** (owner, 2026-11-15). Post the claim with an extra line
-  `Kind: bug` and a `Test-first:` line (the failing test that proves the bug); the lane check then does not need an `Agree:`
-  from the other lane. Claims that overlap another open claim still need the handshake. The coordinator's agents fix a bug
-  only inside a feature branch they are finishing (rule 24).
-- **No duplicate features** (owner, 2026-11-15): both lanes run `find_existing.py` first, extend what exists, and say
+  `scripts/gen_vs_node_docs.py`. Edit the source pages, then regenerate. On a merge conflict, regenerate.
+- **No duplicate features** (owner, 2026-11-15). Every lane runs `find_existing.py` first, extends what exists, and says
   `Existing:` / `Gap:` in the claim.
+- **A new lane** is one entry in the `lanes` map of `lanes.json` (name and branch prefix) plus its rules. Then add the
+  prefix to the two lists in `.github/workflows/branch-lint.yml` and to `DisplayBranch` in `shared/TestBuild.hpp`.
+  The tests fail until you do.
+
+### Who merges and who releases
+
+- **Any Claude may merge its own lane's PRs** once they pass CLAUDE.md rule 6 (every CI job finished and green,
+  including "Build & test (Ubuntu)"; squash with the title `<PR title> (#N)` and the exact head sha).
+- **Only the coordinator** merges the release PR, dispatches `release.yml` and checks the release (rules 11 to 13).
+- Never merge another lane's PR without that lane's `Agree:` on #422, except to fix it under rule 8.
+
+Note: CLAUDE.md rules 10 and 25 still say that only the main session opens and merges PRs and that Claude 2 opens none.
+Until CLAUDE.md is updated to match, follow CLAUDE.md (the owner's file wins over this page).
+
+### How to hand work over
+
+1. Push your branch (plain push). Make sure the last commit says `WIP` if it is not finished.
+2. Post one comment on #422: `Release: <branch>`, then `Handed to: <lane>` and the state in short lines: what works and
+   is tested (with the test names and counts), what is written but not built, what fails, and the next steps.
+3. The lane that takes it over posts its own `Claim:` for a new branch with its own prefix, stacked on yours
+   (`git switch -c claude3/x origin/claude2/x`). It never pushes to the other lane's branch.
+4. Move any `lanes.json` paths that change owner in the same PR as the hand-over note.
 
 ## 2. Before you start: find what exists (2 minutes)
 
@@ -68,28 +103,36 @@ branch's owner first.
 
 ## 3. The claim protocol
 
-Claims live on issue #422, one comment per claim. The format is fixed so a script can read it:
+Claims live on issue #422, one comment per claim, for all three lanes. The format is fixed so a script can read it:
 
 ```
-Claim: claude2/tween-easing
-Existing: TweenPosition node (editor/VisualScriptCategories.hpp), Tween.cpp; no easing choice in the node
-Gap: add an easing pin (linear, ease-in, ease-out, ease-in-out) to the tween nodes
-Files: engine/src/Core/Tween.cpp, engine/include/okay/VisualScript/**, tests/test_tween_ease.cpp
-Test-first: tween_ease
-Try-it: examples/visual_script/tween_ease.okayvs, press Play, the box eases in and out
+Claim: claude3/world-streaming-2
+Lane: claude3
+Existing: WorldStreamer (engine/include/okay/Components/WorldStreamer.hpp), StreamingGrid; claude2/world-streaming (WIP)
+Gap: finish chunk streaming: the Clear and Flush counts in test_chunk_streaming
+Files: engine/src/Optimize/ChunkStreamer.cpp, tests/test_chunk_streaming.cpp
+Test-first: chunk_streaming
+Try-it: examples/streaming, walk to the edge, the next chunk loads
 ```
 
-(The five fields may also sit on one line separated by ` / `.)
+(The fields may also sit on one line separated by ` / `.)
+
+- `Lane:` is optional. It names the lane (`claude3`, `Claude 3`, `coordinator`). Without it the lane comes from the branch
+  prefix. A `Lane:` that does not match the prefix is a refused claim.
+- The lane may also be written in brackets: `Claim (Claude 3): claude3/x`.
+- `Kind: bug` marks a bug fix (see section 1).
 
 1. **A claim is one comment** starting `Claim: <branch>`, with `Existing`, `Gap`, `Files` (globs), `Test-first` (the
    failing test you will write first) and `Try-it` (the scene or steps the owner will use).
-2. **Refused** until the other side releases or agrees: a claim whose `Files` are in the other lane, or that overlap an open
-   claim. The work board shows the refusal reason in the claims table. A refused claim is not started.
+2. **Refused** until the other side releases or agrees: a claim whose `Files` are in another lane, or that overlap an open
+   claim (also one of the same lane). The work board shows the refusal reason in the claims table. A refused claim is not started.
 3. **Claims expire after 24 hours without a push** to the branch. A stale claim stops blocking others and shows as stale on
    the board.
 4. **Release** with a comment `Release: <branch>` when the work is merged, handed over or dropped. A result report is not a
    release.
 5. **Agree** with a comment `Agree: <branch>` from the lane that owns the files (or the owner of the overlapping claim).
+   With three lanes, say which lane agrees: `Agree (Claude 2): claude3/x` or a `Lane: claude2` line under it. That
+   agreement counts for that lane only. A plain `Agree: <branch>` with no lane counts for every lane (the old form).
 6. Work posted without a claim (a branch with no claim and no PR) shows up on the board as unclaimed. Claim it.
 
 ## 4. Readiness checklist (before the coordinator reads a branch)
@@ -113,15 +156,17 @@ Every agent starts from [agent_brief_template.md](agent_brief_template.md): goal
 **rules pasted in full** (not "see CLAUDE.md"), the recurring bug-class checklist from [review_log.md](review_log.md), and
 how to report. Build it with `python3 scripts/make_brief.py --goal ... --branch ... --with-branch origin/claude/owner-rule2`:
 it takes `CLAUDE.md` from `origin/main` and adds the rules of any rules branch that is not merged yet, so no agent works from
-stale rules. The coordinator uses this for its own agents and posts the same brief for Claude 2's new items.
+stale rules. `--lane` takes any lane in `lanes.json` (`coordinator`, `claude2`, `claude3`); the brief lists the other
+lanes' files as off limits.
 
 ## 6. The automatic checks
 
 | Check | Where | Fatal? |
 |---|---|---|
-| Forbidden thread includes in Windows code (rule 21a) | `branch-lint` on every push to `claude/**`, `claude2/**` | yes |
+| Forbidden thread includes in Windows code (rule 21a) | `branch-lint` on every push to every branch (`claude/**`, `claude2/**`, `claude3/**`, `john/**`, main) and on pull requests from forks | yes |
+| Pasted code, or a new copy of a shared helper, in any language ([no_duplicates.md](no_duplicates.md)) | `branch-lint` (`scripts/dup_lint.py check`) | yes (renamed near copies: warning) |
 | Secrets (private keys, `sk-`, `ghp_`, `AKIA`, long key strings) | `branch-lint` | yes |
-| Push into the other lane's open claim | `branch-lint` (`collision_check.py --branch`) | yes |
+| Push into another lane's open claim | `branch-lint` (`collision_check.py --branch`; not for forks, which have no claims) | yes |
 | Code changed with no docs changed | `branch-lint` | warning |
 | Feature map not regenerated | `branch-lint` | warning |
 | MinGW `-fsyntax-only` of changed engine files | `branch-lint` (installs MinGW only when engine files changed) | warning |
@@ -135,6 +180,7 @@ Try them locally, from the repo root with the branch checked out:
 python3 scripts/find_existing.py tween
 python3 scripts/collision_check.py --branch $(git branch --show-current)
 python3 scripts/branch_lint.py all
+python3 scripts/dup_lint.py check         # pasted code / new copies of shared helpers (also: bash scripts/install_hooks.sh)
 python3 scripts/bug_patterns.py
 python3 scripts/tests/test_collab.py      # the scripts' own tests (also ctest: collab_scripts)
 ```
@@ -167,6 +213,21 @@ with the reviewer and with the dedupe audit below.
 - `bug_patterns.py`: all heuristics. `substr-loop` and `loop-copy` flag by shape; `alloc-before-check` looks 10 lines back for
   a read; a limit checked in a helper function is invisible to it. Fix it, or explain it in the report.
 
+## 6a. Integration check: do the open PRs work together?
+
+Each PR's own CI shows it works alone on main. Two green PRs can still break each other once both are in: both
+change the same function, both add the same helper, or one renames what the other calls. The **Integration check**
+workflow (`.github/workflows/integration.yml`, every night and by hand from Actions) does this:
+
+1. It merges every open PR, drafts included, onto main in number order (`scripts/integration_merge.py`). A PR that
+   conflicts is skipped and reported, with whether it conflicts with main or only with another open PR.
+2. It runs the duplicate check over everything the open PRs add together. This catches two PRs adding the same helper.
+3. It builds and runs the full Ubuntu test suite on the merged tree. A failure there that no single PR shows means two
+   PRs break each other: fix it before the second one merges.
+
+The report is in the run summary and the `integration-report` artifact. Nothing is pushed. To try it locally on a
+throw-away worktree of main: `python3 scripts/integration_merge.py --prs 1130 1132` (no build).
+
 ## 7. Weekly dedupe audit
 
 Once a week the coordinator asks Grok (or a read-only agent) to list duplicate features: two classes, nodes, helpers or
@@ -178,7 +239,7 @@ lanes. (Known today: `Sha256` in `Crypto/Crypto.hpp` and in `Platform/Account/Ac
 
 ## 8. What is still by hand
 
-- The coordinator posts `Agree:` and `Release:` answers and settles a refused claim.
+- Each lane posts its own `Agree:` and `Release:` answers. The coordinator settles a refused claim the lanes cannot.
 - Someone runs the weekly dedupe audit and files the findings on #888.
 - Reviews of design and of "does this really match the claim". The scripts only catch the cheap, mechanical cases.
 - Keeping `docs/lanes.json` true when new directories appear (it falls back to "open", which is safe).

@@ -65,6 +65,10 @@ if(OKAY_BUILD_TESTS)
     add_executable(test_xbox_uwp_touch tests/test_xbox_uwp_touch.cpp UwpPlatform.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)
     target_include_directories(test_xbox_uwp_touch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
     add_test(NAME xbox_uwp_touch COMMAND test_xbox_uwp_touch)
+    # Round 3 pure pieces: pending saves before suspend, splash model, keyboard layouts, clipboard seam. Header-only, no engine link.
+    add_executable(test_xbox_uwp_pieces tests/test_xbox_uwp_pieces.cpp)
+    target_include_directories(test_xbox_uwp_pieces PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME xbox_uwp_pieces COMMAND test_xbox_uwp_pieces)
     # The non-blocking SDK check (XboxAsyncProbe.hpp): state machine, "UI call returns in under 5 ms while a 300 ms probe runs", vswhere JSON, cache file.
     add_executable(test_xbox_uwp_async tests/test_xbox_uwp_async.cpp)
     target_include_directories(test_xbox_uwp_async PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

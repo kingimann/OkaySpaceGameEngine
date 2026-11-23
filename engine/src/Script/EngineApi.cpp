@@ -1419,7 +1419,7 @@ EngineApi Build() {
             [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 2); return Value{s && s->SetMapEnabled(S(a[0]), std::get_if<bool>(&a[1]) ? *std::get_if<bool>(&a[1]) : F(a[1]) != 0.0f)}; },
             "Switch a local player's action map on or off (Gameplay, UI ...). False for an unknown map."));
         in.staticMethods.push_back(method("PlayerRebind", {tString, tInt, tInt, tString, tInt}, {"action", "binding", "part", "input", "player"}, tBool,
-            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 4); return Value{s && s->Rebind(S(a[0]), I(a[1]), I(a[2]), S(a[3]))}; },
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 4); return Value{s && InputRuntime::Rebind(a.size() > 4 ? I(a[4]) : 0, S(a[0]), I(a[1]), I(a[2]), S(a[3]))}; },   // player 0's reaches InputActions too
             "Change one input of a local player's action (binding and part count from 0), e.g. (\"Jump\", 0, 0, \"key:j\", 0). False if it is not understood."));
         in.staticMethods.push_back(method("MyPlayer", {}, {}, tInt,
             [](const Value&, std::vector<Value>&, CallContext& c) {

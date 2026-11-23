@@ -8,6 +8,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 ## 36. Math & geometry
 
 ### 36.1 Vectors and colours
+- **System:** Math - Vectors, rotations, matrices, bounds, easing, noise and random numbers every system uses.
 - **What:** The 2D, 3D and 4D float vectors every system uses, and the RGBA colour type.
 - **Parts:**
   - 36.1.1 Vec2 - `Math/Vec2` - 2D vector with Dot, Cross, Angle, SignedAngle, Perpendicular, Rotate, Reflect, ClampMagnitude, MoveTowards, SmoothDamp
@@ -29,6 +30,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Project this velocity onto the slope"; "Why does SmoothDamp give NaN when the game is paused?"
 
 ### 36.2 Quaternions and matrices
+- **System:** Math
 - **What:** Rotation as quaternions and 4x4 column-major matrices for transforms, view and projection.
 - **Parts:**
   - 36.2.1 Quaternion - `Math/Quat` - `Euler`, `AngleAxis`, `FromToRotation`, `LookRotation`, `Slerp`, `Lerp`, `RotateTowards`, `Angle`, `ToEuler`, `FromRotationMatrix`, `Inverse`, `Conjugate`
@@ -48,6 +50,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Rotate this vector 30 degrees about the slope normal"; "Get position, rotation and scale back out of a Mat4"
 
 ### 36.3 Scalars, interpolation and easing
+- **System:** Math
 - **What:** Scalar helpers and the curves used for animation and game feel.
 - **Parts:**
   - 36.3.1 Scalar helpers - `Math/Mathf` - Clamp, Lerp, InverseLerp, SmoothStep, Repeat, PingPong, MoveTowards, DeltaAngle, LerpAngle, SmoothDamp, SmoothDampAngle, Approximately
@@ -69,6 +72,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Use a springy ease for the menu pop-in"; "Damp the camera toward the target without overshoot"
 
 ### 36.4 Bounds, rectangles and shapes
+- **System:** Math
 - **What:** Axis-aligned boxes and 2D rectangles, and the shape and intersection types that grow around them.
 - **Parts:**
   - 36.4.1 Bounds - `Math/Bounds` - centre and extents box: `Contains`, `Intersects`, `Encapsulate`, `SetMinMax`
@@ -87,6 +91,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Raycast against this box and return the hit distance"; "Grow the bounds to include every child mesh"
 
 ### 36.5 IK math
+- **System:** Inverse Kinematics
 - **What:** The solvers and helpers behind foot, limb, chain and look-at IK, kept free of scene dependencies so the animation components share them.
 - **Parts:**
   - 36.5.1 Two-bone solver - `Math/TwoBoneIK` - analytic law-of-cosines solve with pole hint, bend limits and soft reach
@@ -108,6 +113,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "Limit the elbow to 150 degrees without changing the solver"
 
 ### 36.6 Geometry helpers elsewhere
+- **System:** Math
 - **What:** Geometry code that lives outside `Math/` because a system needed it first: the view frustum, ray and triangle tests, camera rays, closest-point and ray tests in physics, mesh queries.
 - **Parts:**
   - 36.6.1 Frustum and bounding spheres - `Render/Culling` - `Frustum` from a view-projection matrix, `MeshLocalSphere`, `ObjectWorldSphere`, `CulledByFrustum` (see 2.8)
@@ -129,6 +135,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Ask me like:** "One shared Ray and Plane type for physics, picking and culling"
 
 ### 36.7 Noise, curves, colour spaces and random streams
+- **System:** Math
 - **What:** Shared procedural helpers (noise, curves, colour spaces, seeded random streams) that merged in #571, and the several private copies they should replace.
 - **Parts:**
   - 36.7.1 Existing private noise - `Render/ProcTexture` (`Hash01`, `ValueNoise`, `Fbm`, `Worley`), `Components/Terrain` (`ValueNoise`, `Generate`), `Render/Mesh` (`ValueNoise`, `PropRand`), `Components/ParticleSystem` (`Noise3`), `Components/VirtualCamera` (`Noise`)

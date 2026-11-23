@@ -49,7 +49,7 @@ Each folder has a `README.md` that lists its pages with one line each.
 | Folder | What is in it |
 |---|---|
 | [status/](status/README.md) | What is going on and what is left: the work board, the unfinished lists, the plan to replace outside libraries, where code came from. |
-| [process/](process/README.md) | How the work is done: the two Claudes, agent briefs, reviews, testing, QA, and [okay_run](process/okay_run.md) (run a scene and check what happened). |
+| [process/](process/README.md) | How the work is done: the three Claudes, agent briefs, reviews, testing, QA, and [okay_run](process/okay_run.md) (run a scene and check what happened). |
 | [engine/](engine/README.md) | The core: runtime, time, maths, scenes, prefabs, assets, saving, input, languages, settings, debug and speed tools. |
 | [gameplay/](gameplay/README.md) | Game pieces: animation, cameras, AI and paths, dialogue, cutscenes, vehicles, weapons, survival, wind, your first game. |
 | [rendering/](rendering/README.md) | How things look: the renderers and their status, lighting, terrain and water, particles, textures. |
@@ -67,6 +67,8 @@ Each folder has a `README.md` that lists its pages with one line each.
 
 These stay at the top of `docs/` because scripts and tests write or read them there. Do not edit the made ones by hand.
 
+- [SYSTEMS.md](SYSTEMS.md): every named system (Physics, Save Games, OkayScript...) with one plain line on what it does, its status, main code and the duplicates found
+  (also made by `scripts/gen_feature_map.py`, from the `System:` lines of the feature map pages).
 - [FEATURE_MAP.md](FEATURE_MAP.md): every system, where its code, tests and docs are, and what is still open
   (made by `scripts/gen_feature_map.py` from the pages in [feature_map/](feature_map/)).
 - [status/UNFINISHED.md](status/UNFINISHED.md): everything that is not finished (hand-written).

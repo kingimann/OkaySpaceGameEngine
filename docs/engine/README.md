@@ -12,6 +12,7 @@
 - [Logging and profiling](core_logging_profiling.md): Two small core systems, both header-only: `okay/Core/Log.hpp` and `okay/Core/Profiler.hpp`.
 - [Core runtime](core_runtime.md): The core runtime foundations and the core audit notes.
 - [Core tools](core_tools.md): Small, dependency-free helpers in `okay/Core/`.
+- [Shared code: one place for each job](shared_code.md): the one file to use for hashing, CRC, Base64, JSON, noise, easing, tweens, timers, pools, saves, input, logging and more. Look here before writing a helper.
 - [Data assets and data packs](data_assets.md): Data assets and data packs: typed data files a game reads (headers `okay/Core/DataAsset.hpp`, `okay/Core/DataPack.hpp`).
 - [Profiling and debugging tools (data layer)](debug_tools.md): The profiling and debugging tools data layer (headers in `engine/include/okay/Debug/`, sources in `engine/src/Debug/`).
 - [Display settings](display_settings.md): `okay::DisplaySettings` (`okay/Core/DisplaySettings.hpp`) holds what the Settings screen changes about the window and the picture: the **window mode**, the **resolution**, **vsync** and the **quality preset**.

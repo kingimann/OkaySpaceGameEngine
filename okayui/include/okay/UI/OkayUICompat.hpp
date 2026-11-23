@@ -511,8 +511,8 @@ template <class T, class... A> inline bool TreeNodeEx(T* ptrId, unsigned flags, 
 void PushFont(Font* font);
 void PushFont(Font* font, float sizePixels);   // the size is accepted and not used (see above)
 void PopFont();
-/// What Dear ImGui hands a text callback. OkayUI text fields have no callbacks: the type exists so the code that defines one compiles, and the callback
-/// pointer passed to the InputText overloads below is stored nowhere and never called.
+/// What a text callback is handed. The InputText overloads below call it for InputText_CallbackHistory (Up / Down) and
+/// InputText_CallbackCompletion (Tab) while the field has the keyboard; other callback flags never call it.
 struct InputTextCallbackData {
     int EventFlag = 0, Flags = 0, EventChar = 0, EventKey = 0; void* UserData = nullptr; char* Buf = nullptr; int BufTextLen = 0, BufSize = 0; bool BufDirty = false;
     int CursorPos = 0, SelectionStart = 0, SelectionEnd = 0;

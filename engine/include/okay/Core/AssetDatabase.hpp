@@ -91,7 +91,7 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text);
 struct ScanOptions {
     bool createMetas = true;           ///< write a `.okaymeta` for assets that have none
     bool indexUnmetaed = false;        ///< with createMetas off: still index assets that have no meta (in memory only, nothing is written);
-                                       ///< they get a GUID that lasts for the session and a meta appears only when something is stored (labels, settings, EnsureMeta)
+                                       ///< the GUID is derived from the project path, so a new session finds the same one; a meta appears only when something is stored (labels, settings, EnsureMeta)
     bool detectMoves = true;           ///< follow moved / renamed files by GUID, hash and name
     bool matchByName = true;           ///< last resort: one orphan meta + one new file with the same name and type
     bool verifyHashes = true;          ///< hash every file on a first scan (false: trust a meta's hash when the size matches)

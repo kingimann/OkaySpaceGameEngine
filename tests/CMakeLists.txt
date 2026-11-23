@@ -5134,3 +5134,7 @@ add_test(NAME vs_facing COMMAND test_vs_facing)
 add_executable(test_dataasset_file_appears test_dataasset_file_appears.cpp)
 target_link_libraries(test_dataasset_file_appears PRIVATE okay::engine)
 add_test(NAME dataasset_file_appears COMMAND test_dataasset_file_appears)
+
+add_executable(test_asset_guid_stable test_asset_guid_stable.cpp)
+target_link_libraries(test_asset_guid_stable PRIVATE okay::engine)
+add_test(NAME asset_guid_stable COMMAND test_asset_guid_stable)

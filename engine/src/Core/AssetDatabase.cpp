@@ -3,6 +3,7 @@
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/StringId.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -33,6 +34,20 @@ using adb::U8;
 namespace {
 
 constexpr std::size_t kMaxMetaBytes = 1u << 20;
+
+// The same project path always yields the same GUID, so an asset indexed with no .okaymeta
+// (ScanOptions::indexUnmetaed) keeps its id across sessions until a meta file is written.
+// Both halves are StringId hashes (Core/StringId.hpp) of the path with different prefixes.
+Guid GuidFromPathKey(const std::string& key) {
+    Guid g;
+    if (key.empty()) { g.lo = 1; return g; }
+    const std::string hiKey = std::string("okay-asset-hi\n") + key;
+    const std::string loKey = std::string("okay-asset-lo\n") + key;
+    g.hi = StringId::HashOf(hiKey);
+    g.lo = StringId::HashOf(loKey);
+    if (g.IsNull()) g.lo = 1;
+    return g;
+}
 
 std::uint64_t Splitmix(std::uint64_t x) {
     x += 0x9E3779B97F4A7C15ull;
@@ -879,7 +894,26 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (!opt.indexUnmetaed) { c.skip = true; ++rep.unmetaed; continue; }
             writeIt = c.dupLoser;   // a copied meta needs its own GUID on disk, or it would change at every scan
         }
-        c.guid = NewGuid();
+        if (!writeIt) {
+            // In memory only: the id is a function of the path, so a later session finds the same one
+            // without a meta. A clash with some other asset's id falls back to a fresh random one.
+            const std::string key = KeyOf(c.fe.rel);
+            const Guid g = GuidFromPathKey(key);
+            auto taken = [&](const Guid& x) {
+                if (x.IsNull() || present.count(x)) return true;
+                auto sit = m_slots.find(x);
+                if (sit != m_slots.end() && KeyOf(sit->second.rec.path) != key) return true;
+                auto vit = m_vanished.find(x);
+                if (vit != m_vanished.end() && KeyOf(vit->second.rec.path) != key) return true;
+                auto oit = m_orphans.find(x);
+                if (oit != m_orphans.end() && KeyOf(oit->second) != key) return true;
+                return false;
+            };
+            c.guid = taken(g) ? NewGuid() : g;
+        } else {
+            c.guid = NewGuid();
+        }
+        if (!c.guid.IsNull()) present.insert(c.guid);
         c.created = true;
         c.needsWrite = writeIt;
         if (c.dupLoser) {

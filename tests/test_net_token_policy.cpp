@@ -71,6 +71,7 @@ bool Join(RawHost& host, bool anyHost) {
 
 int main() {
     RUN_SUITE("net_token_policy");
+    okay::net::Startup();   // raw UdpSockets below open before any NetworkManager does: Windows needs WSAStartup first
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 

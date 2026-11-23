@@ -137,7 +137,7 @@ private:
 
 bool SaveShot(Image& image, const std::string& name) {
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::path("/tmp/okay-touch-controls") / name;
+    const fs::path tmp = (fs::temp_directory_path() / "okay-touch-controls") / name;
     const fs::path art = fs::path("/opt/cursor/artifacts") / name;
     std::error_code ec;
     fs::create_directories(tmp.parent_path(), ec);

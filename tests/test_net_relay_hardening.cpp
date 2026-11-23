@@ -1,3 +1,4 @@
+#include "okay/Net/UdpSocket.hpp"
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Net/RelayServer.hpp"
@@ -109,6 +110,7 @@ std::vector<std::uint8_t> Handshake(RelayServer& relay, RelayRole role, const st
 
 int main() {
     RUN_SUITE("net_relay_hardening");
+    okay::net::Startup();   // raw UdpSockets below open before any NetworkManager does: Windows needs WSAStartup first
 
     // ---- #701: a relay that never answers ends the attempt with an error ----
     {

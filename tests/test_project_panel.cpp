@@ -43,6 +43,15 @@ std::string ReadFile(const std::string& p) {
 }
 bool Has(const std::string& hay, const std::string& needle) { return hay.find(needle) != std::string::npos; }
 bool Exists(const std::string& p) { std::error_code ec; return fs::exists(fs::u8path(p), ec); }
+// True when the folder lists the file under exactly this name (letter case included). fs::exists ignores case on
+// Windows, so it cannot tell "Hero.PNG" from "hero.png" there.
+bool ListedAs(const std::string& p) {
+    std::error_code ec;
+    const fs::path f = fs::u8path(p);
+    for (fs::directory_iterator it(f.parent_path(), ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().filename() == f.filename()) return true;
+    return false;
+}
 
 using Tree = std::map<std::string, std::string>;
 Tree Snap(const fs::path& root) {
@@ -256,11 +265,11 @@ int main() {
         CHECK(!b.Rename(p.tex, "other").ok);                                      // "other.png" exists
         CHECK(Exists(p.tex));
         auto r = b.Rename(p.tex, "hero.v2");                                     // dots in a name are fine: the extension is kept
-        CHECK(r.ok && Exists(p.td.at("Art/hero.v2.png")));
+        CHECK(r.ok && ListedAs(p.td.at("Art/hero.v2.png")));
         r = b.Rename(p.td.at("Art/hero.v2.png"), "Hero.v2.PNG");                 // same extension in another case: taken as typed
-        CHECK(r.ok && Exists(p.td.at("Art/Hero.v2.PNG")) && !Exists(p.td.at("Art/hero.v2.png")));
+        CHECK(r.ok && ListedAs(p.td.at("Art/Hero.v2.PNG")) && !ListedAs(p.td.at("Art/hero.v2.png")));
         r = b.Rename(p.td.at("Art/Hero.v2.PNG"), "hero.v2.png");                 // back, a change of case only
-        CHECK(r.ok && Exists(p.td.at("Art/hero.v2.png")));
+        CHECK(r.ok && ListedAs(p.td.at("Art/hero.v2.png")));
         r = b.Rename(p.td.at("Art/hero.v2.png"), "h\xC3\xA9ro \xE2\x9C\x93 sprite");
         CHECK(r.ok && Exists(p.td.at("Art/h\xC3\xA9ro \xE2\x9C\x93 sprite.png")));
         CHECK(Has(ReadFile(p.scene), "h\xC3\xA9ro \xE2\x9C\x93 sprite.png"));

@@ -9,7 +9,11 @@
 //     user's login hash), or holds a ':' other than one drive letter followed by a slash ("C:/x"; "C:x" is refused).
 //     The same screen, on every platform, also refuses a path component that is a Windows reserved device name (CON,
 //     PRN, AUX, NUL, COM1-COM9, LPT1-LPT9, in any case, with or without an extension: "con.png") and a component that
-//     ends in a '.' or a space (other than "." and ".."), which Windows silently trims to another name.
+//     ends in a '.' or a space (other than "." and ".."), which Windows silently trims to another name. A name that is
+//     not valid UTF-8 is refused on every platform too (on Windows std::filesystem::u8path throws on it; an old .mtl
+//     saved as Latin-1 with "caf\xE9.png" is the usual case). Each name refused here logs one warning that names the
+//     file (bytes that are not UTF-8 shown as \xNN), the model's folder and the reason, so a missing texture is
+//     explained in the log.
 //   * A relative path that stays inside the model's own folder is kept (its "." and ".." resolved on the text), as
 //     before, unless links on the disk lead it out of that folder (and out of every allowed root): then it is dropped.
 //   * An absolute path, or a relative one whose ".." climbs out of the model's folder, is kept only when its text lies
@@ -22,6 +26,8 @@
 //
 // Written for this engine from the path rules of the file systems (POSIX path resolution, the Windows path formats);
 // no other project's code was used.
+#include "okay/Core/Log.hpp"
+#include "okay/Core/Utf8.hpp"
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -108,6 +114,8 @@ inline Kind Screen(const std::string& p, std::string* why) {
     auto refuse = [&](const char* w) { if (why) *why = w; return Kind::Refused; };
     if (p.empty()) return refuse("an empty file name");
     if (p.find('\0') != std::string::npos) return refuse("a file name with a NUL character");
+    // Not UTF-8: on Windows std::filesystem::u8path throws on such text, and no real file has that name.
+    if (!utf8::IsValid(p)) return refuse("a file name that is not valid UTF-8");
     if (p.find_first_of("?*\"<>|") != std::string::npos) return refuse("a file name with a wildcard or device character");
     if (p.size() >= 2 && p[0] == '/' && p[1] == '/') return refuse("a network or device path (\\\\host\\share, \\\\?\\) is not allowed");
     {
@@ -128,6 +136,21 @@ inline Kind Screen(const std::string& p, std::string* why) {
         return Kind::Absolute;
     }
     return p[0] == '/' ? Kind::Absolute : Kind::Relative;
+}
+
+// A file name as it can be shown in a log line: control bytes, and every byte above 127 when the text is not valid UTF-8,
+// are written as \xNN ("caf\xE9.png"); valid UTF-8 ("café.png") is left as it is.
+inline std::string Printable(const std::string& s) {
+    const bool utf8ok = utf8::IsValid(s);
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        const unsigned char c = (unsigned char)ch;
+        if (c < 0x20 || c == 0x7F || (!utf8ok && c >= 0x80)) { out += "\\x"; out += hex[c >> 4]; out += hex[c & 15]; }
+        else out += ch;
+    }
+    return out;
 }
 
 // "a/./b/../c" -> {"a", "c"}. False when a ".." climbs above the start.
@@ -220,8 +243,13 @@ inline std::string ResolveModelTexturePath(std::string written, const std::strin
     namespace d = texture_path_detail;
     namespace fs = std::filesystem;
     for (char& c : written) if (c == '\\') c = '/';
-    const d::Kind kind = d::Screen(written, nullptr);
-    if (kind == d::Kind::Refused) return {};
+    std::string why;
+    const d::Kind kind = d::Screen(written, &why);
+    if (kind == d::Kind::Refused) {
+        Log::Warning("File '", d::Printable(written), "' (named by a model in '", d::Printable(modelDir.empty() ? std::string(".") : modelDir),
+                     "') was not loaded: ", why, ".");
+        return {};
+    }
     std::vector<d::Root> roots;
     {
         d::Guard lock;

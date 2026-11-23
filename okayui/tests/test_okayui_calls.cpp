@@ -254,10 +254,15 @@ int main() {
     {   // SaveIniSettingsToMemory / LoadIniSettingsFromMemory: the dock layout as text
         Reset();
         std::size_t n = 99;
-        const char* a = UI::SaveIniSettingsToMemory(&n);
-        CHECK(a != nullptr && n == std::strlen(a) && UI::SaveIniSettingsToMemory() != nullptr);
+        const char* p = UI::SaveIniSettingsToMemory(&n);
+        CHECK(p != nullptr && n == std::strlen(p));
+        // The pointer is only valid until the next call, so keep a copy before calling again (the second call frees the old
+        // text: Linux happened to leave the bytes in place, the Windows heap did not).
+        const std::string a = p ? p : "";
+        CHECK(UI::SaveIniSettingsToMemory() != nullptr);
         const std::string before = UI::DockSaveLayout();
         CHECK(before == a);
+        if (before != a) std::fprintf(stderr, "  layout text: [%s]\n  memory text: [%s]\n", before.c_str(), a.c_str());
         UI::LoadIniSettingsFromMemory(nullptr, 5);
         UI::LoadIniSettingsFromMemory("garbage that is not a layout", 0);
         CHECK(UI::DockSaveLayout() == before);

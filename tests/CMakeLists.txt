@@ -8,6 +8,10 @@ foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD
     endif()
 endforeach()
 
+# The tests folder as an absolute path, for tests that read source files next to them. __FILE__ is relative to the
+# build folder in some builds (the MinGW cross build gives "../tests/x.cpp"), so it cannot be used to find them.
+add_compile_definitions(OKAY_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -4686,8 +4690,10 @@ add_test(NAME controller_mapping COMMAND test_controller_mapping)
 # a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
 # reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
 # see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/process/automated_testing.md "CI speed").
+# ui_render_bench (3 ms per UI frame) and project_panel_db (re-checking 5,000 assets) missed their limits on the Windows test run
+# while sharing the runner with other tests; scripts/run_windows_tests.py honours RUN_SERIAL the same way.
 foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
-                     launcher_download_own launcher_versions native_fetch playfab_own)
+                     launcher_download_own launcher_versions native_fetch playfab_own ui_render_bench project_panel_db)
     if(TEST ${_serial_test})
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()

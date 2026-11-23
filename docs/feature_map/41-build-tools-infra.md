@@ -288,3 +288,25 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Words:** module, modular engine, manifest, okaymodule, module group, ctest label, strip
 - **Seen as:** `-- OkaySpace: 40 engine modules; ... files of okay_engine in modules` while configuring; `[okay] modules: 40 modules, 40 on` in the player log; a Modules tab in Build Game's report; Edit > Project Settings > Modules; the Modules line in File > New Project; a "Modules" warning on a pushed branch
 - **Ask me like:** "which tests belong to the physics module?"
+
+### 41.14 okay command line (with Git underneath)
+- **System:** Okay CLI - One program, `okay` (`okay.exe`), that makes, opens, plays, runs, builds and tests projects and keeps them in version control with the person's own Git.
+  Home: `tools/okay-cli/`. Entry: `tools/okay-cli/Cli.cpp`. Also called: okay, okay.exe, okay_cli, okay vc, command line, CLI, OKAY_BUILD_CLI.
+- **What:** A command line for the engine: `okay new`, `open`, `play`, `run`, `build`, `test`, `info`, `doctor`, `help`, and `okay vc` (init, status, save, history, undo, branch, switch, sync, remote, who) on top of the installed `git` program. It wraps what exists (project creation, the editor's flags, the player, okay_run, Build Game, SceneMerge, SceneDiff) instead of copying it. Messages are short plain sentences.
+- **Parts:**
+  - 41.14.1 Commands and help - `tools/okay-cli/Cli.cpp` - one table of commands and their help; `okay::CommandLine` parses each command; `--project FOLDER` works everywhere; the project is found upward from the current folder (`project.okayproj`, else `Assets/`)
+  - 41.14.2 One process seam - `tools/okay-cli/Process.cpp` - the only code that starts a program: CreateProcessW on Windows (documented quoting rules, stderr to a temp file, no threads), fork/execvp with poll on Linux; a missing program is "not started", not a crash
+  - 41.14.3 Projects - `okay new` (an empty project made headless from `shared/ProjectCreate.hpp`, `ProjectState.hpp` and the `engine_version` stamp; any other template is made by the editor's `--new-project --template`), `okay open` (editor `--open`), `okay play` (player), `okay build` (editor `--build-game`), `okay run` (`scripts/okay_run.py`), `okay test` (every scene and prefab loads and has no clash marks; `--engine` runs ctest), `okay info` / `okay doctor`
+  - 41.14.4 Git underneath - `tools/okay-cli/Git.cpp` - the only file that runs git: `okay vc init` writes a project-aware `.gitignore` (the Build Settings list plus caches, backups and per-person files) and a `.gitattributes` (scenes and prefabs merge and diff with the engine, pictures and sounds binary); status grouped into scenes and prefabs, scripts, assets and project settings; save, history, undo (the current copy is kept in `.okay/backups/undo` first), branch, switch (refuses unsaved changes unless `--carry`), sync (fetch, merge, push to any Git remote; nothing GitHub-specific)
+  - 41.14.5 Scene merge and diff drivers - `okay vc merge-driver %O %A %B %P`, `okay vc diff-driver` - registered in `.git/config` by `okay vc init`; both sides are upgraded with `SceneMigration` first, merged with `SceneMerge` (the result must load into a scratch scene), a real clash keeps our side, still loads and is listed in plain words; a file that is not a scene is merged as text by `git merge-file`
+- **Code:** `tools/okay-cli/Cli.cpp`, `tools/okay-cli/Git.cpp`, `tools/okay-cli/Process.cpp`, `tools/okay-cli/main.cpp`, `CMakeLists.txt` (`okay_cli`, `okay_cli_lib`, `OKAY_BUILD_CLI`), `scripts/build-windows-dist.sh` (copies `okay.exe` into `Tools/`)
+- **API:** `okay help`, `okay new <name> [--template X]`, `okay vc init`, `okay vc save "message"`, `okaycli::Main`, `okaycli::SceneMergeDriver`, `okaycli::Run`
+- **Editor:** none (a separate program; it starts the editor and the player)
+- **Docs:** -
+- **Tests:** `okay_cli` (`tests/test_okay_cli.cpp`: arguments, help, Windows quoting, .gitignore/.gitattributes, status grouping, empty project and `okay test`, the merge and diff drivers on files, and with git installed init/who/save/history/undo/branch/switch/remote/sync and a clean and a clashing scene merge through `git merge` on temporary repositories; exit 77 when git is missing)
+- **Status:** Partial - built and tested on Linux; the Windows build is compiled with MinGW (syntax only) and not run; `okay open`, `play` and `build` with a real editor and player are not tested
+- **Open:** Windows run unverified; no editor Git panel yet (28.1); conflict choice per object is not offered (our side is kept, the person fixes it in the editor); `okay run` needs the engine source folder (Python script)
+- **Related:** 28.1, 28.2, 28.3, 28.4, 18.6, 41.4
+- **Words:** okay, okay.exe, command line, CLI, terminal, okay new, okay open, okay play, okay build, okay vc, git, version control, merge driver, diff driver, gitignore, gitattributes
+- **Seen as:** I want to make and build a game from a terminal; scenes clash after a git merge; autosaves and build output in my commits
+- **Ask me like:** "add a command to the okay CLI"; "save my project with okay vc save"

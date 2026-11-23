@@ -593,7 +593,9 @@ inline std::vector<std::string> IgnoreLines(const std::string& outputDirRelative
     return v;
 }
 /// `existing` plus the wanted lines that it does not have yet (nothing is removed or reordered). `added` = how many were added.
-inline std::string MergeIgnore(const std::string& existing, const std::vector<std::string>& wanted, int* added = nullptr) {
+/// `heading` is the comment line written above the added lines (the okay CLI uses this for .gitignore and .gitattributes too).
+inline std::string MergeIgnore(const std::string& existing, const std::vector<std::string>& wanted, int* added = nullptr,
+                               const std::string& heading = "# added by OkaySpace Build Settings") {
     std::vector<std::string> have;
     std::istringstream in(existing);
     for (std::string l; std::getline(in, l);) { while (!l.empty() && l.back() == '\r') l.pop_back(); have.push_back(l); }
@@ -601,7 +603,7 @@ inline std::string MergeIgnore(const std::string& existing, const std::vector<st
     int n = 0;
     for (const std::string& w : wanted) {
         if (std::find(have.begin(), have.end(), w) != have.end()) continue;
-        if (n == 0) { if (!out.empty() && out.back() != '\n') out += "\n"; out += "# added by OkaySpace Build Settings\n"; }
+        if (n == 0) { if (!out.empty() && out.back() != '\n') out += "\n"; out += heading + "\n"; }
         out += w + "\n"; ++n;
     }
     if (added) *added = n;

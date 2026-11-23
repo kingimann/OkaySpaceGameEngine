@@ -338,6 +338,26 @@ if(OKAY_BUILD_CONTENT_TOOL AND NOT EMSCRIPTEN)
     set_target_properties(okay-content PROPERTIES OUTPUT_NAME "okay-content")
 endif()
 
+# ---- okay: the engine's command line (tools/okay-cli) -------------------------
+# new / open / play / run / build / test / info / doctor, and version control with the person's own git underneath
+# (okay vc ...; scenes and prefabs merge and diff through SceneMerge / SceneDiff as git's drivers). Built by default.
+# okay_cli_lib holds everything but main() so tests/test_okay_cli.cpp checks the same code.
+option(OKAY_BUILD_CLI "Build the okay command-line program" ON)
+if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
+    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp)
+    target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                               PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(okay_cli_lib PUBLIC okay::engine)
+    target_compile_definitions(okay_cli_lib PRIVATE ${OKAY_VERSION_DEFINE})
+    add_executable(okay_cli tools/okay-cli/main.cpp)
+    target_link_libraries(okay_cli PRIVATE okay_cli_lib)
+    if(WIN32)
+        target_link_libraries(okay_cli PRIVATE shell32)
+        okay_win_version(okay_cli "OkaySpace command line" "okay.exe")
+    endif()
+    set_target_properties(okay_cli PROPERTIES OUTPUT_NAME "okay")
+endif()
+
 # ---- Ship SDL2.dll beside the binaries ----
 # Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
 # need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable

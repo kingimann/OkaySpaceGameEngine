@@ -20,6 +20,12 @@ pos 99 40 440
 entry OnEvent:specimens 99
 exec 99 0 100
 exec 100 0 101
+exec 101 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 110
+exec 110 0 111
 node 100 GlSlowMotion
 pos 100 40 520
 default 100 0 0.25
@@ -36,3 +42,23 @@ pos 104 1080 520
 default 104 0 0
 node 105 GlGetGameSpeed
 pos 105 1340 520
+node 106 GlSetLightColor
+pos 106 40 710
+default 106 0 1
+default 106 1 0.5
+default 106 2 0.25
+node 107 GlSetLightIntensity
+pos 107 300 710
+default 107 0 2.5
+node 108 GlCountdownTimer
+pos 108 560 710
+default 108 0 0.5
+node 109 GlDrawDebugSphere
+pos 109 820 710
+default 109 1 2
+node 110 GlDrawDebugBox
+pos 110 1080 710
+node 111 GlWatchValue
+pos 111 1340 710
+default 111 0 "speed"
+default 111 1 12.5

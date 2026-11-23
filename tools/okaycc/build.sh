@@ -13,7 +13,7 @@ fi
 mkdir -p build
 
 objs=()
-for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp src/ir.cpp src/codegen.cpp src/elf.cpp src/link.cpp src/coff.cpp; do
+for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/ast.cpp src/mangle.cpp src/templates.cpp src/parser.cpp src/check.cpp src/lower.cpp src/ir.cpp src/codegen.cpp src/elf.cpp src/link.cpp src/coff.cpp; do
   obj="build/$(basename "${src%.cpp}").o"
   "$CXX" "${FLAGS[@]}" -c "$src" -o "$obj"
   objs+=("$obj")

@@ -237,7 +237,7 @@ int main() {
         for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
         ras.DrawImGui(); const Bitmap imPic = ras.bmp;
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
-        CHECK(okRes.iterations.w > 0 && okRes.continuous.w > 0);
+        CHECK(okRes.iterations.w > 0);   // (one physics path: no quality list and no continuous box any more)
         const UI::Rect a = okRes.apply;
         ok.sim.Move(a.x + a.w * 0.5f, a.y + a.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
         im.Click(a.x + a.w * 0.5f, a.y + a.h * 0.5f, imBody);

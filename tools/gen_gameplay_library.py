@@ -27,6 +27,9 @@ def B(name, fb=None): return (name, "B", fb)
 def T(name, fb=None): return (name, "T", fb)
 def O(name="Target"): return (name, "O", None)
 def R(name): return (name, "R", None)
+def V(name, fb=None): return (name, "V", fb)   # a vector (x, y, z)
+def L(name): return (name, "L", None)           # a list (outputs only)
+def A(name): return (name, "A", None)           # any value
 
 def add(typ, title, topic, sub, level, help_, ins, outs, cpp, *, reg="CAT_DATA",
         exec_=False, exec_outs=None, defaults=None, expect=None, etype="f",
@@ -253,6 +256,8 @@ import gameplay_nodes_batch5
 gameplay_nodes_batch5.define(add, N, B, T, O, R)
 import gameplay_nodes_batch6
 gameplay_nodes_batch6.define(add, N, B, T, O, R)
+import gameplay_nodes_batch7
+gameplay_nodes_batch7.define(add, N, B, T, O, R, V, L, A)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -283,7 +288,7 @@ def kind_of(n):
 
 def decl_inputs(n):
     lines = []
-    fi = bi = ti = oi = 0
+    fi = bi = ti = oi = vi = ai = 0
     for i, spec in enumerate(n["ins"]):
         name, kind, fb = spec
         if kind == "N":
@@ -298,6 +303,10 @@ def decl_inputs(n):
         elif kind == "R":
             tail = "" if oi == 0 else str(oi + 1)
             lines.append(f"GameObject* o{tail} = GpPin(this, {i}, g, ctx, true, \"{name.lower()}\"); (void)o{tail};"); oi += 1
+        elif kind == "V":
+            lines.append(f"Vec3 v{vi} = In({i}, g, ctx, VsValue{{{fb or 'Vec3{0.0f, 0.0f, 0.0f}'}}}).AsVec3(); (void)v{vi};"); vi += 1
+        elif kind == "A":
+            lines.append(f"VsValue a{ai} = In({i}, g, ctx); (void)a{ai};"); ai += 1
     return "\n".join(lines)
 
 def fix_object_names(n):
@@ -308,7 +317,7 @@ def fix_object_names(n):
 def letters(spec_list):
     out = ""
     for _, kind, _ in spec_list:
-        out += {"N": "N", "B": "B", "T": "T", "O": "O", "R": "O"}[kind]
+        out += {"N": "N", "B": "B", "T": "T", "O": "O", "R": "O", "V": "V", "L": "L", "A": "A"}[kind]
     return out
 
 def checks():
@@ -356,10 +365,17 @@ def main():
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
-#include <algorithm>
+#include "okay/Input/InputActions.hpp"
+#include "okay/VisualScript/NodesFriendlyHelpers.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -750,10 +766,23 @@ def write_tests():
 #include "okay/Components/DialogueGraph.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleSeat.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Core/Log.hpp"
+#include "test_sandbox.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -849,6 +878,25 @@ static std::string Snapshot(Scene& s) {
                 for (int i = 0; i < 4; ++i) out += std::to_string(q->Progress(id, i)) + (q->ObjectiveDone(id, i) ? "d" : "-");
             }
         }
+        if (auto* l = g->GetComponent<Light>()) {
+            std::snprintf(b, sizeof b, "L%.3f,%.3f,%.3f,%.3f", l->color.r, l->color.g, l->color.b, l->intensity);
+            out += b;
+        }
+        for (auto* c : g->GetComponents<Collider3D>()) {
+            out += c->enabled ? "c1" : "c0";
+            if (auto* bx = dynamic_cast<BoxCollider3D*>(c)) { std::snprintf(b, sizeof b, "%.3f,%.3f,%.3f", bx->size.x, bx->size.y, bx->size.z); out += b; }
+        }
+        for (auto* c : g->GetComponents<FirstPersonController>()) {
+            std::snprintf(b, sizeof b, "F%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        for (auto* c : g->GetComponents<ThirdPersonController>()) {
+            std::snprintf(b, sizeof b, "P%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        if (auto* ln = g->GetComponent<LineRenderer>()) out += "N" + std::to_string(ln->positions.size());
+        if (auto* m = g->GetComponent<UIModal>()) out += m->IsOpen() ? "M1" : "M0";
+        for (auto* seat : g->GetComponents<VehicleSeat>()) out += seat->Occupant() ? "Z1" : "Z0";
         for (auto* vc : g->GetComponents<VisualScriptComponent>()) {
             std::vector<std::string> names;
             for (const auto& kv : vc->Variables()) names.push_back(kv.first + "=" + Str(kv.second));
@@ -859,7 +907,15 @@ static std::string Snapshot(Scene& s) {
     for (const char* key : {"vs.position.spot", "vs.position.gone", "vs.health.hero"})
         out += std::string(key) + (Prefs::Has(key) ? "1" : "0");
     std::snprintf(b, sizeof b, "|time %.3f %d", Time::BaseTimeScale(), (int)Time::HitStopActive());
-    return out + b;
+    out += b;
+    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+        std::snprintf(b, sizeof b, "|bus%d %.3f %d", i, AudioMixer::groupVolume[i], (int)AudioMixer::groupMuted[i]);
+        out += b;
+    }
+    float lo = 0, hi = 0, secs = 0;
+    if (Input::TakeRumble(lo, hi, secs)) { std::snprintf(b, sizeof b, "|rumble %.3f %.3f %.3f", lo, hi, secs); out += b; }
+    out += "|save " + std::string(SaveGame::Exists("vstest") ? "1" : "0");
+    return out + "|" + InputActions::ExportBindings();
 }
 static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + ": " + e.message); }
 '''
@@ -874,6 +930,8 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
             lines.append("exec 1 0 2")
         else:
             lines += ["node 3 SetVar out", "exec 1 0 3", "data 3 0 2 0"]
+        if n["graph"] and n["graph"] != "giver":
+            lines += n["graph"].split("\n")
         text = ("\\n".join(lines) + "\\n").replace('"', '\\"')
         if n["check"] is not None:
             check = n["check"]
@@ -1071,6 +1129,7 @@ static void CheckPlaygrounds() {{
 '''
     test = prelude + playground + f'''int main() {{
     RUN_SUITE("vs_gameplay_library");
+    okaytest::Sandbox sandbox("vs_gameplay_library");   // Save Game and Rebind Action write save files and prefs here
     Log::sink = [](Log::Level, const std::string&) {{}};   // node errors are collected by the hook
     vs::SetRuntimeErrorHook(&OnErr);
     const char* types[] = {{ {types} }};

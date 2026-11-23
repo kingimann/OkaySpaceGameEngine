@@ -2,20 +2,13 @@
 
 # Code index: engine-Physics
 
-Back to the [code index](../code_index.md). 26 headers, 109 names.
+Back to the [code index](../code_index.md). 30 headers, 149 names.
 
 ## `engine/include/okay/Physics/BodyPose.hpp`
 
 - `MoveBodyWorld` function, line 15: Shift 't' by a world-space delta. No parent: 'localPosition += worldDelta'.
 - `SpinBodyWorld` function, line 23: Integrate angular velocity (radians per second, world axes) for one step.
 - `ParentSample` struct, line 37: The parent pose last physics frame, so leaving that parent can keep its speed.
-
-## `engine/include/okay/Physics/BoxManifold.hpp`
-
-- `Box` struct, line 19: An oriented box: centre, half sizes and its three unit axes (world space).
-- `Point` struct, line 34
-- `Result` struct, line 39
-- `Collide` function, line 109: Contact between boxes A and B. 'skin' lets boxes that are apart by less than that still touch (negative depth), so a
 
 ## `engine/include/okay/Physics/Broadphase.hpp`
 
@@ -83,20 +76,6 @@ Back to the [code index](../code_index.md). 26 headers, 109 names.
 - `PointsFromText` function, line 167
 - `RegisterColliderShapeProperties` function, line 169: The Inspector rows and saved-scene records of the new colliders (called with the other built-in registrations).
 
-## `engine/include/okay/Physics/ContactSolver.hpp`
-
-- `ZeroMat` function, line 27
-- `Body` struct, line 29
-- `Point` struct, line 37
-- `Manifold` struct, line 46
-- `Settings` struct, line 61
-- `PointVelocity` function, line 78
-- `ApplyImpulse` function, line 80
-- `EffectiveMass` function, line 87
-- `Prepare` function, line 94: Work out the masses, tangent directions and targets, and apply the warm start.
-- `SolveVelocities` function, line 133
-- `SolvePositions` function, line 197: Move overlapping bodies apart directly (translation only, so no speed is added). Results are in Body::dp.
-
 ## `engine/include/okay/Physics/ConvexContact.hpp`
 
 - `ConvexHit` struct, line 15: A hit between two convex shapes. 'normal' points from A toward B.
@@ -106,6 +85,79 @@ Back to the [code index](../code_index.md). 26 headers, 109 names.
 
 - `ConvexHit2` struct, line 13
 - `ConvexContact2D` function, line 28: supportA / supportB: callables Vec2(const Vec2& dir) giving the furthest point of each shape along dir.
+
+## `engine/include/okay/Physics/Core/Collide.hpp`
+
+- `DistanceResult` struct, line 25
+- `GjkDistance` function, line 34: Distance between the cores of two shapes (GJK).
+- `PenetrationResult` struct, line 36
+- `EpaPenetration` function, line 43: Penetration of overlapping cores (EPA).
+- `ContactPoint` struct, line 45
+- `Manifold` struct, line 51
+- `Collide` function, line 61: Contact manifold between two shapes when they are closer than 'speculative' (points with separation up to that
+- `ReduceContacts` function, line 64: Reduce a set of contact points to at most four: the deepest, then the ones that span the largest area.
+
+## `engine/include/okay/Physics/Core/DynamicTree.hpp`
+
+- `DynamicTree` class, line 29
+
+## `engine/include/okay/Physics/Core/Horizon.hpp`
+
+- `HorizonEdges` function, line 14: 'corners(faceIndex, k)' gives corner k (0..2) of a face, counter-clockwise from outside.
+
+## `engine/include/okay/Physics/Core/PMath.hpp`
+
+- `V3` struct, line 17
+- `Dot` function, line 34
+- `Cross` function, line 35
+- `LenSq` function, line 36
+- `Len` function, line 37
+- `Mul` function, line 38
+- `Min` function, line 39
+- `Max` function, line 40
+- `Abs` function, line 41
+- `Normalize` function, line 43: Unit vector along v, or 'fallback' when v is (nearly) zero or not finite.
+- `Finite` function, line 48
+- `Basis` function, line 51: Two unit vectors that, with n, make a right-handed orthonormal basis (n, t1, t2). Branch on the smallest component so
+- `Q` struct, line 58: A rotation as a unit quaternion (x, y, z = vector part, w = scalar part).
+- `Conj` function, line 76
+- `NormalizeQ` function, line 77
+- `Rotate` function, line 84: v rotated by the unit quaternion q (expanded form of q v q*).
+- `InvRotate` function, line 89
+- `Integrate` function, line 91: q advanced by angular velocity w (rad/s) over dt: q + 0.5 * (w, 0) * q * dt, renormalised (first-order exponential map).
+- `ToRotationVector` function, line 97: The rotation vector (axis * angle, radians, angle in [0, pi]) of a unit quaternion; the short way round.
+- `M33` struct, line 107: 3x3 matrix, row-major: m[r][c].
+- `Skew` function, line 161: The matrix of the cross product: Skew(a) * b == Cross(a, b).
+- `Xf` struct, line 170: A rigid transform: rotate, then translate.
+- `Aabb` struct, line 179: Axis-aligned box.
+
+## `engine/include/okay/Physics/Core/Shape.hpp`
+
+- `ShapeType` enum, line 30
+- `Tri3` struct, line 32
+- `TriangleSource` class, line 36: Static triangle geometry (a triangle mesh, a height field, a terrain): anything that can list the triangles near a
+- `ScaledTriangleSource` class, line 47: Another source seen through a per-axis scale (one mesh asset shared by many scaled instances: the triangles and
+- `HeightGridSource` class, line 60: A regular grid of heights (a height field or a terrain): vertex (i, j) sits at (x0 + i * cx, h[j * cols + i], z0 + j * cz)
+- `TriMeshSource` class, line 75: A triangle list with its own bounding volume tree (a DynamicTree built once).
+- `HullData` struct, line 90: A convex hull built from points: its vertices and triangles (outward, counter-clockwise seen from outside).
+- `MassProps` struct, line 105
+- `Shape` class, line 111
+- `SortPolygon` function, line 153: Put 'pts' in counter-clockwise order as seen from the side 'n' points to (around their average).
+
+## `engine/include/okay/Physics/Core/World.hpp`
+
+- `IdIndex` function, line 53
+- `BodyType` enum, line 55
+- `BodyDef` struct, line 57
+- `ColliderDef` struct, line 73
+- `JointType` enum, line 87
+- `AxisMode` enum, line 88
+- `JointAxis` struct, line 91: One degree of freedom of a joint, measured in the joint frame of body A (axis 0 = X = hinge / twist / slider axis).
+- `JointDef` struct, line 102
+- `SetupJoint` function, line 136: Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
+- `ContactEvent` struct, line 138
+- `WorldStats` struct, line 146
+- `World` class, line 155
 
 ## `engine/include/okay/Physics/DebrisPool.hpp`
 
@@ -132,7 +184,7 @@ Back to the [code index](../code_index.md). 26 headers, 109 names.
 - `Collision3D` struct, line 24: Data passed to OnCollision3D callbacks describing a contact with another
 - `TriggerContact3D` struct, line 43: Where a trigger overlap happened, readable from inside OnTrigger*3D callbacks
 - `RaycastHit3D` struct, line 51: Result of a 3D raycast.
-- `Physics3D` class, line 74: A small but real 3D physics engine: semi-implicit Euler integration with
+- `Physics3D` class, line 74: The scene's 3D physics. Step() hands every Rigidbody3D, collider and Joint3D to our own physics engine core
 
 ## `engine/include/okay/Physics/PhysicsDebug.hpp`
 
@@ -161,8 +213,8 @@ Back to the [code index](../code_index.md). 26 headers, 109 names.
 
 ## `engine/include/okay/Physics/PhysicsQuality.hpp`
 
-- `PhysicsQuality` enum, line 15: How the step solves contacts.
-- `PhysicsStepStats` struct, line 19: What the last Step did (Improved quality fills all of it; Classic fills the counts it knows). For tests, the debug view
+- `PhysicsQuality` enum, line 11: The physics quality setting old scene files carry ('physicsquality'). There is ONE physics path now (3D: our own
+- `PhysicsStepStats` struct, line 15: What the last Step did (Improved quality fills all of it; Classic fills the counts it knows). For tests, the debug view
 
 ## `engine/include/okay/Physics/PlayerCollision.hpp`
 

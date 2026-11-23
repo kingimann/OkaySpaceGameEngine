@@ -315,8 +315,7 @@
    "tests/test_inspector_model.cpp": 1,
    "tests/test_vs_categories.cpp": 1,
    "tools/okaybuild/cmake_reader.hpp": 4,
-   "tools/okaybuild/okay-build.cpp": 4,
-   "tools/okaycc/src/parser.cpp": 7
+   "tools/okaybuild/okay-build.cpp": 4
   },
   "two-bone-ik": {
    "engine/src/Animation/HumanoidMotion.cpp": 3

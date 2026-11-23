@@ -95,5 +95,22 @@ int main() {
         CHECK(wallMoved > 1.5f);
         CHECK(dIce > 2.0f); CHECK(dRub < 0.3f);
     }
+    {   // ---- physics_engine (Engine quality): tower and pyramid stand, limbs stay attached, the arm is held, no shot passes the wall
+        Scene s;
+        CHECK(Load(s, "physics_engine/physics_engine.okayscene"));
+        CHECK(s.physics3D().quality == PhysicsQuality::Engine);
+        Play(s, 6.0f);
+        float topY = 0; int towers = 0; for (auto& o : s.Objects()) if (o && o->name.rfind("Tower crate", 0) == 0) { topY = std::max(topY, P(o.get()).y); ++towers; }
+        int shotsThrough = 0, shots = 0; for (auto& o : s.Objects()) if (o && o->name.rfind("Shot", 0) == 0) { ++shots; shotsThrough += P(o.get()).x > 30.0f; }
+        float worstLimb = 0; for (auto& o : s.Objects()) if (o && o->name.rfind("Limb", 0) == 0) worstLimb = std::max(worstLimb, std::fabs(P(o.get()).y - 10.0f));
+        GameObject* arm = F(s, "Powered arm");
+        const float armTip = arm ? (arm->transform->Position() + arm->transform->Rotation() * Vec3{1.0f, 0, 0}).y : -1e9f;
+        std::cout << "  engine: tower top y " << topY << " of " << towers << ", shots through the wall " << shotsThrough << "/" << shots
+                  << ", powered arm tip y " << armTip << " (5.2), limbs moved down at most " << worstLimb << " m\n";
+        CHECK(towers == 12); CHECK_NEAR(topY, 11.5, 0.1);
+        CHECK(shots == 6); CHECK(shotsThrough == 0);
+        CHECK(std::fabs(armTip - 5.2f) < 0.15f);
+        CHECK(worstLimb < 6.0f);   // hanging chains: no link fell away (a link that came loose falls to the ground, 10 m down)
+    }
     TEST_MAIN_RESULT();
 }

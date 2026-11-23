@@ -14,10 +14,23 @@
 #include "okay/Components/DialogueGraph.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleSeat.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Core/Log.hpp"
+#include "test_sandbox.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -113,6 +126,25 @@ static std::string Snapshot(Scene& s) {
                 for (int i = 0; i < 4; ++i) out += std::to_string(q->Progress(id, i)) + (q->ObjectiveDone(id, i) ? "d" : "-");
             }
         }
+        if (auto* l = g->GetComponent<Light>()) {
+            std::snprintf(b, sizeof b, "L%.3f,%.3f,%.3f,%.3f", l->color.r, l->color.g, l->color.b, l->intensity);
+            out += b;
+        }
+        for (auto* c : g->GetComponents<Collider3D>()) {
+            out += c->enabled ? "c1" : "c0";
+            if (auto* bx = dynamic_cast<BoxCollider3D*>(c)) { std::snprintf(b, sizeof b, "%.3f,%.3f,%.3f", bx->size.x, bx->size.y, bx->size.z); out += b; }
+        }
+        for (auto* c : g->GetComponents<FirstPersonController>()) {
+            std::snprintf(b, sizeof b, "F%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        for (auto* c : g->GetComponents<ThirdPersonController>()) {
+            std::snprintf(b, sizeof b, "P%.3f,%.3f,%d,%d", c->walkSpeed, c->runSpeed, (int)c->sprintByScript, (int)c->stance());
+            out += b;
+        }
+        if (auto* ln = g->GetComponent<LineRenderer>()) out += "N" + std::to_string(ln->positions.size());
+        if (auto* m = g->GetComponent<UIModal>()) out += m->IsOpen() ? "M1" : "M0";
+        for (auto* seat : g->GetComponents<VehicleSeat>()) out += seat->Occupant() ? "Z1" : "Z0";
         for (auto* vc : g->GetComponents<VisualScriptComponent>()) {
             std::vector<std::string> names;
             for (const auto& kv : vc->Variables()) names.push_back(kv.first + "=" + Str(kv.second));
@@ -123,7 +155,15 @@ static std::string Snapshot(Scene& s) {
     for (const char* key : {"vs.position.spot", "vs.position.gone", "vs.health.hero"})
         out += std::string(key) + (Prefs::Has(key) ? "1" : "0");
     std::snprintf(b, sizeof b, "|time %.3f %d", Time::BaseTimeScale(), (int)Time::HitStopActive());
-    return out + b;
+    out += b;
+    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+        std::snprintf(b, sizeof b, "|bus%d %.3f %d", i, AudioMixer::groupVolume[i], (int)AudioMixer::groupMuted[i]);
+        out += b;
+    }
+    float lo = 0, hi = 0, secs = 0;
+    if (Input::TakeRumble(lo, hi, secs)) { std::snprintf(b, sizeof b, "|rumble %.3f %.3f %.3f", lo, hi, secs); out += b; }
+    out += "|save " + std::string(SaveGame::Exists("vstest") ? "1" : "0");
+    return out + "|" + InputActions::ExportBindings();
 }
 static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + ": " + e.message); }
 
@@ -168,20 +208,20 @@ static void CheckPlaygrounds() {
     const Row rows[] = {
         {"ai", {"GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlFaceObject", "GlCountTaggedInRange"}},
         {"animation", {"GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity"}},
-        {"audio", {"GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlIsSoundPositional"}},
-        {"camera", {"GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlGetCameraTilt"}},
+        {"audio", {"GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlIsSoundPositional", "GlSetBusVolume", "GlMuteBus"}},
+        {"camera", {"GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlGetCameraTilt", "GlGetCameraForward", "GlGetCameraRight"}},
         {"dialogue", {"GlIsDialogueRunning", "GlGetDialogueLine", "GlGetDialogueSpeaker", "GlIsDialogueWaitingForChoice", "GlGetDialogueOptionCount", "GlGetDialogueOptionText", "GlAdvanceDialogue", "GlChooseDialogueOption", "GlStopDialogue"}},
         {"groups", {"GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlRenameObject"}},
         {"health", {"GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime"}},
-        {"input", {"GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlIsJumpHeld", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength"}},
+        {"input", {"GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlIsJumpHeld", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength", "GlRebindAction", "GlRumble"}},
         {"inventory", {"GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlSetCarryLimit", "GlSetStackLimit", "GlGetCarryLimit", "GlIsOverweight", "GlGetSlowdownFromWeight", "GlCountAllItems", "GlGetStackLimit", "GlGetInventorySize"}},
-        {"movement", {"GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlTurnTowardObject", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight"}},
-        {"physics", {"GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked"}},
-        {"progression", {"GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance"}},
+        {"movement", {"GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlTurnTowardObject", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight", "GlSetMoveSpeed", "GlGetMoveSpeed", "GlSetSprinting", "GlSetCrouching", "GlEnterVehicle", "GlExitVehicle", "GlIsDriving"}},
+        {"physics", {"GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked", "GlSetColliderSize", "GlEnableCollider", "GlDisableCollider", "GlIsGrounded"}},
+        {"progression", {"GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlSplitText"}},
         {"quests", {"GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlCountCompletedQuests", "GlIsAnyQuestActive", "GlFailActiveQuests", "GlFinishObjectives", "GlGetObjectiveCount"}},
-        {"saving", {"GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlSaveHealth", "GlLoadHealth"}},
-        {"timing", {"GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlHasTimePassed", "GlGetGameSpeed"}},
-        {"ui", {"GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlGetTextOpacity", "GlGetTextSize"}},
+        {"saving", {"GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlSaveHealth", "GlLoadHealth", "GlSaveGame", "GlLoadGame", "GlHasSave"}},
+        {"timing", {"GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlHasTimePassed", "GlGetGameSpeed", "GlSetLightColor", "GlSetLightIntensity", "GlCountdownTimer", "GlDrawDebugSphere", "GlDrawDebugBox", "GlWatchValue"}},
+        {"ui", {"GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlGetTextOpacity", "GlGetTextSize", "GlGetSliderValue", "GlOpenMenu", "GlCloseMenu"}},
     };
     const std::string dir = std::string(OKAY_SOURCE_DIR) + "/" + kDir + "/";
     for (const Row& r : rows) {
@@ -247,9 +287,10 @@ static void CheckPlaygrounds() {
 }
 int main() {
     RUN_SUITE("vs_gameplay_library");
+    okaytest::Sandbox sandbox("vs_gameplay_library");   // Save Game and Rebind Action write save files and prefs here
     Log::sink = [](Log::Level, const std::string&) {};   // node errors are collected by the hook
     vs::SetRuntimeErrorHook(&OnErr);
-    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlFaceObject", "GlTurnTowardObject", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlCountTaggedInRange", "GlIsJumpHeld", "GlSaveHealth", "GlLoadHealth", "GlHasTimePassed", "GlGetGameSpeed", "GlRenameObject", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlSetCarryLimit", "GlSetStackLimit", "GlGetCarryLimit", "GlIsOverweight", "GlGetSlowdownFromWeight", "GlCountAllItems", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlCountCompletedQuests", "GlIsAnyQuestActive", "GlFailActiveQuests", "GlFinishObjectives", "GlGetObjectiveCount", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked", "GlIsSoundPositional", "GlGetCameraTilt", "GlGetTextOpacity", "GlGetTextSize", "GlGetStackLimit", "GlGetInventorySize", "GlIsDialogueRunning", "GlGetDialogueLine", "GlGetDialogueSpeaker", "GlIsDialogueWaitingForChoice", "GlGetDialogueOptionCount", "GlGetDialogueOptionText", "GlAdvanceDialogue", "GlChooseDialogueOption", "GlStopDialogue" };
+    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlFaceObject", "GlTurnTowardObject", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlCountTaggedInRange", "GlIsJumpHeld", "GlSaveHealth", "GlLoadHealth", "GlHasTimePassed", "GlGetGameSpeed", "GlRenameObject", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlSetCarryLimit", "GlSetStackLimit", "GlGetCarryLimit", "GlIsOverweight", "GlGetSlowdownFromWeight", "GlCountAllItems", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlCountCompletedQuests", "GlIsAnyQuestActive", "GlFailActiveQuests", "GlFinishObjectives", "GlGetObjectiveCount", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked", "GlIsSoundPositional", "GlGetCameraTilt", "GlGetTextOpacity", "GlGetTextSize", "GlGetStackLimit", "GlGetInventorySize", "GlIsDialogueRunning", "GlGetDialogueLine", "GlGetDialogueSpeaker", "GlIsDialogueWaitingForChoice", "GlGetDialogueOptionCount", "GlGetDialogueOptionText", "GlAdvanceDialogue", "GlChooseDialogueOption", "GlStopDialogue", "GlGetCameraForward", "GlGetCameraRight", "GlSetMoveSpeed", "GlGetMoveSpeed", "GlSetSprinting", "GlSetCrouching", "GlEnterVehicle", "GlExitVehicle", "GlIsDriving", "GlGetSliderValue", "GlOpenMenu", "GlCloseMenu", "GlRebindAction", "GlRumble", "GlSetBusVolume", "GlMuteBus", "GlSetColliderSize", "GlEnableCollider", "GlDisableCollider", "GlIsGrounded", "GlSaveGame", "GlLoadGame", "GlHasSave", "GlSetLightColor", "GlSetLightIntensity", "GlCountdownTimer", "GlSplitText", "GlDrawDebugSphere", "GlDrawDebugBox", "GlWatchValue" };
     {
         std::string outA;
         {
@@ -6599,6 +6640,785 @@ int main() {
         if (snaps[0] == snaps[1]) std::printf("  GlStopDialogue changed nothing compared with no node\n");
         CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlStopDialogue");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* cg = s.CreateGameObject("Cam"); cg->AddComponent<Camera>(); cg->transform->SetRotation(Quat::AngleAxis(90.0f, Vec3(0, 1, 0)) * Quat::AngleAxis(-30.0f, Vec3(1, 0, 0)));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraForward\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            { Vec3 d = Var(v, "out").AsVec3(); CHECK_NEAR(d.x, -1.0f, 0.01f); CHECK_NEAR(d.y, 0.0f, 0.001f); CHECK_NEAR(d.z, 0.0f, 0.01f); }
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCameraForward reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCameraForward again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraForward\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCameraForward gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetCameraForward");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* cg = s.CreateGameObject("Cam"); cg->AddComponent<Camera>(); cg->transform->SetRotation(Quat::AngleAxis(90.0f, Vec3(0, 1, 0)) * Quat::AngleAxis(-30.0f, Vec3(1, 0, 0)));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraRight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            { Vec3 d = Var(v, "out").AsVec3(); CHECK_NEAR(d.x, 0.0f, 0.01f); CHECK_NEAR(d.y, 0.0f, 0.001f); CHECK_NEAR(d.z, -1.0f, 0.01f); }
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCameraRight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCameraRight again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraRight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCameraRight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetCameraRight");
+    }
+    {   // GlSetMoveSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            auto* tp = me->AddComponent<ThirdPersonController>(); tp->walkSpeed = 2.0f; tp->runSpeed = 4.0f; 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetMoveSpeed\ndefault 2 0 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<ThirdPersonController>()->walkSpeed, 3.0f, 0.001f); CHECK_NEAR(me->GetComponent<ThirdPersonController>()->runSpeed, 6.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetMoveSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetMoveSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetMoveSpeed");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            auto* tp = me->AddComponent<ThirdPersonController>(); tp->walkSpeed = 2.0f; tp->runSpeed = 4.0f; 
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMoveSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetMoveSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetMoveSpeed again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMoveSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetMoveSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetMoveSpeed");
+    }
+    {   // GlSetSprinting: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            auto* tp = me->AddComponent<ThirdPersonController>(); tp->walkSpeed = 2.0f; tp->runSpeed = 4.0f; 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSprinting\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<ThirdPersonController>()->sprintByScript);
+                if (!g_errs.empty()) { std::printf("  GlSetSprinting reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSprinting changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetSprinting");
+    }
+    {   // GlSetCrouching: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            auto* tp = me->AddComponent<ThirdPersonController>(); tp->walkSpeed = 2.0f; tp->runSpeed = 4.0f; 
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlSetCrouching\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 3; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<ThirdPersonController>()->stance() == ThirdPersonController::Stance::Crouch);
+                if (!g_errs.empty()) { std::printf("  GlSetCrouching reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetCrouching changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetCrouching");
+    }
+    {   // GlEnterVehicle: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* car = s.CreateGameObject("Car"); car->AddComponent<VehicleController>(); GameObject* st = s.CreateGameObject("Seat"); st->transform->SetParent(car->transform); st->AddComponent<VehicleSeat>(); 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlEnterVehicle\ndefault 2 0 Car\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Seat")->GetComponent<VehicleSeat>()->Occupant() == me);
+                if (!g_errs.empty()) { std::printf("  GlEnterVehicle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlEnterVehicle changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlEnterVehicle");
+    }
+    {   // GlExitVehicle: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* car = s.CreateGameObject("Car"); car->AddComponent<VehicleController>(); GameObject* st = s.CreateGameObject("Seat"); st->transform->SetParent(car->transform); st->AddComponent<VehicleSeat>(); s.Find("Seat")->GetComponent<VehicleSeat>()->Enter(me);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlExitVehicle\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Seat")->GetComponent<VehicleSeat>()->Occupant() == nullptr);
+                if (!g_errs.empty()) { std::printf("  GlExitVehicle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlExitVehicle changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlExitVehicle");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* car = s.CreateGameObject("Car"); car->AddComponent<VehicleController>(); GameObject* st = s.CreateGameObject("Seat"); st->transform->SetParent(car->transform); st->AddComponent<VehicleSeat>(); s.Find("Seat")->GetComponent<VehicleSeat>()->Enter(me);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsDriving\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsDriving reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsDriving again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsDriving\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsDriving gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlIsDriving");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            auto* sl = me->AddComponent<UISlider>(); sl->minValue = 0; sl->maxValue = 10; sl->value = 7;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSliderValue\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 7.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSliderValue reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSliderValue again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSliderValue\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSliderValue gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetSliderValue");
+    }
+    {   // GlOpenMenu: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* mn = s.CreateGameObject("Options"); mn->active = false;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlOpenMenu\ndefault 2 0 Options\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Options") && s.Find("Options")->active);
+                if (!g_errs.empty()) { std::printf("  GlOpenMenu reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlOpenMenu changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlOpenMenu");
+    }
+    {   // GlCloseMenu: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            s.CreateGameObject("Options");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlCloseMenu\ndefault 2 0 Options\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Options") == nullptr || !s.Find("Options")->active);
+                if (!g_errs.empty()) { std::printf("  GlCloseMenu reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCloseMenu changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlCloseMenu");
+    }
+    {   // GlRebindAction: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlRebindAction\ndefault 2 0 \"Jump\"\ndefault 2 1 \"key:j\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(InputActions::ExportBindings().find("key:j") != std::string::npos); InputActions::Reset();
+                if (!g_errs.empty()) { std::printf("  GlRebindAction reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRebindAction changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlRebindAction");
+    }
+    {   // GlRumble: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlRumble\ndefault 2 0 0.8\ndefault 2 1 0.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                (void)0;   // the snapshot reads the rumble request (Input::TakeRumble); test_vs_node_values checks the numbers
+                if (!g_errs.empty()) { std::printf("  GlRumble reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRumble changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlRumble");
+    }
+    {   // GlSetBusVolume: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetBusVolume\ndefault 2 0 \"Music\"\ndefault 2 1 0.4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { AudioGroup m; CHECK(AudioMixer::GroupFromName("Music", m)); CHECK_NEAR(AudioMixer::groupVolume[(int)m], 0.4f, 0.001f); AudioMixer::groupVolume[(int)m] = 1.0f; }
+                if (!g_errs.empty()) { std::printf("  GlSetBusVolume reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetBusVolume changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetBusVolume");
+    }
+    {   // GlMuteBus: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlMuteBus\ndefault 2 0 \"SFX\"\ndefault 2 1 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { AudioGroup m; CHECK(AudioMixer::GroupFromName("SFX", m)); CHECK(AudioMixer::groupMuted[(int)m]); AudioMixer::groupMuted[(int)m] = false; }
+                if (!g_errs.empty()) { std::printf("  GlMuteBus reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMuteBus changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlMuteBus");
+    }
+    {   // GlSetColliderSize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<BoxCollider3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetColliderSize\ndefault 2 0 2\ndefault 2 1 3\ndefault 2 2 4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Vec3 z = me->GetComponent<BoxCollider3D>()->size; CHECK_NEAR(z.x, 2.0f, 0.001f); CHECK_NEAR(z.y, 3.0f, 0.001f); CHECK_NEAR(z.z, 4.0f, 0.001f); }
+                if (!g_errs.empty()) { std::printf("  GlSetColliderSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetColliderSize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetColliderSize");
+    }
+    {   // GlEnableCollider: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<BoxCollider3D>()->enabled = false;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlEnableCollider\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<BoxCollider3D>()->enabled);
+                if (!g_errs.empty()) { std::printf("  GlEnableCollider reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlEnableCollider changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlEnableCollider");
+    }
+    {   // GlDisableCollider: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<BoxCollider3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlDisableCollider\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!me->GetComponent<BoxCollider3D>()->enabled);
+                if (!g_errs.empty()) { std::printf("  GlDisableCollider reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDisableCollider changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlDisableCollider");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<BoxCollider3D>(); GameObject* fl = s.CreateGameObject("Floor"); fl->transform->SetPosition(Vec3(0, -1.0f, 0)); fl->AddComponent<BoxCollider3D>()->size = Vec3(10, 1, 10);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsGrounded\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsGrounded reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsGrounded again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsGrounded\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsGrounded gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlIsGrounded");
+    }
+    {   // GlSaveGame: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSaveGame\ndefault 2 0 \"vstest\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(SaveGame::Exists("vstest")); SaveGame::Delete("vstest");
+                if (!g_errs.empty()) { std::printf("  GlSaveGame reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSaveGame changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSaveGame");
+    }
+    {   // GlLoadGame: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadGame\ndefault 2 0 \"vsnothing\"\nexec 1 0 2\nnode 4 SetVar branch\ndefault 4 0 \"none\"\nexec 2 1 4\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(Var(v, "branch").AsString() == "none");
+                if (!g_errs.empty()) { std::printf("  GlLoadGame reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLoadGame changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlLoadGame");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasSave\ndefault 2 0 \"vsnothing\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == false);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlHasSave reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlHasSave again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        CHECK(SaveGame::Save(s, "vsnothing", "x"));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasSave\ndefault 2 0 \"vsnothing\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlHasSave gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlHasSave");
+    }
+    {   // GlSetLightColor: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Light>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetLightColor\ndefault 2 0 1\ndefault 2 1 0.5\ndefault 2 2 0.25\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Color c = me->GetComponent<Light>()->color; CHECK_NEAR(c.r, 1.0f, 0.001f); CHECK_NEAR(c.g, 0.5f, 0.001f); CHECK_NEAR(c.b, 0.25f, 0.001f); }
+                if (!g_errs.empty()) { std::printf("  GlSetLightColor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetLightColor changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetLightColor");
+    }
+    {   // GlSetLightIntensity: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Light>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetLightIntensity\ndefault 2 0 2.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Light>()->intensity, 2.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetLightIntensity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetLightIntensity changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlSetLightIntensity");
+    }
+    {   // GlCountdownTimer: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlCountdownTimer\ndefault 2 0 0.5\nexec 1 0 2\nnode 4 AddVar done\ndefault 4 0 1\nexec 2 1 4\nnode 5 AddVar ticks\ndefault 5 0 1\nexec 2 0 5\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 10; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(Var(v, "done").AsFloat(), 1.0f, 0.001f); CHECK_NEAR(Var(v, "ticks").AsFloat(), 4.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlCountdownTimer reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCountdownTimer changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlCountdownTimer");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSplitText\ndefault 2 0 \"red,green,blue\"\ndefault 2 1 \",\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "[red, green, blue]");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlSplitText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+        g_seen.insert("GlSplitText");
+    }
+    {   // GlDrawDebugSphere: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlDrawDebugSphere\ndefault 2 1 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { auto& p = me->GetComponent<LineRenderer>()->positions; CHECK(p.size() == 79); for (const Vec3& q : p) CHECK_NEAR(q.Magnitude(), 2.0f, 0.001f); }
+                if (!g_errs.empty()) { std::printf("  GlDrawDebugSphere reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDrawDebugSphere changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlDrawDebugSphere");
+    }
+    {   // GlDrawDebugBox: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlDrawDebugBox\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { auto& p = me->GetComponent<LineRenderer>()->positions; CHECK(p.size() == 16); for (const Vec3& q : p) { CHECK_NEAR(std::fabs(q.x), 0.5f, 0.001f); CHECK_NEAR(std::fabs(q.y), 0.5f, 0.001f); CHECK_NEAR(std::fabs(q.z), 0.5f, 0.001f); } }
+                if (!g_errs.empty()) { std::printf("  GlDrawDebugBox reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDrawDebugBox changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlDrawDebugBox");
+    }
+    {   // GlWatchValue: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlWatchValue\ndefault 2 0 \"speed\"\ndefault 2 1 12.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Watch Values") && s.Find("Watch Values")->GetComponent<TextRenderer>()->text == "speed: 12.5");
+                if (!g_errs.empty()) { std::printf("  GlWatchValue reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlWatchValue changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlWatchValue");
     }
     {   // Move Item To Object: the Moved branch, then Not Enough, then Too Full.
         Scene s; s.physicsEnabled = false;

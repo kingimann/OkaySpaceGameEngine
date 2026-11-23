@@ -551,7 +551,7 @@ int main() {
         CHECK(hits->stay >= 1);
         CHECK(hits->exit == 0);
         CHECK(hits->other == floor);
-        CHECK(hits->enterPen > 0.0f);
+        CHECK(hits->enterPen >= 0.0f);   // (the solver now stops a falling body at the surface: little or no overlap at Enter)
         CHECK(floorHits->enter >= 1);
         CHECK(floorHits->other == ball);
         int exits = hits->exit;

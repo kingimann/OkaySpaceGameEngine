@@ -2,7 +2,7 @@
 
 # Code index: engine-AI
 
-Back to the [code index](../code_index.md). 7 headers, 37 names.
+Back to the [code index](../code_index.md). 8 headers, 41 names.
 
 ## `engine/include/okay/AI/BehaviorTree.hpp`
 
@@ -26,9 +26,16 @@ Back to the [code index](../code_index.md). 7 headers, 37 names.
 - `BtNode` struct, line 169
 - `BehaviorTree` class, line 199: A tree: its blackboard keys with defaults, the nodes and which one is the root.
 
+## `engine/include/okay/AI/GridAStar.hpp`
+
+- `GridCell` struct, line 20: One square of a grid: column x, row y.
+- `Options` struct, line 31
+- `DenseStore` class, line 43: Cells of a bounded width x height grid, kept in flat arrays. A cell's id is y * width + x.
+- `SparseStore` class, line 68: Cells of an unbounded grid, made only when the search first reaches them. A cell's id is the order it was
+
 ## `engine/include/okay/AI/NavGrid3D.hpp`
 
-- `NavGrid3D` class, line 20: 3D obstacle-avoiding pathfinding for NPCs: A* over a lazily-sampled grid
+- `NavGrid3D` class, line 22: 3D obstacle-avoiding pathfinding for NPCs: A* over a lazily-sampled grid
 
 ## `engine/include/okay/AI/NavMesh.hpp`
 
@@ -50,11 +57,11 @@ Back to the [code index](../code_index.md). 7 headers, 37 names.
 
 ## `engine/include/okay/AI/Navigation.hpp`
 
-- `Navigation` class, line 21: Pathfinding for a scene: the baked NavMesh when the scene has a NavMeshSurface
+- `Navigation` class, line 27: Pathfinding for a scene: the baked NavMesh when the scene has a NavMeshSurface
 
 ## `engine/include/okay/AI/Pathfinding.hpp`
 
-- `Pathfinding` class, line 15: A* grid pathfinding for 2D games and tower-defense routing. Works on any
+- `Pathfinding` class, line 14: The older name for Navigation's grid paths, kept so existing code and the
 
 ## `engine/include/okay/AI/Perception.hpp`
 

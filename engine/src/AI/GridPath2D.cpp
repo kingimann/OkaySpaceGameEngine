@@ -16,7 +16,7 @@
 namespace okay {
 namespace {
 
-bool SameCell(const Pathfinding::Cell& c, int x, int y) { return c.x == x && c.y == y; }
+bool SameCell(const GridCell& c, int x, int y) { return c.x == x && c.y == y; }
 
 bool AgentUsesMap(const GridPathAgent2D& agent, const Tilemap& map) {
     if (!agent.mapName.empty())
@@ -25,12 +25,12 @@ bool AgentUsesMap(const GridPathAgent2D& agent, const Tilemap& map) {
     return scene && scene->FindObjectOfType<Tilemap>() == &map;
 }
 
-void RepathUsersOf(Scene& scene, const Tilemap& map, const std::vector<Pathfinding::Cell>& cells) {
+void RepathUsersOf(Scene& scene, const Tilemap& map, const std::vector<GridCell>& cells) {
     if (cells.empty()) return;
     for (GridPathAgent2D* agent : scene.FindObjectsOfType<GridPathAgent2D>()) {
         if (!agent || !agent->enabled || !AgentUsesMap(*agent, map)) continue;
         bool hit = false;
-        for (const Pathfinding::Cell& c : cells)
+        for (const GridCell& c : cells)
             if (agent->PathUses(c.x, c.y)) { hit = true; break; }
         if (hit) agent->Repath();
     }
@@ -114,14 +114,14 @@ void GridCostLayer::SetTileCost(int tileId, float cost) {
     Tilemap* map = gameObject ? gameObject->GetComponent<Tilemap>() : nullptr;
     if (!map && s) map = s->FindObjectOfType<Tilemap>();
     if (!s || !map) return;
-    std::vector<Pathfinding::Cell> hit;
+    std::vector<GridCell> hit;
     for (int y = 0; y < map->Height(); ++y)
         for (int x = 0; x < map->Width(); ++x)
-            if (map->GetTile(x, y) == tileId) hit.push_back(Pathfinding::Cell{x, y});
+            if (map->GetTile(x, y) == tileId) hit.push_back(GridCell{x, y});
     for (GridPathAgent2D* agent : s->FindObjectsOfType<GridPathAgent2D>()) {
         if (!agent || !agent->useCosts) continue;
         bool uses = false;
-        for (const Pathfinding::Cell& c : hit) if (agent->PathUses(c.x, c.y)) { uses = true; break; }
+        for (const GridCell& c : hit) if (agent->PathUses(c.x, c.y)) { uses = true; break; }
         if (uses) agent->Repath();
     }
 }
@@ -184,7 +184,7 @@ bool GridObstacle2D::UsesMap(const Tilemap& map) const {
     return map.gameObject && map.gameObject->name == mapName;
 }
 
-void GridObstacle2D::CoveredCells(const Tilemap& map, std::vector<Pathfinding::Cell>& out) const {
+void GridObstacle2D::CoveredCells(const Tilemap& map, std::vector<GridCell>& out) const {
     if (!blocks || !enabled || !UsesMap(map)) return;
     int x = 0, y = 0;
     if (m_hasAnchor) { x = m_anchorX; y = m_anchorY; }
@@ -194,7 +194,7 @@ void GridObstacle2D::CoveredCells(const Tilemap& map, std::vector<Pathfinding::C
     const int h = std::max(1, cellsTall);
     for (int dy = 0; dy < h; ++dy)
         for (int dx = 0; dx < w; ++dx)
-            out.push_back(Pathfinding::Cell{x + dx, y + dy});
+            out.push_back(GridCell{x + dx, y + dy});
 }
 
 void GridObstacle2D::Place(int cellX, int cellY) {
@@ -219,7 +219,7 @@ void GridObstacle2D::Commit() {
     Scene* s = GetScene();
     Tilemap* map = Map();
     if (!s || !map) return;
-    std::vector<Pathfinding::Cell> cells;
+    std::vector<GridCell> cells;
     CoveredCells(*map, cells);
     RepathUsersOf(*s, *map, cells);
 }
@@ -256,7 +256,7 @@ Tilemap* GridPathAgent2D::Map() const {
 }
 
 bool GridPathAgent2D::PathUses(int x, int y) const {
-    for (const Pathfinding::Cell& c : m_path) if (SameCell(c, x, y)) return true;
+    for (const GridCell& c : m_path) if (SameCell(c, x, y)) return true;
     return false;
 }
 
@@ -308,7 +308,7 @@ void GridPathAgent2D::Repath() {
     if (!map || !scene || !m_hasGoal || !transform) return;
     const int w = map->Width(), h = map->Height();
     if (w <= 0 || h <= 0) return;
-    if (static_cast<long long>(w) * h > Pathfinding::kMaxCells) return;
+    if (static_cast<long long>(w) * h > Navigation::kMaxGridCells) return;
 
     int sx = 0, sy = 0;
     map->WorldToCell(transform->Position(), sx, sy);
@@ -351,15 +351,15 @@ void GridPathAgent2D::Repath() {
 
     for (GridObstacle2D* block : scene->FindObjectsOfType<GridObstacle2D>()) {
         if (!block) continue;
-        std::vector<Pathfinding::Cell> cells;
+        std::vector<GridCell> cells;
         block->CoveredCells(*map, cells);
-        for (const Pathfinding::Cell& c : cells) {
+        for (const GridCell& c : cells) {
             if (c.x < 0 || c.y < 0 || c.x >= w || c.y >= h) continue;
             walk[(std::size_t)c.y * w + c.x] = false;
         }
     }
 
-    m_path = Pathfinding::AStar(walk, w, h, sx, sy, gx, gy, allowDiagonal, costPtr, smoothPath);
+    m_path = Navigation::GridPath(walk, w, h, sx, sy, gx, gy, allowDiagonal, costPtr, smoothPath);
 }
 
 void GridPathAgent2D::Update(float dt) {

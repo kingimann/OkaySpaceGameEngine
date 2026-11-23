@@ -1,10 +1,10 @@
-#include "okay/AI/Pathfinding.hpp"
+// Navigation's grid paths: 2D grids and tilemaps. The search itself is the shared one in GridAStar.hpp.
+#include "okay/AI/Navigation.hpp"
 #include "okay/Components/Tilemap.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <queue>
 #include <vector>
 
 namespace okay {
@@ -75,24 +75,24 @@ std::vector<char> OpenGrid(const std::vector<bool>& walkable, int width, int hei
 
 } // namespace
 
-bool Pathfinding::LineClear(const std::vector<bool>& walkable, int width, int height, Cell a, Cell b) {
+bool Navigation::GridLineClear(const std::vector<bool>& walkable, int width, int height, GridCell a, GridCell b) {
     if (width <= 0 || height <= 0) return false;
-    if (static_cast<long long>(width) * height > kMaxCells) return false;
+    if (static_cast<long long>(width) * height > kMaxGridCells) return false;
     if ((int)walkable.size() < width * height) return false;
     const std::vector<char> open = OpenGrid(walkable, width, height, nullptr);
     return LineClearOpen(open, width, height, a.x, a.y, b.x, b.y);
 }
 
-std::vector<Pathfinding::Cell> Pathfinding::Smooth(const std::vector<bool>& walkable, int width, int height,
-                                                   const std::vector<Cell>& path) {
+std::vector<GridCell> Navigation::SmoothGridPath(const std::vector<bool>& walkable, int width, int height,
+                                                const std::vector<GridCell>& path) {
     if (path.size() < 3) return path;
-    std::vector<Cell> out;
+    std::vector<GridCell> out;
     out.push_back(path.front());
     std::size_t i = 0;
     while (i + 1 < path.size()) {
         std::size_t far = i + 1;
         for (std::size_t j = i + 2; j < path.size(); ++j)
-            if (LineClear(walkable, width, height, path[i], path[j])) far = j;
+            if (GridLineClear(walkable, width, height, path[i], path[j])) far = j;
         out.push_back(path[far]);
         if (far == i) break;
         i = far;
@@ -100,13 +100,13 @@ std::vector<Pathfinding::Cell> Pathfinding::Smooth(const std::vector<bool>& walk
     return out;
 }
 
-std::vector<Pathfinding::Cell> Pathfinding::AStar(
+std::vector<GridCell> Navigation::GridPath(
     const std::vector<bool>& walkable, int width, int height,
     int sx, int sy, int gx, int gy, bool allowDiagonal,
     const std::vector<float>* costs, bool smooth) {
 
     if (width <= 0 || height <= 0) return {};
-    if (static_cast<long long>(width) * height > kMaxCells) return {};
+    if (static_cast<long long>(width) * height > kMaxGridCells) return {};
     const int N = width * height;
     if ((int)walkable.size() < N) return {};
     const bool priced = costs && (int)costs->size() == N;
@@ -114,12 +114,6 @@ std::vector<Pathfinding::Cell> Pathfinding::AStar(
 
     auto passable = [&](int x, int y) { return OpenAt(open, width, x, y) && y < height; };
     if (!passable(sx, sy) || !passable(gx, gy)) return {};
-
-    auto idx = [&](int x, int y) { return y * width + x; };
-    auto price = [&](int i) {
-        if (!priced) return 1.0f;
-        return (*costs)[(std::size_t)i];
-    };
 
     float minCost = 1.0f;
     if (priced) {
@@ -131,80 +125,37 @@ std::vector<Pathfinding::Cell> Pathfinding::AStar(
         if (!(minCost > 0.0f) || !std::isfinite(minCost)) minCost = 1.0f;
     }
 
-    std::vector<float> g(N, std::numeric_limits<float>::infinity());
-    std::vector<int> came(N, -1);
-    std::vector<char> closed(N, 0);
-
-    auto heur = [&](int x, int y) {
-        float dx = std::fabs(float(x - gx)), dy = std::fabs(float(y - gy));
-        float h = dx + dy;
-        if (allowDiagonal) h = (dx + dy) + (1.41421356f - 2.0f) * std::min(dx, dy);
-        return h * minCost;
-    };
-
-    using PQItem = std::pair<float, int>;
-    std::priority_queue<PQItem, std::vector<PQItem>, std::greater<PQItem>> pq;
-
-    g[idx(sx, sy)] = 0.0f;
-    pq.push({heur(sx, sy), idx(sx, sy)});
-
-    const int goal = idx(gx, gy);
-
-    static const int dx4[] = {1, -1, 0, 0};
-    static const int dy4[] = {0, 0, 1, -1};
-    static const int dx8[] = {1, -1, 0, 0, 1, 1, -1, -1};
-    static const int dy8[] = {0, 0, 1, -1, 1, -1, 1, -1};
-    const int* dxs = allowDiagonal ? dx8 : dx4;
-    const int* dys = allowDiagonal ? dy8 : dy4;
-    const int dirs = allowDiagonal ? 8 : 4;
-
-    while (!pq.empty()) {
-        int cur = pq.top().second;
-        pq.pop();
-        if (cur == goal) break;
-        if (closed[cur]) continue;
-        closed[cur] = 1;
-
-        int cx = cur % width, cy = cur / width;
-        for (int d = 0; d < dirs; ++d) {
-            int nx = cx + dxs[d], ny = cy + dys[d];
-            if (!passable(nx, ny)) continue;
-            if (allowDiagonal && dxs[d] != 0 && dys[d] != 0)
-                if (!passable(cx + dxs[d], cy) || !passable(cx, cy + dys[d])) continue;
-
-            int ni = idx(nx, ny);
-            if (closed[ni]) continue;
-            float step = ((dxs[d] != 0 && dys[d] != 0) ? 1.41421356f : 1.0f) * price(ni);
-            float tentative = g[cur] + step;
-            if (tentative < g[ni]) {
-                g[ni] = tentative;
-                came[ni] = cur;
-                pq.push({tentative + heur(nx, ny), ni});
-            }
-        }
-    }
-
-    if (came[goal] == -1 && goal != idx(sx, sy)) return {};
-
-    std::vector<Cell> path;
-    for (int c = goal; c != -1; c = came[c]) {
-        path.push_back(Cell{c % width, c / width});
-        if (c == idx(sx, sy)) break;
-    }
-    std::reverse(path.begin(), path.end());
-    if (!smooth) return path;
+    gridastar::DenseStore store(width, height);
+    gridastar::Options opt;
+    opt.diagonal = allowDiagonal;
+    std::vector<GridCell> path;
+    gridastar::Search(
+        store, GridCell{sx, sy}, GridCell{gx, gy}, opt,
+        [&](int, int, int bx, int by) { return passable(bx, by); },
+        [&](int bx, int by, bool diag) {
+            const float price = priced ? (*costs)[(std::size_t)(by * width + bx)] : 1.0f;
+            return (diag ? 1.41421356f : 1.0f) * price;
+        },
+        [&](int x, int y) {
+            float dx = std::fabs(float(x - gx)), dy = std::fabs(float(y - gy));
+            float h = dx + dy;
+            if (allowDiagonal) h = (dx + dy) + (1.41421356f - 2.0f) * std::min(dx, dy);
+            return h * minCost;
+        },
+        path);
+    if (path.empty() || !smooth) return path;
 
     std::vector<bool> blocked(walkable.size(), false);
     for (int i = 0; i < N; ++i) blocked[(std::size_t)i] = open[(std::size_t)i] != 0;
-    return Smooth(blocked, width, height, path);
+    return SmoothGridPath(blocked, width, height, path);
 }
 
-std::vector<Pathfinding::Cell> Pathfinding::OnTilemap(
+std::vector<GridCell> Navigation::TilemapPath(
     const Tilemap& map, int sx, int sy, int gx, int gy, bool allowDiagonal,
     const std::vector<float>* tileCost, bool smooth) {
     int w = map.Width(), h = map.Height();
     if (w <= 0 || h <= 0) return {};
-    if (static_cast<long long>(w) * h > kMaxCells) return {};
+    if (static_cast<long long>(w) * h > kMaxGridCells) return {};
     const bool priced = tileCost && !tileCost->empty();
     std::vector<bool> walkable(static_cast<std::size_t>(w) * h, false);
     std::vector<float> cellCost;
@@ -226,7 +177,7 @@ std::vector<Pathfinding::Cell> Pathfinding::OnTilemap(
             }
         }
     }
-    return AStar(walkable, w, h, sx, sy, gx, gy, allowDiagonal, priced ? &cellCost : nullptr, smooth);
+    return GridPath(walkable, w, h, sx, sy, gx, gy, allowDiagonal, priced ? &cellCost : nullptr, smooth);
 }
 
 } // namespace okay

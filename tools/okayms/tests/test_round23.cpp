@@ -267,6 +267,39 @@ static void test_qualified_names(Tally& tally) {
              0);
 }
 
+// Found in review of this round (both were silent miscompiles): A::Size read the last enumerator of that name from any
+// class (B's 8), and a const global or const static member with a non-constant initializer was read as the constant 0
+// (and /O2 refused the startup store as an "assignment to const"). A::X for an X that is not a member of A is an error.
+static void test_review_fixes(Tally& tally) {
+    std::printf("test_review_fixes\n");
+    okayms_test::run_both(kRun, tally, "review_fixes",
+             "struct A { enum { Size = 4, Only = 1 }; };\n"
+             "struct B { enum { Size = 8 }; };\n"
+             "struct C { int x; enum E { Size = 4, K = 9 }; int f() const { return Size + K; } };\n"
+             "static int f() { return 7; }\n"
+             "const int k = f();\n"
+             "static const int k2 = f() + 1;\n"
+             "struct S { static const int m; static const int n; };\n"
+             "const int S::m = f();\n"
+             "const int S::n = 3;\n"
+             "static int g() { static const int q = f() * 2; return q; }\n"
+             "const int arr[2] = {f(), 5};\n"
+             "int entry(void) {\n"
+             "  CK(1, A::Size == 4); CK(2, B::Size == 8); CK(3, C::Size == 4 && C::K == 9);\n"
+             "  C c; CK(4, c.f() == 13); CK(5, A::Only == 1);\n"
+             "  CK(6, k == 7); CK(7, k2 == 8); CK(8, S::m == 7); CK(9, S::n == 3); CK(10, g() == 14);\n"
+             "  CK(11, arr[0] == 7 && arr[1] == 5);\n"
+             "  int s = 0; for (int i = 0; i < k; ++i) s += 1; CK(12, s == 7);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    okayms::CompileInput in;
+    in.source = "struct A { enum { Size = 4 }; };\nstruct B { enum { Other = 8 }; };\nint entry(void) { return B::Size; }\n";
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, !compiled.ok());
+    if (compiled.ok()) std::fprintf(stderr, "  B::Size compiled, but Size is not a member of B\n");
+}
+
 // okay-cl /c file.cpp: a quoted include is looked up next to the main file, also when the file is named without a
 // directory ([cpp.include]); before this round only the include paths were searched.
 static void test_include_next_to_main(Tally& tally) {
@@ -302,6 +335,7 @@ int main(int argc, char** argv) {
     test_containers(tally);
     test_forward_decl(tally);
     test_qualified_names(tally);
+    test_review_fixes(tally);
     test_include_next_to_main(tally);
-    return tally.finish(9);
+    return tally.finish(10);
 }

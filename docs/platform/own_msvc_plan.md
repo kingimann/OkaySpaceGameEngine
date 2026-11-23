@@ -601,7 +601,7 @@ Tried on Linux with Wine (wine 9.0) on branch `claude/third-party-okayms-1`, 202
 
 How the blockers were found: every `engine/src/**/*.cpp` (438 files) was compiled with `okay-cl /c <file> /I engine/include /I engine/src /I shared /I tools/okayms/stdinc` and the first error of each was counted. With the compiler of `origin/main` (and this round's headers) 17 files compiled; after this round 24 (new: NavMeshCarve, EmbeddedFont, Gestures, OwnLinuxX11, OwnWin32, Bc, Mip; none lost). The 36 files of the older measurement: still 33 compile; the three others now stop later (`Random.hpp:264` "expected ';'", `ActionSet.hpp:258` `std::function`, `LodGroup.cpp` `<filesystem>`). "Compiles" means an object file was written; none of the 24 was linked or run.
 
-New test `tests/test_round23.cpp`: 9 test functions, 114 checks. Each program is built by okay-cl at `/O0`, `/O1` and `/O2`, linked, run under Wine, and built again by MinGW g++ and run under Wine; all exit codes must be 0. The same test built against the `origin/main` compiler fails 25 of its checks (every program fails), so each one covers a change of this round.
+New test `tests/test_round23.cpp`: 10 test functions, 129 checks. Each program is built by okay-cl at `/O0`, `/O1` and `/O2`, linked, run under Wine, and built again by MinGW g++ and run under Wine; all exit codes must be 0. The same test built against the `origin/main` compiler fails 25 of its checks (every program fails), so each one covers a change of this round.
 
 Done:
 
@@ -614,6 +614,7 @@ Done:
 - **Forward-declared classes** (`class X;`, `struct X *p;`, `struct Info;` inside a class): an incomplete class, filled in by its definition. A variable or member of an incomplete type is an error.
 - **Fixed: `static int f(int);` before `static int f(int p) { ... }`** left an undefined external `f` and the link failed.
 - `(double(k) * 2)` and `(T(x) + 1)` inside parentheses are functional casts, not C casts. `using F = R (*)(A);` and `using A3 = int[3];` at any scope, and `typedef R (*F)(A);` inside a class. `mutable` members. `Class::Enum` as a type and `Class::Enum::Value` / `Class::Value` as an enumerator. A braced default argument `const V3& v = V3{0, 1, 0}`. `Outer::Nested` of a plain struct as a template argument.
+- **Fixed in review (both silent miscompiles of this round's first version):** `A::Size` read the last enumerator of that name from any class; it now reads A's own member table, and `A::X` for an `X` that is not a member of A is an error again. A `const` global or `const` static member with a non-constant initializer (`const int k = f();`) was read as the constant 0, and `/O2` refused its startup store ("assignment to const"); such a variable is no longer a compile-time constant, and the `/O2` inliner keeps a store an initialization. Test: `test_review_fixes` in `test_round23.cpp` (it fails 4 checks on the first version).
 - **Quoted includes:** `okay-cl /c file.cpp` (no directory in the name) now looks next to the file first; before, only the include paths were searched.
 - **Own headers:** `<map>` and `<unordered_map>` (a vector sorted by key, like `<set>`), `<cfloat>` (values worked out from the IEEE 754 formats), `<ctime>` (types and declarations only), `vector::emplace_back`, `std::fmin`, `std::fmax`, `std::fdim`.
 

@@ -882,15 +882,22 @@ struct Parser {
         return k;
     }
     // C::name (or ns::C::name) where C is a class and name an enumerator: its value.
+    // The value comes from the class's own member table (the flat enum_values keeps only the last enumerator of a
+    // name, so A::Size would read B's). A name that is not an enumerator of that class (or its bases) is not taken here.
     bool class_enumerator(const std::string& name, uint64_t* value) const {
         const size_t last = name.rfind("::");
         if (last == std::string::npos || local_visible(name)) return false;
         const std::string qual = name.substr(0, last);
         const size_t prev = qual.rfind("::");
         const std::string cls = prev == std::string::npos ? qual : qual.substr(prev + 2);
-        const auto it = enum_values.find(name.substr(last + 2));
-        if (find_struct(cls) < 0 || it == enum_values.end()) return false;
-        *value = it->second;
+        const std::string member = name.substr(last + 2);
+        if (enum_values.find(member) == enum_values.end()) return false;
+        const int sid = find_struct(cls);
+        if (sid < 0) return false;
+        const auto& statics = structs[static_cast<size_t>(sid)].statics;
+        const auto it = statics.find(member);
+        if (it == statics.end() || !it->second.has_const) return false;
+        *value = static_cast<uint64_t>(it->second.cval);
         return true;
     }
     int find_struct(const std::string& name) const {
@@ -1197,6 +1204,7 @@ struct Parser {
                 if (!parse_const(&next_value, "an enumerator value")) return false;
             }
             enum_values[name] = next_value;
+            enums_declared.push_back(name);  // the class being read gets it as a member (parse_struct_body)
             ++next_value;
             if (!accept(TComma)) break;
             if (is(TRBrace)) break;
@@ -1361,6 +1369,8 @@ struct Parser {
     }
     bool parse_init(Node* out);
     bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
+    // Every enumerator name in the order read; a class body takes the ones declared inside it as members.
+    std::vector<std::string> enums_declared{};
     // The parts of a static initializer that are not constants, while flatten_init runs (see dyn_leaf_stmts).
     std::vector<DynLeaf>* dyn_leaves = nullptr;
     bool static_guard_block(const std::string& symbol, Node* then_block);
@@ -1718,7 +1728,7 @@ struct Parser {
         for (const Global& g : globals) {
             if (g.name != name) continue;
             const Type& t = g.type;
-            if (!t.is_const || g.bss || g.vtable || t.pointers != 0 || t.array_len >= 0 || t.is_ref) return false;
+            if (!t.is_const || g.bss || g.dynamic || g.vtable || t.pointers != 0 || t.array_len >= 0 || t.is_ref) return false;
             if (t.base != 1 && t.base != 2 && t.base != 4 && t.base != 5 && t.base != 6) return false;
             const int width = size_of(t);
             if (width < 1 || width > 8 || g.init_bytes.size() < static_cast<size_t>(width)) return false;
@@ -2501,7 +2511,7 @@ struct Parser {
             def.vtable = base.vtable;
             def.statics = base.statics;
         }
-        const std::map<std::string, uint64_t> enums_before = enum_values;
+        const size_t enums_from = enums_declared.size();
         int self = -1;
         for (size_t k = 0; k < structs.size(); ++k)
             if (structs[k].incomplete && structs[k].name == name) self = static_cast<int>(k);
@@ -2870,14 +2880,15 @@ struct Parser {
             if (!expect(TSemi, "';'")) return false;
         }
         if (!expect(TRBrace, "'}'")) return false;
-        for (const auto& ev : enum_values) {
-            auto was = enums_before.find(ev.first);
-            if (was != enums_before.end() && was->second == ev.second) continue;
+        // The enumerators declared in this body (nested classes included) are members of the class with their own
+        // values: A::Size and B::Size stay apart even though the flat table keeps only the last one.
+        for (size_t k = enums_from; k < enums_declared.size(); ++k) {
+            const std::string& ename = enums_declared[k];
             StaticMem sm;
             sm.type.base = 1;
             sm.has_const = true;
-            sm.cval = static_cast<long long>(ev.second);
-            def.statics[ev.first] = sm;
+            sm.cval = static_cast<long long>(enum_values[ename]);
+            def.statics[ename] = sm;
         }
         int offset = 0;
         int align = 1;
@@ -5338,9 +5349,11 @@ struct Parser {
     bool flatten_dyn(const Type& type, const Node& init, Global* g, std::vector<DynLeaf>* leaves) {
         init_relocs = &g->addr_relocs;
         dyn_leaves = leaves;
+        const size_t before = leaves->size();
         const bool ok = flatten_init(type, init, &g->init_bytes, 0);
         dyn_leaves = nullptr;
         init_relocs = nullptr;
+        if (leaves->size() > before) g->dynamic = true;
         return ok;
     }
     void add_init_stmts(std::vector<Node> stmts) {

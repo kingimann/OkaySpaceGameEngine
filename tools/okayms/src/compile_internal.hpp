@@ -215,6 +215,9 @@ struct Global {
     // Pointers in the initial data (a string literal's address): offset in the data and the
     // symbol it points to, filled by an ADDR64 relocation.
     std::vector<std::pair<uint32_t, std::string>> addr_relocs;
+    // Some of its value is stored at startup (__okay_init) or on first use (a static local): its bytes are not its
+    // value, so even a const one is never read as a compile-time constant.
+    bool dynamic = false;
 };
 
 inline Type peel_array(const Type& type) {

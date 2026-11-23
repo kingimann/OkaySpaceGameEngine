@@ -39,8 +39,7 @@
 #include "okay/Platform/OwnHttpDownload.hpp"   // temporary file, SHA-256 while streaming, resume, retries
 #endif
 #if !defined(_WIN32)
-#include <fcntl.h>
-#include <unistd.h>
+#include <fcntl.h>   // open() with mode 0600
 #endif
 
 namespace okay::http {
@@ -225,13 +224,10 @@ inline bool WritePrivate(const std::filesystem::path& p, const std::string& data
 #else
     const int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, 0600);
     if (fd < 0) return false;
-    size_t o = 0;
-    while (o < data.size()) {
-        const ssize_t n = ::write(fd, data.data() + o, data.size() - o);
-        if (n <= 0) { ::close(fd); return false; }
-        o += (size_t)n;
-    }
-    return ::close(fd) == 0;
+    std::FILE* f = ::fdopen(fd, "wb");
+    if (!f) return false;
+    const bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
+    return std::fclose(f) == 0 && ok;
 #endif
 }
 

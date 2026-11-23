@@ -34,7 +34,6 @@
 #  include <spawn.h>
 #  include <sys/types.h>
 #  include <sys/wait.h>
-#  include <unistd.h>
 extern char** environ;
 #endif
 
@@ -166,12 +165,12 @@ inline RunResult RunCurlProcess(const std::vector<std::string>& args, const RunS
 #else
     posix_spawn_file_actions_t actions;
     if (posix_spawn_file_actions_init(&actions) != 0) return res;
-    bool opened = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0 &&
-                  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0;
+    bool opened = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0) == 0 &&
+                  posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0;
     if (opened) {
         opened = rs.stdoutFile.empty()
-            ? posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0
-            : posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, rs.stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600) == 0;
+            ? posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0) == 0
+            : posix_spawn_file_actions_addopen(&actions, 1, rs.stdoutFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600) == 0;
     }
     std::vector<std::string> argv;
     argv.reserve(args.size() + 1);

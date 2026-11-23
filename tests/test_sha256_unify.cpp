@@ -14,10 +14,10 @@
 
 namespace fs = std::filesystem;
 namespace nw = okay::crypto;
-namespace acct = okay::account;
+namespace acc = okay::account;   // (not "acct": POSIX declares acct() in <unistd.h>, which the HTTP seam reaches)
 using Bytes = std::vector<std::uint8_t>;
 
-static std::string Hex(const std::uint8_t* p, std::size_t n) { return acct::detail::ToHex(p, n); }
+static std::string Hex(const std::uint8_t* p, std::size_t n) { return acc::detail::ToHex(p, n); }
 static std::string NewHex(const Bytes& m) { std::uint8_t d[32]; nw::Sha256Hash(d, m.data(), m.size()); return Hex(d, 32); }
 static std::string Str(const Bytes& b) { return std::string(b.begin(), b.end()); }
 static Bytes Pat(std::size_t n) { Bytes b(n); for (std::size_t i = 0; i < n; ++i) b[i] = (std::uint8_t)((i * 7 + 3) & 255); return b; }
@@ -83,11 +83,11 @@ int main() {
 
     // ---- the account wrapper keeps its behaviour: reuse after Digest(), string updates, hex helper ----
     {
-        acct::detail::Sha256 h; h.Update("ab"); h.Update(std::string("c"));
+        acc::detail::Sha256 h; h.Update("ab"); h.Update(std::string("c"));
         CHECK(Hex(h.Digest().data(), 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         h.Update("abc");                                                    // a fresh message after Digest()
         CHECK(Hex(h.Digest().data(), 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-        CHECK(acct::detail::Sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        CHECK(acc::detail::Sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 
     // ---- HMAC-SHA256: RFC 4231 test cases 1 to 7 (case 5 is truncated to 128 bits by the RFC) ----
@@ -138,7 +138,7 @@ int main() {
             Bytes p(rng() % 151), salt(rng() % 80); for (auto& b : p) b = (std::uint8_t)rng(); for (auto& b : salt) b = (std::uint8_t)rng();
             const std::uint32_t it = 1 + rng() % 400;
             const auto o = okay_old::account::Pbkdf2Sha256(Str(p), salt, it);
-            const auto n = acct::detail::Pbkdf2Sha256(Str(p), salt, it);               // the account service's wrapper
+            const auto n = acc::detail::Pbkdf2Sha256(Str(p), salt, it);               // the account service's wrapper
             if (o != n) ++bad;
         }
         CHECK(bad == 0);
@@ -147,22 +147,22 @@ int main() {
     // ---- password records written by the OLD code still verify (made with the code that shipped before the merge) ----
     {
         const std::string salt = "00112233445566778899aabbccddeeff";
-        CHECK(acct::detail::HashPassword("oldpass1", salt) == "d10f8ed8ee3048a7a07492e7d6b5b01c32481c2dc3084be52ae3034968651c5e");
-        CHECK(acct::detail::HashPasswordV2("correct horse battery staple", salt) ==
+        CHECK(acc::detail::HashPassword("oldpass1", salt) == "d10f8ed8ee3048a7a07492e7d6b5b01c32481c2dc3084be52ae3034968651c5e");
+        CHECK(acc::detail::HashPasswordV2("correct horse battery staple", salt) ==
               "$pbkdf2-sha256$600000$7c0123695eb46911838d4c16fa259d7280c59060c6031130b8269b624faacd02");        // the real cost
-        CHECK(acct::detail::HashPasswordV2(std::string(100, 'x') + "!", salt, 1000) ==
+        CHECK(acc::detail::HashPasswordV2(std::string(100, 'x') + "!", salt, 1000) ==
               "$pbkdf2-sha256$1000$38d3b1aabcba0d48b5c9cb1a2fb05eef56ea155131ffd182726de7e30b496126");          // key longer than a block
-        CHECK(acct::detail::HashPasswordV2("p\xc3\xa4ssw\xc3\xb6rd", salt, 2000) ==
+        CHECK(acc::detail::HashPasswordV2("p\xc3\xa4ssw\xc3\xb6rd", salt, 2000) ==
               "$pbkdf2-sha256$2000$0e41c64aada870145b6e5998d5d47a88d3f302e9c7d597e19f80c37767b5f4b1");
         // And through the real login path: a stored account file with records from the old code.
-        fs::path dir = fs::temp_directory_path() / ("okay_sha_unify_" + acct::detail::RandomHex(8));
+        fs::path dir = fs::temp_directory_path() / ("okay_sha_unify_" + acc::detail::RandomHex(8));
         fs::remove_all(dir); fs::create_directories(dir);
         {
             std::ofstream(dir / "accounts.db")
                 << "v1user\t" << salt << "\td10f8ed8ee3048a7a07492e7d6b5b01c32481c2dc3084be52ae3034968651c5e\n"
                 << "v2user\t" << salt << "\t$pbkdf2-sha256$600000$7c0123695eb46911838d4c16fa259d7280c59060c6031130b8269b624faacd02\n";
         }
-        acct::AccountService svc(dir);
+        acc::AccountService svc(dir);
         CHECK(svc.Login("v2user", "correct horse battery staple").ok);
         CHECK(!svc.Login("v2user", "correct horse battery stapl3").ok);
         svc.Logout();

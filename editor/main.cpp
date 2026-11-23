@@ -20842,40 +20842,15 @@ void DrawProjectSettings(EditorState& ed) {
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
             ImGui::Separator();
-            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            ImGui::TextDisabled("Physics solver of the open scene (saved with the scene)");
             {
                 auto& p3 = ed.scene().physics3D();
-                int q = (int)p3.quality;
-                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
-                const char* qn[] = {"Classic", "Improved", "Engine"};
-                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
-                if (ImGui::Combo("Quality##psq", &q, qn, 3)) {
-                    p3.quality = q == 2 ? okay::PhysicsQuality::Engine : q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
-                    ed.scene().physics().quality = q >= 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;   // (2D has no Engine)
-                    ed.dirty = true;
+                int it = p3.solverIterations;
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                    p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
-                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
-                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
-                                      "Engine (3D) runs the scene on our own full physics engine core: tree broad phase, exact contacts,\n"
-                                      "islands solved on every core, ball and cone-twist joints with drives for ragdolls.\n"
-                                      "New scenes start Improved. The setting is part of the scene file.");
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Engine ? "Our own engine core: many bodies, joints with drives, nothing tunnels."
-                                       : p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
-                                                                                     : "The original step, for old scenes.");
-                ImGui::PopStyleColor();
-                if (p3.quality != okay::PhysicsQuality::Classic) {
-                    int it = p3.solverIterations;
-                    ImGui::SetNextItemWidth(160);
-                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
-                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
-                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.");
             }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
@@ -34517,8 +34492,7 @@ static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*
     }
     const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
     if (ball || cone) {
-        L.Note("Ball and Cone Twist turn, limit and drive only in the Engine physics quality (Project Settings > Physics). "
-               "In Classic and Improved they are only a distance rod between the two points. Needs Freeze Rotation OFF.", false, true);
+        L.Note("Turns about the anchor; a powered joint for ragdolls with Use Drive. Needs Freeze Rotation OFF.", false, true);
         if (cone) {
             kAxis = L.Drag("Twist Axis##jtc", ax, 3, 0.05f); L.Tip("The bone's long axis (world space, taken when Play starts).");
             L.Drag("Swing Limit 1 (deg)##jtc", &jt->swingLimit1, 1, 1.0f, 0.0f, 180.0f); L.TipLookup();
@@ -54342,7 +54316,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Moving a collider's centre by a world-space step: Classic keeps the offset in world units, Improved in the object's own.
     auto shiftColliderOffset = [&](Collider3D* col, const Vec3& worldMove) {
         Transform* tr = col->transform;
-        if (tr && ed.scene().physics3D().quality != PhysicsQuality::Classic) {
+        if (tr) {
             Vec3 loc = tr->Rotation().Inverse() * worldMove; Vec3 ls = tr->LossyScale();
             col->offset = col->offset + Vec3{loc.x / (Mathf::Abs(ls.x) > 1e-4f ? ls.x : 1.0f), loc.y / (Mathf::Abs(ls.y) > 1e-4f ? ls.y : 1.0f), loc.z / (Mathf::Abs(ls.z) > 1e-4f ? ls.z : 1.0f)};
         } else col->offset = col->offset + worldMove;

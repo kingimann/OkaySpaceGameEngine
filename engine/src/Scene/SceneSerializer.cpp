@@ -4109,7 +4109,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
         out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
             << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
-    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+    // (written whenever it holds anything but the defaults; the quality value is kept as it was read: old files round-trip)
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic ||
+        scene.physics3D().solverIterations != 10 || !scene.physics3D().autoContinuous || scene.physics().solverIterations != 10) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
         out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
@@ -4524,10 +4526,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             in >> q3 >> it3 >> ac;
             in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
             if (clear) {
+                // (kept as read, so the file saves back unchanged; there is one physics path and the value changes nothing)
                 scene.physics3D().quality = q3 == 2 ? PhysicsQuality::Engine : q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
                 scene.physics3D().autoContinuous = (ac != 0);
-                scene.physics().quality = q2 >= 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;   // (2D has no Engine quality: it uses Improved)
+                scene.physics().quality = q2 == 2 ? PhysicsQuality::Engine : q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
             }
         } else if (token == "rendersettings") {

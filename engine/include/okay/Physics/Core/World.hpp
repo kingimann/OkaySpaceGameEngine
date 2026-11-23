@@ -47,6 +47,10 @@ using BodyId = std::uint32_t;
 using ColliderId = std::uint32_t;
 using JointId = std::uint32_t;
 constexpr std::uint32_t kInvalidId = 0xFFFFFFFFu;
+/// Ids are handles: the low 24 bits are a slot, the top 8 bits that slot's generation. A removed body's (collider's,
+/// joint's) id stays invalid even after something new takes its slot.
+constexpr std::uint32_t kIdIndexMask = 0x00FFFFFFu;
+inline std::uint32_t IdIndex(std::uint32_t id) { return id & kIdIndexMask; }
 
 enum class BodyType : std::uint8_t { Static, Kinematic, Dynamic };
 
@@ -73,6 +77,7 @@ struct ColliderDef {
     float friction = 0.5f;
     float restitution = 0.0f;
     float rollingResistance = 0.0f;   // 0..1: how much a rolling round body is slowed (stops a ball rolling forever)
+    float contactOffset = 0.0f;       // the collider counts as this much thicker (rests this far off what it touches)
     bool sensor = false;              // reports overlaps, never pushes
     std::uint32_t layer = 0;          // 0..31
     std::uint32_t mask = 0xFFFFFFFFu; // layers it collides with
@@ -163,19 +168,25 @@ public:
     bool blockSolver = true;             // solve the 2 to 4 normal points of a manifold together (steadier stacks)
     bool enableSleep = true;
     bool continuous = true;              // speculative contacts sized by each body's motion this step
-    float linearSlop = 0.005f;           // overlap that is left alone (stops jitter)
+    float linearSlop = 0.002f;           // overlap that is left alone (stops jitter)
     float speculativeDistance = 0.02f;   // contacts closer than this are kept even at rest
     float positionCorrection = 0.2f;     // fraction of the overlap removed per position iteration
     float maxCorrection = 0.2f;          // metres per iteration at most
     float restitutionThreshold = 1.0f;   // m/s: slower impacts do not bounce
     float sleepLinear = 0.05f, sleepAngular = 0.05f, timeToSleep = 0.5f;
-    float maxLinearSpeed = 500.0f, maxAngularSpeed = 100.0f;
+    float maxLinearSpeed = 500.0f, maxAngularSpeed = 1000.0f;
 
     /// Run fn(begin, end) over [0, count) on many threads (e.g. the engine JobSystem). Unset = serial.
     using ParallelFor = std::function<void(int count, const std::function<void(int, int)>& fn)>;
     void SetParallelFor(ParallelFor pf) { m_parallel = std::move(pf); }
     /// Extra pair filter (e.g. the scene's layer matrix): return false to never collide the two.
     std::function<bool(ColliderId, ColliderId)> shouldCollide;
+    /// The materials of a touching pair. Unset: friction is the square root of the two frictions, bounciness the larger
+    /// of the two, no extra still grip, rolling resistance the larger of the two. `staticFriction` (0 = same as friction)
+    /// is the grip while the surfaces are nearly still. Called from the narrow phase (maybe on several threads: it
+    /// must only read).
+    struct PairMaterial { float friction, restitution, staticFriction, rolling; };
+    std::function<void(ColliderId, ColliderId, PairMaterial&)> combineMaterials;
 
     // ---- bodies ----
     BodyId CreateBody(const BodyDef& def);

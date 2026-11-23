@@ -1,6 +1,7 @@
 // okay::phys::World: bodies, colliders, broad and narrow phase, islands, sleeping, events and queries.
 // (Sources: see World.hpp. The solver is Solver.cpp, joints Joint.cpp.)
 #include "WorldInternal.hpp"
+#include "okay/Core/StringId.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -89,11 +90,14 @@ Aabb ColliderWorldBox(const World::Impl& w, const ColliderData& c) {
 } // namespace
 
 BodyId World::CreateBody(const BodyDef& d) {
-    BodyId id;
-    if (!m->freeBodies.empty()) { id = m->freeBodies.back(); m->freeBodies.pop_back(); }
-    else { id = (BodyId)m->bodies.size(); m->bodies.emplace_back(); }
+    std::uint32_t slot;
+    if (!m->freeBodies.empty()) { slot = m->freeBodies.back(); m->freeBodies.pop_back(); }
+    else { slot = (std::uint32_t)m->bodies.size(); m->bodies.emplace_back(); }
+    const std::uint8_t gen = NextGen(m->bodies[slot].gen);
+    const BodyId id = MakeId(slot, gen);
     BodyData& b = m->bodies[id];
     b = BodyData{};
+    b.gen = gen;
     b.alive = true;
     b.type = d.type;
     b.xf = Xf{d.position, NormalizeQ(d.rotation)};
@@ -119,11 +123,15 @@ void World::DestroyBody(BodyId id) {
     for (JointId j : js) DestroyJoint(j);
     const std::vector<ColliderId> cs = m->bodies[id].colliders;
     for (ColliderId c : cs) RemoveCollider(c);
+    const std::uint8_t gen = m->bodies[id].gen;
     m->bodies[id] = BodyData{};
-    m->freeBodies.push_back(id);
+    m->bodies[id].gen = gen;
+    m->freeBodies.push_back(IdIndex(id));
 }
 
-bool World::IsValid(BodyId id) const { return id < m->bodies.size() && m->bodies[id].alive; }
+bool World::IsValid(BodyId id) const {
+    return id != kInvalidId && IdIndex(id) < m->bodies.size() && m->bodies[id].alive && m->bodies[id].gen == (id >> 24);
+}
 BodyType World::GetType(BodyId id) const { return IsValid(id) ? m->bodies[id].type : BodyType::Static; }
 void World::SetType(BodyId id, BodyType t) {
     if (!IsValid(id)) return;
@@ -139,13 +147,12 @@ void World::SetType(BodyId id, BodyType t) {
         m_tree.Destroy(cd.proxy);
         cd.box = ColliderWorldBox(*m, cd);
         cd.proxy = m_tree.Create(cd.box, c);
-        if (m->movedFlag.size() <= c) m->movedFlag.resize(c + 1, 0);
-        if (!m->movedFlag[c]) { m->movedFlag[c] = 1; m->movedProxies.push_back((int)c); }
+        m->MarkMoved(c);
     }
 }
 Xf World::GetTransform(BodyId id) const { return IsValid(id) ? m->bodies[id].xf : Xf{}; }
 void World::SetTransform(BodyId id, const V3& p, const Q& q) {
-    if (!IsValid(id)) return;
+    if (!IsValid(id) || !Finite(p) || !std::isfinite(q.x + q.y + q.z + q.w)) return;   // (a NaN pose is refused)
     BodyData& b = m->bodies[id];
     b.xf = Xf{p, NormalizeQ(q)};
     b.prevXf = b.xf;
@@ -162,20 +169,19 @@ void World::SetTransform(BodyId id, const V3& p, const Q& q) {
         ColliderData& cd = m->colliders[c];
         cd.box = ColliderWorldBox(*m, cd);
         if (m_tree.Move(cd.proxy, cd.box, V3{})) {
-            if (m->movedFlag.size() <= c) m->movedFlag.resize(c + 1, 0);
-            if (!m->movedFlag[c]) { m->movedFlag[c] = 1; m->movedProxies.push_back((int)c); }
+            m->MarkMoved(c);
         }
     }
 }
 V3 World::GetLinearVelocity(BodyId id) const { return IsValid(id) ? m->bodies[id].v : V3{}; }
 V3 World::GetAngularVelocity(BodyId id) const { return IsValid(id) ? m->bodies[id].w : V3{}; }
 void World::SetLinearVelocity(BodyId id, const V3& v) {
-    if (!IsValid(id) || m->bodies[id].type == BodyType::Static) return;
+    if (!IsValid(id) || m->bodies[id].type == BodyType::Static || !Finite(v)) return;
     m->bodies[id].v = v;
     if (LenSq(v) > 0.0f) Wake(id);
 }
 void World::SetAngularVelocity(BodyId id, const V3& w) {
-    if (!IsValid(id) || m->bodies[id].type == BodyType::Static) return;
+    if (!IsValid(id) || m->bodies[id].type == BodyType::Static || !Finite(w)) return;
     m->bodies[id].w = w;
     if (LenSq(w) > 0.0f) Wake(id);
 }
@@ -253,11 +259,14 @@ Xf World::InterpolatedTransform(BodyId id, float alpha) const {
 // ---- colliders ---------------------------------------------------------------------------------------------------------
 ColliderId World::AddCollider(BodyId body, const ColliderDef& def) {
     if (!IsValid(body)) return kInvalidId;
-    ColliderId id;
-    if (!m->freeColliders.empty()) { id = m->freeColliders.back(); m->freeColliders.pop_back(); }
-    else { id = (ColliderId)m->colliders.size(); m->colliders.emplace_back(); }
+    std::uint32_t slot;
+    if (!m->freeColliders.empty()) { slot = m->freeColliders.back(); m->freeColliders.pop_back(); }
+    else { slot = (std::uint32_t)m->colliders.size(); m->colliders.emplace_back(); }
+    const std::uint8_t gen = NextGen(m->colliders[slot].gen);
+    const ColliderId id = MakeId(slot, gen);
     ColliderData& c = m->colliders[id];
     c = ColliderData{};
+    c.gen = gen;
     c.alive = true;
     c.body = body;
     c.def = def;
@@ -266,8 +275,7 @@ ColliderId World::AddCollider(BodyId body, const ColliderDef& def) {
     UpdateMass(*m, body);
     c.box = ColliderWorldBox(*m, c);
     c.proxy = m_tree.Create(c.box, id);
-    if (m->movedFlag.size() <= id) m->movedFlag.resize(id + 1, 0);
-    if (!m->movedFlag[id]) { m->movedFlag[id] = 1; m->movedProxies.push_back((int)id); }
+    m->MarkMoved(id);
     return id;
 }
 
@@ -294,13 +302,17 @@ void World::RemoveCollider(ColliderId id) {
     BodyData& b = m->bodies[c.body];
     b.colliders.erase(std::remove(b.colliders.begin(), b.colliders.end(), id), b.colliders.end());
     const BodyId body = c.body;
+    const std::uint8_t gen = c.gen;
     c = ColliderData{};
-    if (id < m->movedFlag.size()) m->movedFlag[id] = 0;
-    m->movedProxies.erase(std::remove(m->movedProxies.begin(), m->movedProxies.end(), (int)id), m->movedProxies.end());
-    m->freeColliders.push_back(id);
+    c.gen = gen;
+    if (IdIndex(id) < m->movedFlag.size()) m->movedFlag[IdIndex(id)] = 0;
+    m->movedProxies.erase(std::remove(m->movedProxies.begin(), m->movedProxies.end(), id), m->movedProxies.end());
+    m->freeColliders.push_back(IdIndex(id));
     UpdateMass(*m, body);
 }
-bool World::IsValidCollider(ColliderId id) const { return id < m->colliders.size() && m->colliders[id].alive; }
+bool World::IsValidCollider(ColliderId id) const {
+    return id != kInvalidId && IdIndex(id) < m->colliders.size() && m->colliders[id].alive && m->colliders[id].gen == (id >> 24);
+}
 BodyId World::ColliderBody(ColliderId id) const { return IsValidCollider(id) ? m->colliders[id].body : kInvalidId; }
 const ColliderDef& World::GetCollider(ColliderId id) const { static ColliderDef none; return IsValidCollider(id) ? m->colliders[id].def : none; }
 void World::SetColliderMaterial(ColliderId id, float f, float r, float roll) {
@@ -361,11 +373,14 @@ JointId World::CreateJoint(const JointDef& def) {
     if (def.bodyA != kInvalidId && !IsValid(def.bodyA)) return kInvalidId;
     if (def.bodyB != kInvalidId && !IsValid(def.bodyB)) return kInvalidId;
     if (def.bodyA == def.bodyB) return kInvalidId;
-    JointId id;
-    if (!m->freeJoints.empty()) { id = m->freeJoints.back(); m->freeJoints.pop_back(); }
-    else { id = (JointId)m->joints.size(); m->joints.emplace_back(); }
+    std::uint32_t slot;
+    if (!m->freeJoints.empty()) { slot = m->freeJoints.back(); m->freeJoints.pop_back(); }
+    else { slot = (std::uint32_t)m->joints.size(); m->joints.emplace_back(); }
+    const std::uint8_t gen = NextGen(m->joints[slot].gen);
+    const JointId id = MakeId(slot, gen);
     JointData& j = m->joints[id];
     j = JointData{};
+    j.gen = gen;
     j.alive = true;
     j.def = def;
     j.def.frameA.q = NormalizeQ(def.frameA.q);
@@ -396,14 +411,17 @@ void World::DestroyJoint(JointId id) {
         Wake(b);
         // the pair may collide again: let its colliders look for pairs
         for (ColliderId c : m->bodies[b].colliders) {
-            if (m->movedFlag.size() <= c) m->movedFlag.resize(c + 1, 0);
-            if (!m->movedFlag[c]) { m->movedFlag[c] = 1; m->movedProxies.push_back((int)c); }
+            m->MarkMoved(c);
         }
     }
+    const std::uint8_t gen = j.gen;
     j = JointData{};
-    m->freeJoints.push_back(id);
+    j.gen = gen;
+    m->freeJoints.push_back(IdIndex(id));
 }
-bool World::IsValidJoint(JointId id) const { return id < m->joints.size() && m->joints[id].alive; }
+bool World::IsValidJoint(JointId id) const {
+    return id != kInvalidId && IdIndex(id) < m->joints.size() && m->joints[id].alive && m->joints[id].gen == (id >> 24);
+}
 JointDef& World::EditJoint(JointId id) {
     static JointDef none;
     if (!IsValidJoint(id)) return none;
@@ -433,8 +451,8 @@ bool CanCollide(const World& world, const World::Impl& w, ColliderId ia, Collide
     if (a.body == b.body) return false;
     const BodyData& ba = w.bodies[a.body];
     const BodyData& bb = w.bodies[b.body];
-    if (ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic && !a.def.sensor && !b.def.sensor) return false;
-    if (ba.type == BodyType::Static && bb.type == BodyType::Static) return false;
+    const bool sensor = a.def.sensor || b.def.sensor;   // (a trigger reports overlaps with anything, still or moving)
+    if (ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic && !sensor) return false;
     if (!((a.def.mask >> (b.def.layer & 31)) & 1u) || !((b.def.mask >> (a.def.layer & 31)) & 1u)) return false;
     // joined bodies that should not collide
     const BodyData& small = ba.joints.size() <= bb.joints.size() ? ba : bb;
@@ -490,12 +508,30 @@ void World::Step(float dt) {
 
     for (BodyData& b : w.bodies) if (b.alive) b.prevXf = b.xf;
 
+    // 0. every moving collider's box is stretched over where THIS step's motion can take it before pairs are looked
+    //    for, so a body that starts fast (spawned with a speed, or given one while resting) meets what is in its way
+    //    in this step's narrow phase (its speculative contact then stops it)
+    for (std::size_t ci = 0; ci < w.colliders.size(); ++ci) {
+        ColliderData& c = w.colliders[ci];
+        if (!c.alive) continue;
+        const BodyData& b = w.bodies[c.body];
+        if (b.type == BodyType::Static || !b.awake) continue;
+        V3 v = b.v;
+        if (b.type == BodyType::Dynamic) v += gravity * (b.gravityScale * dt);
+        const float reach = Len(b.xf.Apply(c.def.local.p) - b.com) + c.def.shape.OuterRadius();
+        const V3 move = v * dt;
+        const Aabb now = c.box;
+        if (!Finite(now.lo) || !Finite(now.hi) || !Finite(move)) continue;
+        const Aabb ahead{now.lo + move, now.hi + move};
+        const Aabb sweep = Aabb::Union(now, ahead).Grown(Len(b.w) * reach * dt);
+        if (!m_tree.FatAabb(c.proxy).Contains(sweep) && m_tree.Move(c.proxy, sweep, move)) w.MarkMoved(MakeId(ci, c.gen));
+    }
+
     // 1. new pairs: colliders whose fat box changed look for partners in the tree (sorted, so the order is fixed)
     std::sort(w.movedProxies.begin(), w.movedProxies.end());
     std::vector<std::uint64_t> fresh;
-    for (int ci : w.movedProxies) {
-        const ColliderId c = (ColliderId)ci;
-        if (c < w.movedFlag.size()) w.movedFlag[c] = 0;
+    for (const ColliderId c : w.movedProxies) {
+        if (IdIndex(c) < w.movedFlag.size()) w.movedFlag[IdIndex(c)] = 0;
         if (!IsValidCollider(c)) continue;
         m_tree.Query(m_tree.FatAabb(w.colliders[c].proxy), [&](int proxy) {
             const ColliderId o = (ColliderId)m_tree.User(proxy);
@@ -550,7 +586,7 @@ void World::Step(float dt) {
             const BodyData& bb = w.bodies[cb.body];
             const bool aActive = ba.awake && ba.type != BodyType::Static;
             const bool bActive = bb.awake && bb.type != BodyType::Static;
-            cp.active = aActive || bActive;
+            cp.active = aActive || bActive || cp.sensor;   // (a trigger is looked at every step, even between still colliders)
             if (!cp.active) continue;   // both asleep or fixed: keep last step's result
             cp.wasTouching = cp.touching;
             if (!m_tree.FatAabb(ca.proxy).Overlaps(m_tree.FatAabb(cb.proxy))) {
@@ -567,7 +603,14 @@ void World::Step(float dt) {
                 spec += mm;
             }
             Manifold man;
-            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec, man);
+            const float offs = ca.def.contactOffset + cb.def.contactOffset;
+            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec + offs, man);
+            if (hit && offs > 0.0f)   // the colliders count as thicker: every point is that much closer
+                for (int k = 0; k < man.count; ++k) {
+                    man.pts[k].pA += man.pts[k].normal * ca.def.contactOffset;
+                    man.pts[k].pB -= man.pts[k].normal * cb.def.contactOffset;
+                    man.pts[k].separation -= offs;
+                }
             ContactPointState old[4];
             const int oldCount = cp.count;
             for (int k = 0; k < oldCount; ++k) old[k] = cp.pts[k];
@@ -588,9 +631,19 @@ void World::Step(float dt) {
             }
             if (cp.sensor) { cp.touching = minSep <= 0.0f; cp.count = 0; continue; }
             cp.touching = minSep <= linearSlop;
-            cp.friction = Combine(ca.def.friction, cb.def.friction);
-            cp.restitution = std::max(ca.def.restitution, cb.def.restitution);
-            cp.rolling = std::max(ca.def.rollingResistance, cb.def.rollingResistance);
+            cp.minSeparation = minSep;
+            {   // how fast the two close along the normal (for waking a sleeper a speculative contact is about to push)
+                const V3 pa = ba.xf.Apply(cp.pts[0].localA);
+                const V3 vrel = (bb.v + Cross(bb.w, pa - bb.com)) - (ba.v + Cross(ba.w, pa - ba.com));
+                cp.closing = std::max(0.0f, -Dot(vrel, cp.normal));
+            }
+            PairMaterial pm{Combine(ca.def.friction, cb.def.friction), std::max(ca.def.restitution, cb.def.restitution), 0.0f,
+                            std::max(ca.def.rollingResistance, cb.def.rollingResistance)};
+            if (combineMaterials) combineMaterials(cp.a, cp.b, pm);
+            cp.friction = pm.friction;
+            cp.restitution = pm.restitution;
+            cp.staticFriction = pm.staticFriction;
+            cp.rolling = pm.rolling;
             const float tol = 0.05f * std::max(0.2f, std::min(ca.def.shape.OuterRadius(), cb.def.shape.OuterRadius()) * 2.0f);
             MatchWarm(cp, old, oldCount, tol);
         }
@@ -636,7 +689,7 @@ void World::Step(float dt) {
     const std::size_t nb = w.bodies.size();
     std::vector<int> parent(nb);
     for (std::size_t i = 0; i < nb; ++i) parent[i] = (int)i;
-    // dup-allow: physics core has no engine dependency (a plain union-find, as in the Improved step's sleeping groups)
+    // (a plain union-find with path halving; the Improved step's copy is gone with it)
     auto find = [&](int x) { while (parent[(std::size_t)x] != x) { parent[(std::size_t)x] = parent[(std::size_t)parent[(std::size_t)x]]; x = parent[(std::size_t)x]; } return x; };
     auto unite = [&](int x, int y) { x = find(x); y = find(y); if (x == y) return; if (x < y) parent[(std::size_t)y] = x; else parent[(std::size_t)x] = y; };
     auto isDyn = [&](BodyId b) { return b != kInvalidId && w.bodies[b].alive && w.bodies[b].type == BodyType::Dynamic; };
@@ -650,8 +703,11 @@ void World::Step(float dt) {
             BodyData& B = w.bodies[bb];
             const bool aMoves = A.awake && A.type != BodyType::Static;
             const bool bMoves = B.awake && B.type != BodyType::Static;
-            if (aMoves && !B.awake && B.type == BodyType::Dynamic && cp.touching) { B.awake = true; B.sleepTime = 0; changed = true; }
-            if (bMoves && !A.awake && A.type == BodyType::Dynamic && cp.touching) { A.awake = true; A.sleepTime = 0; changed = true; }
+            // a contact acts when touching, or when it is apart but will close this step (a fast body about to hit a
+            // sleeper): either wakes the sleeper, so the hit moves it instead of meeting a wall
+            const bool acts = cp.touching || cp.closing * dt >= cp.minSeparation - linearSlop;
+            if (aMoves && !B.awake && B.type == BodyType::Dynamic && acts) { B.awake = true; B.sleepTime = 0; changed = true; }
+            if (bMoves && !A.awake && A.type == BodyType::Dynamic && acts) { A.awake = true; A.sleepTime = 0; changed = true; }
         }
         for (const JointData& j : w.joints) {
             if (!j.alive || j.broken) continue;
@@ -682,13 +738,13 @@ void World::Step(float dt) {
     for (const ContactPair& cp : w.contacts) {
         if (!cp.alive || cp.sensor || cp.count == 0) continue;
         const BodyId ba = w.colliders[cp.a].body, bb = w.colliders[cp.b].body;
-        if (isDyn(ba) && isDyn(bb) && w.bodies[ba].awake && w.bodies[bb].awake) unite((int)ba, (int)bb);
+        if (isDyn(ba) && isDyn(bb) && w.bodies[ba].awake && w.bodies[bb].awake) unite((int)IdIndex(ba), (int)IdIndex(bb));
     }
     for (std::size_t ji = 0; ji < w.joints.size(); ++ji) {
         const JointData& j = w.joints[ji];
         if (!j.alive || j.broken) continue;
         if (isDyn(j.def.bodyA) && isDyn(j.def.bodyB) && w.bodies[j.def.bodyA].awake && w.bodies[j.def.bodyB].awake)
-            unite((int)j.def.bodyA, (int)j.def.bodyB);
+            unite((int)IdIndex(j.def.bodyA), (int)IdIndex(j.def.bodyB));
     }
     std::vector<int> islandOf(nb, -1);
     std::vector<IslandWork> islands;
@@ -700,7 +756,7 @@ void World::Step(float dt) {
         if (islandOf[(std::size_t)root] < 0) { islandOf[(std::size_t)root] = (int)islands.size(); islands.emplace_back(); }
         const int is = islandOf[(std::size_t)root];
         b.island = is;
-        islands[(std::size_t)is].bodies.push_back((BodyId)i);
+        islands[(std::size_t)is].bodies.push_back(MakeId(i, b.gen));
     }
     for (std::size_t i = 0; i < w.contacts.size(); ++i) {
         const ContactPair& cp = w.contacts[i];
@@ -716,7 +772,7 @@ void World::Step(float dt) {
         const int ia = j.def.bodyA != kInvalidId ? w.bodies[j.def.bodyA].island : -1;
         const int ib = j.def.bodyB != kInvalidId ? w.bodies[j.def.bodyB].island : -1;
         const int is = ia >= 0 ? ia : ib;
-        if (is >= 0) islands[(std::size_t)is].joints.push_back((JointId)ji);
+        if (is >= 0) islands[(std::size_t)is].joints.push_back(MakeId(ji, j.gen));
     }
     // kinematic bodies move on their own
     for (BodyData& b : w.bodies) {
@@ -755,6 +811,16 @@ void World::Step(float dt) {
     }
     const double t3 = NowMs();
 
+    // a body whose state went non-finite (NaN / inf from outside, or an extreme case) goes back to its last good pose
+    // at rest, so it can never spread NaN to the others
+    for (BodyData& b : w.bodies) {
+        if (!b.alive || b.type == BodyType::Static) continue;
+        if (Finite(b.xf.p) && Finite(b.v) && Finite(b.w) && std::isfinite(b.xf.q.x + b.xf.q.y + b.xf.q.z + b.xf.q.w)) continue;
+        b.xf = Finite(b.prevXf.p) ? b.prevXf : Xf{};
+        b.com = b.xf.Apply(b.localCom);
+        b.v = V3{}; b.w = V3{};
+    }
+
     // 5. move the moved colliders in the tree (their boxes stretched by this step's motion for the next step)
     for (std::size_t ci = 0; ci < w.colliders.size(); ++ci) {
         ColliderData& c = w.colliders[ci];
@@ -764,9 +830,9 @@ void World::Step(float dt) {
         if (b.xf.p == b.prevXf.p && b.xf.q == b.prevXf.q) continue;
         c.box = ColliderWorldBox(w, c);
         const V3 disp = b.xf.p - b.prevXf.p;
+        if (!Finite(c.box.lo) || !Finite(c.box.hi)) continue;
         if (m_tree.Move(c.proxy, c.box, disp)) {
-            if (w.movedFlag.size() <= ci) w.movedFlag.resize(ci + 1, 0);
-            if (!w.movedFlag[ci]) { w.movedFlag[ci] = 1; w.movedProxies.push_back((int)ci); }
+            w.MarkMoved(MakeId(ci, c.gen));
         }
     }
 
@@ -862,15 +928,15 @@ std::vector<ColliderId> World::Overlap(const Shape& shape, const Xf& xf, std::ui
 }
 
 std::uint64_t World::StateHash() const {
-    std::uint64_t h = kHashSeed;
-    auto mix = [&](const void* p, std::size_t n) { h = HashBytes(h, p, n); };
+    std::string bytes;
+    auto mix = [&](const void* p, std::size_t n) { bytes.append(static_cast<const char*>(p), n); };
     for (const BodyData& b : m->bodies) {
         if (!b.alive) continue;
         mix(&b.xf.p, sizeof(V3)); mix(&b.xf.q, sizeof(Q)); mix(&b.v, sizeof(V3)); mix(&b.w, sizeof(V3));
         const char aw = b.awake ? 1 : 0;
         mix(&aw, 1);
     }
-    return h;
+    return StringId::HashOf(bytes);
 }
 
 } // namespace phys

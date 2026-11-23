@@ -1545,12 +1545,6 @@ add_test(NAME physics_joints COMMAND test_physics_joints)
 
 # Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
-add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
-target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
-add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
-add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
-target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
-add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
 add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
 target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
 add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)

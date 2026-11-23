@@ -133,12 +133,13 @@ struct M33 {
     M33 operator*(float s) const { M33 r; for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i][j] = m[i][j] * s; return r; }
     M33 Transposed() const { M33 r; for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i][j] = m[j][i]; return r; }
     V3 Col(int c) const { return {m[0][c], m[1][c], m[2][c]}; }
-    float Det() const {   // dup-allow: physics core has no engine dependency (3x3 determinant)
+    float Det() const {   // dup-allow: row-major 3x3 of the solver's inner loops; the engine's Mat3 is column-major (Mat4 / 2D helpers)
         return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
                m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
     }
     /// The inverse by the adjugate; a singular matrix gives the zero matrix (so a locked direction simply gets no push).
-    /// dup-allow: physics core has no engine dependency (the engine's Mat3 is column-major with 2D helpers)
+    /// (A row-major type of its own: the solver's inner loops use it with V3; converting to the engine's column-major
+    /// Mat3 there would cost a copy per use.)
     M33 Inverse() const {
         const float d = Det();
         if (!(std::fabs(d) > 1e-30f)) return Zero();
@@ -173,15 +174,6 @@ struct Xf {
     V3 ApplyInv(const V3& v) const { return InvRotate(q, v - p); }
     Xf operator*(const Xf& b) const { return {Apply(b.p), NormalizeQ(q * b.q)}; }   // apply b, then this
 };
-
-/// Byte hash (64-bit FNV-1a) for state fingerprints and caches.
-/// dup-allow: physics core has no engine dependency (the engine's is okay::StringId::HashOf)
-constexpr std::uint64_t kHashSeed = 1469598103934665603ULL;
-inline std::uint64_t HashBytes(std::uint64_t h, const void* p, std::size_t n) {
-    const unsigned char* c = static_cast<const unsigned char*>(p);
-    for (std::size_t i = 0; i < n; ++i) { h ^= c[i]; h *= 1099511628211ULL; }   // dup-allow: physics core has no engine dependency
-    return h;
-}
 
 /// Axis-aligned box.
 struct Aabb {

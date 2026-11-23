@@ -8,8 +8,25 @@
 namespace okay {
 namespace phys {
 
+/// A vector indexed by id handles: the low 24 bits pick the slot (the top 8 bits are the slot's generation, so an id
+/// of something removed never names whatever reuses its slot; World::IsValid* check it).
+template <class T> struct SlotVec {
+    std::vector<T> v;
+    T& operator[](std::uint32_t id) { return v[id & kIdIndexMask]; }
+    const T& operator[](std::uint32_t id) const { return v[id & kIdIndexMask]; }
+    std::size_t size() const { return v.size(); }
+    void emplace_back() { v.emplace_back(); }
+    typename std::vector<T>::iterator begin() { return v.begin(); }
+    typename std::vector<T>::iterator end() { return v.end(); }
+    typename std::vector<T>::const_iterator begin() const { return v.begin(); }
+    typename std::vector<T>::const_iterator end() const { return v.end(); }
+};
+inline std::uint32_t MakeId(std::size_t index, std::uint8_t gen) { return (std::uint32_t)index | ((std::uint32_t)gen << 24); }
+inline std::uint8_t NextGen(std::uint8_t g) { return (std::uint8_t)(g >= 254 ? 0 : g + 1); }   // (255 would make kInvalidId)
+
 struct BodyData {
     bool alive = false;
+    std::uint8_t gen = 0;
     BodyType type = BodyType::Dynamic;
     bool awake = true;
     bool allowSleep = true;
@@ -34,6 +51,7 @@ struct BodyData {
 
 struct ColliderData {
     bool alive = false;
+    std::uint8_t gen = 0;
     BodyId body = kInvalidId;
     ColliderDef def;
     int proxy = DynamicTree::kNull;
@@ -61,13 +79,16 @@ struct ContactPair {
     bool mixed = false;               // points have their own normals (a mesh pair)
     int count = 0;
     ContactPointState pts[4];
-    float friction = 0.5f, restitution = 0.0f, rolling = 0.0f;
+    float friction = 0.5f, restitution = 0.0f, rolling = 0.0f, staticFriction = 0.0f;
     float approach = 0.0f;            // closing speed when it began
+    float closing = 0.0f;             // closing speed along the normal this step (narrow phase)
+    float minSeparation = 0.0f;       // deepest point's separation this step
     float preApproach = 0.0f;         // fastest closing speed seen while still apart but within reach (speculative)
 };
 
 struct JointData {
     bool alive = false;
+    std::uint8_t gen = 0;
     bool broken = false;
     JointDef def;
     // accumulated impulses (warm starting) and what they were last step
@@ -99,16 +120,21 @@ struct SolverBody {
 };
 
 struct World::Impl {
-    std::vector<BodyData> bodies;
+    SlotVec<BodyData> bodies;
     std::vector<BodyId> freeBodies;
-    std::vector<ColliderData> colliders;
+    SlotVec<ColliderData> colliders;
     std::vector<ColliderId> freeColliders;
-    std::vector<JointData> joints;
+    SlotVec<JointData> joints;
     std::vector<JointId> freeJoints;
     std::vector<ContactPair> contacts;             // sorted by key
     std::unordered_map<std::uint64_t, int> contactIndex;
-    std::vector<int> movedProxies;                 // colliders whose fat box changed (look for new pairs)
-    std::vector<char> movedFlag;
+    std::vector<ColliderId> movedProxies;          // colliders whose fat box changed (look for new pairs)
+    std::vector<char> movedFlag;                   // by slot
+    void MarkMoved(ColliderId c) {
+        const std::size_t i = c & kIdIndexMask;
+        if (movedFlag.size() <= i) movedFlag.resize(i + 1, 0);
+        if (!movedFlag[i]) { movedFlag[i] = 1; movedProxies.push_back(c); }
+    }
 };
 
 // ---- helpers shared by the solver files ----
@@ -151,8 +177,8 @@ struct SolveSettings {
     V3 gravity;
     int velocityIterations = 8, positionIterations = 3;
     bool warmStarting = true, frictionCone = true, blockSolver = true;
-    float linearSlop = 0.005f, positionCorrection = 0.2f, maxCorrection = 0.2f, restitutionThreshold = 1.0f;
-    float maxLinearSpeed = 500.0f, maxAngularSpeed = 100.0f;
+    float linearSlop = 0.002f, positionCorrection = 0.2f, maxCorrection = 0.2f, restitutionThreshold = 1.0f;
+    float maxLinearSpeed = 500.0f, maxAngularSpeed = 1000.0f;
     float sleepLinear = 0.05f, sleepAngular = 0.05f;
 };
 

@@ -17,8 +17,6 @@
 //   start pose relative to the other body) like a damped spring, never with more than driveMaxTorque: a
 //   powered ragdoll joint (active ragdolls set driveTarget every frame from an animation pose).
 //   Ball and ConeTwist pivot about `anchor` (a world point at the start), with or without a connected body.
-//   Ball and ConeTwist are solved fully in the Engine physics quality (our own engine core); Classic and
-//   Improved keep the distance between the two points only.
 //
 // Put it on the dynamic body. Leave `connectedBody` empty to anchor to a fixed world
 // point (`anchor`); set it to another object's name to link two bodies.
@@ -55,7 +53,7 @@ public:
     float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle); Slider: metres of travel from the start position
     float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle); Slider: metres of travel from the start position
 
-    // ---- Ball / ConeTwist (Engine quality) ----
+    // ---- Ball / ConeTwist ----
     float swingLimit1 = 45.0f;        ///< ConeTwist: how far the body may swing about the first axis across `axis` (deg)
     float swingLimit2 = 45.0f;        ///< ConeTwist: ... about the second axis across `axis` (deg)
     bool  useDrive = false;           ///< pull toward driveTarget (a powered joint)
@@ -77,7 +75,6 @@ public:
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;
-    bool  m_warnedQuality = false;    ///< runtime: the "Ball / Cone Twist need the Engine quality" warning was logged
     Vec3  pinOffset{0, 0, 0};         ///< A_pos - B_pos captured at init (Pin)
     float restLen = 1.0f;             ///< resolved rest length used by the solver
     Vec3  hingeLever{0, 0, 0};        ///< world lever COM_A -> pivot at init (Hinge)

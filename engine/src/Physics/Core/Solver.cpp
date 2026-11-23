@@ -21,6 +21,8 @@ namespace phys {
 
 namespace {
 
+constexpr float kStaticSpeed = 0.12f;   // m/s: below this sliding speed a contact uses its still grip
+
 struct CPoint {
     V3 n, t1, t2;         // normal and friction directions of this point
     V3 rA, rB;            // arms from the centres of mass (world) at the start of the step
@@ -34,7 +36,7 @@ struct CPoint {
 struct CSolver {
     int a = 0, b = 0;
     V3 n, t1, t2;
-    float friction = 0, restitution = 0, rolling = 0;
+    float friction = 0, restitution = 0, rolling = 0, staticFriction = 0;
     int count = 0;
     bool mixed = false;
     CPoint p[4];
@@ -216,6 +218,7 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
         c.friction = cp.friction;
         c.restitution = cp.restitution;
         c.rolling = cp.rolling;
+        c.staticFriction = cp.staticFriction;
         c.rollRadius = std::max(std::min(ca.def.shape.InnerRadius(), cb.def.shape.type == ShapeType::Plane ? 1e30f : cb.def.shape.InnerRadius()), 0.0f);
         if (cb.def.shape.type != ShapeType::Plane && ca.def.shape.type == ShapeType::Plane) c.rollRadius = cb.def.shape.InnerRadius();
         c.count = cp.count;
@@ -275,8 +278,14 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
             for (int kk = 0; kk < c.count; ++kk) {
                 const int k = (it & 1) ? c.count - 1 - kk : kk;
                 CPoint& p = c.p[k];
-                const float maxF = c.friction * p.st->normalImpulse;
                 const V3 dv = VelAt(B, p.rB) - VelAt(A, p.rA);
+                // the still grip holds while the two barely slide against each other (staticFriction above friction)
+                float coef = c.friction;
+                if (c.staticFriction > c.friction) {
+                    const float s1 = Dot(dv, p.t1), s2 = Dot(dv, p.t2);
+                    if (s1 * s1 + s2 * s2 < kStaticSpeed * kStaticSpeed) coef = c.staticFriction;
+                }
+                const float maxF = coef * p.st->normalImpulse;
                 if (s.frictionCone) {
                     const float l1 = -p.tMass[0] * Dot(dv, p.t1), l2 = -p.tMass[1] * Dot(dv, p.t2);
                     const float o1 = p.st->tangentImpulse[0], o2 = p.st->tangentImpulse[1];

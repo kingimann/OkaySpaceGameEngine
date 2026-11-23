@@ -1,5 +1,6 @@
 // Narrow phase of the physics core: GJK, EPA and manifold clipping (see Collide.hpp for the sources).
 #include "okay/Physics/Core/Collide.hpp"
+#include "okay/Physics/Core/Horizon.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -559,25 +560,12 @@ PenetrationResult EpaPenetration(const Shape& a, const Xf& xaIn, const Shape& b,
         if (dup) break;
         verts.push_back(p);
         const int pi = (int)verts.size() - 1;
-        horizon.clear();
         std::vector<int> vis;
         // faces the new point sees (the face being expanded always counts); a small tolerance keeps nearly coplanar
         // neighbours out, so the horizon stays one clean loop
         for (std::size_t i = 0; i < faces.size(); ++i)
             if (faces[i].alive && ((int)i == bi || Dot(faces[i].n, p.w) - faces[i].d > eps * 0.1f)) vis.push_back((int)i);
-        for (int vf : vis) {
-            const Face& f = faces[(std::size_t)vf];
-            const int e[3][2] = {{f.i, f.j}, {f.j, f.k}, {f.k, f.i}};
-            for (const auto& ed : e) {
-                bool shared = false;
-                for (int of : vis) {
-                    if (of == vf) continue;
-                    const Face& g = faces[(std::size_t)of];
-                    if ((g.i == ed[1] && g.j == ed[0]) || (g.j == ed[1] && g.k == ed[0]) || (g.k == ed[1] && g.i == ed[0])) { shared = true; break; }
-                }
-                if (!shared) horizon.emplace_back(ed[0], ed[1]);
-            }
-        }
+        HorizonEdges(vis, [&](int f, int k) { const Face& x = faces[(std::size_t)f]; return k == 0 ? x.i : k == 1 ? x.j : x.k; }, horizon);
         // the new faces must all keep the origin inside; if rounding broke that, stop with what we have
         std::vector<Face> fresh;
         bool broken = horizon.size() < 3;

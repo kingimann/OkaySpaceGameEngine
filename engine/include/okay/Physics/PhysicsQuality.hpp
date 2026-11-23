@@ -4,20 +4,10 @@
 
 namespace okay {
 
-/// How the step solves contacts.
-///  Classic  - the original single-pass step: every touching pair is resolved once, in order. Old scenes keep it, so they
-///             play exactly as they did.
-///  Improved - the iterated contact solver: boxes touch along a whole face (up to four contact points), the solver
-///             repeats several times and remembers last step's pushes (so stacks stand still and settle), real inertia
-///             for each shape, friction that holds, bodies that rest together fall asleep together and wake when what
-///             held them up moves away, fast bodies are swept so they cannot pass through thin walls, and rolling
-///             resistance stops a rolling ball. New scenes start with Improved; a scene file records it as `physicsquality 1`.
-///  Engine   - (3D only) our own full physics engine core (okay::phys, engine/include/okay/Physics/Core): a dynamic AABB
-///             tree broad phase, GJK / EPA / SAT contact manifolds, a sequential-impulse solver with a block solver for
-///             resting faces, speculative contacts so fast bodies never tunnel, islands that sleep together and are
-///             solved in parallel on the job system with bit-identical results, and joints with limits, motors and
-///             drives (ball and cone-twist for ragdolls). Saved as `physicsquality 2`. See docs/physics/physics_core.md.
-///             The 2D step treats Engine like Improved.
+/// The physics quality setting old scene files carry (`physicsquality`). There is ONE physics path now (3D: our own
+/// engine core, docs/physics/physics_core.md; 2D: the 2D step), so the value changes nothing: it is read and written back
+/// as it was, so old files load and save unchanged. Scenes that used Classic (the old default) or Improved now run the
+/// engine core; their motion can differ slightly (tighter stacking, joints, fast objects).
 enum class PhysicsQuality : int { Classic = 0, Improved = 1, Engine = 2 };
 
 /// What the last Step did (Improved quality fills all of it; Classic fills the counts it knows). For tests, the debug view

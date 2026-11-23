@@ -1,6 +1,7 @@
 // Convex shapes of the physics core (see Shape.hpp for the sources each part was written from).
 #include "okay/Physics/Core/Shape.hpp"
 #include "okay/Physics/Core/DynamicTree.hpp"
+#include "okay/Physics/Core/Horizon.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -185,20 +186,7 @@ std::shared_ptr<HullData> HullData::Build(const std::vector<V3>& input) {
         for (std::size_t f = 0; f < faces.size(); ++f)
             if (faces[f].alive && Dot(faces[f].n, p) - faces[f].d > eps) visible.push_back((int)f);
         if (visible.empty()) continue;
-        horizon.clear();
-        for (int vf : visible) {
-            const F& f = faces[(std::size_t)vf];
-            const int e[3][2] = {{f.a, f.b}, {f.b, f.c}, {f.c, f.a}};
-            for (const auto& ed : e) {
-                bool shared = false;   // is the reverse edge on another visible face?
-                for (int of : visible) {
-                    if (of == vf) continue;
-                    const F& g = faces[(std::size_t)of];
-                    if ((g.a == ed[1] && g.b == ed[0]) || (g.b == ed[1] && g.c == ed[0]) || (g.c == ed[1] && g.a == ed[0])) { shared = true; break; }
-                }
-                if (!shared) horizon.emplace_back(ed[0], ed[1]);
-            }
-        }
+        HorizonEdges(visible, [&](int f, int k) { const F& x = faces[(std::size_t)f]; return k == 0 ? x.a : k == 1 ? x.b : x.c; }, horizon);
         for (int vf : visible) faces[(std::size_t)vf].alive = false;
         for (const auto& h : horizon) faces.push_back(makeFace(h.first, h.second, (int)pi));
         if (faces.size() > 4 * kMaxInput) {   // keep the face list short: drop dead faces now and then

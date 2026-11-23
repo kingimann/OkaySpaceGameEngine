@@ -1,4 +1,4 @@
-// The Engine physics quality: our own physics engine core (okay::phys::World, engine/include/okay/Physics/Core) runs
+// The 3D physics step: our own physics engine core (okay::phys::World, engine/include/okay/Physics/Core) runs
 // the scene. Included at the end of Physics3D.cpp, so it shares that file's helpers (BodyOfCollider, MakeCollision,
 // DispatchCollision, DispatchTrigger, TriggerAccepts, Alive).
 //
@@ -70,15 +70,21 @@ std::shared_ptr<phys::TriangleSource> MeshSourceOf(MeshCollider3D* mc, MeshCache
     const TriMesh& tm = mc->Tris();
     std::vector<phys::Tri3> tris;
     tris.reserve((std::size_t)tm.TriangleCount());
-    std::uint64_t key = phys::kHashSeed;
     for (int i = 0; i < tm.TriangleCount(); ++i) {
         Vec3 a, b, c;
         tm.Triangle(i, a, b, c);
         tris.push_back({P3(a), P3(b), P3(c)});
-        key = phys::HashBytes(key, &tris.back(), sizeof(phys::Tri3));
     }
+    const std::uint64_t key = StringId::HashOf(std::string_view(reinterpret_cast<const char*>(tris.data()), tris.size() * sizeof(phys::Tri3)));
     std::shared_ptr<const phys::TriMeshSource> base = cache[key].lock();
-    if (!base) { base = std::make_shared<phys::TriMeshSource>(std::move(tris)); cache[key] = base; }
+    if (!base) {
+        for (auto it = cache.begin(); it != cache.end();) {   // forget trees no collider uses any more
+            if (it->second.expired()) it = cache.erase(it);
+            else ++it;
+        }
+        base = std::make_shared<phys::TriMeshSource>(std::move(tris));
+        cache[key] = base;
+    }
     const Vec3 s = mc->transform ? mc->transform->LossyScale() : Vec3::One;
     return std::make_shared<phys::ScaledTriangleSource>(base, phys::V3{s.x, s.y, s.z});
 }
@@ -132,6 +138,12 @@ bool PiecesOfCollider(Collider3D* c, bool dynamicBody, std::vector<EnginePiece>&
         }
         case S::Mesh: {
             auto* mc = static_cast<MeshCollider3D*>(c);
+            if (!mc->HasTriangles()) {   // no mesh (yet): it collides as its size box, as before
+                const Vec3 h = mc->HalfExtents();
+                out.push_back({phys::Shape::Box(phys::V3{std::max(h.x, 1e-4f), std::max(h.y, 1e-4f), std::max(h.z, 1e-4f)}),
+                               phys::Xf{P3(c->WorldCenter()), PQ(rot)}});
+                return true;
+            }
             if (dynamicBody) {   // a moving mesh collides as its convex hull (as in the other qualities)
                 if (!mc->HasTriangles()) return false;
                 const Mat4 M = mc->WorldMatrix();
@@ -171,8 +183,13 @@ bool PieceOfTerrain(Terrain* t, EnginePiece& out) {
     return true;
 }
 
-std::uint64_t Mix(std::uint64_t h, const void* p, std::size_t n) { return phys::HashBytes(h, p, n); }
-template <class T> std::uint64_t MixV(std::uint64_t h, const T& v) { return Mix(h, &v, sizeof(T)); }
+// Signatures: the bytes that describe a thing, hashed once with the engine's string hash (StringId::HashOf).
+struct SigBytes {
+    std::string b;
+    std::uint64_t Done() const { return StringId::HashOf(b); }
+};
+SigBytes& Mix(SigBytes& h, const void* p, std::size_t n) { h.b.append(static_cast<const char*>(p), n); return h; }
+template <class T> SigBytes& MixV(SigBytes& h, const T& v) { return Mix(h, &v, sizeof(T)); }
 // A scale read back from a turning body's matrix wobbles in its last bits: compare it to 1 part in 100,000.
 Vec3 Quantized(const Vec3& v) {
     auto q = [](float x) { return std::round(x * 100000.0f); };
@@ -180,67 +197,83 @@ Vec3 Quantized(const Vec3& v) {
 }
 // Big height data: every byte up to 1 MB, beyond that 65,536 evenly spread samples (a 2049 x 2049 terrain would
 // otherwise cost 16 MB of hashing every step; an edit that touches none of the samples is then picked up late).
-std::uint64_t MixBig(std::uint64_t h, const void* p, std::size_t n) {
-    h = MixV(h, n);
+SigBytes& MixBig(SigBytes& h, const void* p, std::size_t n) {
+    MixV(h, n);
     if (n <= (1u << 20)) return Mix(h, p, n);
     const unsigned char* c = static_cast<const unsigned char*>(p);
     const std::size_t stride = n / 65536;
-    for (std::size_t i = 0; i < n; i += stride) h = Mix(h, c + i, 1);
+    for (std::size_t i = 0; i < n; i += stride) Mix(h, c + i, 1);
     return h;
 }
 
 // What a collider looks like (shape kind and sizes, scale, offset, trigger, layer, material), without building it.
 std::uint64_t ColliderSig(Collider3D* c, const Rigidbody3D* body) {
     using S = Collider3D::Shape;
-    std::uint64_t h = phys::kHashSeed;
-    h = MixV(h, (int)c->shape());
-    h = MixV(h, c->offset); h = MixV(h, c->isTrigger); h = MixV(h, c->layer);
-    h = MixV(h, c->friction); h = MixV(h, c->bounciness);
-    if (c->transform) h = MixV(h, Quantized(c->transform->LossyScale()));
-    if (body) { h = MixV(h, body->friction); h = MixV(h, body->bounciness); h = MixV(h, body->rollingResistance); h = MixV(h, (int)body->bodyType); }
+    SigBytes h;
+    MixV(h, (int)c->shape());
+    MixV(h, c->offset); MixV(h, c->isTrigger); MixV(h, c->layer);
+    MixV(h, c->friction); MixV(h, c->bounciness); MixV(h, c->contactOffset);
+    if (c->transform) MixV(h, Quantized(c->transform->LossyScale()));
+    if (body) { MixV(h, body->friction); MixV(h, body->bounciness); MixV(h, body->rollingResistance); MixV(h, (int)body->bodyType); }
     switch (c->shape()) {
-        case S::Box: h = MixV(h, static_cast<BoxCollider3D*>(c)->size); break;
-        case S::Sphere: h = MixV(h, static_cast<SphereCollider3D*>(c)->radius); break;
+        case S::Box: MixV(h, static_cast<BoxCollider3D*>(c)->size); break;
+        case S::Sphere: MixV(h, static_cast<SphereCollider3D*>(c)->radius); break;
         case S::Capsule:
         case S::Cylinder: {
             auto* cc = static_cast<CapsuleCollider3D*>(c);
-            h = MixV(h, cc->radius); h = MixV(h, cc->height); h = MixV(h, cc->axis);
+            MixV(h, cc->radius); MixV(h, cc->height); MixV(h, cc->axis);
             break;
         }
         case S::Cone: {
             auto* cc = static_cast<ConeCollider3D*>(c);
-            h = MixV(h, cc->radius); h = MixV(h, cc->height); h = MixV(h, cc->axis);
+            MixV(h, cc->radius); MixV(h, cc->height); MixV(h, cc->axis);
             break;
         }
-        case S::ConvexHull: { const std::string& p = static_cast<ConvexHullCollider3D*>(c)->points; h = Mix(h, p.data(), p.size()); break; }
+        case S::ConvexHull: { const std::string& p = static_cast<ConvexHullCollider3D*>(c)->points; Mix(h, p.data(), p.size()); break; }
         case S::Compound:
             for (const auto& part : static_cast<CompoundCollider3D*>(c)->Parts()) {
-                h = MixV(h, (int)part.shape.kind); h = MixV(h, part.shape.half); h = MixV(h, part.shape.radius);
-                h = MixV(h, part.shape.height); h = MixV(h, part.shape.axis); h = MixV(h, part.pos); h = MixV(h, part.rot);
+                MixV(h, (int)part.shape.kind); MixV(h, part.shape.half); MixV(h, part.shape.radius);
+                MixV(h, part.shape.height); MixV(h, part.shape.axis); MixV(h, part.pos); MixV(h, part.rot);
             }
             break;
         case S::Heightfield: {
             auto* hf = static_cast<HeightfieldCollider3D*>(c);
-            h = MixV(h, hf->Cols()); h = MixV(h, hf->Rows()); h = MixV(h, hf->CX()); h = MixV(h, hf->CZ()); h = MixV(h, hf->heightScale);
-            h = MixBig(h, hf->heights.data(), hf->heights.size());
+            MixV(h, hf->Cols()); MixV(h, hf->Rows()); MixV(h, hf->CX()); MixV(h, hf->CZ()); MixV(h, hf->heightScale);
+            MixBig(h, hf->heights.data(), hf->heights.size());
             break;
         }
         case S::Mesh: {
             auto* mc = static_cast<MeshCollider3D*>(c);
-            h = MixV(h, mc->BuildCount());   // (its pose is not part of it: a moved static mesh is moved, not rebuilt)
+            MixV(h, mc->BuildCount());   // (its pose is not part of it: a moved static mesh is moved, not rebuilt)
+            MixV(h, mc->size);            // (the box it falls back to without a mesh)
             break;
         }
         case S::Plane: break;
     }
-    return h;
+    return h.Done();
+}
+
+bool SameAxis(const phys::JointAxis& a, const phys::JointAxis& b) {
+    return a.mode == b.mode && a.lower == b.lower && a.upper == b.upper && a.motor == b.motor && a.motorSpeed == b.motorSpeed &&
+           a.motorMaxForce == b.motorMaxForce && a.springFrequency == b.springFrequency && a.springDamping == b.springDamping &&
+           a.springTarget == b.springTarget;
+}
+// The settings the bridge edits every step (limits, motors, springs, cone, drive).
+bool SameJointSettings(const phys::JointDef& a, const phys::JointDef& b) {
+    for (int k = 0; k < 3; ++k)
+        if (!SameAxis(a.linear[k], b.linear[k]) || !SameAxis(a.angular[k], b.angular[k])) return false;
+    return a.swingSpan1 == b.swingSpan1 && a.swingSpan2 == b.swingSpan2 && a.distanceStiffness == b.distanceStiffness &&
+           a.distanceDamper == b.distanceDamper && a.drive == b.drive && a.driveTarget == b.driveTarget &&
+           a.driveStiffness == b.driveStiffness && a.driveDamping == b.driveDamping && a.driveFrequency == b.driveFrequency &&
+           a.driveDampingRatio == b.driveDampingRatio && a.driveMaxTorque == b.driveMaxTorque;
 }
 
 std::uint64_t TerrainSig(Terrain* t) {
-    std::uint64_t h = phys::kHashSeed;
-    h = MixV(h, t->resolution); h = MixV(h, t->size);
-    if (t->transform) h = MixV(h, Quantized(t->transform->LossyScale()));
-    if (!t->heights.empty()) h = MixBig(h, t->heights.data(), t->heights.size() * sizeof(float));
-    return h;
+    SigBytes h;
+    MixV(h, t->resolution); MixV(h, t->size);
+    if (t->transform) MixV(h, Quantized(t->transform->LossyScale()));
+    if (!t->heights.empty()) MixBig(h, t->heights.data(), t->heights.size() * sizeof(float));
+    return h.Done();
 }
 
 } // namespace
@@ -254,6 +287,7 @@ struct Physics3D::EngineBridge {
         bool sleeping = false;
         bool seen = false;
         bool driven = false;                      // a kinematic body game code moved this step (its speed was made up)
+        bool warnedBad = false;                   // a NaN / infinite pose or speed from game code was logged once
     };
     struct ColRec {
         std::vector<phys::ColliderId> ids;
@@ -270,18 +304,42 @@ struct Physics3D::EngineBridge {
         std::uint64_t sig = 0;
         const GameObject* partner = nullptr;
         bool seen = false;
+        float restLength = -1.0f;                 // Distance / Spring: the length it was built with (kept if rebuilt)
+        Vec3 lastPartnerPos{0, 0, 0};             // where the partner last was (a joint that loses it holds there)
     };
     std::unordered_map<const Rigidbody3D*, BodyRec> bodies;
     std::unordered_map<const Collider3D*, ColRec> colliders;
     std::unordered_map<const Terrain*, ColRec> terrains;
     std::unordered_map<const Joint3D*, JointRec> joints;
-    std::vector<Collider3D*> back;                        // ColliderId -> its component (nullptr: a terrain)
+    // ColliderId -> its component, by id slot; the full id is kept so a stale id never finds a newer collider
+    std::vector<std::pair<phys::ColliderId, Collider3D*>> back;
     MeshCache meshCache;                                  // one triangle tree per mesh asset
-    std::vector<std::uint64_t> touching;                  // pair keys touching after the last step (sorted)
-    std::unordered_map<std::uint64_t, std::pair<Collider3D*, Collider3D*>> touchingPair;
+    // collider pairs touching after the last step, as component pairs (a compound's pieces and a rebuilt collider are
+    // still the same pair), in the order their callbacks were sent
+    using CPair = std::pair<Collider3D*, Collider3D*>;
+    struct CPairHash { std::size_t operator()(const CPair& p) const { return std::hash<const void*>()(p.first) * 31u ^ std::hash<const void*>()(p.second); } };
+    std::vector<CPair> touching;
+    std::unordered_set<CPair, CPairHash> touchingSet;
 
+    Collider3D* Back(phys::ColliderId id) const {
+        const std::size_t i = phys::IdIndex(id);
+        return i < back.size() && back[i].first == id ? back[i].second : nullptr;
+    }
+    bool Known(phys::ColliderId id) const {   // a live collider of ours (a terrain's maps to nullptr)
+        const std::size_t i = phys::IdIndex(id);
+        return i < back.size() && back[i].first == id;
+    }
+    void SetBack(phys::ColliderId id, Collider3D* c) {
+        const std::size_t i = phys::IdIndex(id);
+        if (back.size() <= i) back.resize(i * 2 + 1, {phys::kInvalidId, nullptr});
+        back[i] = {id, c};
+    }
     void Unmap(const ColRec& r) {
-        for (phys::ColliderId id : r.ids) { world.RemoveCollider(id); if (id < back.size()) back[id] = nullptr; }
+        for (phys::ColliderId id : r.ids) {   // (an id the world already dropped, with its body, is simply invalid now)
+            world.RemoveCollider(id);
+            const std::size_t i = phys::IdIndex(id);
+            if (i < back.size() && back[i].first == id) back[i] = {phys::kInvalidId, nullptr};
+        }
         if (r.ownStatic) world.DestroyBody(r.owner);
     }
 };
@@ -289,9 +347,7 @@ struct Physics3D::EngineBridge {
 Physics3D::~Physics3D() = default;
 
 void Physics3D::Clear() {
-    m_contacts.clear(); m_meshContacts.clear(); m_restContacts.clear();
-    m_solver.reset();   // its remembered pushes point at colliders about to be freed
-    m_engine.reset();   // (Engine quality: the world holds bodies for components about to be freed)
+    m_engine.reset();   // the world holds bodies for components about to be freed
 }
 
 phys::World* Physics3D::EngineWorld() { return m_engine ? &m_engine->world : nullptr; }
@@ -316,12 +372,34 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     W.velocityIterations = std::min(std::max(solverIterations, 4), 30);
     W.positionIterations = 3;
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {
-        Collider3D* ca = a < E.back.size() ? E.back[a] : nullptr;
-        Collider3D* cb = b < E.back.size() ? E.back[b] : nullptr;
+        Collider3D* ca = E.Back(a);
+        Collider3D* cb = E.Back(b);
         if (!ca || !cb) return true;   // a terrain collides with everything solid
         if (!LayersCollide(ca->layer, cb->layer)) return false;
         if ((ca->isTrigger || cb->isTrigger) && (!TriggerAccepts(ca, cb) || !TriggerAccepts(cb, ca))) return false;
         return true;
+    };
+    // friction and bounce of a pair: each collider's own value (or its body's) and the stronger of the two combine rules
+    // (PhysicsMaterial.hpp: Default = square root of the frictions, the larger bounce)
+    // Materials of a pair: each collider's own friction / bounce (or its body's) joined by the stronger combine rule
+    // (PhysicsMaterial.hpp; Default = square root of the frictions, the larger bounce); a Physics Material on either
+    // side adds its still grip (times its slope grip) and its rolling friction, as the old step did.
+    W.combineMaterials = [&E](phys::ColliderId a, phys::ColliderId b, phys::World::PairMaterial& pm) {
+        Collider3D* ca = E.Back(a);
+        Collider3D* cb = E.Back(b);
+        if (!ca || !cb) return;   // a terrain: the default rule
+        const phys::World& w = E.world;
+        const float fa = w.GetCollider(a).friction, fb = w.GetCollider(b).friction;
+        pm.friction = CombineSurface(fa, fb, ca->frictionCombine, cb->frictionCombine, true);
+        pm.restitution = CombineSurface(w.GetCollider(a).restitution, w.GetCollider(b).restitution, ca->bounceCombine, cb->bounceCombine, false);
+        const PhysicsMaterialData* ma = SurfaceOf(ca->gameObject);
+        const PhysicsMaterialData* mb = SurfaceOf(cb->gameObject);
+        if (ma || mb) {
+            const float sa = ma ? ma->staticFriction * ma->slopeGrip : fa, sb = mb ? mb->staticFriction * mb->slopeGrip : fb;
+            pm.staticFriction = CombineSurface(sa, sb, ca->frictionCombine, cb->frictionCombine, true);
+            if (ma && ma->rollingFriction >= 0.0f) pm.rolling = std::max(ma->rollingFriction, mb && mb->rollingFriction >= 0.0f ? mb->rollingFriction : 0.0f);
+            else if (mb && mb->rollingFriction >= 0.0f) pm.rolling = std::max(pm.rolling, mb->rollingFriction);
+        }
     };
     JobSystem& jobs = EngineJobs();
     if (jobs.WorkerCount() > 0) {
@@ -369,10 +447,24 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         W.SetAllowSleep(id, rb->allowSleep);
         if (type == phys::BodyType::Dynamic && std::fabs(W.GetMass(id) - rb->mass) > 1e-6f * std::max(1.0f, rb->mass))
             W.SetMass(id, rb->mass > 0.0f ? rb->mass : 1.0f);
-        // what game code changed since the last step
-        const bool moved = !(pos == r.pos) || !(rot.x == r.rot.x && rot.y == r.rot.y && rot.z == r.rot.z && rot.w == r.rot.w);
+        // what game code changed since the last step. A NaN or infinite pose, speed or force is refused (logged once):
+        // only that body keeps its last good state, nothing else is touched by it.
+        const bool goodPose = std::isfinite(pos.x + pos.y + pos.z) && std::isfinite(rot.x + rot.y + rot.z + rot.w);
+        const bool goodVel = std::isfinite(rb->velocity.x + rb->velocity.y + rb->velocity.z) &&
+                             std::isfinite(rb->angularVelocity.x + rb->angularVelocity.y + rb->angularVelocity.z);
+        if ((!goodPose || !goodVel) && !r.warnedBad) {
+            r.warnedBad = true;
+            Log::Warning("Rigidbody3D on '", rb->gameObject->name, "': a NaN or infinite position, rotation or speed was set; "
+                         "the physics keeps its last good state");
+        }
+        const bool moved = goodPose && (!(pos == r.pos) || !(rot.x == r.rot.x && rot.y == r.rot.y && rot.z == r.rot.z && rot.w == r.rot.w));
         r.driven = false;
-        if (moved && type == phys::BodyType::Kinematic && dt > 0.0f) {
+        // a kinematic body that game code moved slower than this is driven (it carries and pushes); a bigger jump is a
+        // teleport (no made-up speed that would shove what it lands next to)
+        constexpr float kDriveMaxSpeed = 50.0f;
+        const bool drive = moved && type == phys::BodyType::Kinematic && dt > 0.0f &&
+                           (pos - E3(W.GetTransform(id).p)).Magnitude() <= kDriveMaxSpeed * dt;
+        if (drive) {
             // a kinematic body moved by game code (a lift, a moving platform): give it the speed that gets it there this
             // step instead of teleporting it, so what stands on it is carried and what it hits is pushed
             const phys::Xf now = W.GetTransform(id);
@@ -381,17 +473,17 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
             r.driven = true;
         } else {
             if (moved) W.SetTransform(id, P3(pos), PQ(rot));
-            if (!(rb->velocity == r.vel)) W.SetLinearVelocity(id, P3(rb->velocity));
-            if (!(rb->angularVelocity == r.ang)) W.SetAngularVelocity(id, P3(rb->angularVelocity));
+            if (moved && type == phys::BodyType::Kinematic) { W.SetLinearVelocity(id, phys::V3{}); W.SetAngularVelocity(id, phys::V3{}); }
+            if (goodVel && !(rb->velocity == r.vel)) W.SetLinearVelocity(id, P3(rb->velocity));
+            if (goodVel && !(rb->angularVelocity == r.ang)) W.SetAngularVelocity(id, P3(rb->angularVelocity));
         }
         if (r.sleeping && !rb->sleeping) W.Wake(id);
         const Vec3 f = rb->ConsumeForce(), tq = rb->ConsumeTorque();
-        if (f.SqrMagnitude() > 0.0f) W.ApplyForceAtCenter(id, P3(f));
-        if (tq.SqrMagnitude() > 0.0f && !rb->freezeRotation) W.ApplyTorque(id, P3(tq));
+        if (f.SqrMagnitude() > 0.0f && std::isfinite(f.x + f.y + f.z)) W.ApplyForceAtCenter(id, P3(f));
+        if (tq.SqrMagnitude() > 0.0f && std::isfinite(tq.x + tq.y + tq.z) && !rb->freezeRotation) W.ApplyTorque(id, P3(tq));
     }
 
     // ---- 1b. colliders (static ones get a static body of their own, so a moved one can be moved alone) ----
-    if (E.back.size() < 64) E.back.resize(64, nullptr);
     for (auto& kv : E.colliders) kv.second.seen = false;
     const std::vector<Collider3D*> cols = CachedComponents<Collider3D>(scene);
     std::vector<EnginePiece> pieces;
@@ -399,7 +491,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         if (!Alive(c) || !c->transform) continue;
         Rigidbody3D* rb = BodyOfCollider(c);
         auto bit = rb ? E.bodies.find(rb) : E.bodies.end();
-        if (rb && bit == E.bodies.end()) continue;   // its body is switched off: so is the collider
+        if (rb && bit == E.bodies.end()) { rb = nullptr; bit = E.bodies.end(); }   // its body is switched off: a static collider
         const bool onBody = bit != E.bodies.end();
         const std::uint64_t sig = ColliderSig(c, onBody ? rb : nullptr);
         auto it = E.colliders.find(c);
@@ -473,10 +565,10 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
             cd.friction = c->friction >= 0.0f ? c->friction : (rb ? rb->friction : 0.5f);
             cd.restitution = c->bounciness >= 0.0f ? c->bounciness : (rb ? rb->bounciness : 0.0f);
             cd.rollingResistance = rb ? std::min(std::max(rb->rollingResistance, 0.0f), 1.0f) : 0.0f;
+            cd.contactOffset = std::max(c->contactOffset, 0.0f);
             const phys::ColliderId id = W.AddCollider(r.owner, cd);
             if (id == phys::kInvalidId) continue;
-            if (E.back.size() <= id) E.back.resize((std::size_t)id * 2 + 1, nullptr);
-            E.back[id] = c;
+            E.SetBack(id, c);
             r.ids.push_back(id);
         }
         if (onBody && rb->bodyType == Rigidbody3D::BodyType::Dynamic && rb->mass > 0.0f) W.SetMass(r.owner, rb->mass);
@@ -510,8 +602,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         cd.friction = 0.6f;
         const phys::ColliderId id = W.AddCollider(r.owner, cd);
         if (id != phys::kInvalidId) {
-            if (E.back.size() <= id) E.back.resize((std::size_t)id * 2 + 1, nullptr);
-            E.back[id] = nullptr;
+            E.SetBack(id, nullptr);
             r.ids.push_back(id);
         }
         E.terrains.emplace(t, std::move(r));
@@ -529,21 +620,35 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         auto partnerIt = rbB ? E.bodies.find(rbB) : E.bodies.end();
         const phys::BodyId other = partnerIt != E.bodies.end() ? partnerIt->second.id : phys::kInvalidId;
         const Joint3D::Mode mode = (Joint3D::Mode)j->mode;
-        std::uint64_t sig = phys::kHashSeed;
-        sig = MixV(sig, j->mode); sig = MixV(sig, partner); sig = MixV(sig, other); sig = MixV(sig, j->axis);
-        sig = MixV(sig, j->distance); sig = MixV(sig, j->autoConfigure); sig = MixV(sig, j->anchor);
+        SigBytes sigb;
+        MixV(sigb, j->mode); MixV(sigb, partner); MixV(sigb, other); MixV(sigb, j->axis);
+        MixV(sigb, j->distance); MixV(sigb, j->autoConfigure); MixV(sigb, j->anchor);
+        const std::uint64_t sig = sigb.Done();
         auto it = E.joints.find(j);
         if (it != E.joints.end() && it->second.sig == sig && W.IsValidJoint(it->second.id)) {
             it->second.seen = true;
+            if (partner && partner->transform) it->second.lastPartnerPos = partner->transform->Position();
         } else {
-            if (it != E.joints.end()) { W.DestroyJoint(it->second.id); E.joints.erase(it); }
+            // A joint that loses its partner (destroyed, or its body switched off) keeps holding where that partner last
+            // was, at the length it had: it is not rebuilt around the world anchor at a new length.
+            float keptLength = -1.0f;
+            bool partnerLost = false;
+            Vec3 lostAt{0, 0, 0};
+            if (it != E.joints.end()) {
+                partnerLost = it->second.partner && !partner;
+                lostAt = it->second.lastPartnerPos;
+                keptLength = it->second.restLength;
+                W.DestroyJoint(it->second.id);   // (an id the world already dropped with its body is simply invalid)
+                E.joints.erase(it);
+            }
             // build the joint from the poses right now (the start pose)
             const phys::Xf xa = W.GetTransform(bodyIt->second.id);
             const phys::Xf xo = other != phys::kInvalidId ? W.GetTransform(other) : phys::Xf{};
             const Vec3 pa = j->transform->Position();
-            const Vec3 pb = partner && partner->transform ? partner->transform->Position() : j->anchor;
+            const Vec3 pb = partner && partner->transform ? partner->transform->Position() : (partnerLost ? lostAt : j->anchor);
             auto toOther = [&](const phys::V3& w) { return other != phys::kInvalidId ? xo.ApplyInv(w) : w; };
             auto rotOther = [&](const phys::Q& w) { return other != phys::kInvalidId ? phys::NormalizeQ(phys::Conj(xo.q) * w) : w; };
+            float builtLength = -1.0f;
             phys::JointDef d;
             d.bodyA = other;                       // the core's A is the partner (or the world), B is this body
             d.bodyB = bodyIt->second.id;
@@ -579,7 +684,8 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
                 case Joint3D::Mode::Distance:
                 case Joint3D::Mode::Spring: {
                     d.type = phys::JointType::Distance;
-                    const float rest = j->autoConfigure ? Vec3::Distance(pa, pb) : j->distance;
+                    const float rest = keptLength >= 0.0f ? keptLength : j->autoConfigure ? Vec3::Distance(pa, pb) : j->distance;
+                    builtLength = rest;
                     d.frameA.p = toOther(P3(pb));
                     d.frameB.p = xa.ApplyInv(P3(pa));
                     d.minLength = d.maxLength = std::max(rest, 0.0f);
@@ -612,12 +718,15 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
             r.sig = sig;
             r.partner = partner;
             r.seen = true;
+            r.restLength = builtLength;
+            r.lastPartnerPos = partner && partner->transform ? partner->transform->Position() : (partnerLost ? lostAt : j->anchor);
             if (r.id == phys::kInvalidId) continue;
             j->initialized = true;
             it = E.joints.emplace(j, r).first;
         }
-        // limits, motors, springs and drives: edited in place every step (cheap; scripts change them while playing)
-        phys::JointDef& d = W.EditJoint(it->second.id);
+        // limits, motors, springs and drives: scripts change them while playing. Worked out on a copy; the joint is only
+        // edited (which wakes its bodies) when something really changed, so jointed bodies can fall asleep.
+        phys::JointDef d = W.GetJoint(it->second.id);
         const float deg = 3.14159265f / 180.0f;
         switch (mode) {
             case Joint3D::Mode::Spring:
@@ -658,6 +767,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
                 break;
             default: break;
         }
+        if (!SameJointSettings(d, W.GetJoint(it->second.id))) W.EditJoint(it->second.id) = d;
     }
 
     // ---- 1d. remove what is gone (in id order, so the world changes the same way every run) ----
@@ -687,6 +797,20 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
 
     // ---- 2. step ----
     W.Step(dt);
+    // mud and sand (a Physics Material with damping) slow what touches them, as the old step did
+    W.ForEachTouching([&](const phys::ContactEvent& e) {
+        if (e.sensor) return;
+        Collider3D* ca = E.Back(e.a);
+        Collider3D* cb = E.Back(e.b);
+        auto damp = [&](Collider3D* surface, phys::BodyId body) {
+            const PhysicsMaterialData* m = surface ? SurfaceOf(surface->gameObject) : nullptr;
+            if (!m || W.GetType(body) != phys::BodyType::Dynamic) return;
+            if (m->linearDamping > 0.0f) W.SetLinearVelocity(body, W.GetLinearVelocity(body) * (1.0f / (1.0f + m->linearDamping * dt)));
+            if (m->angularDamping > 0.0f) W.SetAngularVelocity(body, W.GetAngularVelocity(body) * (1.0f / (1.0f + m->angularDamping * dt)));
+        };
+        damp(ca, e.bodyB);
+        damp(cb, e.bodyA);
+    });
 
     // ---- 3. world -> scene ----
     for (Rigidbody3D* rb : rbs) {
@@ -734,8 +858,17 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         const phys::V3 b = W.GetTransform(d.bodyB).Apply(d.frameB.p);
         float stretch = phys::Len(b - a);
         if (d.type == phys::JointType::Distance) stretch = std::fabs(phys::Len(b - a) - d.maxLength);
-        const float force = phys::Len(W.JointForce(kv.second.id));
-        if (stretch > j->breakForce || (d.type != phys::JointType::Distance && force > j->breakForce * 1000.0f)) j->broken = true;
+        // The joint now holds firm, so its stretch stays small; what it had to undo this step is the push it gave times
+        // dt^2 / mass: the stretch the old step measured before it pulled the two back (a hard yank breaks it, a weight
+        // hanging still does not).
+        float invMass = 0.0f;
+        for (phys::BodyId id : {d.bodyA, d.bodyB})
+            if (id != phys::kInvalidId && W.GetType(id) == phys::BodyType::Dynamic && W.GetMass(id) > 0.0f) invMass += 1.0f / W.GetMass(id);
+        const float undone = phys::Len(W.JointForce(kv.second.id)) * dt * dt * invMass;
+        if (std::max(stretch, undone) > j->breakForce) {
+            j->broken = true;
+            W.DestroyJoint(kv.second.id);   // let go now
+        }
     }
     const phys::WorldStats& ws = W.Stats();
     m_stats.contacts = ws.points;
@@ -744,35 +877,26 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     m_stats.warmStarted = ws.warmPoints;
 
     // ---- 4. events ----
+    // Pairs are the two collider components (normalised), so a compound's several pieces touching the same collider
+    // are one pair, and a collider rebuilt at run time (a friction or scale change) stays the same pair: no Exit/Enter.
     Scene::RemovalWatch gone(scene);
-    std::vector<std::uint64_t> now;
+    auto norm = [](Collider3D* a, Collider3D* b) { return std::less<const void*>()(a, b) ? EngineBridge::CPair{a, b} : EngineBridge::CPair{b, a}; };
     std::vector<phys::ContactEvent> touchingNow;
     W.ForEachTouching([&](const phys::ContactEvent& e) { touchingNow.push_back(e); });
+    std::vector<EngineBridge::CPair> nowList;
+    std::unordered_set<EngineBridge::CPair, EngineBridge::CPairHash> nowSet;
+    nowList.reserve(touchingNow.size());
+    nowSet.reserve(touchingNow.size() * 2 + 1);
     for (const phys::ContactEvent& e : touchingNow) {
-        Collider3D* a = e.a < E.back.size() ? E.back[e.a] : nullptr;
-        Collider3D* b = e.b < E.back.size() ? E.back[e.b] : nullptr;
+        Collider3D* a = E.Back(e.a);
+        Collider3D* b = E.Back(e.b);
         if (!a || !b || a == b) continue;   // terrain contacts raise no callbacks (as before)
-        const std::uint64_t key = ((std::uint64_t)e.a << 32) | e.b;
-        // a compound collider has several pieces: report each collider pair once
-        bool dup = false;
-        for (std::uint64_t k : now) {
-            const auto& pr = E.touchingPair[k];
-            if ((pr.first == a && pr.second == b) || (pr.first == b && pr.second == a)) { dup = true; break; }
-        }
-        if (dup) continue;
-        now.push_back(key);
-        E.touchingPair[key] = {a, b};
-    }
-    std::sort(now.begin(), now.end());
-    auto wasTouching = [&](std::uint64_t key) { return std::binary_search(E.touching.begin(), E.touching.end(), key); };
-    for (const phys::ContactEvent& e : touchingNow) {
-        const std::uint64_t key = ((std::uint64_t)e.a << 32) | e.b;
-        if (!std::binary_search(now.begin(), now.end(), key)) continue;
-        Collider3D* a = E.back[e.a];
-        Collider3D* b = E.back[e.b];
+        const EngineBridge::CPair key = norm(a, b);
+        if (!nowSet.insert(key).second) continue;   // (another piece of the same pair already reported it)
+        nowList.push_back(key);
         if (gone.Gone(a) || gone.Gone(b)) continue;
         const Vec3 n = E3(e.normal), pt = E3(e.point);
-        const bool was = wasTouching(key);
+        const bool was = E.touchingSet.count(key) != 0;
         if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts) m_debugContacts.push_back({pt, n, e.sensor});
         if (e.sensor) {
             auto fn = was ? &Component::OnTriggerStay3D : &Component::OnTriggerEnter3D;
@@ -789,32 +913,28 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
             const Vec3 relBA = E3(velAt(bb) - velAt(ba));
             Collision3D forA = MakeCollision(b, n, pen, pt, relBA, a);
             Collision3D forB = MakeCollision(a, -n, pen, pt, -relBA, b);
-            if (!was) {   // the closing speed when it began (the solver has already stopped it)
+            if (!was) {   // the closing speed when it began (the solver has already stopped it): as the old step reported it
                 forA.impactSpeed = forB.impactSpeed = e.approachSpeed;
+                const Vec3 tangential = relBA - n * Vec3::Dot(relBA, n);
+                forA.relativeVelocity = tangential - n * e.approachSpeed;
+                forB.relativeVelocity = -forA.relativeVelocity;
             }
             auto fn = was ? &Component::OnCollisionStay3D : &Component::OnCollisionEnter3D;
             DispatchCollision(a->gameObject, fn, forA, gone);
             if (!gone.Gone(a) && !gone.Gone(b)) DispatchCollision(b->gameObject, fn, forB, gone);
         }
     }
-    for (std::uint64_t key : E.touching) {
-        if (std::binary_search(now.begin(), now.end(), key)) continue;
-        auto pit = E.touchingPair.find(key);
-        if (pit == E.touchingPair.end()) continue;
-        Collider3D* a = pit->second.first;
-        Collider3D* b = pit->second.second;
-        E.touchingPair.erase(pit);
+    for (const EngineBridge::CPair& key : E.touching) {   // (in the order they began: deterministic)
+        if (nowSet.count(key)) continue;
+        Collider3D* a = key.first;
+        Collider3D* b = key.second;
         if (gone.Gone(a) || gone.Gone(b)) continue;
         if (E.colliders.find(a) == E.colliders.end() || E.colliders.find(b) == E.colliders.end()) continue;   // removed
         if (!Alive(a) || !Alive(b)) continue;
         DispatchExit(a, b, gone);
     }
-    E.touching = now;
-    // forget pairs that are no longer touching (keys of pairs still touching are kept)
-    for (auto it = E.touchingPair.begin(); it != E.touchingPair.end();) {
-        if (!std::binary_search(now.begin(), now.end(), it->first)) it = E.touchingPair.erase(it);
-        else ++it;
-    }
+    E.touching.swap(nowList);
+    E.touchingSet.swap(nowSet);
 }
 
 } // namespace okay

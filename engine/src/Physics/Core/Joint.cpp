@@ -24,7 +24,7 @@ namespace phys {
 namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kInf = 1e30f;
-constexpr float kMaxAngularCorrection = 0.2f;   // radians per position iteration
+constexpr float kMaxAngularCorrection = 0.5f;   // radians per position iteration (a pose shoved past a stop comes back in a step)
 
 struct Frames {
     V3 pA, pB, rA, rB, d;     // anchors, arms from the centres of mass, d = pB - pA

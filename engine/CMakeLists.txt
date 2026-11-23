@@ -149,6 +149,8 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
+    src/Scripting/ScriptApiRegistry.cpp
+    src/Scripting/ScriptApiCore.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
@@ -244,7 +246,7 @@ add_library(okay_engine
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
     src/Audio/WavPlayback.cpp
-    src/AI/Pathfinding.cpp
+    src/AI/NavigationGrid.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -374,6 +376,7 @@ add_library(okay_engine
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
     src/Render/GpuTexture.cpp
+    src/Render/TextureAsset.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

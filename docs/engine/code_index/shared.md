@@ -421,39 +421,39 @@ Back to the [code index](../code_index.md). 67 headers, 962 names.
 - `LayerErrorText` function, line 334
 - `CopyToBuf` function, line 336: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
 - `PhysicsSettingsModel` struct, line 348
-- `PhysicsSettingsIntent` struct, line 356
-- `ClampStepsPerSecond` function, line 370: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
-- `DefaultItemWidth` function, line 373: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
-- `ProfilerSection` struct, line 379
-- `ProfilerModel` struct, line 386
-- `ProfilerIntent` struct, line 399
-- `ProfilerGraphTop` function, line 415: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
-- `ProfilerFrameCount` function, line 416
-- `ProfilerFixSelection` function, line 418: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
-- `ProfilerOtherMs` function, line 424
-- `ProfilerOverlay` function, line 428
-- `ProfilerBarText` function, line 433: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
-- `ProfilerDiagnosis` function, line 440: The plain-language diagnosis under the bars.
-- `ProfilerRows` function, line 462: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
-- `ProfilerHot` function, line 469: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
-- `ProfilerCells` function, line 471: The seven cells of a row: name, self, total, %, calls, avg, max.
-- `ProfilerCsv` function, line 480
-- `ProfilerEmptyText` function, line 489
-- `ImportKind` enum, line 497
-- `ImportFields` struct, line 500: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
-- `ImportSettingsModel` struct, line 513
-- `ImportSettingsState` struct, line 521: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
-- `ImportSettingsIntent` struct, line 526
-- `ImportSizeIndex` function, line 543: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
-- `ImportSame` function, line 548: The same settings as far as the panel shows them (the fields of the asset's kind).
-- `PostValues` struct, line 563: The open scene's post-processing values (scene render settings), copied in and back by the host.
-- `PostProcessModel` struct, line 579
-- `PostProcessIntent` struct, line 586
-- `PostChainText` function, line 607
-- `PlayerSettingsModel` struct, line 615
-- `PlayerSettingsIntent` struct, line 624
-- `RenderingSettingsModel` struct, line 626
-- `RenderingSettingsIntent` struct, line 631
+- `PhysicsSettingsIntent` struct, line 358
+- `ClampStepsPerSecond` function, line 377: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
+- `DefaultItemWidth` function, line 380: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
+- `ProfilerSection` struct, line 386
+- `ProfilerModel` struct, line 393
+- `ProfilerIntent` struct, line 406
+- `ProfilerGraphTop` function, line 422: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
+- `ProfilerFrameCount` function, line 423
+- `ProfilerFixSelection` function, line 425: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
+- `ProfilerOtherMs` function, line 431
+- `ProfilerOverlay` function, line 435
+- `ProfilerBarText` function, line 440: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
+- `ProfilerDiagnosis` function, line 447: The plain-language diagnosis under the bars.
+- `ProfilerRows` function, line 469: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
+- `ProfilerHot` function, line 476: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
+- `ProfilerCells` function, line 478: The seven cells of a row: name, self, total, %, calls, avg, max.
+- `ProfilerCsv` function, line 487
+- `ProfilerEmptyText` function, line 496
+- `ImportKind` enum, line 504
+- `ImportFields` struct, line 507: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
+- `ImportSettingsModel` struct, line 520
+- `ImportSettingsState` struct, line 528: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
+- `ImportSettingsIntent` struct, line 533
+- `ImportSizeIndex` function, line 550: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
+- `ImportSame` function, line 555: The same settings as far as the panel shows them (the fields of the asset's kind).
+- `PostValues` struct, line 570: The open scene's post-processing values (scene render settings), copied in and back by the host.
+- `PostProcessModel` struct, line 586
+- `PostProcessIntent` struct, line 593
+- `PostChainText` function, line 614
+- `PlayerSettingsModel` struct, line 622
+- `PlayerSettingsIntent` struct, line 631
+- `RenderingSettingsModel` struct, line 633
+- `RenderingSettingsIntent` struct, line 638
 
 ## `shared/FileDialog.hpp`
 

@@ -280,9 +280,13 @@ private:
 /// before the panels are submitted, so the mouse decision uses last frame's rectangles: one frame of latency). Several screens
 /// can be hosted in one frame (a page and the notifications panel floating over it): each Offer adds one rectangle, up to
 /// kMax; the set offered in a frame replaces the set of the frame before.
+/// kMax was 8: the OkayUI Inspector offers one rectangle per section (the object card, the Transform, and each component's
+/// header bar and body), so an object with four or five components already offered more than 8, and every section after the 8th
+/// never got the mouse: its fields ignored clicks and the Inspector looked frozen (2026-11-23 report). One frame offers at most
+/// a few dozen; Overflowed() tells a test (and the slow-frame log) when even this many was not enough.
 class Region {
 public:
-    static constexpr int kMax = 8;
+    static constexpr int kMax = 96;
     /// Called by a hosted panel each frame it draws: `rect` is its screen rectangle, `hovered` ImGui's answer to "is the
     /// mouse over my placeholder item and not covered by another window or popup" (ImGui::IsItemHovered).
     /// `overlay`: a popup, menu list or dropdown OkayUI draws over everything (the host keeps a press there from ImGui too).
@@ -291,11 +295,13 @@ public:
         for (int i = 0; i < kMax && pick < 0; ++i)   // the same rectangle offered again this frame: the newest answer wins
             if (m_r[i].valid && m_r[i].age == 0 && m_r[i].x == x && m_r[i].y == y && m_r[i].w == w && m_r[i].h == h) pick = i;
         for (int i = 0; i < kMax && pick < 0; ++i) if (!m_r[i].valid || m_r[i].age > 0) pick = i;   // a slot not offered this frame yet
-        if (pick < 0) return;                                                                      // more than kMax in one frame: ignored
+        if (pick < 0) { ++m_overflow; return; }                                                    // more than kMax in one frame: ignored, counted
         m_r[pick] = Rect{x, y, w, h, hovered, true, 0, overlay};
     }
     /// Start of the next frame: a rectangle that was not offered last frame (panel closed, another page showing) is dropped.
-    void NextFrame() { for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false; }
+    void NextFrame() { for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false; m_lastOverflow = m_overflow; m_overflow = 0; }
+    /// How many offers the frame before this one had to ignore (0 = every rectangle was kept).
+    int Overflowed() const { return m_lastOverflow; }
     /// True when the mouse (x, y) is over a rectangle whose panel was visible and not covered last frame.
     bool Owns(float x, float y) const {
         for (const Rect& r : m_r)
@@ -314,6 +320,7 @@ public:
 private:
     struct Rect { float x = 0, y = 0, w = 0, h = 0; bool hovered = false, valid = false; int age = 0; bool overlay = false; };
     Rect m_r[kMax];
+    int m_overflow = 0, m_lastOverflow = 0;
 };
 
 /// Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).

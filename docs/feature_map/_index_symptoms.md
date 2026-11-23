@@ -50,6 +50,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a camera glides forever toward a target | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a camera ray passes through a wall | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a change breaks rendering and nobody notices | [33.3](20-35-planned.md#333-regression-testing) Regression testing |
+| a change in one subsystem rebuilds everything | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | a character cannot reach a platform | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | a character faces the wrong way | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | a character sinks into terrain | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
@@ -66,7 +67,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a collider is bigger or smaller than the mesh | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a colour comes out too dark | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a Combo list draws under other widgets | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
-| a component body is still Dear ImGui with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-off-by-default) The Inspector on OkayUI (preview, off by default) |
+| a component body is still Dear ImGui with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
@@ -683,7 +684,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | marketplace download is not listed | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
 | memory grows when many views are open | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
 | memory grows while playing | [23.2](20-35-planned.md#232-memory-tracking) Memory tracking |
-| merge conflicts in `launcher/main.cpp` or `editor/main.cpp | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) Splitting the largest files (editor, launcher, OkayScript VM, serializer) |
+| merge conflicts in `launcher/main.cpp` or `editor/main.cpp | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | merge conflicts in `main.cpp | [15.10](15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) Splitting `editor/main.cpp` into panel files (~45k lines) |
 | merge conflicts in id files | [20.3](20-35-planned.md#203-guids) GUIDs |
 | messages arrive late or out of order | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
@@ -886,7 +887,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sit pose floats above the chair | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
 | skip does not fire the last events | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | slide or dodge does nothing | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
-| slow builds when one file changes | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) Splitting the largest files (editor, launcher, OkayScript VM, serializer) |
+| slow builds when one file changes | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | slow first open of a folder full of models | [20.5](20-35-planned.md#205-thumbnails) Thumbnails |
 | slow motion and hit stop do nothing in the editor's Play mode | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | slow motion or pause does not stop something | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
@@ -1053,7 +1054,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | the head stares at the origin or the target behind | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the Inspector is slow with many components | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
-| the Inspector looks the same with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-off-by-default) The Inspector on OkayUI (preview, off by default) |
+| the Inspector looks the same with OkayUI on | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | the installer asks to close OkaySpace | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the Issues tab shows missing waypoints | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
 | the item does not snap to the zone | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
@@ -1209,7 +1210,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | typing in a text field also moves the player | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
-| typing in an OkayUI field triggers an editor shortcut | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-off-by-default) The Inspector on OkayUI (preview, off by default) |
+| typing in an OkayUI field triggers an editor shortcut | [40.10](40-okayui-library.md#4010-the-inspector-on-okayui-preview-on-by-default) The Inspector on OkayUI (preview, on by default) |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
 | UI is slow with many widgets | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -1234,6 +1235,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | updating a pack overwrites my edits | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | using the software renderer briefly | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
+| vague one-letter names | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |

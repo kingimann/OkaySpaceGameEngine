@@ -23258,12 +23258,16 @@ int main(int argc, char** argv) {
                     const osw::Context ctx = osw::Context::Here();
                     cardBegin("##sc_own", "TRY OUR OWN CODE");
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextDisabled("Each switch swaps one third-party part for our own. All are off until you turn them on. A change starts working after you restart the launcher and editor.");
+                    ImGui::TextDisabled("Each switch swaps one third-party part for our own. All are on by default: untick one to go back to the third-party part. A change starts working after you restart the launcher and editor.");
                     ImGui::PopTextWrapPos();
                     ImGui::Dummy(ImVec2(0, 6));
-                    bool anyOn = !st.chosen.empty();
-                    ImGui::BeginDisabled(!anyOn);
-                    if (ImGui::Button("Back to normal (all off)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    std::vector<std::string> allOn; osw::AllOn(allOn);
+                    ImGui::BeginDisabled(st.chosen == allOn);
+                    if (ImGui::Button("All on (default)", ImVec2(220, 30))) { st.chosen = allOn; osw::SaveChosen(); }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(st.chosen.empty());
+                    if (ImGui::Button("All off (third-party parts)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
                     ImGui::EndDisabled();
                     ImGui::Dummy(ImVec2(0, 4));
                     for (const osw::Item& it : osw::Items()) {

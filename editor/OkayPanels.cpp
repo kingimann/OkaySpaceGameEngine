@@ -65,6 +65,7 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, co
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton(itemId, a);               // an ImGui item, so ImGui does not move or scroll the window under it
+        if (okayuihost::HiddenInImGui(ImGui::GetCurrentWindow())) { ImGui::End(); return true; }   // a frame ImGui keeps hidden: nothing shows
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);    // the wheel scrolls the OkayUI body, not the ImGui window
         OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         OkayUI::PushTextScale(g_uiScale);
@@ -93,6 +94,10 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
     if (bleedRight < 0.0f) bleedRight = bleed;
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (!win || okayuihost::OutsideMainWindow(win)) return false;
+    // A window ImGui does not show (the Inspector while the Hierarchy tab in its dock is picked, a collapsed window): nothing is drawn
+    // and nothing is offered, so the body neither paints over the panel that is shown nor takes its clicks. The caller's Dear ImGui
+    // version is skipped by ImGui alike.
+    if (win->SkipItems) return false;
     float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
     {
         // The part of the window this section would show: when a popup or another ImGui window in front overlaps it, the Dear ImGui
@@ -121,6 +126,7 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
     }
     const float h = std::max(*height, 8.0f);
     ImGui::InvisibleButton(itemId, ImVec2(w, h));
+    if (okayuihost::HiddenInImGui(win)) return true;   // a frame ImGui lays out but keeps hidden: the space stays, nothing is drawn
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     const ImVec2 c0 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Min), c1 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Max);
     const ImRect clip(c0, c1);

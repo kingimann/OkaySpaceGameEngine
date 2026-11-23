@@ -7,9 +7,9 @@
 > **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
 
 `okay::AssetManager` (`okay/Core/AssetManager.hpp`) is an opt-in central registry for
-files loaded from disk. Nothing in the engine uses it yet; existing loading paths
-(`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) are unchanged.
-Wiring consumers onto it is left for a later change.
+files loaded from disk. Textures use it (`Render/TextureAsset`, a `TextureAsset` loader, every renderer; see
+`docs/rendering/textures.md`; `AssetHandle::Shared()` was added for that wrapper). Other loading paths
+(`DataAsset::Cached`, `AudioClip::LoadCached`) are unchanged.
 
 ```cpp
 auto& assets = okay::AssetManager::Instance();      // default loaders registered

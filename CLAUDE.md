@@ -85,8 +85,14 @@ then this file gets updated. Keep this file short and true.
    1.5-2 hour CI, so batch related work into one PR per area (for example one physics PR, one duplicates PR) instead of
    one per step, keep about 5 open per Claude at most, and push to an open PR only when its fix is complete. Stacked
    steps go in as the top branch's single PR.
-10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
-    session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
+10. **Two branches per Claude.** (Owner, 2026-11-23: "can we use only one or two branches so I can delete the rest".)
+    Each Claude has `<lane>/work`, where all its work is built, and `<lane>/ready`, the branch its PR comes from (moved
+    forward to `work` when a batch passes the precheck, so new work does not restart the PR's checks). Agents work in
+    local worktrees and local branches and do NOT push branches of their own: they report, and the main session merges
+    their work into `work`. Open PRs from before this rule finish on their own branches. Old branches are kept by one
+    archive branch per lane (`<lane>/archive`: commits whose parents are the old tips, with names and shas in the
+    messages) before anyone deletes them. Plain push, never force; agents do not open PRs. Each Claude's main session
+    opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
 26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow
     `docs/process/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
     you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,
@@ -144,7 +150,9 @@ then this file gets updated. Keep this file short and true.
     the old code (rule 19c: no second copy kept "just in case"). New features ship on. The switches that are off today
     are being turned on one by one, each with its tests; one that cannot be turned on safely yet is finished first, not
     left off. Do not drop a format or feature just because it is hard: write the replacement. Cryptography is the one
-    exception (rule 18).
+    exception (rule 18). Why on (owner, 2026-11-23): "if it's not on, I can't find bugs". Our own parts are on in every
+    build the owner runs, so their bugs show up in normal use and get fixed; the Settings > Experimental switches start
+    ticked and the person can untick one to go back.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until its tests show it is finished; finish it rather than leave it off. Say honestly how close each one is.
 

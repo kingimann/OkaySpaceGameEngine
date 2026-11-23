@@ -133,5 +133,32 @@ int main() {
         CHECK(r.find("100 FPS") != std::string::npos && r.find("performance mode on") != std::string::npos);
         CHECK(r.find("3D view render") != std::string::npos && r.find("60.0%") != std::string::npos);
     }
+
+    // ---- the slow-frame log (okay_editor_perf.log): a slow frame names where its time went; a quick one writes nothing --------------
+    {
+        CHECK_NEAR(perf::SlowFrameLog::ThresholdFrom(nullptr), 250.0, 1e-9);
+        CHECK_NEAR(perf::SlowFrameLog::ThresholdFrom("400"), 400.0, 1e-9);
+        CHECK_NEAR(perf::SlowFrameLog::ThresholdFrom("0"), 0.0, 1e-9);       // off
+        CHECK_NEAR(perf::SlowFrameLog::ThresholdFrom("5"), 20.0, 1e-9);      // never so low that every frame is logged
+        CHECK_NEAR(perf::SlowFrameLog::ThresholdFrom("abc"), 250.0, 1e-9);
+        perf::SlowFrameLog log;
+        Profiler::Frame quick = MakeFrame(16.0); Add(quick, "UI.Inspector", 10.0);
+        CHECK(log.Line(quick, 16.0, 1, "").empty() && log.written == 0);
+        Profiler::Frame slow = MakeFrame(900.0); Add(slow, "UI.Inspector", 700.0); Add(slow, "Present", 120.0); Add(slow, "UI.Hierarchy", 30.0);
+        const std::string l = log.Line(slow, 900.0, 42, "okayui inspector ownrender, edit");
+        CHECK(log.written == 1);
+        CHECK(l.find("slow frame 42: 900 ms") != std::string::npos);
+        CHECK(l.find("mostly Panels") != std::string::npos);                                 // the section that took the time
+        CHECK(l.find("UI.Inspector 700 ms, Present 120 ms, UI.Hierarchy 30 ms") != std::string::npos);   // biggest scopes first
+        CHECK(l.find("not timed 50 ms") != std::string::npos && l.find("| okayui inspector ownrender, edit") != std::string::npos);
+        const std::string none = log.Line(MakeFrame(300.0), 300.0, 43, "");                // the profiler saw nothing
+        CHECK(none.find("mostly Not timed") != std::string::npos && none.find("no timed scopes") != std::string::npos);
+        perf::SlowFrameLog off; off.thresholdMs = 0.0;
+        CHECK(off.Line(slow, 5000.0, 1, "").empty());
+        perf::SlowFrameLog full; full.maxLines = 2;
+        CHECK(!full.Line(slow, 900.0, 1, "").empty());
+        CHECK(full.Line(slow, 900.0, 2, "").find("the log is full") != std::string::npos);
+        CHECK(full.Line(slow, 900.0, 3, "").empty() && full.written == 2);
+    }
     TEST_MAIN_RESULT();
 }

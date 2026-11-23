@@ -7,6 +7,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 ## 5. Animation & IK
 
 ### 5.1 Animator and state machines
+- **System:** Animation - Plays and blends animation clips with a state machine, shares humanoid animations between models, and gives scripts control.
 - **What:** The Animator is a state machine: states name a clip or a blend tree, transitions fire on parameters, clip end or exit time, layers play on part of the skeleton. The same machine plays through an imported model's Model Animator or the blocky Character's own clips.
 - **Parts:**
   - 5.1.1 States, transitions, conditions - `Components/AnimStateMachine` - OnClipEnd, Float >/<, Bool, Trigger, Always, Int ==/!=; extra conditions all must pass; exit time, Any State, interruption modes, priority, mute, Start at, Keep phase
@@ -30,6 +31,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add an attack layer on the upper body"; "why does the hit state not interrupt Walk"
 
 ### 5.2 Clips and curves
+- **System:** Animation
 - **What:** The ways animation data is authored and stored: text `.okayanim` clips of per-bone Euler keys for the blocky Character, track-per-property clips for any object and for imported nodes, one-click presets, named events, the Animation tab with dope sheet, curves and onion skin, and recording a live pose to a clip.
 - **Parts:**
   - 5.2.1 Character clips (`.okayanim`) - `Components/AnimClip` - clip/key/bone text format, root track, loop, once, override, easing words, LoadClips, PlayClip, clipIdle/clipWalk bindings
@@ -53,6 +55,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add a ping-pong loop mode to clips"; "record a pose while the game is running"
 
 ### 5.3 Model clip player and locomotion
+- **System:** Animation
 - **What:** Stride matching, idle fallback, strafe and backpedal: the Model Animator on an imported model holds all its clips, crossfades between them and switches idle, walk, run, jump, fall, land and stance clips from how the body really moves; slots with no clip fall back to the built-in animation.
 - **Parts:**
   - 5.3.1 Model Animator - `Components/ModelAnimator`, `Components/ModelAnimatorPose` - clip library per node, blend time, binds each node to its Transform once, samples straight into transforms
@@ -74,6 +77,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "fill the empty slots from clip names again"; "the run clip plays too slowly at 8 m/s"
 
 ### 5.4 Humanoid retarget and library
+- **System:** Animation
 - **What:** The engine's own humanoid animation (a 15-bone skeleton with procedural gait, stances, gestures and emotions) and the machinery that lets it drive any imported humanoid: a shared bone-name mapper, the Humanoid Retarget component, baked default clips and the default Animator graph.
 - **Parts:**
   - 5.4.1 Humanoid bone mapper - `Animation/HumanoidBones` - MapHumanoidBones for Mixamo, UE mannequin, Rigify, VRoid, plain names; checks the skeleton's shape so a dog or robot arm is rejected; helper bones (ik_, twist, fingers) never match
@@ -96,6 +100,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "map a Blender rig's fingers too"; "make the built-in walk less bouncy"; "the character walking is basically running"
 
 ### 5.5 Root motion and skinning
+- **System:** Animation
 - **What:** Letting the animation's root bone move the character, and deforming a rigged mesh with its bones.
 - **Parts:**
   - 5.5.1 RootMotion component - `Components/RootMotion` - reads the root bone's travel, moves the object, re-centres the bone, explicit physics or animation mode
@@ -115,6 +120,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "apply root motion only on the ground plane"; "switch the arms to dual quaternion skinning"
 
 ### 5.6 Foot, limb and chain IK
+- **System:** Inverse Kinematics - Bends bones so feet stand on the ground, hands reach and hold things, and heads look at targets.
 - **What:** Solvers that bend bones so a foot, hand or chain tip reaches a goal, run after all animation each frame: feet planted on slopes and steps, one arm or leg reaching a target, and long chains (tails, tentacles, spider legs).
 - **Parts:**
   - 5.6.1 Foot IK - `Components/FootIK` - raycast per foot, two-bone leg solve, Adjust Pelvis, Plant Down, Align To Slope, Toe & Heel rays, foot lock, smoothing; wires itself on the blocky Character
@@ -137,6 +143,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "plant the feet on stairs without popping"; "give the spider legs a joint limit"
 
 ### 5.7 Look-at, aim and full-body IK
+- **System:** Inverse Kinematics
 - **What:** Head tracking, single-bone aiming, whole-humanoid reach with four effectors, goal objects, camera-driven aim offsets with recoil, and the script calls and per-state weights that control them.
 - **Parts:**
   - 5.7.1 Look-At IK - `Components/LookAtIK` - spine, neck, head chain with shares, Clamp, eye bones, smoothing, Max Distance, Auto-Detect Chain, forward axis read from the rest pose
@@ -159,29 +166,27 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "make the guard look at the player only within 10 m"; "add recoil to the pistol"
 
 ### 5.8 Ragdolls and hit reactions
-- **What:** A humanoid goes limp on death or flinches on a hit that does not kill it (Ragdoll, a particle simulation over the 15 humanoid bones), or is a full dynamic character (Active Ragdoll, our own powered ragdoll of rigid bodies and driven joints: follows the animation, keeps its balance, steps, falls, braces, gets up).
+- **System:** Ragdolls - Makes a character go limp when it dies or flinch when it is hit.
+- **What:** A humanoid goes limp on death or flinches on a hit that does not kill it. The ragdoll is a particle simulation over the 15 humanoid bones, not rigid bodies and joints.
 - **Parts:**
   - 5.8.1 Verlet ragdoll - `Components/Ragdoll` - particles per bone plus tips, distance constraints, torso brace, elbow and knee minimum reach, ray collisions against 3D colliders and terrain, 60 Hz after animation and IK (order 900)
   - 5.8.2 Death and revive - `Components/Ragdoll` - ragdollOnDeath from a HealthStat death, push away from the hit, animators, IK and controllers switched off while limp and restored after
   - 5.8.3 Physical hit reactions - `Components/Ragdoll` - hitReactions shove the struck part which springs back over Recover Time
   - 5.8.4 Script and C++ calls - `Components/Ragdoll` - `ragdoll()`, `ragdoll(0)`, `ragdoll_push`, `is_ragdoll()`, Activate, Deactivate, Hit, IsActive, IsSettled
-  - 5.8.8 Shared ragdoll parts - `Components/RagdollShared` - bone lookup, the one list of body drivers (animation and IK, movement and Rigidbody3D) switched off while limp, HealthStat death / revive / hit events; used by Ragdoll and ActiveRagdoll; an ActiveRagdoll switches off a Ragdoll on the same object
-  - 5.8.5 Active Ragdoll physics layer - `Animation/RagdollPhysics` - `RagdollPhysics` seam and `XpbdRagdoll`, our own articulated solver (XPBD substeps, PD joint drives, swing / twist limits, knee and elbow hinges, contacts with friction by ray, pins, get-up helper springs, non-finite reset)
-  - 5.8.6 Dynamic character - `Animation/DynamicCharacter` - pose tracking by joint drives with region strengths; states Animated, Balancing, Falling, Down, GettingUp, Blending, Dead; modes Reactive, Powered, Limp; balance by centre of mass over the feet and capture-point steps; behaviour modules HitReaction, StumbleRecover, Grab, BraceForFall, ProtectHead, GetUp (face up and face down); shots, blasts, ray against the body
-  - 5.8.7 Active Ragdoll component - `Components/ActiveRagdoll` - Character part rig or imported humanoid, scene rays, HealthStat damage / death / revive, movement controllers switched off while physical and back on after, the root moved under the body; scripts `active_ragdoll(name)`, `active_ragdoll_push`, `active_ragdoll_shoot`, `active_ragdoll_explode`, `active_ragdoll_state` (and their `Fn.` visual-script nodes)
-- **Code:** `Components/Ragdoll`, `Components/RagdollShared`, `Components/ActiveRagdoll`, `Animation/DynamicCharacter`, `Animation/RagdollPhysics`
-- **API:** `Ragdoll`; scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`; `ActiveRagdoll` (Push, Hit, Shoot, Explode, Trigger, SetMode, onStateChanged, Core), `dyn::DynamicCharacter`, `dyn::RagdollPhysics`; scripts `active_ragdoll(...)`, `active_ragdoll_push(...)`, `active_ragdoll_shoot(...)`, `active_ragdoll_explode(...)`, `active_ragdoll_state()`
-- **Editor:** Add Component > Ragdoll (death + hit reactions); Ragdoll inspector; Add Component > Active Ragdoll (balance, stumble, fall, get up) with the property-registry inspector; example `examples/active_ragdoll/active_ragdoll.okayscene`
-- **Docs:** `docs/physics/physics.md`, `docs/gameplay/active_ragdoll.md`
-- **Tests:** `ragdoll`, `active_ragdoll`
-- **Status:** Works - ragdoll test covers limp, landing in one piece, standing up, falling away from a hit and flinching; Active Ragdoll is a first version: active_ragdoll covers standing powered, a small push (stays up, back to the animation), a push that needs a step, a big push (falls), get-up face up and face down, bracing hands landing first, hostile input (NaN, huge, zero mass, broken skeletons), a bit-identical scripted sequence, the component in a scene (controller handed over and back, HealthStat, scripts by name, shots) and the example scene (off the ledge and up again)
-- **Open:** `XpbdRagdoll` is a second joint solver (a copy) to be deleted once the physics core's Joint3D drives land and ActiveRagdoll runs on them; Active Ragdoll limbs collide only with static colliders and terrain (rays), not with each other or with other dynamic bodies, until the new physics core's driven joints are behind the seam (`docs/gameplay/active_ragdoll.md`); it does not walk while physical; the get-up uses a helper force; imported rigs untested; no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12
+- **Code:** `Components/Ragdoll`
+- **API:** `Ragdoll`; scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`
+- **Editor:** Add Component > Ragdoll (death + hit reactions); Ragdoll inspector
+- **Docs:** `docs/physics/physics.md`
+- **Tests:** `ragdoll`
+- **Status:** Works - ragdoll test covers limp, landing in one piece, standing up, falling away from a hit and flinching
+- **Open:** no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12
 - **Related:** 5.12, 5.6, 11.7, 6.2
-- **Words:** active ragdoll, dynamic character, powered ragdoll, balance, stumble, capture point, get up, brace, protect head, ragdoll, limp, death, hit reaction, flinch, Verlet, Ragdoll component, Death Push, Recover Time
+- **Words:** ragdoll, limp, death, hit reaction, flinch, Verlet, Ragdoll component, Death Push, Recover Time
 - **Seen as:** character falls apart or flops; tumbles through the floor; does not get back up after a revive; body twitches on a hit
 - **Ask me like:** "add a heavy ragdoll preset"; "keep the head from clipping the ground"
 
 ### 5.9 Object holding
+- **System:** Inverse Kinematics
 - **What:** A character picks an object up and holds it: hands go to the object's grips through Full Body IK, the elbows bend down and out, a heavy load leans the torso and slows the character, and the object follows the chest, a socket or the first-person hands.
 - **Parts:**
   - 5.9.1 Holding component - `Components/ProceduralObjectHolding` - Primary Hand, Holding Style, transition, drop with the character's velocity, hands never stretch (order 90)
@@ -204,6 +209,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "hold a bow with a custom grip"; "merge multiplayer holding"
 
 ### 5.10 Sprite animation
+- **System:** Sprites and Tilemaps
 - **What:** Frame-by-frame animation for 2D sprites: a list of frames or one row of an atlas, named clips, play and loop, with controllers that choose idle, run or jump from movement.
 - **Parts:**
   - 5.10.1 Sprite Animator - `Components/SpriteAnimator` - frames, atlas cells through the SpriteRenderer's uv region, named SpriteClips (idle, run, jump), Play(name), non-looping stops on the last frame
@@ -221,6 +227,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add animation events to sprite frames"; "flip the sprite clip with the facing"
 
 ### 5.11 Animation script control
+- **System:** Animation
 - **What:** The script-facing side of animation (OkayScript, visual scripts, typed scripts): which animation component a script drives, play and hold a clip, set Animator parameters, change IK weights and targets, swap the character model, capture poses. One implementation serves text scripts, typed scripts and the generated visual-script nodes.
 - **Parts:**
   - 5.11.1 Clip commands - `Components/AnimControl` - finds the animator on the object, then children breadth-first, then parents; play_clip holds until stop_clip; play_clip_once; clip_speed; clip_normalized
@@ -239,6 +246,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "play a wave then return to locomotion from a script"; "set the aim weight from a visual script"
 
 ### 5.12 Built-in action clips
+- **System:** Animation
 - **What:** Death, hits, roll, dive, vault, sit, swim and emotes: a set of baked humanoid action clips plus the states and Any-State transitions that add them to the default Animator. Gameplay displacement stays on the controllers; the clips are visual. A saved graph records which revision of the set it has.
 - **Parts:**
   - 5.12.1 Action framework - `Animation/HumanoidActions` - revision counter (death 1, dive 2, sit 3, hits 4, roll 5, vault 6, swim 7, emotes 8), a deleted state is not put back, Add built-in actions
@@ -261,6 +269,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "add a wave emote"; "replicate the dive to other players"
 
 ### 5.13 Player animation setup
+- **System:** Animation
 - **What:** In flight, not on main: a controller-panel status read-out ("what animation and IK does this player have") and one repeatable step that adds Foot IK, Look-At and the default Animator only where missing, then re-runs the animation fix without touching weights, chains or custom graphs.
 - **Parts:**
   - 5.13.1 Inspect and wire - Animation/PlayerSetup (on branch `grok/anim-integrate` only) - InspectPlayerAnimation and WirePlayerAnimation

@@ -213,6 +213,21 @@ with the reviewer and with the dedupe audit below.
 - `bug_patterns.py`: all heuristics. `substr-loop` and `loop-copy` flag by shape; `alloc-before-check` looks 10 lines back for
   a read; a limit checked in a helper function is invisible to it. Fix it, or explain it in the report.
 
+## 6a. Integration check: do the open PRs work together?
+
+Each PR's own CI shows it works alone on main. Two green PRs can still break each other once both are in: both
+change the same function, both add the same helper, or one renames what the other calls. The **Integration check**
+workflow (`.github/workflows/integration.yml`, every night and by hand from Actions) does this:
+
+1. It merges every open PR, drafts included, onto main in number order (`scripts/integration_merge.py`). A PR that
+   conflicts is skipped and reported, with whether it conflicts with main or only with another open PR.
+2. It runs the duplicate check over everything the open PRs add together. This catches two PRs adding the same helper.
+3. It builds and runs the full Ubuntu test suite on the merged tree. A failure there that no single PR shows means two
+   PRs break each other: fix it before the second one merges.
+
+The report is in the run summary and the `integration-report` artifact. Nothing is pushed. To try it locally on a
+throw-away worktree of main: `python3 scripts/integration_merge.py --prs 1130 1132` (no build).
+
 ## 7. Weekly dedupe audit
 
 Once a week the coordinator asks Grok (or a read-only agent) to list duplicate features: two classes, nodes, helpers or

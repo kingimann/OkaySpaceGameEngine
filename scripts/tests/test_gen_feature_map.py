@@ -14,8 +14,8 @@ def write(path, text):
         f.write(text)
 
 
-def sub(sid, title, system, code='`src/a.cpp`', status='Works - read'):
-    return (f"### {sid} {title}\n{system}\n- **What:** w\n- **Code:** {code}\n"
+def sub(sid, title, system, code='`src/a.cpp`', status='Works - read', docs='-'):
+    return (f"### {sid} {title}\n{system}\n- **What:** w\n- **Code:** {code}\n- **Docs:** {docs}\n"
             f"- **Status:** {status}\n- **Words:** x\n\n")
 
 
@@ -39,26 +39,53 @@ class Systems(unittest.TestCase):
     def test_table_status_code_and_duplicates(self):
         self.page(sub('1.1', 'Saves', '- **System:**\n'
                       '  - Save Games - Keeps progress. Code: `src/a.cpp`, `src/missing.cpp`\n'
-                      '  - Old Save - Older slots - being merged into Save Games (PR #7) Code: `src/b.cpp`')
+                      '    Home: `src/`. Entry: `src/a.cpp`. Also called: Old Saves, `SaveFramework`.\n'
+                      '  - Old Save - Older slots - being merged into Save Games (PR #7) Code: `src/b.cpp`\n'
+                      '    Home: `src/b.cpp`. Entry: `src/b.cpp`. Fix: delete it after the merge.',
+                      docs='`docs/saves.md`')
                   + sub('1.2', 'Checkpoints', '- **System:** Save Games', status='Partial - gaps'))
+        write(os.path.join(self.d.name, 'docs', 'saves.md'), '# Saves\n')
         out, problems, counts = G.build(self.d.name)
         md = out['docs/SYSTEMS.md']
         self.assertEqual(problems, [])
         self.assertEqual(counts[3], 2)
-        self.assertIn('| **Save Games** | Keeps progress. | 1 Works, 1 Partial | `src/a.cpp` |', md)
-        self.assertNotIn('missing.cpp', md)  # paths that do not exist are never written
-        self.assertIn('| **Old Save** | Older slots | Works (duplicate', md)
-        self.assertIn('| **Old Save** | Save Games | Being merged (PR #7) |', md)
+        self.assertIn('| **Save Games** | Keeps progress. | `src/` | `src/a.cpp` | [saves.md](saves.md) | - | '
+                      'Old Saves, SaveFramework | 1 Works, 1 Partial |', md)
+        self.assertIn('| **Old Save** | Older slots | `src/b.cpp` | `src/b.cpp` | [saves.md](saves.md) | - | - | Works (see', md)
+        self.assertIn('| **Old Save** | Same job as **Save Games** | Being merged (PR #7). delete it after the merge |', md)
         self.assertIn('[1.2](feature_map/01-core.md#12-checkpoints)', md)
-        self.assertIn('- Save Games (1.1, 1.2)', out['docs/feature_map/_index_az.md'])
+        az = out['docs/feature_map/_index_az.md']
+        self.assertIn('- Save Games (1.1, 1.2)', az)
+        self.assertIn('- Old Saves (1.1, 1.2)', az)  # an old name leads to the system
+        reg = {e['name']: e for e in G.registry(self.d.name)}
+        self.assertEqual(reg['Save Games']['aliases'], ['Old Saves', 'SaveFramework'])
+        self.assertEqual(reg['Save Games']['entry'], 'src/a.cpp')
+
+    def test_two_homes_go_into_still_duplicated(self):
+        os.makedirs(os.path.join(self.d.name, 'editor'))
+        write(os.path.join(self.d.name, 'editor', 'W.cpp'), '')
+        self.page(sub('1.1', 'A', '- **System:** Split - two homes\n  Home: `src/a.cpp`, `docs/feature_map/`. Entry: `src/a.cpp`.')
+                  + sub('1.2', 'B', '- **System:** Tool - one home and its editor window\n  Home: `src/b.cpp`, `editor/W.cpp`. Entry: `src/b.cpp`.'))
+        out, problems, _ = G.build(self.d.name)
+        md = out['docs/SYSTEMS.md']
+        self.assertEqual(problems, [])
+        self.assertIn('| **Split** | Code in 2 homes: `src`, `docs` | Pick one home folder', md)
+        self.assertNotIn('| **Tool** | Code in', md)  # an editor window is not a second home
 
     def test_warnings(self):
         self.page(sub('1.1', 'A', '- **System:** One - first') + sub('1.2', 'B', '- **System:** One - again')
                   + sub('1.3', 'C', '') + sub('1.4', 'D', '- **System:** Lonely')
-                  + sub('1.5', 'E', '- **System:** Two - x - duplicate of Nobody (why)'))
+                  + sub('1.5', 'E', '- **System:** Two - x - duplicate of Nobody (why)')
+                  + sub('1.6', 'F', '- **System:** Three - y\n  Home: `src/nothere/`. Entry: `src/c.cpp`. Also called: First, One')
+                  + sub('1.7', 'G', '- **System:** Physics V2 - z'))
         _, problems, _ = G.build(self.d.name)
         text = '\n'.join(problems)
+        self.assertIn("system 'Three' names `src/nothere/`, which does not exist", text)
+        self.assertIn("'One' is a name or alias of both 'Three' and 'One'", text)
+        self.assertIn("system 'One' has no 'Home:'", text)
+        self.assertIn("system 'One' has no 'Entry:'", text)
         self.assertIn("system 'One' is described twice", text)
+        self.assertIn("system name 'Physics V2' has 'V2' in it", text)
         self.assertIn("1.3 has no 'System' line", text)
         self.assertIn("system 'Lonely' has no ' - what it does' line", text)
         self.assertIn("system 'Two' says 'duplicate of' but names no other system", text)

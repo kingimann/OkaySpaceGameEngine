@@ -9,6 +9,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 
 ### 36.1 Vectors and colours
 - **System:** Math - Vectors, rotations, matrices, bounds, easing, noise and random numbers every system uses.
+  Home: `engine/include/okay/Math/`. Entry: `engine/include/okay/Math/Vec3.hpp`. Also called: Vec3, Quat, Mat4, vectors, Noise, Random.
 - **What:** The 2D, 3D and 4D float vectors every system uses, and the RGBA colour type.
 - **Parts:**
   - 36.1.1 Vec2 - `Math/Vec2` - 2D vector with Dot, Cross, Angle, SignedAngle, Perpendicular, Rotate, Reflect, ClampMagnitude, MoveTowards, SmoothDamp

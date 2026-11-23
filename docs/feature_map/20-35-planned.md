@@ -570,6 +570,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 25.1 Templates
 - **System:** Project Templates and Upgrades - New-project templates, project settings and upgrading old projects to the current version.
+  Home: `editor/ProjectUpgrade.cpp`, `shared/ProjectCreate.hpp`. Entry: `editor/ProjectUpgrade.hpp`. Also called: project templates, new project, project upgrade, project settings.
 - **What:** Starting points for a new project: a blank scene, a genre starter or a complete small game.
 - **Parts:**
   - 25.1.1 Launcher Create page - `launcher/main.cpp` - 22 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
@@ -897,6 +898,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 28.1 Git integration
 - **System:** Version Control - Git inside the launcher and editor: commit, compare and fix merge conflicts.
+  Home: `launcher/main.cpp`. Entry: `launcher/main.cpp`. Also called: git, source control, merge conflicts.
 - **What:** Use git from the tools: clone a project, see what changed, commit, push, pull and switch branches without a terminal.
 - **Parts:**
   - 28.1.1 Launcher git jobs - `launcher/main.cpp` - runs `git` on a background thread (needs git on the PATH) and reports a toast; works on any listed project
@@ -1292,6 +1294,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 
 ### 32.1 Controller navigation
 - **System:** Accessibility - Playing with a controller only, colour-blind options and other help for players with different needs.
+  Home: `engine/include/okay/Core/AccessibilitySettings.hpp`, `engine/include/okay/Components/UINavigation.hpp`. Entry: `engine/include/okay/Core/AccessibilitySettings.hpp`. Also called: AccessibilitySettings, colour-blind, controller-only.
 - **What:** Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks.
 - **Parts:**
   - 32.1.1 UI navigation - `Components/UINavigation` - `NavigateUI` moves focus to the nearest widget in the pressed direction (arrows, WASD, D-pad), wraps at the ends, scrolls a focused widget into view, handles button, toggle, slider, dropdown, tabs and keybind fields, and keeps focus inside an open modal

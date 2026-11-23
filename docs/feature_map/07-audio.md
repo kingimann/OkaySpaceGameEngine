@@ -9,6 +9,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
 ### 7.1 Mixer and Audio Mixer
 - **System:** Audio - Plays sound and music in 2D and 3D, mixes it in groups and saves the player's volume settings.
+  Home: `engine/include/okay/Audio/`, `engine/src/Audio/`. Entry: `engine/include/okay/Audio/AudioMixer.hpp`. Also called: AudioMixer, sound, music, AudioSource, OKAY_OWN_WAV, own WAV decoder.
 - **What:** The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice, distance panning, and (when asked) doppler, occlusion, distance muffling and a reverb zone, and reports peak levels for the editor meters.
 - **Parts:**
   - 7.1.1 Mixer core - `Audio/AudioMixer` - `RenderStereo` and `Render`: voices, resampling to the device rate, stereo voices, pan gains (balance for stereo 2D, mono-then-pan for 3D), one-pole low-pass per channel, streaming voices, clamping

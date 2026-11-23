@@ -29,6 +29,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 
 ### 38.2 OpenGL backend
 - **System:** Render Backends - The OpenGL, Direct3D 11, Direct3D 12 and CPU (software) drawing code; the software one needs no graphics card and is used by tests.
+  Home: `engine/include/okay/Render/`, `engine/src/Render/`. Entry: `engine/include/okay/Render/GLRenderer.hpp`. Also called: GLRenderer, D3D11Renderer, D3D12Renderer, SoftwareRenderer, OpenGL, Direct3D.
 - **What:** The GPU renderer for every platform: an MSAA offscreen render with per-pixel lighting, shadow atlases, a procedural sky and a full post chain.
 - **Parts:**
   - 38.2.1 Loading and context - `Render/GLRenderer` - `LoadGL(getProc)` resolves modern GL functions at run time (no link-time GL dependency); the host makes a hidden SDL window with a 3.2 compatibility context; shaders are `#version 120`
@@ -154,6 +155,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 
 ### 38.8 Shader pipeline
 - **System:** Shaders - The small GPU programs that colour each pixel, including our own `.okayshader` language for custom looks.
+  Home: `engine/include/okay/Render/OkayShader.hpp`, `engine/include/okay/Render/ShaderBundle.hpp`. Entry: `engine/include/okay/Render/OkayShader.hpp`. Also called: .okayshader, OkayShader, HLSL, GLSL, shader pipeline.
 - **What:** The shader programs the backends run, how they stay in step with the CPU maths, and the places a custom shader would plug in.
 - **Parts:**
   - 38.8.1 GLSL programs - `Render/GLRenderer` - `#version 120` source strings: main mesh, depth-only shadow, procedural sky, bloom, SSAO, uber post, FXAA, depth of field

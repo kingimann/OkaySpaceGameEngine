@@ -105,7 +105,7 @@ release job or the installer build for this change.
 | okayui-window | OkayUI window mode (editor window and frame run by OkayUI, no Dear ImGui): Scene and Game views, Hierarchy, Inspector, Console, Project, dialogs, menu bar | `OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui`; steps in the section "OkayUI window mode" | Headless tests only; the editor was never built or started with it |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | own-switch | One place to switch our own code on and off (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
-| pe1 | Physics: Engine quality (our own physics engine core), ball and cone-twist joints with drives | Open `examples\physics_engine\physics_engine.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; the editor menus and the feel on Windows are unverified |
+| pe1 | Physics: one physics path (our own physics engine core runs every 3D scene), ball and cone-twist joints with drives | Open `examples\physics_engine\physics_engine.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; the editor menus and the feel on Windows are unverified |
 | pm1 | Physics Material: how a surface feels (14 presets, .okayphysmat files, Physics Surface component) | Open `examples\physics_materials\physics_materials.okayscene` and press Play; or select an object, Add Component > Physics 3D > Physics Surface | Tested headless on Linux; the Inspector rows were compiled, not opened |
 | pt1 | Physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable, Moving Platform, Explosion, Breakable | Open `examples\physics_toys\physics_toys.okayscene` and press Play; Add Component > Physics 3D | Tested headless on Linux; menu entry under GameObject not built |
 | pu1 | Physics upgrade: steady towers at any step rate, fast bodies, heavy ropes, callbacks that set speed | Open `examples\physics\physics_upgrade.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; nothing run on Windows or on a screen |
@@ -2036,9 +2036,9 @@ Tested on Linux: the `own_switches` test (reading and writing the file, master o
 the status words, items hidden where they cannot work) and the `own_stack` test (the `switches=` part of the line).
 Unverified: the Settings page and the editor menu were compiled but not looked at on a desktop; Windows not run.
 
-## pe1. Physics: the Engine quality, our own physics engine
+## pe1. Physics: one physics path, our own physics engine
 
-**What it is.** A third physics quality, **Engine**, runs a 3D scene on our own physics engine core (written from papers,
+**What it is.** Every 3D scene now runs on our own physics engine core (written from papers,
 no other engine's code): a tree that finds touching pairs fast, exact contacts for every shape, a solver that keeps tall
 stacks still, fast bodies that never pass through thin walls, groups of bodies solved on every CPU core, and joints for
 ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain explanation and numbers:
@@ -2051,7 +2051,9 @@ ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain exp
 2. Press **Play** and wait about 10 seconds.
 3. For many bodies, open `examples\physics_engine\physics_engine_5k.okayscene` (5,000 crates and balls poured into a pit)
    and press Play.
-4. To use it in your own scene: **Project Settings > Physics**, "Physics quality of the open scene", choose **Engine**.
+4. Your own scenes use it already; there is nothing to switch on. **Project Settings > Physics** has no Quality list any
+   more, only **Solver iterations** under "Physics solver of the open scene". Open an old scene of yours and press Play:
+   it loads as before; motion can differ slightly (stacking, joints, fast objects).
 5. A ragdoll-style joint: select an object with a Rigidbody 3D (untick Freeze Rotation), **Add Component > Joint 3D**,
    set **Mode** to **Cone Twist** (or **Ball**), set **Anchor** to the point it turns about, tick **Use Drive**.
 
@@ -2066,9 +2068,9 @@ ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain exp
 | 5 Shapes | A capsule, cylinder, cone, hull and compound body fall and settle on the floor. |
 | 5k scene | 5,000 bodies fall into the pit and settle; the frame rate stays usable on a 4-core PC (not measured on Windows). |
 
-**If it looks wrong.** The joints in Ball / Cone Twist mode only turn and hold a pose in the Engine quality; in Classic
-and Improved they are only a rod (the Console says so once). Unverified: the editor menus, the Inspector fields and the
-look on Windows; everything above was checked headless on Linux by `physics_engine_mode` and `physics_examples`.
+**If it looks wrong.** Save an old scene and look at the file: its `physicsquality` line is the same as before (the
+value is kept but does nothing). Unverified: the editor menus, the Inspector fields and the
+look on Windows; everything above was checked headless on Linux by `physics_engine_mode`, `physics_examples` and `physics_one_path`.
 
 ## pm1. Physics Material: how a surface feels
 
@@ -2101,7 +2103,7 @@ turn on and off), **Gravity Zone** (a box with its own gravity: floating, moon),
 3. Change numbers while it plays only in the Inspector fields (Speed, Strength, Radius, Gravity...): each has a plain tooltip.
 
 **What you should see.** 1 crates ride the belt; 2 a ball bounces on the green pad; 3 balls fall to the blue attractor and run from the orange repeller; 4 balls fall into the purple well and swirl round the teal whirlpool;
-5 a ball floats in the zero-g zone, drifts down slowly in the moon zone and falls normally outside; 6 crates are carried round the turntable; 7 a crate rides the platform; 8 after 3 seconds the bomb goes off and the breakable crates burst into pieces
+5 a ball floats in the zero-g zone, drifts down slowly in the moon zone and falls normally outside; 6 crates are carried round the turntable; 7 a crate rides the platform; 8 the bomb drops onto the pyramid of breakable crates and bursts the top one into 8 pieces, then after 3 seconds it goes off and throws the rest about
 that vanish after a few seconds; 9 a pendulum and a rope swing; 10 a ball bounces high on the trampoline patch, a crate slides far on ice and stops quickly on the sticky patch.
 
 **Status.** Tested headless on Linux (`tests/test_physics_toys.cpp`: every toy measured, saved and loaded back; `tests/test_physics_examples.cpp`). Not built: the GameObject > Physics Toys menu (presets exist as code in

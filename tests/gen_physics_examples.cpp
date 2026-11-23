@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
         Piece(s, "Rider crate", V(44, 1.3f, 0), Vec3::One * 0.8f, Color::FromBytes(230, 120, 120), false, true, 1.0f);
         Label(s, "8  BOMB (3 s) and BREAKABLE CRATES", V(58, 8, 0));
         for (int y = 0; y < 3; ++y) for (int x = 0; x < 3 - y; ++x) BreakableCratePreset(s, V(56 + x * 1.05f + y * 0.52f, 0.5f + y * 1.02f, 0));
-        BombPreset(s, V(58.5f, 6, 3));
+        BombPreset(s, V(57.04f, 6, 0));   // drops onto the top crate (about 7.8 m/s: it breaks), then goes off at 3 s
         Label(s, "9  PENDULUM, ROPE and WRECKING BALL", V(70, 10, 0));
         PendulumPreset(s, V(66, 9, 0), 4.0f);
         RopePreset(s, V(72, 9, 0), 8, 0.6f);

@@ -1111,6 +1111,11 @@ struct Runtime {
     bool HasSub(const std::string& event) const;
 };
 
+// A component reference returned by GetComponent<T>(): the string "@T" for this
+// object's own component, "@T#<instance id>" for another object's (other.GetComponent<T>()).
+inline bool IsComponentRef(const Value& v) {
+    return v.IsString() && v.AsString().size() > 1 && v.AsString()[0] == '@';
+}
 float RealFps();   // Time.fps and fps(): defined in OkayScriptVM.cpp
 
 // A function from the shared table (okay/Scripting/ScriptApiRegistry.hpp) as an OkayScript builtin. It is a

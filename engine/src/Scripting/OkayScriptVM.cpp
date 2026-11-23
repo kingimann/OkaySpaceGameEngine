@@ -353,11 +353,6 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
     return false;
 }
 
-// A component reference returned by GetComponent<T>(): the string "@T" for this
-// object's own component, "@T#<instance id>" for another object's (other.GetComponent<T>()).
-inline bool IsComponentRef(const Value& v) {
-    return v.IsString() && v.AsString().size() > 1 && v.AsString()[0] == '@';
-}
 // expr.member  — a property read on any expression's value.
 struct MemberExpr : Expr {
     ExprPtr obj; std::string name; bool safe = false;

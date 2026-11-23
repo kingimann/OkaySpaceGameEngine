@@ -220,31 +220,24 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Seen as:** "1 item / 2 items" reads wrong; some letters show as boxes; text stays in the old language after switching; a key name shows instead of text
 - **Ask me like:** "Add Polish plural rules"; "Why does the Japanese menu show squares?"
 
-### 1.9 Events and ECS
+### 1.9 Event bus
 - **System:**
-  - ECS World - A second, data-only object store for very many simple things, mirrored into the scene and the network - duplicate of Scenes and Objects (kept on purpose: opt-in, mirrors objects through `SceneBridge`; no merge planned) Code: `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
-    Home: `engine/include/okay/ECS/`. Entry: `engine/include/okay/ECS/World.hpp`. Also called: ECS, entity component system, NetWorld, SceneBridge.
   - Core Utilities Code: `Core/EventBus`
-- **What:** A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as GameObjects and a networked world.
+- **What:** A typed publish/subscribe event bus. (The second, data-only object store, the ECS World, was removed in #1156: nothing used it; the scene's GameObjects are the one object store.)
 - **Parts:**
   - 1.9.1 Event bus - `Core/EventBus` - `Subscribe<E>`, `Publish`, scoped subscription handle; safe when handlers subscribe, unsubscribe or publish during a publish
-  - 1.9.2 ECS world - `ECS/World` - entities as ids, sparse-set component pools, `each<A, B>` queries, add/get/remove
-  - 1.9.3 System scheduler - `ECS/Systems` - named systems run in order each tick, can be toggled
-  - 1.9.4 Scene bridge - `ECS/SceneBridge` - `EcsTransform` entities mirrored to GameObjects created by your factory, with interpolation
-  - 1.9.5 Networked ECS - `ECS/NetWorld`, `ECS/NetWorldSync` - register replicated component types, `snapshot()/apply()`, `WorldReplicator` broadcast/listen over the NetworkManager RPC channel (see 16.3); delta snapshots with acknowledgements and a linear-time apply (#571)
-  - 1.9.6 Command buffer and safe iteration - `ECS/World` - (#571) `world.commands()` records create, destroy, add, set and remove during `each` and `flush()` applies them in order; destroying inside `each` is safe
-  - 1.9.7 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
-- **Code:** `Core/EventBus`, `ECS/World`, `ECS/Systems`, `ECS/SceneBridge`, `ECS/NetWorld`, `ECS/NetWorldSync`
-- **API:** `EventBus::Subscribe`, `EventBus::Publish`, `ecs::World`, `ecs::SystemScheduler`, `ecs::SceneBridge`, `ecs::NetWorld`, `ecs::WorldReplicator`
+  - 1.9.2 Event bus extras - `Core/EventBus` - (#571) priorities, `SubscribeOnce`, scoped `Listen`, `Queue` and `Flush`
+- **Code:** `Core/EventBus`
+- **API:** `EventBus::Subscribe`, `EventBus::Publish`
 - **Editor:** none
 - **Docs:** -
-- **Tests:** `eventbus`, `ecs`, `core_audit`, `ecs_commands`
-- **Status:** Works - read the headers; `eventbus` and `ecs` tests are thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` or the ECS (grep finds no consumer)
-- **Open:** the old note that `SceneBridge` keeps raw `GameObject*` is out of date: it keeps instance ids and re-creates a lost object (`respawnLost`, re-checked 2026-11-22 in `ECS/SceneBridge.hpp`); #571 added the command buffer, safe `World::each`, delta snapshots with ack and the `EventBus` extras (docs `docs/engine/ecs.md`, `docs/engine/core_tools.md`)
-- **Related:** 16.3, 1.3
-- **Words:** EventBus, event, publish, subscribe, ECS, entity, component pool, World, system, SceneBridge, NetWorld, snapshot, replication, event bus, command buffer, delta snapshot, ack, SubscribeOnce, event priority
-- **Seen as:** a handler still runs after it unsubscribed; an ECS unit does not show on screen; the client's ECS world differs from the server's
-- **Ask me like:** "Use the ECS for 5000 bullets and draw them through the bridge"; "Send only changed components to clients"
+- **Tests:** `eventbus`, `core_audit`
+- **Status:** Works - read `Core/EventBus.hpp`; the `eventbus` test is thorough, but it is opt-in library code: nothing in the engine, editor or player uses `EventBus` yet
+- **Open:** no engine system publishes on it yet
+- **Related:** 1.3
+- **Words:** EventBus, event, publish, subscribe, event bus, SubscribeOnce, event priority, ECS (removed), entity component system (removed), NetWorld (removed), SceneBridge (removed)
+- **Seen as:** a handler still runs after it unsubscribed
+- **Ask me like:** "Send a 'player died' event to every listener"
 
 ### 1.10 Logging and profiling
 - **System:**

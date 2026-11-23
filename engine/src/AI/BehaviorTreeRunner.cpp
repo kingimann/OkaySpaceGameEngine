@@ -3,6 +3,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/AI/Perception.hpp"
+#include "okay/Components/Damage.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/AnimControl.hpp"
@@ -545,11 +546,10 @@ void BehaviorTreeRunner::RunService(int idx, float elapsed) {
         if (!sk.empty()) blackboard.Set(sk, BtValue::Bool(noticed));
         if (m_npc) m_npc->SetAlert(noticed);
     } else if (n.type == BtNodeType::HealthWatcher) {
+        // HealthOf (Damage.hpp): the holder DealDamage hurts. This used to read the NPC Controller first and skip RPG
+        // Stats, so an NPC with a Health Stat watched a number the hits never changed (#422 audit item 21).
         float hp = 0.0f, max = 0.0f;
-        if (m_npc) { hp = m_npc->health; max = m_npc->maxHealth; }
-        else if (auto* s = gameObject->GetComponent<SurvivalStats>()) { hp = s->health; max = s->maxHealth; }
-        else if (auto* h = gameObject->GetComponent<HealthStat>()) { hp = h->health; max = h->maxHealth; }
-        else return;
+        if (!HealthOf(gameObject, hp, max)) return;
         const float pct = max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
         if (const std::string k = n.Str("healthKey"); !k.empty()) blackboard.Set(k, BtValue::Number(hp));
         if (const std::string k = n.Str("pctKey"); !k.empty()) blackboard.Set(k, BtValue::Number(pct));
@@ -738,11 +738,12 @@ bool BehaviorTreeRunner::ResolveTarget(const std::string& spec, Vec3& pos, GameO
     return true;
 }
 
+// The health Condition reads HealthOf, like the Health Watcher: the holder DealDamage hurts (it used to read the NPC
+// Controller first, so a watcher and a "health below" test on the same NPC could disagree).
 float BehaviorTreeRunner::HealthFraction() const {
-    if (m_npc) return m_npc->maxHealth > 0.0f ? m_npc->health / m_npc->maxHealth : 1.0f;
-    if (auto* s = gameObject->GetComponent<SurvivalStats>()) return s->Fraction();
-    if (auto* h = gameObject->GetComponent<HealthStat>()) return h->maxHealth > 0.0f ? h->health / h->maxHealth : 1.0f;
-    return 1.0f;
+    float hp = 0.0f, max = 0.0f;
+    if (!HealthOf(gameObject, hp, max)) return 1.0f;
+    return max > 0.0f ? std::clamp(hp / max, 0.0f, 1.0f) : 1.0f;
 }
 
 bool BehaviorTreeRunner::Test(const BtNode& n) const {

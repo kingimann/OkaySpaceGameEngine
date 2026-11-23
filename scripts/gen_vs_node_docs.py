@@ -232,7 +232,7 @@ REQ = {
     "AnimSetFloat": ("Needs an Animator state machine on this object, a child or a parent (or on Target). Runs in Play mode.", "AnimStateMachine"),
     "AnimSetBool": ("Needs an Animator state machine on this object, a child or a parent (or on Target). Runs in Play mode.", "AnimStateMachine"),
     "AnimState": ("Needs an Animator state machine on this object, a child or a parent (or on Target).", "AnimStateMachine"),
-    "PlayClip": ("Needs an Animator on this object (or on Target) that has the named clip. Runs in Play mode.", "Animator"),
+    "PlayClip": ("Needs a Character or a Model Animator on this object, a child or a parent (or on Target) with the named clip; a Character also plays its built-in animations (Idle, Walk, Run, Jump, Wave, Point ...). Runs in Play mode.", "Character|ModelAnimator"),
     "NavMoveTo": ("Needs a Nav Mesh Agent on this object (or on Target), and a baked nav mesh in the scene. Runs in Play mode.", "NavMeshAgent"),
     "NavStop": ("Needs a Nav Mesh Agent on this object (or on Target). Runs in Play mode.", "NavMeshAgent"),
     "NavArrived": ("Needs a Nav Mesh Agent on this object (or on Target). False when there is none.", "NavMeshAgent"),

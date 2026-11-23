@@ -2,6 +2,7 @@
 // Written for this engine from general ideas (a signed-distance field's solid fraction, flood fill, angle of repose);
 // no outside code was used. See docs/rendering/terrain_water.md.
 #include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Core/Base64.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 
 #include <algorithm>
@@ -516,26 +517,12 @@ Mesh VoxelTerrain::PieceMesh(const Piece& p) const {
 }
 
 std::string VoxelTerrain::EncodeMaterials() const {
-    static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out; out.reserve((material.size() + 2) / 3 * 4);
-    for (std::size_t i = 0; i < material.size(); i += 3) {
-        const unsigned b0 = material[i], b1 = i + 1 < material.size() ? material[i + 1] : 0, b2 = i + 2 < material.size() ? material[i + 2] : 0;
-        const unsigned n = (b0 << 16) | (b1 << 8) | b2;
-        out.push_back(b64[(n >> 18) & 63]); out.push_back(b64[(n >> 12) & 63]);
-        out.push_back(i + 1 < material.size() ? b64[(n >> 6) & 63] : '='); out.push_back(i + 2 < material.size() ? b64[n & 63] : '=');
-    }
-    return out;
+    return base64::Encode(material.data(), material.size());   // standard alphabet, '=' padded (okay/Core/Base64.hpp)
 }
 
 bool VoxelTerrain::DecodeMaterials(const std::string& s) {
-    std::vector<unsigned char> bytes; unsigned acc = 0; int bits = 0;
-    for (char c : s) {
-        int v;
-        if (c >= 'A' && c <= 'Z') v = c - 'A'; else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
-        else if (c >= '0' && c <= '9') v = c - '0' + 52; else if (c == '+') v = 62; else if (c == '/') v = 63; else continue;
-        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
-        if (bits >= 8) { bits -= 8; bytes.push_back((unsigned char)((acc >> bits) & 0xFF)); }
-    }
+    std::vector<unsigned char> bytes;
+    base64::DecodeLenient(s, bytes);   // skips anything outside the alphabet, as before (okay/Core/Base64.hpp)
     if (bytes.size() != density.size()) return false;
     material = bytes; ++matRev_; mcAllDirty_ = true;
     return true;

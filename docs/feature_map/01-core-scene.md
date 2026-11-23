@@ -274,7 +274,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.11.2 Path normalization - `Core/AssetManager` - `AssetManager::Normalize` makes one key per file (slashes, `.` and `..`, case folded on Windows only)
   - 1.11.3 Loaders - `Core/AssetManager` - `RegisterLoader<T>`; defaults for Image, AudioClip, Mesh, DataAsset and Material on `Instance()`
   - 1.11.4 Async loading - `Core/AssetManager` - `LoadAsync` on one worker thread, callbacks from `Pump()` on the main thread, `Progress()`, duplicate requests share one decode
-  - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size in `Pump()` and re-decodes in place so handles stay valid
+  - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size (`Core/FileStamp`, shared with the audio clip cache and the baked nav mesh check, #422 audit item 26) in `Pump()` and re-decodes in place so handles stay valid
   - 1.11.6 Report - `Core/AssetManager` - `Report()` lists every cached asset with type, bytes, refcount and reload count
 - **Code:** `Core/AssetManager`
 - **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`
@@ -325,7 +325,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/engine/scene_management.md`
 - **Tests:** `scene_load_pool`, `object_pool_audit`
 - **Status:** Works - merged in #570; the Spawner's `usePool` (Inspector **Use Pool**, added 2026-11-22: the field was saved but had no Inspector box), `Lifetime`, `Projectile3D` and `DebrisPool` use it, and scripts have `pool_get`, `pool_release`, `pool_prewarm` and `pool_idle`. Fixed 2026-11-22: the script `pool_*` calls skipped the file gate `spawn` uses, so a script could load a prefab from outside the game folder (test `object_pool_audit`, suite "script pool calls refuse prefab files outside the game folder")
-- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); no visual-script nodes for the pool calls
+- **Open:** resetting Rigidbody velocities is each component's job (`OnPoolReuse`); the visual-script Pool Get / Pool Release nodes (`VisualScript/NodesGameplay.hpp`) keep their own static list of released objects instead of `ObjectPool::ForPrefab` (#422 audit item 22, reviewed 2026-11-22, left as they are for now): moving them would change what a graph sees: Pool Release takes any object (not only pooled ones) and Pool Get hands it back the same frame, untouched, while `ObjectPool` reuses only its own objects, from the next frame, reset to the template and hidden from saves while idle. The list holds only instance ids (a stale one is skipped), so the cost of never clearing it is a few bytes per released object
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
 - **Seen as:** a frame hitch when many bullets spawn; a reused bullet keeps its old speed or state

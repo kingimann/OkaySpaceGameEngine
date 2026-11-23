@@ -370,6 +370,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/engine/core_logging_profiling.md`; `docs/engine/debug_tools.md`
 - **Tests:** `profiler`, `profiler_export`; `debug_frame_history`, `debug_gpu_stats`, `debug_overlay`
 - **Status:** Partial - the Profiler window works on CPU data; the trace and CSV exports exist in code but have no button (CSV of one frame can be copied); real GPU timing exists only as a data layer.
+- **Open:** two frame rings (#422 finding 13, reviewed 2026-11-22, left as they are): `Profiler`'s 240-frame ring is the hand-off buffer that `FrameHistory::Capture` copies from (it reads `Profiler::FrameAt`), and the editor Profiler window's pause and scrub (`selected`, `paused`, `FrameAt`, `Displayed`, `SectionStat`) read it directly. Making the Profiler keep only the current frame would need `FrameHistory` pushed from `EndFrame` and the window rewritten in `editor/main.cpp` onto `FrameHistory`; that rewrite cannot be run here (no editor run), so it was not done. `FrameStats` (GameLoop) already shares `Distribution::Of` for its numbers.
 - **Exists today:** Frame profiler and window as above. The data layer from #574 (`FrameHistory`, `GpuTimer`, `RenderStats`, `DebugStatsOverlay`) is on main and tested but not wired: "No renderer calls the hooks yet" (`docs/engine/debug_tools.md`; grep finds no `GpuScope` outside `Debug/`).
 - **Work packages:**
   1. S - Profiler window: "Export Chrome trace" and "Export CSV" buttons using the existing `ExportChromeTraceToFile`. Depends on: nothing.

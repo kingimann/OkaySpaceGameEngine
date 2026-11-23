@@ -225,7 +225,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`, `camera_math`, `camera_rig`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control
-- **Open:** none recorded; GPU culling uses the camera frustum (2.8)
+- **Open:** none recorded; GPU culling uses the camera frustum (2.8); four hand-made camera shakes stay outside `cam::CameraShaker` (#422 audit item 23, reviewed 2026-11-22, left as they are): TopDownShooterController (sines at 61 and 47 per second), VehicleController (sines at 91 and 77), ThirdPersonController's landing bump and the Sequence shake track each move the camera by a fixed formula, while CameraShaker moves it by gradient noise, so moving them over would change every offset a player sees; the Sequence track must also stay scrub-exact (a pure function of time)
 - **Related:** 4.8, 2.1, 2.8, 13.4
 - **Words:** camera, field of view, orthographic, perspective, shake, trauma, zoom, pixel perfect, WorldToScreen, culling mask, viewport rect
 - **Seen as:** the screen shakes too long or never; the 2D game looks blurry or jitters; world-to-screen is off; an object disappears when the camera turns

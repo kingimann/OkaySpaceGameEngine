@@ -1,5 +1,6 @@
 #include "okay/Modeling/Curve.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
+#include "okay/Math/Curves.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -7,10 +8,8 @@ namespace okay::modeling {
 
 namespace {
 bool Finite(const Vec3& v) { return std::isfinite(v.x + v.y + v.z); }
-Vec3 Bez(const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d, float t) {
-    const float u = 1.0f - t;
-    return a * (u * u * u) + b * (3.0f * u * u * t) + c * (3.0f * u * t * t) + d * (t * t * t);
-}
+// Math/Curves' cubic Bezier (the same formula, bit for bit: test curve_formulas).
+Vec3 Bez(const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d, float t) { return Curves::CubicBezier(a, b, c, d, t); }
 // Frames along the samples: tangents and a normal carried along without twisting.
 struct Frames { std::vector<Vec3> t, n, b; };
 Frames MakeFrames(const std::vector<Vec3>& p, bool closed) {

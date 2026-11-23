@@ -9,7 +9,7 @@
 //   VsTryGraph       a ready-made little working graph for one node (the "Try this node" button)
 //   VsHelpCardFor    the "What is this?" card: does, plug-ins, tiny example, common mistakes, next step
 //   VsIntentFor      the "what do you want to do?" heading a node sits under in the Add Node list
-//   kVsPlainRenames  the plain titles given to the most confusing nodes; the old name stays a search word
+//   (plain titles of the most confusing nodes: kVsNames in VisualScriptNames.hpp; old names stay search words)
 // Written for this project from docs/scripting/visual_script_clarity.md. Included by VisualScriptEditor.hpp after the
 // graph model (VsEditGraph, VsDef) it reads. The graph file format and the runtime are not touched.
 #include "VisualScriptClarity.hpp"
@@ -446,6 +446,6 @@ inline int VsIntentForName(const std::string& t, int cat, bool event) {
 
 inline int VsIntentFor(const VsDef& d) { return VsIntentForName(d.type, d.cat, !d.execIn && !d.execOut.empty()); }
 
-// ---- 8. Plain titles: kVsPlainRenames and VsPlainRenameFor live in VisualScriptPlain.hpp (the registry needs them first).
+// ---- 8. Plain titles: they live in kVsNames (VisualScriptNames.hpp), the one title table.
 
 }  // namespace okay::editor::vsed

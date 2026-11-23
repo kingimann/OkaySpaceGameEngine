@@ -1458,6 +1458,18 @@ add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
 add_executable(test_voxel_chunks test_voxel_chunks.cpp)
 target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
 add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# One set of curve formulas (Math/Curves) for Spline, Modeling/Curve, DollyPath and the DOTween path (#422 finding 6): same bits.
+add_executable(test_curve_formulas test_curve_formulas.cpp)
+target_link_libraries(test_curve_formulas PRIVATE okay::engine)
+add_test(NAME curve_formulas COMMAND test_curve_formulas)
+# One Base64 (engine/include/okay/Core/Base64.hpp, #422 audit item 24): the same bytes as the copies it replaced.
+add_executable(test_base64 test_base64.cpp)
+target_link_libraries(test_base64 PRIVATE okay::engine)
+add_test(NAME base64 COMMAND test_base64)
+# One file size + time helper (engine/include/okay/Core/FileStamp.hpp, #422 audit item 26): the same answers as the three copies.
+add_executable(test_file_stamp test_file_stamp.cpp)
+target_link_libraries(test_file_stamp PRIVATE okay::engine)
+add_test(NAME file_stamp COMMAND test_file_stamp)
 # The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)
@@ -1943,6 +1955,13 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+# The simple clip player is shown as "Clip Player", the state graph as "Animator" (#422 finding 8); saved scenes unchanged.
+add_executable(test_anim_component_names test_anim_component_names.cpp)
+target_include_directories(test_anim_component_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_anim_component_names PRIVATE okay::engine)
+target_compile_definitions(test_anim_component_names PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_component_names COMMAND test_anim_component_names)
 
 add_executable(test_vs_guide test_vs_guide.cpp)
 target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})

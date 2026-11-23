@@ -796,6 +796,7 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
 #include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
 
 // Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
@@ -21625,8 +21626,8 @@ static void DrawAnimationEditor(EditorState& ed) {
     StopModelScenePreview(ed);
     Animator* an = go->GetComponent<Animator>();
     if (!an) {
-        ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
-        if (ImGui::Button("Add Animator")) { go->AddComponent<Animator>(); ed.dirty = true; }
+        ImGui::TextDisabled("'%s' has no Clip Player.", go->name.c_str());
+        if (ImGui::Button("Add Clip Player")) { go->AddComponent<Animator>(); ed.dirty = true; }
         ImGui::TextDisabled("Tip: to animate a Character, select it (or any of its parts) - its pose and clip tools open here.");
         ImGui::End(); return;
     }
@@ -34613,7 +34614,7 @@ void DrawInspector(EditorState& ed) {
         }
     } else
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
-        if (CompHeader("Animator", sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
+        if (CompHeader(okay::editor::vsed::kAnimGraphTitle, sm, &toRemove) && !(UseOkayUIInspector() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.7f, 0.75f, 1.0f));
             ImGui::TextWrapped("Picks the walk, run, jump and crouch animation from how the player moves.");
             ImGui::PopStyleColor();
@@ -44544,7 +44545,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* anm = dynamic_cast<Animator*>(curComp)) {
-        if (CompHeader("Animator", anm, &toRemove) && !(UseOkayUIInspector() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
+        if (CompHeader(okay::editor::vsed::kClipPlayerTitle, anm, &toRemove) && !(UseOkayUIInspector() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
             char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
             if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
             oked::FieldTip("Clip##anm");
@@ -44859,7 +44860,7 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Animation");
           if (o) {
-            if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Animator>(), "Clip Player (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
@@ -53820,8 +53821,10 @@ int main(int argc, char** argv) {
         if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
         if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
         if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
-        if (n == "AnimStateMachine") return go->GetComponent<AnimStateMachine>() != nullptr;
-        if (n == "Animator") return go->GetComponent<Animator>() != nullptr;
+        // The animation ids ("Animator", "AnimStateMachine", "ClipPlayer", "Character", "ModelAnimator") are checked
+        // where their nodes look at run time (editor/AnimComponentNames.hpp).
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None)
+            return okay::editor::vsed::VsAnimHas(go, okay::editor::vsed::VsAnimComponentFor(id));
         if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
         if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
         if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
@@ -53848,8 +53851,11 @@ int main(int argc, char** argv) {
         auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
         if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
         if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
-        if (n == "AnimStateMachine") return add(go->AddComponent<AnimStateMachine>());
-        if (n == "Animator") return add(go->AddComponent<Animator>());
+        if (okay::editor::vsed::VsAnimComponentFor(id) != okay::editor::vsed::VsAnimComponent::None) {   // AnimComponentNames.hpp
+            const bool ok = okay::editor::vsed::VsAnimAdd(go, okay::editor::vsed::VsAnimComponentFor(id));
+            if (ok) ConsoleLog(std::string("Added ") + id);
+            return ok;
+        }
         if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
         if (n == "Inventory") return add(go->AddComponent<Inventory>());
         if (n == "Equipment") return add(go->AddComponent<Equipment>());

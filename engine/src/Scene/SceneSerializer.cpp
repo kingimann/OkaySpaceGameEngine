@@ -1800,7 +1800,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
             << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque
-            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle;
+        {   // ball / cone twist fields (trailing), written only when one differs from the default: old scenes save as before
+            const Joint3D d;
+            if (j->swingLimit1 != d.swingLimit1 || j->swingLimit2 != d.swingLimit2 || j->useDrive != d.useDrive ||
+                !(j->driveTarget == d.driveTarget) || j->driveStiffness != d.driveStiffness || j->driveDamping != d.driveDamping ||
+                j->driveFrequency != d.driveFrequency || j->driveDampingRatio != d.driveDampingRatio || j->driveMaxTorque != d.driveMaxTorque)
+                out << " " << j->swingLimit1 << " " << j->swingLimit2 << " " << (j->useDrive ? 1 : 0)
+                    << " " << j->driveTarget.x << " " << j->driveTarget.y << " " << j->driveTarget.z
+                    << " " << j->driveStiffness << " " << j->driveDamping << " " << j->driveFrequency
+                    << " " << j->driveDampingRatio << " " << j->driveMaxTorque;
+        }
+        out << "\n";
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
@@ -4102,7 +4113,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
         out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
             << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
-    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+    // (written whenever it holds anything but the defaults; the quality value is kept as it was read: old files round-trip)
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic ||
+        scene.physics3D().solverIterations != 10 || !scene.physics3D().autoContinuous || scene.physics().solverIterations != 10) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
         out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
@@ -4517,10 +4530,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             in >> q3 >> it3 >> ac;
             in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
             if (clear) {
-                scene.physics3D().quality = q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                // (kept as read, so the file saves back unchanged; there is one physics path and the value changes nothing)
+                scene.physics3D().quality = q3 == 2 ? PhysicsQuality::Engine : q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
                 scene.physics3D().autoContinuous = (ac != 0);
-                scene.physics().quality = q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics().quality = q2 == 2 ? PhysicsQuality::Engine : q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
                 scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
             }
         } else if (token == "rendersettings") {
@@ -5687,6 +5701,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             int ul = 0;
                             in >> ul >> j->minAngle >> j->maxAngle;
                             j->useLimits = (ul != 0);
+                            in >> std::ws;
+                            if (std::isdigit(static_cast<unsigned char>(in.peek())) || in.peek() == '-') {   // ball / cone twist (trailing)
+                                int ud = 0;
+                                in >> j->swingLimit1 >> j->swingLimit2 >> ud >> j->driveTarget.x >> j->driveTarget.y >> j->driveTarget.z
+                                   >> j->driveStiffness >> j->driveDamping >> j->driveFrequency >> j->driveDampingRatio >> j->driveMaxTorque;
+                                j->useDrive = (ud != 0);
+                            }
                         }
                     }
                 } else if (field == "joint2d") {

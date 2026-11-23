@@ -50,9 +50,12 @@ Windows release.
 
 - Files and folders of the other lanes (see `docs/lanes.json`): {{OFFLIMITS}}
 - Shared files need a handshake (one claim at a time): `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`,
-  `docs/FEATURE_MAP.md` and `docs/feature_map/*` (generated: edit the pages, run `python3 scripts/gen_feature_map.py`),
+  the feature map pages `docs/feature_map/NN-*.md` (check with `python3 scripts/gen_feature_map.py --validate`),
   `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `examples/visual_script/playground/coverage.okayvs`.
-- Generated files are never edited by hand: regenerate them.
+- Generated docs (`docs/FEATURE_MAP.md`, `docs/SYSTEMS.md`, `docs/feature_map/_index_*.md`, `docs/engine/code_index*`,
+  `docs/try_it.md`) are never edited or committed in a branch: main rebuilds them (`regen-docs.yml`). If you changed one,
+  `bash scripts/precheck.sh --restore-generated`. Other generated files (e.g. `editor/VisualScriptNodeDocs.inc`) are
+  regenerated with their script in the same change.
 - No third-party code, assets or SDKs (rule 19a). No `<mutex>`, `<thread>`, `<condition_variable>` or `std::call_once`
   in code the Windows build compiles (rule 21a): use `debugutil::SpinLock` or atomics.
 
@@ -68,7 +71,7 @@ default for a decision that is the owner's, say what you picked, and carry on.
 - [ ] Rule 4a material: a way to try it in the Windows release (menu, template, shipped example scene, setting), exact
       steps and what to expect in `docs/try_it.md`; screenshots for visual work (headless renders are fine, say so).
 - [ ] Behaviour you changed was RUN, not guessed: `python3 scripts/okay_run.py SCENE --input ... --check ...` (docs/process/okay_run.md); paste its PASS/FAIL lines.
-- [ ] Docs updated in the same change; generated files regenerated (`python3 scripts/gen_feature_map.py --check`).
+- [ ] Docs updated in the same change; feature map pages valid (`python3 scripts/gen_feature_map.py --validate`); no generated docs committed.
 - [ ] No forbidden includes; `python3 scripts/branch_lint.py all` and `python3 scripts/bug_patterns.py` are clean or each
       finding is explained.
 - [ ] `python3 scripts/collision_check.py --offline --branch {{BRANCH}}` shows no overlap you did not discuss.

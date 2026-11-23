@@ -21,8 +21,9 @@ subsystems, which folder holds each, and what may include what (plan and audit: 
 - `docs/feature_map/NN-*.md` are the detail pages, one per area. Each sub-area has a block with what it
   is, its numbered parts, code, API, editor window, docs, tests, status, what is open, related
   sub-areas, the words people use for it, what you see when it is wrong, and an example request.
-- To change the map: edit a page, then run `python3 scripts/gen_feature_map.py`. The format is in
-  `docs/feature_map/README.md`.
+- To change the map: edit a page and check it with `python3 scripts/gen_feature_map.py --validate`. This
+  overview is rebuilt on main after the merge (`.github/workflows/regen-docs.yml`); PRs do not commit it.
+  The format is in `docs/feature_map/README.md`.
 
 **Status words:** Works (implemented and exercised by tests or shipping features), Partial (works with
 known gaps), Basic (minimal version), In flight (a PR or branch exists, not on main), Planned (not built).
@@ -426,7 +427,7 @@ Details for every sub-area and numbered part: [docs/feature_map/15-editor.md](fe
 | [15.7](feature_map/15-editor.md#157-build-settings) | Build Settings | Works | File > Build Settings (Ctrl+B): export the current scenes as a standalone game for Windows, Web, Android or a dedicated server, with named build... | the Android and Web targets export a project that still needs outside tools (Emscripten, NDK) per `docs/editor/editor.md`; about... |
 | [15.8](feature_map/15-editor.md#158-plugin-system-and-plugins-menu) | Plugin system and Plugins menu | Works | Editor plugins written in OkayScript: a file in `<project>/EditorPlugins/` or the editor's `plugins/` folder can add a panel, a menu command, and... | `editor_plugins` runs the examples against its own fake editor, so the real `RegisterPluginBuiltins` is not under test (possible... |
 | [15.9](feature_map/15-editor.md#159-layout-undo-autosave) | Layout, undo, autosave | Works | The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model. | audit in `docs/editor/editor_undo.md`; each Undo rebuilds the whole scene (no per-object or per-property commands); moving an... |
-| [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone. | the order of the next moves is in `docs/engine/modularization_plan.md` Part B.2 (moves 2 and 3, the self-updater and script... |
+| [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone. | the order of the next moves is in `docs/engine/modularization_plan.md` Part B.2; moves that touch code inside an open PR (the... |
 | [15.11](feature_map/15-editor.md#1511-console-and-diagnostics-panels) | Console and diagnostics panels | Works | The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable... | planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger |
 | [15.12](feature_map/15-editor.md#1512-scene-manager-panel) | Scene Manager panel | Works | The project's scene list, file actions and the build order that Build Settings uses. | none found |
 | [15.13](feature_map/15-editor.md#1513-content-editors-and-tool-windows) | Content editors and tool windows | Works | Smaller editors for assets and data: sprites, materials, data assets, items, save files, audio mixer and the UI theme window. | none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs |

@@ -224,7 +224,7 @@ bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypane
     return HostSection("##okayui_physics", [&](float x, float y, float w, float h) {
         const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
         intent = r.intent;
-        return SectionDrawn{r.contentHeight, r.popup};
+        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};   // no list in this section opens a popup
     });
 }
 

@@ -625,23 +625,12 @@ PhysicsSettingsResult DrawPhysicsSettings(PhysicsSettingsModel& m, float x, floa
             if (UI::IsItemHovered()) UI::SetTooltip("%s", kSmoothTip);
         }
         Divider();
-        UI::TextDisabled(kPhysicsQualityHeading);
-        int q = m.quality == 1 ? 1 : 0;
-        UI::SetNextItemWidth(WithLabel(330.0f, "Quality"));
-        if (UI::Combo("Quality##psq", kPhysicsQualityNames, 2, &q)) res.intent.quality = q;
-        res.quality = UI::GetItemRect();
-        if (UI::IsItemHovered()) UI::SetTooltip("%s", kQualityTip);
-        if (q == 1) {
-            int it = m.solverIterations;
-            UI::SetNextItemWidth(WithLabel(160.0f, "Solver iterations"));
-            if (UI::SliderInt("Solver iterations##psq", &it, 4, 30, "%d")) res.intent.solverIterations = it;
-            res.iterations = UI::GetItemRect();
-            if (UI::IsItemHovered()) UI::SetTooltip("%s", kIterationsTip);
-            bool cont = m.autoContinuous;
-            if (FrameCheckbox("Catch fast bodies automatically##psq", &cont)) res.intent.autoContinuous = cont ? 1 : 0;
-            res.continuous = UI::GetItemRect();
-            if (UI::IsItemHovered()) UI::SetTooltip("%s", kContinuousTip);
-        }
+        UI::TextDisabled(kPhysicsSolverHeading);
+        int it = m.solverIterations;
+        UI::SetNextItemWidth(WithLabel(160.0f, "Solver iterations"));
+        if (UI::SliderInt("Solver iterations##psq", &it, 4, 30, "%d")) res.intent.solverIterations = it;
+        res.iterations = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("%s", kIterationsTip);
         if (UI::Button("Apply to current scene")) res.intent.apply = true;
         res.apply = UI::GetItemRect();
         res.contentHeight = ContentHeight(top);

@@ -1,8 +1,11 @@
 # Feature map pages
 
-`docs/FEATURE_MAP.md` is generated from the pages in this folder by `scripts/gen_feature_map.py`.
-Edit a page, then run the script. `scripts/check_feature_map.py --list` lists source files that no page
-mentions.
+`docs/FEATURE_MAP.md` (and `docs/SYSTEMS.md`, `_index_az.md`, `_index_symptoms.md`) are generated from the pages in
+this folder by `scripts/gen_feature_map.py`. Edit a page and check it with `python3 scripts/gen_feature_map.py --validate`
+(precheck and branch-lint run the same). Do not commit the generated files: `.github/workflows/regen-docs.yml` rebuilds
+them on main after every merge, so two PRs never conflict in them. To see the result locally, run the script without
+options, then put main's copies back with `bash scripts/precheck.sh --restore-generated`.
+`scripts/check_feature_map.py --list` lists source files that no page mentions.
 
 ## Page layout
 ```

@@ -57,6 +57,11 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Swing and twist split, joint limits | `Math/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
+| Quaternion to rotation matrix (any precision) | `Math/Mat4.hpp` | `okay::SetRotationFromUnitQuat`, `Mat4::Rotate` | `rc::M4 r; SetRotationFromUnitQuat(r, x, y, z, w);` |
+| Model readers: affine inverse, cofactors, Quake frame vertices, triangle corners | `engine/src/Render/AffineInverse.hpp`, `engine/src/Render/ReaderCommon.hpp` | `rc::InvAffine`, `rc::Cofactors3`, `rc::ReadQuakeFrameVerts`, `rc::TriCorner` | `double c[9]; rc::Cofactors3(m, c);` |
+| Tests: memory and time budget of a read (counting operator new) | `tests/alloc_budget.hpp` (one source file per test program) | `budget::Measure`, `budget::PeakReset`, `budget::PeakSince`, `g_live`, `g_peak` | `Run r = budget::Measure("big", read, kCap, kMaxSeconds);` |
+| Tests: hostile-input helpers for readers | `tests/reader_hostile_common.hpp` | `hostile::Sane`, `hostile::MutateBinary`, `hostile::HasNote`, `hostile::AddCorpusSeeds` | `hostile::AddCorpusSeeds(seeds, {"TER/a.ter"});` |
+| Tests: own-reader routing through the import seam | `tests/own_seam_checks.hpp` | `seam::CheckSeamMatchesDirect`, `seam::CheckFlattened`, `seam::CheckEnvSwitch`, `seam::CheckDefaultBackend`, `seam::SetEnv` | `seam::CheckFlattened(path, 2);` |
 | Save games | `Core/GameSaves.hpp` and `Core/SaveFramework.hpp` | `okay::GameSaves` (`Save`, `Load`, `AutoSave`), `Saveable`, `SaveWriter`, `SaveReader`, `SaveSystem` | `GameSaves::Save(scene, "slot1");` |
 | Input actions | `Input/ActionSet.hpp` | `okay::ActionSet` (`Pressed`, `Axis`), `ActionMap`, `BindingSpec` | `if (actions.Pressed("Jump")) ...` |
 | Saved fields of a component | `Scene/PropertyRegistry.hpp` | `okay::PropertyRegistry` (`Register`, `FindByName`, `TryGetProperty`) | `PropertyRegistry::TryGetProperty(go, "Health.value", v);` |

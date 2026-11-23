@@ -37,6 +37,9 @@ namespace okay {
 namespace HumanoidActions {
 
 using namespace humanoid_actions;
+using SM = AnimStateMachine;
+using C = SM::Cond;
+using B = HumanoidMotion::Bone;
 
 void ApplyTimes(AnimStateMachine& sm) {
     const StanceTimes& t = sm.stanceTimes;

@@ -361,7 +361,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 ## `engine/include/okay/Components/FirstPersonController.hpp`
 
 - `FirstPersonController` class, line 51: First-person player controller. Mouse looks around (yaw turns the body, pitch
-- `GameViewBodyIgnore` function, line 1207: What the editor Game view should skip. While playing, the controller and the
+- `GameViewBodyIgnore` function, line 1209: What the editor Game view should skip. While playing, the controller and the
 
 ## `engine/include/okay/Components/FirstPersonHand.hpp`
 
@@ -1480,7 +1480,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/VisualScriptComponent.hpp`
 
-- `VisualScriptComponent` class, line 21: Attaches a visual-script graph to a GameObject. The graph's "OnStart" entry
+- `VisualScriptComponent` class, line 22: Attaches a visual-script graph to a GameObject. The graph's "OnStart" entry
 
 ## `engine/include/okay/Components/Volume.hpp`
 

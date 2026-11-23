@@ -311,6 +311,7 @@ add_library(okay_engine
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/BlendReaderBuild.cpp
     src/Render/BlendModifiers.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp

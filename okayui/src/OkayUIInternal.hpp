@@ -1,6 +1,6 @@
 #pragma once
 // Private shared state and helpers of the OkayUI toolkit (okayui/src/OkayUI*.cpp). The toolkit keeps its state in file-scope
-// variables; the families that were split out of OkayUI.cpp (windows, tooltips, tables, draw list) reach it through these
+// variables; the families that were split out of OkayUI.cpp (tooltips, tables, draw list; O1 in docs/engine/modularization_plan.md) reach it through these
 // declarations. Not part of the public API (that is okay/UI/OkayUI.hpp). Definitions stay in OkayUI.cpp.
 #include <SDL.h>
 #include "okay/UI/OkayUI.hpp"

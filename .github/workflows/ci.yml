@@ -63,7 +63,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build -j "$(bash scripts/ci_jobs.sh 4)"   # capped by memory: a bare -j starved the runner (#1140)
 
       # Four tests at a time. Each test uses its own temp folder or port 0 (checked in the CI-speed audit), and the few
       # that time a real operation are marked RUN_SERIAL in tests/CMakeLists.txt so they still run alone.
@@ -124,7 +124,7 @@ jobs:
             -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=ON -DOKAY_BUILD_LAUNCHER=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-player -j
+          cmake --build build-player -j "$(bash scripts/ci_jobs.sh 4)"
 
       - name: Upload player runtime
         uses: actions/upload-artifact@v6
@@ -175,7 +175,7 @@ jobs:
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build-editor -j
+          cmake --build build-editor -j "$(bash scripts/ci_jobs.sh 4)"
           ./build-editor/bin/OkayEngine --selftest
 
       - name: Upload editor
@@ -410,7 +410,7 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
+          cmake --build build-assimp -j "$(bash scripts/ci_jobs.sh 4)" --target test_model_readers test_model_readers_fuzz test_collada_reader \
             test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
       - name: Test

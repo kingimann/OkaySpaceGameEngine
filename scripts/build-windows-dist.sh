@@ -111,22 +111,8 @@ echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
 # asked here; the Linux server build in release.yml is checked that way.
 scripts/check_release_own_stack.sh --cache "$BUILD_DIR"
-# Jobs: one per core, but never more than the memory allows. The big files (editor and player main.cpp, the
-# scene serializer, the script VM) each need about 5-6 GB under MinGW -O2; four of them at once on a 16 GB CI
-# runner starved it until GitHub lost the runner ("The hosted runner lost communication with the server", PRs
-# #1120 and #1143 on 2026-11-22). So: cores, capped at (available memory / 6 GB), at least 1. JOBS=N still wins.
-if [ -z "${JOBS:-}" ]; then
-    CORES="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-    MEM_KB="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-    if [ "${MEM_KB:-0}" -gt 0 ]; then
-        BY_MEM=$(( MEM_KB / (6 * 1024 * 1024) ))
-        [ "$BY_MEM" -lt 1 ] && BY_MEM=1
-        JOBS=$(( CORES < BY_MEM ? CORES : BY_MEM ))
-    else
-        JOBS="$CORES"
-    fi
-    echo "Build jobs: $JOBS (cores $CORES, available memory $(( MEM_KB / 1024 )) MB, 6 GB per job)"
-fi
+# Jobs: one per core, capped by memory (scripts/ci_jobs.sh; MinGW -O2 needs about 6 GB for the biggest files).
+JOBS="$(bash scripts/ci_jobs.sh 6)"
 cmake --build "$BUILD_DIR" -j "$JOBS"
 
 # ---- Distribution layout ------------------------------------------------------

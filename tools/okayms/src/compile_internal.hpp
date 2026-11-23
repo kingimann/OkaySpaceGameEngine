@@ -169,6 +169,9 @@ struct StaticMem {
 
 struct StructDef {
     std::string name;
+    // Declared (`class X;`, or named after `struct`) and not yet defined: only pointers and references to it can be
+    // made ([basic.def], [class.name]). The definition fills this same entry.
+    bool incomplete = false;
     // The name in decorated symbols when it differs from name (a class template instance Box<H>
     // is ?$Box@H there).
     std::string sym_name;
@@ -243,6 +246,13 @@ struct Node {
     // Line of the preprocessed text where a statement starts. 0 is unknown.
     int line = 0;
     std::vector<Node> kids;
+};
+
+// A part of a static initializer that is not a constant: stored at run time (Parser::dyn_leaf_stmts).
+struct DynLeaf {
+    int at = 0;
+    Type type{};
+    Node value{};
 };
 
 struct Local {

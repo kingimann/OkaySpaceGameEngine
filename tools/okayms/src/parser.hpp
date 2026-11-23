@@ -175,7 +175,7 @@ struct Parser {
                 out.push_back(c);
                 continue;
             }
-            if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" ||
+            if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" || t.text == "mutable" ||
                                       t.text == "final" || t.text == "consteval" || t.text == "constinit" ||
                                       t.text == "volatile")) {
                 if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
@@ -260,8 +260,29 @@ struct Parser {
                     td.kind = TTypedef;
                     td.text = "typedef";
                     out.push_back(td);
-                    for (size_t k = i + 3; k < j; ++k) out.push_back(tokens[k]);
-                    out.push_back(tokens[i + 1]);
+                    // The name goes where the declarator would have it ([dcl.typedef], [dcl.name]): after the stars of
+                    // `R (*)(A)` (a function pointer), before the first '[' of `T[N]`, else at the end.
+                    size_t name_at = j;
+                    int angle = 0;
+                    for (size_t k = i + 3; k < j; ++k) {
+                        if (tokens[k].kind == TLt) ++angle;
+                        else if (tokens[k].kind == TGt && angle > 0) --angle;
+                        if (angle > 0) continue;
+                        if (tokens[k].kind == TLParen && k + 1 < j && tokens[k + 1].kind == TStar) {
+                            name_at = k + 1;
+                            while (name_at < j && tokens[name_at].kind == TStar) ++name_at;
+                            break;
+                        }
+                        if (tokens[k].kind == TLBrack) {
+                            name_at = k;
+                            break;
+                        }
+                    }
+                    for (size_t k = i + 3; k < j; ++k) {
+                        if (k == name_at) out.push_back(tokens[i + 1]);
+                        out.push_back(tokens[k]);
+                    }
+                    if (name_at == j) out.push_back(tokens[i + 1]);
                     i = j - 1;
                     continue;
                 }
@@ -306,6 +327,14 @@ struct Parser {
                 } else {
                     want_name = false;
                 }
+            }
+            if (t.kind == TIdent && scoped.count(t.text) == 0 && i + 4 < tokens.size() && tokens[i + 1].kind == TColonColon &&
+                tokens[i + 2].kind == TIdent && scoped.count(tokens[i + 2].text) > 0 && tokens[i + 3].kind == TColonColon &&
+                tokens[i + 4].kind == TIdent) {
+                // Input::PadFamily::Xbox: a scoped enumerator named through the class (or namespace) that declares the
+                // enumeration. Enumerators are kept in one table here, so the outer qualifier is dropped.
+                ++i;
+                continue;
             }
             if (t.kind == TIdent && scoped.count(t.text) > 0 && i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon &&
                 tokens[i + 2].kind == TIdent) {
@@ -844,6 +873,26 @@ struct Parser {
         return false;
     }
 
+    // The first token at or after k that is not one of the keywords of a built-in type (unsigned long, double).
+    size_t after_type_keywords(size_t k) const {
+        while (k < tokens.size() && (tokens[k].kind == TInt || tokens[k].kind == TFloat || tokens[k].kind == TDouble ||
+                                     tokens[k].kind == TChar || tokens[k].kind == TShort || tokens[k].kind == TUnsigned ||
+                                     tokens[k].kind == TSigned || tokens[k].kind == TLong))
+            ++k;
+        return k;
+    }
+    // C::name (or ns::C::name) where C is a class and name an enumerator: its value.
+    bool class_enumerator(const std::string& name, uint64_t* value) const {
+        const size_t last = name.rfind("::");
+        if (last == std::string::npos || local_visible(name)) return false;
+        const std::string qual = name.substr(0, last);
+        const size_t prev = qual.rfind("::");
+        const std::string cls = prev == std::string::npos ? qual : qual.substr(prev + 2);
+        const auto it = enum_values.find(name.substr(last + 2));
+        if (find_struct(cls) < 0 || it == enum_values.end()) return false;
+        *value = it->second;
+        return true;
+    }
     int find_struct(const std::string& name) const {
         for (size_t i = 0; i < structs.size(); ++i)
             if (structs[i].name == name) return static_cast<int>(i);
@@ -916,6 +965,17 @@ struct Parser {
                     any = true;
                     continue;
                 }
+            }
+            if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
+                typedefs.find(tokens[at + 1].text) != typedefs.end() && find_struct(tokens[at + 1].text) < 0 &&
+                !(at + 2 < tokens.size() && (tokens[at + 2].kind == TLParen || tokens[at + 2].kind == TColonColon))) {
+                // Input::PadFamily: an enumeration (or typedef) declared in the class. Names of types are kept in one
+                // table here, as for namespaces, so the class qualifier is dropped.
+                *t = typedefs[tokens[at + 1].text];
+                next();
+                next();
+                any = true;
+                continue;
             }
             if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
                 typedefs.find(tokens[at + 1].text) == typedefs.end()) {
@@ -1022,10 +1082,17 @@ struct Parser {
                 error = "expected a struct name";
                 return false;
             }
-            const int id = find_struct(name);
+            int id = find_struct(name);
             if (id < 0) {
-                error = "unknown struct " + name;
-                return false;
+                // class X; or struct X *p; before X is defined: an incomplete class, completed by its definition later.
+                StructDef fwd;
+                fwd.name = name;
+                fwd.incomplete = true;
+                fwd.cxx = true;
+                fwd.is_class = as_class;
+                fwd.is_union = as_union;
+                structs.push_back(fwd);
+                id = static_cast<int>(structs.size()) - 1;
             }
             type->base = 3;
             type->struct_id = id;
@@ -1294,6 +1361,10 @@ struct Parser {
     }
     bool parse_init(Node* out);
     bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
+    // The parts of a static initializer that are not constants, while flatten_init runs (see dyn_leaf_stmts).
+    std::vector<DynLeaf>* dyn_leaves = nullptr;
+    bool static_guard_block(const std::string& symbol, Node* then_block);
+    void finish_static_guard(Node* then_block, Node init_stmt, const std::string& symbol, Node* out);
 
     bool parse_param_list(Declarator* out) {
         if (is(TVoid) && at + 1 < tokens.size() && tokens[at + 1].kind == TRParen) {
@@ -1394,7 +1465,7 @@ struct Parser {
                 Node def_expr;
                 if ((is(TLBrace) && pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0) ||
                     (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.find(cur().text) == typedefs.end() &&
-                     at + 1 < tokens.size() && tokens[at + 1].kind == TLParen)) {
+                     at + 1 < tokens.size() && (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace))) {
                     // `= {}`, `= {a, b}` or `= Color(1, 1, 1, 1)`: a class object made for each call. The text is
                     // kept as a position in the token stream and read again at each call, where the temporary
                     // can be made.
@@ -1539,6 +1610,9 @@ struct Parser {
         if (i >= 2 && tokens[i - 1].kind == TLParen && tokens[i - 2].kind == TSizeof && i + 1 < tokens.size() &&
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
+        if (i + 3 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
+            (find_struct(tokens[i + 2].text) >= 0 || typedefs.count(tokens[i + 2].text) > 0) && tokens[i + 3].kind != TLParen)
+            return true;  // S::Nested names a nested class, enumeration or typedef of a plain struct
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
@@ -2140,6 +2214,16 @@ struct Parser {
         return static_type(arg, &at) && at.base == 3 && at.pointers == 0 && at.struct_id == t.struct_id &&
                !at.is_array();
     }
+    // A value of class t that is not an object (a call returning t by value): it initializes an object of t in place.
+    bool class_prvalue(const Type& t, const Node& value) const {
+        if (!(t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 && !t.is_array())) return false;
+        if (value.kind == Node::Name || value.kind == Node::Field || value.kind == Node::Index ||
+            (value.kind == Node::Unary && value.op == TStar))
+            return false;
+        Type vt;
+        return static_type(value, &vt) && vt.base == 3 && vt.pointers == 0 && !vt.is_ref && vt.struct_id == t.struct_id &&
+               !vt.is_array();
+    }
     struct Temp {
         std::string name;
         int sid = -1;
@@ -2180,6 +2264,32 @@ struct Parser {
             if (pt.is_ref) {
                 const bool object = arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
                                     (arg.kind == Node::Unary && arg.op == TStar);
+                Type from;
+                if (cur_locals != nullptr && pt.base == 3 && pt.pointers == 0 && !pt.is_array() && pt.struct_id >= 0 &&
+                    class_needs_ctor(structs[static_cast<size_t>(pt.struct_id)]) && static_type(arg, &from) &&
+                    !(from.base == 3 && from.pointers == 0 && !from.is_array()) && !(from.base == 0 && from.pointers == 0)) {
+                    // const C& given a value that is not a class object ("abc" for a const std::string&): a temporary C
+                    // is made from it by a converting constructor ([dcl.init.ref], [over.ics.user]) and bound to the
+                    // reference; it is destroyed after the statement.
+                    Local hidden;
+                    hidden.name = "__bt" + std::to_string(tmp_count++);
+                    hidden.type = pt;
+                    hidden.type.is_ref = false;
+                    hidden.type.rref = false;
+                    hidden.type.is_const = false;
+                    hidden.type.pconst = false;
+                    place_local(cur_locals, hidden);
+                    std::vector<Node> cargs;
+                    cargs.push_back(std::move(arg));
+                    Node call;
+                    if (!special_call(pt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                        return false;
+                    stmt_pre.push_back(std::move(call));
+                    if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+                    arg = node_addr(node_name(hidden.name));
+                    continue;
+                }
                 if (!object && cur_locals != nullptr) {
                     // A reference bound to a temporary: the value goes into a hidden local first.
                     Local hidden;
@@ -2392,8 +2502,15 @@ struct Parser {
             def.statics = base.statics;
         }
         const std::map<std::string, uint64_t> enums_before = enum_values;
-        structs.push_back(def);
-        const int self = static_cast<int>(structs.size()) - 1;
+        int self = -1;
+        for (size_t k = 0; k < structs.size(); ++k)
+            if (structs[k].incomplete && structs[k].name == name) self = static_cast<int>(k);
+        if (self >= 0) {
+            structs[static_cast<size_t>(self)] = def;  // the definition of a class declared before
+        } else {
+            structs.push_back(def);
+            self = static_cast<int>(structs.size()) - 1;
+        }
         if (!expect(TLBrace, "'{'")) return false;
         char access = is_class ? 'A' : 'Q';
         // typedef and using names of this class are visible to the members after them.
@@ -2418,19 +2535,27 @@ struct Parser {
                     next();  // =
                 }
                 if (!parse_type(&aliased, &imp, &exp)) return false;
-                while (accept(TStar)) ++aliased.pointers;
-                if (accept(TAmp)) aliased.is_ref = true;  // typedef T& reference;
-                else if (accept(TAndAnd)) {
-                    aliased.is_ref = true;
-                    if (aliased.pointers == 0) aliased.rref = true;
-                }
                 if (!is_using) {
-                    if (!is(TIdent)) {
-                        error = "expected a typedef name";
+                    // typedef T* p; typedef T& r; typedef R (*fn)(A); typedef T arr[N]; : the declarator gives the
+                    // name and the rest of the type ([dcl.typedef]).
+                    Declarator td;
+                    if (!parse_declarator(aliased, &td)) {
+                        if (error == "expected a name") error = "expected a typedef name";
                         return false;
                     }
-                    alias = cur().text;
-                    next();
+                    if (td.is_function) {
+                        error = "a typedef of a function type is not supported";
+                        return false;
+                    }
+                    alias = td.name;
+                    aliased = td.type;
+                } else {
+                    while (accept(TStar)) ++aliased.pointers;
+                    if (accept(TAmp)) aliased.is_ref = true;  // using reference = T&;
+                    else if (accept(TAndAnd)) {
+                        aliased.is_ref = true;
+                        if (aliased.pointers == 0) aliased.rref = true;
+                    }
                 }
                 if (!expect(TSemi, "';'")) return false;
                 def.tdefs[alias] = aliased;
@@ -2646,36 +2771,72 @@ struct Parser {
                 return false;
             }
             if (static_member) {
-                // static T name; or static const T name = constant; ([class.static.data])
-                StaticMem sm;
-                sm.type = field.type;
-                sm.type.is_const = static_const;
-                def.cxx = true;
-                if (accept(TAssign)) {
-                    Node init;
-                    if (!parse_init(&init)) return false;
-                    std::vector<uint8_t> bytes;
-                    if (!flatten_init(sm.type, init, &bytes, 0)) return false;
-                    if (sm.type.pointers != 0 || sm.type.is_array() || sm.type.base == 3) {
-                        error = "a static member with an initializer must be an integer constant";
+                // static T name; static const T name = constant; static inline T name = value; ([class.static.data])
+                for (;;) {
+                    StaticMem sm;
+                    sm.type = field.type;
+                    sm.type.is_const = static_const || field.type.is_const;
+                    def.cxx = true;
+                    const bool scalar = sm.type.pointers == 0 && !sm.type.is_array() && sm.type.base != 3;
+                    if (accept(TAssign)) {
+                        Node init;
+                        if (!parse_init(&init)) return false;
+                        if (sm.type.is_const && scalar) {
+                            std::vector<uint8_t> bytes;
+                            if (!flatten_init(sm.type, init, &bytes, 0)) return false;
+                            long long v = 0;
+                            for (size_t bi = bytes.size(); bi-- > 0;) v = (v << 8) | bytes[bi];
+                            const size_t nb = bytes.size();
+                            // A signed char, short or int constant is sign-extended from its width (static_cast<char>(153)
+                            // is -103).
+                            if (nb > 0 && nb < 8 && (bytes[nb - 1] & 0x80) != 0 && !sm.type.is_unsigned && !sm.type.is_bool &&
+                                (sm.type.base == 1 || sm.type.base == 2 || sm.type.base == 4))
+                                v -= (1LL << (8 * nb));
+                            sm.has_const = true;
+                            sm.cval = v;
+                        } else {
+                            // static inline float s = 1.0f; static inline int a[4] = {...}; static constexpr T t[] = {...}:
+                            // a variable with that first value ([dcl.inline]). Own simplification: each file that includes
+                            // the class keeps its own copy (an internal symbol), as for inline functions here.
+                            if (obj_needs_ctor(sm.type) || obj_needs_dtor(sm.type)) {
+                                error = "an in-class initialized static member of a class with a constructor is not supported";
+                                return false;
+                            }
+                            if (!fix_unsized(&sm.type, init)) return false;
+                            sm.symbol = static_symbol(def, field.name, sm.type);
+                            Global g;
+                            g.name = sm.symbol;
+                            g.type = sm.type;
+                            g.bss = false;
+                            g.is_static = true;
+                            std::vector<DynLeaf> leaves;
+                            if (!flatten_dyn(sm.type, init, &g, &leaves)) return false;
+                            globals.push_back(g);
+                            add_init_stmts(dyn_leaf_stmts(g.name, g.type, &leaves));
+                        }
+                    } else {
+                        sm.symbol = static_symbol(def, field.name, sm.type);
+                        Global g;
+                        g.name = sm.symbol;
+                        g.type = sm.type;
+                        g.bss = true;
+                        globals.push_back(g);
+                    }
+                    def.statics[field.name] = sm;
+                    if (!accept(TComma)) break;
+                    // static int a = 0, b = 0; : the next name has the type read before the first one.
+                    field = Field{};
+                    field.type = base_type;
+                    while (accept(TStar)) ++field.type.pointers;
+                    if (!is(TIdent)) {
+                        error = "expected a field name";
                         return false;
                     }
-                    long long v = 0;
-                    for (size_t bi = bytes.size(); bi-- > 0;) v = (v << 8) | bytes[bi];
-                    const size_t nb = bytes.size();
-                    if (nb > 0 && nb < 8 && (bytes[nb - 1] & 0x80) != 0 && sm.type.base == 1) v -= (1LL << (8 * nb));
-                    sm.has_const = true;
-                    sm.cval = v;
-                } else {
-                    sm.symbol = static_symbol(def, field.name, sm.type);
-                    Global g;
-                    g.name = sm.symbol;
-                    g.type = sm.type;
-                    g.bss = true;
-                    globals.push_back(g);
+                    field.name = cur().text;
+                    next();
+                    if (!parse_brackets(&field.type)) return false;
                 }
                 if (!expect(TSemi, "';'")) return false;
-                def.statics[field.name] = sm;
                 continue;
             }
             for (;;) {  // float x, y, z; every name gets the type read before the first one
@@ -2688,7 +2849,8 @@ struct Parser {
                     next();
                 }
                 if (!read_member_init(&field)) return false;
-                if (field.type.base == 3 && field.type.pointers == 0 && field.type.array_len < 0 && field.type.struct_id == self) {
+                if (field.type.base == 3 && field.type.pointers == 0 && !field.type.is_ref && field.type.struct_id >= 0 &&
+                    (field.type.struct_id == self || structs[static_cast<size_t>(field.type.struct_id)].incomplete)) {
                     error = "struct field is incomplete";
                     return false;
                 }
@@ -3109,6 +3271,12 @@ struct Parser {
                     pre.push_back(assign_field(field.name));
                 }
             }
+        } else if (special == 1 && inits.size() == 1 && (inits[0].name == def.name || (!def.tmpl.empty() && inits[0].name == def.tmpl))) {
+            // C() : C(42) {} : a delegating constructor ([class.base.init] 6): the target constructor makes the whole
+            // object (base, table pointer, members), then this body runs.
+            Node call;
+            if (!special_call(cls, "<ctor>", node_name("this"), std::move(inits[0].args), &call)) return false;
+            pre.push_back(std::move(call));
         } else if (special == 1) {
             if (def.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(def.base)])) {
                 std::vector<Node> args;
@@ -5115,6 +5283,73 @@ struct Parser {
         return true;
     }
 
+    // A variable with static storage whose initializer is not a constant expression ([basic.start.static],
+    // [basic.start.dynamic]): flatten_init keeps the constant parts in the bytes and records each part that is not a
+    // constant (a call, a variable) as a leaf: its offset, its type and its expression. The leaves become stores that
+    // run before main (__okay_init) or, for a static local, the first time its declaration is reached.
+    std::vector<Node> dyn_leaf_stmts(const std::string& name, const Type& whole, std::vector<DynLeaf>* leaves) {
+        std::vector<Node> out;
+        for (DynLeaf& leaf : *leaves) {
+            Node target;
+            if (leaf.at == 0 && !whole.is_array() && leaf.type.base == whole.base && leaf.type.pointers == whole.pointers &&
+                leaf.type.struct_id == whole.struct_id) {
+                target = node_name(name);
+            } else {
+                // *(T *)((char *)&name + at)
+                Node bytes;
+                bytes.kind = Node::Unary;
+                bytes.type.base = 2;
+                bytes.type.pointers = 1;
+                bytes.kids.push_back(node_addr(node_name(name)));
+                Node off;
+                off.kind = Node::IntLit;
+                off.type.base = 1;
+                off.number = static_cast<uint64_t>(leaf.at);
+                Node sum;
+                sum.kind = Node::Binary;
+                sum.op = TPlus;
+                sum.kids.push_back(std::move(bytes));
+                sum.kids.push_back(std::move(off));
+                Node typed;
+                typed.kind = Node::Unary;
+                typed.type = leaf.type;
+                typed.type.is_const = false;
+                typed.type.pointers += 1;
+                typed.kids.push_back(std::move(sum));
+                target.kind = Node::Unary;
+                target.op = TStar;
+                target.kids.push_back(std::move(typed));
+            }
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(std::move(target));
+            assign.kids.push_back(std::move(leaf.value));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            out.push_back(std::move(stmt));
+        }
+        leaves->clear();
+        return out;
+    }
+    // flatten_init with leaves allowed: false only for a real error.
+    bool flatten_dyn(const Type& type, const Node& init, Global* g, std::vector<DynLeaf>* leaves) {
+        init_relocs = &g->addr_relocs;
+        dyn_leaves = leaves;
+        const bool ok = flatten_init(type, init, &g->init_bytes, 0);
+        dyn_leaves = nullptr;
+        init_relocs = nullptr;
+        return ok;
+    }
+    void add_init_stmts(std::vector<Node> stmts) {
+        if (stmts.empty()) return;
+        init_body.kind = Node::Block;
+        for (Node& n : stmts) init_body.kids.push_back(std::move(n));
+        init_used = true;
+    }
+
     // The constructor calls of the global objects, in declaration order, go into __okay_init; the
     // destructors (globals, then static locals, latest first) into __okay_fini. main (or entry)
     // calls them. Written from ISO/IEC 14882 [basic.start.init] and [basic.start.term].
@@ -5246,6 +5481,22 @@ struct Parser {
     }
 
     bool finish_program() {
+        {
+            // static int f(int); ... static int f(int p) { ... }: the declaration and the definition are one function
+            // ([basic.link]); a declaration left beside an internal definition would ask the linker for an external f.
+            // The linkage of the first declaration holds for the definition ([dcl.stc] 4).
+            for (size_t i = 0; i < funcs.size(); ++i) {
+                if (funcs[i].defined) continue;
+                for (FuncDecl& d : funcs) {
+                    if (!d.defined || d.name != funcs[i].name || d.symbol != funcs[i].symbol) continue;
+                    if (funcs[i].is_static) d.is_static = true;
+                    funcs[i].name.clear();  // marked for removal
+                    break;
+                }
+            }
+            funcs.erase(std::remove_if(funcs.begin(), funcs.end(), [](const FuncDecl& f) { return f.name.empty(); }),
+                        funcs.end());
+        }
         declare_external_methods();
         // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,
         // so two files can both use vector<int> or the same inline function): template instances and virtual tables.
@@ -5507,12 +5758,29 @@ struct Parser {
                     }
                     if (!expect(TSemi, "';'")) return false;
                     if (sm->second.has_const) continue;  // const P::k; the value is already known
+                    if (!has_init && obj_needs_ctor(sm->second.type) && !sm->second.type.is_array()) {
+                        // std::string C::name; : the default constructor runs at startup.
+                        if (!register_global_object(sm->second.symbol, sm->second.type, {})) return false;
+                        continue;
+                    }
+                    if (has_init && obj_needs_ctor(sm->second.type) && !sm->second.type.is_array() &&
+                        !(sinit.kind == Node::Block && sinit.text == "init")) {
+                        // std::string C::name = "x"; : a constructor with that value.
+                        std::vector<Node> sargs;
+                        sargs.push_back(std::move(sinit));
+                        if (!register_global_object(sm->second.symbol, sm->second.type, std::move(sargs))) return false;
+                        continue;
+                    }
+                    std::vector<DynLeaf> leaves;
+                    Type gtype;
                     for (Global& g : globals)
                         if (g.name == sm->second.symbol && has_init) {
                             g.bss = false;
                             g.init_bytes.clear();
-                            if (!flatten_init(g.type, sinit, &g.init_bytes, 0)) return false;
+                            gtype = g.type;
+                            if (!flatten_dyn(g.type, sinit, &g, &leaves)) return false;
                         }
+                    add_init_stmts(dyn_leaf_stmts(sm->second.symbol, gtype, &leaves));
                     continue;
                 }
                 next();
@@ -5598,11 +5866,39 @@ struct Parser {
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
                 Node ginit;
                 bool has_ginit = false;
-                if (is_static) {
-                    error = "a global object with a constructor is not static";
-                    return false;
-                }
-                if (accept(TAssign)) {
+                if (!decl.type.is_array() && !gctor_args && is(TAssign) && at + 1 < tokens.size() &&
+                    tokens[at + 1].kind != TLBrace) {
+                    // C g = value; ([dcl.init]): the constructor that takes the value (a converting or copy
+                    // constructor) runs at startup.
+                    next();
+                    Node value;
+                    if (!parse_expr(1, &value)) return false;
+                    if (class_prvalue(decl.type, value)) {
+                        // C g = f(); : f writes g at startup; only the destructor is registered.
+                        if (!expect(TSemi, "';'")) return false;
+                        Global global;
+                        global.name = decl.name;
+                        global.type = decl.type;
+                        global.bss = true;
+                        global.is_static = is_static || anon_depth > 0;
+                        globals.push_back(global);
+                        {
+                            std::vector<DynLeaf> one(1);
+                            one[0].type = decl.type;
+                            one[0].value = std::move(value);
+                            add_init_stmts(dyn_leaf_stmts(decl.name, decl.type, &one));
+                        }
+                        if (obj_needs_dtor(decl.type)) {
+                            GlobalObj g;
+                            g.name = decl.name;
+                            g.sid = decl.type.struct_id;
+                            global_objs.push_back(std::move(g));
+                        }
+                        continue;
+                    }
+                    gargs.clear();
+                    gargs.push_back(std::move(value));
+                } else if (accept(TAssign)) {
                     if (!decl.type.is_array() || !decl.type.more.empty() || !parse_init(&ginit)) {
                         error = error.empty() ? "a global object with a constructor takes arguments in parentheses" : error;
                         return false;
@@ -5614,6 +5910,7 @@ struct Parser {
                 global.name = decl.name;
                 global.type = decl.type;
                 global.bss = true;
+                global.is_static = is_static || anon_depth > 0;
                 globals.push_back(global);
                 if (!register_global_object(decl.name, decl.type, std::move(gargs), has_ginit ? &ginit : nullptr))
                     return false;
@@ -5622,6 +5919,7 @@ struct Parser {
             if (!decl.is_function) {
                 for (;;) {  // int a = 1, *b, c[2]; : every name gets the type read before the first one
                     Global global;
+                    std::vector<DynLeaf> dyn_leaves_here;
                     global.name = decl.name;
                     global.type = decl.type;
                     // A const object at namespace scope and anything in an unnamed namespace has internal linkage
@@ -5633,10 +5931,7 @@ struct Parser {
                         global.bss = false;
                         if (!fix_unsized(&decl.type, init)) return false;
                         global.type = decl.type;
-                        init_relocs = &global.addr_relocs;
-                        const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
-                        init_relocs = nullptr;
-                        if (!flat_ok) return false;
+                        if (!flatten_dyn(decl.type, init, &global, &dyn_leaves_here)) return false;
                     }
                     {
                         // The same variable name in two namespaces (Sha256.hpp's kK and Sha512.cpp's kK): names of
@@ -5653,6 +5948,7 @@ struct Parser {
                         }
                     }
                     globals.push_back(global);
+                    add_init_stmts(dyn_leaf_stmts(global.name, global.type, &dyn_leaves_here));
                     if (!accept(TComma)) break;
                     decl = Declarator{};
                     if (!parse_declarator(type, &decl)) return false;

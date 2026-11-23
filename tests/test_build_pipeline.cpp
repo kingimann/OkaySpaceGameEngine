@@ -4,6 +4,7 @@
 // Temp folders only; nothing sleeps.
 #include "test_framework.hpp"
 #include "okay/Core/BuildPipeline.hpp"
+#include "okay/Core/StringId.hpp"
 #include "../editor/ProjectState.hpp"
 
 #include <algorithm>
@@ -302,11 +303,7 @@ std::string ZipBytesNoTime(const fs::path& p) {
     }
     return b;
 }
-std::uint64_t Fnv64(const std::string& s) {
-    std::uint64_t h = 1469598103934665603ull;
-    for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
-    return h;
-}
+std::uint64_t Fnv64(const std::string& s) { return okay::StringId::HashOf(s); }   // the engine's one FNV-1a
 
 void TestZip(const fs::path& tmp) {
     RUN_SUITE("zip archive");

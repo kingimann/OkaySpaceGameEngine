@@ -9,6 +9,7 @@
 // on many random inputs, junk included, the shared code must give the same bytes and the same yes/no answers.
 using namespace okay;
 namespace {
+// dup-allow-begin: the old copies, kept exactly as they were so this test can prove the shared Base64 gives the same bytes
 
 // ---- the old copies ---------------------------------------------------------------------------------------------------
 bool OldGltf(const std::string& in, std::vector<std::uint8_t>& out) {          // Render/Gltf.hpp
@@ -133,6 +134,7 @@ bool OldTicketDecode(const std::string& t, std::vector<std::uint8_t>& out) {
     }
     return (acc & ((1u << bits) - 1)) == 0;
 }
+// dup-allow-end
 
 struct Lcg {
     std::uint32_t s;

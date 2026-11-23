@@ -1,0 +1,11 @@
+# S3 step 2 of the EngineApi split (docs/engine/modularization_plan.md, section 3.1): the Ctx::Bind<Topic> functions of
+# engine/src/Script/EngineApi.cpp move, unchanged, to sibling files EngineApi_<Topic>.cpp. Each file only adds
+# `#include "EngineApiInternal.hpp"`, a namespace line and a comment, so no edit rule is needed:
+#   python3 scripts/check_pure_move.py --base <commit before the move> --head <the move commit> \
+#       --source engine/src/Script/EngineApi.cpp --dest engine/src/Script/EngineApi_<Topic>.cpp \
+#       --rules docs/engine/moves/S3_engineapi_topics.rules
+# (the CMake line that compiles the new file is in engine/CMakeLists.txt, not in the checked files)
+# The last lines of a moved function (`}`) can equal the lines just before it, so the line diff of EngineApi.cpp is
+# shifted by those few lines: they show as removed there and added in the new file. Nothing else is allowed to differ.
+drop: ^\s*\}$
+add: ^\s*\}$

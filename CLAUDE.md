@@ -76,6 +76,10 @@ then this file gets updated. Keep this file short and true.
    run the relevant tests, push. This includes the `john/` branches (the owner allowed it).
 9. **Keep the open PR count low.** Merge or close. Close PRs that are superseded, with a comment saying by what.
    Do not open new PRs faster than CI can check them.
+   **Fewer, bigger PRs** (owner, 2026-11-23: "can we do bigger PRs, that way it's fewer"): every PR runs the whole
+   1.5-2 hour CI, so batch related work into one PR per area (for example one physics PR, one duplicates PR) instead of
+   one per step, keep about 5 open per Claude at most, and push to an open PR only when its fix is complete. Stacked
+   steps go in as the top branch's single PR.
 10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. Each Claude's main
     session opens and merges its own lane's PRs (rule 6). Only the coordinator merges the release PR and runs `release.yml`.
 26. **Three Claudes, one set of lanes.** The coordinator (`claude/*`), Claude 2 (`claude2/*`) and Claude 3 (`claude3/*`) follow

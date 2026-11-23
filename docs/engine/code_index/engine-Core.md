@@ -102,11 +102,11 @@ Back to the [code index](../code_index.md). 77 headers, 476 names.
 - `ReportFile` struct, line 144
 - `ExcludedFile` struct, line 145
 - `Report` struct, line 146
-- `HumanBytes` function, line 184
-- `ZipStats` struct, line 194
-- `WriteZip` function, line 198: Pack every file under 'rootDir' into 'zipPath' (paths relative to rootDir, '/' separators, sorted, so the
-- `ZipEntry` struct, line 199
-- `ReadZipDirectory` function, line 201: The central directory of a zip (what 'unzip -l' lists).
+- `HumanBytes` function, line 173
+- `ZipStats` struct, line 183
+- `WriteZip` function, line 187: Pack every file under 'rootDir' into 'zipPath' (paths relative to rootDir, '/' separators, sorted, so the
+- `ZipEntry` struct, line 188
+- `ReadZipDirectory` function, line 190: The central directory of a zip (what 'unzip -l' lists).
 
 ## `engine/include/okay/Core/Clipboard.hpp`
 

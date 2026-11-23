@@ -8,6 +8,10 @@
 #   python3 scripts/check_pure_move.py --base <commit before> --head <commit> --source okayui/src/OkayUI.cpp \
 #       --dest okayui/src/OkayUIInternal.hpp (commit 1; --dest okayui/src/OkayUI_<Family>.cpp for commits 2 to 4) \
 #       --rules docs/engine/moves/O1_okayui_split.rules
+# Part 2 (OkayUI_Menus.cpp: menu bar, menus, selectables, popups, combo, popup queries; OkayUI_Windows.cpp: windows, children, scrolling, window
+# queries): three more commits, the same check. Step 1 moves the structs and small inline helpers they read into the header (they keep `inline`),
+# adds `extern` lines and prototypes, and edits the definition lines of the file-static window state (`static` left, `ui_core::` added). The rules of
+# part 2 are at the end of this file.
 # The edits that are not moves: the toolkit's old anonymous namespace of state (and the few later blocks that hold state the new
 # files read) became `namespace ui_core`, so the new files reach it through the header; every file that uses it says
 # `using namespace ui_core;`. Where a function had to be reachable, `static` / `inline` left its definition (one drop and one add
@@ -128,3 +132,84 @@ drop: ^\}\ //\ namespace$
 drop: ^inline\ bool\ hit\(float\ x,\ float\ y,\ float\ w,\ float\ h\);$
 drop: ^static\ bool\ beginPopupBody\(int\ id\);$
 add: ^using namespace ui_core;$
+
+# ---- part 2 (OkayUI_Windows.cpp and OkayUI_Menus.cpp): header step 2 and the two moves. Generated from the edit list: an add: is a declaration or an edited line, a drop: is the line it replaced.
+add: ^\s*extern\ const\ fontatlas::Atlas\*\ g_ttf;$
+add: ^\s*extern\ int\ g_itemWTop;$
+add: ^\s*extern\ float\ g_itemWStack\[16\];$
+add: ^\s*extern\ int\ g_winItemWDepth;$
+add: ^\s*extern\ int\ g_focusAtFrameStart;$
+add: ^\s*extern\ int\ g_editId;$
+add: ^\s*extern\ bool\ g_inMenuBar;$
+add: ^\s*extern\ int\ g_popupSubOpen;$
+add: ^\s*extern\ float\ g_barX,\ g_barY,\ g_barH;$
+add: ^\s*extern\ int\ g_menuDepth;$
+add: ^\s*extern\ bool\ g_framedWidgets;$
+add: ^\s*extern\ bool\ g_escapeUsed;$
+add: ^\s*extern\ bool\ g_dblClick;$
+add: ^\s*extern\ float\ g_popupPadX,\ g_popupPadY,\ g_popupW,\ g_innerX;$
+add: ^\s*extern\ float\ g_childPadY;$
+add: ^\s*extern\ PopupSlot\ g_popups\[32\];$
+add: ^\s*extern\ unsigned\ long\ long\ g_zCounter;$
+add: ^\s*extern\ float\ g_winBaseScale;$
+add: ^\s*extern\ bool\ g_ptrOverWindow,\ g_ptrOverWindowPrev;$
+add: ^\s*extern\ bool\ g_nextWinFocus;$
+add: ^\s*extern\ float\ g_nextBgAlpha;$
+add: ^\s*extern\ float\ g_bgAlphaCore;$
+add: ^\s*extern\ bool\ g_hitWinOn;\ extern\ int\ g_hitWinId;\ extern\ unsigned\ long\ long\ g_hitWinZ;$
+add: ^\s*extern\ int\ g_childTop;$
+add: ^\s*void\ panelColored\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ const\ unsigned\ char\*\ fill\);$
+add: ^\s*void\ framedComboBox\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ bool\ hovered,\ const\ char\*\ text\);$
+add: ^\s*void\ chevron\(float\ cx,\ float\ cy,\ float\ sz,\ bool\ down,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^\s*void\ xMark\(float\ cx,\ float\ cy,\ float\ sz,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^\s*void\ softShadow\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ float\ rad\);$
+add: ^\s*bool\*\ openState\(int\ id,\ bool\ dflt\);$
+add: ^\s*MenuKb\*\ kbSlot\(int\ id\);$
+add: ^\s*extern\ CurMenu\ g_curMenu;$
+add: ^\s*extern\ CurMenu\ g_menuStack\[4\];$
+add: ^\s*extern\ ChildSave\ g_childStack\[8\];$
+add: ^\s*extern\ PopupCtx\ g_popupStack\[4\];$
+add: ^\s*extern\ int\ g_popupTop;$
+add: ^\s*extern\ WinSlot\ g_wins\[64\];$
+add: ^\s*extern\ NextCollapse\ g_nextCollapse;$
+add: ^\s*extern\ OvRect\ g_ovCur\[16\];\ \ extern\ int\ g_ovCurN;$
+add: ^\s*extern\ OvRect\ g_ovPrev\[16\];\ extern\ int\ g_ovPrevN;$
+add: ^\s*extern\ PopRect\ g_popCur\[8\],\ g_popPrev\[8\];\ extern\ int\ g_popCurN,\ g_popPrevN;$
+add: ^\s*extern\ WinRect\ g_wCur\[64\],\ g_wPrev\[64\];\ extern\ int\ g_wCurN,\ g_wPrevN;$
+add: ^\s*extern\ WinRec\ g_wrec\[64\];\ extern\ int\ g_nwrec;\ extern\ int\ g_wrecOpen;$
+add: ^\s*extern\ CurWin\ g_curWin;$
+add: ^\s*extern\ WinEnd\ g_we;$
+add: ^\s*extern\ NextWin\ g_nextWinPos,\ g_nextWinSize;$
+add: ^\s*extern\ int\ g_wflagsNext;$
+add: ^\s*extern\ int\ g_focusWin;$
+add: ^\s*extern\ bool\ g_pinNext,\ g_bareNext,\ g_noTitleNext,\ g_resizeNext;$
+add: ^\s*extern\ bool\ g_dockAware,\ g_dockRouted;$
+add: ^\s*void\ ChannelsMergeAll\(\);$
+drop: ^\s*static\ void\ panelColored\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ const\ unsigned\ char\*\ fill\)\ \{$
+add: ^\s*void\ ui_core::panelColored\(float\ x,\ float\ y,\ float\ w,\ float\ h,\ const\ unsigned\ char\*\ fill\)\ \{$
+drop: ^\s*static\ bool\ g_pinNext\ =\ false;\ \ \ //\ PinNextWindow:\ the\ next\ Begin\ sits\ where\ it\ is\ told$
+add: ^\s*bool\ ui_core::g_pinNext\ =\ false;\ \ \ //\ PinNextWindow:\ the\ next\ Begin\ sits\ where\ it\ is\ told$
+drop: ^\s*static\ CurWin\ g_curWin;$
+add: ^\s*CurWin\ ui_core::g_curWin;$
+drop: ^\s*static\ WinEnd\ g_we;$
+add: ^\s*WinEnd\ ui_core::g_we;$
+drop: ^\s*static\ int\ \ g_wflagsNext\ =\ 0;\ \ \ \ \ \ //\ WindowFlags\ for\ the\ next\ core\ Begin$
+add: ^\s*int\ \ ui_core::g_wflagsNext\ =\ 0;\ \ \ \ \ \ //\ WindowFlags\ for\ the\ next\ core\ Begin$
+drop: ^\s*static\ int\ g_focusWin\ =\ 0;$
+add: ^\s*int\ ui_core::g_focusWin\ =\ 0;$
+drop: ^\s*static\ NextWin\ g_nextWinPos,\ g_nextWinSize;$
+add: ^\s*NextWin\ ui_core::g_nextWinPos,\ ui_core::g_nextWinSize;$
+drop: ^\s*static\ bool\ g_bareNext\ =\ false;\ \ \ //\ BareNextWindow:\ the\ next\ Begin\ has\ no\ title\ bar\ \(a\ panel\ that\ fills\ a\ host's\ rectangle\)$
+add: ^\s*bool\ ui_core::g_bareNext\ =\ false;\ \ \ //\ BareNextWindow:\ the\ next\ Begin\ has\ no\ title\ bar\ \(a\ panel\ that\ fills\ a\ host's\ rectangle\)$
+drop: ^\s*static\ bool\ \ g_noTitleNext\ =\ false;\ \ //\ Window_NoTitleBar:\ the\ next\ Begin\ has\ no\ title\ bar\ \(docked\ windows\)$
+add: ^\s*bool\ \ ui_core::g_noTitleNext\ =\ false;\ \ //\ Window_NoTitleBar:\ the\ next\ Begin\ has\ no\ title\ bar\ \(docked\ windows\)$
+drop: ^\s*static\ bool\ \ g_resizeNext\ =\ false;\ \ \ //\ ResizableNextWindow:\ the\ next\ Begin\ gets\ a\ resize\ grip$
+add: ^\s*bool\ \ ui_core::g_resizeNext\ =\ false;\ \ \ //\ ResizableNextWindow:\ the\ next\ Begin\ gets\ a\ resize\ grip$
+drop: ^\s*static\ bool\ g_dockAware\ =\ false,\ g_dockRouted\ =\ false;\ \ \ //\ SetDockAwareBegin:\ Begin\ runs\ a\ window\ of\ the\ dock\ layout\ as\ DockBegin;\ the\ End\ that\ closes\ it\ as\ DockEnd$
+add: ^\s*bool\ ui_core::g_dockAware\ =\ false,\ ui_core::g_dockRouted\ =\ false;\ \ \ //\ SetDockAwareBegin:\ Begin\ runs\ a\ window\ of\ the\ dock\ layout\ as\ DockBegin;\ the\ End\ that\ closes\ it\ as\ DockEnd$
+drop: ^\s*float\ g_popupPadX\ =\ \-1\.0f,\ g_popupPadY\ =\ \-1\.0f,\ g_popupW\ =\ \-1\.0f,\ g_innerX\ =\ \-1\.0f;$
+add: ^\s*\}\ //\ namespace$
+add: ^\s*namespace\ ui_core\ \{\ float\ g_popupPadX\ =\ \-1\.0f,\ g_popupPadY\ =\ \-1\.0f,\ g_popupW\ =\ \-1\.0f,\ g_innerX\ =\ \-1\.0f;\ \}$
+add: ^\s*namespace\ \{$
+drop: ^\s*namespace\ \{$
+add: ^\s*namespace\ ui_core\ \{$

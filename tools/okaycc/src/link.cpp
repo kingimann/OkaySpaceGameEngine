@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -215,19 +216,30 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
             va = align16(va + o.data.size());
         }
     }
+    // A global (STB_GLOBAL) symbol may be defined once. A weak one (STB_WEAK, an inline function
+    // or a vtable) may be defined in many objects: the first is kept, and a global definition
+    // wins over a weak one (ELF gABI, "Symbol Table").
     std::map<std::string, std::uint64_t> global;
+    std::set<std::string> weakOnly;
     for (const Obj& o : objs) {
         for (const Sym& s : o.syms) {
-            if (s.bind != 1 || s.shndx == 0 || s.name.empty()) continue;
+            if ((s.bind != 1 && s.bind != 2) || s.shndx == 0 || s.name.empty()) continue;
             std::uint64_t base = 0;
             if (s.shndx == o.textId) base = o.textVa;
             else if (s.shndx == o.roId) base = o.roVa;
             else if (s.shndx == o.dataId) base = o.dataVa;
             else continue;
-            if (global.count(s.name)) {
+            if (s.bind == 2) {
+                if (global.count(s.name)) continue;
+                weakOnly.insert(s.name);
+                global[s.name] = base + s.value;
+                continue;
+            }
+            if (global.count(s.name) && !weakOnly.count(s.name)) {
                 error = "duplicate symbol " + s.name;
                 return {};
             }
+            weakOnly.erase(s.name);
             global[s.name] = base + s.value;
         }
     }
@@ -247,6 +259,10 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
     auto resolve = [&](const Obj& o, std::uint32_t si, std::uint64_t& out) -> bool {
         if (si >= o.syms.size()) return false;
         const Sym& s = o.syms[si];
+        if (s.shndx != 0 && (s.bind == 2 || s.bind == 1) && !s.name.empty() && global.count(s.name)) {
+            out = global[s.name];  // the one kept definition
+            return true;
+        }
         if (s.shndx != 0) {
             out = secVa(o, s.shndx) + s.value;
             return true;

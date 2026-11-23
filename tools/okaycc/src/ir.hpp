@@ -66,6 +66,7 @@ struct Function {
     int vaNamed = -1;  // named general registers before "...", or -1 when the function is not variadic
     int vaXmm = 0;     // named xmm registers before "..."
     bool localSym = false;
+    bool weakSym = false;  // an inline function: every file may define it, the linker keeps one
     std::vector<int> xmmSlot;   // vreg that receives xmm0, xmm1, ...
     std::vector<int> xmmWidth;  // 4 or 8 for each of those
     std::vector<Block> blocks;
@@ -75,6 +76,8 @@ struct Global {
     std::string name;
     int size = 0;
     bool rodata = false;
+    bool localSym = false;  // internal linkage: a static global or a constexpr static member
+    bool weakSym = false;   // a vtable of a class defined in a header: one copy kept by the linker
     std::vector<unsigned char> bytes;
     std::string reloc;  // if set, the 8-byte value is the address of this symbol
     std::vector<std::pair<int, std::string>> relocs;  // (byte offset, symbol) 8-byte addresses inside bytes

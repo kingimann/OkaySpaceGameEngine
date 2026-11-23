@@ -559,16 +559,21 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
     case Inst::Op::Shr:
         loadRax(im, in.a);
         loadRcx(im, in.b);
-        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : 5);
+        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : (in.arith ? 7 : 5));  // SHL /4, SHR /5, SAR /7
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         loadRax(im, in.a);
-        u8(im, 0x48);
-        u8(im, 0x99);
+        if (in.uns) {
+            u8(im, 0x31);  // xor edx, edx: the high half of an unsigned dividend
+            u8(im, modrm(3, 2, 2));
+        } else {
+            u8(im, 0x48);  // cqo
+            u8(im, 0x99);
+        }
         loadRcx(im, in.b);
-        unaryF7(im, Rcx, 7);
+        unaryF7(im, Rcx, in.uns ? 6 : 7);  // DIV /6, IDIV /7
         if (in.op == Inst::Op::Div) movSlotRax(im, in.dst);
         else {
             movReg(im, Rax, Rdx);

@@ -1,9 +1,11 @@
+// exit 0
 /* Round 18 regressions, each wrong before: a double parameter changed on one path and then passed
  * to a call (copy propagation took the branch's copy); -s.hi on a double field (integer
  * negation); a 16-byte struct returned in two registers passed straight to another call; a long
  * expression passed to a long parameter (the checker called it int and cut it to 32 bits); a float
  * field stored through a pointer. */
 int printf(char *fmt, ...);
+int shifts(void);
 typedef struct {
     double hi;
     double lo;
@@ -32,7 +34,7 @@ double f(double x, double y) {
     if (x == 0.0) return n ? -1 : 1;
     return first(mk(x, 0)) * y;
 }
-int main() {
+int main2() {
     dd a = mk(1.5, 0.25);
     dd b = add2(a, neg(mk(0.5, 0.125)));
     unsigned long u = 3;
@@ -45,4 +47,22 @@ int main() {
     printf("%ld %d %d %ld\n", (long)keep((u << 44) | 4503599627370495ul), pair[1].a, pair[0].a,
            (long)(pair[0].w * 10));
     return 0;
+}
+/* Also: unsigned / and % used signed division, and >> of a negative value was logical. */
+static unsigned long umod(unsigned long h, unsigned long m) { return h % m; }
+int shifts(void) {
+    long n = -64;
+    int k = -9;
+    unsigned int u = 4000000000u;
+    unsigned long big = 18000000000000000000ul;
+    unsigned long h = big;
+    h %= 1000000007ul;
+    k >>= 1;
+    printf("%ld %d %ld %ld %ld %ld %ld\n", n >> 3, k, (long)(u / 3u), (long)(u % 7u), (long)umod(big, 1000000007ul),
+           (long)h, (long)(big / 3ul >> 40));
+    return 0;
+}
+int main() {
+    main2();
+    return shifts();
 }

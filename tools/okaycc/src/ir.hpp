@@ -44,6 +44,7 @@ struct Inst {
     int extra = 8;  // byte width for a load, store, or narrowing move
     bool uns = false;  // zero-extend, or unsigned compare
     bool fp = false;   // floating-point op; extra is 4 (float) or 8 (double)
+    bool arith = false;  // Shr of a signed value: an arithmetic shift (SAR)
     Operand a;
     Operand b;
     std::string label;

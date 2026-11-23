@@ -1258,6 +1258,100 @@ private:
         return true;
     }
 
+    // obj.f(args) where f is a member function template: deduce its parameters from the arguments
+    // (e.kids[1..]), ask for the instance (made when the file is parsed again) and return its name.
+    std::string memberInstance(const std::string& key, Expr& e) {
+        auto it = funcTemplateSigs().find(key);
+        if (it == funcTemplateSigs().end() || !it->second.fn) {
+            err(e.line, e.col, "unknown member template");
+            return {};
+        }
+        const TemplateSig& sig = it->second;
+        if (sig.fn->params.size() != e.kids.size() - 1) {
+            err(e.line, e.col, "wrong number of arguments");
+            return {};
+        }
+        std::vector<std::unique_ptr<Type>> bound(sig.names.size());
+        for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
+            ET a = checkExpr(*e.kids[i + 1]);
+            if (a.bad || !a.type) return {};
+            ET d = decay(copyET(a));
+            if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *d.type, sig, bound)) {
+                err(e.line, e.col, "conflicting types for a template argument");
+                return {};
+            }
+        }
+        std::vector<TArg> args;
+        for (std::size_t i = 0; i < sig.names.size(); ++i) {
+            if (!bound[i]) {
+                err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
+                return {};
+            }
+            TArg a;
+            a.type = std::move(bound[i]);
+            args.push_back(std::move(a));
+        }
+        std::string inst = instFuncName(key, sig, args);
+        bool known = false;
+        for (const InstReq& r : instRequests())
+            if (r.name == inst) known = true;
+        if (!known) {
+            InstReq r;
+            r.tmpl = key;
+            r.name = inst;
+            r.args = std::move(args);
+            instRequests().push_back(std::move(r));
+            instDirty() = true;
+        }
+        return inst;
+    }
+
+    // An argument of another type for a class parameter: if the class has a constructor of one
+    // parameter (not its copy constructor) that takes it, the argument becomes T(arg), a temporary.
+    bool convertingTemp(Expr& arg, const Type& from, const Type& want) {
+        const Type* T = canonOf(&want);
+        if (!T || T->kind != Type::Kind::Struct || T->tag.empty()) return false;
+        bool ok = false;
+        for (const Param& p : T->params) {
+            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1 || !p.type->params[0].type) continue;
+            const Type* pt = p.type->params[0].type.get();
+            if (pt->kind == Type::Kind::Reference && pt->inner && pt->inner->kind == Type::Kind::Struct &&
+                pt->inner->tag == T->tag)
+                continue;  // the copy constructor
+            ET probe;
+            probe.type = cloneType(from);
+            probe = decay(std::move(probe));  // "text" is a char array: it is passed as const char *
+            if (sameType(*pt, *probe.type) || canAssign(*pt, probe)) ok = true;
+        }
+        if (!ok) return false;
+        std::string tmp = "__cv" + std::to_string(tempN_++);
+        auto call = mkE(Expr::Kind::Call, arg);
+        call->kids.push_back(mkName("\x01" "ctor:" + T->tag, arg));
+        call->kids.push_back(eUnary("&", mkName(tmp, arg), arg));
+        auto inner = std::make_unique<Expr>();
+        inner->kind = arg.kind;
+        inner->text = arg.text;
+        inner->ival = arg.ival;
+        inner->litUnsigned = arg.litUnsigned;
+        inner->litRank = arg.litRank;
+        inner->line = arg.line;
+        inner->col = arg.col;
+        inner->file = arg.file;
+        inner->kids = std::move(arg.kids);
+        inner->ty = std::move(arg.ty);
+        inner->checked = std::move(arg.checked);
+        call->kids.push_back(std::move(inner));
+        arg.kind = Expr::Kind::Comma;
+        arg.ival = 7;
+        arg.text = tmp;
+        arg.ty = cloneType(*T);
+        arg.kids.clear();
+        arg.checked.reset();
+        arg.kids.push_back(std::move(call));
+        arg.kids.push_back(mkName(tmp, arg));
+        return true;
+    }
+
     // A braced list where an object of class T is expected (an argument {a, b}, [dcl.init.list]):
     // a temporary T. A constructor whose parameter count matches takes the values; otherwise the
     // class is an aggregate: its implicit constructor (default member initializers) runs if it has
@@ -1695,6 +1789,11 @@ private:
                     const Param* fp = pickOverload(cands, e, 1);
                     const Param& f = *fp;
                     if (f.type) addDefaults(e, *f.type, 0);
+                    std::string target = f.mangled;
+                    if (target.compare(0, 7, "\x01" "mtmpl:") == 0) {
+                        target = memberInstance(target.substr(7), e);
+                        if (target.empty()) return bad(e.line, e.col);
+                    }
                     std::unique_ptr<Expr> selfArg;
                     if (mem.text == "->") {
                         selfArg = std::move(mem.kids[0]);
@@ -1722,7 +1821,7 @@ private:
                     } else {
                         callee = std::make_unique<Expr>();
                         callee->kind = Expr::Kind::Name;
-                        callee->text = f.mangled;
+                        callee->text = target;
                         callee->line = e.line;
                         callee->col = e.col;
                     }
@@ -1771,6 +1870,13 @@ private:
                 ET src = checkExpr(*e.kids[i + 1]);
                 if (src.bad) return bad(e.line, e.col);
                 const Type& want = *fn.params[i].type->inner;
+                if (src.type && !sameType(want, *src.type) && !derivedFrom(*src.type, want) &&
+                    convertingTemp(*e.kids[i + 1], *src.type, want)) {
+                    // f(const std::string &) called with "text": a temporary made by the converting
+                    // constructor, bound to the reference ([over.ics.user], [class.conv.ctor]).
+                    src = checkExpr(*e.kids[i + 1]);
+                    if (src.bad) return bad(e.line, e.col);
+                }
                 if (!src.lvalue) {
                     // A reference to const may bind to a temporary: copy the value into a hidden
                     // local and pass its address.
@@ -1853,8 +1959,13 @@ private:
         for (std::size_t i = fn.params.size(); i < nargs; ++i) {
             ET arg = decay(checkExpr(*e.kids[i + 1]));
             if (arg.bad) return bad(e.line, e.col);
-            if (arg.type && (arg.type->kind == Type::Kind::Char || arg.type->kind == Type::Kind::Short))
-                e.kids[i + 1]->checked = prim(Type::Kind::Int);
+            if (arg.type && (arg.type->kind == Type::Kind::Char || arg.type->kind == Type::Kind::Short)) {
+                // The default argument promotion to int ([expr.call] p12). The node keeps its
+                // signedness: an unsigned char is loaded zero-extended (168 stays 168).
+                auto promoted = prim(Type::Kind::Int);
+                promoted->unsign = arg.type->unsign;
+                e.kids[i + 1]->checked = std::move(promoted);
+            }
         }
         ET r;
         r.line = e.line;

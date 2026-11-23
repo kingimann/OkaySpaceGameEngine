@@ -1784,6 +1784,17 @@ private:
             implicitTags_.insert(shortTag);
         }
         while (!atEnd() && !isP("}")) {
+            if (isKw("template")) {
+                std::string savedTag = memberTag_;
+                Type* savedCls = memberCls_;
+                memberTag_ = tag;
+                memberCls_ = t.get();
+                parseTemplate();
+                memberTag_ = savedTag;
+                memberCls_ = savedCls;
+                cx.cxx = true;
+                continue;
+            }
             if ((isKw("public") || isKw("private") || isKw("protected")) && nextIs(":")) {
                 pub = isKw("public");
                 advance();
@@ -2589,6 +2600,25 @@ private:
         i_ = td.end;
         // More than one function template may have this name ([temp.over]): the others are kept as
         // name#1, name#2, ...; the checker deduces against each.
+        if (memberCls_) {
+            // A member function template ([temp.mem]): kept with its class; the class gets a
+            // member whose symbol is "\x01mtmpl:key", which the checker deduces and instantiates.
+            std::string mkey = memberTag_ + "::" + name;
+            for (int k = 1; memberTmpl_.count(mkey); ++k) mkey = memberTag_ + "::" + name + "#" + std::to_string(k);
+            MemberTmpl mt;
+            mt.td = td;
+            mt.tag = memberTag_;
+            if (!tscopes_.empty())
+                for (auto& kv : tscopes_.back()) mt.scope.emplace_back(kv.first, cloneType(*kv.second));
+            Param m;
+            m.name = name;
+            m.mangled = "\x01" "mtmpl:" + mkey;
+            m.type = cloneType(*sig.fn);
+            memberCls_->params.push_back(std::move(m));
+            funcTemplateSigs()[mkey] = std::move(sig);
+            memberTmpl_[mkey] = std::move(mt);
+            return;
+        }
         std::string key = name;
         for (int k = 1; ftmpl_.count(key); ++k) key = name + "#" + std::to_string(k);
         funcTemplateSigs()[key] = std::move(sig);
@@ -2637,7 +2667,48 @@ private:
         return cloneType(*it->second);
     }
 
+    struct MemberTmpl {
+        TDecl td;
+        std::string tag;
+        std::vector<std::pair<std::string, std::unique_ptr<Type>>> scope;  // the class's own bindings
+    };
+    std::map<std::string, MemberTmpl> memberTmpl_;
+    std::string memberTag_;
+    Type* memberCls_ = nullptr;
+
+    // An instance of a member function template: its tokens read again inside the class's scope
+    // (the class template's parameters bound as they were), with its own parameters bound.
+    void replayMember(Tu& tu, const InstReq& r, MemberTmpl& mt) {
+        std::size_t saved = i_;
+        tscopes_.emplace_back();
+        for (auto& kv : mt.scope) tscopes_.back()[kv.first] = cloneType(*kv.second);
+        auto es = bindParams(mt.td, r.args);
+        i_ = mt.td.start;
+        Pos pos = here();
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        auto type = apply(std::move(base), d.mods);
+        while (isKw("const") || isKw("noexcept")) advance();
+        if (type && type->kind == Type::Kind::Function && isP("{")) {
+            auto decl = newMethodDecl(mt.tag, r.name, *type, type->params, pos);
+            decl->isInline = true;
+            decl->body = parseBody(type->inner.get());
+            flushExtras(tu);
+            tu.decls.push_back(std::move(decl));
+        } else {
+            err("a member function template must be defined in its class");
+        }
+        unbindParams(es);
+        tscopes_.pop_back();
+        i_ = saved;
+    }
+
     void replayFunction(Tu& tu, const InstReq& r) {
+        auto mit = memberTmpl_.find(r.tmpl);
+        if (mit != memberTmpl_.end()) {
+            replayMember(tu, r, mit->second);
+            return;
+        }
         auto it = ftmpl_.find(r.tmpl);
         if (it == ftmpl_.end()) {
             err("unknown function template '" + r.tmpl + "'");

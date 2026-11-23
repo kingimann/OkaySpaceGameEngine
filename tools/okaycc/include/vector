@@ -10,6 +10,10 @@ class vector {
 public:
     vector() : data_(nullptr), size_(0), cap_(0) {}
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
+    vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {
+        reserve((unsigned long)(last - first));
+        for (const T *p = first; p != last; ++p) data_[size_++] = *p;
+    }
     vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
         reserve(n);
         for (unsigned long i = 0; i < n; ++i) data_[i] = v;
@@ -84,6 +88,15 @@ public:
             data_[size_] = std::move(v);
         }
         ++size_;
+    }
+    // emplace_back with one or two constructor arguments (no variadic templates yet).
+    template <typename A>
+    void emplace_back(A a) {
+        push_back(T(a));
+    }
+    template <typename A, typename B>
+    void emplace_back(A a, B b) {
+        push_back(T(a, b));
     }
     void pop_back() { --size_; }
     void clear() { size_ = 0; }

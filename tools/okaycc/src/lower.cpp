@@ -1701,8 +1701,23 @@ private:
                 b.op = narrow(b.op, 4, true);
             }
         }
+        bool arith = false;
+        if ((e.text == "/" || e.text == "%" || e.text == ">>") && e.checked && isIntish(*e.checked)) {
+            // Unsigned division, remainder and right shift; a signed right shift is arithmetic
+            // (implementation-defined in C, arithmetic in g++ and in C++20).
+            if (e.checked->unsign) {
+                if (e.text != ">>") uns = true;
+                if (e.checked->kind != Type::Kind::Long) {
+                    a.op = narrow(a.op, 4, true);
+                    if (e.text != ">>") b.op = narrow(b.op, 4, true);
+                }
+            } else if (e.text == ">>") {
+                arith = true;
+            }
+        }
         int dst = fresh();
         emitBin(binOp(e.text), dst, a.op, b.op, uns);
+        if (arith) fn_.blocks[static_cast<std::size_t>(cur_)].code.back().arith = true;
         return Val{Operand::vreg(dst), 0, 0};
     }
 
@@ -1776,7 +1791,21 @@ private:
                 lhsVal = loadAddr(addr, 0, lhs.checked && lhs.checked->unsign);
             }
             int dst = fresh();
-            emitBin(binOp(op), dst, lhsVal.op, rhs.op);
+            const Type* lt = lhs.checked.get();
+            bool opUns = false, opArith = false;
+            if ((op == "/" || op == "%" || op == ">>") && lt && isIntish(*lt)) {
+                if (lt->unsign) {
+                    if (op != ">>") opUns = true;
+                    if (lt->kind != Type::Kind::Long) {
+                        lhsVal.op = narrow(lhsVal.op, 4, true);
+                        if (op != ">>") rhs.op = narrow(rhs.op, 4, true);
+                    }
+                } else if (op == ">>") {
+                    opArith = true;
+                }
+            }
+            emitBin(binOp(op), dst, lhsVal.op, rhs.op, opUns);
+            if (opArith) fn_.blocks[static_cast<std::size_t>(cur_)].code.back().arith = true;
             Operand result = Operand::vreg(dst);
             if (!byAddr) {
                 Sym* s = find(lhs.text);

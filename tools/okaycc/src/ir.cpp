@@ -143,12 +143,18 @@ bool foldInst(const Inst& in, std::int64_t& out) {
         {
             auto ux = static_cast<std::uint64_t>(x);
             unsigned s = static_cast<unsigned>(y);
-            out = static_cast<std::int64_t>(in.op == Inst::Op::Shl ? (ux << s) : (ux >> s));
+            if (in.op == Inst::Op::Shr && in.arith) out = x < 0 ? ~static_cast<std::int64_t>(~ux >> s) : static_cast<std::int64_t>(ux >> s);
+            else out = static_cast<std::int64_t>(in.op == Inst::Op::Shl ? (ux << s) : (ux >> s));
         }
         return true;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         if (y == 0 || (x == INT64_MIN && y == -1)) return false;
+        if (in.uns) {
+            auto ux = static_cast<std::uint64_t>(x), uy = static_cast<std::uint64_t>(y);
+            out = static_cast<std::int64_t>(in.op == Inst::Op::Div ? ux / uy : ux % uy);
+            return true;
+        }
         out = in.op == Inst::Op::Div ? x / y : x % y;
         return true;
     default:

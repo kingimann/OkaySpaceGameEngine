@@ -326,15 +326,15 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::Shr:
         load(s, in.a, "%rax");
         load(s, in.b, "%rcx");
-        s += "  shrq %cl, %rax\n";
+        s += in.arith ? "  sarq %cl, %rax\n" : "  shrq %cl, %rax\n";
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         load(s, in.a, "%rax");
-        s += "  cqto\n";
+        s += in.uns ? "  xorl %edx, %edx\n" : "  cqto\n";
         load(s, in.b, "%rcx");
-        s += "  idivq %rcx\n";
+        s += in.uns ? "  divq %rcx\n" : "  idivq %rcx\n";
         store(s, in.op == Inst::Op::Div ? "%rax" : "%rdx", in.dst);
         break;
     case Inst::Op::Neg:

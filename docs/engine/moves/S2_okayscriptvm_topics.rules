@@ -1,0 +1,12 @@
+# S2 step 2 of the OkayScriptVM split (docs/engine/modularization_plan.md, section 3.1): the RegisterXxxBuiltins topic
+# functions of engine/src/Scripting/OkayScriptVM.cpp move, unchanged, to sibling files OkayScriptVM_<Topic>.cpp. Each file
+# only adds `#include "OkayScriptVMInternal.hpp"` and `namespace okay {`, so no edit rule is needed:
+#   python3 scripts/check_pure_move.py --base <commit before the move> --head <the move commit> \
+#       --source engine/src/Scripting/OkayScriptVM.cpp --dest engine/src/Scripting/OkayScriptVM_<Topic>.cpp \
+#       --rules docs/engine/moves/S2_okayscriptvm_topics.rules
+# (the CMake line that compiles the new file is in engine/CMakeLists.txt, not in the checked files)
+# The last lines of a moved block can equal the lines just before it (`return Value{};`, `};`, `}` at the end of a
+# builtin), so the line diff of OkayScriptVM.cpp is shifted by those few lines: they show as removed there and added in
+# the new file. Nothing else is allowed to differ.
+drop: ^\s*(return Value\{\};|\};|\})$
+add: ^\s*(return Value\{\};|\};|\})$

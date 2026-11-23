@@ -638,6 +638,7 @@ void OkayScriptVM::Impl::RegisterMaterialEventBuiltins(BuiltinCtx& c) {
         // Broadcast a named signal to every Actions (OnMessage) list in the scene.
         b["send_message"] = [this](std::vector<Value>& a) {
             if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+                // dup-allow: the OkayScript send_message builtin moved here unchanged from OkayScriptVM.cpp (S2); it is not a new copy
                 for (ActionList* al : rt.host->gameObject->scene()->FindObjectsOfType<ActionList>())
                     al->ReceiveMessage(a[0].AsString());
             return Value{};

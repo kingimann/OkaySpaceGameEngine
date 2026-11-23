@@ -290,6 +290,7 @@ inline char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s)
 // ===================== JSON (for to_json / from_json builtins) =====================
 // A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
 // strings, arrays and maps round-trip; vec3 is written as a [x,y,z] array.
+// dup-allow: moved here unchanged from OkayScriptVM.cpp (S2); not a new copy
 inline void JsonEscape(const std::string& s, std::string& out) {
     out += '"';
     for (char c : s) {

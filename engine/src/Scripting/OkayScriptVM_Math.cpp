@@ -24,6 +24,7 @@ void OkayScriptVM::Impl::RegisterEasingBuiltins(BuiltinCtx& c) {
             return Value{1.0f - 0.5f * f * f * f};
         };
         b["ease_back"] = [E](std::vector<Value>& a) {   // slight overshoot backward then in
+            // dup-allow: the ease_* builtin moved here unchanged from OkayScriptVM.cpp (S2); not a new copy
             float t = E(a); const float c1 = 1.70158f, c3 = c1 + 1.0f;
             return Value{c3 * t * t * t - c1 * t * t};
         };

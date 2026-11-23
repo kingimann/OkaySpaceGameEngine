@@ -124,7 +124,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a grenade does not push crates | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | a gunshot cuts off the previous one | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a hand snaps to a new target | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
-| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
+| a handler still runs after it unsubscribed | [1.9](01-core-scene.md#19-event-bus) Event bus |
 | a hat floats | [30.3](20-35-planned.md#303-clothing) Clothing |
 | a health bar does not follow hp | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a hitch when a big file loads | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
@@ -359,7 +359,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an API member exists in the script but not as a node | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | an API node is missing from the palette | [13.6](13-scripting.md#136-engine-api-and-generated-docs) Engine API and generated docs |
 | an asset does not show or has the wrong icon | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
-| an ECS unit does not show on screen | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | an edited file does not show until restart | [1.11](01-core-scene.md#111-asset-manager) Asset manager |
 | an edited mesh reverts after reopening the scene | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | an edited mesh updates a moment late | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
@@ -989,7 +988,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
-| the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |

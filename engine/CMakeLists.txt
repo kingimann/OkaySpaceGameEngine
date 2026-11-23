@@ -212,6 +212,7 @@ add_library(okay_engine
     src/Components/Character.cpp
     src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
+    src/Components/ModelAnimatorUpdate.cpp
     src/Components/PlayerView.cpp
     src/Components/PlayerController.cpp
     src/Components/CharacterAnimBackend.cpp

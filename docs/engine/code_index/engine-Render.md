@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 463 names.
+Back to the [code index](../code_index.md). 48 headers, 462 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -41,10 +41,6 @@ Back to the [code index](../code_index.md). 49 headers, 463 names.
 - `CameraStackPlan` struct, line 57
 - `CameraTarget` function, line 110: Last picture rendered for a camera that named a render target. Empty when
 - `StoreCameraTarget` function, line 118: Copy an ABGR8888 renderer buffer into the named target (RGBA).
-
-## `engine/include/okay/Render/Color.hpp`
-
-- `Color` struct, line 9: RGBA color with components in the [0, 1] range, like 'Color'.
 
 ## `engine/include/okay/Render/ColorHSV.hpp`
 

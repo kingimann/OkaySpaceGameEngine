@@ -2,7 +2,7 @@
 
 # Code index: engine-Animation
 
-Back to the [code index](../code_index.md). 11 headers, 106 names.
+Back to the [code index](../code_index.md). 13 headers, 119 names.
 
 ## `engine/include/okay/Animation/AnimationClip.hpp`
 
@@ -124,6 +124,25 @@ Back to the [code index](../code_index.md). 11 headers, 106 names.
 - `StartPhase` function, line 56: The phase a gait starts at when stepping off from a stand: the left foot
 - `AbsorbLanding` function, line 60: A landing's knee give on a striding pose (walk or run): the hips drop by
 - `KneelPose` function, line 64: The poses between lying prone and standing (getting up, dropping down):
+
+## `engine/include/okay/Animation/IKMath.hpp`
+
+- `Finite` function, line 22
+- `SafeNormalize` function, line 26: 'v' as a unit vector, or 'fallback' when 'v' is too short or not finite.
+- `IsUnder` function, line 33: True when 't' sits somewhere below 'ancestor' in the hierarchy.
+- `AimBone` function, line 41: The world rotation that turns 'bone' so the child now at 'childNow' ends up on
+- `BlendWorldRotation` function, line 52: Give 't' the blend of two world rotations: 'from' at w = 0 (the animated pose),
+- `IKPoleMode` enum, line 59: Where a joint bends toward. The numbers match LimbIK's saved 'poleMode'
+- `IKPole` struct, line 71: One pole helper for every solver. Call Direction() each frame with the limb's
+- `IKGoalBlend` struct, line 113: Eases a goal across a jump instead of snapping. When its source changes (a
+
+## `engine/include/okay/Animation/JointLimit.hpp`
+
+- `IKJointLimit` struct, line 22
+- `IKJointFrame` struct, line 52: The rest frame one bone's limit measures from. Capture() when the bones
+- `TwistAbout` function, line 84: Signed angle (degrees) of the twist component of 'q' about 'axis', and that
+- `ApplyLimit` function, line 98: Clamp a bone's local rotation to 'limit' around its rest frame. 'bendFree'
+- `HingeAngleDegrees` function, line 137: Signed angle, in degrees, of 'localRot' relative to 'restLocal' about a world
 
 ## `engine/include/okay/Animation/PlayerSetup.hpp`
 

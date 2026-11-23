@@ -3,8 +3,11 @@ OkaySpace Game Engine — Changelog
 v2.903.5
   One input system, Windows file copy fix, cleanup
   - Input: one table of actions and one place where key changes are
-    saved, so rebinding a key works the same everywhere.
-  - Windows: copying a file over one that already exists works now.
+    saved, so rebinding a key works the same everywhere. Controller
+    look feels a little different: no second stick dead zone and no
+    look curve.
+  - Windows: copying a file over one that already exists should work
+    now (built for Windows, not yet tried on a Windows PC).
   - Physics: the 5,000-body example's camera looks at the bodies again.
   - Behind the scenes: duplicate code removed (mesh hashes, node names,
     Base64, PNG writer and more), big files split into smaller files by

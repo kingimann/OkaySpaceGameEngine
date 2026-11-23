@@ -369,7 +369,7 @@ int main() {
         s.physics3D().gravity = {0, 0, 0};
         GameObject* self = s.CreateGameObject("Eye");
         self->AddComponent<SphereCollider3D>()->radius = 0.25f;   // ignored by its own casts
-        Box3(s, "Target", {0, 0, 6}, {1, 1, 1});
+        Box3(s, "Target", {0, 0, -6}, {1, 1, 1});   // in front: an unrotated object faces -Z
         auto* vsc = self->AddComponent<VisualScriptComponent>();
         std::string err;
         CHECK(vsc->LoadFromText(
@@ -390,7 +390,7 @@ int main() {
         CHECK(err.empty());
         s.Start();
         s.Update(1.0f / 60.0f);
-        CHECK(vsc->GetVariable("hit").AsBool());                       // forward (+Z) hits the target
+        CHECK(vsc->GetVariable("hit").AsBool());                       // forward (-Z) hits the target
         CHECK(vsc->GetVariable("what").AsString() == "Target");
         CHECK_NEAR(vsc->GetVariable("dist").AsFloat(), 5.5f, 1e-3f);    // origin is the eye, which it skips
         CHECK_NEAR(vsc->GetVariable("n").AsFloat(), 1.0f, 1e-4f);       // the target, not itself

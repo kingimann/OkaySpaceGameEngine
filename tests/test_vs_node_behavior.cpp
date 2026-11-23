@@ -515,7 +515,7 @@ int main() {
         Scene s;
         GameObject* dummy = s.CreateGameObject("Dummy");
         dummy->tag = "Enemy";
-        dummy->transform->SetPosition({0, 0, 3});
+        dummy->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         dummy->AddComponent<BoxCollider3D>()->size = {2, 2, 2};
         auto* hp = Hp(dummy);
         auto* v = Attach(s, "Gun",
@@ -605,7 +605,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, 3});
+        foe->transform->SetPosition({0, 0, -3});   // in front: an unrotated object faces -Z
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 80\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");
@@ -616,7 +616,7 @@ int main() {
     {
         Scene s; s.physicsEnabled = false;
         GameObject* foe = s.CreateGameObject("Foe");
-        foe->transform->SetPosition({0, 0, -4});
+        foe->transform->SetPosition({0, 0, 4});    // behind
         auto* v = Attach(s, "Eye",
             "node 1 OnStart\nentry OnStart 1\nnode 2 FindObject Foe\nnode 3 CanSee\n"
             "default 3 1 10\ndefault 3 2 40\nnode 4 SetVar seen\nexec 1 0 4\ndata 4 0 3 0\ndata 3 0 2 0\n");

@@ -60,3 +60,7 @@ node 112 GlIsCameraZoomedIn
 pos 112 40 900
 node 113 GlGetCameraTilt
 pos 113 300 900
+node 114 GlGetCameraForward
+pos 114 560 900
+node 115 GlGetCameraRight
+pos 115 820 900

@@ -1,0 +1,64 @@
+# Move 3 of the editor/main.cpp split (docs/editor/main_split_plan.md): sections 25 (Scripting Reference, DrawScriptDocs)
+# and 26 (script completion, signatures, docs, C# members, help card, snippet painter, palette and language definition)
+# -> editor/ScriptAssist.hpp/.cpp. The Script Editor's tab glue (CodeEditorFor, ScriptTabDirty, FormatOkayScript, the
+# close / reopen tab code) stays in main.cpp with DrawScriptEditor, which owns it.
+# Check it with (the parent of the move 3 commit; the moves are one commit each on top of bc5629ee8):
+#   python3 scripts/check_pure_move.py --base <move 3 commit>~1 --head <move 3 commit> --source editor/main.cpp \
+#       --dest editor/ScriptAssist.hpp --dest editor/ScriptAssist.cpp --dest editor/MainShared.hpp --rules docs/editor/main_split/03_script_assist.rules
+# struct ScriptCaret, enum class AcKind and struct ScriptHelp moved whole into ScriptAssist.hpp. The two one-line types
+# are listed below as drop + add of the identical line: the checker's in-order matcher does not pair a lone line that
+# lands in the header between other declarations.
+drop: ^enum class AcKind \{ Keyword, Type, Function, Variable \};$
+add: ^enum class AcKind \{ Keyword, Type, Function, Variable \};$
+drop: ^struct ScriptHelp \{ const char\* doc; const char\* example; \};$
+add: ^struct ScriptHelp \{ const char\* doc; const char\* example; \};$
+
+# Names DrawScriptEditor (main.cpp) uses: `static` dropped (external linkage), declared in ScriptAssist.hpp.
+change: static int g_acCount = 0; ==> int g_acCount = 0;
+change: static int g_acIndex = 0; ==> int g_acIndex = 0;
+change: static bool g_acDismiss = false; ==> bool g_acDismiss = false;
+change: static const std::vector<std::string>& ScriptCompletions() { ==> const std::vector<std::string>& ScriptCompletions() {
+change: static void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool) { ==> void AddBufferIdentifiers(const char* src, std::vector<std::string>& pool) {
+change: static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() { ==> const std::unordered_map<std::string, std::string>& ScriptSignatureMap() {
+change: static const std::string* ScriptSignature(const std::string& name) { ==> const std::string* ScriptSignature(const std::string& name) {
+change: static AcKind ClassifyCompletion(const std::string& name) { ==> AcKind ClassifyCompletion(const std::string& name) {
+change: static void AcKindTag(AcKind k, char& letter, ImU32& col) { ==> void AcKindTag(AcKind k, char& letter, ImU32& col) {
+change: static int FuzzyScore(const std::string& pat, const std::string& cand) { ==> int FuzzyScore(const std::string& pat, const std::string& cand) {
+change: static const std::string* ScriptDoc(const std::string& name) { ==> const std::string* ScriptDoc(const std::string& name) {
+change: static const std::vector<std::string>& ScriptMembers(const std::string& receiver) { ==> const std::vector<std::string>& ScriptMembers(const std::string& receiver) {
+change: static std::vector<std::string> CsMembersFor(const std::string& src, const std::string& receiver) { ==> std::vector<std::string> CsMembersFor(const std::string& src, const std::string& receiver) {
+change: static const ScriptHelp* ScriptHelpFor(const std::string& key) { ==> const ScriptHelp* ScriptHelpFor(const std::string& key) {
+change: static std::string ScriptExampleFromSignature(const std::string& sig) { ==> std::string ScriptExampleFromSignature(const std::string& sig) {
+change: static void DrawCodeSnippet(const std::string& code) { ==> void DrawCodeSnippet(const std::string& code) {
+change: static const TextEditor::Palette& OkayScriptPalette() { ==> const TextEditor::Palette& OkayScriptPalette() {
+change: static const TextEditor::LanguageDefinition& OkayScriptLangDef() { ==> const TextEditor::LanguageDefinition& OkayScriptLangDef() {
+
+# ScriptAssist.hpp: the declarations of those names (the definitions moved unchanged).
+add: ^void DrawScriptDocs\(\);$
+add: ^extern int g_acCount;$
+add: ^extern int g_acIndex;$
+add: ^extern bool g_acDismiss;$
+add: ^const std::vector<std::string>& ScriptCompletions\(\);$
+add: ^void AddBufferIdentifiers\(const char\* src, std::vector<std::string>& pool\);$
+add: ^const std::unordered_map<std::string, std::string>& ScriptSignatureMap\(\);$
+add: ^const std::string\* ScriptSignature\(const std::string& name\);$
+add: ^AcKind ClassifyCompletion\(const std::string& name\);$
+add: ^void AcKindTag\(AcKind k, char& letter, ImU32& col\);$
+add: ^int FuzzyScore\(const std::string& pat, const std::string& cand\);$
+add: ^const std::string\* ScriptDoc\(const std::string& name\);$
+add: ^const std::vector<std::string>& ScriptMembers\(const std::string& receiver\);$
+add: ^std::vector<std::string> CsMembersFor\(const std::string& src, const std::string& receiver\);$
+add: ^const ScriptHelp\* ScriptHelpFor\(const std::string& key\);$
+add: ^std::string ScriptExampleFromSignature\(const std::string& sig\);$
+add: ^void DrawCodeSnippet\(const std::string& code\);$
+add: ^const TextEditor::Palette& OkayScriptPalette\(\);$
+add: ^const TextEditor::LanguageDefinition& OkayScriptLangDef\(\);$
+
+# main.cpp: what ScriptAssist.cpp still uses from main.cpp gets external linkage, declared in MainShared.hpp.
+add: ^extern bool g_showScriptDocs;$
+add: ^extern ImFont\* g_codeFont;$
+add: ^void SectionHeader\(const char\* label\);$
+drop: ^static ImFont\* g_codeFont    = nullptr;   // monospace face for the Script Editor$
+add: ^ImFont\* g_codeFont    = nullptr;   // monospace face for the Script Editor$
+drop: ^static void SectionHeader\(const char\* label\) \{$
+add: ^void SectionHeader\(const char\* label\) \{$

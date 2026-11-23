@@ -300,7 +300,21 @@
       "sources": [
         "docs/feature_map/*.md"
       ],
-      "regen": "python3 scripts/gen_feature_map.py"
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
+    },
+    {
+      "file": "docs/SYSTEMS.md",
+      "sources": [
+        "docs/feature_map/*.md"
+      ],
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
+    },
+    {
+      "file": "docs/try_it.md",
+      "sources": [
+        "docs/try_it/*.md"
+      ],
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
     },
     {
       "file": "docs/feature_map/_index_az.md",
@@ -308,7 +322,7 @@
         "docs/feature_map/0*.md",
         "docs/feature_map/[1-4]*.md"
       ],
-      "regen": "python3 scripts/gen_feature_map.py"
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
     },
     {
       "file": "docs/feature_map/_index_symptoms.md",
@@ -316,7 +330,7 @@
         "docs/feature_map/0*.md",
         "docs/feature_map/[1-4]*.md"
       ],
-      "regen": "python3 scripts/gen_feature_map.py"
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
     },
     {
       "file": "editor/VisualScriptNodeDocs.inc",
@@ -330,7 +344,7 @@
     {
       "file": "docs/engine/code_index.md",
       "sources": ["engine/include/**", "shared/**", "okayui/include/**"],
-      "regen": "python3 scripts/gen_code_index.py"
+      "regen": "rebuilt on main by regen-docs.yml; use main's copy: bash scripts/precheck.sh --restore-generated"
     },
     {
       "file": "docs/WORK_BOARD.md",

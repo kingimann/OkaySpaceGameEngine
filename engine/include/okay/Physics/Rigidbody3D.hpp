@@ -156,7 +156,6 @@ private:
     Vec3  m_forceAccum  = Vec3::Zero;
     Vec3  m_torqueAccum = Vec3::Zero;
     float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
-    int   m_solverIndex = -1;     // this step's slot in the contact solver (Improved quality); -1 = none
     Vec3 ConsumeForce()  { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
     Vec3 ConsumeTorque() { Vec3 t = m_torqueAccum; m_torqueAccum = Vec3::Zero; return t; }
 };

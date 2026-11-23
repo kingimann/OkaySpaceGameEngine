@@ -421,11 +421,13 @@ inline const std::vector<VsDef>& Registry() {
         {"OnTagStay", "On Tag Stay", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
         {"OnTagExit", "On Tag Exit", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
         {"Proximity", "Proximity", CAT_LOGIC, false, {}, {"Target","Distance"}, {"Near"}, 0, nullptr},
-        {"Damage", "Damage", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
+        {"Damage", "Damage", CAT_ACTION, true, {""}, {"Amount","Target","Type"}, {}, 0, nullptr},
         {"Heal", "Heal", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
         {"IsDead", "Is Dead", CAT_LOGIC, false, {}, {"Target"}, {"Dead"}, 0, nullptr},
         {"OnDeath", "On Death", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnHealthChanged", "On Health Changed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDamaged", "On Damaged", CAT_EVENT, false, {""}, {}, {"Amount","Type","Source"}, 0, nullptr},
+        {"OnButtonClicked", "On Button Clicked", CAT_EVENT, false, {""}, {}, {}, 1, "button object name"},
         {"Respawn", "Respawn", CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
         {"SpawnProjectile", "Spawn Projectile", CAT_ACTION, true, {""}, {"Speed"}, {"Object"}, 1, "prefab"},
         {"Shoot", "Shoot", CAT_ACTION, true, {""}, {"Max Dist","Damage"}, {"Hit","Object"}, 0, nullptr},
@@ -1031,7 +1033,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
-    if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
+    if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged" || type == "OnDamaged") return type;
+    if (type == "OnButtonClicked") return "OnButtonClicked:" + tok(arg, "Button");
     if (type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag")
         return type + ":" + tok(arg, "Player");
     if (type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnPinch" || type == "OnRotate")

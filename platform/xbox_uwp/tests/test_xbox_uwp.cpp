@@ -401,7 +401,31 @@ static void PendingSaveSuspendTests() {
     CHECK(!rt.LastSuspend().AllOk() && rt.LastSuspend().steps[0].error.find("bad FAILED: disk full") == 0 && rt.Pending().IsPending("bad"));
 }
 
+// The splash model in the runtime: starts with the game, leaves after the first PRESENTED frame and the minimum time, stall is reported once.
+static void SplashRuntimeTests() {
+    using okay::xbox::SplashState;
+    okay::xbox::XboxGameRuntime rt;
+    std::uint64_t t = 1000; rt.clockMs = [&] { return t; };
+    CHECK(rt.SplashStateNow() == SplashState::NotStarted && !rt.SplashVisible() && rt.SplashAlpha() == 0.0f);
+    rt.StartSplash();
+    CHECK(rt.SplashStateNow() == SplashState::Showing && rt.SplashAlpha() == 1.0f);
+    t += 5000; rt.TickSplash();
+    CHECK(rt.SplashStateNow() == SplashState::Showing && !rt.SplashStalled());   // time passed but nothing was presented
+    rt.OnFramePresented(); rt.TickSplash();
+    CHECK(rt.SplashStateNow() == SplashState::Fading && rt.SplashAlpha() == 1.0f);   // minimum time (1500 ms) is long over: fades at once
+    t += 150; rt.TickSplash(); CHECK(rt.SplashAlpha() > 0.49f && rt.SplashAlpha() < 0.51f);
+    t += 150; rt.TickSplash(); CHECK(rt.SplashStateNow() == SplashState::Done && !rt.SplashVisible());
+    // a frame presented before the minimum time waits for it; a stall (no frame in 20 s) is reported
+    okay::xbox::XboxGameRuntime r2; std::uint64_t t2 = 0; r2.clockMs = [&] { return t2; };
+    r2.StartSplash(); r2.OnFramePresented(); t2 = 1000; r2.TickSplash(); CHECK(r2.SplashStateNow() == SplashState::Showing);
+    t2 = 1500; r2.TickSplash(); CHECK(r2.SplashStateNow() == SplashState::Fading);
+    okay::xbox::XboxGameRuntime r3; std::uint64_t t3 = 0; r3.clockMs = [&] { return t3; };
+    r3.StartSplash(); t3 = 19999; r3.TickSplash(); CHECK(!r3.SplashStalled()); t3 = 20000; r3.TickSplash(); CHECK(r3.SplashStalled()); r3.TickSplash(); CHECK(r3.SplashStalled());
+    r3.OnFramePresented(); r3.TickSplash(); CHECK(!r3.SplashStalled() && r3.SplashStateNow() == SplashState::Fading);   // the late frame ends the stall
+}
+
 int main() {
+    SplashRuntimeTests();
     PendingSaveSuspendTests();
     SdkTests();
     NewerVsTests(); ExportToolTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();

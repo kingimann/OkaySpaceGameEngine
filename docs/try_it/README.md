@@ -16,9 +16,8 @@ section at the end of one big file, and every pair of PRs conflicted.)
 3. Under the front matter write the section, starting with a heading (`## 7zz. Title`): what it is, the steps (what to
    open, click or press), what you should see, and what is verified and what is not. An entry needs a row, a section, or both.
 4. Run `python3 scripts/gen_try_it.py --check-entries`. That is what CI runs on your branch.
-5. **Do not commit `docs/try_it.md` in a feature PR.** Leave it alone. The coordinator regenerates and commits it with
-   `python3 scripts/gen_try_it.py` when merging or releasing (the same moment they bump the version and add the
-   `ROADMAP.md` and `dist/CHANGELOG.txt` rows). `python3 scripts/gen_try_it.py --check` says whether the page is current.
+5. **Do not commit `docs/try_it.md` in a feature PR.** Leave it alone. `.github/workflows/regen-docs.yml` regenerates
+   and commits it on main after every merge. `python3 scripts/gen_try_it.py --check` says whether the page is current.
 
 ## Change or delete an entry
 

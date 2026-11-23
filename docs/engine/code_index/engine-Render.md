@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 461 names.
+Back to the [code index](../code_index.md). 49 headers, 463 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -148,7 +148,7 @@ Back to the [code index](../code_index.md). 49 headers, 461 names.
 
 ## `engine/include/okay/Render/Gltf.hpp`
 
-- `LoadGLTF` function, line 638: Load a glTF/GLB file into one merged Mesh. 'ok' (optional) reports success;
+- `LoadGLTF` function, line 628: Load a glTF/GLB file into one merged Mesh. 'ok' (optional) reports success;
 
 ## `engine/include/okay/Render/GpuTexture.hpp`
 
@@ -232,6 +232,8 @@ Back to the [code index](../code_index.md). 49 headers, 461 names.
 
 - `Fold` function, line 23
 - `Bytes` function, line 29: Hash 'nbytes' bytes, continuing from 'seed' (chain several calls by passing the previous result).
+- `MeshSample` function, line 57: The cheap per-frame change sniff the renderers run on every mesh in view: the array sizes, up to 2048 sampled
+- `MeshFull` function, line 76: The exact content hash over every array the renderers' expanded vertex buffer is built from.
 
 ## `engine/include/okay/Render/MeshNormals.hpp`
 

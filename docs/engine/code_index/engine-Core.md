@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 78 headers, 477 names.
+Back to the [code index](../code_index.md). 80 headers, 487 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -48,6 +48,16 @@ Back to the [code index](../code_index.md). 78 headers, 477 names.
 
 - `BackupPolicy` struct, line 12: How many backups of one file to keep.
 - `BackupManager` class, line 33: Timestamped backups of project / scene files, taken before they are overwritten.
+
+## `engine/include/okay/Core/Base64.hpp`
+
+- `Alphabet` enum, line 24
+- `Chars` function, line 27: The 64 characters of an alphabet, in value order.
+- `Value` function, line 33: The value 0..63 of 'c' in the alphabet, or -1 when it is not one of its characters.
+- `Encode` function, line 43: Encode 'n' bytes. With 'pad' the text is padded with '=' to a multiple of 4 characters.
+- `DecodeLenient` function, line 69: Decode, skipping every character that is not in the alphabet; the bytes are APPENDED to 'out'. Whole groups of four
+- `DecodePadded` function, line 109: Strict decode of padded text (see the top of this file). 'out' is replaced. False on any broken rule.
+- `DecodeUnpadded` function, line 138: Strict decode of unpadded text (see the top of this file). 'out' is replaced. False on any broken rule.
 
 ## `engine/include/okay/Core/BuildConfigExtra.hpp`
 
@@ -105,8 +115,9 @@ Back to the [code index](../code_index.md). 78 headers, 477 names.
 - `HumanBytes` function, line 184
 - `ZipStats` struct, line 194
 - `WriteZip` function, line 198: Pack every file under 'rootDir' into 'zipPath' (paths relative to rootDir, '/' separators, sorted, so the
-- `ZipEntry` struct, line 199
-- `ReadZipDirectory` function, line 201: The central directory of a zip (what 'unzip -l' lists).
+- `ZipInput` struct, line 201: One file for WriteZipEntries: its name inside the archive ('/' separators) and either its bytes ('data') or, when
+- `ZipEntry` struct, line 208
+- `ReadZipDirectory` function, line 210: The central directory of a zip (what 'unzip -l' lists).
 
 ## `engine/include/okay/Core/Clipboard.hpp`
 
@@ -206,6 +217,11 @@ Back to the [code index](../code_index.md). 78 headers, 477 names.
 ## `engine/include/okay/Core/FileCopy.hpp`
 
 - `CopyFileOver` function, line 20
+
+## `engine/include/okay/Core/FileStamp.hpp`
+
+- `FileStat` struct, line 13
+- `StampOf` function, line 20
 
 ## `engine/include/okay/Core/FrameOverlay.hpp`
 

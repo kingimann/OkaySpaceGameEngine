@@ -1,0 +1,57 @@
+# Moved function bodies; each definition loses `inline` and its default arguments (they stay on the declaration).
+change: inline void AddTemplateHoldables(Scene& scene, GameObject* player) { ==> void AddTemplateHoldables(Scene& scene, GameObject* player) {
+add: ^\s*void\ AddTemplateHoldables\(Scene\&\ scene,\ GameObject\*\ player\);$
+change: inline GameObject* AddTopDown2DPlayer(Scene& scene, const Vec3& pos = {0, 0, 0}) { ==> GameObject* AddTopDown2DPlayer(Scene& scene, const Vec3& pos) {
+add: ^\s*GameObject\*\ AddTopDown2DPlayer\(Scene\&\ scene,\ const\ Vec3\&\ pos\ =\ \{0,\ 0,\ 0\}\);$
+change: inline void WireCharacterIK(GameObject* player, Character* pc) { ==> void WireCharacterIK(GameObject* player, Character* pc) {
+add: ^\s*void\ WireCharacterIK\(GameObject\*\ player,\ Character\*\ pc\);$
+change: inline void Platformer(Scene& scene) { ==> void Platformer(Scene& scene) {
+add: ^\s*void\ Platformer\(Scene\&\ scene\);$
+change: inline void Platformer3D(Scene& scene) { ==> void Platformer3D(Scene& scene) {
+add: ^\s*void\ Platformer3D\(Scene\&\ scene\);$
+change: inline void ThirdPerson(Scene& scene) { ==> void ThirdPerson(Scene& scene) {
+add: ^\s*void\ ThirdPerson\(Scene\&\ scene\);$
+change: inline void ThirdPersonShooter(Scene& scene) { ==> void ThirdPersonShooter(Scene& scene) {
+add: ^\s*void\ ThirdPersonShooter\(Scene\&\ scene\);$
+change: inline void PointAndClick(Scene& scene) { ==> void PointAndClick(Scene& scene) {
+add: ^\s*void\ PointAndClick\(Scene\&\ scene\);$
+change: inline void FPS(Scene& scene) { ==> void FPS(Scene& scene) {
+add: ^\s*void\ FPS\(Scene\&\ scene\);$
+change: inline void TopDown(Scene& scene) { ==> void TopDown(Scene& scene) {
+add: ^\s*void\ TopDown\(Scene\&\ scene\);$
+change: inline void TopDownShooter(Scene& scene) { ==> void TopDownShooter(Scene& scene) {
+add: ^\s*void\ TopDownShooter\(Scene\&\ scene\);$
+change: inline void Platformer25D(Scene& scene) { ==> void Platformer25D(Scene& scene) {
+add: ^\s*void\ Platformer25D\(Scene\&\ scene\);$
+change: inline void Vehicle3D(Scene& scene) { ==> void Vehicle3D(Scene& scene) {
+add: ^\s*void\ Vehicle3D\(Scene\&\ scene\);$
+change: inline void VehicleSeats3D(Scene& scene) { ==> void VehicleSeats3D(Scene& scene) {
+add: ^\s*void\ VehicleSeats3D\(Scene\&\ scene\);$
+change: inline void DrivingWorld(Scene& scene) { ==> void DrivingWorld(Scene& scene) {
+add: ^\s*void\ DrivingWorld\(Scene\&\ scene\);$
+change: inline void Vehicle2D(Scene& scene) { ==> void Vehicle2D(Scene& scene) {
+add: ^\s*void\ Vehicle2D\(Scene\&\ scene\);$
+change: inline void Multiplayer(Scene& scene) { ==> void Multiplayer(Scene& scene) {
+add: ^\s*void\ Multiplayer\(Scene\&\ scene\);$
+change: inline void CoinCollector(Scene& scene) { ==> void CoinCollector(Scene& scene) {
+add: ^\s*void\ CoinCollector\(Scene\&\ scene\);$
+change: inline void MainMenu(Scene& scene) { ==> void MainMenu(Scene& scene) {
+add: ^\s*void\ MainMenu\(Scene\&\ scene\);$
+change: inline void Inventory(Scene& scene) { ==> void Inventory(Scene& scene) {
+add: ^\s*void\ Inventory\(Scene\&\ scene\);$
+change: inline void Snake(Scene& scene) { ==> void Snake(Scene& scene) {
+add: ^\s*void\ Snake\(Scene\&\ scene\);$
+change: inline void BrickBreaker(Scene& scene) { ==> void BrickBreaker(Scene& scene) {
+add: ^\s*void\ BrickBreaker\(Scene\&\ scene\);$
+change: inline void TerrainSandbox(Scene& scene) { ==> void TerrainSandbox(Scene& scene) {
+add: ^\s*void\ TerrainSandbox\(Scene\&\ scene\);$
+drop: ^\s*inline\ void\ VoxelSandbox\(Scene\&\ scene,\ int\ gridX,\ int\ gridY,\ int\ gridZ,$
+drop: ^\s*float\ hillHeight\ =\ 9\.0f,\ unsigned\ seed\ =\ 2024u\)\ \{$
+add: ^\s*void\ VoxelSandbox\(Scene\&\ scene,\ int\ gridX,\ int\ gridY,\ int\ gridZ,$
+add: ^\s*float\ hillHeight\ =\ 9\.0f,\ unsigned\ seed\ =\ 2024u\);$
+add: ^\s*void\ VoxelSandbox\(Scene\&\ scene,\ int\ gridX,\ int\ gridY,\ int\ gridZ,$
+add: ^\s*float\ hillHeight,\ unsigned\ seed\)\ \{$
+change: inline GameObject* AddBoat(Scene& scene, const Vec3& pos = {0, 0, 0}, float yawDegrees = 0.0f) { ==> GameObject* AddBoat(Scene& scene, const Vec3& pos, float yawDegrees) {
+add: ^\s*GameObject\*\ AddBoat\(Scene\&\ scene,\ const\ Vec3\&\ pos\ =\ \{0,\ 0,\ 0\},\ float\ yawDegrees\ =\ 0\.0f\);$
+change: inline void BoatLake(Scene& scene) { ==> void BoatLake(Scene& scene) {
+add: ^\s*void\ BoatLake\(Scene\&\ scene\);$

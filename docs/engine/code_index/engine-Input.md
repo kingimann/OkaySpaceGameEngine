@@ -2,7 +2,7 @@
 
 # Code index: engine-Input
 
-Back to the [code index](../code_index.md). 22 headers, 108 names.
+Back to the [code index](../code_index.md). 22 headers, 112 names.
 
 ## `engine/include/okay/Input/ActionEditor.hpp`
 
@@ -12,22 +12,26 @@ Back to the [code index](../code_index.md). 22 headers, 108 names.
 
 ## `engine/include/okay/Input/ActionSet.hpp`
 
-- `ValueType` enum, line 22
-- `ValueTypeName` function, line 23
-- `ParseValueType` function, line 24
-- `InputValue` struct, line 26
-- `Processor` struct, line 34: One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "invert(x)", "invert(xy)",
-- `ParseProcessors` function, line 46: "deadzone(0.2) invert(y)" (spaces or ';' between) <-> a list. Parse returns false on any unknown step and leaves 'out' unchanged.
-- `ProcessorsToString` function, line 47
-- `Phase` enum, line 51: Where an action is in an interaction: the player started something (Started), it completed (Performed), or it did not
-- `PhaseName` function, line 52
-- `Interaction` struct, line 57: How an action turns presses into events. Text form: "press", "release", "press_release", "hold(0.5)", "tap(0.2)",
-- `PhaseEvent` struct, line 70: One phase change, reported by ActionSet::Update (also to Subscribe callbacks).
-- `ControlScheme` struct, line 79
-- `BindingSpec` struct, line 85
-- `ActionDef` struct, line 97
-- `ActionMap` struct, line 125: A group of actions that can be switched on and off together (Gameplay, UI, Vehicle). Enabled maps run from the highest
-- `ActionSet` class, line 132
+- `ValueType` enum, line 26
+- `ValueTypeName` function, line 27
+- `ParseValueType` function, line 28
+- `InputValue` struct, line 30
+- `Processor` struct, line 38: One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "invert(x)", "invert(xy)",
+- `ParseProcessors` function, line 50: "deadzone(0.2) invert(y)" (spaces or ';' between) <-> a list. Parse returns false on any unknown step and leaves 'out' unchanged.
+- `ProcessorsToString` function, line 51
+- `Phase` enum, line 55: Where an action is in an interaction: the player started something (Started), it completed (Performed), or it did not
+- `PhaseName` function, line 56
+- `Interaction` struct, line 61: How an action turns presses into events. Text form: "press", "release", "press_release", "hold(0.5)", "tap(0.2)",
+- `PhaseEvent` struct, line 74: One phase change, reported by ActionSet::Update (also to Subscribe callbacks).
+- `ControlScheme` struct, line 83
+- `BindingSpec` struct, line 89
+- `BindingKindName` function, line 102: "single", "vector2", "vector3", "axis", "chord" (the asset file and the "ovlist" override line).
+- `ParseBindingKind` function, line 103
+- `IsBaseMapName` function, line 105: "" and "Gameplay" (any case) are the base map: always on, what InputActions calls the base context.
+- `ShapeResponse` function, line 107: A 0..1 reading through a response (InputActions::ShapeValue: for drawing the curve).
+- `ActionDef` struct, line 109
+- `ActionMap` struct, line 156: A group of actions that can be switched on and off together (Gameplay, UI, Vehicle). Enabled maps run from the highest
+- `ActionSet` class, line 164
 
 ## `engine/include/okay/Input/ControllerMapping.hpp`
 
@@ -103,7 +107,7 @@ Back to the [code index](../code_index.md). 22 headers, 108 names.
 ## `engine/include/okay/Input/InputActions.hpp`
 
 - `InputBinding` struct, line 24: One input a game action listens to, written as text so it saves and shows
-- `InputActions` class, line 62: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
+- `InputActions` class, line 59: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
 
 ## `engine/include/okay/Input/InputAsset.hpp`
 
@@ -131,7 +135,7 @@ Back to the [code index](../code_index.md). 22 headers, 108 names.
 
 ## `engine/include/okay/Input/InputRuntime.hpp`
 
-- `InputRuntime` class, line 10
+- `InputRuntime` class, line 13
 
 ## `engine/include/okay/Input/PadProfiles.hpp`
 
@@ -161,8 +165,8 @@ Back to the [code index](../code_index.md). 22 headers, 108 names.
 
 ## `engine/include/okay/Input/PlayerInput.hpp`
 
-- `JoinDevice` enum, line 12
-- `PlayerInputManager` class, line 14
+- `JoinDevice` enum, line 13
+- `PlayerInputManager` class, line 15
 
 ## `engine/include/okay/Input/RemapModel.hpp`
 

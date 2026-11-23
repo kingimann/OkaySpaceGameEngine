@@ -14,12 +14,12 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Audio | 11 | 33 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
 | engine-Components | 262 | 741 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 80 | 487 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Core | 80 | 488 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
-| engine-Input | 22 | 108 | [code_index/engine-Input.md](code_index/engine-Input.md) |
+| engine-Input | 22 | 112 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
 | engine-Math | 22 | 80 | [code_index/engine-Math.md](code_index/engine-Math.md) |
 | engine-Modeling | 21 | 196 | [code_index/engine-Modeling.md](code_index/engine-Modeling.md) |

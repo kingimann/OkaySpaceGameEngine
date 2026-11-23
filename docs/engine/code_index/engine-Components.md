@@ -2,7 +2,7 @@
 
 # Code index: engine-Components
 
-Back to the [code index](../code_index.md). 259 headers, 732 names.
+Back to the [code index](../code_index.md). 260 headers, 735 names.
 
 ## `engine/include/okay/Components/ActionList.hpp`
 
@@ -478,6 +478,10 @@ Back to the [code index](../code_index.md). 259 headers, 732 names.
 ## `engine/include/okay/Components/LODGroup.hpp`
 
 - `LODGroup` class, line 15
+
+## `engine/include/okay/Components/LedgeHandsIK.hpp`
+
+- `LedgeHandsIK` class, line 37
 
 ## `engine/include/okay/Components/Lifetime.hpp`
 
@@ -1019,20 +1023,22 @@ Back to the [code index](../code_index.md). 259 headers, 732 names.
 
 ## `engine/include/okay/Components/Traversal.hpp`
 
-- `TraverseKind` enum, line 17
-- `TraverseProbe` struct, line 19
-- `TraverseJob` struct, line 27
-- `TraverseJobs` function, line 39
-- `HangPoints` function, line 44
-- `HangGravity` function, line 48
-- `TraverseOwners` function, line 53: These maps are keyed by object address. A scene that ends (or an object destroyed) in the middle of a
-- `TraverseValidate` function, line 57
-- `TraverseBusy` function, line 70
-- `RestoreHangGravity` function, line 78
-- `ProbeTraverse` function, line 88
-- `BeginTraverse` function, line 128
-- `TickTraverse` function, line 148
-- `AbortTraverse` function, line 177: Stop a move and put the colliders back. A hang keeps its saved gravity.
+- `TraverseKind` enum, line 18
+- `TraverseProbe` struct, line 20
+- `TraverseJob` struct, line 30
+- `TraverseJobs` function, line 44
+- `HangPoints` function, line 49
+- `HangGravity` function, line 53
+- `HangEdge` struct, line 57: The top edge a hanging body holds (LedgeHandsIK puts the hands on it). Set with HangPoints
+- `HangEdges` function, line 58
+- `TraverseOwners` function, line 66: These maps are keyed by object address. A scene that ends (or an object destroyed) in the middle of a
+- `TraverseValidate` function, line 70
+- `TraverseBusy` function, line 84
+- `RestoreHangGravity` function, line 92
+- `ProbeTraverse` function, line 102
+- `BeginTraverse` function, line 148
+- `TickTraverse` function, line 168
+- `AbortTraverse` function, line 199: Stop a move and put the colliders back. A hang keeps its saved gravity.
 
 ## `engine/include/okay/Components/TurnManager.hpp`
 
@@ -1155,33 +1161,33 @@ Back to the [code index](../code_index.md). 259 headers, 732 names.
 - `UIScaleFor` function, line 347: The pixel scale a widget is drawn at: for a world-space Canvas the projected
 - `UIHidden` function, line 365: True when the widget's owning Canvas is hidden (Canvas.visible == false), or an
 - `UIShowsFocusRing` function, line 376: A focus ring is only for a widget the player can still use. Hiding the menu
-- `CanvasSortOrder` function, line 403: The sort order of a widget's owning Canvas (0 if it has none). Higher draws on
-- `BuildUIPreOrder` function, line 416: A hierarchy PRE-ORDER rank per object (index into 'objects'): a parent comes
-- `BuildUIDrawOrder` function, line 455: The order UI should be drawn in: primary key the owning Canvas's sortOrder
-- `UIDrawItem` struct, line 472: One queued UI draw: which object (index into the scene list), an opaque renderer
-- `UILayerName` function, line 561: Short display name of a layer kind ("panel", "text"...), or "" if out of range.
-- `UIQueueDrawItems` function, line 576: Queue every draw-block item the GameObject at 'index' contributes to the single
-- `UIDefaultLayer` function, line 627: The canonical default draw layer for whatever UI widget a GameObject carries
-- `UIOpacity` function, line 672: The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,
-- `OwningScrollView` function, line 685: The Scroll View a widget lives in (nearest ancestor), or nullptr — used to
-- `UIScrollTotal` function, line 696: How far a widget's content is scrolled: the sum of every enclosing scroll
-- `UIScrollBelowParent` function, line 721: The scroll offset a widget adds on top of its UI parent's rect: the scroll
-- `UIButtonTextChild` function, line 736: A button's text child: the first active direct child carrying a screen-space
-- `UIDesignRect` function, line 750: A widget's rect in its world-space Canvas's DESIGN pixel space (no projection):
-- `ScrollViewContentHeight` function, line 842: Total height of a Scroll View's content: the furthest bottom edge of its direct
-- `ScrollViewContentWidth` function, line 858: Total width of a Scroll View's content: the furthest right edge of its direct
-- `UIResolveSize` function, line 872
-- `UIResolveOrigin` function, line 879: The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
-- `UITextDrawOrigin` function, line 967: The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:
-- `UIScreenContains` function, line 974: Whether a point (screen pixels) falls inside a widget's scaled rect.
-- `UIClipsChildren` function, line 987: Does this object clip its UI descendants (a scroll view, a list view or a mask)?
-- `UIClipRectLogical` function, line 995: The rect a widget's drawing is clipped to, in the renderer's frame
-- `UIClipContains` function, line 1015: Hit-test clipping: is screen point 'p' inside every clipping ancestor of 'go'
-- `UIPreOrderBefore` function, line 1027: Does 'a' come before 'b' in hierarchy pre-order (a parent before its children,
-- `UIDrawsAbove` function, line 1056: Is 'a' drawn over 'b'? The same order the renderer uses: owning Canvas sort order, then
-- `UIIsSelfOrAncestor` function, line 1067: Is 'go' an ancestor of (or the same object as) 'child'?
-- `UIPointerBlockedByPanel` function, line 1076: Is the point 'p' covered by a pointer-blocking panel drawn above 'go'? (A panel with
-- `UIClipHitTest` function, line 1094: The host's 'UIWorld().clipContains': clip hover, presses and releases to the
+- `CanvasSortOrder` function, line 404: The sort order of a widget's owning Canvas (0 if it has none). Higher draws on
+- `BuildUIPreOrder` function, line 417: A hierarchy PRE-ORDER rank per object (index into 'objects'): a parent comes
+- `BuildUIDrawOrder` function, line 456: The order UI should be drawn in: primary key the owning Canvas's sortOrder
+- `UIDrawItem` struct, line 473: One queued UI draw: which object (index into the scene list), an opaque renderer
+- `UILayerName` function, line 562: Short display name of a layer kind ("panel", "text"...), or "" if out of range.
+- `UIQueueDrawItems` function, line 577: Queue every draw-block item the GameObject at 'index' contributes to the single
+- `UIDefaultLayer` function, line 628: The canonical default draw layer for whatever UI widget a GameObject carries
+- `UIOpacity` function, line 673: The master opacity [0,1] the widget should be drawn at (its Canvas's opacity,
+- `OwningScrollView` function, line 686: The Scroll View a widget lives in (nearest ancestor), or nullptr — used to
+- `UIScrollTotal` function, line 697: How far a widget's content is scrolled: the sum of every enclosing scroll
+- `UIScrollBelowParent` function, line 722: The scroll offset a widget adds on top of its UI parent's rect: the scroll
+- `UIButtonTextChild` function, line 737: A button's text child: the first active direct child carrying a screen-space
+- `UIDesignRect` function, line 751: A widget's rect in its world-space Canvas's DESIGN pixel space (no projection):
+- `ScrollViewContentHeight` function, line 843: Total height of a Scroll View's content: the furthest bottom edge of its direct
+- `ScrollViewContentWidth` function, line 859: Total width of a Scroll View's content: the furthest right edge of its direct
+- `UIResolveSize` function, line 873
+- `UIResolveOrigin` function, line 880: The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
+- `UITextDrawOrigin` function, line 968: The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:
+- `UIScreenContains` function, line 975: Whether a point (screen pixels) falls inside a widget's scaled rect.
+- `UIClipsChildren` function, line 988: Does this object clip its UI descendants (a scroll view, a list view or a mask)?
+- `UIClipRectLogical` function, line 996: The rect a widget's drawing is clipped to, in the renderer's frame
+- `UIClipContains` function, line 1016: Hit-test clipping: is screen point 'p' inside every clipping ancestor of 'go'
+- `UIPreOrderBefore` function, line 1028: Does 'a' come before 'b' in hierarchy pre-order (a parent before its children,
+- `UIDrawsAbove` function, line 1057: Is 'a' drawn over 'b'? The same order the renderer uses: owning Canvas sort order, then
+- `UIIsSelfOrAncestor` function, line 1068: Is 'go' an ancestor of (or the same object as) 'child'?
+- `UIPointerBlockedByPanel` function, line 1077: Is the point 'p' covered by a pointer-blocking panel drawn above 'go'? (A panel with
+- `UIClipHitTest` function, line 1095: The host's 'UIWorld().clipContains': clip hover, presses and releases to the
 
 ## `engine/include/okay/Components/UIFilePicker.hpp`
 
@@ -1246,12 +1252,12 @@ Back to the [code index](../code_index.md). 259 headers, 732 names.
 ## `engine/include/okay/Components/UINavigation.hpp`
 
 - `IsNavFocusable` function, line 26: True when NavigateUI would let focus rest on this object: an enabled, focusable, interactable
-- `UITextFieldHasKeyboard` function, line 42: True while a text field has the keyboard: typing letters, Space and Enter belong to the
-- `BuildFocusGraph` function, line 56: Fill 'graph' (cleared first) with the scene's focusable widgets that are on screen now (visible,
-- `SetWidgetFocused` function, line 73
-- `ScrollWidgetIntoView` function, line 86: Scroll the nearest Scroll View or List View just enough that 'go' is on screen.
-- `SetUIFocus` function, line 121: Move menu focus to 'go', scroll it into view, and show the focus ring.
-- `NavigateUI` function, line 149: Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
+- `UITextFieldHasKeyboard` function, line 43: True while a text field has the keyboard: typing letters, Space and Enter belong to the
+- `BuildFocusGraph` function, line 57: Fill 'graph' (cleared first) with the scene's focusable widgets that are on screen now (visible,
+- `SetWidgetFocused` function, line 74
+- `ScrollWidgetIntoView` function, line 88: Scroll the nearest Scroll View or List View just enough that 'go' is on screen.
+- `SetUIFocus` function, line 123: Move menu focus to 'go', scroll it into view, and show the focus ring.
+- `NavigateUI` function, line 152: Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
 
 ## `engine/include/okay/Components/UIOwnerData.hpp`
 

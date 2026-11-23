@@ -21,7 +21,7 @@
 
 namespace okay {
 
-enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD };
+enum class ImageFormat { Unknown, PNG, JPEG, BMP, TGA, GIF, HDR, PSD, PNM };
 
 struct DecodedImage {
     int width = 0;
@@ -54,6 +54,9 @@ bool DecodeImage(const std::uint8_t* data, std::size_t size, DecodedImage& out, 
 bool DecodeImageFile(const std::string& path, DecodedImage& out, std::string* error = nullptr);
 /// Header-only dimensions of a file.
 bool GetImageFileInfo(const std::string& path, int* width, int* height, ImageFormat* format = nullptr);
+/// PNM (Netpbm P1 to P6, maxval up to 65535) to RGBA8. DecodeImage and DetectImageFormat route to it only when the
+/// environment variable OKAY_OWN_PNM=1 is set (off by default); calling this directly always works.
+bool DecodePnm(const std::uint8_t* data, std::size_t size, DecodedImage& out, std::string* error = nullptr);
 /// Decode every frame of a GIF.
 bool DecodeGifFrames(const std::uint8_t* data, std::size_t size, DecodedAnimation& out, std::string* error = nullptr);
 

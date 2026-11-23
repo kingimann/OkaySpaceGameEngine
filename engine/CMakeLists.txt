@@ -180,6 +180,7 @@ add_library(okay_engine
     src/Script/Checker.cpp
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
+    src/Script/EngineApi_Story.cpp
     src/Script/EngineApi_World.cpp
     src/Script/EngineApi_Runtime.cpp
     src/Script/EngineApi_Input.cpp

@@ -86,6 +86,11 @@ private:
         auto it = sc.find(name);
         if (it != sc.end()) {
             if (func && it->second.func && it->second.type && type && sameType(*it->second.type, *type)) return;
+            // A file-scope variable declared (extern, or a static data member in its class) and then
+            // defined: the same object ([basic.def]).
+            if (!func && !it->second.func && scopes_.size() == 1 && it->second.type && type &&
+                sameType(*it->second.type, *type))
+                return;
             err(line, col, "redefined '" + name + "'");
             return;
         }
@@ -1580,6 +1585,14 @@ private:
         return r;
     }
 
+    void checkBraceKids(Expr& b) {
+        for (auto& k : b.kids) {
+            if (!k) continue;
+            if (k->kind == Expr::Kind::Brace) checkBraceKids(*k);
+            else checkExpr(*k);
+        }
+    }
+
     void checkVar(Decl& d) {
         if (!d.type) return;
         if (!d.vt.empty()) return;  // a vtable: already declared
@@ -1600,8 +1613,7 @@ private:
             err(d.line, d.col, "variable has type void");
         }
         if (d.init && d.init->kind == Expr::Kind::Brace) {
-            for (auto& k : d.init->kids)
-                if (k) checkExpr(*k);
+            checkBraceKids(*d.init);
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
             checkExpr(*d.init);
         } else if (d.init) {
@@ -1632,7 +1644,10 @@ private:
             std::size_t cut = d.name.rfind("::");
             if (cut != std::string::npos) inNs_ = d.name.substr(0, cut);
         }
-        if (!d.methodTag.empty()) {
+        // Inside a member function, names are looked up in the class, then in the namespaces
+        // around it ([basic.lookup.unqual]): the class tag is the scope.
+        if (!d.methodTag.empty()) inNs_ = d.methodTag;
+        if (!d.methodTag.empty() && !d.staticMember) {
             auto it = canonStructs().find(d.methodTag);
             if (it != canonStructs().end()) method_ = it->second.get();
         }

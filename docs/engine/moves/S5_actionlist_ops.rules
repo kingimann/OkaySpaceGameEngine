@@ -25,3 +25,4 @@ add: ^\s*else \{$
 add: ^\s*if \(RunMoreOps\(it, op, scene, t\) == 2\) return;$
 add: ^\s*(float|std::string|int|bool|Ease|Inventory\*|RaycastHit3D) \w+\(.*\);$
 add: ^\s*class (GameObject|Inventory|Scene);$
+drop: ^\} // namespace$

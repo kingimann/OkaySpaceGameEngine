@@ -102,6 +102,7 @@ add_library(okay_engine
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
+    src/Scene/SceneTemplatesBuilders.cpp
     src/Scene/SceneManager.cpp
     src/Scene/ObjectPool.cpp
     src/Scene/SceneSerializer.cpp

@@ -63,8 +63,8 @@ void UIKeybindField::BindAction(const std::string& binding) {
         ActionSet* set = InputRuntime::Set(tp);
         const ActionDef* a = set ? set->Find(tn) : nullptr;
         const int bi = a ? TypedBinding(*set, *a, gamepad) : -1;
-        if (bi < 0 || !set->Rebind(tn, bi, part < 0 ? 0 : part, InputBinding::Parse(binding).ToString())) return;   // the canonical text ("key:j")
-        InputRuntime::Players().SaveOverrides(tp);
+        if (bi < 0 || !InputRuntime::Rebind(tp, tn, bi, part < 0 ? 0 : part, InputBinding::Parse(binding).ToString())) return;   // the canonical text ("key:j"); player 0's reaches InputActions too
+        InputRuntime::SaveOverrides(tp);
     } else if (!InputActions::Rebind(inputAction, binding, part)) return;
     if (KeyLabel() == before) return;
     if (gameObject)
@@ -102,8 +102,8 @@ void UIKeybindField::Update(float) {
             if (Input::GetKeyDown('\b')) {
                 if (!typed) InputActions::Reset(inputAction);
                 else if (ActionSet* set = InputRuntime::Set(tp)) {
-                    if (const ActionDef* a = set->Find(tn)) set->ResetOverride(tn, TypedBinding(*set, *a, gamepad));
-                    InputRuntime::Players().SaveOverrides(tp);
+                    if (const ActionDef* a = set->Find(tn)) InputRuntime::ResetBinding(tp, tn, TypedBinding(*set, *a, gamepad));
+                    InputRuntime::SaveOverrides(tp);
                 }
                 m_listening = false; return;
             }

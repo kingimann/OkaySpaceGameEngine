@@ -1,5 +1,7 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/InputRuntime.hpp"
+#include "okay/Input/ActionSet.hpp"
+#include "okay/Input/InputAsset.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
@@ -130,6 +132,144 @@ void DefineDefaults() {
 void EnsureDefaults() {
     static bool done = false;
     if (!done) { done = true; DefineDefaults(); }
+}
+
+// ---- One store with the typed layer ----------------------------------------------------------------------------------
+// Binding i of an action here is binding i of the same-named action in the live default ActionSet (InputRuntime player 0)
+// when that action's authored bindings are exactly this action's defaults: a four-key direction is a vector2 composite of
+// the same four keys, anything else a single binding with the same input. Nothing is read from or written to the typed
+// store before a player 0 has joined (only then is the asset in use known). Written for this engine (duplicate audit #422).
+bool g_storeBusy = false;   // a push or pull is running: do not start another
+
+// Typed rebinds of player 0 pulled into this table but not saved yet (no ia_save): Save keeps writing the text that was
+// saved before for such an action, so nothing typed reaches "input.<action>" before the typed layer saves it.
+// lower-case action -> {text before the first unsaved pull, text after the last one}
+std::unordered_map<std::string, std::pair<std::string, std::string>>& PendingPulls() {
+    static std::unordered_map<std::string, std::pair<std::string, std::string>> m;
+    return m;
+}
+
+bool SameParts(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (InputBinding::Parse(a[i]).ToString() != InputBinding::Parse(b[i]).ToString()) return false;
+    return true;
+}
+const std::vector<std::string>& Authored(const BindingSpec& s) { return s.original.empty() ? s.parts : s.original; }
+bool ShapeFits(const InputBinding& b, const BindingSpec& s) {
+    return b.kind == InputBinding::Kind::Keys4 ? (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4)
+                                               : (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1);
+}
+bool Linked(const InputActions::Action& a, const ActionDef& d) {
+    if (a.defaults.empty() || a.defaults.size() != d.bindings.size() || a.bindings.size() < d.bindings.size()) return false;
+    for (std::size_t i = 0; i < d.bindings.size(); ++i)
+        if (!ShapeFits(a.defaults[i], d.bindings[i]) || !SameParts(BindingParts(a.defaults[i]), Authored(d.bindings[i]))) return false;
+    return true;
+}
+// The typed binding's current parts as one binding this table would accept for `a` (InputActions::Rebind's rules: a
+// direction action takes only something that points); Kind::None when it cannot (a composite with a pad button in it,
+// Look on a lone key). Such a binding is left alone on both sides.
+InputBinding Representable(const InputActions::Action& a, const BindingSpec& s) {
+    InputBinding b;
+    if (s.kind == BindingSpec::Kind::Single && s.parts.size() == 1) b = InputBinding::Parse(s.parts[0]);
+    else if (s.kind == BindingSpec::Kind::Vector2 && s.parts.size() == 4) {
+        for (std::size_t j = 0; j < 4; ++j) {
+            const InputBinding k = InputBinding::Parse(s.parts[j]);
+            if (k.kind != InputBinding::Kind::Key || k.code <= 0 || k.code > 255) return InputBinding{};
+            b.keys[j] = (char)k.code;
+        }
+        b.kind = InputBinding::Kind::Keys4;
+    }
+    if (b.kind == InputBinding::Kind::None || !ShapeFits(b, s) || (a.direction && !b.IsDirection())) return InputBinding{};
+    return b;
+}
+// Does `parts` clash in `set` with an input of another binding that this table does not also give that action? (A clash
+// this table has too, the player made; one it does not have, mirroring would invent: Controls screen "Unbind".)
+bool InventsClash(const ActionSet& set, const std::string& action, int binding, const std::vector<std::string>& parts) {
+    for (std::size_t k = 0; k < parts.size(); ++k)
+        for (const std::string& c : set.Conflicts(action, binding, (int)k, parts[k])) {
+            const InputActions::Action* other = InputActions::Find(c.substr(0, c.find('.')));
+            if (!other) continue;   // an action of the asset only: not this table's business
+            const std::string want = InputBinding::Parse(parts[k]).ToString();
+            bool has = false;
+            for (const InputBinding& b : other->bindings)
+                for (const std::string& p : BindingParts(b)) if (p == want) has = true;
+            if (!has) return true;
+        }
+    return false;
+}
+// Change only this binding's line of the saved overrides ("ov <action> <binding> ..."); every other line, pending or
+// for an action this table does not know, stays exactly as it is.
+void SaveOverrideLine(const std::string& action, int binding, const BindingSpec& s) {
+    const std::string key = "inputov.player0", head = "ov " + action + " " + std::to_string(binding) + " ";
+    const std::string text = Prefs::Has(key) ? Prefs::GetString(key) : std::string();
+    std::string out, mine;
+    if (!SameParts(s.parts, Authored(s))) {
+        mine = head;
+        for (std::size_t i = 0; i < s.parts.size(); ++i) mine += (i ? "," : "") + s.parts[i];
+        mine += "\n";
+    }
+    std::size_t i = 0;
+    while (i < text.size()) {
+        std::size_t e = text.find('\n', i); e = e == std::string::npos ? text.size() : e + 1;
+        const std::string line = text.substr(i, e - i);
+        i = e;
+        if (line.rfind(head, 0) == 0) { out += mine; mine.clear(); } else out += line;
+    }
+    out += mine;
+    if (out.empty()) Prefs::Delete(key); else Prefs::SetString(key, out);
+}
+// Make the live set's linked bindings match this table, binding by binding, where the typed value and the new one are
+// both ones this table can hold and no clash is invented. Changes are mirrored into their own override lines only.
+// `pullSaved`: a binding the typed layer has rebound (a saved override, at join) comes here instead.
+void PushTo(ActionSet& set, bool pullSaved) {
+    if (g_storeBusy) return;
+    g_storeBusy = true;
+    // Pass 1 (repeated while it makes progress, so two actions trading inputs both get through): bring each binding in step.
+    for (int round = 0; round < 8; ++round) {
+        bool progress = false;
+        for (InputActions::Action& a : Actions()) {
+            const ActionDef* d = set.Find(a.name);
+            if (!d || !Linked(a, *d)) continue;
+            for (std::size_t i = 0; i < d->bindings.size(); ++i) {
+                const BindingSpec& s = d->bindings[i];
+                const InputBinding typed = Representable(a, s);
+                if (typed.kind == InputBinding::Kind::None || !ShapeFits(a.bindings[i], s)) continue;   // unlinked binding
+                const std::vector<std::string> want = BindingParts(a.bindings[i]);
+                if (SameParts(want, s.parts)) continue;
+                if (pullSaved && !SameParts(s.parts, Authored(s))) { a.bindings[i] = typed; continue; }
+                if (InventsClash(set, d->name, (int)i, want)) continue;
+                if (SameParts(want, Authored(s))) set.ResetOverride(d->name, (int)i);
+                else {
+                    const std::vector<std::string> now = s.parts;   // Rebind changes s
+                    for (std::size_t k = 0; k < want.size(); ++k)
+                        if (InputBinding::Parse(now[k]).ToString() != InputBinding::Parse(want[k]).ToString()) set.Rebind(d->name, (int)i, (int)k, want[k]);
+                }
+                SaveOverrideLine(d->name, (int)i, d->bindings[i]);
+                progress = true;
+            }
+        }
+        if (!progress) break;
+    }
+    // Pass 2: a rebound binding in step with this table but clashing where this table does not (an Unbind removed the
+    // other side here) goes back to the asset's input, as the typed layer had it before.
+    for (InputActions::Action& a : Actions()) {
+        const ActionDef* d = set.Find(a.name);
+        if (!d || !Linked(a, *d)) continue;
+        for (std::size_t i = 0; i < d->bindings.size(); ++i) {
+            const BindingSpec& s = d->bindings[i];
+            if (Representable(a, s).kind == InputBinding::Kind::None || SameParts(s.parts, Authored(s))) continue;
+            if (!SameParts(BindingParts(a.bindings[i]), s.parts)) continue;
+            if (InventsClash(set, d->name, (int)i, s.parts) && !InventsClash(set, d->name, (int)i, Authored(s))) {
+                set.ResetOverride(d->name, (int)i);
+                SaveOverrideLine(d->name, (int)i, d->bindings[i]);
+            }
+        }
+    }
+    g_storeBusy = false;
+}
+void PushToStore() {
+    if (ActionSet* set = InputRuntime::LinkedSet()) PushTo(*set, false);
 }
 
 // The player's saved bindings for `a`, if any, over its defaults.
@@ -808,6 +948,7 @@ void InputActions::Reset(const std::string& name) {
             a.bindings = a.defaults;
             Prefs::Delete("input." + Lower(a.name));
         }
+    PushToStore();
 }
 
 void InputActions::Load() {
@@ -815,14 +956,47 @@ void InputActions::Load() {
     for (Action& a : Actions()) { ApplySaved(a); ApplySavedResponse(a); }
 }
 
+void InputActions::SyncFrom(const ActionSet& set) {
+    EnsureDefaults();
+    if (g_storeBusy) return;
+    for (Action& a : Actions()) {
+        const ActionDef* d = set.Find(a.name);
+        if (!d || !Linked(a, *d)) continue;
+        const std::string before = Joined(a.bindings);
+        for (std::size_t i = 0; i < d->bindings.size(); ++i) {
+            const BindingSpec& s = d->bindings[i];
+            if (!ShapeFits(a.bindings[i], s)) continue;   // changed here into a shape the ActionSet cannot hold: this side wins
+            const InputBinding nb = Representable(a, s);
+            if (nb.kind != InputBinding::Kind::None) a.bindings[i] = nb;   // else: a value this table would refuse stays typed-only
+        }
+        const std::string after = Joined(a.bindings);
+        if (after == before) continue;
+        auto& pending = PendingPulls();
+        auto it = pending.find(Lower(a.name));
+        if (it == pending.end()) it = pending.emplace(Lower(a.name), std::make_pair(before, after)).first;
+        it->second.second = after;
+        if (it->second.first == after) pending.erase(it);
+    }
+}
+
+void InputActions::LinkJoined(ActionSet& set) { EnsureDefaults(); PushTo(set, true); }
+
+void InputActions::SaveWithStore() { PendingPulls().clear(); Save(); }
+
 void InputActions::Save() {
     EnsureDefaults();
     for (const Action& a : Actions()) {
         const std::string key = "input." + Lower(a.name);
-        const std::string now = Joined(a.bindings);
+        std::string now = Joined(a.bindings);
+        auto pending = PendingPulls().find(Lower(a.name));
+        if (pending != PendingPulls().end()) {
+            if (pending->second.second == now) now = pending->second.first;   // a typed rebind nobody saved yet: keep the saved text
+            else PendingPulls().erase(pending);                                 // changed here since: this table's change is saved
+        }
         if (now == Joined(a.defaults)) Prefs::Delete(key);   // only what the player changed
         else Prefs::SetString(key, now);
     }
+    PushToStore();
 }
 
 std::string InputActions::ExportBindings() {
@@ -998,6 +1172,6 @@ Vec2 InputActions::ControlMove() {
     return Rebound("Move") ? Vector("Move") : Input::AxisWASD();
 }
 
-void InputActions::Restore() { Stack().clear(); g_now = 0.0; g_clockSeen = false; DefineDefaults(); }
+void InputActions::Restore() { PendingPulls().clear(); Stack().clear(); g_now = 0.0; g_clockSeen = false; DefineDefaults(); }
 
 } // namespace okay

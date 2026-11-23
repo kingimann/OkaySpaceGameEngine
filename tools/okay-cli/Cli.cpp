@@ -165,6 +165,7 @@ std::string FindProjectRoot(const std::string& start) {
     fs::path p = fs::absolute(start.empty() ? fs::path(".") : fs::path(start), ec);
     if (ec) return "";
     p = p.lexically_normal();
+    if (p.has_parent_path() && p.filename().empty()) p = p.parent_path();   // "/x/Game/." normalizes to "/x/Game/"
     if (!fs::is_directory(p, ec)) p = p.parent_path();
     fs::path withAssets;
     for (fs::path q = p; !q.empty(); q = q.parent_path()) {

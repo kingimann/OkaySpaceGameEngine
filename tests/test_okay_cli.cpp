@@ -86,7 +86,7 @@ void TestArguments() {
     RUN_SUITE("okay cli: commands, help, arguments");
     Said s;
     CHECK(Cli({}, s) == 0 && Has(s.out, "Commands:") && Has(s.out, "vc save"));
-    CHECK(Cli({"help"}, s) == 0 && Has(s.out, "okay new"));
+    CHECK(Cli({"help"}, s) == 0 && Has(s.out, "Make a new project.") && Has(s.out, "okay help <command>"));
     CHECK(Cli({"help", "vc", "save"}, s) == 0 && Has(s.out, "Usage: okay vc save"));
     CHECK(Cli({"help", "vc"}, s) == 0 && Has(s.out, "history"));
     CHECK(Cli({"help", "nosuch"}, s) == 2 && Has(s.err, "no command called \"nosuch\""));
@@ -192,6 +192,8 @@ void TestProjects(const fs::path& tmp) {
     CHECK(Cli({"new", "bad/name", "--in", where.string(), "--no-git"}, s) == 1);
 
     CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets").string())) == root);
+    CHECK(fs::path(okaycli::FindProjectRoot((root / ".").string())).filename() == "My Game");   // no trailing slash from "."
+    CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets" / "").string())) == root);
     CHECK(fs::path(okaycli::FindProjectRoot((root / "Assets" / "My Game.okayscene").string())) == root);
     CHECK(okaycli::FindProjectRoot(tmp.string()).empty());
     CHECK(fs::path(okaycli::MainScene(root.string())) == root / "Assets" / "My Game.okayscene");

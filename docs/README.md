@@ -67,6 +67,8 @@ Each folder has a `README.md` that lists its pages with one line each.
 
 These stay at the top of `docs/` because scripts and tests write or read them there. Do not edit the made ones by hand.
 
+- [SYSTEMS.md](SYSTEMS.md): every named system (Physics, Save Games, OkayScript...) with one plain line on what it does, its status, main code and the duplicates found
+  (also made by `scripts/gen_feature_map.py`, from the `System:` lines of the feature map pages).
 - [FEATURE_MAP.md](FEATURE_MAP.md): every system, where its code, tests and docs are, and what is still open
   (made by `scripts/gen_feature_map.py` from the pages in [feature_map/](feature_map/)).
 - [status/UNFINISHED.md](status/UNFINISHED.md): everything that is not finished (hand-written).

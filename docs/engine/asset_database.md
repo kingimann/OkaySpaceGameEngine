@@ -255,6 +255,11 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
   `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). Audio `loadMode` and `forceMono` are read
   when the file is loaded (`ReadAudioImportOptions`). `quality` is kept so older files round-trip and is not applied,
   because audio is not re-encoded. `srgb` and `compress` are still stored and unread.
+- The loaders and the database read the meta the same way: `ImportSidecar.cpp` hands the `importer` block's
+  `set` lines (unescaped) to `ImportSettings::FromPairs`, so a value written through `savefmt::Escape` and an
+  older layout's keys (`maxsize`, `mips`, `nearest`, `linear`, `stream`, `mono`) reach the texture, audio and model
+  loaders through the one migration path. The result is cached per meta file and re-read when the file's time or
+  size changes (`ClearImportSidecarCache` drops it). Tests: `import_settings_real`.
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 

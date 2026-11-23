@@ -7,6 +7,7 @@
 // under models/glTF/ are read and fuzzed too.
 #include "test_framework.hpp"
 #include "reader_hostile_common.hpp"
+#include "alloc_budget.hpp"
 #include "gltf1_test_build.hpp"
 #include <atomic>
 #include <chrono>
@@ -18,30 +19,6 @@
 using namespace okay;
 using namespace hostile;
 using namespace gltf1build;
-
-// ---- a counting allocator: bytes live now and the peak since the last reset ---------------------------------------------
-static std::atomic<std::size_t> g_live{0}, g_peak{0};
-static void* CountedAlloc(std::size_t n) {
-    void* raw = std::malloc(n + 16);
-    if (!raw) throw std::bad_alloc();
-    *static_cast<std::size_t*>(raw) = n;
-    const std::size_t now = g_live.fetch_add(n) + n;
-    std::size_t p = g_peak.load();
-    while (now > p && !g_peak.compare_exchange_weak(p, now)) {}
-    return static_cast<char*>(raw) + 16;
-}
-static void CountedFree(void* q) noexcept {
-    if (!q) return;
-    void* raw = static_cast<char*>(q) - 16;
-    g_live.fetch_sub(*static_cast<std::size_t*>(raw));
-    std::free(raw);
-}
-void* operator new(std::size_t n) { return CountedAlloc(n); }
-void* operator new[](std::size_t n) { return CountedAlloc(n); }
-void operator delete(void* p) noexcept { CountedFree(p); }
-void operator delete[](void* p) noexcept { CountedFree(p); }
-void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
-void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
 
 static long g_ok = 0, g_refused = 0;
 
@@ -60,24 +37,17 @@ static void TryG(const std::string& bytes) {
 
 // Peak bytes the reader holds at once while reading `bytes` (the input is already allocated by the caller), and the time.
 static std::size_t PeakWhileReading(const std::string& bytes, bool& ok, double& secs) {
-    const std::size_t base = g_live.load();
-    g_peak.store(base);
+    const std::size_t base = budget::PeakReset();
     const auto t0 = std::chrono::steady_clock::now();
     { ImportedModel m; std::string err; ok = ReadGltf1Buffer(bytes, "", m, &err); }
     secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    return g_peak.load() - base;
+    return budget::PeakSince(base);
 }
 
 int main() {
     RUN_SUITE("gltf1_hostile");
     std::vector<std::string> seeds = {QuadJson(), QuadBinary()};
-    if (const char* c = std::getenv("OKAY_MODEL_CORPUS")) {   // the real files, when available
-        namespace fs = std::filesystem;
-        for (const char* name : {"models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf", "models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb"}) {
-            const std::string s = Slurp((fs::path(c) / name).string());
-            if (!s.empty()) { seeds.push_back(s); std::printf("  real file %s added (%zu bytes)\n", name, s.size()); }
-        }
-    }
+    AddCorpusSeeds(seeds, {"models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf", "models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb"});   // the real files, when available
     for (const std::string& s : seeds) { ImportedModel m; std::string err; CHECK(ReadGltf1Buffer(s, "", m, &err)); }
 
     // every strict prefix of every seed is refused, never crashes

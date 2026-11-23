@@ -104,11 +104,7 @@ bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::strin
     if (!b.Fits((std::uint64_t)numVerts, 4)) return Fail(err, "the file ends inside the first frame");
     rc::Soup soup;
     soup.pos.resize((std::size_t)numVerts);
-    for (Vec3& p : soup.pos) {
-        const float x = (float)b.U8(), y = (float)b.U8(), z = (float)b.U8();
-        b.U8();                    // index into Quake's table of normals: not used, smooth normals are made
-        p = Vec3{x * scale[0] + trans[0], y * scale[1] + trans[1], z * scale[2] + trans[2]};
-    }
+    rc::ReadQuakeFrameVerts(b, scale, trans, soup.pos);
     if (b.bad) return Fail(err, "the file ends inside the first frame");
 
     int badVert = 0;
@@ -162,9 +158,7 @@ Quat EulerQuat(double rx, double ry, double rz) {
 }
 rc::M4 QuatMatrix(double x, double y, double z, double w) {
     rc::M4 r;
-    r.at(0, 0) = 1 - 2 * (y * y + z * z); r.at(1, 0) = 2 * (x * y - w * z);     r.at(2, 0) = 2 * (x * z + w * y);
-    r.at(0, 1) = 2 * (x * y + w * z);     r.at(1, 1) = 1 - 2 * (x * x + z * z); r.at(2, 1) = 2 * (y * z - w * x);
-    r.at(0, 2) = 2 * (x * z - w * y);     r.at(1, 2) = 2 * (y * z + w * x);     r.at(2, 2) = 1 - 2 * (x * x + y * y);
+    SetRotationFromUnitQuat(r, x, y, z, w);
     return r;
 }
 
@@ -393,7 +387,7 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
                 std::size_t pos = 0, neg = 0;
                 const Mesh& me = part.mesh;
                 for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) {
-                    const Vec3 &p0 = me.vertices[(std::size_t)me.triangles[t]], &p1 = me.vertices[(std::size_t)me.triangles[t + 1]], &p2 = me.vertices[(std::size_t)me.triangles[t + 2]];
+                    const Vec3 &p0 = rc::TriCorner(me, t, 0), &p1 = rc::TriCorner(me, t, 1), &p2 = rc::TriCorner(me, t, 2);
                     const Vec3 fn = Vec3::Cross(p1 - p0, p2 - p0);
                     const Vec3 an = me.normals[(std::size_t)me.triangles[t]] + me.normals[(std::size_t)me.triangles[t + 1]] + me.normals[(std::size_t)me.triangles[t + 2]];
                     const double d = (double)fn.x * an.x + (double)fn.y * an.y + (double)fn.z * an.z;

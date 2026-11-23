@@ -32,6 +32,8 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # The systems list (docs/SYSTEMS.md) made by scripts/gen_feature_map.py: temp folders only.
+    add_test(NAME gen_feature_map_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_feature_map.py)
     # The collaboration scripts (docs/process/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -1773,6 +1775,21 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
+    # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
+    add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_codeedit_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_codeedit_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_codeedit_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_codeedit_imgui COMMAND test_okayui_codeedit_imgui)
+    set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
@@ -2903,6 +2920,12 @@ add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)
 
+# ActiveRagdoll core (DynamicCharacter): balance, stepping, falls, get-up, hostile input, determinism
+add_executable(test_active_ragdoll test_active_ragdoll.cpp)
+target_link_libraries(test_active_ragdoll PRIVATE okay::engine)
+target_compile_definitions(test_active_ragdoll PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME active_ragdoll COMMAND test_active_ragdoll)
+
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
@@ -3010,6 +3033,11 @@ add_test(NAME save_hardening COMMAND test_save_hardening)
 add_executable(test_save_framework test_save_framework.cpp)
 target_link_libraries(test_save_framework PRIVATE okay::engine)
 add_test(NAME save_framework COMMAND test_save_framework)
+
+# One store for whole-game saves: SaveGame is the save framework's whole-scene mode; old .okaygame files still load (Grok #422 item 1).
+add_executable(test_save_merge test_save_merge.cpp)
+target_link_libraries(test_save_merge PRIVATE okay::engine)
+add_test(NAME save_merge COMMAND test_save_merge)
 
 # Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
 # checkpoints, quick save, autosave ring, continue.
@@ -4892,6 +4920,11 @@ add_test(NAME grok_145_146_153_155 COMMAND test_grok_145_146_153_155)
 add_executable(test_controller_actions test_controller_actions.cpp)
 target_link_libraries(test_controller_actions PRIVATE okay::engine)
 add_test(NAME controller_actions COMMAND test_controller_actions)
+
+# One rebinding store for InputActions and the typed ActionSet (duplicate audit #422, item 2).
+add_executable(test_input_one_store test_input_one_store.cpp)
+target_link_libraries(test_input_one_store PRIVATE okay::engine)
+add_test(NAME input_one_store COMMAND test_input_one_store)
 
 # Our own glTF 1.0 reader (docs/content/model_readers.md, section glTF 1.0): files built in memory with hand-computed values,
 # the binary form, external files and the folder rule, refusals and the import seam; the hostile test builds without the

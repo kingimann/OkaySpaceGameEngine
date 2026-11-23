@@ -8,6 +8,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 ## 6. Physics
 
 ### 6.1 2D bodies and colliders
+- **System:** Physics
 - **What:** Side-view and top-down games: Rigidbody2D bodies and 2D colliders are stepped by Physics2D (gravity, contacts with friction and bounce, triggers, sleeping).
 - **Parts:**
   - 6.1.1 2D solver - `Physics/Physics2D` - Step: integrate, resolve contacts, fire collision and trigger callbacks, sleep resting bodies
@@ -27,6 +28,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make a one-way platform you can jump up through"; "why does my 2D ball not bounce off the wall?"
 
 ### 6.2 3D bodies and colliders, collider fit
+- **System:** Physics - Moves solid 2D and 3D objects under gravity, makes them collide, bounce and join, and answers "what is here?" (cloth, soft bodies and crowds are planned).
 - **What:** Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, exact triangle meshes) stepped by Physics3D, including heightmap terrain ground-following and voxel terrain collision.
 - **Parts:**
   - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch (finds the real lowest point of a compound, plane, heightfield or hull-less mesh body; it used to read them as boxes, so a compound body moved differently from run to run), triggers; the same scene gives bit-identical results wherever the heap puts it (`physics3d_determinism`)
@@ -52,6 +54,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "the collider does not match my model"; "make this crate stop sliding on the ramp"
 
 ### 6.3 Joints
+- **System:** Physics
 - **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld, hinge and (3D) slider, with optional breaking.
 - **Parts:**
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
@@ -65,13 +68,14 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/physics/physics.md`
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `physics_deep_more`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
-- **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
+- **Open:** the Active Ragdoll (5.8) has its own articulated solver behind `dyn::RagdollPhysics` because these joints have no ball joint with a rotation drive; Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
 - **Words:** joint, hinge, spring, rope, rod, pin, weld, fixed joint, revolute, motor, connectedBody, breakForce, ragdoll joint
 - **Seen as:** a rope or pendulum stretches or explodes; a door does not swing about its hinge; a spring never settles; a joint snaps unexpectedly
 - **Ask me like:** "add a swinging door on a hinge"; "hang a lamp from the ceiling on a spring"
 
 ### 6.4 Fixed step with render interpolation, pose history
+- **System:** Physics
 - **What:** Physics runs in fixed slices (1/50 s by default) whatever the frame rate, and bodies are drawn part way between their last two poses so motion stays smooth.
 - **Parts:**
   - 6.4.1 Fixed physics step - `Scene/Scene` - `fixedTimeStep`, `UseFixedStepPhysics`, `maxPhysicsCatchUp` (the step loop is `Scene::StepPhysics`, owned by area 1.3)
@@ -89,6 +93,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make physics frame-rate independent"; "my rigidbody jitters in the camera follow"
 
 ### 6.5 Queries and debug draw
+- **System:** Physics
 - **What:** Rays, line and shape casts and overlap tests against 2D and 3D colliders and terrain, plus an overlay that draws colliders, contacts and the rays scripts cast.
 - **Parts:**
   - 6.5.1 3D rays and casts - `Physics/Physics3D` - Raycast, RaycastAll, Linecast, SphereCast, BoxCast, CapsuleCast; layer mask, trigger switch, ignore object, `IgnoreHierarchy`
@@ -108,6 +113,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "show me what my raycast is hitting"; "sphere-cast for a ledge check that ignores the player"
 
 ### 6.6 Destructibles and projectiles
+- **System:** Destruction and Projectiles - Breaks blocks and objects into pieces, and flies bullets, rockets and arrows.
 - **What:** Voxel blocks shatter into physics debris and unsupported blocks collapse; bullets, rockets and arrows fly with a swept ray and damage health.
 - **Parts:**
   - 6.6.1 Block fracture - `Components/Destructible` - `BreakBlock` and `BreakAt` replace a cube with debris cubes that despawn after `debrisLifetime`
@@ -127,6 +133,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make walls shatter when shot"; "add a grenade that bounces and explodes"
 
 ### 6.7 Collision layers and trigger filters
+- **System:** Physics
 - **What:** A 32 by 32 layer matrix says which collider layers touch; triggers can also react only to a tag or to chosen layers.
 - **Parts:**
   - 6.7.1 Layer matrix - `Physics/Physics2D`, `Physics/Physics3D` - `SetLayerCollision`, `LayersCollide`, `CollisionMask`, `ResetLayerCollisions`; since #586 also `ApplyLayerCollisionPreset(Everything | Nothing | SameLayerOnly)`, `SetLayerCollisionGroups(maskA, maskB, enabled)`, `SetLayerCollisionByName`, `DisabledLayerPairs` (docs `layers_tags_cameras.md`); scene file `layermatrix` record
@@ -144,6 +151,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Ask me like:** "make bullets ignore the player layer"; "pickups should only trigger for the Player tag"
 
 ### 6.8 Forces, explosions and body push-out
+- **System:** Physics
 - **What:** The four force modes, explosion shoves, and a lightweight push-out that keeps a transform-moved player (no Rigidbody) from clipping into walls and floors.
 - **Parts:**
   - 6.8.1 Force modes - `Physics/ForceMode` - Force, Acceleration, Impulse, VelocityChange used by `AddForce(force, mode)` on both bodies

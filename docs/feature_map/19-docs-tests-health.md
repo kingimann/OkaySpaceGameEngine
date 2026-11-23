@@ -8,6 +8,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 ## 19. Docs, tests & code health
 
 ### 19.1 README and docs
+- **System:** Docs - The written guides, the roadmap, the generated API reference, and in-editor tutorials, tips and help.
 - **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 71 Markdown pages, 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
 - **Parts:**
   - 19.1.1 Root README - `README.md` - what OkaySpace is, how to download and build, the repo layout (checked against the code in 2.847.0, #544 and #546)
@@ -15,15 +16,16 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
   - 19.1.3 Generated API page - `docs/engine_api.md` - generated from the engine binding table; `test_vs_types` fails if it is stale (`OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` rewrites it)
   - 19.1.4 SQL schema files - `docs/sql/*.sql` - the Supabase schema, run once in the SQL editor in the order given in each file header (mapped in 41.6)
   - 19.1.5 Screenshots - a picture folder (pictures are no longer stored in the repository) - 21 images used by `docs/online/anticheat.md` (taken from the launcher's built-in demo data)
-- **Code:** `README.md`, `docs/README.md`, `docs/engine_api.md`
+  - 19.1.6 Systems list - `docs/SYSTEMS.md`, `scripts/gen_feature_map.py` - every named system (one official name, one plain line on what it does, status, main code, sub-areas) and the duplicates found, generated from the `System:` lines of the feature map pages; `--check` covers it
+- **Code:** `README.md`, `docs/README.md`, `docs/engine_api.md`, `docs/SYSTEMS.md`, `scripts/gen_feature_map.py`, `scripts/tests/test_gen_feature_map.py`
 - **API:** `OKAY_WRITE_API_DOCS=1`
 - **Editor:** none
 - **Docs:** `docs/README.md`
-- **Tests:** `vs_types` (the engine API page must be current)
+- **Tests:** `vs_types` (the engine API page must be current), `gen_feature_map_script` (`scripts/tests/test_gen_feature_map.py`: the systems list)
 - **Status:** Works - docs exist for most areas; the index is missing ten pages (below)
 - **Open:** `docs/README.md` links none of ten newer pages (`asset_database.md`, `asset_manager.md`, `core_audit_notes.md`, `layers_tags_cameras.md`, `scene_management.md`, `scene_hierarchy_search.md`, `core_tools.md`, `ecs.md`, `localization_prefs_time.md`, `math_geometry.md`); "README matches reality plus a component audit doc" (old map) is open; `ROADMAP.md` is stale on anti-cheat hardening (19.5); `asset_database.md` and `asset_manager.md` say nothing uses them yet (recheck)
 - **Related:** 19.5, 41.9
-- **Words:** docs, documentation, README, docs index, engine_api, markdown, screenshots, guides, how to
+- **Words:** docs, documentation, README, docs index, engine_api, markdown, screenshots, guides, how to, systems list, SYSTEMS.md, system names
 - **Seen as:** a doc says a feature isn't built but it is; a doc page isn't linked from the index; the API page diverges from the engine
 - **Ask me like:** "which doc explains the relay?", "add the missing pages to the docs index"
 
@@ -122,6 +124,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | a picture folder (pictures are no longer stored in the repository) | 21 screenshots for `docs/online/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
 
 ### 19.2 Test suite
+- **System:** Tests and Code Health - The automated tests run after every change, compiler warnings, memory checkers and splitting big files.
 - **What:** About 418 tests (414 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
 - **Parts:**
   - 19.2.1 Layout of `tests/CMakeLists.txt` - `tests/CMakeLists.txt` - 1,541 lines, roughly in the order tests were added (no grouping by area): each test is `add_executable(test_x test_x.cpp)`, a link to `okay::engine` and `add_test(NAME x COMMAND test_x)` under a `#` comment. ctest names drop `test_` except `remove_component` (`test_remove`), `physics_layers` (`test_layers`), `physics_queries` (`test_queries`)
@@ -162,6 +165,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | Launcher helpers, publish scripts and a few leftovers | 16 | `chat_json`, `friends_json`, `official_game`, `crash_reports`, `project_delete`, `publish_*`, `qa_pr250`, `scriptapi`, `subtree` |
 
 ### 19.3 QA workflow, rig sweep test
+- **System:** Tests and Code Health
 - **What:** How a developer session and a QA session work on the same repository (PR comments as the channel, a bug and a verdict format), and the rig sweep test that runs every test rig through the same motions.
 - **Parts:**
   - 19.3.1 The loop - `docs/process/qa_workflow.md` - developer opens a draft PR and messages QA; QA builds, tests for real (scripted probes, editor under Xvfb), posts one comment per bug and one verdict; merge only after a PASS on the latest commit and green CI
@@ -182,27 +186,32 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Seen as:** a PR waits for a verdict; a rig's skeleton spikes during a walk
 - **Ask me like:** "write the QA verdict for PR 575", "add a rig to the sweep"
 
-### 19.4 Splitting the largest files (editor, launcher, OkayScript VM, serializer)
-- **What:** Keeping source files small enough to work in. The biggest files today (lines, as of main at 224cda8c on 2026-11-09, after #587) are `editor/main.cpp` 45,207, `launcher/main.cpp` 24,802, `engine/src/Scripting/OkayScriptVM.cpp` 10,536, `engine/src/Scene/SceneSerializer.cpp` 8,958, `engine/include/okay/Render/Mesh.hpp` 4,079, `editor/VisualScriptEditor.hpp` 3,800, `engine/src/Net/NetworkManager.cpp` 3,522.
+### 19.4 Splitting the largest files, subsystem boundaries and naming (engine-wide modularization)
+- **System:** Tests and Code Health
+- **What:** Breaking the big files into smaller files with one job each, grouped by subsystem, with clear layers (no include cycles, the engine never includes a program, platform code behind one interface) and descriptive names, without changing behaviour or any public name. The owner asked for it on 2026-11-23; the audit and the ranked plan come first. Largest files on 2026-11-22 (`bc5629ee8`): `editor/main.cpp` 58,835, `launcher/main.cpp` 27,261, `tools/okayms/src/compile.cpp` 15,052, `engine/src/Scripting/OkayScriptVM.cpp` 12,236, `engine/src/Scene/SceneSerializer.cpp` 11,126, `okayui/src/OkayUI.cpp` 7,809, `editor/VisualScriptEditor.hpp` 6,153, `engine/include/okay/Render/Mesh.hpp` 5,170, `engine/src/Net/NetworkManager.cpp` 4,291.
 - **Parts:**
-  - 19.4.1 Editor - `editor/main.cpp` - already partly split (windows live in `editor/*.cpp`); see 15.10
-  - 19.4.2 Launcher - `launcher/main.cpp` - one file for the shell and every page (17.1)
-  - 19.4.3 OkayScript VM - `engine/src/Scripting/OkayScriptVM.cpp` - see 13.1
-  - 19.4.4 Scene serializer - `engine/src/Scene/SceneSerializer.cpp` - see 1.5
-  - 19.4.5 Network manager - `engine/src/Net/NetworkManager.cpp` and `.hpp` - one class for 16.1 to 16.13 (not on the old list)
-- **Code:** `launcher/main.cpp`, `engine/src/Net/NetworkManager.cpp`
+  - 19.4.1 Editor - `editor/main.cpp` - Part B of the plan; see 15.10
+  - 19.4.2 Launcher - `launcher/main.cpp` - Part C of the plan: 24 sections measured, order L1-L8 (17.1)
+  - 19.4.3 OkayScript VM - `engine/src/Scripting/OkayScriptVM.cpp` - `RegisterBuiltins` is one 8,078-line function: refactor per topic, then move (batch S2, after PR #1159); see 13.1
+  - 19.4.4 Scene serializer - `engine/src/Scene/SceneSerializer.cpp` - records into `ComponentSerializerRegistry` entries per subsystem (batch S1, after #1160 and #1138); see 1.5
+  - 19.4.5 Network manager - `engine/src/Net/NetworkManager.cpp` - one class over five `.cpp` files, header unchanged (batch N1)
+  - 19.4.6 Architecture - `docs/engine/architecture.md` - the layers, the nine subsystems and their folders, what may include what
+  - 19.4.7 The plan and the audit - `docs/engine/modularization_plan.md` - largest files and functions, include graph and cycles, platform code in shared code, naming today, the frozen names (about 3,900 in 11 groups), open PRs, 23 ranked batches, the move procedure and checks, the naming rule, CI checks to add later, owner decisions
+  - 19.4.8 Pure-move check - `scripts/check_pure_move.py` - used for every move batch (15.10.6)
+- **Code:** `launcher/main.cpp`, `engine/src/Net/NetworkManager.cpp`, `scripts/check_pure_move.py`
 - **API:** -
 - **Editor:** none
-- **Docs:** `ROADMAP.md` ("Later: split the largest source files")
-- **Tests:** -
-- **Status:** Planned - on the roadmap's "Later" list; no branch exists
-- **Open:** splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and also carries UI drawing, matchmaking windows and the server entry point
-- **Related:** 15.10, 17.1, 13.1, 1.5, 16.2
-- **Words:** split, refactor, large file, main.cpp, file size, god file, OkayScriptVM, SceneSerializer
-- **Seen as:** slow builds when one file changes; merge conflicts in `launcher/main.cpp` or `editor/main.cpp`
-- **Ask me like:** "split the launcher chat code into its own file"
+- **Docs:** `docs/engine/modularization_plan.md`, `docs/engine/architecture.md`
+- **Tests:** `tests/scripts/test_check_pure_move.py`
+- **Status:** Partial - audit and plan written (2026-11-23); editor move 1 done; no other batch has moved yet
+- **Open:** batches 1-5 next (editor self-updater, editor script completion, network manager, launcher chat text, base-layer cycle breakers); the CI checks of the plan's section 7 (include direction in `scripts/check_modules.py` from PR #1158, platform-code lint, file and function size warnings, frozen-name list) are described, not built; owner decisions listed in the plan's section 8 (`.hpp` kept, `m_` only on private members, frozen vague names, forwarding headers for one release); `player/main.cpp` (`main` 1,936 lines) is batch X1
+- **Related:** 15.10, 17.1, 13.1, 1.5, 16.2, 41
+- **Words:** split, refactor, large file, main.cpp, file size, god file, OkayScriptVM, SceneSerializer, modularization, architecture, layers, subsystems, include cycle, circular dependency, naming convention, m_ prefix, frozen names, module boundaries
+- **Seen as:** slow builds when one file changes; merge conflicts in `launcher/main.cpp` or `editor/main.cpp`; a change in one subsystem rebuilds everything; vague one-letter names
+- **Ask me like:** "do batch 3 of the modularization plan"; "split the launcher chat code into its own file"; "which names must not change"
 
 ### 19.5 Roadmap and PR template
+- **System:** Docs
 - **What:** The two files that steer day-to-day work: `ROADMAP.md` (releases table, current work, plans) and the pull-request template.
 - **Parts:**
   - 19.5.1 Roadmap - `ROADMAP.md` - releases table (latest 2.851.0), "Now" table of sessions, plan checklists, "Waiting on Iman", "Later"
@@ -220,6 +229,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Ask me like:** "update the roadmap's hardening list from the code"
 
 ### 19.6 Repository hygiene
+- **System:** Tests and Code Health
 - **What:** Files that should not be in the repository, or checks that are missing, found while mapping.
 - **Parts:**
   - 19.6.1 Stray prefs files at the repo root - `game.okayprefs` and seven files named `$who`, `1`, `arr`, `map`, `msg`, `target`, `v`, `x` - each is a 163-byte copy of the same prefs text (keys like health, map, msg), probably written by a script test run from the repo root (first added 2026-07-09)
@@ -239,6 +249,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Ask me like:** "clean the repo root of generated files"
 
 ### 19.7 Compiler warnings and sanitizers
+- **System:** Tests and Code Health
 - **What:** The switches that catch bugs at build time: strict warnings everywhere, and an opt-in sanitizer build used by the CI job.
 - **Parts:**
   - 19.7.1 Warnings - `CMakeLists.txt` - `-Wall -Wextra -Wpedantic` (`/W4 /permissive-` on MSVC); the PR template asks for a warning-clean build

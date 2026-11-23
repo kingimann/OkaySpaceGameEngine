@@ -10,6 +10,7 @@ No open PR touches this area.
 ## 11. Gameplay systems
 
 ### 11.1 Inventory: bag, grid, chests, equipment
+- **System:** Inventory and Items - Bags, grid inventories, chests, equipment, the item list and loot, also kept by the server in multiplayer.
 - **What:** Items live in a slot Inventory (hotbar and backpack), a DayZ-style Grid Inventory, chests and crates, and an Equipment component of worn and held slots; all player actions go through one shared set of operations so the player and the editor Play view behave the same.
 - **Parts:**
   - 11.1.1 Slot inventory - `Components/Inventory` - stacks with item id, count and per-instance data; capacity, max stack, weight limit, optional enforced weight limit and slow-when-overweight; Add, Remove, Count, dry-run fit; keep across scenes
@@ -33,6 +34,7 @@ No open PR touches this area.
 - **Ask me like:** "add a backpack with a grid inventory"; "make a chest the player can loot"
 
 ### 11.2 Items and loot
+- **System:** Inventory and Items
 - **What:** One project-wide item database (`.okayitems`) defines every item (name, icon, stack size, weight, grid size, rarity, use action, world prefab, custom fields); loot tables (`.okayloot`) roll weighted drops into containers or onto the ground; pickups are items lying in the world.
 - **Parts:**
   - 11.2.1 Item database - `Inventory/ItemDatabase`, `engine/src/Inventory/ItemDatabase.cpp` - definitions by stable id, legacy names, loose definitions for unknown names, per-instance data (durability, uid, values), duplicate-id warnings
@@ -53,6 +55,7 @@ No open PR touches this area.
 - **Ask me like:** "create a rarity system with colored borders"; "make wolves drop meat 50 percent of the time"
 
 ### 11.3 Crafting and recipes
+- **System:** Crafting - Recipes that turn items into other items at a workbench.
 - **What:** Recipes turn input items into outputs (with byproducts, craft time, bench tags and unlock flags); a Crafting menu on the player, a Crafting Menu that builds its own buttons, and Crafting Station benches all share one recipe system and a craft queue.
 - **Parts:**
   - 11.3.1 Recipes and books - `Inventory/Recipe` - `Recipe`, `RecipeBook` (`.okayrecipes` text file), unlock by game variable
@@ -72,6 +75,7 @@ No open PR touches this area.
 - **Ask me like:** "add a workbench that needs 4 planks"; "unlock a recipe after a quest"
 
 ### 11.4 Survival: stats, afflictions, zones
+- **System:** Health and Survival - Health, hunger, thirst, stamina, temperature and other stats, damage, and death.
 - **What:** Native drop-in stat components (health, hunger, thirst, stamina, oxygen, temperature, sleep, sanity), damage-over-time afflictions, carry weight, timed status effects, zones that drive them from the world, and consumable items that feed them.
 - **Parts:**
   - 11.4.1 All-in-one Survival Stats - `Components/SurvivalStats` - drains stats, damages health when hunger, thirst, oxygen or warmth hit zero, armor, regen, death
@@ -95,6 +99,7 @@ No open PR touches this area.
 - **Ask me like:** "add hunger and thirst that hurt you at zero"; "poison that ticks for 10 seconds"
 
 ### 11.5 Building: build mode, structure builder, snapping
+- **System:** Building - Lets players (or you in the editor) place walls, floors and parts that snap together.
 - **What:** Several ways to build: a Build Mode players use in your game (palette, snapping, undo, logic links, saved creations), a Rust-style tiered Structure Builder, a Minecraft-style Block Builder, and a developer Builder Mode for modelling while walking.
 - **Parts:**
   - 11.5.1 Build Mode - `Components/BuildMode`, `Components/Buildable` - palette hotbar, grid snap, rotate, move, copy, delete, undo and redo, reach and object caps, `BuildCreation` save and load to a creations file
@@ -115,6 +120,7 @@ No open PR touches this area.
 - **Ask me like:** "let players build walls and wire a button to a door"; "add upgradeable wood to stone walls"
 
 ### 11.6 Spawners, turn manager, minimap
+- **System:** Spawners, Turns and Minimap - Spawns waves of enemies or loot, keeps turn order, and draws a minimap.
 - **What:** A Spawner drips copies of a template or prefab (enemy waves, loot); a Turn Manager holds turn order for turn-based games; a Minimap panel plots tagged objects around a target.
 - **Parts:**
   - 11.6.1 Spawner - `Components/Spawner` - interval, max alive, total cap, spawn radius, waves, start and stop, live count, `spawner_wave` message
@@ -133,6 +139,7 @@ No open PR touches this area.
 - **Ask me like:** "spawn 5 zombies every 10 seconds near the gate"; "add a circular minimap that rotates with the player"
 
 ### 11.7 Combat actions: melee, dodge, dive
+- **System:** Combat - Melee swings, dodge rolls and dives.
 - **What:** Player melee swings that hit NPCs in an arc, plus a dodge roll and a dolphin dive that the first and third person controllers can use.
 - **Parts:**
   - 11.7.1 Melee attacker - `Components/MeleeAttacker` - attack key or left mouse, range, arc, damage, cooldown, `Swing()`, `player_attack` message
@@ -151,6 +158,7 @@ No open PR touches this area.
 - **Ask me like:** "add a sword that damages enemies in front of me"; "turn on a dodge roll with stamina cost"
 
 ### 11.8 Server-authoritative inventory
+- **System:** Inventory and Items
 - **What:** For multiplayer, the host owns inventory contents: clients send requests, the host validates them, applies them through the shared operations and answers with a versioned snapshot, so a client cannot grant itself items.
 - **Parts:**
   - 11.8.1 Request handling - `Components/NetInventory`, `engine/src/Inventory/NetInventory.cpp` - notice calls for move, split, quick move, transfer, drop, use, grid move, equip, craft; rate limit and size limit per request
@@ -169,6 +177,7 @@ No open PR touches this area.
 - **Ask me like:** "make the inventory server-authoritative"; "add a test for NetInventory"
 
 ### 11.9 RPG stats and XP
+- **System:** RPG Stats - A simple character sheet with health, mana, levels and XP - duplicate of Health and Survival (a second health holder; one damage path since PR #1091, not one component)
 - **What:** A simple RPG character sheet: health, mana, level and XP with attributes, damage mitigated by defense, healing and levelling that fire script events.
 - **Parts:**
   - 11.9.1 Health, mana and attributes - `Components/Stats` - health and mana pools, strength, defense, intelligence, agility; `TakeDamage` mitigated by defense, `Heal`
@@ -186,6 +195,7 @@ No open PR touches this area.
 - **Ask me like:** "give the player XP for kills and level up"; "unify Stats and HealthStat"
 
 ### 11.10 No-code behaviours: move, spin, lifetime
+- **System:** No-Code Behaviours - Tiny components that move, spin, delete or drag objects with no script.
 - **What:** Three tiny components that need no script: Mover (constant velocity), Spinner (constant rotation) and Lifetime (destroy after N seconds).
 - **Parts:**
   - 11.10.1 Mover - `Components/Mover` - world velocity per second
@@ -204,6 +214,7 @@ No open PR touches this area.
 - **Ask me like:** "make coins spin"; "destroy the explosion after 2 seconds"
 
 ### 11.11 World drag and drop
+- **System:** No-Code Behaviours
 - **What:** Lets players drag world-space sprites with the mouse and drop them on drop zones, with snap and tag filtering and script callbacks.
 - **Parts:**
   - 11.11.1 Draggable - `Components/Draggable` - press and drag a sprite in orthographic space, `on_drag_start`, `on_drag`, `on_drop` callbacks, optional snap to zone and grid
@@ -221,6 +232,7 @@ No open PR touches this area.
 - **Ask me like:** "drag ingredients onto a cauldron"; "snap puzzle pieces to a grid"
 
 ### 11.12 Volumes and zones
+- **System:** Volumes and Zones - Invisible areas that act when something enters them: checkpoint, kill, push, change the look.
 - **What:** One region shape (box, sphere or cylinder, no collider needed) with six zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera), ambience (a sound that fades in around the camera) and reverb (a room, hall, cave or outdoor echo on 3D sounds, blended at the edges). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
 - **Parts:**
   - 11.12.1 Shape - `Components/Volume` - `VolumeGeometry`: box, sphere (ellipsoid) and cylinder from one `size` and `offset`; `Contains`, `DepthAt`, `DragFace` (move one face, the opposite stays), `FromGroundDrag`

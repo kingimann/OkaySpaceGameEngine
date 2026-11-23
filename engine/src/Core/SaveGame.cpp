@@ -1,4 +1,6 @@
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/GameSaves.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
@@ -27,6 +29,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// SaveGame's own play-time clock (play_time()): whole-scene loads set it; framework loads (checkpoints,
+// game_load of a Saveable slot) use SaveSystem's clock and leave this one alone, as before the merge.
 float& PlayBase() { static float t = 0.0f; return t; }        // play time of the loaded save
 float& PlayBaseAt() { static float t = 0.0f; return t; }      // Time::ElapsedTime() when it was loaded
 
@@ -142,9 +146,13 @@ std::string SavesFolderFile(const std::string& name) { return Save::Resolve("sav
 struct Parsed {
     SaveSlotInfo info;
     std::string sceneText;
-    std::vector<std::vector<std::string>> state;   // tab-split "--state--" lines
-    std::vector<std::pair<std::string, std::string>> kv;   // the game's Save keys, already unescaped and checked
+    std::string stateText;   // the "--state--" lines as they are in the file
 };
+
+// A bad saved-key row makes the whole save unusable: it would replace the game's Save keys.
+bool CheckStateLine(const std::vector<std::string>& cols) {
+    return !(cols.size() >= 1 && cols[0] == "kv" && (cols.size() < 3 || cols[2].size() < 2 || cols[2][1] != ':'));
+}
 
 // Where the file's `okaygame N` header says it stands. A header with no number is 1.
 bool ParseHeaderLine(const std::string& line, int& version) {
@@ -217,11 +225,12 @@ ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed
             return ReadResult::Damaged;
         }
     }
-    out.info.slot = slot; out.info.exists = true; out.info.version = version;
+    out.info.slot = slot; out.info.exists = true; out.info.version = version; out.info.legacyFile = true; out.info.wholeScene = true;
+    out.info.kind = SlotKind::Manual;
     const std::size_t nl = text.find('\n');   // after the migrations: a step may change the header line
     int section = 0;   // 0 header, 1 scene, 2 state, 3 after the end marker
     std::size_t lines = 0, pos = (nl == std::string::npos) ? text.size() : nl + 1;
-    std::string sceneText;
+    std::string sceneText, stateText;
     while (pos < text.size()) {
         if (++lines > g_maxLines) {
             if (error) *error = "Slot \"" + slot + "\" has too many lines";
@@ -240,55 +249,63 @@ ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed
         auto cols = SplitTabs(line);
         if (section == 0 && cols.size() >= 2) {
             ApplyHeaderLine(out.info, cols);
-        } else if (section == 2 && !cols.empty()) {
-            if (cols[0] == "kv") {
-                // A bad key row makes the whole slot unusable: it would replace the game's save keys.
-                if (cols.size() < 3 || cols[2].size() < 2 || cols[2][1] != ':') {
-                    if (error) *error = "Slot \"" + slot + "\" is damaged (bad saved-key line)";
-                    return ReadResult::Damaged;
-                }
-                out.kv.emplace_back(Unescape(cols[1]), Unescape(cols[2]));
-            } else {
-                out.state.push_back(std::move(cols));
+        } else if (section == 2 && !line.empty()) {
+            if (!CheckStateLine(cols)) {
+                if (error) *error = "Slot \"" + slot + "\" is damaged (bad saved-key line)";
+                return ReadResult::Damaged;
             }
+            stateText += line; stateText += '\n';
         }
     }
+    out.info.savedAtMs = out.info.savedAt * 1000;
     out.sceneText = std::move(sceneText);
+    out.stateText = std::move(stateText);
     return ReadResult::Ok;
 }
 
 // The slot, from its file or else from the .bak left by the last good save.
-bool ReadSave(const std::string& slot, Parsed& out, std::string* error) {
-    g_usedBackup = false;
-    const std::string path = SaveGame::SlotPath(slot);
+ReadResult ReadSave(const std::string& path, const std::string& slot, Parsed& out, bool* usedBackup, std::string* error) {
+    if (usedBackup) *usedBackup = false;
     std::string err;
     const ReadResult r = ReadSaveFile(path, slot, out, &err);
-    if (r == ReadResult::Ok) return true;
+    if (r == ReadResult::Ok) return r;
     if (r == ReadResult::Damaged) {
         Parsed b;
         std::string berr;
         if (ReadSaveFile(path + ".bak", slot, b, &berr) == ReadResult::Ok) {
             out = std::move(b);
-            g_usedBackup = true;
+            out.info.fromBackup = true;
+            if (usedBackup) *usedBackup = true;
             Log::Warning("Save slot ", slot, " was damaged; loaded its backup instead");
             if (error) *error = "Slot \"" + slot + "\" was damaged (" + err + "); loaded the backup of the previous save instead";
-            return true;
+            return ReadResult::Ok;
         }
     }
     if (error) *error = err;
-    return false;
+    return r;
 }
 
 // Put back what the scene text doesn't hold, after the loaded objects started.
-void ApplyState(Scene& scene, const Parsed& p) {
+void ApplyState(Scene& scene, const wholescene::State& st, bool restorePlayTime) {
     const auto index = PathIndex(scene);
     auto find = [&](const std::string& path) -> GameObject* {
         auto it = index.find(path);
         return it == index.end() ? nullptr : it->second;
     };
-    for (const auto& c : p.state) {
+    std::vector<std::pair<std::string, std::string>> kv;
+    std::size_t pos = 0;
+    while (pos < st.stateText.size()) {
+        std::size_t e = st.stateText.find('\n', pos);
+        if (e == std::string::npos) e = st.stateText.size();
+        std::string line = st.stateText.substr(pos, e - pos);
+        pos = e + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        const auto c = SplitTabs(line);
         const std::string& kind = c[0];
-        if (kind == "body3" && c.size() >= 3) {
+        if (kind == "kv" && c.size() >= 3) {
+            kv.emplace_back(Unescape(c[1]), Unescape(c[2]));
+        } else if (kind == "body3" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody3D>()) {
                     float v[3] = {rb->velocity.x, rb->velocity.y, rb->velocity.z};
@@ -316,55 +333,110 @@ void ApplyState(Scene& scene, const Parsed& p) {
             }
         }
     }
-    // The slot was checked whole when it was read, so replacing the game's keys is safe here.
-    if (!p.kv.empty()) {
-        SaveFile& kv = Save::File(Save::DefaultFile());
-        kv.Clear();
-        for (const auto& e : p.kv) kv.SetRaw(e.first, e.second);
+    // The save was checked whole when it was read, so replacing the game's keys is safe here.
+    if (!kv.empty()) {
+        SaveFile& file = Save::File(Save::DefaultFile());
+        file.Clear();
+        for (const auto& e : kv) file.SetRaw(e.first, e.second);
         Save::Flush(Save::DefaultFile());
     }
-    PlayBase() = p.info.playTime;
-    PlayBaseAt() = Time::ElapsedTime();
+    if (restorePlayTime) { PlayBase() = st.playTime > 0.0f ? st.playTime : 0.0f; PlayBaseAt() = Time::ElapsedTime(); }
+}
+
+SaveStore& Store() { return GameSaves::Manager().Store(); }
+
+} // namespace
+
+namespace {
+
+enum class HeaderResult { Ok, Newer, NotASave };
+
+// Just the header lines of one slot file (label, scene, time, ...), read without the scene.
+// The file is read in pieces until its scene or state section starts, so a long label can't
+// push the time out of view; at most kMaxHeaderBytes.
+HeaderResult ReadHeaderOnly(const std::string& path, const std::string& slot, SaveSlotInfo& info) {
+    constexpr std::size_t kMaxHeaderBytes = 1024u * 1024u;
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return HeaderResult::NotASave;
+    std::string text;
+    char buf[8192];
+    while (text.size() < kMaxHeaderBytes) {
+        f.read(buf, sizeof(buf));
+        const std::size_t got = (std::size_t)f.gcount();
+        if (got == 0) break;
+        text.append(buf, got);
+        if (text.find("\n--scene--\n") != std::string::npos || text.find("\n--state--\n") != std::string::npos) break;
+        if (!f) break;
+    }
+    int version = 1;
+    std::size_t pos = text.find('\n');
+    if (!ParseHeaderLine(text.substr(0, pos), version)) return HeaderResult::NotASave;
+    info = SaveSlotInfo();
+    info.slot = slot; info.exists = true; info.version = version; info.legacyFile = true; info.wholeScene = true; info.kind = SlotKind::Manual;
+    while (pos != std::string::npos && pos + 1 < text.size()) {
+        const std::size_t start = pos + 1;
+        pos = text.find('\n', start);
+        if (pos == std::string::npos) break;   // a line cut by the end of what was read: header is done
+        std::string line = text.substr(start, pos - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "--scene--" || line == "--state--") break;
+        ApplyHeaderLine(info, SplitTabs(line));
+    }
+    info.savedAtMs = info.savedAt * 1000;
+    if (version > SaveGame::kFormatVersion) return HeaderResult::Newer;
+    return HeaderResult::Ok;
+}
+
+std::string NewerMessage(const std::string& slot, int version) {
+    return "Slot \"" + slot + "\" was saved by a newer version of the game (save format " +
+           std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
+}
+
+// Whether the older file at `path` would load: it passes its checks, or its .bak does.
+bool CheckLegacy(const std::string& path, const std::string& slot, std::string* error) {
+    auto check = [&](const std::string& file, std::string* why) {
+        std::error_code ec;
+        if (!fs::exists(file, ec)) { *why = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
+        std::string text, readWhy;
+        if (!savefmt::ReadFileCapped(file, g_maxBytes, text, &readWhy)) { *why = "Slot \"" + slot + "\" can't be read: " + readWhy; return ReadResult::Damaged; }
+        int version = 1;
+        return ClassifyText(text, slot, version, why);
+    };
+    std::string why;
+    const ReadResult r = check(path, &why);
+    if (r == ReadResult::Ok) return true;
+    if (r == ReadResult::Damaged) {
+        std::string bwhy;
+        if (check(path + ".bak", &bwhy) == ReadResult::Ok) {
+            if (error) *error = "Slot \"" + slot + "\" was damaged (" + why + "); its backup is fine";
+            return true;
+        }
+    }
+    if (error) *error = why;
+    return false;
+}
+
+// A thumbnail named without a folder is a file beside the slot files: give its full path.
+void ResolveThumbnail(SaveSlotInfo& info) {
+    if (!info.thumbnail.empty() && IsBareName(info.thumbnail)) {
+        std::string d = Store().Directory();
+        if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
+        info.thumbnail = d + info.thumbnail;
+    }
 }
 
 } // namespace
 
-bool SaveGame::ValidSlot(const std::string& slot) {
-    if (slot.empty() || slot.size() > 64) return false;
-    for (char c : slot)
-        if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') return false;
-    return !savefmt::IsReservedDeviceName(slot);
-}
+// ---------------------------------------------------------------------------------------------
+// The whole-scene capture (used through the save framework)
+// ---------------------------------------------------------------------------------------------
 
-std::string SaveGame::SlotPath(const std::string& slot) {
-    return Save::Resolve("saves/" + slot + ".okaygame");
-}
+namespace wholescene {
 
-std::string SaveGame::ThumbnailPath(const std::string& slot) {
-    return SavesFolderFile(slot + ".png");
-}
-
-float SaveGame::PlayTime() { return PlayBase() + std::max(0.0f, Time::ElapsedTime() - PlayBaseAt()); }
-
-bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& label, std::string* error) {
-    SaveOptions options;
-    options.label = label;
-    return Save(scene, slot, options, error);
-}
-
-bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& options, std::string* error) {
-    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name (letters, digits, - and _)"; return false; }
+State Capture(Scene& scene) {
+    State st;
+    st.sceneText = SceneSerializer::Serialize(scene);
     std::ostringstream out;
-    out << "okaygame " << kFormatVersion << "\n";
-    out << "label\t" << Escape(options.label) << "\n";
-    out << "scene\t" << Escape(scene.Name()) << "\n";
-    out << "savedAt\t" << (long long)std::time(nullptr) << "\n";
-    out << "playTime\t" << Num(PlayTime()) << "\n";
-    if (!options.gameVersion.empty()) out << "gameVersion\t" << Escape(options.gameVersion) << "\n";
-    if (!options.thumbnail.empty()) out << "thumbnail\t" << Escape(options.thumbnail) << "\n";
-    for (const auto& kv : options.fields) out << "field\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";
-    out << "--scene--\n" << SceneSerializer::Serialize(scene);
-    out << "--state--\n";
     for (const auto& up : scene.Objects()) {
         GameObject* g = up.get();
         if (!g) continue;
@@ -394,167 +466,80 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& op
     }
     for (const auto& kv : Save::File(Save::DefaultFile()).Raw())
         out << "kv\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";
+    st.stateText = out.str();
+    st.playTime = SaveGame::PlayTime();
+    return st;
+}
 
-    out << kEndLine;
-    std::string text = out.str();
-    // The checksum covers everything up to and including the end marker.
-    text += kSumKey + savefmt::Hex16(savefmt::Fnv1a(text.data(), text.size())) + "\n";
-
-    const std::string path = SlotPath(slot);
-    std::error_code ec;
-    fs::create_directories(fs::path(path).parent_path(), ec);
-    // What is there now: a good file becomes the .bak (a damaged one never replaces the last
-    // good copy); a file from a newer build is kept as .newer.bak, so going back to that build
-    // finds it.
-    if (fs::is_regular_file(path, ec)) {
-        std::string old, why;
-        int v = 1;
-        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why) && ParseHeaderLine(old.substr(0, old.find('\n')), v)) {
-            if (v > kFormatVersion) {
-                std::string kept;
-                const std::string newer = path + ".newer.bak";
-                if (!(savefmt::ReadFileCapped(newer, g_maxBytes, kept, nullptr) && kept == old)) savefmt::AtomicWrite(newer, old);
-            } else if (v < 2 || VerifyChecksum(old, &why)) {
-                savefmt::AtomicWrite(path + ".bak", old);
-            }
-        }
+bool Check(const State& st, std::string* error) {
+    std::size_t lines = 0;
+    for (const std::string* t : {&st.sceneText, &st.stateText}) lines += (std::size_t)std::count(t->begin(), t->end(), '\n');
+    if (lines > g_maxLines) { if (error) *error = "the save has too many lines"; return false; }
+    std::size_t pos = 0;
+    while (pos < st.stateText.size()) {
+        std::size_t e = st.stateText.find('\n', pos);
+        if (e == std::string::npos) e = st.stateText.size();
+        const std::string line = st.stateText.substr(pos, e - pos);
+        pos = e + 1;
+        if (!line.empty() && !CheckStateLine(SplitTabs(line))) { if (error) *error = "the save is damaged (bad saved-key line)"; return false; }
     }
-    // Write beside it, then swap in, so a crash mid-save never leaves a broken slot.
-    savefmt::WriteOptions wopt;
-    wopt.sync = true;
-    std::string werr;
-    if (!savefmt::AtomicWriteChecked(path, text, &werr, wopt)) {
-        if (error) *error = "Couldn't save slot \"" + slot + "\": " + werr + " (the slot was not changed)";
-        return false;
-    }
-    Log::Info("Saved game to slot ", slot);
     return true;
 }
 
-bool SaveGame::Load(Scene& scene, const std::string& slot, std::string* error) {
-    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
-    auto p = std::make_shared<Parsed>();
-    if (!ReadSave(slot, *p, error)) return false;
-    std::string text = std::move(p->sceneText);
-    scene.RequestLoadText(std::move(text), [p](Scene& s) { ApplyState(s, *p); });
-    return true;
-}
-
-bool SaveGame::LoadNow(Scene& scene, const std::string& slot, std::string* error) {
-    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
-    Parsed p;
-    if (!ReadSave(slot, p, error)) return false;
+bool ApplyNow(Scene& scene, const State& st, bool restorePlayTime, std::string* error) {
+    if (!Check(st, error)) return false;
     std::string err;
-    if (!SceneSerializer::Deserialize(scene, p.sceneText, &err)) {
-        if (error) *error = "Slot \"" + slot + "\" is damaged: " + err;
+    if (!SceneSerializer::Deserialize(scene, st.sceneText, &err)) {
+        if (error) *error = "the saved scene is damaged: " + err;
         return false;
     }
     scene.Start();
-    ApplyState(scene, p);
+    ApplyState(scene, st, restorePlayTime);
     return true;
 }
 
-bool SaveGame::Exists(const std::string& slot) {
-    std::error_code ec;
-    return ValidSlot(slot) && fs::exists(SlotPath(slot), ec);
-}
-
-bool SaveGame::Delete(const std::string& slot) {
-    std::error_code ec;
-    if (!ValidSlot(slot)) return false;
-    const SaveSlotInfo info = Info(slot);
-    // A thumbnail named without a folder lives in the saves folder with the slot.
-    if (info.exists && !info.thumbnail.empty()) {
-        // Info resolves a bare name into the saves folder; a path the game gave is left alone.
-        const std::string bare = fs::path(info.thumbnail).filename().string();
-        if (info.thumbnail == SavesFolderFile(bare) && IsBareName(bare)) fs::remove(info.thumbnail, ec);
-    }
-    for (const char* suffix : {".bak", ".tmp", ".newer.bak", ".corrupt", ".swap"}) fs::remove(SlotPath(slot) + suffix, ec);
-    return fs::remove(SlotPath(slot), ec);
-}
-
-namespace {
-
-enum class HeaderResult { Ok, Newer, NotASave };
-
-// Just the header lines of one slot file (label, scene, time, ...), read without the scene.
-// The file is read in pieces until its scene or state section starts, so a long label can't
-// push the time out of view; at most kMaxHeaderBytes.
-HeaderResult ReadHeaderOnly(const std::string& path, const std::string& slot, SaveSlotInfo& info) {
-    constexpr std::size_t kMaxHeaderBytes = 1024u * 1024u;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return HeaderResult::NotASave;
-    std::string text;
-    char buf[8192];
-    while (text.size() < kMaxHeaderBytes) {
-        f.read(buf, sizeof(buf));
-        const std::size_t got = (std::size_t)f.gcount();
-        if (got == 0) break;
-        text.append(buf, got);
-        if (text.find("\n--scene--\n") != std::string::npos || text.find("\n--state--\n") != std::string::npos) break;
-        if (!f) break;
-    }
-    int version = 1;
-    std::size_t pos = text.find('\n');
-    if (!ParseHeaderLine(text.substr(0, pos), version)) return HeaderResult::NotASave;
-    info = SaveSlotInfo();
-    info.slot = slot; info.exists = true; info.version = version;
-    while (pos != std::string::npos && pos + 1 < text.size()) {
-        const std::size_t start = pos + 1;
-        pos = text.find('\n', start);
-        if (pos == std::string::npos) break;   // a line cut by the end of what was read: header is done
-        std::string line = text.substr(start, pos - start);
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line == "--scene--" || line == "--state--") break;
-        ApplyHeaderLine(info, SplitTabs(line));
-    }
-    if (version > SaveGame::kFormatVersion) return HeaderResult::Newer;
-    return HeaderResult::Ok;
-}
-
-std::string NewerMessage(const std::string& slot, int version) {
-    return "Slot \"" + slot + "\" was saved by a newer version of the game (save format " +
-           std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
-}
-
-// A thumbnail named without a folder is a file in the saves folder: give its full path.
-void ResolveThumbnail(SaveSlotInfo& info) {
-    if (!info.thumbnail.empty() && IsBareName(info.thumbnail)) info.thumbnail = SavesFolderFile(info.thumbnail);
-}
-
-} // namespace
-
-bool SaveGame::Check(const std::string& slot, std::string* error) {
-    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
-    auto check = [&](const std::string& path, std::string* why) {
-        std::error_code ec;
-        if (!fs::exists(path, ec)) { *why = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
-        std::string text, readWhy;
-        if (!savefmt::ReadFileCapped(path, g_maxBytes, text, &readWhy)) { *why = "Slot \"" + slot + "\" can't be read: " + readWhy; return ReadResult::Damaged; }
-        int version = 1;
-        return ClassifyText(text, slot, version, why);
+void ApplyDeferred(Scene& scene, State st, bool restorePlayTime, std::function<void(bool ok)> done) {
+    // `done` runs exactly once. Scene::RequestLoadText drops its callback when another load replaces this one in
+    // the same frame, or when the text does not load; the guard below is destroyed with the dropped callback and
+    // reports done(false) then, so a caller waiting for the load (GameSaves' restoring count) is never left waiting.
+    struct Once {
+        std::function<void(bool)> fn;
+        bool fired = false;
+        void Fire(bool ok) { if (!fired) { fired = true; if (fn) fn(ok); } }
+        ~Once() { Fire(false); }
     };
-    const std::string path = SlotPath(slot);
-    std::string why;
-    const ReadResult r = check(path, &why);
-    if (r == ReadResult::Ok) return true;
-    if (r == ReadResult::Damaged) {
-        std::string bwhy;
-        if (check(path + ".bak", &bwhy) == ReadResult::Ok) {
-            if (error) *error = "Slot \"" + slot + "\" was damaged (" + why + "); its backup is fine";
-            return true;
-        }
-    }
-    if (error) *error = why;
-    return false;
+    auto once = std::make_shared<Once>();
+    once->fn = std::move(done);
+    auto p = std::make_shared<State>(std::move(st));
+    std::string text = p->sceneText;
+    scene.RequestLoadText(std::move(text), [p, restorePlayTime, once](Scene& s) {
+        ApplyState(s, *p, restorePlayTime);
+        once->Fire(true);
+    });
 }
 
-SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
-    SaveSlotInfo i; i.slot = slot;
-    if (!ValidSlot(slot)) return i;
-    const std::string path = SlotPath(slot);
+LegacyStatus ReadLegacy(const std::string& path, const std::string& slot, State& out, SaveSlotInfo& info,
+                        bool* usedBackup, std::string* error) {
+    Parsed p;
+    const ReadResult r = ReadSave(path, slot, p, usedBackup, error);
+    if (r != ReadResult::Ok) {
+        if (r == ReadResult::Newer) { info = LegacyInfo(path, slot, false); }
+        return r == ReadResult::Missing ? LegacyStatus::Missing : r == ReadResult::Newer ? LegacyStatus::Newer : LegacyStatus::Damaged;
+    }
     std::error_code ec;
-    if (!fs::exists(path, ec)) return i;
+    const auto size = fs::file_size(path, ec);
+    p.info.sizeBytes = ec ? 0 : (long long)size;
+    out.sceneText = std::move(p.sceneText);
+    out.stateText = std::move(p.stateText);
+    out.playTime = p.info.playTime;
+    info = std::move(p.info);
+    return LegacyStatus::Ok;
+}
+
+SaveSlotInfo LegacyInfo(const std::string& path, const std::string& slot, bool verify) {
+    SaveSlotInfo i; i.slot = slot;
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) return i;
     const auto size = fs::file_size(path, ec);
     const long long sizeBytes = ec ? 0 : (long long)size;
     SaveSlotInfo head;
@@ -565,15 +550,13 @@ SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
             b.fromBackup = true;
             b.error = "Slot \"" + slot + "\" was damaged; these are the backup's values";
             b.sizeBytes = sizeBytes;
-            ResolveThumbnail(b);
             return b;
         }
-        i.exists = true; i.corrupt = true; i.sizeBytes = sizeBytes;
+        i.exists = true; i.corrupt = true; i.sizeBytes = sizeBytes; i.legacyFile = true; i.wholeScene = true;
         i.error = "Slot \"" + slot + "\" isn't a save game";
         return i;
     }
     head.sizeBytes = sizeBytes;
-    ResolveThumbnail(head);
     if (h == HeaderResult::Newer) {
         head.incompatible = true;
         head.error = NewerMessage(slot, head.version);
@@ -581,12 +564,11 @@ SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
     }
     if (verify) {
         std::string why;
-        if (!Check(slot, &why)) { head.corrupt = true; head.error = why; }
+        if (!CheckLegacy(path, slot, &why)) { head.corrupt = true; head.error = why; }
         else if (!why.empty()) {   // the main file failed but the backup is fine: show the backup
             SaveSlotInfo b;
             if (ReadHeaderOnly(path + ".bak", slot, b) == HeaderResult::Ok) {
                 b.fromBackup = true; b.error = why; b.sizeBytes = sizeBytes;
-                ResolveThumbnail(b);
                 return b;
             }
         }
@@ -594,11 +576,166 @@ SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
     return head;
 }
 
+bool RemoveLegacy(const std::string& path) {
+    std::error_code ec;
+    for (const char* suffix : {".bak", ".tmp", ".newer.bak", ".corrupt", ".swap"}) fs::remove(path + suffix, ec);
+    return fs::remove(path, ec);
+}
+
+} // namespace wholescene
+
+// ---------------------------------------------------------------------------------------------
+// SaveGame: the whole-scene names over the framework's store
+// ---------------------------------------------------------------------------------------------
+
+bool SaveGame::ValidSlot(const std::string& slot) {
+    if (slot.empty() || slot.size() > 64) return false;
+    for (char c : slot)
+        if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') return false;
+    return !savefmt::IsReservedDeviceName(slot);
+}
+
+std::string SaveGame::SlotPath(const std::string& slot) { return Store().SlotPath(slot); }
+std::string SaveGame::LegacySlotPath(const std::string& slot) { return Store().LegacySlotPath(slot); }
+
+std::string SaveGame::ThumbnailPath(const std::string& slot) {
+    SaveSlotInfo i;
+    i.thumbnail = slot + ".png";
+    ResolveThumbnail(i);
+    return i.thumbnail;
+}
+
+float SaveGame::PlayTime() { return PlayBase() + std::max(0.0f, Time::ElapsedTime() - PlayBaseAt()); }
+
+bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& label, std::string* error) {
+    SaveOptions options;
+    options.label = label;
+    return Save(scene, slot, options, error);
+}
+
+bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& options, std::string* error) {
+    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name (letters, digits, - and _)"; return false; }
+    SaveRequest req;
+    req.playTime = PlayTime();
+    req.label = options.label;
+    req.thumbnail = options.thumbnail;
+    req.gameVersion = options.gameVersion;
+    req.fields = options.fields;
+    req.kind = options.kind.empty() ? std::string(SlotKind::Manual) : options.kind;
+    req.capture.wholeScene = true;
+    std::string err;
+    if (!GameSaves::Manager().Save(scene, slot, req, &err)) {
+        // The store says "Couldn't write <path>: <why> (the slot was not changed)": keep the why, name the slot once.
+        const std::string head = "Couldn't write ";
+        if (err.compare(0, head.size(), head) == 0) {
+            const std::size_t colon = err.find(": ", head.size());
+            if (colon != std::string::npos) err = err.substr(colon + 2);
+        }
+        if (error) *error = "Couldn't save slot \"" + slot + "\": " + err;
+        return false;
+    }
+    return true;
+}
+
+namespace {
+
+// A slot the SaveGame names see: a whole-scene save, an older .okaygame file, or a file too damaged to tell.
+// Framework-only slots (Saveable captures: the autosave ring, quick saves, checkpoints) are not SaveGame's.
+bool IsSaveGameSlot(const SaveSlotInfo& i) {
+    return i.exists && (i.wholeScene || i.legacyFile || (i.corrupt && i.kind.empty()));
+}
+
+// The checks SaveGame made before reading a slot: it is one of its slots, and not over SetLimits' byte cap.
+bool ReadableSaveGameSlot(const std::string& slot, std::string* error) {
+    if (!SaveGame::ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
+    if (!IsSaveGameSlot(Store().Info(slot))) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
+    std::error_code ec;
+    for (const std::string& path : {Store().SlotPath(slot), Store().LegacySlotPath(slot)}) {
+        const auto size = fs::file_size(path, ec);
+        if (!ec && size > g_maxBytes) {
+            if (error) *error = "Slot \"" + slot + "\" can't be read: " + path + " is too large (" + std::to_string((long long)size) + " bytes)";
+            return false;
+        }
+    }
+    return true;
+}
+
+// An error that does not name the slot gets its name in front, as SaveGame's errors always had.
+std::string NameSlot(const std::string& slot, const std::string& err) {
+    if (err.empty() || err.find("\"" + slot + "\"") != std::string::npos) return err;
+    return "Slot \"" + slot + "\": " + err;
+}
+
+} // namespace
+
+bool SaveGame::Load(Scene& scene, const std::string& slot, std::string* error) {
+    if (!ReadableSaveGameSlot(slot, error)) return false;
+    SaveLoadOptions o;
+    o.deferred = true;
+    g_usedBackup = false;
+    std::string err;
+    if (!GameSaves::Manager().Load(scene, slot, o, &err)) { if (error) *error = NameSlot(slot, err); return false; }
+    if (!err.empty()) { g_usedBackup = true; if (error) *error = err; }
+    return true;
+}
+
+bool SaveGame::LoadNow(Scene& scene, const std::string& slot, std::string* error) {
+    if (!ReadableSaveGameSlot(slot, error)) return false;
+    SaveLoadOptions o;
+    bool backup = false;
+    o.onLoaded = [&backup](const SaveDocument&, const SaveSlotInfo& info) { backup = info.fromBackup; };
+    g_usedBackup = false;
+    std::string err;
+    if (!GameSaves::Manager().Load(scene, slot, o, &err)) { if (error) *error = NameSlot(slot, err); return false; }
+    g_usedBackup = backup;
+    if (error) *error = err;
+    return true;
+}
+
+bool SaveGame::Exists(const std::string& slot) {
+    return ValidSlot(slot) && Store().Exists(slot) && IsSaveGameSlot(Store().Info(slot));
+}
+
+bool SaveGame::Delete(const std::string& slot) {
+    if (!ValidSlot(slot)) return false;
+    std::error_code ec;
+    const SaveSlotInfo info = Info(slot);
+    if (!info.exists) return false;   // none, or a framework-only slot (not SaveGame's to delete)
+    // A thumbnail named without a folder lives beside the slot files (Info gave its full path); a path the game
+    // gave is left alone.
+    if (info.exists && !info.thumbnail.empty()) {
+        const std::string bare = fs::path(info.thumbnail).filename().string();
+        SaveSlotInfo probe;
+        probe.thumbnail = bare;
+        ResolveThumbnail(probe);
+        if (IsBareName(bare) && info.thumbnail == probe.thumbnail) fs::remove(info.thumbnail, ec);
+    }
+    return Store().Delete(slot);
+}
+
+bool SaveGame::Check(const std::string& slot, std::string* error) {
+    if (!ReadableSaveGameSlot(slot, error)) return false;
+    SaveDocument doc;
+    std::string err;
+    const bool ok = Store().Read(slot, doc, nullptr, &err);   // a damaged file whose backup is fine passes, with a note
+    if (error) *error = err;
+    return ok;
+}
+
+SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
+    SaveSlotInfo i; i.slot = slot;
+    if (!ValidSlot(slot)) return i;
+    SaveSlotInfo found = Store().Info(slot, verify);
+    if (!IsSaveGameSlot(found)) return i;
+    ResolveThumbnail(found);
+    return found;
+}
+
 bool SaveGame::LastLoadUsedBackup() { return g_usedBackup; }
 
 void SaveGame::SetLimits(std::size_t maxFileBytes, std::size_t maxLines) {
     g_maxBytes = maxFileBytes ? maxFileBytes : kDefaultMaxFileBytes;
-    g_maxLines = maxLines ? maxLines : kDefaultMaxLines;
+    g_maxLines = maxLines ? maxLines : kDefaultMaxLines;   // the store's own cap (game_* saves) is not changed
 }
 
 void SaveGame::SetMigration(int fromVersion, Migration fn) {
@@ -608,20 +745,11 @@ void SaveGame::SetMigration(int fromVersion, Migration fn) {
 
 std::vector<SaveSlotInfo> SaveGame::List(bool verify) {
     std::vector<SaveSlotInfo> out;
-    std::error_code ec;
-    const fs::path dir = fs::path(SlotPath("x")).parent_path();
-    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->path().extension() != ".okaygame") continue;
-        const std::string slot = it->path().stem().string();
-        if (!ValidSlot(slot)) continue;
-        SaveSlotInfo i = Info(slot, verify);
-        if (i.exists) out.push_back(std::move(i));
+    for (SaveSlotInfo& i : Store().ListSlots(SlotSort::Newest, verify)) {
+        if (!IsSaveGameSlot(i)) continue;
+        ResolveThumbnail(i);
+        out.push_back(std::move(i));
     }
-    // Newest first; slots without a known time (damaged ones) go last, by name.
-    std::sort(out.begin(), out.end(), [](const SaveSlotInfo& a, const SaveSlotInfo& b) {
-        if (a.savedAt != b.savedAt) return a.savedAt > b.savedAt;
-        return a.slot < b.slot;
-    });
     return out;
 }
 

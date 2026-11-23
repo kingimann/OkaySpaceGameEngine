@@ -93,8 +93,8 @@ int main() {
         CHECK(ok && m.backend == "own" && fx::Sane(m));
         CHECK(m.nodes.size() == 3 && m.nodes[0].name == "OpenGEX" && m.nodes[1].name == "root" && m.nodes[2].name == "quad");
         CHECK(m.nodes[1].parent == 0 && m.nodes[2].parent == 1);
-        CHECK(Near(m.nodes[1].position.x, 1) && Near(m.nodes[1].position.y, 2) && Near(m.nodes[1].position.z, 3));
-        CHECK(Near(m.nodes[2].position.x, 4) && Near(m.nodes[2].position.y, 5) && Near(m.nodes[2].position.z, 6));
+        CHECK(fx::NearXyz(m.nodes[1].position, 1, 2, 3, 1e-5f));
+        CHECK(fx::NearXyz(m.nodes[2].position, 4, 5, 6, 1e-5f));
         // Metric distance 2: scale of the root; Metric up "z": the root turns by -90 degrees about X
         CHECK(Near(m.nodes[0].scale.x, 2) && Near(m.nodes[0].scale.y, 2) && Near(m.nodes[0].scale.z, 2));
         CHECK(Near(m.nodes[0].rotation.x, -0.70710678f) && Near(m.nodes[0].rotation.w, 0.70710678f) && Near(m.nodes[0].rotation.y, 0) && Near(m.nodes[0].rotation.z, 0));
@@ -177,7 +177,7 @@ int main() {
         // a column-major matrix: the translation is in the last four numbers
         CHECK(Read("GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}}}}\n"
                    "GeometryNode $n {Name {string {\"n\"}} ObjectRef {ref {$g}} Transform {float[16] {{1,0,0,0, 0,1,0,0, 0,0,1,0, 7,8,9,1}}}}", m, err));
-        CHECK(Near(m.nodes[1].position.x, 7) && Near(m.nodes[1].position.y, 8) && Near(m.nodes[1].position.z, 9));
+        CHECK(fx::NearXyz(m.nodes[1].position, 7, 8, 9, 1e-5f));
         // structures compose in file order: Translation then Rotation = T * R (the node rotates, and sits at the translation) ...
         const std::string geo = "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}}}}\n";
         ImportedModel a;

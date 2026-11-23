@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 49 headers, 461 names.
+Back to the [code index](../code_index.md). 48 headers, 424 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -443,88 +443,89 @@ Back to the [code index](../code_index.md). 49 headers, 461 names.
 
 ## `engine/include/okay/Render/SoftwareRenderer.hpp`
 
-- `ParallelRows` function, line 50: Run 'fn(rowStart, rowEnd)' over [y0, y1) split across hardware threads. Used to
-- `ShadowCascade` struct, line 79: Directional shadow map (depth from the light). Defined up here so the Raster's
-- `ShadowMap` struct, line 89
-- `Shadows` function, line 98
-- `ShadowFactor` function, line 99
-- `LocalShadowsActive` function, line 103: Spot / point / area light shadows (software). Declared here so the per-pixel
-- `LocalShadowFactors` function, line 104
-- `RimLightEnabled` function, line 110: Fresnel rim light: a soft glow on surfaces facing away from the camera (grazing
-- `RimStrength` function, line 111
-- `RimPower` function, line 112
-- `HemisphereAmbient` function, line 118: Hemisphere ambient: tint the ambient term by sky (up) vs ground (down). Strength
-- `HemisphereStrength` function, line 119
-- `EnvSkyData` struct, line 125: Environment sky for reflections: the renderer keeps its own copy of the scene's
-- `EnvSky` function, line 129
-- `OcclusionDepth` struct, line 136: Scene depth for particle occlusion: the per-pixel W-buffer (1/w, larger = nearer)
-- `SceneOcclusionDepth` function, line 137
-- `ParticleOccluded` function, line 144: True if the scene is NEARER than a particle at clip-w 'clipW' at normalized
-- `SampleEnvSky` function, line 157: Sample the sky gradient by a world-space direction's vertical component:
-- `MipChain` struct, line 172: A tiny software rasterizer with a per-pixel depth buffer, so overlapping 3D
-- `CustomSurface` struct, line 184: A Custom (.okayshader) surface for TrianglePhong: the CPU program, the material's property values,
-- `Raster` class, line 201
-- `TextureSamplingOf` function, line 920: How the GPU renderers sample an asset: its import Filter / Wrap / Mipmaps / anisotropy (defaults for "@" and "proc:").
-- `TextureCacheGeneration` function, line 930: Bumped whenever cached pictures are dropped, so GPU renderers that keep their own copy by name re-check them.
-- `RegisterTexture` function, line 935: Register an in-memory image under a name so it can be used without a file on
-- `LoadDdsImage` function, line 941: A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The texture library
-- `GetCachedTexture` function, line 957: The picture for a texture name ("proc:..." procedural, "@..." registered, a .dds, any image file), with its import
-- `MipCacheMap` function, line 964: The software renderer's sampling views of the assets' mip chains (filter and wrap from the import settings), rebuilt
-- `InvalidateTextureCache` function, line 972: Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
-- `InvalidateAllTextureCaches` function, line 981: Drop every picture loaded from a file (pictures registered by name, "@...", are kept: they have no file to
-- `GetCachedMips` function, line 989: A texture's mip chain: the asset's own (built once with our gamma-correct box or Kaiser filter, see TextureAsset::Mips).
-- `BandSkipEnabled` function, line 1011: Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
-- `LightCullingEnabled` function, line 1012
-- `PerPixelLighting` function, line 1014
-- `ShadowsEnabled` function, line 1022
-- `ShadowsUsePerPixel` function, line 1026: When shadows are on and this frame has a shadow map, lit meshes that receive shadows take the per-pixel
-- `ShadowMapResolution` function, line 1027
-- `SoftwareShadowCap` function, line 1031: The software renderer never builds a cascade larger than this many texels a side, whatever ShadowMapResolution() says (the GPU
-- `ShadowDistance` function, line 1038: How far (world units) cascaded shadows reach in front of the camera. The near
-- `ShadowCascades` function, line 1041: Number of cascades (1..ShadowMap::kMaxCascades). More = sharper falloff across
-- `RenderShadowMap` function, line 1128: Render the scene depth from the directional light into the cascaded shadow
-- `SceneAmbientColors` function, line 1277: Up-facing ("sky") and down-facing ("ground") ambient colours for the scene's
-- `ShadowSoftness` function, line 1294: Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
-- `ShadowFactorClassic` function, line 1297: The shadow lookup as it was before the lighting upgrade (see ClassicLighting()).
-- `LocalShadowMapSW` struct, line 1427: ---- Spot / point / area light shadows -------------------------------------
-- `LocalShadowSet` struct, line 1432
-- `LocalShadows` function, line 1440
-- `LocalShadowResolution` function, line 1442: Texels per local shadow tile edge (software). 256 keeps 16 tiles near 4 MB.
-- `RenderLocalShadowMaps` function, line 1500: Build this frame's spot / point / area shadow maps. Called by RenderMeshes
-- `LocalShadowFactor` function, line 1579: 0 = fully shadowed, 1 = fully lit, for light 'li' at world point 'wpos' with
-- `SSAOEnabled` function, line 1625: ---- Screen-space ambient occlusion ----------------------------------------
-- `SSAORadius` function, line 1626
-- `SSAOStrength` function, line 1627
-- `SSAOPower` function, line 1628
-- `ApplySSAO` function, line 1633: Darken creases/contacts using the per-pixel world position + normal G-buffer:
-- `BloomEnabled` function, line 1727: ---- Bloom -----------------------------------------------------------------
-- `BloomThreshold` function, line 1728
-- `BloomIntensity` function, line 1729
-- `ApplyBloom` function, line 1738: Glow on bright/emissive areas: extract pixels above a brightness threshold,
-- `ToneMapEnabled` function, line 1820: ---- Tone mapping (filmic) -------------------------------------------------
-- `Exposure` function, line 1821
-- `ApplyToneMap` function, line 1830: Filmic tone mapping (ACES approximation, Narkowicz 2015). The renderer shades
-- `ColorGradeEnabled` function, line 1861: ---- Color grading (brightness / contrast / saturation / vignette / gamma) --
-- `Brightness` function, line 1862
-- `Contrast` function, line 1863
-- `Saturation` function, line 1864
-- `Vignette` function, line 1865
-- `Gamma` function, line 1866
-- `ApplyColorGrade` function, line 1868
-- `ScenePostPlan` struct, line 1919: ---- The scene's Post-processing section, on the CPU -------------------------
-- `PlanScenePost` function, line 1930: Fold the scene's settings and the process-wide switches into one plan. The process-wide tonemap
-- `ScenePostColor` function, line 1943: Apply a plan to one 0..1 colour (exposure, curve, grade). Exposed so tests can check single values.
-- `ScenePostVignette` function, line 1961: The vignette darkening (0..0.8) at a pixel, the same formula as the GPU uber pass.
-- `ApplyScenePost` function, line 1969
-- `DofPerspective` function, line 2012: True when 'vp' is a perspective projection (clip w depends on the position), so the
-- `DofPixelDistance` function, line 2017: World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
-- `DofRays` struct, line 2025: The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
-- `DofRaysFor` function, line 2029
-- `DofRayScale` function, line 2040: Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
-- `ApplySceneDof` function, line 2047: Blur the frame where it is out of focus. 'focus' and 'range' are post.dofFocus / post.dofRange;
-- `FXAAEnabled` function, line 2153: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
-- `RenderCullingMask` function, line 2158: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
-- `ApplyFXAA` function, line 2163: Cheap post-process anti-aliasing: where local contrast is high (a geometry
+- `ParallelRows` function, line 48: Run 'fn(rowStart, rowEnd)' over [y0, y1) split across hardware threads. Used to
+- `ShadowCascade` struct, line 77: Directional shadow map (depth from the light). Defined up here so the Raster's
+- `ShadowMap` struct, line 87
+- `Shadows` function, line 96
+- `ShadowFactor` function, line 97
+- `LocalShadowsActive` function, line 101: Spot / point / area light shadows (software). Declared here so the per-pixel
+- `LocalShadowFactors` function, line 102
+- `RimLightEnabled` function, line 108: Fresnel rim light: a soft glow on surfaces facing away from the camera (grazing
+- `RimStrength` function, line 109
+- `RimPower` function, line 110
+- `HemisphereAmbient` function, line 116: Hemisphere ambient: tint the ambient term by sky (up) vs ground (down). Strength
+- `HemisphereStrength` function, line 117
+- `EnvSkyData` struct, line 123: Environment sky for reflections: the renderer keeps its own copy of the scene's
+- `EnvSky` function, line 127
+- `OcclusionDepth` struct, line 134: Scene depth for particle occlusion: the per-pixel W-buffer (1/w, larger = nearer)
+- `SceneOcclusionDepth` function, line 135
+- `ParticleOccluded` function, line 142: True if the scene is NEARER than a particle at clip-w 'clipW' at normalized
+- `SampleEnvSky` function, line 155: Sample the sky gradient by a world-space direction's vertical component:
+- `MipChain` struct, line 169: A tiny software rasterizer with a per-pixel depth buffer, so overlapping 3D
+- `CustomSurface` struct, line 176: A Custom (.okayshader) surface for TrianglePhong: the CPU program, the material's property values,
+- `Raster` class, line 193
+- `TextureCacheMap` function, line 909: Process-wide texture cache for the software renderer (path -> RGBA image).
+- `TextureCacheGeneration` function, line 915: Bumped whenever a cached picture is dropped, so GPU renderers that keep their own copy re-upload it.
+- `RegisterTexture` function, line 920: Register an in-memory image under a name so it can be used without a file on
+- `LoadDdsImage` function, line 926: A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The software renderer
+- `GetCachedTexture` function, line 940
+- `InvalidateTextureCache` function, line 959: Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
+- `BuildMips` function, line 965: Build the mipmap pyramid for 'levels' (which already holds the base at [0]):
+- `MipCacheMap` function, line 987
+- `InvalidateAllTextureCaches` function, line 1002: Drop every picture loaded from a file (pictures registered by name, "@...", are kept: they have no file to
+- `GetCachedMips` function, line 1009
+- `BandSkipEnabled` function, line 1028: Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
+- `LightCullingEnabled` function, line 1029
+- `PerPixelLighting` function, line 1031
+- `ShadowsEnabled` function, line 1039
+- `ShadowsUsePerPixel` function, line 1043: When shadows are on and this frame has a shadow map, lit meshes that receive shadows take the per-pixel
+- `ShadowMapResolution` function, line 1044
+- `SoftwareShadowCap` function, line 1048: The software renderer never builds a cascade larger than this many texels a side, whatever ShadowMapResolution() says (the GPU
+- `ShadowDistance` function, line 1055: How far (world units) cascaded shadows reach in front of the camera. The near
+- `ShadowCascades` function, line 1058: Number of cascades (1..ShadowMap::kMaxCascades). More = sharper falloff across
+- `RenderShadowMap` function, line 1145: Render the scene depth from the directional light into the cascaded shadow
+- `SceneAmbientColors` function, line 1294: Up-facing ("sky") and down-facing ("ground") ambient colours for the scene's
+- `ShadowSoftness` function, line 1311: Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
+- `ShadowFactorClassic` function, line 1314: The shadow lookup as it was before the lighting upgrade (see ClassicLighting()).
+- `LocalShadowMapSW` struct, line 1444: ---- Spot / point / area light shadows -------------------------------------
+- `LocalShadowSet` struct, line 1449
+- `LocalShadows` function, line 1457
+- `LocalShadowResolution` function, line 1459: Texels per local shadow tile edge (software). 256 keeps 16 tiles near 4 MB.
+- `RenderLocalShadowMaps` function, line 1517: Build this frame's spot / point / area shadow maps. Called by RenderMeshes
+- `LocalShadowFactor` function, line 1596: 0 = fully shadowed, 1 = fully lit, for light 'li' at world point 'wpos' with
+- `SSAOEnabled` function, line 1642: ---- Screen-space ambient occlusion ----------------------------------------
+- `SSAORadius` function, line 1643
+- `SSAOStrength` function, line 1644
+- `SSAOPower` function, line 1645
+- `ApplySSAO` function, line 1650: Darken creases/contacts using the per-pixel world position + normal G-buffer:
+- `BloomEnabled` function, line 1744: ---- Bloom -----------------------------------------------------------------
+- `BloomThreshold` function, line 1745
+- `BloomIntensity` function, line 1746
+- `ApplyBloom` function, line 1755: Glow on bright/emissive areas: extract pixels above a brightness threshold,
+- `ToneMapEnabled` function, line 1837: ---- Tone mapping (filmic) -------------------------------------------------
+- `Exposure` function, line 1838
+- `ApplyToneMap` function, line 1847: Filmic tone mapping (ACES approximation, Narkowicz 2015). The renderer shades
+- `ColorGradeEnabled` function, line 1878: ---- Color grading (brightness / contrast / saturation / vignette / gamma) --
+- `Brightness` function, line 1879
+- `Contrast` function, line 1880
+- `Saturation` function, line 1881
+- `Vignette` function, line 1882
+- `Gamma` function, line 1883
+- `ApplyColorGrade` function, line 1885
+- `ScenePostPlan` struct, line 1936: ---- The scene's Post-processing section, on the CPU -------------------------
+- `PlanScenePost` function, line 1947: Fold the scene's settings and the process-wide switches into one plan. The process-wide tonemap
+- `ScenePostColor` function, line 1960: Apply a plan to one 0..1 colour (exposure, curve, grade). Exposed so tests can check single values.
+- `ScenePostVignette` function, line 1978: The vignette darkening (0..0.8) at a pixel, the same formula as the GPU uber pass.
+- `ApplyScenePost` function, line 1986
+- `DofPerspective` function, line 2029: True when 'vp' is a perspective projection (clip w depends on the position), so the
+- `DofPixelDistance` function, line 2034: World distance the depth of field uses for one W-buffer value (1 / view depth; 0 = nothing drawn).
+- `DofRays` struct, line 2042: The ray through a point of the screen (NDC x, y, y up) as an affine function of x and y, for
+- `DofRaysFor` function, line 2046
+- `DofRayScale` function, line 2057: Eye distance per unit of view depth along the ray at NDC (x, y): 1 / cos(angle off the view axis).
+- `ApplySceneDof` function, line 2064: Blur the frame where it is out of focus. 'focus' and 'range' are post.dofFocus / post.dofRange;
+- `FXAAEnabled` function, line 2170: ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
+- `RenderCullingMask` function, line 2175: Active camera's layer culling mask (Camera.cullingMask). RenderMeshes draws a
+- `ApplyFXAA` function, line 2180: Cheap post-process anti-aliasing: where local contrast is high (a geometry
 
 ## `engine/include/okay/Render/SsaoMath.hpp`
 
@@ -540,47 +541,6 @@ Back to the [code index](../code_index.md). 49 headers, 461 names.
 ## `engine/include/okay/Render/SurfaceRaycast.hpp`
 
 - `SurfaceHit` struct, line 14
-
-## `engine/include/okay/Render/TextureAsset.hpp`
-
-- `TextureSettings` struct, line 39: Everything a picture's import settings say about how it is decoded, filtered and stored. Stored in the picture's
-- `ReadTextureSettings` function, line 64: The settings of a picture from its '.okaymeta' (one read of the file). Defaults for a missing file or key, and for
-- `TextureExtraKeys` function, line 67: The texture-only keys as 'set' lines' key/value pairs ("anisotropy" "8", ...), for the editor to keep in an
-- `ApplyTextureExtraKeys` function, line 69: Read the texture-only keys back from such pairs (unknown keys are ignored; missing ones keep 's''s values).
-- `TextureCompressionName` function, line 70
-- `TextureMipFilterName` function, line 71
-- `BuildMipChain` function, line 76: A mip chain for 'base', level 0 (a copy) first, down to 1x1, with the settings' filter (box or Kaiser), in linear
-- `TextureAsset` class, line 79: One decoded picture, shared by every renderer.
-- `TextureHandle` class, line 124: A counted reference to a TextureAsset. Copy it freely; the asset lives while any copy does.
-- `Load` function, line 148: Decode a texture from a file, a "proc:" name or a registered "@" name, or share the one already loaded. The handle
-- `Find` function, line 150: The asset already loaded under this name (by anyone), or an empty handle. Never loads.
-- `Reload` function, line 153: Decode the file again now, into the same asset (handles stay valid, the serial changes). For a changed import
-- `ReloadFile` function, line 159: A file changed on disk (or was reimported): every texture loaded from it, under whatever name (relative, "./" and
-- `Register` function, line 163: An in-memory picture under a name (conventionally "@..."), held by the library until Unregister. Registering the
-- `Unregister` function, line 164
-- `RegisteredImage` function, line 167: The registered picture's pixels, to change in place; call TouchRegistered(name) afterwards so renderers upload them.
-- `TouchRegistered` function, line 168
-- `ForRender` function, line 173: What the renderers draw with: the asset for a texture name, loaded on first use and held by the library, or null
-- `ReadOnly` function, line 176: While a ReadOnlyScope is alive (the software renderer's parallel band render), ForRender only looks names up: it
-- `ReadOnlyScope` struct, line 177
-- `Drop` function, line 184: Let go of the library's own reference to a name (the asset lives on while other handles exist).
-- `InvalidateAll` function, line 187: Drop every file texture the library holds for the renderers, re-decode the ones still alive elsewhere, and keep
-- `Generation` function, line 190: Bumped whenever the library lets go of names (Drop, InvalidateAll, a budget trim): renderers that cache by name
-- `Pump` function, line 194: Once a frame on the main thread: hot reload (when on), the frame counter for idle tracking, the budget check and
-- `SetHotReload` function, line 197: Watch loaded picture files for changes (checked at most every 'intervalSeconds'). Off by default; the editor turns
-- `HotReload` function, line 198
-- `SetAsyncLoading` function, line 203: Background loading: ForRender starts the decode on AssetManager's worker and returns null (the renderers draw the
-- `AsyncLoading` function, line 204
-- `Stats` struct, line 206
-- `GetStats` function, line 216
-- `Row` struct, line 217
-- `Report` function, line 226: Every live texture, largest first.
-- `OverlayLine` function, line 228: One line for the F3 overlay: "textures 12  38.4 MB / 1024 MB" (+ "  OVER BUDGET").
-- `SetBudgetBytes` function, line 231: Budget in bytes (0 = no budget). Default from OKAY_TEXTURE_BUDGET_MB, else 1024 MB.
-- `BudgetBytes` function, line 232
-- `SetIdleFrames` function, line 234: While over budget, Pump lets go of textures the renderers have not drawn for this many Pump calls (default 300).
-- `IsHeld` function, line 238: Whether the renderers' cache holds this name now. A GPU renderer that sees Generation() change frees its own copies
-- `ResetForTests` function, line 241: For tests: forget everything the library holds (registered pictures too) and reset the counters.
 
 ## `engine/include/okay/Render/TextureCacheFiles.hpp`
 

@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 65 headers, 955 names.
+Back to the [code index](../code_index.md). 66 headers, 960 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -800,6 +800,14 @@ Back to the [code index](../code_index.md). 65 headers, 955 names.
 - `Unpack` function, line 84: The OKF1 blob -> the raw bytes.
 - `DecodeLines` function, line 137: The whole thing: the string-literal lines of an embedded asset -> the raw bytes.
 
+## `shared/OwnPainter.hpp`
+
+- `OwnPainterPick` enum, line 24
+- `ParseOwnPainter` function, line 27: The value of OKAY_OWN_PAINTER as a choice: "software" / "soft" (any letter case) = Software; anything else, or null, = OpenGL.
+- `OwnPainterChoice` function, line 33
+- `OwnWindowsWantGL` function, line 36: True when windows made on 'b' should carry a GL pixel format (WindowDesc::opengl): 'b' is the own backend and OpenGL will be tried.
+- `MakeOwnPainter` function, line 41: The painter for an own-backend window: OpenGL first unless OKAY_OWN_PAINTER says software, the software painter as the fallback.
+
 ## `shared/OwnStack.hpp`
 
 - `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
@@ -853,33 +861,33 @@ Back to the [code index](../code_index.md). 65 headers, 955 names.
 
 ## `shared/PainterBridge.hpp`
 
-- `OwnFactory` function, line 33
-- `SetOwnPainterFactory` function, line 34
-- `For` function, line 37: The painter that stands for 'ren' (made on first use; null for a null renderer).
-- `OnForget` function, line 47
-- `Forget` function, line 49: Forget the wrapper of a renderer that is about to be destroyed (a new renderer may get the same address).
-- `Access` enum, line 51
-- `DestroyTexture` function, line 65
-- `UpdateTexture` function, line 67: Replace the pixels of 't' (rect null = all) with RGBA8 laid out with 'pitch' bytes per row. 'rect' is {x, y, w, h}.
-- `QueryTexture` function, line 73
-- `SetTextureBlend` function, line 78
-- `SetTextureLinear` function, line 81
-- `Clear` function, line 86: ---- the frame ----
-- `Present` function, line 87
-- `OutputSize` function, line 88
-- `SetVSync` function, line 89
-- `SetScale` function, line 90
-- `SetDrawColor` function, line 91
-- `GetDrawColor` function, line 92
-- `DrawPoint` function, line 95
-- `Flush` function, line 96
-- `ReadPixels` function, line 97
-- `DriverName` function, line 98
-- `IsAccelerated` function, line 99
-- `GetRenderTarget` function, line 100
-- `SetRenderTarget` function, line 101
-- `CreateRenderer` function, line 107: A renderer for an SDL window made by the sdl2 backend: accelerated, else any (what the apps asked SDL for). Null on failure.
-- `DestroyRenderer` function, line 125: Destroys a renderer made by CreateRenderer (its painter owns it); for one the app made another way, only forgets the wrapper.
+- `OwnFactory` function, line 34
+- `SetOwnPainterFactory` function, line 35
+- `For` function, line 38: The painter that stands for 'ren' (made on first use; null for a null renderer).
+- `OnForget` function, line 48
+- `Forget` function, line 50: Forget the wrapper of a renderer that is about to be destroyed (a new renderer may get the same address).
+- `Access` enum, line 52
+- `DestroyTexture` function, line 66
+- `UpdateTexture` function, line 68: Replace the pixels of 't' (rect null = all) with RGBA8 laid out with 'pitch' bytes per row. 'rect' is {x, y, w, h}.
+- `QueryTexture` function, line 74
+- `SetTextureBlend` function, line 79
+- `SetTextureLinear` function, line 82
+- `Clear` function, line 87: ---- the frame ----
+- `Present` function, line 88
+- `OutputSize` function, line 89
+- `SetVSync` function, line 90
+- `SetScale` function, line 91
+- `SetDrawColor` function, line 92
+- `GetDrawColor` function, line 93
+- `DrawPoint` function, line 96
+- `Flush` function, line 97
+- `ReadPixels` function, line 98
+- `DriverName` function, line 99
+- `IsAccelerated` function, line 100
+- `GetRenderTarget` function, line 101
+- `SetRenderTarget` function, line 102
+- `CreateRenderer` function, line 108: A renderer for an SDL window made by the sdl2 backend: accelerated, else any (what the apps asked SDL for). Null on failure.
+- `DestroyRenderer` function, line 126: Destroys a renderer made by CreateRenderer (its painter owns it); for one the app made another way, only forgets the wrapper.
 
 ## `shared/PlatformClipboard.hpp`
 

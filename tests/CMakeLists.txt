@@ -55,6 +55,8 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
         add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
+        add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()
 endif()
 

@@ -51,6 +51,7 @@ add_library(okay_engine
     src/Core/Backup.cpp
     src/Core/AssetManager.cpp
     src/Core/ImportSettings.cpp
+    src/Core/ImportSidecar.cpp
     src/Core/AssetDatabase.cpp
     src/Core/AssetDatabaseDeps.cpp
     src/Core/AssetDatabaseSearch.cpp

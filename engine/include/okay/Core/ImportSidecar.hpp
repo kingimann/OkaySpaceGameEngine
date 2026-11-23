@@ -1,6 +1,6 @@
 #pragma once
 // Reads the import settings the editor stores next to an asset (`<asset>.okaymeta`) for the few importers that use
-// them. Header only, no asset database needed: a missing or unreadable meta means "no settings".
+// them. No asset database needed (ImportSidecar.cpp): a missing or unreadable meta means "no settings".
 //   * texture `maxSize`: the longest side a texture is loaded at (0 = no limit). Used by the software renderer's
 //     texture cache, so the editor and a built game agree.
 //   * texture `filter` / `wrap` / `mipmaps` / `anisotropy`: how the renderers sample the picture. The full set of texture
@@ -11,11 +11,17 @@
 // * texture `compress` (with `sRGB`, `mipmaps`, `maxSize`): the GPU renderers upload a block-compressed copy kept in the
 //   import cache (okay/Render/GpuTexture.hpp, gputex::Source). Editor: Import Settings > "Compress on the GPU".
 // Audio `loadMode` and `forceMono` are read by the audio loader (quality is kept for old files and not applied).
+//
+// One reader: the sidecar is read the way the asset database reads it, through ImportSettings::FromPairs (values
+// unescaped, older layouts migrated by the same steps, so v1's `maxsize`, `mips`, `nearest`, `linear`, `stream`
+// and `mono` are understood without a second copy of those renames here). The result is cached per file and
+// re-read when the file's time or size changes, so the hot loaders pay one file-status call, not a parse.
 #include "okay/Graphics/Image.hpp"
+#include "okay/Core/ImportSettings.hpp"
 
 #include <cctype>
 #include <cstdlib>
-#include <fstream>
+#include <fstream>   // kept for files that relied on this header for it
 #include <sstream>
 #include <string>
 
@@ -24,26 +30,26 @@ namespace okay {
 /// Area-weighted shrink to a longest side of at most `maxSide` (defined in ThumbnailCache.cpp, linked with the engine).
 Image BoxDownscale(const Image& src, int maxSide);
 
-/// The value of `set <key> <value>` in `<assetPath>.okaymeta` for an asset of type `importer`, or "" when absent.
-inline std::string ReadImportSetting(const std::string& assetPath, const char* importer, const char* key) {
-    std::ifstream in(assetPath + ".okaymeta", std::ios::binary);
-    if (!in) return {};
-    std::string line;
-    bool right = false;
-    std::string want = std::string("set ") + key + " ";
-    std::string found;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.rfind("importer ", 0) == 0) right = line.compare(9, std::string(importer).size(), importer) == 0;
-        else if (right && line.compare(0, want.size(), want) == 0) found = line.substr(want.size());
-    }
-    return found;
-}
+/// What `<assetPath>.okaymeta` says for one importer kind.
+struct ImportSidecar {
+    bool found = false;              ///< the file has an `importer <kind>` block
+    ImportSettings settings;         ///< typed, migrated and clamped (the kind's defaults when not found)
+    ImportSettings::Pairs pairs;     ///< the block's `set` lines after migration, unescaped, before any range clamp
+};
+
+/// The sidecar of `assetPath` for `kind` (Texture, Model or Audio), from a small per-file cache (ImportSidecar.cpp).
+/// Safe to call from loader threads.
+ImportSidecar ReadImportSidecar(const std::string& assetPath, AssetType kind);
+/// Forget every cached sidecar (tests, or a tool that rewrote metas within one file-time tick).
+void ClearImportSidecarCache();
+
+/// The value of `set <key> <value>` in `<assetPath>.okaymeta` for an asset of type `importer` ("texture", "model",
+/// "audio"), after migration to the current layout and unescaping; "" when absent. Keys match in any case.
+std::string ReadImportSetting(const std::string& assetPath, const char* importer, const char* key);
 
 /// Texture `maxSize` from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
 inline int TextureImportMaxSize(const std::string& imagePath) {
-    std::string v = ReadImportSetting(imagePath, "texture", "maxSize");
-    if (v.empty()) v = ReadImportSetting(imagePath, "texture", "maxsize");   // the older layout
+    const std::string v = ReadImportSetting(imagePath, "texture", "maxSize");
     if (v.empty()) return 0;
     const int n = std::atoi(v.c_str());
     return n >= 32 && n <= 16384 ? n : 0;
@@ -58,7 +64,7 @@ inline float ModelImportScale(const std::string& modelPath) {
 }
 
 /// How a texture is sampled. A missing sidecar, or a missing key, gives the renderer's long-standing look
-/// (smooth, mipmapped, repeating). Older layouts' words ("nearest", "linear", "mips") are understood too.
+/// (smooth, mipmapped, repeating). Older layouts' words ("nearest", "linear", "mips") are migrated by ImportSettings.
 struct TextureSampling {
     enum Filter { Point = 0, Bilinear = 1, Trilinear = 2 };
     enum Wrap { Repeat = 0, Clamp = 1, Mirror = 2 };
@@ -71,19 +77,15 @@ struct TextureSampling {
 inline TextureSampling TextureImportSampling(const std::string& imagePath) {
     TextureSampling t;
     if (imagePath.empty() || imagePath[0] == '@' || imagePath.rfind("proc:", 0) == 0) return t;
-    auto low = [](std::string s) { for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
-    const std::string f = low(ReadImportSetting(imagePath, "texture", "filter"));
-    if (f == "point" || f == "nearest") t.filter = TextureSampling::Point;
-    else if (f == "bilinear" || f == "linear") t.filter = TextureSampling::Bilinear;
-    else if (f == "trilinear") t.filter = TextureSampling::Trilinear;
-    const std::string w = low(ReadImportSetting(imagePath, "texture", "wrap"));
-    if (w == "clamp") t.wrap = TextureSampling::Clamp;
-    else if (w == "mirror") t.wrap = TextureSampling::Mirror;
-    else if (w == "repeat") t.wrap = TextureSampling::Repeat;
-    std::string m = ReadImportSetting(imagePath, "texture", "mipmaps");
-    if (m.empty()) m = ReadImportSetting(imagePath, "texture", "mips");
-    m = low(m);
-    if (m == "0" || m == "false" || m == "off") t.mipmaps = false;
+    const ImportSidecar sc = ReadImportSidecar(imagePath, AssetType::Texture);
+    if (!sc.found) return t;
+    const TextureImportSettings& s = sc.settings.texture;
+    t.filter = s.filter == TextureImportSettings::Filter::Point ? TextureSampling::Point
+             : s.filter == TextureImportSettings::Filter::Bilinear ? TextureSampling::Bilinear : TextureSampling::Trilinear;
+    t.wrap = s.wrap == TextureImportSettings::Wrap::Clamp ? TextureSampling::Clamp
+           : s.wrap == TextureImportSettings::Wrap::Mirror ? TextureSampling::Mirror : TextureSampling::Repeat;
+    t.mipmaps = s.mipmaps;
+    // anisotropy is a texture-only key the typed settings do not carry yet; read it the same way, from the same file
     const std::string a = ReadImportSetting(imagePath, "texture", "anisotropy");
     if (!a.empty()) { const int n = std::atoi(a.c_str()); t.anisotropy = n < 1 ? 1 : n > 16 ? 16 : n; }
     if (t.filter != TextureSampling::Trilinear) t.anisotropy = 1;   // anisotropic filtering goes with trilinear
@@ -100,14 +102,14 @@ struct ModelImportOptions {
 
 inline ModelImportOptions ReadModelImportOptions(const std::string& modelPath) {
     ModelImportOptions o;
-    auto low = [](std::string s) { for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
-    const std::string n = low(ReadImportSetting(modelPath, "model", "normals"));
-    if (n == "calculate") o.normals = ModelImportOptions::Calculate;
-    else if (n == "flat") o.normals = ModelImportOptions::Flat;
-    const std::string a = ReadImportSetting(modelPath, "model", "smoothingAngle");
+    const ImportSidecar sc = ReadImportSidecar(modelPath, AssetType::Model);
+    if (!sc.found) return o;
+    const ModelImportSettings& m = sc.settings.model;
+    o.normals = m.normals == ModelImportSettings::Normals::Calculate ? ModelImportOptions::Calculate
+              : m.normals == ModelImportSettings::Normals::Flat ? ModelImportOptions::Flat : ModelImportOptions::Import;
+    const std::string a = ReadImportSetting(modelPath, "model", "smoothingAngle");   // out of range: ignored, as before
     if (!a.empty()) { const float v = static_cast<float>(std::atof(a.c_str())); if (v >= 0.0f && v <= 180.0f) o.smoothingAngle = v; }
-    const std::string ia = low(ReadImportSetting(modelPath, "model", "importAnimations"));
-    if (ia == "0" || ia == "false" || ia == "off") o.importAnimations = false;
+    o.importAnimations = m.importAnimations;
     return o;
 }
 
@@ -131,12 +133,10 @@ inline bool ImportFlagOn(const std::string& v) {
 
 inline AudioImportOptions ReadAudioImportOptions(const std::string& audioPath) {
     AudioImportOptions o;
-    const std::string mode = ImportLower(ReadImportSetting(audioPath, "audio", "loadMode"));
-    if (!mode.empty()) o.stream = mode == "stream";
-    else o.stream = ImportFlagOn(ReadImportSetting(audioPath, "audio", "stream"));
-    std::string mono = ReadImportSetting(audioPath, "audio", "forceMono");
-    if (mono.empty()) mono = ReadImportSetting(audioPath, "audio", "mono");
-    o.forceMono = ImportFlagOn(mono);
+    const ImportSidecar sc = ReadImportSidecar(audioPath, AssetType::Audio);
+    if (!sc.found) return o;
+    o.stream = sc.settings.audio.loadMode == AudioImportSettings::LoadMode::Stream;
+    o.forceMono = sc.settings.audio.forceMono;
     return o;
 }
 

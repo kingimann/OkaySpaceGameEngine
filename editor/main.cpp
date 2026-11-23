@@ -2272,6 +2272,15 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > Experimental sets the variable before main() reads anything)
+#ifdef OKAY_HAVE_OKAYUI
+    static const bool item = okayuibackend::DevMode(std::getenv("OKAY_UI_CODEEDIT"));
+    return UseOkayUIBackend() || item;
+#else
+    return false;
+#endif
+}
+bool OkayUIInputOn() { return UseOkayUIBackend() || UseOkayUICodeEdit(); }
 bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
     static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
@@ -16596,7 +16605,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (!UseOkayUIBackend() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
+            if (!UseOkayUICodeEdit() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -58423,7 +58432,7 @@ int main(int argc, char** argv) {
             // over the next frames, so at a low frame rate a letter typed into an OkayUI search field reached the editor's shortcuts
             // after a click had moved the keyboard away ("S Health" typed, the row clicked: the "h" hid the object; stage 9).
             // Modifier keys still go (Ctrl, Shift and Alt stay right in Dear ImGui), and Ctrl+P, which plays from any field.
-            if (UseOkayUIBackend() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
+            if (OkayUIInputOn() && OkayUI::WantsTextInput() && (e.type == EvT::TextInput || e.type == EvT::KeyDown)) {
                 const PKey k = e.type == EvT::KeyDown ? e.key : PKey::Unknown;
                 const bool modifier = k == PKey::LCtrl || k == PKey::RCtrl || k == PKey::LShift || k == PKey::RShift || k == PKey::LAlt ||
                                       k == PKey::RAlt || k == PKey::LGui || k == PKey::RGui;
@@ -58829,14 +58838,14 @@ int main(int argc, char** argv) {
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
                 const bool left = uin.mouseDown;
-                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const bool keys = OkayUIInputOn() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
                 // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
                 // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
-                const bool held = UseOkayUIBackend() && !keys && !io.WantTextInput;
+                const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
                 const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
-                if (UseOkayUIBackend()) {
+                if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
                     else if (held) {
@@ -59043,7 +59052,7 @@ int main(int argc, char** argv) {
         const bool codeKeys = g_scriptCodeOwnsKeys; g_scriptCodeOwnsKeys = false;   // set again by this frame's Render
         bool okayTyping = false;
 #ifdef OKAY_HAVE_OKAYUI
-        okayTyping = UseOkayUIBackend() && OkayUI::WantsTextInput();
+        okayTyping = OkayUIInputOn() && OkayUI::WantsTextInput();
 #endif
         if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || codeKeys || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
@@ -59820,8 +59829,18 @@ int main(int argc, char** argv) {
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
 #ifdef OKAY_HAVE_OKAYUI
-        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+        if (OkayUIInputOn() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
+            // The input method's candidate window goes where the OkayUI field or code editor says its caret is (OkayUI draws in the
+            // main window's own pixels; ImGui's positions are desktop positions with the multi-window viewports).
+            const OkayUI::ImeRect ime = OkayUI::GetImeRect();
+            if (ime.valid) {
+                const ImGuiViewport* mvp = ImGui::GetMainViewport();
+                GImGui->PlatformImeData.InputPos = ImVec2(mvp->Pos.x + ime.caret.x, mvp->Pos.y + ime.caret.y);
+                GImGui->PlatformImeData.InputLineHeight = ime.caret.h;
+                GImGui->PlatformImeData.ViewportId = mvp->ID;
+                GImGui->PlatformImeData.WantVisible = true;
+            }
             ImGui::SetNextFrameWantCaptureKeyboard(true);
             if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }

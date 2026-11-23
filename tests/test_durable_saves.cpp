@@ -173,7 +173,7 @@ int main() {
         s.Start();
         const std::string sceneText = SceneSerializer::Serialize(s);
         auto hand = [&](const std::string& slot, const std::string& head, const std::string& state) {
-            WriteText(SaveGame::SlotPath(slot), head + "--scene--\n" + sceneText + "--state--\n" + state);
+            WriteText(SaveGame::LegacySlotPath(slot), head + "--scene--\n" + sceneText + "--state--\n" + state);   // older .okaygame files
         };
         std::string err;
 
@@ -213,7 +213,7 @@ int main() {
         Save::Clear();
         Save::SetString("tail", "ends\r");
         CHECK(SaveGame::Save(s, "r", "label\r", &err));
-        CHECK(SaveGame::Info("r").label == "label\r" && SaveGame::Info("r").version == SaveGame::kFormatVersion);
+        CHECK(SaveGame::Info("r").label == "label\r" && !SaveGame::Info("r").legacyFile);   // a new save is a store slot
         Save::SetString("tail", "changed");
         CHECK(SaveGame::LoadNow(s, "r", &err));
         CHECK(Save::GetString("tail") == "ends\r");
@@ -238,7 +238,7 @@ int main() {
         bad.replace(bad.find("second"), 6, "SECOND");
         WriteText(SaveGame::SlotPath("r"), bad);
         Save::SetString("tail", "changed");
-        CHECK(SaveGame::Info("r").label == "SECOND");         // header only: no checksum check
+        CHECK(SaveGame::Info("r").fromBackup && SaveGame::Info("r").label == "label\r");   // the header has its own checksum: the .bak's values show
         CHECK(SaveGame::LoadNow(s, "r", &err));
         CHECK(SaveGame::LastLoadUsedBackup());
         CHECK(Contains(err, "backup"));
@@ -259,7 +259,7 @@ int main() {
         // Info reads only the head of the file.
         std::string huge = "okaygame 1\nlabel\thead\nsavedAt\t9\n--scene--\n";
         for (int i = 0; i < 20000; ++i) huge += "garbage line that is never parsed\n";
-        WriteText(SaveGame::SlotPath("huge"), huge);
+        WriteText(SaveGame::LegacySlotPath("huge"), huge);
         CHECK(SaveGame::Info("huge").label == "head" && SaveGame::Info("huge").savedAt == 9);
     }
     Save::SetBaseDir("");

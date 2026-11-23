@@ -27,6 +27,11 @@ extern float g_uiScale;            // the editor's UI scale (1.0 = 100%)
 bool UseOkayUIBackend();
 // The Inspector drawn by OkayUI (preview, off by default): the backend above plus OKAY_DEV or OKAY_UI_INSPECTOR (Settings > Experimental).
 bool UseOkayUIInspector();
+// The Script Editor's code drawn by our own OkayUI::CodeEdit instead of the vendored ImGuiColorTextEdit (off by default): the backend
+// above, or OKAY_UI_CODEEDIT=1 (Settings > Experimental "Our own code editor"). Works with the Dear ImGui backend too.
+bool UseOkayUICodeEdit();
+// OkayUI gets the mouse over its rectangles and the keys while one of its fields has the keyboard: the OkayUI backend, or the code editor above.
+bool OkayUIInputOn();
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::Region& OkayUIRegion();   // where the hosted panel is, for the mouse (main.cpp)
 #endif

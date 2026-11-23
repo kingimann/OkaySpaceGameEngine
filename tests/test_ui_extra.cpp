@@ -140,8 +140,8 @@ int main() {
         s.Start();
         CHECK_NEAR(sc->VM()->GetGlobal("saved").AsFloat(), 1.0f, 1e-4f);
         CHECK_NEAR(sc->VM()->GetGlobal("existed").AsFloat(), 1.0f, 1e-4f);
-        CHECK(std::ifstream("saves/utest.okaygame").good());
-        std::remove("saves/utest.okaygame");
+        CHECK(std::ifstream("saves/utest.okayslot").good());   // SaveGame writes the framework's slot files
+        std::remove("saves/utest.okayslot");
     }
 
     // --- Scroll View: owning lookup, clamped scroll, child offset, save -

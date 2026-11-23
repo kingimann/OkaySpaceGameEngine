@@ -37,6 +37,8 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
         add_test(NAME dup_lint_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_dup_lint.py)
+        # scripts/integration_merge.py: all open PRs merged together (docs/process/collaboration.md "Integration check").
+        add_test(NAME integration_merge COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/integration_merge.py --self-test)
     endif()
 endif()
 
@@ -1771,6 +1773,21 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     endif()
     target_include_directories(test_okayui_host_layering PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
     add_test(NAME okayui_host_layering COMMAND test_okayui_host_layering)
+    # The Script Editor's OkayUI code inside a Dear ImGui window, in ImGui's draw order (OkayUI::BeginCapture, shared/OkayUIImGuiEmbed.hpp):
+    # an ImGui popup over the code is drawn over it. Dear ImGui and OkayUI headless, one software rasteriser.
+    add_executable(test_okayui_codeedit_imgui test_okayui_codeedit_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptEditorCodeEdit.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_codeedit_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_codeedit_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_codeedit_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_codeedit_imgui COMMAND test_okayui_codeedit_imgui)
+    set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
@@ -3008,6 +3025,11 @@ add_test(NAME save_hardening COMMAND test_save_hardening)
 add_executable(test_save_framework test_save_framework.cpp)
 target_link_libraries(test_save_framework PRIVATE okay::engine)
 add_test(NAME save_framework COMMAND test_save_framework)
+
+# One store for whole-game saves: SaveGame is the save framework's whole-scene mode; old .okaygame files still load (Grok #422 item 1).
+add_executable(test_save_merge test_save_merge.cpp)
+target_link_libraries(test_save_merge PRIVATE okay::engine)
+add_test(NAME save_merge COMMAND test_save_merge)
 
 # Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
 # checkpoints, quick save, autosave ring, continue.

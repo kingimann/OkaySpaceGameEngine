@@ -176,6 +176,19 @@ class Collisions(unittest.TestCase):
         r.write("scripts/x.py", "print(2)\n"); r.commit("more"); sh(r.d, "update-ref", "refs/remotes/origin/claude2/b", "HEAD"); sh(r.d, "checkout", "-q", "main")
         self.assertEqual(self.rep()["overlaps"], [])
 
+    def test_stacked_after_the_lower_branch_moved_on(self):
+        """Bug found by CI on 2026-11-22 (#1131/#1134): b was built on an earlier commit of a; then a got more commits
+        (main merged in). Neither tip is an ancestor of the other any more, but they still share unmerged commits:
+        a stack, not a collision."""
+        r = self.r
+        r.branch("claude/a", {"engine/src/Components/Foo.cpp": r.edited(10, "from a")})
+        sh(r.d, "checkout", "-q", "-b", "tmp-b", "origin/claude/a")
+        r.write("engine/src/Components/Foo.cpp", r.edited(10, "from a") .replace("line 20", "b line 20")); r.commit("b on a")
+        sh(r.d, "update-ref", "refs/remotes/origin/claude/b", "HEAD")
+        sh(r.d, "checkout", "-q", "-b", "tmp-a2", "origin/claude/a"); r.write("docs/x.md", "more\n"); r.commit("a moves on")
+        sh(r.d, "update-ref", "refs/remotes/origin/claude/a", "HEAD"); sh(r.d, "checkout", "-q", "main")
+        self.assertEqual(self.rep()["overlaps"], [])
+
     def test_claims_stale_and_conflict(self):
         r = self.r
         r.branch("claude/mine", {"engine/src/Components/Foo.cpp": r.edited(5, "x")})

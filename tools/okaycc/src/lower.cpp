@@ -462,6 +462,97 @@ private:
     }
     int material(Val v) { return asReg(v.op); }
 
+    // An integer constant expression of a global initializer (ISO C 6.6, C++ [expr.const]):
+    // literals, unary and binary operators and casts to an integer type.
+    bool constInt(const Expr& e, std::int64_t& out) {
+        switch (e.kind) {
+        case Expr::Kind::Int:
+        case Expr::Kind::Char:
+            out = static_cast<std::int64_t>(e.ival);
+            return true;
+        case Expr::Kind::Unary: {
+            std::int64_t v = 0;
+            if (e.kids.empty() || !e.kids[0] || !constInt(*e.kids[0], v)) return false;
+            if (e.text == "-") out = static_cast<std::int64_t>(0 - static_cast<std::uint64_t>(v));
+            else if (e.text == "+") out = v;
+            else if (e.text == "~") out = ~v;
+            else if (e.text == "!") out = v == 0;
+            else return false;
+            return true;
+        }
+        case Expr::Kind::Bin: {
+            std::int64_t x = 0, y = 0;
+            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1]) return false;
+            if (!constInt(*e.kids[0], x) || !constInt(*e.kids[1], y)) return false;
+            if (e.text == "&&") { out = x && y; return true; }
+            if (e.text == "||") { out = x || y; return true; }
+            return fold(e.text, x, y, out);
+        }
+        case Expr::Kind::Cast: {
+            std::int64_t v = 0;
+            if (e.kids.empty() || !e.kids[0] || !e.ty || !isIntish(*e.ty) || !constInt(*e.kids[0], v)) return false;
+            int w = sizeOf(e.ty.get());
+            if (e.ty->kind == Type::Kind::Bool) v = v != 0;
+            else if (w > 0 && w < 8) {
+                std::uint64_t mask = (std::uint64_t{1} << (8 * w)) - 1;
+                std::uint64_t u = static_cast<std::uint64_t>(v) & mask;
+                if (!e.ty->unsign && (u >> (8 * w - 1)) & 1u) u |= ~mask;
+                v = static_cast<std::int64_t>(u);
+            }
+            out = v;
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+    // A floating constant: a literal (ival holds its float or double bits), an integer constant,
+    // a negation or a cast of one.
+    bool fpConst(const Expr& e, double& out) {
+        if (e.kind == Expr::Kind::Float) {
+            if (e.litRank == 1) {
+                auto b32 = static_cast<std::uint32_t>(e.ival);
+                float f = 0;
+                std::memcpy(&f, &b32, 4);
+                out = f;
+            } else {
+                std::uint64_t b64 = e.ival;
+                std::memcpy(&out, &b64, 8);
+            }
+            return true;
+        }
+        if (e.kind == Expr::Kind::Unary && e.text == "-" && !e.kids.empty() && e.kids[0]) {
+            if (!fpConst(*e.kids[0], out)) return false;
+            out = -out;
+            return true;
+        }
+        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0] && e.ty && isFp(*e.ty))
+            return fpConst(*e.kids[0], out);
+        std::int64_t v = 0;
+        if (constInt(e, v)) {
+            out = static_cast<double>(v);
+            return true;
+        }
+        return false;
+    }
+    void foldGlobalInit(std::unique_ptr<Expr>& init) {
+        if (!init) return;
+        if (init->kind == Expr::Kind::Brace) {
+            for (auto& k : init->kids) foldGlobalInit(k);
+            return;
+        }
+        if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) return;
+        std::int64_t v = 0;
+        if (!constInt(*init, v)) return;
+        auto lit = std::make_unique<Expr>();
+        lit->kind = Expr::Kind::Int;
+        lit->ival = static_cast<std::uint64_t>(v);
+        lit->line = init->line;
+        lit->col = init->col;
+        lit->file = init->file;
+        init = std::move(lit);
+    }
+
     bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
@@ -612,14 +703,35 @@ private:
             return;
         }
         inferBound(d);
+        if (d.type->kind != Type::Kind::Float && d.type->kind != Type::Kind::Double) foldGlobalInit(d.init);
         Sym s;
         s.global = true;
         s.gname = d.asmName.empty() ? d.name : d.asmName;
         describe(s, d.type.get());
         Global g;
         g.name = s.gname;
+        g.localSym = d.isStatic;
         bool brace = d.init && d.init->kind == Expr::Kind::Brace;
         bool strArr = d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array;
+        double fv = 0;
+        if (!s.array && !s.agg && d.init && isFp(*d.type) && fpConst(*d.init, fv)) {
+            // A float or double global with a constant initializer: the IEEE 754 bits.
+            if (d.type->kind == Type::Kind::Float) {
+                float f = static_cast<float>(fv);
+                std::uint32_t b32 = 0;
+                std::memcpy(&b32, &f, 4);
+                g.size = 4;
+                putInt(g.bytes, static_cast<std::int64_t>(b32), 4);
+            } else {
+                std::uint64_t b64 = 0;
+                std::memcpy(&b64, &fv, 8);
+                g.size = 8;
+                putInt(g.bytes, static_cast<std::int64_t>(b64), 8);
+            }
+            mod_.globals.push_back(std::move(g));
+            globals_[d.name] = s;
+            return;
+        }
         if ((s.array || s.agg) && (brace || strArr)) {
             g.size = sizeOf(d.type.get());
             if (g.size < 0) g.size = 0;
@@ -654,6 +766,7 @@ private:
             for (std::size_t k = 0; k < d.vt.size(); ++k)
                 if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
             g.rodata = true;
+            g.weakSym = d.isInline;
         }
         mod_.globals.push_back(std::move(g));
         globals_[d.name] = s;
@@ -961,6 +1074,47 @@ private:
         int dst = fresh();
         emitBin(Inst::Op::Add, dst, base, Operand::number(off));
         return Operand::vreg(dst);
+    }
+    void zeroMem(Operand dst, int sz) {
+        int off = 0;
+        while (off < sz) {
+            int n = sz - off >= 8 ? 8 : 1;
+            storeBits(addAddr(dst, off), Operand::number(0), n);
+            off += n;
+        }
+    }
+    // A brace initializer of a local array or struct; a nested brace initializes a nested
+    // array or struct (ISO C 6.7.9).
+    void initLocalBrace(Operand base, const Type* t, const Expr& init, int off) {
+        if (!t) return;
+        if (t->kind == Type::Kind::Array && t->inner) {
+            int es = sizeOf(t->inner.get());
+            for (std::size_t i = 0; i < init.kids.size(); ++i) {
+                if (!init.kids[i]) continue;
+                int at = off + static_cast<int>(i) * es;
+                if (init.kids[i]->kind == Expr::Kind::Brace) {
+                    initLocalBrace(base, t->inner.get(), *init.kids[i], at);
+                    continue;
+                }
+                Val v = lowerExpr(*init.kids[i]);
+                int w = es > 8 ? 8 : es;
+                Operand bits = w < 8 ? narrow(v.op, w, t->inner->unsign) : v.op;
+                storeBits(addAddr(base, at), bits, w);
+            }
+        } else if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
+            auto fields = layoutOf(t);
+            for (std::size_t i = 0; i < init.kids.size() && i < fields.size(); ++i) {
+                if (!init.kids[i]) continue;
+                if (init.kids[i]->kind == Expr::Kind::Brace) {
+                    const Type* ft = i < t->params.size() ? t->params[i].type.get() : nullptr;
+                    initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
+                    continue;
+                }
+                Val v = lowerExpr(*init.kids[i]);
+                int w = fields[i].width > 8 ? 8 : fields[i].width;
+                storeBits(addAddr(base, off + fields[i].offset), v.op, w);
+            }
+        }
     }
     void copyMem(Operand dst, Operand src, int sz) {
         int off = 0;
@@ -2145,24 +2299,9 @@ private:
             s.reg = addr;
             if (!d.name.empty()) scopes_.back()[d.name] = s;
             if (d.init && d.init->kind == Expr::Kind::Brace) {
-                if (d.type->kind == Type::Kind::Array && d.type->inner) {
-                    int es = sizeOf(d.type->inner.get());
-                    for (std::size_t i = 0; i < d.init->kids.size(); ++i) {
-                        if (!d.init->kids[i]) continue;
-                        Val v = lowerExpr(*d.init->kids[i]);
-                        int w = es > 8 ? 8 : es;
-                        Operand bits = w < 8 ? narrow(v.op, w, d.type->inner->unsign) : v.op;
-                        storeBits(addAddr(Operand::vreg(addr), static_cast<int>(i) * es), bits, w);
-                    }
-                } else if (d.type->kind == Type::Kind::Struct || d.type->kind == Type::Kind::Union) {
-                    auto fields = layoutOf(d.type.get());
-                    for (std::size_t i = 0; i < d.init->kids.size() && i < fields.size(); ++i) {
-                        if (!d.init->kids[i]) continue;
-                        Val v = lowerExpr(*d.init->kids[i]);
-                        int w = fields[i].width > 8 ? 8 : fields[i].width;
-                        storeBits(addAddr(Operand::vreg(addr), fields[i].offset), v.op, w);
-                    }
-                }
+                // Elements and fields without an initializer are zero (ISO C 6.7.9p21).
+                zeroMem(Operand::vreg(addr), bytes);
+                initLocalBrace(Operand::vreg(addr), d.type.get(), *d.init, 0);
             } else if (d.init && d.type->kind == Type::Kind::Struct) {
                 // A struct initialized from another struct or from a call: copy the bytes.
                 Sym* me = find(d.name);
@@ -2362,6 +2501,7 @@ private:
         fn_ = Function();
         fn_.name = d.asmName.empty() ? d.name : d.asmName;
         fn_.localSym = d.isStatic;
+        fn_.weakSym = d.isInline && !d.isStatic;
         fn_.params = d.type ? static_cast<int>(d.type->params.size()) : 0;
         nextReg_ = 0;
         scopes_.clear();

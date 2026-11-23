@@ -268,7 +268,7 @@ int main() {
     }
 
     checkErr("missing semi", "int x\n", "';'");
-    checkErr("not in subset", "inline x;\n", "not in this subset");
+    checkErr("not in subset", "_Atomic x;\n", "not in this subset");  // inline is accepted since round 16
     checkErr("bad paren", "int f( {\n}\n", "')'");
 
     okaycc_test::gPass += gOk;

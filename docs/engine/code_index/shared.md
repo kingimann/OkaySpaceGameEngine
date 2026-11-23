@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 66 headers, 960 names.
+Back to the [code index](../code_index.md). 67 headers, 962 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -750,11 +750,11 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 ## `shared/OkayUIHost.hpp`
 
 - `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 259: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `WantsKeyboard` function, line 296: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 320: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 347: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 425: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `Region` class, line 283: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `WantsKeyboard` function, line 320: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 344: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 371: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 449: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -786,6 +786,11 @@ Back to the [code index](../code_index.md). 66 headers, 960 names.
 - `LoadFile` function, line 118
 - `SaveFileAtomic` function, line 129: Write through a temporary file and rename it over the old one, so a crash leaves either the old state or the new one. False on any failure (the old
 - `StateSaver` class, line 150: Saves a state at most every 'intervalMs' while it keeps changing, and once more when asked to flush (the window is closing). The clock is passed in, so a
+
+## `shared/OkayUIImGuiEmbed.hpp`
+
+- `ImGuiEmbed` class, line 26
+- `SharedImGuiEmbed` function, line 130: The one embed the editor's hosted OkayUI widgets share (one set of textures).
 
 ## `shared/OkayUIImGuiMap.hpp`
 

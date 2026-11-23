@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -88,6 +90,20 @@ inline void MutateText(std::string& s, const std::string& alphabet) {
 inline long Iters(long def) {
     if (const char* e = std::getenv("OKAY_READER_FUZZ_ITERS")) return std::atol(e);
     return def;
+}
+
+// True when one of the model's notes mentions `what`.
+inline bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
+
+// When OKAY_MODEL_CORPUS is set, add each of the real files `names` (paths inside the corpus) that can be read to `seeds`,
+// saying which were added.
+inline void AddCorpusSeeds(std::vector<std::string>& seeds, std::initializer_list<const char*> names) {
+    const char* c = std::getenv("OKAY_MODEL_CORPUS");
+    if (!c) return;
+    for (const char* name : names) {
+        const std::string s = Slurp((std::filesystem::path(c) / name).string());
+        if (!s.empty()) { seeds.push_back(s); std::printf("  real file %s added (%zu bytes)\n", name, s.size()); }
+    }
 }
 
 } // namespace hostile

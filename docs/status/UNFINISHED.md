@@ -154,6 +154,8 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
+- ActiveRagdoll on the physics core joints (after own-physics-engine / physics-no-classic lands): `XpbdRagdoll` is a second rigid-body and joint solver (a copy) and will be deleted; ActiveRagdoll moves onto the core's Ball / ConeTwist `Joint3D` drives through a `CoreRagdollPhysics` backend behind `dyn::RagdollPhysics` (same fields as `dyn::JointDrive`). Nothing new is built on `XpbdRagdoll` meanwhile. Plan in [active_ragdoll.md](../gameplay/active_ragdoll.md#the-physics-seam-and-the-plan-for-the-physics-core). Also not done: ragdoll poses are not sent over the network
+- Active Ragdoll, our own dynamic character (first version 2026-11-22, branch `claude2/active-ragdoll`, [active_ragdoll.md](../gameplay/active_ragdoll.md)): limbs collide only with static colliders and terrain (no limb-to-limb or dynamic-body collisions until the new physics core's driven joints are behind `dyn::RagdollPhysics`); no walking while physical; get-up uses a helper force; stairs, slopes and imported rigs untested; never run on Windows or seen in the editor window
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
 - Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](../editor/editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches
@@ -216,7 +218,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 15. Editor
 
-| [15.10](../feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | no PR for the next split found (#577 changed about 280 lines of `main.cpp` for the layouts, the Script Editor find and replace... |
+| [15.10](../feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | approved by the owner, slowly by feature: map, order and done list in Part B of `docs/engine/modularization_plan.md` (steps and checks in its sections 4 and 5); move 1 (Build Game to `editor/BuildGame.*`) done; about 58.8k lines left |
 
 ### 16. Networking & multiplayer
 
@@ -232,7 +234,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 19. Docs, tests & code health
 
-| [19.4](../feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
+| [19.4](../feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-subsystem-boundaries-and-naming-engine-wide-modularization) | Splitting the largest files, subsystem boundaries and naming (engine-wide modularization) | Partial | audit and ranked plan in `docs/engine/modularization_plan.md`, target in `docs/engine/architecture.md` (2026-11-23); batches 1-5 next; CI checks described, not built; owner decisions in the plan's section 8 |
 | [19.5](../feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the "Now" table is dated 2026-10-26; the hardening list is now ticked from the code (`docs/online/anticheat.md`)... |
 
 ### 20. Asset management (Critical)

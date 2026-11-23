@@ -34,6 +34,7 @@
 namespace okay {
 
 using namespace HumanoidMotion;   // the bone indices (B_HIPS ...)
+using character_fp::OwnerCamera;
 
 void Character::SetOwnerArmActive(bool on) {
     if (m_ownerArm) m_ownerArm->active = on;

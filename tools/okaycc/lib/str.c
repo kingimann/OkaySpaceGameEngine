@@ -1,5 +1,5 @@
-int strlen(char *s) {
-    int n;
+unsigned long strlen(const char *s) {
+    unsigned long n;
     n = 0;
     while (s[n] != 0) n = n + 1;
     return n;

@@ -53,6 +53,8 @@ OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, MD2, MD3, Irrlicht meshes (`.
 **These formats will stop importing** when Assimp is removed, **unless their readers are written first** (the owner's rule is to
 write replacements, not to drop formats; the list, the difficulty of each and the order are in `docs/content/own_readers_remaining.md`):
 OGRE binary meshes and skeletons, OpenGEX, Quake III BSP, MDL (Quake, Half-Life, 3D GameStudio), SIB, Nendo (`.ndo`) and glTF 1.0
+(updated 2026-11-22: glTF 1.0, OpenGEX, Quake III BSP and MDL for Quake 1 and Half-Life 1 now have own readers, off by default;
+still without one: SIB, Nendo and 3D GameStudio MDL3/4/5/7)
 (updated 2026-11-15: AC3D, OGRE XML, XGL / ZGL, Irrlicht scenes, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX and LWS now have own readers,
 off by default; OpenGEX and MDL for Quake 1 and Half-Life 1 exist on the unmerged branch `claude/readers-e4`).
 (Not switched on in our Windows build, so nothing a user has today: M3D, USD, Unreal, IFC, Assimp binary, Cinema 4D.)
@@ -84,7 +86,8 @@ Until `<REMOVAL RELEASE>`, nothing changes: every format above still imports in 
 | Blender (`.blend`) | Own reader in progress, **off by default** (`OKAY_OWN_BLEND`) | Checked on 28 real files (Blender 2.41 to 2.93, all read) and compared with Assimp; modifiers, constraints, shape keys, vertex colours and zstd compression are not read and are named at import. No real Blender 3.x / 4.x file was available to test. |
 | OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, MD2, MD3, Irrlicht mesh, B3D, DirectX `.x`, Terragen `.ter` | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Each checked on every real file of its format in Assimp's test directory and compared with Assimp (`docs/content/model_corpus.md`); one page each (`docs/content/model_readers.md` ... `docs/content/model_readers.md`, `docs/content/model_readers.md`). |
 | AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, MDC, HMP, CSM, IQM, COB, Q3D, RAW, PMX, LWS / MOT | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Written, tested and read on the real files of Assimp's test folder where such files exist (Q3D, RAW, PMX and LWS have none); MDC, HMP, CSM, IQM and COB were not compared with Assimp; OGRE XML and Irrlicht scenes read less than Assimp (no skeleton, no animators). One page each (`docs/content/model_readers.md` ... `docs/content/model_readers.md`). |
-| OGRE binary, OpenGEX, Q3BSP, MDL, SIB, Nendo, glTF 1.0 | **Not yet** | To be written, in the order of `docs/content/own_readers_remaining.md`. Until then they would stop importing with Assimp. Nendo is a seam that refuses every file. |
+| glTF 1.0, OpenGEX, Q3BSP, MDL (Quake 1 / Half-Life 1) | Yes since 2026-11-22, **off by default** (`OKAY_OWN_GLTF1`, `_OPENGEX`, `_Q3BSP`, `_MDL`) | Read and compared with Assimp on the real files of Assimp's test folder (`docs/content/own_readers_speed.md`); one section each in `docs/content/model_readers.md`. |
+| OGRE binary, SIB, Nendo, 3D GameStudio MDL3/4/5/7 | **Not yet** | To be written, in the order of `docs/content/own_readers_remaining.md`. Until then they would stop importing with Assimp. Nendo is a seam that refuses every file. |
 
 Not part of the announcement, but a precondition (see `docs/third_party_removal_checklist.md`): the COLLADA and FBX
 defaults have been flipped under their own release notes, the 3DS question above is settled, and the owner has approved.

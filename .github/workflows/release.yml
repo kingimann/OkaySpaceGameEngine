@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     # A normal release takes ~11 min; never let a stuck download hold one for hours.
     # (Includes the last step, which waits for the Linux server build that runs beside this job.)
-    timeout-minutes: 60
+    timeout-minutes: 90   # build jobs are capped by memory (build-windows-dist.sh), so a cold build takes longer
     outputs:
       ver: ${{ steps.pkg.outputs.ver }}
     env:

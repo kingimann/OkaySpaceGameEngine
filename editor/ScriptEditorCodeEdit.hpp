@@ -20,6 +20,20 @@
 
 namespace scripteditor {
 
+/// The words of a script language as the Dear ImGui editor's LanguageDefinition lists them (editor/ScriptEditorWidget.hpp fills it
+/// from TextEditor::LanguageDefinition): keywords, type names, known names (built-ins: the identifiers with a tooltip), line comment
+/// starts and the block comment pair.
+struct LanguageWords {
+    std::vector<std::string> keywords, types, known, lineComments;
+    std::string blockStart, blockEnd;
+};
+
+/// TextEditor::Palette's 24 colours in TextEditor::PaletteIndex order (Default, Keyword, Number, String, CharLiteral, Punctuation,
+/// Preprocessor, Identifier, KnownIdentifier, PreprocIdentifier, Comment, MultiLineComment, Background, Cursor, Selection,
+/// ErrorMarker, Breakpoint, LineNumber, CurrentLineFill, CurrentLineFillInactive, CurrentLineEdge, TypeName, Function, Member),
+/// each 0xAABBGGRR like OkayUI.
+constexpr int kImGuiPaletteSize = 24;
+
 struct Coord {
     int mLine = 0, mColumn = 0;
     Coord() = default;
@@ -69,6 +83,12 @@ public:
     // ---- configuration ----
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
+    /// Colour with these words instead (the script's language: OkayScript or C#, Lua on the Lua branch), in the Dear ImGui editor's
+    /// order (a call before a known name). Kept across SetColorizerEnable(false / true).
+    void SetLanguage(const LanguageWords& words);
+    /// The Dear ImGui editor's palette (kImGuiPaletteSize colours, see above): text colours, background (also the gutter: one
+    /// background inside the frame), caret, selection, the error wash, the breakpoint wash, line numbers and the caret's line box.
+    void SetPaletteFromImGui(const unsigned* colors, int count);
     void SetUserTypes(const std::unordered_set<std::string>& types);
     /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
@@ -105,6 +125,8 @@ private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    OkayUI::CodeLanguage language_;             // what SetColorizerEnable(true) turns back on
+    std::vector<std::string> userTypes_;
     float offX_ = 0.0f, offY_ = 0.0f;
 };
 

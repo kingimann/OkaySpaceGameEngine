@@ -411,7 +411,7 @@ int main() {
         CHECK(oi.label == "Chapter 2" && oi.gameVersion == "1.4.2");
         CHECK(oi.fields.size() == 2 && oi.fields["difficulty"] == "hard\tmode" && oi.fields["place"] == "The Mine\n(deep)");
         CHECK(oi.thumbnail == Save::Resolve("saves/shot.png") && fs::exists(oi.thumbnail));
-        CHECK(oi.savedAtMs == oi.savedAt * 1000);
+        CHECK(oi.savedAt == oi.savedAtMs / 1000);   // the store keeps milliseconds
         CHECK(Contains(SaveGame::ThumbnailPath("opt"), "saves/opt.png"));
         bool inList = false;
         for (const auto& e : SaveGame::List()) if (e.slot == "opt") inList = e.gameVersion == "1.4.2" && e.fields.size() == 2;
@@ -433,10 +433,11 @@ int main() {
         WriteText(SaveGame::SlotPath("junk"), "hello\n");
         const SaveSlotInfo ji = SaveGame::Info("junk");
         CHECK(ji.exists && ji.corrupt && !ji.error.empty());
-        // A file cut short after its header: the header-only read shows it, the verified read flags it.
+        // A file cut short after its header: the header-only read still shows its values and flags it (the header
+        // records the payload size); the verified read and Check say why.
         const std::string whole = ReadText(SaveGame::SlotPath("plain"));
-        WriteText(SaveGame::SlotPath("cut"), whole.substr(0, whole.size() / 2));
-        CHECK(!SaveGame::Info("cut").corrupt && SaveGame::Info("cut").label == "Plain");
+        WriteText(SaveGame::SlotPath("cut"), whole.substr(0, whole.size() - 20));   // the payload loses its end
+        CHECK(SaveGame::Info("cut").corrupt && SaveGame::Info("cut").label == "Plain");
         CHECK(SaveGame::Info("cut", true).corrupt && Contains(SaveGame::Info("cut", true).error, "cut short"));
         CHECK(!SaveGame::Check("cut", &err) && Contains(err, "cut short"));
         CHECK(SaveGame::Check("plain") && !SaveGame::Check("nothing-here", &err) && Contains(err, "No save"));
@@ -456,7 +457,7 @@ int main() {
 
         // A slot from a newer build: listed and flagged, never loaded, and kept when saved over.
         const std::string future = "okaygame 99\nlabel\tfrom the future\nsavedAt\t4102444800\n--scene--\n--state--\n";
-        WriteText(SaveGame::SlotPath("future"), future);
+        WriteText(SaveGame::LegacySlotPath("future"), future);   // an older-format file from a newer build
         const SaveSlotInfo fi = SaveGame::Info("future");
         CHECK(fi.exists && fi.incompatible && !fi.corrupt && fi.label == "from the future" && Contains(fi.error, "newer"));
         bool sawFuture = false;
@@ -464,11 +465,11 @@ int main() {
         CHECK(sawFuture);
         CHECK(!SaveGame::LoadNow(s, "future", &err) && Contains(err, "newer"));
         CHECK(SaveGame::Save(s, "future", "now older", &err));
-        CHECK(ReadText(SaveGame::SlotPath("future") + ".newer.bak") == future);
+        CHECK(ReadText(SaveGame::LegacySlotPath("future") + ".newer.bak") == future);
         CHECK(SaveGame::Info("future").label == "now older" && !SaveGame::Info("future").incompatible);
         CHECK(SaveGame::Save(s, "future", "again", &err));              // the kept copy is not replaced by an older one
-        CHECK(ReadText(SaveGame::SlotPath("future") + ".newer.bak") == future);
-        CHECK(SaveGame::Delete("future") && !fs::exists(SaveGame::SlotPath("future") + ".newer.bak"));
+        CHECK(ReadText(SaveGame::LegacySlotPath("future") + ".newer.bak") == future);
+        CHECK(SaveGame::Delete("future") && !fs::exists(SaveGame::LegacySlotPath("future") + ".newer.bak"));
 
         // Newest first, damaged ones (no time) last.
         const auto list = SaveGame::List();
@@ -496,7 +497,7 @@ int main() {
 
         // A migration step that shortens the header line must not shift the parse (the play time
         // line right after it used to be read from the wrong offset and lost).
-        WriteText(SaveGame::SlotPath("mig"), "okaygame 1\nplayTime\t30\n--scene--\n" + SceneSerializer::Serialize(s) + "--state--\n");
+        WriteText(SaveGame::LegacySlotPath("mig"), "okaygame 1\nplayTime\t30\n--scene--\n" + SceneSerializer::Serialize(s) + "--state--\n");
         SaveGame::SetMigration(1, [](std::string& text, std::string*) { text.replace(0, 10, "okaygame"); return true; });
         Scene mig("mig");
         CHECK(SaveGame::LoadNow(mig, "mig", &err));

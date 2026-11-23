@@ -209,6 +209,7 @@ add_library(okay_engine
     src/Components/VoxelEdit.cpp
     src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
+    src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
     src/Components/PlayerView.cpp
     src/Components/PlayerController.cpp
@@ -217,6 +218,7 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/HumanoidActionsRuntime.cpp
     src/Animation/RagdollPhysics.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
@@ -282,6 +284,7 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIScenePass.cpp
     src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UIImageScale.cpp
@@ -315,6 +318,7 @@ add_library(okay_engine
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/BlendReaderBuild.cpp
     src/Render/BlendModifiers.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
@@ -397,6 +401,7 @@ add_library(okay_engine
     src/Testing/GoldenImage.cpp
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
+    src/Render/FbxSceneClips.cpp
     third_party/ufbx/ufbx.c
 )
 
@@ -811,7 +816,7 @@ target_sources(okay_engine PRIVATE
 )
 # ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
-target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp src/Scene/PrefabResolve.cpp)
 # Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
 # ---- Property reflection (docs/engine/properties.md) ----

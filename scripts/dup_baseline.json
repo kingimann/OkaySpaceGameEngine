@@ -275,7 +275,6 @@
    "engine/src/Render/ModelReaders.cpp": 2,
    "engine/src/Render/ReaderCommon.hpp": 1,
    "engine/src/Render/TextReaderUtil.hpp": 4,
-   "engine/src/Scene/PrefabTools.cpp": 1,
    "engine/src/Scene/Properties.cpp": 2,
    "engine/src/Scene/PropertyRegistry.cpp": 1,
    "engine/src/Scene/SceneSerializer.cpp": 1,

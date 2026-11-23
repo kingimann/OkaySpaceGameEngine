@@ -158,37 +158,12 @@ float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragg
 bool  g_inMenuBar = false;
 int   g_popupSubOpen = 0;   // open inline submenus inside a plain popup (EndMenu closes them)
 float g_barX = 0.0f, g_barY = 0.0f, g_barH = 0.0f;
-struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false;
-                bool keyMoved = false; };   // keyMoved: the arrows moved the highlight this frame (a scrolling list brings it into view)
 MenuKb g_menuKbs[16];
 MenuKb* kbSlot(int id) {
     for (auto& s : g_menuKbs) if (s.id == id) return &s;
     for (auto& s : g_menuKbs) if (s.id == 0) { s = MenuKb(); s.id = id; return &s; }
     g_menuKbs[0] = MenuKb(); g_menuKbs[0].id = id; return &g_menuKbs[0];   // table full: reuse the first slot
 }
-struct CurMenu {
-    bool  active = false;
-    int   menuId = 0;
-    float x = 0, w = 0;                          // dropdown left + width
-    float bx = 0, by = 0, bw = 0, bh = 0;        // the menu's button on the bar
-    float itemStartY = 0, itemY = 0;             // dropdown item cursor
-    float subX = 0, subY = 0, subW = 0, subH = 0;   // the open sub-menu's list this frame (a press inside it is not "outside")
-    struct MenuKb* kb = nullptr;                 // keyboard highlight state of this menu
-    int   n = 0;                                 // items seen so far this frame (the next item's ordinal)
-    unsigned long long mask = 0;                 // which of them are enabled
-    bool  activate = false;                      // Enter pressed for the highlighted item this frame
-    int   popupId = 0;                           // a sub-menu opened from a popup's row: that popup (picking an item closes it too)
-    // The list's rows: their height (0: rowH()) and where the label starts. A chain of sub-menus opened from a popup's row uses the
-    // popup's row height and padding (Dear ImGui's menu rows: one text line plus the item spacing), so it matches the popup.
-    float rowH = 0.0f, textInset = 10.0f;
-    bool  fromPopup = false;
-    // Kept inside the display: the list starts higher when last frame's height would run past the bottom; when it is taller than the
-    // display it shows the band [clipY0, clipY1) and scrolls by whole rows (the wheel over it, or the keyboard highlight).
-    float clipY0 = 0.0f, clipY1 = 0.0f;
-    float virtTop = 0.0f;                        // where row 0 would be (itemStartY minus the scroll)
-    float* heightSlot = nullptr;                 // the list's full height last frame
-    float* scrollSlot = nullptr;                 // its scroll offset in pixels
-};
 CurMenu g_curMenu;
 CurMenu g_menuStack[4];
 struct TabSel { int bar = 0; int sel = 0; };
@@ -279,26 +254,8 @@ bool  g_centerNext = false;       // CenterNextOnLine: the next item, on the lin
 float g_posX = 0.0f, g_posY = 0.0f;
 
 // Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
-struct ChildSave {
-    LayoutState lay;      // parent layout to restore
-    float rx, ry, rw, rh; // child region rect
-    float top;            // unscrolled content top (ry + pad)
-    float* scroll;        // persisted scroll offset
-    float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
-    float* autoH = nullptr;   // Child_AutoResizeY: where EndChild leaves the content height for the next frame
-    float* autoSlot = nullptr;   // main's flags form with Child_AutoResizeY: where EndChild stores the measured height plus the padding
-    float pad;            // above and below the content
-    float padX;           // left and right
-    bool  hovered;        // mouse over the region this frame
-    float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
-    float sbW = 10.0f;    // the scroll bar's width (StyleVar_ScrollbarSize when pushed)
-    bool sbPushed = false;    // ScrollbarSize was pushed when the child began (Dear ImGui's proportions)
-    bool sbInside = false;    // the bar sits inside the child's one-pixel outline (a pushed ScrollbarSize and Child_Borders)
-    bool  trim = false;          // the child began through BeginChild(id, size, childFlags): the gap after its last item does not count as content (no scroll bar for a few pixels)
-};
 ChildSave g_childStack[8];
 int       g_childTop = 0;
-constexpr float kScrollbarW = 10.0f;
 
 ColumnState g_col;
 
@@ -318,8 +275,6 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool exact;
-                  float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0; };   // the sub-menu lists opened from its rows this frame (a press there is inside)
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
@@ -337,12 +292,6 @@ struct DragDrop {
 DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
-struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
-                 bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0; char title[64] = {0};   // title: for WindowRef::Name
-                 unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
-                 float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
-                 float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
-               };
 WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
@@ -381,7 +330,6 @@ double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // fo
 bool   g_dblClick = false;                        // this frame's press was the second of a double click
 bool   g_nextWinFocus = false;                    // SetNextWindowFocus: the next ImGui-style Begin takes the focus
 int    g_nextFrameKbd = -1;                       // SetNextFrameWantCaptureKeyboard: -1 none, else 0 / 1 for the next BeginFrame
-struct NextCollapse { bool set = false; bool value = false; int cond = 0; };
 NextCollapse g_nextCollapse;                      // SetNextWindowCollapsed, used up by the next ImGui-style Begin
 float  g_nextBgAlpha = -1.0f;                     // SetNextWindowBgAlpha: -1 none, else 0..1 for the next ImGui-style Begin
 float  g_bgAlphaCore = -1.0f;                     // the same, handed to the core Begin that draws the body
@@ -426,7 +374,6 @@ bool boldGlyph(char c, int x, int y) { return okay::Font8x8::Pixel(c, x, y) || (
 const Font kFontDefault{8, 8, defGlyph};
 const Font kFontBold{8, 8, boldGlyph};
 const Font* g_font = &kFontDefault;
-inline int  fW() { return g_font->width; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
 // The glyph for the character at *p, and *p moved past it: an ASCII byte is looked up in the size's table right here (text is
 // nearly all ASCII), anything else is decoded and searched.
@@ -452,7 +399,6 @@ float fMeasure(const char* s) {
     return (float)(fW() * cstrlen(s));
 }
 // Average character width in cell units (spacing glyph-like icons).
-inline float fCharW() { return (g_ttf || g_font->ttf) ? fMeasure("n") : (float)fW(); }
 // A text's width as Dear ImGui measures it for wrapping: each glyph's advance at the drawn size rounded to a whole pixel (its baked
 // advances are whole pixels; ours are exact, so a long line came out about 2 pixels wider than Dear ImGui's and a wrapped note broke a
 // word earlier: the Vehicle's "Space =", stage 8). In pixels at the current text scale.
@@ -484,30 +430,9 @@ bool g_framedWidgets = false;
 // the window padding (x, y) instead of 6 pixels each way.
 float g_childPadY = -1.0f;
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
-struct VisLabel {
-    char b[128];
-    explicit VisLabel(const char* s) {
-        int n = 0;
-        for (; s && s[n] && n < 127; ++n) if (s[n] == '#' && s[n + 1] == '#') break;
-        for (int i = 0; i < n; ++i) b[i] = s[i];
-        b[n] = 0;
-    }
-};
-
 // Width of a label's visible part (what follows "##" is not shown, so it takes no room).
-inline float visW(const char* s) { return s && *s ? labelW(VisLabel(s).b) : 0.0f; }
 
 // The indented content left edge and full indented content width.
-inline float leftEdge() { return g_lay.ox + g_lay.indent; }
-inline float fullW()    { return g_lay.contentW - g_lay.indent; }
-// Where the next item's left edge will land (honors a pending SameLine).
-inline float cursorX() {
-    if (g_lay.pendingSameLine) {
-        float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
-        return g_lay.prevX + g_lay.prevW + sp;
-    }
-    return leftEdge();
-}
 // Item-width override: SetNextItemWidth (one-shot) / PushItemWidth (scoped). availW()
 // returns this instead of the full remaining width when set, so callers can size a
 // widget explicitly. Always clamped to what actually remains on the line.
@@ -525,8 +450,6 @@ float availW() {
 
 // True when SetNextItemWidth / PushItemWidth set a width for the next item. In Dear ImGui that width is the FIELD's, the label comes on top of it;
 // the labelled widgets that take it that way add their label's room to it (see BeginCombo).
-inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
-inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
 void place(float w, float h, float& x, float& y) {
@@ -761,7 +684,6 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
     cornerFan(x + w - rad, y + h - rad, rad, 2, c);  // bottom-right
     cornerFan(x + rad,     y + h - rad, rad, 3, c);  // bottom-left
 }
-inline float rnd() { return g_theme.rounding; }
 
 // Text with characters the atlas lacks: every glyph from the engine font `f`, bound
 // to its atlas (a span of its own; in the overlay, an overlay span).
@@ -913,57 +835,23 @@ const unsigned char* withAlpha(const unsigned char c[4], float a, unsigned char 
 // every ordinary widget inert while it is open, so the click that closes it is not
 // passed on to whatever is below. Widgets inside a popup body, and the overlay
 // owners themselves (hitOverlay), are not affected.
-struct OvRect { float x, y, w, h; bool modal; };
 OvRect g_ovCur[16];  int g_ovCurN = 0;
 OvRect g_ovPrev[16]; int g_ovPrevN = 0;
-inline void registerOverlay(float x, float y, float w, float h, bool modal) {
-    if (g_ovCurN < 16) g_ovCur[g_ovCurN++] = OvRect{ x, y, w, h, modal };
-}
 // The open popups' boxes with their depth in the popup stack (1 = opened from a window), this frame's and last frame's. A widget in a
 // popup body does not take the pointer where a popup opened from it (deeper, drawn above it) covered it on the last frame: a press on
 // a right-click menu opened from a row of a list must not also click the list rows under that menu.
-struct PopRect { float x, y, w, h; int depth; };
 PopRect g_popCur[8], g_popPrev[8]; int g_popCurN = 0, g_popPrevN = 0;
 // ---- Window stacking (z-order) -------------------------------------------------------------------
 // Every window has a stamp (WinSlot::z): higher draws in front, a click raises it, 0 is the bottom (docked content). The windows
 // begun this frame register their rectangles (g_wCur); last frame's rectangles (g_wPrev) cover the windows not begun yet. A
 // widget of a window ignores the pointer where a window with a higher stamp covers it, so a click never reaches what is behind.
 // The geometry follows the stamps: the windows' index ranges are put in stamp order when the frame ends (reorderWindows).
-struct WinRect { int id; unsigned long long z; float x, y, w, h; };
 WinRect g_wCur[64], g_wPrev[64]; int g_wCurN = 0, g_wPrevN = 0;
 unsigned long long g_zCounter = 0;
 bool g_wheelUsed = false;   // a scrolling child took this frame's wheel (the window does not scroll as well)
 bool g_escapeUsed = false;  // a popup closed on this frame's Escape (the popups it was opened from stay open)
 bool g_hitWinOn = false; int g_hitWinId = 0; unsigned long long g_hitWinZ = 0;   // the window being built, for hit()
-inline bool coveredByHigher(float px, float py, unsigned long long z, int selfId) {
-    for (int i = 0; i < g_wCurN; ++i) {
-        const WinRect& e = g_wCur[i];
-        if (e.id != selfId && e.z > z && pointIn(px, py, e.x, e.y, e.w, e.h)) return true;
-    }
-    for (int i = 0; i < g_wPrevN; ++i) {
-        const WinRect& e = g_wPrev[i];
-        if (e.id == selfId || e.z <= z || !pointIn(px, py, e.x, e.y, e.w, e.h)) continue;
-        bool replaced = false;
-        for (int j = 0; j < g_wCurN; ++j) if (g_wCur[j].id == e.id) { replaced = true; break; }
-        if (!replaced) return true;
-    }
-    return false;
-}
-inline void registerWindowRect(int id, unsigned long long z, float x, float y, float w, float h) {
-    for (int i = 0; i < g_wCurN; ++i) if (g_wCur[i].id == id) { g_wCur[i] = WinRect{id, z, x, y, w, h}; return; }
-    if (g_wCurN < 64) g_wCur[g_wCurN++] = WinRect{id, z, x, y, w, h};
-}
-// Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
-struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
 WinRec g_wrec[64]; int g_nwrec = 0; int g_wrecOpen = -1;
-inline void wrecEnd() { if (g_wrecOpen >= 0) { g_wrec[g_wrecOpen].i1 = g_ni; g_wrecOpen = -1; } }
-inline void wrecBegin(int id, unsigned long long z) {
-    wrecEnd();
-    if (g_nwrec >= 64) return;
-    g_wrecOpen = g_nwrec++;
-    g_wrec[g_wrecOpen] = WinRec{id, z, g_ni, g_ni, g_nv, g_nspans, g_curClipOn, g_curClipRect, g_curTex};
-}
-// The windows' geometry in stamp order. Free geometry between windows keeps its place in the call order; only the windows
 // trade places, so a frame whose stamps agree with the call order is left exactly as it was.
 void reorderWindows() {
     wrecEnd();
@@ -1003,16 +891,8 @@ void reorderWindows() {
     for (int k = 0; k < nns; ++k) g_spans[k] = nsp[k];
     g_nspans = nns;
 }
-inline bool hitOverlay(float x, float y, float w, float h) {
-    return !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
-}
 // Is the mouse inside the current clip rectangle? A widget scrolled out of a child region (or past
 // the edge of a clipped window) is invisible, so it must not take clicks either.
-inline bool inClip() {
-    if (g_toOverlay || g_clipTop <= 0) return true;
-    const SDL_Rect& c = g_clipStack[g_clipTop - 1];
-    return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
-}
 bool hit(float x, float y, float w, float h) {
     if (g_disCount > 0) return false;   // inside BeginDisabled: no hover, no click
     if (!hitOverlay(x, y, w, h)) return false;
@@ -1034,13 +914,6 @@ bool hit(float x, float y, float w, float h) {
 
 // A float to a pixel coordinate: NaN becomes `nan`, anything huge is clamped (a plain (int) cast
 // of either is undefined behaviour).
-inline int clampPx(float v, int nan) {
-    if (v != v) return nan;
-    if (v > 1.0e7f) return 10000000;
-    if (v < -1.0e7f) return -10000000;
-    return (int)v;
-}
-
 inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 
 constexpr int kMaxHexSlots = 16;
@@ -1193,7 +1066,7 @@ void Label(float x, float y, const char* text) {
     if (text && *text) drawText(x, y, text, g_theme.textScale, g_theme.text);
 }
 
-static void panelColored(float x, float y, float w, float h, const unsigned char* fill) {
+void ui_core::panelColored(float x, float y, float w, float h, const unsigned char* fill) {
     const float rd = rnd();
     rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
@@ -2128,323 +2001,6 @@ Font* GetFont()             { return const_cast<Font*>(g_font); }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
 
-// ---- Auto-layout window + ImGui-style overloads --------------------------------
-
-static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
-// The window being built (for GetWindowPos / IsWindowHovered ...) and the one that was clicked last (IsWindowFocused).
-struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; char title[96] = {0}; };
-static CurWin g_curWin;
-// What End() needs to finish the window Begin() started: scrolling, the scroll bar, auto-resize, a hidden measuring frame.
-struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = false, autoSize = false, hidden = false;
-                int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0; };
-static WinEnd g_we;
-static int  g_wflagsNext = 0;      // WindowFlags for the next core Begin
-constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
-
-
-static int g_focusWin = 0;
-// SetNextWindowPos / SetNextWindowSize, consumed by the next Begin(title, p_open, flags).
-struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; float pivX = 0, pivY = 0; };
-static NextWin g_nextWinPos, g_nextWinSize;
-void PinNextWindow() { g_pinNext = true; }
-static bool g_bareNext = false;   // BareNextWindow: the next Begin has no title bar (a panel that fills a host's rectangle)
-void BareNextWindow() { g_bareNext = true; }
-static bool  g_noTitleNext = false;  // Window_NoTitleBar: the next Begin has no title bar (docked windows)
-static bool  g_resizeNext = false;   // ResizableNextWindow: the next Begin gets a resize grip
-static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
-void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resizeMinW = minW; g_resizeMinH = minH; }
-
-// SetNextWindowBgAlpha: scale the alpha of the body geometry a window just drew (vertices from `from` on); the title bar and the content are drawn after and are not touched.
-static void scaleBodyAlpha(int from, float a) {
-    if (!(a >= 0.0f) || a >= 1.0f || g_toOverlay) return;
-    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (Uint8)(g_verts[i].color.a * a + 0.5f);
-}
-
-bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
-    g_posOverride = false;             // a SetCursorScreenPos left over from the previous window
-    g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
-    const int id = hashLabel(title);   // every widget id under it) is stable across frames
-    WinSlot* slot = nullptr;
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
-    if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
-    const int wf = g_wflagsNext;
-    g_wflagsNext = 0;
-    if (g_we.open) End();               // a Begin without its End: close it so the next window starts clean
-    const bool bare = g_bareNext;       // no title bar, never collapsed, never dragged: it is where the host put it
-    g_bareNext = false;
-    const bool pinned = g_pinNext || bare;
-    g_pinNext = false;
-    const float bgAlpha = g_bgAlphaCore; g_bgAlphaCore = -1.0f;   // SetNextWindowBgAlpha for this window's body
-    const int bodyV0 = g_nv;
-    // Opt-in resize grip (ResizableNextWindow): the remembered size replaces the w and h passed in.
-    const bool autoSize = (wf & Window_AlwaysAutoResize) != 0 && slot != nullptr;
-    const bool resizable = g_resizeNext && slot != nullptr && !autoSize;
-    const float minW = g_resizeMinW, minH = g_resizeMinH;
-    g_resizeNext = false;
-    if (resizable) {
-        if (!slot->sized) { slot->w = w; slot->h = h; slot->sized = true; }
-        w = slot->w; h = slot->h;
-    }
-    bool hidden = false;
-    if (autoSize) {   // as big as the content was last frame; the first frame only measures and is not shown
-        if (slot->measured) { w = slot->autoW; h = slot->autoH; slot->w = w; slot->h = h; slot->sized = true; }
-        else hidden = true;
-    }
-    if (pinned && slot) { slot->x = x; slot->y = y; }
-    float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
-    if (pinned) { wx = x; wy = y; }
-    const bool noTitle = g_noTitleNext;
-    g_noTitleNext = false;
-    const float titleH = (bare || noTitle) ? 0.0f : rowH();
-    static bool s_bareOpen = false;     // a bare window's "collapsed" flag: always false
-    bool* collapsed = bare ? &s_bareOpen : openState(id ^ 0x5c01, false);   // per-window collapsed flag
-    if (bare) { s_bareOpen = false; p_open = nullptr; }
-    const bool noCollapse = (wf & Window_NoCollapse) != 0, noBg = (wf & Window_NoBackground) != 0, noFront = (wf & Window_NoBringToFront) != 0 || bare;   // a bare (host) panel never rises above floating windows
-    if (noTitle || noCollapse) *collapsed = false;
-    // Stacking: a window that is new (or has not been drawn for a frame) comes to the front and takes focus unless told not to;
-    // a click on the topmost window under the pointer raises it. NoBringToFront windows stay at the bottom.
-    {
-        const float bh = *collapsed ? titleH : h;
-        const bool fresh = slot && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
-        if (slot) {
-            if (noFront) slot->z = 0;
-            else if (slot->z == 0) slot->z = ++g_zCounter;
-            if (fresh && !noFront && !(wf & Window_NoFocusOnAppearing)) { slot->z = ++g_zCounter; g_focusWin = id; }
-        }
-        if (g_pressed && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bh)
-            && !(slot && coveredByHigher(g_in.mouseX, g_in.mouseY, slot->z, id))) {
-            g_focusWin = id;                                    // the topmost window under the pointer
-            if (slot && !noFront) slot->z = ++g_zCounter;
-        }
-        g_hitWinOn = slot != nullptr; g_hitWinId = id; g_hitWinZ = slot ? slot->z : 0;
-    }
-
-    // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
-    // right, and the draggable strip in between.
-    const float btn = titleH;
-    const float caretX = wx, caretW = btn;
-    const float closeX = wx + w - btn, closeW = p_open ? btn : 0.0f;
-
-    // Collapse toggle: click the caret to fold/unfold the window.
-    const bool overCaret = !noCollapse && !bare && hit(caretX, wy, caretW, titleH);
-    if (overCaret) g_hot = id ^ 0x5c01;
-    if (g_active == (id ^ 0x5c01)) { if (g_released) { if (overCaret) *collapsed = !*collapsed; g_active = 0; } }
-    else if (overCaret && g_pressed) { g_active = id ^ 0x5c01; g_focusClaimed = true; }
-
-    // Close button: click the [x] to clear *p_open.
-    bool overClose = false;
-    if (p_open) {
-        overClose = hit(closeX, wy, closeW, titleH);
-        if (overClose) g_hot = id ^ 0xc105;
-        if (g_active == (id ^ 0xc105)) { if (g_released) { if (overClose) *p_open = false; g_active = 0; } }
-        else if (overClose && g_pressed) { g_active = id ^ 0xc105; g_focusClaimed = true; }
-    }
-
-    // Drag the window by the title bar (the strip between caret and close button).
-    const float dragX = noCollapse ? wx : wx + caretW, dragW = w - (noCollapse ? 0.0f : caretW) - closeW;
-    const bool overDrag = !bare && hit(dragX, wy, dragW, titleH);
-    if (overDrag) g_hot = id;
-    if (g_active == id) {
-        if (!g_in.mouseDown) g_active = 0;
-        else if (slot && !pinned) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
-    } else if (overDrag && g_pressed) {
-        g_active = id; g_focusClaimed = true;
-    }
-
-    // Resize grip: dragging the bottom-right corner grows or shrinks the window (not while folded).
-    if (resizable && !*collapsed) {
-        const int gid = id ^ 0x6f1d;
-        const float grip = 14.0f;
-        const bool overGrip = hit(wx + w - grip, wy + h - grip, grip, grip);
-        if (overGrip) g_hot = gid;
-        if (g_active == gid) {
-            if (!g_in.mouseDown) g_active = 0;
-            else {
-                slot->w += g_mouseDX; slot->h += g_mouseDY;
-                if (slot->w < minW) slot->w = minW;
-                if (slot->h < minH) slot->h = minH;
-                w = slot->w; h = slot->h;
-            }
-        } else if (overGrip && g_pressed) { g_active = gid; g_focusClaimed = true; }
-    }
-
-    // Frame: panel body (only the title bar when collapsed) + accent underline + title.
-    const float bodyH = *collapsed ? titleH : h;
-    const unsigned char* titleCol = pick(*collapsed ? Col_TitleBgCollapsed : (g_focusWin == id ? Col_TitleBgActive : Col_TitleBg), g_theme.titleBg);
-    g_winBaseScale = g_theme.textScale;
-    if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
-    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
-    g_curWin.z = slot ? slot->z : 0;
-    if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
-    if (slot) { slot->lastFrame = g_frameCount; if (title) std::snprintf(slot->title, sizeof slot->title, "%s", title); }
-    if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
-    wrecBegin(id, g_curWin.z);
-    g_we = WinEnd(); g_we.open = true; g_we.hidden = hidden; g_we.id = id; g_we.slot = slot ? (int)(slot - g_wins) : -1;
-    g_we.autoSize = autoSize; g_we.x = wx; g_we.y = wy; g_we.w = w; g_we.h = h; g_we.titleH = titleH;
-    if (bare) {
-        // A bare window draws no frame at all: the host's own window behind it is the background.
-    } else if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
-        const float wr = g_theme.windowRounding;
-        if (!noBg) {
-            if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
-            rrect(wx, wy, w, bodyH, wr, g_theme.border);
-            rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, pick(Col_WindowBg, g_theme.panel));
-        }
-        scaleBodyAlpha(bodyV0, bgAlpha);
-        if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, titleCol);
-        if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, titleCol);
-        if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
-        const float s0 = g_theme.textScale;
-        if (!noTitle) {
-        if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
-        if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, g_theme.text);
-        }
-        if (p_open && !noTitle) {
-            unsigned char tmp[4];
-            const unsigned char white[4] = {255, 255, 255, 255};
-            if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
-            xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
-        }
-    } else if (!noBg) {
-    Panel(wx, wy, w, bodyH);
-    scaleBodyAlpha(bodyV0, bgAlpha);
-    }
-    if (!g_look && !bare && !noTitle) {
-    // Title bar: round the TOP corners to match the panel, square at the bottom edge
-    // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
-    const float rd = rnd();
-    rrect(wx, wy, w, titleH, rd, titleCol);
-    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, titleCol);
-    quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
-    const float s = g_theme.textScale;
-    if (!noCollapse) drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
-    if (title && *title) drawText(wx + 8.0f + (noCollapse ? 0.0f : fCharW() * s * 2.0f), wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s, g_theme.text);
-    if (p_open) {
-        const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
-        drawText(closeX + (btn - fCharW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
-    }
-    }
-
-    if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
-
-    if (resizable) {   // grip marks: two diagonal strokes in the corner
-        const bool gripAct = g_active == (id ^ 0x6f1d), gripHot = g_hot == (id ^ 0x6f1d);
-        const unsigned char* gc = gripAct ? pick(Col_ResizeGripActive, g_theme.accent) : (gripHot ? pick(Col_ResizeGripHovered, g_theme.accent) : pick(Col_ResizeGrip, g_theme.textDim));
-        line(wx + w - 4.0f, wy + h - 12.0f, wx + w - 12.0f, wy + h - 4.0f, 1.5f, gc);
-        line(wx + w - 4.0f, wy + h - 7.0f, wx + w - 7.0f, wy + h - 4.0f, 1.5f, gc);
-    }
-
-    // Establish the content layout region.
-    // (A bare window has no padding: the host's own window already has its own.)
-    const float pad = bare ? 0.0f : g_theme.windowPadding;
-    // A window whose content did not fit last frame scrolls (wheel, and a bar unless NoScrollbar); the content is clipped to it.
-    float scrollY = 0.0f;
-    bool scrollable = false;
-    const bool flagStyle = (wf & kWinFlagStyle) != 0;   // only windows begun with Begin(title, p_open, flags) scroll; the old Begin(title, x, y, w, h) never did
-    if (slot && flagStyle && !autoSize && slot->maxScroll > 0.0f) {
-        if (slot->scroll > slot->maxScroll) slot->scroll = slot->maxScroll;
-        if (slot->scroll < 0.0f) slot->scroll = 0.0f;
-        scrollY = slot->scroll; scrollable = true;
-    } else if (slot) slot->scroll = 0.0f;
-    const bool showBar = scrollable && !(wf & Window_NoScrollbar);
-    if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
-    g_lay.active = true;
-    g_lay.seed = id;
-    g_lay.ox = wx + pad;
-    g_lay.oy = wy + titleH + pad - scrollY;
-    g_lay.cx = g_lay.ox;
-    g_lay.cy = g_lay.oy;
-    g_lay.maxRight = g_lay.ox;
-    g_we.laid = true; g_we.scrolls = flagStyle; g_we.showBar = showBar; g_we.pad = pad; g_we.ox = g_lay.ox; g_we.oy = g_lay.oy;
-    g_lay.contentW = w - 2.0f * pad - (showBar ? kScrollbarW : 0.0f);
-    g_lay.bottom = wy + h - pad;
-    g_lay.spacingX = g_look ? 9.0f : 8.0f; g_lay.spacingY = g_look ? 8.0f : 6.0f;
-    g_lay.indent = 0.0f;
-    g_lay.pendingSameLine = false;
-    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
-    return true;
-}
-
-// A scroll bar's track (classic look, or when ScrollbarBg is set) and thumb in the Col_Scrollbar* colours.
-// With a pushed StyleVar_ScrollbarSize the bar is that wide and the grab sits 2 pixels inside it on every side, fully rounded.
-void ui_core::scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track) {
-    const float bw = g_sbSize > 0.0f ? g_sbSize : kScrollbarW;
-    if (track && (!g_look || colorIsSet(Col_ScrollbarBg))) quad(sbx, top, bw, trackH, pick(Col_ScrollbarBg, g_theme.track));
-    if (g_look || g_sbSize > 0.0f) {   // thin rounded thumb, faint until hovered
-        unsigned char tmp[4];
-        const unsigned char white[4] = {255, 255, 255, 255};
-        const unsigned char* tc2 = active ? pick(Col_ScrollbarGrabActive, g_theme.accent) : (over ? pick(Col_ScrollbarGrabHovered, withAlpha(white, 0.26f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(white, 0.14f, tmp)));
-        if (g_sbSize > 0.0f) { const float gw = std::max(1.0f, bw - 4.0f); rrect(sbx + 2.0f, thumbY + 2.0f, gw, thumbH - 4.0f, gw * 0.5f, tc2); }
-        else rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f, tc2);
-    } else {
-        const unsigned char* tc = active ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent));
-        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
-    }
-}
-
-static bool g_dockAware = false, g_dockRouted = false;   // SetDockAwareBegin: Begin runs a window of the dock layout as DockBegin; the End that closes it as DockEnd
-void End() {
-    if (g_dockRouted) { g_dockRouted = false; DockEnd(); return; }   // closes a Begin that was run as DockBegin (SetDockAwareBegin); DockEnd calls End again, now plain
-    ChannelsMergeAll();   // a channel split left open ends with its window
-    if (g_winItemWDepth > 0) { if (g_itemWTop >= g_winItemWDepth) g_itemWTop = g_winItemWDepth - 1; g_winItemWDepth = 0; }
-    if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
-    // Forget it once the window is closed: the next BeginFrame restores a window LEFT OPEN to it, and a window that was opened inside
-    // the host's PushTextScale would otherwise hand that pushed scale to the next frame as the base (the text grew a step every frame).
-    if (g_curWin.valid) g_winBaseScale = 0.0f;
-    g_curWin.valid = false;
-    g_posOverride = false;
-    if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
-    if (g_we.open) {
-        WinSlot* slot = g_we.slot >= 0 ? &g_wins[g_we.slot] : nullptr;
-        if (slot && g_we.laid) {
-            const float contentH = std::max(0.0f, (g_lay.cy - g_lay.spacingY) - g_we.oy);
-            const float view = g_we.h - g_we.titleH - 2.0f * g_we.pad;
-            if (g_we.autoSize) {
-                slot->autoW = std::max(g_lay.maxRight - g_we.ox, 1.0f) + 2.0f * g_we.pad;
-                slot->autoH = g_we.titleH + contentH + 2.0f * g_we.pad;
-                slot->measured = std::isfinite(slot->autoW) && std::isfinite(slot->autoH);
-                slot->maxScroll = 0.0f;
-            } else if (g_we.scrolls) {
-                slot->maxScroll = contentH > view + g_we.pad ? contentH - view : 0.0f;   // a window scrolls once content passes its bottom edge (the padding may be eaten)
-                if (slot->maxScroll > 0.0f && g_we.laid) {
-                    const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_we.x, g_we.y, g_we.w, g_we.h)
-                                      && !coveredByHigher(g_in.mouseX, g_in.mouseY, slot->z, g_we.id);
-                    if (over && g_in.wheel != 0.0f && !g_wheelUsed && g_disCount == 0) slot->scroll -= g_in.wheel * rowH();
-                    if (g_we.showBar) {   // the scroll bar along the right edge, below the title bar
-                        const float sbx = g_we.x + g_we.w - kScrollbarW - 1.0f, sby = g_we.y + g_we.titleH, trackH = g_we.h - g_we.titleH - 1.0f;
-                        float frac = view / (view + slot->maxScroll); if (frac > 1.0f) frac = 1.0f;
-                        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f; if (thumbH > trackH) thumbH = trackH;
-                        const float t = slot->scroll / slot->maxScroll;
-                        const float thumbY = sby + std::max(0.0f, std::min(1.0f, t)) * (trackH - thumbH);
-                        const int sbId = g_we.id ^ 0x5c0b;
-                        const bool overThumb = hit(sbx, thumbY, kScrollbarW, thumbH);
-                        if (overThumb) g_hot = sbId;
-                        if (g_active == sbId) {
-                            if (!g_in.mouseDown) g_active = 0;
-                            else if (trackH - thumbH > 0.0f) slot->scroll += g_mouseDY * (slot->maxScroll / (trackH - thumbH));
-                        } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
-                        scrollbarThumb(sbx, sby, trackH, thumbY, thumbH, g_active == sbId, overThumb);
-                    }
-                    if (slot->scroll < 0.0f) slot->scroll = 0.0f;
-                    if (slot->scroll > slot->maxScroll) slot->scroll = slot->maxScroll;
-                }
-            }
-        }
-        wrecEnd();
-        if (g_we.hidden && g_nwrec > 0 && g_wrec[g_nwrec - 1].id == g_we.id) {   // the measuring frame leaves no trace
-            const WinRec& r = g_wrec[--g_nwrec];
-            g_nv = r.v0; g_ni = r.i0; g_nspans = r.ns0; g_curClipOn = r.clipOn; g_curClipRect = r.clip; g_curTex = r.tex;
-        }
-        g_we = WinEnd();
-    }
-    g_hitWinOn = false;
-    g_lay.active = false;
-}
-
-void SetWindowFontScale(float scale) {
-    if (!g_curWin.valid || g_winBaseScale <= 0.0f || !std::isfinite(scale)) return;
-    g_theme.textScale = g_winBaseScale * (scale < 0.25f ? 0.25f : (scale > 8.0f ? 8.0f : scale));
-}
 void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
 MouseCursor GetMouseCursor() { return g_cursor; }
 namespace {
@@ -2558,109 +2114,6 @@ IO& GetIO() {
     return g_io;
 }
 
-void SetNextWindowPos(Vec2 pos, Cond cond) { g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond}; }
-void SetNextWindowPos(Vec2 pos, Cond cond, Vec2 pivot) {
-    const float px = std::isfinite(pivot.x) ? pivot.x : 0.0f, py = std::isfinite(pivot.y) ? pivot.y : 0.0f;
-    g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond, px, py};
-}
-void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, size.x, size.y, (int)cond}; }
-
-// A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
-static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
-
-void SetDockAwareBegin(bool on) { g_dockAware = on; }
-bool DockAwareBegin() { return g_dockAware; }
-bool Begin(const char* title, bool* p_open, int flags) {
-    if (g_dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (GetDockLayout().Contains(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
-    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
-    const int id = windowId(title);
-    WinSlot* slot = nullptr; bool created = false;
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
-    if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { created = true; ws.used = true; ws.id = id; ws.x = 60.0f; ws.y = 60.0f; ws.w = 320.0f; ws.h = 240.0f; ws.sized = true; slot = &ws; break; }
-    NextWin np = g_nextWinPos, ns = g_nextWinSize;
-    g_nextWinPos.set = g_nextWinSize.set = false;
-    if (np.set && (np.pivX != 0.0f || np.pivY != 0.0f)) {   // SetNextWindowPos with a pivot: move the point of the window that sits at the position
-        const float pw = ns.set ? ns.x : (slot && slot->sized ? slot->w : 320.0f), ph = ns.set ? ns.y : (slot && slot->sized ? slot->h : 240.0f);
-        np.x -= np.pivX * pw; np.y -= np.pivY * ph;
-    }
-    bool pin = false;
-    if (slot) {
-        const bool appearing = slot->lastFrame + 1 < g_frameCount;      // not drawn on the frame before
-        auto apply = [&](const NextWin& n, bool& init) {
-            if (!n.set) return false;
-            const bool take = n.cond == Cond_Always || ((n.cond == Cond_Once || n.cond == Cond_FirstUseEver) && !init) || (n.cond == Cond_Appearing && appearing);
-            if (take) init = true;
-            return take;
-        };
-        if (apply(np, slot->posInit)) { slot->x = np.x; slot->y = np.y; pin = (np.cond == Cond_Always); }
-        if (apply(ns, slot->sizeInit)) { slot->w = ns.x; slot->h = ns.y; slot->sized = true; }
-        if (created) slot->posInit = slot->sizeInit = true;            // a window that exists has had its first use (FirstUseEver / Once are spent)
-        if (flags & Window_NoMove) pin = true;
-        if (!slot->sized) { slot->w = 320.0f; slot->h = 240.0f; slot->sized = true; }
-    }
-    const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
-    const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
-    if (g_nextCollapse.set) {   // SetNextWindowCollapsed, with the same conditions as position and size
-        const NextCollapse nc = g_nextCollapse; g_nextCollapse = NextCollapse();
-        if (slot) {
-            const bool appearing = slot->lastFrame + 1 < g_frameCount;
-            const bool take = nc.cond == Cond_Always || ((nc.cond == Cond_Once || nc.cond == Cond_FirstUseEver) && !slot->collInit) || (nc.cond == Cond_Appearing && appearing);
-            if (take) { *openState(id ^ 0x5c01, false) = nc.value; slot->collInit = true; }
-        }
-    }
-    g_bgAlphaCore = g_nextBgAlpha; g_nextBgAlpha = -1.0f;
-    if (pin) PinNextWindow();
-    if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }
-    if (!(flags & (Window_NoResize | Window_AlwaysAutoResize))) ResizableNextWindow(96.0f, 64.0f);
-    g_noTitleNext = (flags & Window_NoTitleBar) != 0;
-    g_wflagsNext = flags | kWinFlagStyle;
-    return Begin(title, x, y, w, h, (flags & Window_NoTitleBar) ? nullptr : p_open);
-}
-
-Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
-Vec2 GetWindowSize() { return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
-float GetWindowWidth() { return g_curWin.valid ? g_curWin.w : 0.0f; }
-float GetWindowHeight() { return g_curWin.valid ? g_curWin.h : 0.0f; }
-bool IsWindowHovered() {
-    return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
-           && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
-}
-bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
-bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }
-bool FindWindowSlot(const char* title, Vec2& pos, Vec2& size, bool& focused) {
-    if (!title || !*title) return false;
-    const int id = windowId(title);
-    for (const WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        pos = Vec2{ws.x, ws.y}; size = Vec2{ws.w, ws.h}; focused = (g_focusWin == id);
-        return true;
-    }
-    return false;
-}
-void SetNextWindowFocus() { g_nextWinFocus = true; }
-// ---- small calls and internals added in step 6.9 (declared in OkayUICompat.hpp / OkayUIInternals.hpp) ----
-void SetWindowSize(Vec2 size, Cond cond) { if (g_curWin.valid) SetWindowSize(g_curWin.title, size, cond); }
-bool SetWindowSize(const char* title, Vec2 size, Cond cond) {
-    if (!title || !*title || !std::isfinite(size.x) || !std::isfinite(size.y)) return false;
-    const int id = windowId(title);
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
-        const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.sizeInit);
-        if (!take) return true;   // found, the condition said no
-        ws.w = size.x < 1.0f ? 1.0f : (size.x > 1.0e6f ? 1.0e6f : size.x);
-        ws.h = size.y < 1.0f ? 1.0f : (size.y > 1.0e6f ? 1.0e6f : size.y);
-        ws.sized = true; ws.sizeInit = true;
-        return true;
-    }
-    return false;
-}
-Vec2 GetWindowContentRegionMin() {
-    if (!g_curWin.valid || !g_lay.active) return Vec2{0, 0};
-    return Vec2{g_lay.ox - g_curWin.x, g_lay.oy - g_curWin.y};
-}
-Vec2 GetMousePosOnOpeningCurrentPopup() {
-    if (g_popupTop > 0) { const PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) return Vec2{p->x, p->y}; }
-    return Vec2{g_in.mouseX, g_in.mouseY};
-}
 const DragPayload* GetDragDropPayload() {
     if (!g_tdd.active || !g_tdd.hasPayload) return nullptr;
     static DragPayload copy;
@@ -2669,92 +2122,12 @@ const DragPayload* GetDragDropPayload() {
 }
 unsigned GetActiveID() { return (unsigned)g_active; }
 void ClearActiveID() { g_active = 0; if (g_focus != 0) { g_focusLostEnd = g_focus; g_focus = 0; } }
-CurrentWindow GetCurrentWindow() {
-    CurrentWindow w;
-    if (!g_curWin.valid) return w;
-    w.valid = true; w.id = (unsigned)g_curWin.id; w.pos = Vec2{g_curWin.x, g_curWin.y}; w.size = Vec2{g_curWin.w, g_curWin.h};
-    w.focused = g_focusWin == g_curWin.id; w.hovered = IsWindowHovered(); w.appearing = g_curWin.appearing; w.z = g_curWin.z;
-    w.ID = w.id; w.Pos = w.pos; w.Size = w.size;
-    std::snprintf(w.title, sizeof w.title, "%s", g_curWin.title);
-    return w;
-}
 Vec2 GetMouseDragDelta(int button, float threshold) {
     if (!IsMouseDragging(button, threshold)) return Vec2{0, 0};
     return Vec2{g_in.mouseX - g_pressX, g_in.mouseY - g_pressY};
 }
 void ResetMouseDragDelta(int button) { if (button == 0) { g_pressX = g_in.mouseX; g_pressY = g_in.mouseY; } }
 bool IsAnyItemHovered() { return g_lay.active && (g_anyHoverNow || g_anyHoverPrev); }
-void SetWindowFocus(const char* title) {
-    if (!title) return;
-    g_focusWin = windowId(title);
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
-}
-
-// ---- step 6.10: window and frame calls (declared in OkayUICompat.hpp / OkayUIInternals.hpp) ----
-void SetNextWindowCollapsed(bool collapsed, Cond cond) { g_nextCollapse = NextCollapse{true, collapsed, (int)cond}; }
-void SetNextWindowBgAlpha(float alpha) { g_nextBgAlpha = std::isfinite(alpha) ? (alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha)) : -1.0f; }
-bool SetWindowPos(const char* title, Vec2 pos, Cond cond) {
-    if (!title || !*title || !std::isfinite(pos.x) || !std::isfinite(pos.y)) return false;
-    const int id = windowId(title);
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
-        const bool appearing = ws.lastFrame + 1 < g_frameCount;
-        const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.posInit);
-        if (!take) return true;
-        ws.x = pos.x < -1.0e6f ? -1.0e6f : (pos.x > 1.0e6f ? 1.0e6f : pos.x);
-        ws.y = pos.y < -1.0e6f ? -1.0e6f : (pos.y > 1.0e6f ? 1.0e6f : pos.y);
-        ws.posInit = true;
-        return true;
-    }
-    return false;
-}
-void SetWindowPos(Vec2 pos, Cond cond) { if (g_curWin.valid) SetWindowPos(g_curWin.title, pos, cond); }
-bool BringWindowToDisplayFront(const char* title) {
-    if (!title || !*title) return false;
-    const int id = windowId(title);
-    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { if (ws.z != 0) ws.z = ++g_zCounter; return true; }
-    return false;
-}
-bool BringWindowToDisplayFront(const CurrentWindow& w) { return w.valid && BringWindowToDisplayFront(w.title); }
-WindowInfo FindWindowByID(unsigned id) {
-    WindowInfo wi;
-    if (id == 0) return wi;
-    for (const WinSlot& ws : g_wins) if (ws.used && (unsigned)ws.id == id) {
-        wi.found = true; wi.pos = Vec2{ws.x, ws.y}; wi.size = Vec2{ws.w, ws.h}; wi.focused = g_focusWin == ws.id;
-        std::snprintf(wi.Name, sizeof wi.Name, "%s", ws.title); wi.Pos = wi.pos; wi.Size = wi.size; wi.ID = (unsigned)ws.id;
-        break;
-    }
-    return wi;
-}
-bool AnyWindowFocused() { return g_focusWin != 0; }
-bool AnyPopupOpen() { for (const PopupSlot& p : g_popups) if (p.used && p.open) return true; return false; }
-void ClosePopupToLevel(int level, bool) { if (level <= 0) for (PopupSlot& p : g_popups) p.open = false; else if (level == 1) for (PopupSlot& p : g_popups) if (p.open && !p.modal) p.open = false; }
-int ListOpenPopups(PopupSlotInfo* out, int cap) {
-    int n = 0;
-    for (const PopupSlot& p : g_popups) {
-        if (!p.used || !p.open || n >= cap) continue;
-        PopupSlotInfo& o = out[n++];
-        o.id = (unsigned)p.id; o.pos = Vec2{p.x, p.y}; o.modal = p.modal;
-        o.size = Vec2{p.w > 0.0f ? p.w : 200.0f, *floatState(p.id ^ 0x9090, rowH() * 3.0f) + 12.0f};
-    }
-    return n;
-}
-unsigned WindowIdOfTitle(const char* title) { return title ? (unsigned)windowId(title) : 0u; }
-int ListWindowSlots(WindowSlotInfo* out, int cap) {
-    int n = 0;
-    for (const WinSlot& ws : g_wins) {
-        if (!ws.used || n >= cap) continue;
-        WindowSlotInfo& o = out[n++];
-        std::snprintf(o.title, sizeof o.title, "%s", ws.title); o.id = (unsigned)ws.id; o.pos = Vec2{ws.x, ws.y}; o.size = Vec2{ws.w, ws.h};
-        o.lastFrame = ws.lastFrame; o.z = ws.z; o.focused = g_focusWin == ws.id;
-    }
-    return n;
-}
-void SetWindowItemWidthDefault(float width) {
-    if (!g_curWin.valid || !(width > 0.0f) || !std::isfinite(width)) return;
-    if (g_winItemWDepth > 0 && g_itemWTop >= g_winItemWDepth) { g_itemWStack[g_winItemWDepth - 1] = width; return; }
-    if (g_itemWTop >= 16) return;
-    g_itemWStack[g_itemWTop++] = width; g_winItemWDepth = g_itemWTop;
-}
 Context* RefreshContext() {
     static Context c;
     c.ActiveId = (unsigned)g_active; c.HoveredId = (unsigned)g_hot; c.FrameCount = (int)g_frameCount; c.Time = GetTime();
@@ -2771,204 +2144,12 @@ Context* RefreshContext() {
     FillContextFromWindowTable(c, hov ? (unsigned)hov->id : 0u, activeWin, curWin, (unsigned)g_focusWin);
     return &c;
 }
-WindowRef* GetTopMostPopupModal() {
-    static WindowRef ref;
-    for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) { ref = WindowRef(); ref.ID = (unsigned)p.id; ref.Pos = Vec2{p.x, p.y}; ref.Size = Vec2{p.w, 0.0f}; ref.Active = ref.WasActive = true; ref.RootWindow = &ref; return &ref; }
-    return nullptr;
-}
 void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
 float GetTreeNodeToLabelSpacing() {
     if (g_look) return 24.0f;
     return 4.0f + fCharW() * g_theme.textScale * 1.5f;
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr, float padX = -1.0f, bool outline = false, bool trim = false);
-static float* g_childAutoSlot = nullptr;   // set by main's flags form of BeginChild (Child_AutoResizeY) for the plain one to pick up
-bool BeginChild(const char* id, float w, float h, bool border) {
-    float* const autoSlot = g_childAutoSlot; g_childAutoSlot = nullptr;
-    const int depth = g_childTop;
-    const bool ok = beginChildImpl(id, w, h, border, 6.0f, true);
-    if (autoSlot && g_childTop == depth + 1) g_childStack[depth].autoSlot = autoSlot;   // EndChild stores the measured height there
-    return ok;
-}
-
-// OkayUI's flags form (the default): Child_Borders is the plain form's filled frame, the padding is always there, Child_AutoResizeY follows
-// the content one frame behind (a positive size.y is the smallest height), the other flags are accepted. The Dear ImGui-faithful form below
-// is used while StyleVar_FramedWidgets is pushed.
-static bool beginChildFlagsImGui(const char* id, Vec2 size, int flags);
-bool BeginChild(const char* id, Vec2 size, int childFlags, int /*windowFlags*/) {
-    if (g_framedWidgets) return beginChildFlagsImGui(id, size, childFlags);
-    if (!id || !g_lay.active) return false;
-    float h = std::isfinite(size.y) ? size.y : 0.0f;
-    float w = std::isfinite(size.x) ? size.x : 0.0f;
-    // Dear ImGui sizes: 0 is the space left, a negative size is the space left minus that much (-40 leaves 40 px below), on each axis.
-    // (Not for an auto-resized height: that one follows the content.)
-    if (w <= 0.0f) { const float room = availW(); w = w < 0.0f ? (room + w > 8.0f ? room + w : 8.0f) : 0.0f; }
-    if (h <= 0.0f && !(childFlags & Child_AutoResizeY)) {
-        const Vec2 room = GetContentRegionAvail();
-        h = room.y + h;                           // h is 0 or negative here
-        if (h < rowH() * 2.0f) h = rowH() * 2.0f; // never smaller than two rows
-    }
-    float* slot = nullptr;
-    if (childFlags & Child_AutoResizeY) {
-        slot = floatState(hashLabel(id) ^ 0x7a31, 0.0f);
-        const float measured = *slot > 0.0f ? *slot : rowH();   // one frame behind: the first frame shows a single row
-        h = h > measured ? h : measured;                          // a positive size is the smallest height
-    }
-    g_childAutoSlot = slot;
-    const bool ok = BeginChild(id, w, h, (childFlags & Child_Borders) != 0);
-    g_childAutoSlot = nullptr;
-    return ok;
-}
-
-// Dear ImGui's form (StyleVar_FramedWidgets pushed): Child_FrameStyle draws the same frame as Child_Borders (a one-pixel outline, filled only
-// when Col_ChildBg is set); padding only for a bordered or padded child; the scroll bar only when the content overflowed; Child_AutoResizeY
-// as tall as last frame's content; the window flags and the other child flags are accepted and ignored.
-static bool beginChildFlagsImGui(const char* id, Vec2 size, int flags) {
-    if (!g_lay.active || !id) return false;
-    const bool border = (flags & (Child_Borders | Child_FrameStyle)) != 0;
-    const bool padded = border || (flags & Child_AlwaysUseWindowPadding);
-    const float pad = padded ? (g_childPadY >= 0.0f ? g_childPadY : 6.0f) : 0.0f;                 // above and below
-    const float padX = padded ? (g_childPadY >= 0.0f ? g_theme.windowPadding : 6.0f) : 0.0f;      // left and right
-    const Vec2 avail = GetContentRegionAvail();
-    // Dear ImGui's sizes: 0 fills what is left, a negative value leaves that much; a size that cannot be used falls back to filling.
-    float w = std::isfinite(size.x) ? size.x : 0.0f, h = std::isfinite(size.y) ? size.y : 0.0f;
-    w = w > 0.0f ? w : avail.x + w; h = h > 0.0f ? h : avail.y + h;
-    if (w < 1.0f) w = std::max(avail.x, 1.0f);
-    if (h < 1.0f) h = std::max(avail.y, rowH());
-    float* autoH = nullptr;
-    if (flags & Child_AutoResizeY) {   // as tall as its content was on the last frame (one row on the first); it never scrolls
-        autoH = floatState(hashLabel(id) ^ 0x41755a, rowH());
-        h = std::max(*autoH + 2.0f * pad, 1.0f);
-    }
-    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), false, pad, false, autoH, padX, border, true);
-}
-
-// `border`: the old form's filled frame. `outline`: Dear ImGui's bordered child (Child_Borders): a one-pixel rounded outline in
-// Col_Border, filled only when Col_ChildBg is set. `pad` is the padding above and below, `padX` left and right (< 0: the same as pad).
-// `trim`: the gap after the last item is not content (the flags form, as in Dear ImGui: no scroll bar for a few pixels).
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH, float padX, bool outline, bool trim) {
-    if (padX < 0.0f) padX = pad;
-    // Depth guard first: past the child-stack capacity the parent layout cannot
-    // be saved, so the child cannot begin at all -- otherwise EndChild would pop
-    // a slot that was never pushed and corrupt the parent's scroll/clip state.
-    // Returning before place()/wheel handling also keeps the parent layout
-    // cursor and scroll slots untouched on the skip path.
-    if (!g_lay.active || g_childTop >= 8) return false;
-    const int cid = hashLabel(id);
-    const float rw = w > 0.0f ? w : availW();
-    const float rh = h > 0.0f ? h : rowH() * 4.0f;   // (an auto-height child's height comes from its slot, in BeginChild)
-    float rx, ry; place(rw, rh, rx, ry);
-
-    float* scroll  = floatState(cid, 0.0f);
-    float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
-    const bool hovered = hit(rx, ry, rw, rh);
-    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * rowH(); if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
-    // Clamp with the previous frame's content extent so layout uses a sane offset.
-    if (*scroll < 0.0f) *scroll = 0.0f;
-    if (*scroll > *maxSlot) *scroll = *maxSlot;
-
-    // Frame + clip to the region.
-    if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
-    if (outline) {   // a stroked outline (filling under it would cost a whole child's area twice on a CPU rasteriser)
-        const float rd = rnd();
-        if (colorIsSet(Col_ChildBg)) rrect(rx, ry, rw, rh, rd, g_theme.colors[Col_ChildBg]);
-        const unsigned char* bc = pick(Col_Border, g_theme.border);
-        // one-pixel edges between the corners, and each corner as three short segments of its arc (a fixed table: no sine per frame)
-        const float r = std::min(rd, std::min(rw, rh) * 0.5f);
-        quad(rx + r, ry, rw - 2.0f * r, 1.0f, bc); quad(rx + r, ry + rh - 1.0f, rw - 2.0f * r, 1.0f, bc);
-        quad(rx, ry + r, 1.0f, rh - 2.0f * r, bc); quad(rx + rw - 1.0f, ry + r, 1.0f, rh - 2.0f * r, bc);
-        if (r > 0.5f) {
-            static const float k[4][2] = {{1.0f, 0.0f}, {0.8660254f, 0.5f}, {0.5f, 0.8660254f}, {0.0f, 1.0f}};   // cos, sin of 0, 30, 60, 90 degrees
-            const float a = r - 0.5f;
-            const float cx[4] = {rx + r, rx + rw - r, rx + rw - r, rx + r}, cy[4] = {ry + r, ry + r, ry + rh - r, ry + rh - r};
-            const float sx[4] = {-1.0f, 1.0f, 1.0f, -1.0f}, sy[4] = {-1.0f, -1.0f, 1.0f, 1.0f};
-            for (int q = 0; q < 4; ++q)
-                for (int i = 0; i < 3; ++i)
-                    line(cx[q] + sx[q] * a * k[i][0], cy[q] + sy[q] * a * k[i][1], cx[q] + sx[q] * a * k[i + 1][0], cy[q] + sy[q] * a * k[i + 1][1], 1.0f, bc);
-        }
-    }
-    // With a pushed ScrollbarSize the content is clipped where the bar starts while there is one (Dear ImGui's: a row running past the
-    // content region is cut at the bar, not drawn under it); otherwise the whole child.
-    const float sbClip = g_sbSize > 0.0f && (reserveBar || *maxSlot > 0.0f) ? g_sbSize + (outline ? 1.0f : 0.0f) : 0.0f;
-    PushClipRect(rx, ry, std::max(0.0f, rw - sbClip), rh);
-
-    // Save the parent layout, then set up the child's inner layout (scrolled).
-    if (g_childTop < 8) {
-        ChildSave& c = g_childStack[g_childTop++];
-        c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.padX = padX; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH; c.trim = trim; c.autoSlot = nullptr;
-        c.sbW = g_sbSize > 0.0f ? g_sbSize : kScrollbarW; c.sbPushed = g_sbSize > 0.0f; c.sbInside = c.sbPushed && outline;
-    }
-    g_lay.ox = rx + padX;
-    // The old form always leaves room for the scrollbar; the flags form only when the content overflowed last frame (Dear ImGui's way).
-    g_lay.contentW = rw - 2.0f * padX - (reserveBar || *maxSlot > 0.0f ? (g_sbSize > 0.0f ? g_sbSize : kScrollbarW) : 0.0f);
-    g_lay.bottom = ry + rh - pad;
-    g_lay.oy = ry + pad - *scroll;
-    g_lay.cx = g_lay.ox;
-    g_lay.cy = g_lay.oy;
-    g_lay.indent = 0.0f;
-    g_lay.seed = cid;                   // child-local widget id namespace
-    g_lay.pendingSameLine = false;
-    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
-    return true;
-}
-
-float GetScrollY()    { return g_childTop > 0 ? *g_childStack[g_childTop - 1].scroll : 0.0f; }
-float GetScrollMaxY() { return g_childTop > 0 ? *g_childStack[g_childTop - 1].maxSlot : 0.0f; }
-void SetScrollY(float y) {
-    if (g_childTop <= 0) return;
-    if (!(y > 0.0f)) y = 0.0f;                  // also catches NaN
-    g_childStack[g_childTop - 1].setScroll = y;   // applied by EndChild, after it measured the content, and clamped to it
-}
-
-float GetChildViewHeight() { return g_childTop > 0 ? g_childStack[g_childTop - 1].rh - 2.0f * g_childStack[g_childTop - 1].pad : 0.0f; }   // hook for OkayUICompat's SetScrollHereY
-
-void EndChild() {
-    if (g_childTop <= 0) return;
-    ChildSave& c = g_childStack[--g_childTop];
-    // Content height = how far the cursor advanced from the (scrolled) top, in
-    // unscrolled space. cy currently sits at top - scroll + contentHeight.
-    float contentH = g_lay.cy - (c.top - *c.scroll);
-    if (c.autoSlot) *c.autoSlot = contentH + 2.0f * c.pad;   // main's flags form with Child_AutoResizeY: next frame's height
-    if (c.trim) contentH = std::max(0.0f, contentH - g_lay.spacingY);   // the last item's spacing is not content
-    if (c.autoH) *c.autoH = std::max(0.0f, std::min(contentH, 1.0e6f));
-    const float viewH = c.rh - 2.0f * c.pad;
-    float maxScroll = contentH - viewH; if (maxScroll < 0.0f || c.autoH) maxScroll = 0.0f;   // an auto-height child never scrolls
-    if (c.setScroll >= 0.0f) *c.scroll = c.setScroll;   // SetScrollY, now that the content is measured
-    *c.maxSlot = maxScroll;                     // remember for next frame's clamp
-    if (*c.scroll < 0.0f) *c.scroll = 0.0f;
-    if (*c.scroll > maxScroll) *c.scroll = maxScroll;
-
-    PopClipRect();   // stop clipping before drawing the scrollbar
-
-    // Scrollbar (only when content overflows).
-    if (maxScroll > 0.0f) {
-        const float in = c.sbInside ? 1.0f : 0.0f;   // inside the outline: the bar stops one pixel short of each edge
-        const float sbx = c.rx + c.rw - c.sbW - in, trackY = c.ry + in, trackH = c.rh - 2.0f * in;
-        if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, trackY, c.sbW, trackH, pick(Col_ScrollbarBg, g_theme.track));
-        float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
-        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f;
-        float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
-        float thumbY = trackY + t * (trackH - thumbH);
-        // Drag the thumb.
-        const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)clampPx(sbx * 7.0f, 0)) & 0x7fffffff;
-        const bool overThumb = hit(sbx, thumbY, c.sbW, thumbH);
-        if (overThumb) g_hot = sbId;
-        if (g_active == sbId) {
-            if (!g_in.mouseDown) g_active = 0;
-            else if (trackH - thumbH > 0.0f) *c.scroll += g_mouseDY * (maxScroll / (trackH - thumbH));
-        } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
-        if (*c.scroll < 0.0f) *c.scroll = 0.0f;
-        if (*c.scroll > maxScroll) *c.scroll = maxScroll;
-        const float pushed = g_sbSize; g_sbSize = c.sbPushed ? c.sbW : -1.0f;   // the bar as it was begun
-        scrollbarThumb(sbx, trackY, trackH, thumbY, thumbH, g_active == sbId, overThumb, false);
-        g_sbSize = pushed;
-    }
-
-    g_lay = c.lay;   // restore the parent layout (cursor already past the region)
-    g_posOverride = false;
-}
 
 void SameLine(float spacing) {
     if (!g_lay.active) return;
@@ -3037,7 +2218,9 @@ namespace {
 // OkayUI's own style values for Dear ImGui-looking menus and fields (PushStyleVar; < 0 = the usual OkayUI value):
 // StyleVar_PopupPadding (x, y) inside a popup (default 6, 6), StyleVar_PopupWidth (default 160), StyleVar_ItemInnerSpacing (x only: the gap
 // between the cells of a formatted drag row and before its label).
-float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -1.0f, g_innerX = -1.0f;
+} // namespace
+namespace ui_core { float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -1.0f, g_innerX = -1.0f; }
+namespace {
 inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) {
     const float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : rowH());
@@ -4099,7 +3282,7 @@ bool IsMouseDragging(int button, float threshold) {
     return dx * dx + dy * dy > t * t;
 }
 
-namespace {
+namespace ui_core {
 // A framed combo's box (StyleVar_FramedWidgets): a rounded field in Col_FrameBg, the text FramePadding.x in (clipped before the button),
 // and at the right end a square button as tall as the field in Col_Button with a filled triangle pointing down in the text colour.
 // The triangle's size and place (0.37 of the text height either side of the button's centre, its top edge 0.34 of the text height
@@ -4614,607 +3797,6 @@ void TreePop() {
     if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
 }
 
-bool BeginMenuBar() {
-    if (!g_lay.active) return false;
-    const float h = rowH();
-    float x, y; place(fullW(), h, x, y);
-    if (!g_look || colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.bgDown));
-    if (g_look) quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
-    g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
-    return true;
-}
-
-void EndMenuBar() { g_inMenuBar = false; }
-
-
-namespace {
-// The height of the open list's rows.
-float menuRowH() { return g_curMenu.rowH > 0.0f ? g_curMenu.rowH : rowH(); }
-// The open list starts at `y` (level with its row, or under its bar button). Moved up when last frame's height would run past the
-// display's bottom (Input::displayH), as Dear ImGui keeps a menu inside its viewport; taller than the display, it starts at the top
-// and scrolls. Sets itemStartY (the visible top), virtTop and itemY (row 0, scroll included).
-void menuListBegin(int id, float y) {
-    float* full = floatState(id ^ 0x6d1a0b, 0.0f);
-    float* scroll = floatState(id ^ 0x6d1b0c, 0.0f);
-    g_curMenu.heightSlot = full; g_curMenu.scrollSlot = scroll;
-    g_curMenu.clipY0 = g_curMenu.clipY1 = 0.0f;
-    float top = y, off = 0.0f;
-    if (g_dispH > 0.0f && *full > 0.0f) {
-        if (*full > g_dispH) {   // does not fit at all: the whole display, scrolled
-            top = 0.0f;
-            g_curMenu.clipY0 = 0.0f; g_curMenu.clipY1 = g_dispH;
-            const float maxOff = *full - g_dispH, rh = menuRowH();
-            *scroll = std::clamp(*scroll, 0.0f, maxOff);
-            off = *scroll >= maxOff ? maxOff : std::floor(*scroll / rh + 0.5f) * rh;   // whole rows (the last step shows the end)
-            off = std::min(off, maxOff);
-        } else {
-            if (top + *full > g_dispH) top = g_dispH - *full;
-            *scroll = 0.0f;
-        }
-    } else *scroll = 0.0f;
-    g_curMenu.itemStartY = top; g_curMenu.virtTop = top - off; g_curMenu.itemY = top - off;
-}
-// Is a row at (y, h) of the open list inside its visible band? (always, unless the list scrolls)
-bool menuRowShown(float y, float h) {
-    if (g_curMenu.clipY1 <= g_curMenu.clipY0) return true;
-    return y >= g_curMenu.clipY0 - 0.5f && y + h <= g_curMenu.clipY1 + 0.5f;
-}
-// The keyboard highlight is on a row outside the band: scroll it into view next frame.
-void menuRowReveal(float y, float h) {
-    if (g_curMenu.clipY1 <= g_curMenu.clipY0 || !g_curMenu.scrollSlot) return;
-    const float rowTop = y - g_curMenu.virtTop;
-    if (y < g_curMenu.clipY0) *g_curMenu.scrollSlot = rowTop;
-    else if (y + h > g_curMenu.clipY1) *g_curMenu.scrollSlot = rowTop + h - (g_curMenu.clipY1 - g_curMenu.clipY0);
-}
-// Per-menu keyboard handling at the start of its item list. Only the innermost open menu reacts (the one with no open child).
-void menuKeysBegin(int menuId, bool nestedMenu) {
-    MenuKb* kb = kbSlot(menuId);
-    kb->childOpen = kb->childOpenNext; kb->childOpenNext = false;
-    g_curMenu.kb = kb; g_curMenu.n = 0; g_curMenu.mask = 0; g_curMenu.activate = false;
-    kb->keyMoved = false;
-    if (kb->childOpen) return;
-    const int cnt = kb->count;
-    auto enabledAt = [&](int i) { return i >= 0 && i < cnt && i < 64 && ((kb->mask >> i) & 1ull); };
-    if ((g_in.down || g_in.up) && cnt > 0) {
-        kb->keyMoved = true;
-        int i = kb->idx;
-        for (int step = 0; step < cnt; ++step) {
-            i = g_in.down ? (i < 0 ? 0 : (i + 1) % cnt) : (i <= 0 ? cnt - 1 : i - 1);
-            if (enabledAt(i)) { kb->idx = i; break; }
-        }
-    }
-    if (g_in.enter && enabledAt(kb->idx)) g_curMenu.activate = true;
-    // Escape (as an edge, or as the held key a host passes while no field types) closes the innermost list.
-    if (((g_in.escape || IsKeyPressed(KeyId_Escape, false)) && !g_escapeUsed) || (nestedMenu && g_in.left)) {
-        *openState(menuId, false) = false;
-        if (!(nestedMenu && g_in.left)) g_escapeUsed = true;
-    }
-}
-}
-
-namespace { bool popupRow(const char* label, const char* shortcut, bool selected, bool enabled, bool lit, bool arrow, float& x, float& y, float& w, float& h); }
-bool BeginMenu(const char* label) {
-    if (g_lay.active && !g_curMenu.active && !g_inMenuBar && label && g_popupTop > 0 && !g_framedWidgets) {   // a submenu of a plain popup: expands in place, indented
-        if (!TreeNode(label)) return false;
-        ++g_popupSubOpen;
-        return true;
-    }
-    // With StyleVar_FramedWidgets (Dear ImGui's look): a sub-menu row inside a popup (a context menu) that opens a list to its right.
-    if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) {
-        if (g_menuDepth >= 4) return false;
-        const int id = hashLabel(label) ^ 0x7e11;
-        bool* open = openState(id, false);
-        float x, y, w, h;
-        const bool ih = popupRow(label, nullptr, false, true, *open, true, x, y, w, h);
-        g_lastId = id;
-        if (ih) { g_hot = id; *open = true; }   // hovering the row opens its list
-        if (!*open) return false;
-        CurMenu from;                           // the popup's row: an inactive menu the sub-menu returns to
-        from.popupId = g_popupStack[g_popupTop - 1].id;
-        from.bx = x; from.by = y; from.bw = w; from.bh = h;
-        g_menuStack[g_menuDepth++] = from;
-        g_curMenu = CurMenu();
-        g_curMenu.active = true; g_curMenu.menuId = id;
-        g_curMenu.x = x + w; g_curMenu.w = g_popupW > 0.0f ? g_popupW : 180.0f;
-        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
-        g_curMenu.fromPopup = true;
-        g_curMenu.rowH = h;   // the popup's own row height (a text line and the item spacing)
-        g_curMenu.textInset = (g_popupPadX >= 0.0f ? g_popupPadX : g_lay.spacingX * 0.5f + 4.0f);
-        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);   // no room on the right: the left
-        menuListBegin(id, y);
-        menuKeysBegin(id, true);
-        return true;
-    }
-    if (g_lay.active && g_curMenu.active && label) {   // a sub-menu: a row of the open menu that opens a list to its right
-        if (g_menuDepth >= 4) return false;
-        const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
-        bool* open = openState(id, false);
-        const float h = menuRowH(), s = g_theme.textScale;
-        const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
-        g_curMenu.itemY += h;
-        const bool shown = menuRowShown(y, h);
-        const bool ih = shown && hitOverlay(x, y, w, h);
-        const int ord = g_curMenu.n++;
-        if (ord < 64) g_curMenu.mask |= 1ull << ord;
-        MenuKb* pk = g_curMenu.kb;
-        if (ih) { g_hot = id; *open = true; if (pk) pk->idx = ord; }          // hovering the row opens it (and highlights it)
-        const bool ksel = pk && pk->idx == ord && !pk->childOpen;
-        if (ksel && !shown && pk->keyMoved) menuRowReveal(y, h);
-        if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
-        if (shown) {
-            const bool wasOverlay = g_toOverlay;   // inside a popup (a context menu's sub-menu) the popup's later rows stay on top too
-            g_toOverlay = true;
-            const float ty = y + (h - textH()) * 0.5f;
-            quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
-            drawText(x + g_curMenu.textInset, ty, label, s, g_theme.text);
-            if (g_curMenu.fromPopup) {   // Dear ImGui's arrow, as on the popup's own sub-menu rows
-                const float th = textH(), r = th * 0.40f, cx = x + w - g_curMenu.textInset - th * 0.5f, cy = ty + th * 0.5f;
-                tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, g_theme.text);
-            } else drawText(x + w - labelW(">") - 8.0f, ty, ">", s, pick(Col_TextDisabled, g_theme.textDim));
-            g_toOverlay = wasOverlay;
-        }
-        if (!*open) { kbSlot(id)->idx = -1; return false; }
-        if (pk) pk->childOpenNext = true;
-        g_menuStack[g_menuDepth++] = g_curMenu;
-        g_curMenu.menuId = id;
-        g_curMenu.x = x + w; g_curMenu.w = (g_curMenu.fromPopup && g_popupW > 0.0f) ? g_popupW : 180.0f;
-        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);
-        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
-        g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
-        menuListBegin(id, y);
-        menuKeysBegin(id, true);
-        return true;
-    }
-    if (!g_lay.active || !g_inMenuBar) return false;
-    const int id = hashLabel(label);
-    bool* open = openState(id, false);
-    const float h = g_barH, s = g_theme.textScale;
-    const float bw = visW(label) + 16.0f;
-    const float x = g_barX, y = g_barY;
-    g_barX += bw;   // advance the bar cursor for the next menu
-
-    const bool inside = hit(x, y, bw, h);
-    g_lastId = id; if (inside) g_hot = id;
-    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
-    else if (inside && g_pressed) g_active = id;
-    if (*open || inside) quad(x, y, bw, h, g_theme.bgHover);
-    drawText(x + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
-
-    if (*open) {
-        g_curMenu = CurMenu();
-        g_curMenu.active = true; g_curMenu.menuId = id;
-        g_curMenu.x = x; g_curMenu.w = 180.0f;
-        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
-        menuListBegin(id, y + h);
-        menuKeysBegin(id, false);
-    } else kbSlot(id)->idx = -1;
-    return *open;
-}
-
-namespace {
-// A menu row inside a popup body (a context menu), Dear ImGui's way: the item is one text line in the popup's layout and its highlight
-// reaches half the item spacing past it on each side, so consecutive rows touch. The label starts at the row; a shortcut is right-aligned
-// and dim; a checked item has a tick at the right end; a disabled one is dim and takes no clicks. `arrow` draws a sub-menu's arrow.
-// Returns whether the row is under the pointer; (x, y, w, h) is the highlight rectangle.
-bool popupRow(const char* label, const char* shortcut, bool selected, bool enabled, bool lit, bool arrow, float& x, float& y, float& w, float& h) {
-    const float s = g_theme.textScale, th = textH();
-    float ix, iy; w = fullW(); place(w, th, ix, iy);
-    x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
-    const bool ih = enabled && hit(x, y, w, h);
-    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
-    if (ih || lit) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-    const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
-    drawText(ix, iy, label, s, col);
-    const float right = ix + w - g_lay.spacingX;
-    if (shortcut && shortcut[0]) {
-        const float sw = labelW(shortcut), sx = right - sw - (selected || arrow ? th + 4.0f : 0.0f);
-        if (sx > ix + labelW(label) + 12.0f) drawText(sx, iy, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
-    }
-    if (selected) {   // a tick in the text colour, a text line wide
-        const float a = th * 0.25f, cx = right - th * 0.5f, cy = iy + th * 0.5f;
-        line(cx - a * 1.2f, cy, cx - a * 0.3f, cy + a * 0.9f, 2.0f, col);
-        line(cx - a * 0.3f, cy + a * 0.9f, cx + a * 1.3f, cy - a * 0.9f, 2.0f, col);
-    }
-    if (arrow) {      // a right-pointing triangle a text line tall at the right end, as Dear ImGui's sub-menu rows have
-        const float r = th * 0.40f, cx = right - th * 0.5f, cy = iy + th * 0.5f;
-        tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, col);
-    }
-    return ih;
-}
-bool popupMenuItem(const char* label, const char* shortcut, bool selected, bool enabled) {
-    float x, y, w, h;
-    const int iid = hashLabel(label) ^ 0x31a7;
-    const bool ih = popupRow(label, shortcut, selected, enabled, false, false, x, y, w, h);
-    g_lastId = iid; if (ih) g_hot = iid;
-    bool clicked = false;
-    if (g_active == iid) { if (g_released) { if (ih) clicked = true; g_active = 0; } }
-    else if (ih && g_pressed) g_active = iid;
-    if (clicked) CloseCurrentPopup();
-    return clicked;
-}
-bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool enabled) {
-    if (g_lay.active && !g_curMenu.active && !g_inMenuBar && label && g_popupTop > 0 && !g_framedWidgets) {   // inside a plain popup (a context menu): a selectable row
-        const float wantW = labelW(label) + (shortcut && *shortcut ? labelW(shortcut) + 40.0f : 0.0f) + 24.0f;   // room for the label, a gap and the shortcut
-        const bool clicked = Selectable(label, selected, (unsigned)(Selectable_ClosePopup | (enabled ? 0 : Selectable_Disabled)), Vec2{ wantW, 0.0f });
-        if (shortcut && *shortcut) {
-            const Rect r = GetItemRect();
-            const float tw = labelW(shortcut);
-            if (tw < r.w - 24.0f) GetWindowDrawList().AddText(Vec2{ r.x + r.w - tw - 8.0f, r.y + (r.h - textH()) * 0.5f }, 0xff000000u | ((unsigned)g_theme.textDim[2] << 16) | ((unsigned)g_theme.textDim[1] << 8) | g_theme.textDim[0], shortcut);
-        }
-        return clicked;
-    }
-    // With StyleVar_FramedWidgets: Dear ImGui's menu row (one text line, the highlight reaching half the item spacing past it).
-    if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) return popupMenuItem(label, shortcut, selected, enabled);
-    if (!g_lay.active || !g_curMenu.active || !label) return false;
-    const float h = menuRowH(), s = g_theme.textScale;
-    const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
-    g_curMenu.itemY += h;
-    const int iid = hashLabel(label) ^ g_curMenu.menuId;
-    const bool shown = menuRowShown(y, h);
-    const bool ih = shown && enabled && hitOverlay(x, y, w, h);
-    if (ih) g_hot = iid;
-    const int ord = g_curMenu.n++;
-    if (enabled && ord < 64) g_curMenu.mask |= 1ull << ord;
-    MenuKb* kb = g_curMenu.kb;
-    if (ih && kb) kb->idx = ord;
-    const bool ksel = kb && kb->idx == ord && enabled && !kb->childOpen;
-    if (ksel && !shown && kb->keyMoved) menuRowReveal(y, h);
-    bool clicked = false;
-    if (ksel && g_curMenu.activate) {   // Enter on the highlighted item
-        clicked = true; *openState(g_curMenu.menuId, false) = false;
-        for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false;
-    }
-    if (g_active == iid) {
-        if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
-    } else if (ih && g_pressed) g_active = iid;
-    if (clicked)   // a chain of sub-menus opened from a popup's row: the popup closes as well, as a context menu does
-        for (int i = 0; i < g_menuDepth; ++i)
-            if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
-    if (!shown) return clicked;
-    const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
-    const bool wasOverlay = g_toOverlay;   // a sub-menu of a popup: the popup's rows after it must stay on top
-    g_toOverlay = true;
-    const float in = g_curMenu.textInset;
-    quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
-    if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
-    drawText(x + in, y + (h - textH()) * 0.5f, VisLabel(label).b, s, col);
-    if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
-        const float sw = labelW(shortcut), sx = x + w - sw - in;
-        if (sx > x + in + visW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
-    }
-    g_toOverlay = wasOverlay;
-    return clicked;
-}
-} // namespace
-
-bool MenuItem(const char* label) { return menuItemImpl(label, nullptr, false, true); }
-bool MenuItem(const char* label, const char* shortcut, bool selected, bool enabled) { return menuItemImpl(label, shortcut, selected, enabled); }
-
-void MenuSeparator() {
-    if (!g_lay.active || !g_curMenu.active) return;
-    const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
-    g_curMenu.itemY += h;
-    if (!menuRowShown(y, h)) return;
-    const bool wasOverlay = g_toOverlay;
-    g_toOverlay = true;
-    quad(x, y, w, h, pick(Col_PopupBg, g_theme.panel));
-    quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, pick(Col_Separator, g_theme.border));
-    g_toOverlay = wasOverlay;
-}
-
-void EndMenu() {
-    if (!g_curMenu.active) { if (g_popupSubOpen > 0) { --g_popupSubOpen; TreePop(); } return; }
-    const bool nested = g_menuDepth > 0;
-    // A press outside both the menu button (or the sub-menu's row) and its item list closes the menu.
-    // The list as drawn: from its visible top to its last row, or the band it scrolls in.
-    const bool scrolls = g_curMenu.clipY1 > g_curMenu.clipY0;
-    const float fullH = g_curMenu.itemY - g_curMenu.virtTop;
-    if (g_curMenu.heightSlot) *g_curMenu.heightSlot = fullH;   // where next frame's list starts depends on it
-    const float listY0 = g_curMenu.itemStartY;
-    const float listY1 = scrolls ? std::min(g_curMenu.itemY, g_curMenu.clipY1) : g_curMenu.itemY;
-    const bool inBtn  = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.bx, g_curMenu.by, g_curMenu.bw, g_curMenu.bh);
-    const bool inList = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0);
-    if (scrolls && g_curMenu.scrollSlot && g_in.wheel != 0.0f && !g_wheelUsed && hitOverlay(g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0)) {
-        *g_curMenu.scrollSlot -= g_in.wheel * menuRowH() * 3.0f;   // three rows a notch
-        g_wheelUsed = true;
-    }
-    const bool inSub  = g_curMenu.subW > 0.0f && pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.subX, g_curMenu.subY, g_curMenu.subW, g_curMenu.subH);
-    if (g_pressed && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
-    // A sub-menu also closes when the pointer leaves its row, its list and any list opened from it.
-    // (only while the mouse is moving: a sub-menu opened from the keyboard stays open under a parked pointer)
-    if (nested && !inBtn && !inList && !inSub && (g_mouseDX != 0.0f || g_mouseDY != 0.0f)) *openState(g_curMenu.menuId, false) = false;
-    if (g_curMenu.kb) { g_curMenu.kb->count = g_curMenu.n; g_curMenu.kb->mask = g_curMenu.mask; }
-    const bool hasItems = listY1 > listY0;
-    if (hasItems)
-        registerOverlay(g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0, false);
-    if (nested) {   // back to the menu this one was opened from; it needs to know where this list is
-        const CurMenu child = g_curMenu;
-        g_curMenu = g_menuStack[--g_menuDepth];
-        if (hasItems) {   // the bounding box of its list and of any list opened from it (a press in either is "inside" for the outer menus)
-            float x0 = child.x, y0 = listY0, x1 = child.x + child.w, y1 = listY1;
-            if (child.subW > 0.0f) { x0 = std::min(x0, child.subX); y0 = std::min(y0, child.subY); x1 = std::max(x1, child.subX + child.subW); y1 = std::max(y1, child.subY + child.subH); }
-            g_curMenu.subX = x0; g_curMenu.subY = y0; g_curMenu.subW = x1 - x0; g_curMenu.subH = y1 - y0;
-            if (!g_curMenu.active && g_popupTop > 0) {   // back in the popup the chain started from: a press in these lists is inside it
-                PopupCtx& pc = g_popupStack[g_popupTop - 1];
-                if (pc.subX1 <= pc.subX0) { pc.subX0 = x0; pc.subY0 = y0; pc.subX1 = x1; pc.subY1 = y1; }
-                else { pc.subX0 = std::min(pc.subX0, x0); pc.subY0 = std::min(pc.subY0, y0); pc.subX1 = std::max(pc.subX1, x1); pc.subY1 = std::max(pc.subY1, y1); }
-            }
-        }
-        return;
-    }
-    g_curMenu.active = false;
-}
-
-static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec2 size, bool* p_sel) {
-    if (!g_lay.active) return false;
-    if (p_sel) selected = *p_sel;
-    const int id = hashLabel(label);
-    const bool disabled = (flags & Selectable_Disabled) != 0;
-    const float s = g_theme.textScale;
-    const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : rowH();
-    float w = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : fullW();
-    float x, y; place(w, h, x, y);
-    const float textX = x;                        // the label starts at the cell, even when the highlight spans the table
-    if ((flags & Selectable_SpanAllColumns) && g_tbl.active) {
-        x = g_tbl.x0 - (g_tbl.scrollX ? g_tbl.sx : 0.0f); w = g_tbl.fullW;
-        g_lay.prevX = x; g_lay.prevW = w;
-    }
-    const bool inside = !disabled && hit(x, y, w, h);
-    g_lastId = id; if (inside) g_hot = id;
-    bool clicked = false;
-    const bool dblOnly = (flags & Selectable_DoubleClickOnly) != 0;
-    if (g_active == id) { if (g_released) { if (inside && !dblOnly) clicked = true; g_active = 0; } }
-    else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
-    const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
-    const float ty = y + (h - textH()) * 0.5f;
-    if (flags & Selectable_Header) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
-        unsigned char tmp[4];
-        const unsigned char* bg = nullptr;
-        if (inside && g_active == id) bg = pick(Col_HeaderActive, g_theme.accent);
-        else if (inside)              bg = pick(Col_HeaderHovered, g_theme.bgHover);
-        else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
-        if (bg) quad(x, y, w, h, bg);
-        drawText(textX + g_lay.spacingX * 0.5f, ty, label, s, tcol);
-    } else if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
-        unsigned char tmp[4];
-        const unsigned char white[4] = {255, 255, 255, 255};
-        if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
-        else if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        drawText(textX + 10.0f, ty, VisLabel(label).b, s, tcol);
-    } else {
-        if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
-        else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-        drawText(textX + 6.0f, ty, VisLabel(label).b, s, tcol);
-    }
-    if (clicked) {
-        if (p_sel) *p_sel = !*p_sel;
-        if (flags & Selectable_ClosePopup) CloseCurrentPopup();
-    }
-    return clicked;
-}
-bool Selectable(const char* label, bool selected) { return selectableImpl(label, selected, 0, Vec2{}, nullptr); }
-bool Selectable(const char* label) { return selectableImpl(label, false, 0, Vec2{}, nullptr); }
-bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size) { return selectableImpl(label, selected, flags, size, nullptr); }
-bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) { return selectableImpl(label, false, flags, size, p_selected); }
-
-void OpenPopup(const char* id) {
-    PopupSlot* p = popupSlot(hashLabel(id), true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
-}
-
-void CloseCurrentPopup() {
-    if (g_popupTop > 0) { PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) p->open = false; }
-}
-
-// Shared popup body setup: redirect layout into a floating overlay box at (px,py),
-// drawing the background using last frame's measured height. Returns true if open.
-bool ui_core::beginPopupBody(int id) {
-    // Depth guard first: past the popup-stack capacity the parent layout cannot
-    // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
-    // state that was never saved and stomp another popup's measured height.
-    if (g_popupTop >= 4) return false;
-    PopupSlot* p = popupSlot(id, false);
-    if (!p || !p->open) return false;
-    // StyleVar_PopupWidth / StyleVar_PopupPadding (when pushed) give the size; with a pushed padding the height is the content's
-    // exactly (no item spacing after the last item), as in Dear ImGui.
-    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
-    float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
-    float* wSlot = floatState(id ^ 0x9091, 0.0f);   // the widest line of last frame's content (plus padding): the popup grows to fit it
-    float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
-    if (!p->fixedW && !(g_popupW > 0.0f) && *wSlot > w) w = *wSlot;   // a pushed StyleVar_PopupWidth is the width (the Dear ImGui-looking menus); a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
-    if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
-    if (p->modal && g_dispW > 0.0f) p->x = (g_dispW - w) * 0.5f;   // a modal stays centred when it grew
-    float px = p->x, py = p->y;
-    // A combo's list goes where Dear ImGui's documented combo placement puts it: under the box toward the right; if that does not fit
-    // in the display, above the box toward the right; then under it toward the left (its right edge on the box's right edge); then
-    // above it toward the left. Only when none fits is it pushed inside like any popup.
-    bool placed = false;
-    if (p->combo && g_dispW > 0.0f && g_dispH > 0.0f) {
-        const float ph = *hSlot + padY * 2.0f;
-        const float cand[4][2] = {{p->x, p->y}, {p->x, p->boxTop - ph}, {p->boxRight - w, p->y}, {p->boxRight - w, p->boxTop - ph}};
-        for (const auto& c : cand)
-            if (c[0] >= 0.0f && c[1] >= 0.0f && c[0] + w <= g_dispW && c[1] + ph <= g_dispH) { px = c[0]; py = c[1]; placed = true; break; }
-    }
-    // Kept inside the display (Input::displayW/H), as Dear ImGui keeps a popup inside its viewport: moved left and up as needed.
-    if (!placed && g_framedWidgets && g_dispW > 0.0f && px + w > g_dispW) px = std::max(0.0f, g_dispW - w);
-    if (!placed && g_framedWidgets && g_dispH > 0.0f && py + *hSlot + padY * 2.0f > g_dispH) py = std::max(0.0f, g_dispH - (*hSlot + padY * 2.0f));
-    // Frame (overlay so it sits above everything). Height is last frame's content.
-    registerOverlay(px, py, w, *hSlot + padY * 2.0f, true);
-    g_toOverlay = true;
-    panelColored(px, py, w, *hSlot + padY * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
-    // Save parent layout; set up the popup's inner layout.
-    PopupCtx& c = g_popupStack[g_popupTop++];
-    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
-    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f;
-    c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
-    g_lay.active = true;
-    g_lay.ox = px + padX; g_lay.oy = py + padY;
-    g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
-    g_lay.contentW = w - 2.0f * padX;
-    g_lay.indent = 0.0f; g_lay.seed = id;
-    g_lay.pendingSameLine = false;
-    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
-    g_lay.maxRight = px;   // measure how far the content reaches
-    return true;
-}
-
-void EndPopup() {
-    if (g_popupTop <= 0) return;
-    PopupCtx& c = g_popupStack[--g_popupTop];
-    *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
-    if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
-    *c.wSlot = g_lay.maxRight > c.x ? (g_lay.maxRight - c.x) + c.padX : 0.0f;   // and the width it needs, plus padding
-    g_toOverlay = g_popupTop > 0;   // back in the popup this one was opened from: still on top
-    // Dismiss on a left-click outside the popup box (but not the click that opened it).
-    PopupSlot* p = popupSlot(c.id, false);
-    // Escape closes the innermost popup, as in Dear ImGui: not while a text field in it has the keyboard (Escape gives the field up),
-    // nor while a sub-menu list is open from one of its rows (that list closes first).
-    if (p && p->open && !p->modal && !g_escapeUsed && (g_in.escape || IsKeyPressed(KeyId_Escape, false)) &&
-        g_focusAtFrameStart == 0 && g_editId == 0 && !(c.subX1 > c.subX0)) {
-        p->open = false;
-        g_escapeUsed = true;
-    }
-    if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
-        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f);
-        const bool inSub = c.subX1 > c.subX0 && pointIn(g_in.mouseX, g_in.mouseY, c.subX0, c.subY0, c.subX1 - c.subX0, c.subY1 - c.subY0);
-        if (!inside && !inSub) p->open = false;
-    }
-    if (p && p->open && g_popCurN < 8) g_popCur[g_popCurN++] = PopRect{c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f, g_popupTop + 1};
-    // A popup opened from inside another one (a right-click menu on a row of an open list): a press in it is inside its parent too,
-    // so the parent stays open while it is used, as in Dear ImGui.
-    if (p && p->open && g_popupTop > 0) {
-        PopupCtx& pc = g_popupStack[g_popupTop - 1];
-        const float x0 = c.x, y0 = c.y, x1 = c.x + c.w, y1 = c.y + *c.hSlot + c.padY * 2.0f;
-        if (pc.subX1 <= pc.subX0) { pc.subX0 = x0; pc.subY0 = y0; pc.subX1 = x1; pc.subY1 = y1; }
-        else { pc.subX0 = std::min(pc.subX0, x0); pc.subY0 = std::min(pc.subY0, y0); pc.subX1 = std::max(pc.subX1, x1); pc.subY1 = std::max(pc.subY1, y1); }
-    }
-    g_lay = c.lay;   // restore parent layout
-}
-
-bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
-// By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
-void OpenPopup(unsigned id, int) {
-    PopupSlot* p = popupSlot((int)id, true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
-}
-bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
-
-bool IsPopupOpen(const char* name) {
-    if (!name) return false;
-    const PopupSlot* p = popupSlot(hashLabel(name), false);
-    return p && p->open;
-}
-
-static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
-bool BeginPopupModal(const char* name, bool* open, int flags) { g_modalNoTitle = (flags & Window_NoTitleBar) != 0; const bool r = BeginPopupModal(name, open); g_modalNoTitle = false; return r; }
-bool BeginPopupModal(const char* name, bool* open) {
-    if (!g_lay.active || !name) return false;
-    const int id = hashLabel(name);
-    PopupSlot* p = popupSlot(id, false);
-    if (!p || !p->open) { if (open) *open = false; return false; }
-    p->modal = true;
-    if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
-        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
-        g_nextWinSize.set = false;
-    }
-    g_nextWinPos.set = false;   // consumed: it must not move the next window
-    if (p->w <= 0.0f) p->w = 320.0f;
-    if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
-    const float pad = 6.0f;
-    float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
-    const float titleH = rowH() + 4.0f;
-    if (g_dispW > 0.0f && g_dispH > 0.0f) {   // centre it, using last frame's measured height
-        p->x = (g_dispW - p->w) * 0.5f;
-        p->y = (g_dispH - (*hSlot + pad * 2.0f)) * 0.5f;
-        if (p->y < 0.0f) p->y = 0.0f;
-    }
-    // Dim and block everything behind it.
-    if (g_dispW > 0.0f && g_dispH > 0.0f) {
-        registerOverlay(0.0f, 0.0f, g_dispW, g_dispH, true);
-        g_toOverlay = true;
-        const unsigned char dim[4] = {0, 0, 0, 140};
-        quad(0.0f, 0.0f, g_dispW, g_dispH, pick(Col_ModalWindowDimBg, dim));
-        g_toOverlay = false;
-    }
-    if (!beginPopupBody(id)) return false;
-    (void)titleH;
-    const VisLabel shown(name);
-    const bool showTitle = !g_modalNoTitle && shown.b[0] != 0;   // an empty title ("##id") or NoTitleBar: no title line and no rule under it
-    if (showTitle) Text(static_cast<const char*>(shown.b));
-    if (open && showTitle) {   // a close button at the top-right of the title line
-        const float bx = p->x + p->w - pad - rowH(), by = p->y + pad;
-        if (Button(id ^ 0x58, bx, by, rowH(), rowH(), "x")) { p->open = false; *open = false; }
-    }
-    if (showTitle) Separator();
-    return true;
-}
-
-
-namespace { int g_comboCloseId = 0; }   // a press on an open combo's box: the release closes it instead of reopening it
-
-// A combo whose list is whatever the caller draws: the box shows `preview`; while it is open the content between
-// BeginCombo and EndCombo (usually Selectable rows) fills a popup under the box, as wide as the box.
-bool BeginCombo(const char* label, const char* preview) {
-    if (!g_lay.active) return false;
-    const int id = hashLabel(label);
-    const VisLabel vis(label);   // the "##id" part is not shown
-    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
-    float w = availW();
-    // an explicit width is the box's; the label is extra (with StyleVar_FramedWidgets the views pass the whole row's width, label included)
-    if (lw > 0.0f && widthOverridden() && !g_framedWidgets) { const float room = realAvailW(); w = w + lw < room ? w + lw : room; }
-    float x, y; place(w, h, x, y);
-    float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
-    PopupSlot* ps = popupSlot(id ^ 0x77ca, true);
-    // A press counts only when nothing lies over the box (hit()): a popup over it (an Inspector field's prefab menu over the Axis list
-    // below the field) takes the click; the box used to open its list under the menu and the menu's row never got it (seen in the real
-    // editor). The hover look stays the pointer in the box, as before.
-    const bool insideBox = hitOverlay(x, y, boxW, h) && inClip();
-    const bool takesPress = insideBox && ((ps && ps->open) || hit(x, y, boxW, h));   // its own open list may lie over it: it still closes it
-    g_lastId = id; if (insideBox) g_hot = id;
-    if (g_active == id) {
-        if (g_released) {
-            if (insideBox && ps) {
-                if (g_comboCloseId == id) ps->open = false;
-                else if (!ps->open) {
-                    ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id;
-                    ps->combo = true; ps->boxTop = y; ps->boxRight = x + boxW;
-                }   // a pushed PopupWidth wider than the box widens the list (Dear ImGui fits it to its content)
-            }
-            g_comboCloseId = 0; g_active = 0;
-        }
-    } else if (takesPress && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
-    const bool open = ps && ps->open;
-    if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, preview);
-    else {
-    quad(x, y, boxW, h, g_theme.border);
-    if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
-    PushClipRect(x, y, std::max(1.0f, boxW - 24.0f), h);
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
-    PopClipRect();
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
-    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
-    }
-    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
-    if (!ps) return false;
-    const bool shown = beginPopupBody(ps->id);
-    if (shown) { g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = boxW; g_lay.prevH = h; }   // GetItemRect right after BeginCombo is the box
-    return shown;
-}
-
-void EndCombo() { EndPopup(); }
-
-bool BeginPopupContextItem(const char* id) {
-    const int pid = id ? hashLabel(id) : (hashLabel("##ctxitem") ^ g_lastId);
-    // Right-click on the last-issued widget opens the popup at the cursor.
-    // hit() is the test a left click on that widget passes: inside it, inside the clip (not scrolled out of its child), not
-    // under a window in front, not in a disabled block, not under an open overlay.
-    if (g_lay.active && g_rPressed && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
-        PopupSlot* p = popupSlot(pid, true);
-        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
-    }
-    return beginPopupBody(pid);
-}
 
 bool IsDragging() { return g_dd.active || g_tdd.active; }
 

@@ -2917,6 +2917,12 @@ add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)
 
+# ActiveRagdoll core (DynamicCharacter): balance, stepping, falls, get-up, hostile input, determinism
+add_executable(test_active_ragdoll test_active_ragdoll.cpp)
+target_link_libraries(test_active_ragdoll PRIVATE okay::engine)
+target_compile_definitions(test_active_ragdoll PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME active_ragdoll COMMAND test_active_ragdoll)
+
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)

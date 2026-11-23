@@ -273,6 +273,23 @@ int main() {
         CHECK(r.res.add.button.w == 300.0f - 32.0f);                          // under 300: the whole width
     }
 
+    // ================= no part of the card covers the name, at any width =================
+    // The owner's screenshot (v2.903.1.3) showed "+ Add Component" over the object's name. That was the hidden Inspector drawn in one
+    // line over the Hierarchy (shared/OkayUIHostImGui.hpp HiddenInImGui); shown, the name keeps its own room: Static and Lock sit right
+    // of it or drop below it, and the Add Component button is under the whole card.
+    for (float w : {260.0f, 300.0f, 380.0f, 460.0f, 900.0f}) {
+        IRig r(inspfix::Sample(), w, 1500.0f);
+        r.Frames(3);
+        const S::InspectorHeaderResult& h = r.res.header;
+        auto apart = [](const UI::Rect& a, const UI::Rect& b) {
+            return a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+        };
+        CHECK(h.nameField.w > 100.0f);
+        CHECK(apart(h.nameField, h.activeBox) && apart(h.nameField, h.staticBox) && apart(h.nameField, h.lockBox));
+        CHECK(h.nameField.x + h.nameField.w <= h.card.x + h.card.w);
+        CHECK(apart(r.res.add.button, h.card) && apart(r.res.add.button, h.nameField) && r.res.add.button.y > h.card.y + h.card.h);
+    }
+
     // ================= component header bars =================
     {
         IRig r(inspfix::Sample());

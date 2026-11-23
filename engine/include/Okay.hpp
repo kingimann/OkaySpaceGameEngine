@@ -362,11 +362,6 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/NetTransport.hpp"
 #include "okay/Net/NetBackend.hpp"
-#include "okay/ECS/World.hpp"
-#include "okay/ECS/NetWorld.hpp"
-#include "okay/ECS/Systems.hpp"
-#include "okay/ECS/NetWorldSync.hpp"
-#include "okay/ECS/SceneBridge.hpp"
 
 // Visual scripting (node graphs)
 #include "okay/VisualScript/VsValue.hpp"

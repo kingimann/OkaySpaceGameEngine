@@ -92,10 +92,10 @@ A physics body: velocity, mass and forces. The object needs a Rigidbody componen
 | `GetComponent<Rigidbody>().drag = drag` | `Rigidbody.drag=` | step | drag (Number), Target (Object) | - | How quickly it slows down by itself (0 = never). |
 | `GetComponent<Rigidbody>().isKinematic` | `Rigidbody.isKinematic` | value | Target (Object) | isKinematic (Bool) | When true, forces and gravity don't move it; only scripts do. |
 | `GetComponent<Rigidbody>().isKinematic = isKinematic` | `Rigidbody.isKinematic=` | step | isKinematic (Bool), Target (Object) | - | When true, forces and gravity don't move it; only scripts do. |
+| `GetComponent<Rigidbody>().AddForceAtPosition(force, point)` | `Rigidbody.AddForceAtPosition/2` | step | force (Vector3), point (Vector3), Target (Object) | - | Push it at a world point (off-centre pushes also spin it). |
 | `GetComponent<Rigidbody>().AddForce(force)` | `Rigidbody.AddForce/1` | step | force (Vector3), Target (Object) | - | Push it, over the next physics step (heavier bodies move less). |
 | `GetComponent<Rigidbody>().AddImpulse(impulse)` | `Rigidbody.AddImpulse/1` | step | impulse (Vector3), Target (Object) | - | Kick it at once (a jump, a hit). |
-| `GetComponent<Rigidbody>().AddTorque(torque)` | `Rigidbody.AddTorque/1` | step | torque (Vector3), Target (Object) | - | Twist it around X / Y / Z. |
-| `GetComponent<Rigidbody>().AddForceAtPosition(force, point)` | `Rigidbody.AddForceAtPosition/2` | step | force (Vector3), point (Vector3), Target (Object) | - | Push it at a world point (off-centre pushes also spin it). |
+| `GetComponent<Rigidbody>().AddTorque(torque)` | `Rigidbody.AddTorque/1` | step | torque (Vector3), Target (Object) | - | Twist it around X / Y / Z (a 2D body turns by the Z part). |
 
 ## PlayerView
 
@@ -552,17 +552,10 @@ Keyboard, mouse and gamepad.
 | `Input.pinchScale` | `Input.pinchScale` | value | - | pinchScale (Number) | How far apart two fingers are compared with where the pinch began. 1 means unchanged. Greater than 1 means they moved apart. |
 | `Input.twistDegrees` | `Input.twistDegrees` | value | - | twistDegrees (Number) | How far two fingers have twisted, in degrees. Positive is counter-clockwise. |
 | `Input.touchScreen` | `Input.touchScreen` | value | - | touchScreen (Bool) | True once a touch screen has been used or reported. |
-| `Input.GetKey(key)` | `Input.GetKey/1` | value | key (Text) | Result (Bool) | True while the key is held. |
-| `Input.GetKeyDown(key)` | `Input.GetKeyDown/1` | value | key (Text) | Result (Bool) | True on the frame the key is pressed. |
-| `Input.GetKeyUp(key)` | `Input.GetKeyUp/1` | value | key (Text) | Result (Bool) | True on the frame the key is released. |
 | `Input.GetAxis(axis)` | `Input.GetAxis/1` | value | axis (Text) | Result (Number) | "Horizontal" (A/D, left/right, stick) or "Vertical" (W/S, up/down, stick): -1 to 1. |
 | `Input.GetMouseButton(button)` | `Input.GetMouseButton/1` | value | button (Number) | Result (Bool) | True while the mouse button is held (0 left, 1 right, 2 middle). |
 | `Input.GetMouseButtonDown(button)` | `Input.GetMouseButtonDown/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is pressed. |
 | `Input.GetMouseButtonUp(button)` | `Input.GetMouseButtonUp/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is released. |
-| `Input.GetButton(action)` | `Input.GetButton/1` | value | action (Text) | Result (Bool) | True while the action is held ("Jump", "Fire"...), on keyboard, mouse or controller. |
-| `Input.GetButtonDown(action)` | `Input.GetButtonDown/1` | value | action (Text) | Result (Bool) | True on the frame the action is pressed. |
-| `Input.GetButtonUp(action)` | `Input.GetButtonUp/1` | value | action (Text) | Result (Bool) | True on the frame the action is released. |
-| `Input.GetActionValue(action)` | `Input.GetActionValue/1` | value | action (Text) | Result (Number) | How far the action is pressed, 0 to 1 (a trigger can be part way). |
 | `Input.GetActionVector(action)` | `Input.GetActionVector/1` | value | action (Text) | Result (Vector3) | A direction action ("Move", "Look") as x, y in -1..1 (y up; z is 0). |
 | `Input.Rumble(low, high, seconds)` | `Input.Rumble/3` | step | low (Number), high (Number), seconds (Number) | - | Shake the controller: low (heavy) and high (light) motor strength 0 to 1, for some seconds. |
 | `Input.RebindAction(action, binding)` | `Input.RebindAction/2` | step | action (Text), binding (Text) | Result (Bool) | Bind an action to "key:e", "mouse:right", "pad:rt"... for this player (saved). False if the binding isn't understood. |
@@ -582,6 +575,17 @@ Keyboard, mouse and gamepad.
 | `Input.MyPlayer()` | `Input.MyPlayer/0` | value | - | Result (Number) | The local player index of the Player Input component on this object (use it as the player of the Player calls), or -1 when there is none or the game is not playing. |
 | `Input.PlayerScheme(player)` | `Input.PlayerScheme/1` | value | player (Number) | Result (Text) | The control scheme a local player is in now (Keyboard+Mouse, Gamepad ...); it follows the device used last when the player uses any device. |
 | `Input.Gesture(name)` | `Input.Gesture/1` | value | name (Text) | Result (Bool) | True on the frame a touch gesture happens. name is "tap", "double tap", "long press", "swipe", "swipe up", "swipe down", "swipe left", "swipe right", "pinch" or "rotate". |
+| `Input.GetKey(key)` | `Input.GetKey/1` | value | key (Text) | Result (Bool) | True while the key is held. |
+| `Input.GetKeyDown(key)` | `Input.GetKeyDown/1` | value | key (Text) | Result (Bool) | True on the frame the key is pressed. |
+| `Input.GetKeyUp(key)` | `Input.GetKeyUp/1` | value | key (Text) | Result (Bool) | True on the frame the key is released. |
+| `Input.GetButton(action)` | `Input.GetButton/1` | value | action (Text) | Result (Bool) | True while the action is held ("Jump", "Fire"...), on keyboard, mouse or controller. A player number (0-3) reads one controller's action. |
+| `Input.GetButton(action, player)` | `Input.GetButton/2` | value | action (Text), player (Number) | Result (Bool) | True while the action is held ("Jump", "Fire"...), on keyboard, mouse or controller. A player number (0-3) reads one controller's action. |
+| `Input.GetButtonDown(action)` | `Input.GetButtonDown/1` | value | action (Text) | Result (Bool) | True on the frame the action is pressed. |
+| `Input.GetButtonDown(action, player)` | `Input.GetButtonDown/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame the action is pressed. |
+| `Input.GetButtonUp(action)` | `Input.GetButtonUp/1` | value | action (Text) | Result (Bool) | True on the frame the action is released. |
+| `Input.GetButtonUp(action, player)` | `Input.GetButtonUp/2` | value | action (Text), player (Number) | Result (Bool) | True on the frame the action is released. |
+| `Input.GetActionValue(action)` | `Input.GetActionValue/1` | value | action (Text) | Result (Number) | How far the action is pressed, 0 to 1 (a trigger can be part way). |
+| `Input.GetActionValue(action, player)` | `Input.GetActionValue/2` | value | action (Text), player (Number) | Result (Number) | How far the action is pressed, 0 to 1 (a trigger can be part way). |
 
 ## Time
 
@@ -595,8 +599,6 @@ Frame timing.
 | `Time.physicsSteps = physicsSteps` | `Time.physicsSteps=` | step | physicsSteps (Number) | - | How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame. |
 | `Time.smoothPhysics` | `Time.smoothPhysics` | value | - | smoothPhysics (Bool) | Draw bodies between physics steps so motion stays smooth at any frame rate. |
 | `Time.smoothPhysics = smoothPhysics` | `Time.smoothPhysics=` | step | smoothPhysics (Bool) | - | Draw bodies between physics steps so motion stays smooth at any frame rate. |
-| `Time.time` | `Time.time` | value | - | time (Number) | Seconds since the game started. |
-| `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.timeScale` | `Time.timeScale` | value | - | timeScale (Number) | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
 | `Time.timeScale = timeScale` | `Time.timeScale=` | step | timeScale (Number) | - | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
 | `Time.sessionTime` | `Time.sessionTime` | value | - | sessionTime (Number) | Seconds of game time since this Play began (Time.time keeps counting across Plays; this starts from 0 each time). |
@@ -607,6 +609,8 @@ Frame timing.
 | `Time.fps` | `Time.fps` | value | - | fps (Number) | Frames per second over the last half second of real frame times (0 before the first frame). |
 | `Time.hitchCount` | `Time.hitchCount` | value | - | hitchCount (Number) | How many frames took over a tenth of a second since this Play began. |
 | `Time.paused` | `Time.paused` | value | - | paused (Bool) | True while the game is paused (a menu, a cutscene or the pause button holds it). |
+| `Time.time` | `Time.time` | value | - | time (Number) | Seconds since the game started. |
+| `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.PushPause(reason)` | `Time.PushPause/1` | step | reason (Text) | - | Hold the game paused for a reason of your own ("dialogue", "shop"). The game stays paused until every reason is let go, so two scripts that pause never resume each other. |
 | `Time.PopPause(reason)` | `Time.PopPause/1` | step | reason (Text) | Result (Bool) | Let go of one hold of that reason. False when nothing held it. |
 | `Time.IsPausedBy(reason)` | `Time.IsPausedBy/1` | value | reason (Text) | Result (Bool) | True while that reason is holding the pause. |
@@ -634,10 +638,10 @@ The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a setting
 | `Audio.masterVolume = masterVolume` | `Audio.masterVolume=` | step | masterVolume (Number) | - | Overall volume, 0 to 1. |
 | `Audio.muted` | `Audio.muted` | value | - | muted (Bool) | Silence everything. |
 | `Audio.muted = muted` | `Audio.muted=` | step | muted (Bool) | - | Silence everything. |
-| `Audio.SetGroupVolume(group, volume)` | `Audio.SetGroupVolume/2` | step | group (Text), volume (Number) | - | Set one group's volume, 0 to 1 ("Music", "SFX", "UI" or "Voice"). |
-| `Audio.GetGroupVolume(group)` | `Audio.GetGroupVolume/1` | value | group (Text) | Result (Number) | One group's volume. |
 | `Audio.MuteGroup(group, mute)` | `Audio.MuteGroup/2` | step | group (Text), mute (Bool) | - | Mute or unmute one group. |
 | `Audio.SaveSettings()` | `Audio.SaveSettings/0` | step | - | - | Store the volumes in the player's prefs now (they are also saved when the game closes). |
+| `Audio.SetGroupVolume(group, volume)` | `Audio.SetGroupVolume/2` | step | group (Text), volume (Number) | - | Set one group's volume, 0 to 1 ("Music", "SFX", "UI" or "Voice"). |
+| `Audio.GetGroupVolume(group)` | `Audio.GetGroupVolume/1` | value | group (Text) | Result (Number) | One group's volume. |
 
 ## SaveGame
 

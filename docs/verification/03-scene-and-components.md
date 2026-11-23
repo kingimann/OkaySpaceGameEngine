@@ -96,7 +96,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     - 1.6 Prefabs and templates [Partial]. Where: GameObject menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); override UI in the Inspector header...
     - 1.7 Saves and prefs [Works]. Where: AutoSave component in the Inspector (editor/main.cpp); no save-slot UI components yet (12.8)
     - 1.8 Localization [Works]. Where: Localization window (1.16, 'editor/LocalizationWindow.*')
-    - 1.9 Events and ECS [Works].
+    - 1.9 Events [Works].
     - 1.10 Logging and profiling [Works]. Where: Console panel ('editor/ConsolePanel.*'); Profiler and Stats windows (editor/main.cpp, 23)
     - 1.11 Asset manager [Partial].
     - 1.12 Asset database [Partial]. Where: Project panel ('editor/ProjectBrowser.*': listing, search, filters, counts, folder tree, info strip, Find...

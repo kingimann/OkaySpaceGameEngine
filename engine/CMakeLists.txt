@@ -361,6 +361,7 @@ add_library(okay_engine
     src/Texture/Stream.cpp
     src/Texture/Export.cpp
     src/Render/GpuTexture.cpp
+    src/Render/TextureAsset.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

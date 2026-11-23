@@ -4529,6 +4529,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - shared script table (13.6)
 - Shared script-function table (13.6.4)
 - Shared shading maths (2.3.2)
+- Shared texture assets (2.13.8)
 - Shared timeline widgets (15.5.5)
 - shatter (6.6, 52.4)
 - ShellSafeUrl (39.9)

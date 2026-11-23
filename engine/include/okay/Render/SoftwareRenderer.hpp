@@ -22,6 +22,8 @@
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
+#include "okay/Render/TextureAsset.hpp"   // the shared texture library every renderer draws from
+#include <memory>
 #include "okay/Render/OkayShader.hpp"
 #include "okay/Texture/Dds.hpp"         // .dds pictures: read and decoded on the CPU (okay::tex)
 #include "okay/Core/Log.hpp"
@@ -166,9 +168,15 @@ inline Vec3 SampleEnvSky(const Vec3& dir) {
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
 /// (ImGui image) display. Flat-shaded; this is the engine's reference 3D path.
 // A texture's mip levels plus how it is sampled (from the asset's import settings: Filter and Wrap).
-struct MipChain : std::vector<Image> {
+// A view of a TextureAsset's mip chain (shared, not copied), with how it is sampled.
+struct MipChain {
+    std::shared_ptr<const std::vector<Image>> levels;
+    std::uint64_t serial = 0;   // the asset serial the view was taken from
     int filter = TextureSampling::Trilinear;
     int wrap = TextureSampling::Repeat;
+    std::size_t size() const { return levels ? levels->size() : 0; }
+    bool empty() const { return size() == 0; }
+    const Image& operator[](std::size_t i) const { return (*levels)[i]; }
 };
 
 /// A Custom (.okayshader) surface for TrianglePhong: the CPU program, the material's property values,
@@ -904,25 +912,32 @@ public:
     }
 };
 
-// Process-wide texture cache for the software renderer (path -> RGBA image).
-// Loaded lazily; failed/empty paths cache an empty image so we don't retry.
-inline std::unordered_map<std::string, Image>& TextureCacheMap() {
-    static std::unordered_map<std::string, Image> cache;
-    return cache;
+// The texture every renderer draws with comes from one shared library (okay/Render/TextureAsset.hpp): one decoded
+// asset per name, loaded through AssetManager, reference counted, hot reloaded, counted in MemoryTracker. The functions
+// below are the software renderer's (and the older callers') way into it.
+
+// How the GPU renderers sample an asset: its import Filter / Wrap / Mipmaps / anisotropy (defaults for "@" and "proc:").
+inline TextureSampling TextureSamplingOf(const TextureAsset& a) {
+    TextureSampling t;
+    t.filter = a.settings.filter;
+    t.wrap = a.settings.wrap;
+    t.mipmaps = a.settings.mipmaps;
+    t.anisotropy = a.settings.filter == TextureSettings::Trilinear ? a.settings.anisotropy : 1;   // with trilinear only
+    return t;
 }
 
-// Bumped whenever a cached picture is dropped, so GPU renderers that keep their own copy re-upload it.
+// Bumped whenever cached pictures are dropped, so GPU renderers that keep their own copy by name re-check them.
 inline unsigned& TextureCacheGeneration() { static unsigned g = 0; return g; }
 
 // Register an in-memory image under a name so it can be used without a file on
 // disk (e.g. an embedded/procedural matcap that ships inside the exe). Names
 // conventionally start with '@' to avoid colliding with real file paths.
 inline void RegisterTexture(const std::string& name, Image img) {
-    TextureCacheMap()[name] = std::move(img);
+    textures::Register(name, std::move(img));
 }
 
-// A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The software renderer
-// and the Direct3D renderers draw .dds files this way; the OpenGL renderer uploads them compressed when it can.
+// A .dds picture as RGBA8: its top level, block formats decoded on the CPU (okay::tex::DecodeBc). The texture library
+// decodes .dds files this way for the software and Direct3D 12 renderers; OpenGL and Direct3D 11 upload them compressed.
 inline bool LoadDdsImage(const std::string& path, Image& img) {
     tex::DdsImage d;
     std::string why;
@@ -937,62 +952,26 @@ inline bool LoadDdsImage(const std::string& path, Image& img) {
     return true;
 }
 
+// The picture for a texture name ("proc:..." procedural, "@..." registered, a .dds, any image file), with its import
+// settings applied; null when it cannot be loaded. Shared with every renderer (textures::ForRender).
 inline Image* GetCachedTexture(const std::string& path) {
-    auto& cache = TextureCacheMap();
-    auto it = cache.find(path);
-    if (it == cache.end()) {
-        Image img;
-        if (path.rfind("proc:", 0) == 0)
-            img = GenerateProcTexture(path);   // built-in procedural (no file)
-        else if (tex::IsDdsPath(path))
-            LoadDdsImage(path, img);
-        else
-            img.Load(path);                    // leaves the image empty on failure
-        ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
-        it = cache.emplace(path, std::move(img)).first;
-    }
-    return it->second.Width() > 0 ? &it->second : nullptr;
+    const TextureAsset* a = textures::ForRender(path);
+    return a ? const_cast<Image*>(&a->image) : nullptr;
 }
 
-// Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
-// (the editor calls this after Apply on the Import Settings box or a reimport).
-inline void InvalidateTextureCache(const std::string& path);
-
-// Build the mipmap pyramid for `levels` (which already holds the base at [0]):
-// box-downsample by 2 until 1x1. Mip levels let the renderer pick a smaller,
-// pre-filtered texture for far-away/minified triangles, which kills the harsh
-// shimmer/aliasing you get sampling a full-res texture at a distance.
-inline void BuildMips(std::vector<Image>& levels) {
-    if (levels.empty()) return;
-    while (levels.back().Width() > 1 || levels.back().Height() > 1) {
-        const Image& s = levels.back();
-        int sw = s.Width(), sh = s.Height();
-        int dw = sw > 1 ? sw / 2 : 1, dh = sh > 1 ? sh / 2 : 1;
-        Image dimg(dw, dh);
-        for (int y = 0; y < dh; ++y)
-            for (int x = 0; x < dw; ++x) {
-                int sx = x * 2, sy = y * 2;
-                int sx1 = sx + 1 < sw ? sx + 1 : sx, sy1 = sy + 1 < sh ? sy + 1 : sy;
-                Color a = s.GetPixel(sx, sy), b = s.GetPixel(sx1, sy);
-                Color c = s.GetPixel(sx, sy1), e = s.GetPixel(sx1, sy1);
-                dimg.SetPixel(x, y, Color((a.r + b.r + c.r + e.r) * 0.25f,
-                                          (a.g + b.g + c.g + e.g) * 0.25f,
-                                          (a.b + b.b + c.b + e.b) * 0.25f,
-                                          (a.a + b.a + c.a + e.a) * 0.25f));
-            }
-        levels.push_back(std::move(dimg));
-    }
-}
-
+// The software renderer's sampling views of the assets' mip chains (filter and wrap from the import settings), rebuilt
+// when the asset's serial changes (hot reload, reimport, a painted terrain splat).
 inline std::unordered_map<std::string, MipChain>& MipCacheMap() {
     static std::unordered_map<std::string, MipChain> cache;
     return cache;
 }
 
-// A texture's mip chain (built lazily from the base image). Returns null if the
-// texture failed to load / is empty.
+// Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
+// (the editor calls this after Apply on the Import Settings box or a reimport). A picture still held elsewhere is
+// decoded again in place, so every handle sees the new version.
 inline void InvalidateTextureCache(const std::string& path) {
-    TextureCacheMap().erase(path);
+    textures::Drop(path);
+    textures::Reload(path);
     MipCacheMap().erase(path);
     ++TextureCacheGeneration();
 }
@@ -1000,24 +979,28 @@ inline void InvalidateTextureCache(const std::string& path) {
 // Drop every picture loaded from a file (pictures registered by name, "@...", are kept: they have no file to
 // read again). For when the caller does not know which cache key a file went in under.
 inline void InvalidateAllTextureCaches() {
-    auto& tex = TextureCacheMap();
-    for (auto it = tex.begin(); it != tex.end();) { if (!it->first.empty() && it->first[0] == '@') ++it; else it = tex.erase(it); }
+    textures::InvalidateAll();
     MipCacheMap().clear();
     ++TextureCacheGeneration();
 }
 
+// A texture's mip chain: the asset's own (built once with our gamma-correct box or Kaiser filter, see TextureAsset::Mips).
+// Returns null if the texture failed to load / is empty.
 inline const MipChain* GetCachedMips(const std::string& path) {
+    const TextureAsset* a = textures::ForRender(path);
     auto& cache = MipCacheMap();
     auto it = cache.find(path);
-    if (it == cache.end()) {
-        MipChain levels;
-        Image* base = GetCachedTexture(path);
-        const TextureSampling ts = TextureImportSampling(path);   // the asset's Filter / Wrap / Mipmaps
-        levels.filter = ts.filter; levels.wrap = ts.wrap;
-        if (base && base->Width() > 0) { levels.push_back(*base); if (ts.mipmaps) BuildMips(levels); }
-        it = cache.emplace(path, std::move(levels)).first;
+    if (a && it != cache.end() && it->second.serial == a->serial && it->second.levels) return &it->second;
+    if (textures::ReadOnly()) return nullptr;   // the render bands (several threads) never change the cache
+    if (!a) { if (it != cache.end()) cache.erase(it); return nullptr; }
+    MipChain& c = cache[path];
+    if (c.serial != a->serial || !c.levels) {
+        c.levels = a->SharedMips();
+        c.serial = a->serial;
+        c.filter = a->settings.filter;
+        c.wrap = a->settings.wrap;
     }
-    return (!it->second.empty() && it->second[0].Width() > 0) ? &it->second : nullptr;
+    return c.empty() ? nullptr : &c;
 }
 
 /// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
@@ -2808,7 +2791,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     }
     };  // renderBand
     // Split the frame into horizontal bands across hardware threads.
-    { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
+    { OKAY_PROFILE("Render.Raster"); textures::ReadOnlyScope texturesReadOnly;   // the bands only read the textures loaded above
+      ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
     OKAY_PROFILE("Render.Post");
     if ((SSAOEnabled() || rs.post.ssao) && !r.gvalid.empty()) {       // contact AO post-pass
         const float radSaved = SSAORadius(), strSaved = SSAOStrength(), powSaved = SSAOPower();

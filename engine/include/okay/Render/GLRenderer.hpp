@@ -79,6 +79,10 @@ public:
         unsigned glFormat = 0;     ///< the GL internal format
         int levels = 0;            ///< mip levels uploaded from the file (0: the ordinary RGBA8 path)
         std::string note;          ///< why a compressed file was decoded on the CPU, when it was
+        int uploadedLevels = 0;    ///< mip levels on the GPU (our own gamma-correct chain for an ordinary picture)
+        std::size_t gpuBytes = 0;  ///< bytes of all uploaded levels (counted in MemoryTracker "Textures (GPU)")
+        std::uint64_t serial = 0;  ///< the TextureAsset serial uploaded; a new serial uploads again
+        int anisotropy = 1;        ///< anisotropic filtering level asked for (1 = off)
     };
     /// The GL texture for a material texture name, uploaded on first use like a draw does (0 when it cannot be
     /// loaded). A GL context must be current.
@@ -216,11 +220,13 @@ private:
     std::vector<unsigned int> m_indices;    // scratch index buffer
     std::vector<std::uint32_t> m_pixels;    // read-back result
 
-    // GPU texture cache (texture name/path -> GL texture object), shared shape with
-    // the software renderer's cache so the same material textures appear.
+    // GPU texture cache: texture name -> GL texture object, made from the shared TextureAsset (TextureAsset.hpp) and
+    // uploaded again only when that asset's serial changes. Names the texture library lets go of are freed here too.
     std::unordered_map<std::string, unsigned int> m_texCache;
     std::unordered_map<unsigned int, TextureSampling> m_texInfo;   // GL texture -> its import Filter / Wrap / Mipmaps
-    unsigned m_texGen = 0;   // TextureCacheGeneration() the cache above was built for
+    unsigned m_texGen = 0;      // TextureCacheGeneration() the cache above was checked against
+    unsigned m_texLibGen = 0;   // textures::Generation() likewise
+    void FreeTexture(const std::string& name);
     unsigned int TextureFor(const std::string& name);   // upload-on-first-use
     unsigned int UploadDdsTexture(const std::string& name, TextureSampling& ts, TextureUploadInfo& info);   // .dds / compressed copy; 0 = not one
     std::unordered_map<std::string, TextureUploadInfo> m_uploadInfo;   // texture name -> how it was uploaded

@@ -33,6 +33,8 @@ struct BodyData {
     bool bullet = false;
     bool massSet = false;            // SetMass was called (keep that mass when colliders change)
     float setMass = 0.0f;
+    bool inertiaSet = false;         // SetInertia was called (keep that inertia when colliders or the mass change)
+    M33 setInertia;
     float sleepTime = 0.0f;
     Xf xf, prevXf;                    // origin pose now and at the previous step
     V3 localCom, com;                 // centre of mass: body frame and world

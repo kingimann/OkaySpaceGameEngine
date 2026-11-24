@@ -78,6 +78,7 @@ void UpdateMass(World::Impl& w, BodyId id) {
         b.inertiaLocal = b.inertiaLocal * s;
         b.mass = b.setMass;
     }
+    if (b.inertiaSet) b.inertiaLocal = b.setInertia;
     b.invMass = 1.0f / b.mass;
     b.invInertiaLocal = b.inertiaLocal.Inverse();
     b.com = b.xf.Apply(b.localCom);
@@ -192,6 +193,15 @@ void World::SetMass(BodyId id, float mass) {
     if (!IsValid(id)) return;
     m->bodies[id].massSet = mass > 0.0f;
     m->bodies[id].setMass = mass;
+    UpdateMass(*m, id);
+}
+void World::SetInertia(BodyId id, const M33& inertiaLocal) {
+    if (!IsValid(id)) return;
+    bool given = false;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) given = given || inertiaLocal.m[i][j] != 0.0f;
+    m->bodies[id].inertiaSet = given;
+    m->bodies[id].setInertia = inertiaLocal;
     UpdateMass(*m, id);
 }
 void World::SetDamping(BodyId id, float l, float a) { if (IsValid(id)) { m->bodies[id].linDamp = l; m->bodies[id].angDamp = a; } }
@@ -607,7 +617,8 @@ void World::Step(float dt) {
             }
             Manifold man;
             const float offs = ca.def.contactOffset + cb.def.contactOffset;
-            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec + offs, man);
+            const bool hit = Collide(ca.def.shape, xa, cb.def.shape, xb, spec + offs, man) &&
+                             (cp.sensor || !contactEnabled || contactEnabled(cp.a, cp.b));
             if (hit && offs > 0.0f)   // the colliders count as thicker: every point is that much closer
                 for (int k = 0; k < man.count; ++k) {
                     man.pts[k].pA += man.pts[k].normal * ca.def.contactOffset;

@@ -181,6 +181,10 @@ public:
     void SetParallelFor(ParallelFor pf) { m_parallel = std::move(pf); }
     /// Extra pair filter (e.g. the scene's layer matrix): return false to never collide the two.
     std::function<bool(ColliderId, ColliderId)> shouldCollide;
+    /// Asked every step for each solid pair that is close: return false and the pair counts as apart for this step (no
+    /// push, not touching). For contacts that depend on where the two are, such as a one-way platform that lets through
+    /// what comes from its far side. Called from the narrow phase (maybe on several threads: it must only read).
+    std::function<bool(ColliderId, ColliderId)> contactEnabled;
     /// The materials of a touching pair. Unset: friction is the square root of the two frictions, bounciness the larger
     /// of the two, no extra still grip, rolling resistance the larger of the two. `staticFriction` (0 = same as friction)
     /// is the grip while the surfaces are nearly still. Called from the narrow phase (maybe on several threads: it
@@ -206,6 +210,9 @@ public:
     float GetMass(BodyId id) const;
     M33 GetInertiaLocal(BodyId id) const;    // about the centre of mass, body frame
     void SetMass(BodyId id, float mass);     // keep the shape, scale the inertia to this mass (<= 0: from density again)
+    /// Use this inertia (about the centre of mass, body frame) instead of the one worked out from the shapes; an all-zero
+    /// matrix goes back to the shapes'. For bodies whose shapes stand in for something else (a 2D disc is a ball here).
+    void SetInertia(BodyId id, const M33& inertiaLocal);
     void SetDamping(BodyId id, float linear, float angular);
     void SetGravityScale(BodyId id, float s);
     void SetLocks(BodyId id, std::uint8_t linear, std::uint8_t angular);

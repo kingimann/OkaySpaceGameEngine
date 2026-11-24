@@ -9,19 +9,19 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 
 ### 6.1 2D bodies and colliders
 - **System:** Physics
-- **What:** Side-view and top-down games: Rigidbody2D bodies and 2D colliders are stepped by Physics2D (gravity, contacts with friction and bounce, triggers, sleeping).
+- **What:** Side-view and top-down games: Rigidbody2D bodies and 2D colliders are stepped by Physics2D on our own physics core, the solver 3D uses (gravity, stacking contacts with friction and bounce, triggers, sleeping in groups).
 - **Parts:**
-  - 6.1.1 2D solver - `Physics/Physics2D` - Step: integrate, resolve contacts, fire collision and trigger callbacks, sleep resting bodies
+  - 6.1.1 2D step - `Physics/Physics2D`, `Physics/Physics2DEngine.inl`, `Physics/Core/World` - each 2D body is a core body locked to the x/y plane that turns about z only; shapes are the 2D outline pushed out along z; then collision and trigger callbacks (`docs/physics/physics_core.md`, "2D on the core")
   - 6.1.2 Rigidbody2D - `Physics/Rigidbody2D` - Dynamic / Kinematic / Static, mass, drag, gravity scale, bounciness, friction, spin (off by default), sleeping, opt-in continuous collision
   - 6.1.3 2D collider shapes - `Physics/Collider2D` - box, circle, capsule, edge (one-way platforms) and polygon colliders, trigger flag, offset, layer
   - 6.1.4 Tilemap collider - `Components/TilemapCollider2D` - builds merged box strips from a sibling Tilemap on Start
 - **Code:** `Physics/Physics2D`, `Physics/Rigidbody2D`, `Physics/Collider2D`, `Components/TilemapCollider2D`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D`, `EdgeCollider2D`, `PolygonCollider2D`, `TilemapCollider2D`, `OnCollisionEnter2D`, `OnTriggerEnter2D`, `scene.physics()`, `Collision2D`
 - **Editor:** Add Component > Physics 2D rows; Inspector sections for each component; Scene view collider gizmos (View > Scene Overlays > Colliders)
-- **Docs:** -
-- **Tests:** `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
-- **Status:** Works - Physics2D::Step and Rigidbody2D read; covered by the tests above (friction, spin, tilemap strips, NaN and freed-pointer safety)
-- **Open:** no dedicated physics doc; 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
+- **Docs:** `docs/physics/physics_core.md` (section "2D on the core")
+- **Tests:** `physics2d_core`, `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
+- **Status:** Works - headless on Linux only; covered by the tests above (a 10-crate stack at 30, 60 and 120 steps a second, waking on lost support, heavy on light, a fast ball at a thin wall, friction, spin, tilemap strips, NaN and freed-pointer safety)
+- **Open:** 2D joints are the Joint2D component (6.3), solved by the core; no 2D slider joint; the debug view draws no 2D bodies or joints; two solid colliders without a dynamic body raise no collision callbacks; not run in the editor or on Windows
 - **Related:** 6.3, 6.4, 6.5, 6.7, 2.6, 4.3
 - **Words:** physics, gravity, 2D physics, Rigidbody2D, BoxCollider2D, CircleCollider2D, CapsuleCollider2D, PolygonCollider2D, EdgeCollider2D, one-way platform, trigger, TilemapCollider2D, sleeping, friction, bounce, restitution, Box2D-style
 - **Seen as:** a sprite falls through the floor; a box jitters or never comes to rest; a ball does not bounce; a platform cannot be jumped up through; tilemap tiles do not block the player; a body spins when it should stay upright

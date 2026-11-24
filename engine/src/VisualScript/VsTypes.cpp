@@ -266,6 +266,8 @@ const Row kRows[] = {
         {"OnPlayerLeft", false, "", ""},
         {"NetHostOrJoin", true, "", ""},
         {"NetSendEvent", true, "A", ""},
+        {"NetHostOnline", true, "T", "T"},
+        {"NetJoinCode", true, "T", ""},
         {"NetEventSender", false, "", "N"},
         {"NetPlayerCount", false, "", "N"},
         {"NetPlayerIdAt", false, "N", "N"},

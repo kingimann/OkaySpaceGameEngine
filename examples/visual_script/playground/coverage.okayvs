@@ -1618,3 +1618,8 @@ node 1692 Fn.wrap
 node 1693 Fn.wrap_in_box
 node 1694 Fn.write_save
 node 1695 Fn.zoom_camera
+node 1696 Fn.net.host_online
+node 1697 Fn.net.join_code
+node 1698 Fn.net.path
+node 1699 Fn.net.relay
+node 1700 Fn.net.room_code

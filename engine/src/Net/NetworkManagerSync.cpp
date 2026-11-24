@@ -1148,10 +1148,21 @@ void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data,
         }
         return;
     }
+    if (to.port == net::kRelaySlotPort) {
+        // A punched path to that slot: straight there, as in a direct session (directConnect).
+        if (const DirectPath* d = DirectFor(to.address); d && d->open && !d->failed) {
+            m_bytesOutAcc += size;
+            if (!net::HoldDatagram(m_socket, d->ep, data, size)) {
+                if (m_socket.SendTo(d->ep, data, size)) net::NoteWire(size, false);
+            }
+            return;
+        }
+    }
     net::Packet h(net::RelayData);
     h.Write(to.address);                       // destination slot
     std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
     dg.insert(dg.end(), data, data + size);
+    m_bytesOutAcc += dg.size();
     if (!net::HoldDatagram(m_socket, m_relayEp, dg.data(), dg.size())) {
         if (m_socket.SendTo(m_relayEp, dg.data(), dg.size())) net::NoteWire(dg.size(), false);
     }
@@ -1170,9 +1181,13 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
         int n = net::TakeDatagram(m_socket, buffer, capacity, from);
         if (n > 0) m_bytesInAcc += (std::size_t)n;
         if (n <= 0 || !m_relay) return n;
-        if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
+        if (!(from == m_relayEp)) {                  // only the relay should reach us...
+            if (OnDirectDatagram(b, n, from)) return n;   // ...or a peer on a punched path
+            continue;
+        }
         std::uint8_t tag = b[0];
+        if (tag == net::RelayPeerAddr) { OnRelayPeerAddr(b, static_cast<std::size_t>(n)); continue; }
         if (tag == net::RelayWelcome) {
             // Version 2 relays add [u8 version][u64 host key]; the key comes
             // only to the host, which sends it back in every hello so only it
@@ -1186,14 +1201,36 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
                 ++m_relayBadWelcomes;
                 continue;
             }
+            m_relayHeard = true;
             const std::uint32_t hostSlot = w.hostSlot;
             const bool haveKey = w.haveKey;
             const std::uint32_t keyLo = static_cast<std::uint32_t>(w.hostKey), keyHi = static_cast<std::uint32_t>(w.hostKey >> 32);
             // A host needs the key fields: without them it would hello with key 0
             // and be refused as if the code were taken.
             if (m_mode == Mode::Server && !haveKey) continue;
-            if (m_mode == Mode::Server && (keyLo | keyHi))
+            if (m_mode == Mode::Server) {
+                if (w.slot != 0) m_relaySlot = w.slot;
+                if (hostSlot != 0 && hostSlot != w.slot) {
+                    // We are not the session's host (yet). A player taking a gone host's place keeps asking
+                    // (the relay waits until the old host is silent); if another player took it, we join that
+                    // one instead (MigrationHostTick). Anyone else: this host was replaced, which ends it.
+                    if (m_relayPromoting) {   // the old host's slot, until the relay agrees: keep asking
+                        if (hostSlot != m_mig.oldHostSlot) m_relayNewHost = hostSlot;
+                        continue;
+                    }
+                    m_relayError = "another player took over as the host of session '" + m_relayCode + "'";
+                    OKAY_WARN("net: relay: ", m_relayError);
+                    m_relayLost = true;
+                    return 0;
+                }
+                if (!(keyLo | keyHi)) continue;   // not ours yet (a successor before the relay agreed)
                 m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
+                if (w.successorKey) m_relaySuccessorKey = w.successorKey;
+                if (m_relayPromoting) {
+                    m_relayPromoting = false;
+                    OKAY_INFO("net: the relay made this player the host of session '", m_relayCode, "'");
+                }
+            }
             if (m_mode == Mode::Client) {
                 // The relay knows us by our source address, and a new address (a NAT rebinding, a
                 // phone changing network) is a new peer with a new slot: the host still lists the old
@@ -1212,6 +1249,22 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
                 // Any change (it left: slot 0, or another host took the code)
                 // ends this session instead of re-pointing us at someone else.
                 if (m_relayWelcomed && !(m_serverEp == SlotEndpoint(hostSlot))) {
+                    // Host migration through the relay: the host leaving moves us on, and a player on the
+                    // host's list taking its place is our new host (the relay lets only a holder of the
+                    // successor key do that). Anything else ends the session, as before.
+                    const bool canMove = hostMigration != HostMigration::Off && (m_migrating ? m_mig.relayKey : m_migRelayKey) != 0 &&
+                                         (m_migrating || (m_joined && m_migPeers.size() >= 2));
+                    if (canMove) {
+                        if (m_migrating && hostSlot == m_mig.oldHostSlot) continue;   // the relay has not moved on yet
+                        bool listed = false;
+                        for (const MigPeer& mp : (m_migrating ? m_mig.candidates : m_migPeers))
+                            if (mp.ep == SlotEndpoint(hostSlot)) listed = true;
+                        if (hostSlot == 0 || listed) {
+                            if (hostSlot) m_relayNewHost = hostSlot;
+                            if (!m_migrating) m_migrateNow = true;
+                            continue;
+                        }
+                    }
                     m_relayError = hostSlot ? "the session's host changed" : "the host left the session";
                     OKAY_WARN("net: relay session '", m_relayCode, "' ended: ", m_relayError);
                     m_relayLost = true;
@@ -1234,6 +1287,7 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             if (!p.Ok()) continue;
             std::memcpy(m_relayCookie, c, sizeof c);
             m_relayHelloTimer = 0.0f;
+            m_relayHeard = true;
             continue;
         }
         if (tag == net::RelayRefused) {

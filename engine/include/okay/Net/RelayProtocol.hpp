@@ -27,7 +27,25 @@ enum RelayTag : std::uint8_t {
     RelayRefused = 0x94, // relay->peer: [u8 RelayRefusal][u8 relay version]
     RelayCookie  = 0x95, // relay->peer: [u8 relay version][16-byte cookie]: send the
                          //   hello again with it (proves the address is really yours)
+    RelayPeerAddr = 0x96, // relay->peer (version 5): [u32 peerSlot][u32 address][u16 port][u32 tokenLo]
+                          //   [u32 tokenHi][u32 nonceLo][u32 nonceHi]: the public address the relay sees
+                          //   for your session partner, so the two can try a direct path (NAT hole
+                          //   punching). Sent only when BOTH sides set RelayHelloDirect, only between a
+                          //   session's host and one of its clients, and it echoes the hello nonce.
+    RelayPunch    = 0x98, // peer<->peer, straight to the address RelayPeerAddr gave (never via the relay):
+                          //   [u8 kind: 0 probe, 1 answer][u32 tokenLo][u32 tokenHi][u32 sender's slot]
 };
+
+/// Hello flags (version 5, one byte after the nonce).
+enum RelayHelloFlag : std::uint8_t {
+    /// "You may tell my session partner my public address so we can try a direct path." A host sets it
+    /// while it allows direct paths; a client sets it while it still wants its host's address. The relay
+    /// exchanges addresses only when both have it set (NetworkManager::directConnect).
+    RelayHelloDirect = 1,
+};
+/// Size of a RelayPunch datagram and of a RelayPeerAddr frame.
+inline constexpr std::size_t kRelayPunchBytes = 1 + 1 + 8 + 4;
+inline constexpr std::size_t kRelayPeerAddrBytes = 1 + 4 + 4 + 2 + 8 + 8;
 
 /// Why the relay turned a hello away (RelayRefused).
 enum RelayRefusal : std::uint8_t {
@@ -43,7 +61,16 @@ enum RelayRefusal : std::uint8_t {
 /// relay echoes it in every welcome for that peer, and the peer drops a welcome
 /// that doesn't carry it, so a forged welcome can't pair, redirect or end a
 /// session. Older relays ignore the nonce; older peers get the old welcome.
-inline constexpr std::uint8_t kRelayProtocolVersion = 4;
+/// Version 5 adds direct paths and host succession: a hello flag byte after the
+/// nonce (RelayHelloDirect), RelayPeerAddr, and a successor key in the host's
+/// welcome (after the nonce). The host shares the successor key with its players
+/// (inside the game's own, encrypted, traffic); a client of the session that
+/// presents it in a host-role hello becomes the session's host, but only while the
+/// host is gone or has been silent for kRelaySuccessionQuietSeconds, so no player
+/// can take a live host's place. Both keys are made new when that happens.
+inline constexpr std::uint8_t kRelayProtocolVersion = 5;
+/// How long a session's host must have been silent before a successor may take over.
+inline constexpr float kRelaySuccessionQuietSeconds = 1.5f;
 inline constexpr std::size_t kRelayCookieBytes = 16;
 /// A version-3 hello is padded to at least this, so the relay never answers
 /// with more bytes than it was sent (a welcome is 26, a cookie 18); shorter

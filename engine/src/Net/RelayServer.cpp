@@ -72,7 +72,7 @@ void WriteKey(Packet& p, std::uint64_t key) {
 } // namespace
 
 void RelayServer::SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::uint32_t hostSlot,
-                              std::uint64_t hostKey) {
+                              std::uint64_t hostKey, std::uint64_t successorKey) {
     Packet w(RelayWelcome);
     w.Write(yourSlot);
     w.Write(hostSlot);
@@ -81,9 +81,68 @@ void RelayServer::SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::u
     // Version 4: echo the nonce the peer's hello carried, so the peer can tell this
     // welcome from one an off-path sender forged. Peers without one get the
     // 18-byte welcome older versions send.
-    if (auto it = m_peers.find(to); it != m_peers.end() && it->second.nonce != 0)
+    if (auto it = m_peers.find(to); it != m_peers.end() && it->second.nonce != 0) {
         WriteKey(w, it->second.nonce);
+        // Version 5: the host also gets the successor key, which it shares with its players
+        // so one of them can take over if it goes (TakeSuccession).
+        if (hostKey != 0 && successorKey != 0 && it->second.version >= 5) WriteKey(w, successorKey);
+    }
     m_socket.SendTo(to, w.Data(), w.Size());
+}
+
+// Version 5: tell a client and its host each other's public address and a token
+// both prove a direct path with. Only when both asked (RelayHelloDirect), and only
+// between a session's host and its client, so no address goes anywhere else.
+void RelayServer::SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session& s) {
+    if (!client.direct || client.version < 5 || client.nonce == 0 || s.hostSlot == 0 || client.slot == s.hostSlot) return;
+    auto hostEp = m_slotEp.find(s.hostSlot);
+    if (hostEp == m_slotEp.end()) return;
+    auto host = m_peers.find(hostEp->second);
+    if (host == m_peers.end() || !host->second.direct || host->second.version < 5 || host->second.nonce == 0) return;
+    if (client.punchToken == 0 || client.punchHost != s.hostSlot) {
+        client.punchToken = NewHostKey();
+        client.punchHost = s.hostSlot;
+    }
+    auto frame = [&](std::uint32_t slot, const Endpoint& at, std::uint64_t nonce) {
+        Packet f(RelayPeerAddr);
+        f.Write(slot);
+        f.Write(at.address);
+        f.Write(static_cast<std::uint8_t>(at.port & 0xFF));   // u16, little-endian
+        f.Write(static_cast<std::uint8_t>(at.port >> 8));
+        WriteKey(f, client.punchToken);
+        WriteKey(f, nonce);
+        return f;
+    };
+    const Packet toClient = frame(s.hostSlot, hostEp->second, client.nonce);
+    const Packet toHost = frame(client.slot, clientEp, host->second.nonce);
+    m_socket.SendTo(clientEp, toClient.Data(), toClient.Size());
+    m_socket.SendTo(hostEp->second, toHost.Data(), toHost.Size());
+    m_peerAddrsSent += 2;
+}
+
+// Version 5: a client of the session presents the successor key in a host-role hello.
+// It becomes the host only when the old one is gone or has been silent a while, so a
+// player holding the key can't push a live host out. Both keys are made new: the old
+// host (should it come back) and anyone who saw the old successor key can't take it back.
+bool RelayServer::TakeSuccession(const Endpoint& from, Peer& peer, Session& s, std::uint64_t key) {
+    if (peer.host || peer.hub || peer.version < 5 || s.successorKey == 0 || key != s.successorKey) return false;
+    if (s.hostSlot != 0) {
+        Peer* old = FindBySlot(s.hostSlot);
+        if (old && old->idle < kRelaySuccessionQuietSeconds) return false;   // the host is alive: not yet
+        if (old) old->host = false;   // a client from now on (it can only talk to the new host)
+        s.lastHostSlot = s.hostSlot;
+        s.hostSlot = 0;
+    }
+    s.hostKey = NewHostKey();
+    s.successorKey = NewHostKey();
+    peer.host = true;
+    ++m_successions;
+    if (m_logBudget >= 1.0f) {
+        m_logBudget -= 1.0f;
+        OKAY_INFO("relay: peer slot ", peer.slot, " took over as host of session '", RelayLogSafe(peer.code), "'");
+    }
+    ClaimHost(from, peer, s);
+    return true;
 }
 
 void RelayServer::SendRefused(const Endpoint& to, std::uint8_t reason) {
@@ -272,6 +331,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     }
     Cookie cookie{};
     std::uint64_t nonce = 0;
+    std::uint8_t flags = 0;
     if (version >= 3) {
         // [tag][role][u32 length + code][version][u64 key], then the cookie.
         const std::size_t at = 1 + 1 + 4 + code.size() + 1 + 8;
@@ -282,6 +342,8 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         if (version >= 4 && len >= nat + 8)
             nonce = static_cast<std::uint64_t>(LoadU32LE(data + nat)) |
                     (static_cast<std::uint64_t>(LoadU32LE(data + nat + 4)) << 32);
+        // Version 5 follows the nonce with a flags byte (RelayHelloFlag).
+        if (version >= 5 && len >= nat + 9) flags = data[nat + 8];
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
     ++m_helloVersions[version < m_helloVersions.size() ? version : m_helloVersions.size() - 1];
@@ -306,9 +368,12 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         }
         peer.idle = 0.0f;
         peer.version = version;
+        peer.direct = (flags & RelayHelloDirect) != 0;
         auto sit = m_sessions.find(peer.code);
         if (sit == m_sessions.end()) return;
         Session& s = sit->second;
+        // Version 5: a client holding the successor key takes over a gone (or silent) host.
+        if (role == RelayHost && !peer.host && TakeSuccession(from, peer, s, key)) return;
         // A host-role peer waiting in a session with no host takes over, as
         // version 1 did (the launcher's voice calls hand their hub on this way);
         // in a protected session, only with the key.
@@ -316,9 +381,10 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             ClaimHost(from, peer, s);
             return;
         }
-        if (peer.slot == s.hostSlot) SendWelcome(from, peer.slot, s.hostSlot, s.hostKey);
+        if (peer.slot == s.hostSlot) SendWelcome(from, peer.slot, s.hostSlot, s.hostKey, s.successorKey);
         else if (peer.host || s.hostSlot != 0) SendWelcome(from, peer.slot, s.hostSlot);
         // else: a client with no host yet keeps re-helloing until one registers.
+        if (s.hostSlot != 0 && peer.slot != s.hostSlot) SendPeerAddrs(from, peer, s);
         return;
     }
 
@@ -368,8 +434,9 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
                 s.opener = from.address;
             }
             slotEp->second = from;
+            moved.direct = (flags & RelayHelloDirect) != 0;
             m_peers.emplace(from, moved);
-            SendWelcome(from, moved.slot, s.hostSlot, s.hostKey);
+            SendWelcome(from, moved.slot, s.hostSlot, s.hostKey, s.successorKey);
             return;
         }
         reclaim = true;   // the host left and is back: same slot if it's free
@@ -398,6 +465,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.hub = asHub;
     peer.version = version;
     peer.nonce = nonce;
+    peer.direct = (flags & RelayHelloDirect) != 0;
     peer.packets = 2.0f * kPacketsPerSecond;
     peer.bytes = 2.0f * kBytesPerSecond;
     peer.refilled = m_now;
@@ -425,6 +493,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     }
     if (asHost && s.hostSlot == 0) ClaimHost(from, added, s);
     else if (s.hostSlot != 0 || asHost) SendWelcome(from, peer.slot, s.hostSlot);   // pair now
+    if (!asHost && s.hostSlot != 0) SendPeerAddrs(from, added, s);
 }
 
 // `peer` becomes its session's host: a version-2 host gets the code's key (the
@@ -432,8 +501,9 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
 // peer waiting in the session.
 void RelayServer::ClaimHost(const Endpoint& from, Peer& peer, Session& s) {
     if (s.hostKey == 0 && peer.version >= 2 && !peer.hub) s.hostKey = NewHostKey();
+    if (s.successorKey == 0 && s.hostKey != 0) s.successorKey = NewHostKey();
     s.hostSlot = peer.slot;
-    SendWelcome(from, peer.slot, s.hostSlot, s.hostKey);
+    SendWelcome(from, peer.slot, s.hostSlot, s.hostKey, s.successorKey);
     for (auto& [ep, other] : m_peers)
         if (other.code == peer.code && other.slot != peer.slot)
             SendWelcome(ep, other.slot, s.hostSlot);

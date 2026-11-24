@@ -655,6 +655,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetMatchStarted") return std::make_unique<NetMatchStartedNode>();
     if (type == "NetAllReady")    return std::make_unique<NetAllReadyNode>();
     if (type == "NetHostOrJoin")  { int p = args.empty() ? 45000 : ArgInt(args[0], 45000); return std::make_unique<NetHostOrJoinNode>(p); }
+    if (type == "NetHostOnline")  return std::make_unique<NetHostOnlineNode>();
+    if (type == "NetJoinCode")    return std::make_unique<NetJoinCodeNode>();
     if (type == "NetSendEvent")   { if (!need(1)) return nullptr; return std::make_unique<NetSendEventNode>(args[0]); }
     if (type == "NetEventSender") return std::make_unique<NetEventSenderNode>();
     if (type == "NetPlayerCount") return std::make_unique<NetPlayerCountNode>();

@@ -4279,6 +4279,9 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             if (std::isfinite(snap) && snap > 0.0f) nm->reconcileSnap = std::min(snap, 100.0f);
                         }
                     }
+                } else if (field == "netrelay") {   // the relay online play uses (NetworkManager::relayServer)
+                    const std::string r = ReadQuoted(in);
+                    if (auto* nm = LastOf(go->GetComponents<NetworkManager>()); nm && r.size() <= 255) nm->relayServer = r;
                 } else if (field == "netprefab") {   // one of the NetworkManager's spawnable prefabs
                     const std::string pf = ReadQuoted(in);
                     if (auto* nm = LastOf(go->GetComponents<NetworkManager>()); nm && !pf.empty()) nm->spawnablePrefabs.push_back(pf);

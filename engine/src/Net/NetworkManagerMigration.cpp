@@ -33,6 +33,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Core/Log.hpp"
 #include <algorithm>
+#include "okay/Net/RelayProtocol.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include "NetworkManagerInternal.hpp"
@@ -59,10 +60,13 @@ int NetworkManager::OnHostMigrated(std::function<void(std::uint32_t)> f) {
 }
 
 bool NetworkManager::MigrationAllowedHere() const {
-    if (hostMigration == HostMigration::Off || m_mode != Mode::Server || m_relay || dedicated) return false;
+    if (hostMigration == HostMigration::Off || m_mode != Mode::Server || dedicated) return false;
+    // Through a relay: only one that can hand the host's place on (version 5 gave a successor key). The list then
+    // names players by relay slot, never by address, so Lan and Always both allow it.
+    if (m_relay && (m_relaySuccessorKey == 0 || m_relayPromoting)) return false;
     // The host enforces these; a player who takes over could not be trusted to.
     if (anticheat.settings.enabled || m_verifyToken || m_joinCheck) return false;
-    if (hostMigration == HostMigration::Lan)
+    if (hostMigration == HostMigration::Lan && !m_relay)
         for (const auto& [ep, c] : m_clients)
             if (c.room == m_localRoom && !PrivateAddress(ep.address)) return false;
     return true;
@@ -71,6 +75,22 @@ bool NetworkManager::MigrationAllowedHere() const {
 // ---- the host: the list every client would use ----------------------------------------------------------
 
 void NetworkManager::MigrationHostTick(float dt) {
+    if (m_relayPromoting) {
+        // Taking the host's place on the relay, not confirmed yet. Another player on the list may have got
+        // there first: play on as its client. A relay that never agrees ends it.
+        m_relayPromoteWait += dt;
+        if (m_relayNewHost) {
+            OKAY_INFO("net: another player took the host's place on the relay first; joining it");
+            m_migrating = true;
+            TryNextHostRelay();
+            return;
+        }
+        if (m_relayPromoteWait > std::max(2.0f * migrationJoinTimeoutSeconds, 4.0f * kRelaySuccessionQuietSeconds)) {
+            m_relayError = "the relay did not let this player take over as host";
+            m_relayLost = true;   // ServerTick ends it with LastError
+            return;
+        }
+    }
     if (m_migGrace > 0.0f && (m_migGrace -= dt) <= 0.0f && !m_migExpect.empty()) {
         // Players who never came back after the move: they count as gone now (PlayersTick says so).
         OKAY_INFO("net: ", m_migExpect.size(), " player(s) did not come back to the new host");
@@ -91,6 +111,9 @@ void NetworkManager::MigrationHostTick(float dt) {
         for (const auto& [ep, c] : m_clients) if (c.room == m_localRoom) room.push_back(&c);
         std::sort(room.begin(), room.end(), [](const Client* a, const Client* b) { return a->id < b->id; });
         if (room.size() < 2) room.clear();   // one client has nobody to go on with: no list (and no traffic)
+        // Relay sessions: first the key a player needs to take the host's place on the relay. Older players stop
+        // at this line and ignore the list (they could not take over a relay session anyway).
+        if (m_relay && !room.empty()) list += "R|" + std::to_string(m_relaySuccessorKey) + "|0|relay\n";
         for (const Client* c : room) {
             if (list.size() > 8000) break;
             std::string name = c->name.substr(0, 64);
@@ -120,12 +143,17 @@ void NetworkManager::SendHostBye() {
 void NetworkManager::OnMigWire(std::uint32_t from, const std::string& data) {
     if (m_mode != Mode::Client || from != 0) return;   // the host's word only
     std::vector<MigPeer> list;
+    std::uint64_t relayKey = 0;
     std::size_t at = 0;
     while (at < data.size() && list.size() < kMaxMigPeers) {
         std::size_t nl = data.find('\n', at);
         if (nl == std::string::npos) nl = data.size();
         const std::string line = data.substr(at, nl - at);
         at = nl + 1;
+        if (line.compare(0, 2, "R|") == 0) {   // relay sessions: the successor key
+            relayKey = std::strtoull(line.c_str() + 2, nullptr, 10);
+            continue;
+        }
         const std::size_t b1 = line.find('|'), b2 = b1 == std::string::npos ? b1 : line.find('|', b1 + 1),
                           b3 = b2 == std::string::npos ? b2 : line.find('|', b2 + 1);
         if (b3 == std::string::npos) return;   // not the host's shape: ignore the whole list
@@ -141,16 +169,22 @@ void NetworkManager::OnMigWire(std::uint32_t from, const std::string& data) {
         list.push_back(std::move(mp));
     }
     std::sort(list.begin(), list.end(), [](const MigPeer& a, const MigPeer& b) { return a.id < b.id; });
+    // Through a relay the list is only any use with the key, and it names relay slots; directly, addresses.
+    if (m_relay != (relayKey != 0)) list.clear();
+    for (const MigPeer& mp : list)
+        if ((mp.ep.port == net::kRelaySlotPort) != m_relay) { list.clear(); break; }
+    m_migRelayKey = list.empty() ? 0 : relayKey;
     m_migPeers = std::move(list);
 }
 
 bool NetworkManager::BeginMigration(const std::string& why) {
     if (m_mode != Mode::Client || !m_joined || m_migrating) return false;
-    if (hostMigration == HostMigration::Off || m_relay || !pinnedHostKey.empty()) return false;
+    if (hostMigration == HostMigration::Off || !pinnedHostKey.empty()) return false;
+    if (m_relay && m_migRelayKey == 0) return false;   // a relay that can't hand the host's place on
     if (m_migPeers.size() < 2) return false;   // alone: nobody to go on with
     if (std::none_of(m_migPeers.begin(), m_migPeers.end(), [&](const MigPeer& p) { return p.id == m_localId; })) return false;
     const std::uint16_t port = m_socket.LocalPort();
-    if (port == 0) return false;
+    if (port == 0 && !m_relay) return false;   // (through a relay the socket stays as it is)
     m_mig = MigCarry{};
     m_mig.myOldId = m_localId;
     m_mig.localPort = port;
@@ -161,7 +195,10 @@ bool NetworkManager::BeginMigration(const std::string& why) {
     m_mig.remoteTargets = m_remoteTarget;
     m_mig.known = m_knownPlayers;
     m_mig.serverName = m_serverName;
-    OKAY_INFO("net: ", why, "; moving to a new host (", m_migPeers.size(), " players on the list)");
+    m_mig.relayKey = m_relay ? m_migRelayKey : 0;
+    m_mig.oldHostSlot = m_relay && m_serverEp.port == net::kRelaySlotPort ? m_serverEp.address : 0;
+    OKAY_INFO("net: ", why, "; moving to a new host (", m_migPeers.size(), " players on the list",
+              m_relay ? ", through the relay)" : ")");
     m_migrating = true;
     TryNextHost();
     return true;
@@ -176,7 +213,63 @@ void NetworkManager::RestoreCarry() {
     m_playersAnnounced = true;
 }
 
+// This player hosts now (on its old port, or in the host's place on the relay): what it carried comes back,
+// the others are expected back with their old ids, and the move is done.
+void NetworkManager::HostAfterMigration() {
+    RestoreCarry();
+    m_resumeToken = 0;
+    m_connectionLost = false; m_connectionLostReason.clear();
+    m_migExpect.clear();
+    std::uint32_t top = m_mig.myOldId;
+    for (const MigPeer& p : m_mig.candidates) {
+        top = std::max(top, p.id);
+        if (p.id != m_mig.myOldId) m_migExpect.push_back(p);
+    }
+    for (const auto& [id, name] : m_mig.known) top = std::max(top, id);
+    m_nextId = top + 1;   // no newcomer gets an id one of us had (its objects are "sp/<id>/...")
+    m_migGrace = migrationGraceSeconds;
+    if (serverName.empty()) serverName = m_mig.serverName;
+    FinishMigration(m_mig.myOldId);
+}
+
+// Nobody left to go on with: the session ends, in plain words.
+void NetworkManager::EndMigrationAlone() {
+    m_migrating = false;
+    m_keepResume = false;
+    Stop();
+    m_connectionLost = true;
+    m_connectionLostReason = "the host left and no other player could take over";
+    SetError("Lost the connection to the host: " + m_connectionLostReason + ".");
+    m_errorNoted = true;
+}
+
+// Through the relay: the lowest id left takes the host's place there (the relay checks the successor key and
+// waits for the old host to be gone); the others stay registered and join whoever the relay names.
+void NetworkManager::TryNextHostRelay() {
+    auto& cs = m_mig.candidates;
+    if (m_relayNewHost) {   // the relay named the new host already: those before it on the list are gone
+        const auto named = std::find_if(cs.begin(), cs.end(), [&](const MigPeer& p) { return p.ep == SlotEndpoint(m_relayNewHost); });
+        if (named != cs.end() && named->id != m_mig.myOldId) cs.erase(cs.begin(), named);
+        m_relayNewHost = 0;
+    }
+    if (cs.empty()) { EndMigrationAlone(); return; }
+    const MigPeer next = cs.front();
+    const bool iHost = next.id == m_mig.myOldId;
+    m_keepResume = true;   // build mode and quest state, and our own spawned objects, stay
+    const bool ok = RelaySwitch(iHost);
+    m_keepResume = false;
+    if (!ok) { EndMigrationAlone(); return; }
+    m_migWait = 0.0f;
+    if (iHost) { HostAfterMigration(); return; }
+    m_serverEp = next.ep;   // its relay slot: the relay passes our join on once it is the host
+    m_resumeToken = 0;
+    m_connectionLost = false; m_connectionLostReason.clear();
+    RestoreCarry();
+    OKAY_INFO("net: waiting for player ", next.id, " to take the host's place on the relay");
+}
+
 void NetworkManager::TryNextHost() {
+    if (m_mig.relayKey) { TryNextHostRelay(); return; }
     while (!m_mig.candidates.empty()) {
         const MigPeer next = m_mig.candidates.front();
         if (next.id == m_mig.myOldId) {
@@ -189,20 +282,7 @@ void NetworkManager::TryNextHost() {
                 m_mig.candidates.erase(m_mig.candidates.begin());
                 continue;
             }
-            RestoreCarry();
-            m_resumeToken = 0;
-            m_connectionLost = false; m_connectionLostReason.clear();
-            m_migExpect.clear();
-            std::uint32_t top = m_mig.myOldId;
-            for (const MigPeer& p : m_mig.candidates) {
-                top = std::max(top, p.id);
-                if (p.id != m_mig.myOldId) m_migExpect.push_back(p);
-            }
-            for (const auto& [id, name] : m_mig.known) top = std::max(top, id);
-            m_nextId = top + 1;   // no newcomer gets an id one of us had (its objects are "sp/<id>/...")
-            m_migGrace = migrationGraceSeconds;
-            if (serverName.empty()) serverName = m_mig.serverName;
-            FinishMigration(m_mig.myOldId);
+            HostAfterMigration();
             return;
         }
         // Join the lowest id left, from our old local port (it knows us by that address).
@@ -221,14 +301,7 @@ void NetworkManager::TryNextHost() {
         OKAY_INFO("net: joining player ", next.id, " at ", next.ep.ToString(), " as the new host");
         return;
     }
-    // Nobody left to go on with.
-    m_migrating = false;
-    m_keepResume = false;
-    Stop();
-    m_connectionLost = true;
-    m_connectionLostReason = "the host left and no other player could take over";
-    SetError("Lost the connection to the host: " + m_connectionLostReason + ".");
-    m_errorNoted = true;
+    EndMigrationAlone();   // nobody left to go on with
 }
 
 void NetworkManager::MigrationTick(float dt) {
@@ -236,6 +309,10 @@ void NetworkManager::MigrationTick(float dt) {
     if (!m_migrating) return;
     if (m_mode != Mode::Client) { m_migrating = false; return; }
     if (m_mig.candidates.empty()) { TryNextHost(); return; }
+    if (m_relayNewHost) {   // the relay named the new host (another than the one we wait for): join that one
+        if (!(m_serverEp == SlotEndpoint(m_relayNewHost))) { TryNextHostRelay(); return; }
+        m_relayNewHost = 0;
+    }
     if (m_joined) { FinishMigration(m_mig.candidates.front().id); return; }
     if (m_migrateNow) {   // a player after us on the list is joining us: everyone before us is gone for it
         m_migrateNow = false;

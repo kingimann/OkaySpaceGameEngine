@@ -1,0 +1,29 @@
+// Recursion, loops, lists and maps together.
+function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2) }
+function isPrime(n) {
+    if (n < 2) return false
+    for (var d = 2; d * d <= n; d++) {
+        if (n % d == 0) return false
+    }
+    return true
+}
+var primes = []
+for (var i = 0; primes.Count < 10; i++) {
+    if (isPrime(i)) primes.Add(i)
+}
+print("primes:", primes)
+print("fib(25) =", fib(25))
+var counts = new Dictionary<string, int>()
+foreach (var w in "the cat and the hat and the bat".Split(" ")) {
+    counts[w] += 1
+}
+foreach (var kv in counts) print(kv.Key, kv.Value)
+var i = 0
+var total = 0
+while (true) {
+    i++
+    if (i % 2 == 0) continue
+    if (i > 9) break
+    total += i
+}
+print("odd sum", total)

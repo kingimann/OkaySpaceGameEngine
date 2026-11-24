@@ -447,7 +447,7 @@ template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
         case StmtKind::Yield: {
             auto& s = static_cast<const YieldStmt&>(st);
             V v = s.e ? Eval(*s.e) : V{};
-            if (!hooks || !hooks->Yield(*this, v))
+            if (!hooks || !hooks->YieldValue(*this, v))
                 throw RuntimeError("'yield return' only works in a coroutine the host runs", Ln(s.line));
             return;
         }

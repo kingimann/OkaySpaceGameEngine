@@ -355,7 +355,7 @@ struct EngineHooks final : okayscript::BasicHost<Value> {
         return false;
     }
     // yield return <wait>;  — inside a coroutine: hand control back to the game loop.
-    bool Yield(okayscript::BasicRuntime<Value>& brt, const Value& v) override {
+    bool YieldValue(okayscript::BasicRuntime<Value>& brt, const Value& v) override {
         Runtime& r = R(brt);
         if (auto m = v.AsMap()) {
             bool real = m->count("__real") > 0;

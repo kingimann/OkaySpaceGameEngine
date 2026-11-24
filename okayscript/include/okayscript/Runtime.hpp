@@ -53,7 +53,7 @@ public:
                             V& /*out*/) { return false; }
     /// `yield return value;` inside a coroutine the host runs: hand control back and return true when the coroutine
     /// may go on. Without a host that runs coroutines, `yield` is a runtime error.
-    virtual bool Yield(BasicRuntime<V>&, const V& /*value*/) { return false; }
+    virtual bool YieldValue(BasicRuntime<V>&, const V& /*value*/) { return false; }
 };
 
 /// Safety limits (the engine's values by default).

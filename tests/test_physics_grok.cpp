@@ -917,6 +917,19 @@ int main() {
             CHECK(p.physics().ClosestPoint(p, {0.0f, -0.1f * f.y}).distance == 0.0f);
             CHECK(p.physics().ClosestPoint(p, {0.45f, 0.4f * f.y}).distance > 0.1f);
 
+            Scene far("flipfar");   // far from the origin the corner order is still worked out exactly
+            auto* fb = far.CreateGameObject("Box");
+            fb->transform->localPosition = {5000, 3000, 0};
+            fb->transform->localScale = f;
+            fb->AddComponent<BoxCollider2D>()->size = {2, 2};
+            auto* ft = far.CreateGameObject("Tri");
+            ft->transform->localPosition = {5010, 3000, 0};
+            ft->transform->localScale = f;
+            ft->AddComponent<PolygonCollider2D>();
+            CHECK(far.physics().ClosestPoint(far, {5000.25f, 3000.25f}).distance == 0.0f);
+            CHECK_NEAR(far.physics().ClosestPoint(far, {5001.5f, 3000.25f}).distance, 0.5f, 0.01f);
+            CHECK(far.physics().ClosestPoint(far, {5010.0f, 3000.0f - 0.125f * f.y}).distance == 0.0f);
+
             Scene c("flipcap");
             auto* cap = c.CreateGameObject("Cap");
             cap->transform->localScale = f;

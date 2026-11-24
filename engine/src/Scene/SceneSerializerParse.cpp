@@ -1585,7 +1585,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "jointlink") {   // the partner's guid, written after that joint
                     const std::string g = ReadQuoted(in);
                     auto joints = go->GetComponents<Joint3D>();
-                    if (!joints.empty() && joints.back()) { joints.back()->connectedGuid = g; joints.back()->linkedName = joints.back()->connectedBody; }
+                    if (!joints.empty() && joints.back()) { joints.back()->connectedGuid = g; joints.back()->NoteLinkedName(); }
                 } else if (field == "jointat") {   // the partner is object N of this same text: it stays the partner in a copy
                     int at = -1;
                     in >> at;

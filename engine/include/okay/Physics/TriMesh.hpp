@@ -141,8 +141,10 @@ public:
     Contact Capsule(const Vec3& a, const Vec3& b, float r) const;
     Contact Box(const Vec3& c, const Vec3& half, const Vec3& ax, const Vec3& ay, const Vec3& az) const;
     /// The point of the placed mesh nearest to `p` and its distance, only when that is no more than `maxDist`.
-    /// `inside` is true when `p` is inside a closed mesh (see TriMesh::ClosedWinding), which a distance cannot say.
-    /// Walks the tree nearest box first (TriMesh::Nearest), so it costs the same on a small mesh and a huge one.
+    /// A point inside a closed mesh (see TriMesh::ClosedWinding) is answered at once, with no search for a triangle:
+    /// `inside` is true, `point` is `p` itself and `dist` is 0, however far the skin is. Inside is counted from the
+    /// whole surface (crossings of one ray), so it is right beside sharp edges and corners too.
+    /// Otherwise walks the tree nearest box first (TriMesh::Nearest), so it costs the same on a small mesh and a huge one.
     bool Nearest(const Vec3& p, float maxDist, Vec3& point, float& dist, bool& inside) const;
 
 private:

@@ -42,9 +42,10 @@ Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float botto
         landed.y += up;
         landed.z = center.z;
     }
-    // What is the body now standing on? Look at the surface in front of it, on the side the push came from. A slope is
-    // walked up. A flat top is only climbed when it is no taller than a step (from where the feet were): a body is
-    // never lifted onto the corner of a ledge or crate that is higher than that, and left hanging there.
+    // What is the body now standing on? Look at the surface in front of it, on the side the push came from. The slope
+    // the body was pushed out of is walked up. Any other top (flat, a little tilted, round, uneven) is a ledge and is
+    // only climbed when it is no taller than a step, from where the feet were: a body is never lifted onto the corner
+    // of a ledge or crate that is higher than that, and left hanging there.
     const float hx = -d.x, hz = -d.z;
     const float hl = std::sqrt(hx * hx + hz * hz);
     const float rise = landed.y - center.y;
@@ -55,7 +56,19 @@ Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float botto
     RaycastHit3D top = scene.physics3D().Raycast(scene, probe, Vec3{0.0f, -1.0f, 0.0f}, 1.3f, self,
                                                  Physics3D::kAllLayers, false);
     if (!top.hit || top.normal.y < 0.35f) return fixed;
-    if (top.normal.y > 0.9995f && top.point.y - (center.y - bottom) > stepUp + 0.02f) return fixed;   // a flat top taller than a step
+    Vec3 tn = top.normal;
+    const float tl = tn.Magnitude();
+    if (!(tl > 1e-6f)) return fixed;
+    tn = tn * (1.0f / tl);
+    // The same slope that pushed? Then the push points the way the top faces, and the round foot was no deeper under
+    // the top's plane than that push explains. A ledge pushes from its side, with the foot far under its top.
+    const float feet = center.y - bottom;
+    const float pushed = d.Magnitude();
+    const float under = radius - Vec3::Dot(Vec3{center.x, feet + radius, center.z} - top.point, tn);
+    const bool sameSlope = Vec3::Dot(d, tn) > 0.9f * pushed && under <= pushed * 1.5f + 0.03f;
+    // A ledge: how far its top is above the feet, less what the top's own tilt adds between the body and the probe.
+    const float tilt = radius * 1.3f * std::sqrt(Mathf::Max(0.0f, 1.0f - tn.y * tn.y)) / tn.y;
+    if (!sameSlope && top.point.y - feet > stepUp + 0.02f + tilt) return fixed;   // a top taller than a step
     return landed;
 }
 
@@ -63,8 +76,10 @@ Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float botto
 /// A capsule, and a tall box (the usual character), is pushed out as a capsule: the head meets a
 /// ceiling and the feet meet a floor. That push is the default. On a walkable slope the separation
 /// is straight up, so standing still does not slide downhill, and a riser lower than a step is
-/// walked over. `stepUp` is the tallest riser it climbs (MovePlayerBody passes its stepHeight); a slope is always
-/// walked. A cube stays a sphere at the waist. Call right after moving the Transform.
+/// walked over. `stepUp` is the tallest riser it climbs (MovePlayerBody passes its stepHeight, the first- and
+/// third-person controllers their stepOffset), at most kSeatLift; a slope is always walked. A foot is round: a
+/// kerb lower than the body's radius is still rolled over. A cube stays a sphere at the waist. Call right after
+/// moving the Transform.
 inline void ResolvePlayerBody(Scene& scene, GameObject* self, float stepUp = kSeatLift) {
     if (!self || !self->transform) return;
     auto shift = [&](const Vec3& from, const Vec3& fixed) {

@@ -113,6 +113,27 @@ int main() {
         Input::FeedGamepadAt(1, {0, 0}, 0);
     }
 
+    RUN_SUITE("gesture drives an action");
+    {
+        Gestures::Reset();
+        Gestures::ClearBinds();
+        Gestures::Bind("swipe up", "Jump");
+        ActionSet set;
+        set.Add("Jump", ValueType::Button);
+        Input::FeedTouch(3, 0, {80, 400});
+        Gestures::Tick(1.0);
+        Input::FeedTouch(3, 1, {80, 120});
+        Gestures::Tick(1.10);
+        Input::FeedTouch(3, 2, {80, 90});
+        Gestures::Tick(1.12);
+        Gestures::Apply(set);
+        set.Update(0.016f);
+        CHECK(set.Pressed("Jump"));
+        Input::ClearTypedText();
+        Gestures::Reset();
+        Gestures::ClearBinds();
+    }
+
     RUN_SUITE("swipe without clearing the touch list");
     {
         Gestures::Reset();

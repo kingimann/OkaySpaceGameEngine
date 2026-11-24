@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <regex>
@@ -124,6 +126,34 @@ static vector<Cmd> parseFile(const string& text, const string& file) {
     return out;
 }
 
+// string(MD5): RFC 1321, written from the RFC's description (not a security function here: CMake projects use it to make names).
+// The 64 constants are floor(|sin(i + 1)| * 2^32), worked out the way the RFC defines them.
+static string md5Hex(const string& msg) {
+    static uint32_t K[64]; static bool ready = false;
+    if (!ready) { for (int i = 0; i < 64; ++i) K[i] = (uint32_t)(long long)(std::fabs(std::sin((double)(i + 1))) * 4294967296.0); ready = true; }
+    static const int R[4][4] = {{7, 12, 17, 22}, {5, 9, 14, 20}, {4, 11, 16, 23}, {6, 10, 15, 21}};
+    uint32_t h[4] = {0x67452301u, 0xefcdab89u, 0x98badcfeu, 0x10325476u};
+    string m = msg; uint64_t bits = (uint64_t)msg.size() * 8; m += (char)0x80;
+    while (m.size() % 64 != 56) m += (char)0;
+    for (int i = 0; i < 8; ++i) m += (char)((bits >> (8 * i)) & 0xff); // length, low byte first
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[16];
+        for (int i = 0; i < 16; ++i) { w[i] = 0; for (int b = 0; b < 4; ++b) w[i] |= (uint32_t)(unsigned char)m[off + 4 * i + b] << (8 * b); }
+        uint32_t A = h[0], B = h[1], C = h[2], D = h[3];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t f; int g, round = i / 16;
+            if (round == 0) { f = (B & C) | (~B & D); g = i; } else if (round == 1) { f = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+            else if (round == 2) { f = B ^ C ^ D; g = (3 * i + 5) % 16; } else { f = C ^ (B | ~D); g = (7 * i) % 16; }
+            uint32_t x = A + f + K[i] + w[g]; int r = R[round][i % 4];
+            A = D; D = C; C = B; B = B + ((x << r) | (x >> (32 - r)));
+        }
+        h[0] += A; h[1] += B; h[2] += C; h[3] += D;
+    }
+    string out; char b[3];
+    for (int i = 0; i < 4; ++i) for (int k = 0; k < 4; ++k) { snprintf(b, sizeof b, "%02x", (h[i] >> (8 * k)) & 0xff); out += b; }
+    return out;
+}
+
 // ---- Paths in the build folder ------------------------------------------------------------------------------------------
 // The build folder is the word {bin}. binNormal() tidies "{bin}/a/../b" to "{bin}/b"; a path that climbs above {bin} keeps its
 // leading "..", and "{bin}x" is left as it is, so inBin() can refuse both. Used by the reader and by okay-build's manifest parser.
@@ -200,7 +230,7 @@ struct Interp {
     bool testingOn = false;
     // Files the CMake code writes while it is read (file(WRITE/APPEND), cmake -E copy): path -> text. Only paths in the build folder
     // ({bin}) go into the manifest; the source tree is never written.
-    std::map<string, string> written;
+    std::map<string, string> written; std::set<string> folders; // folders: file(MAKE_DIRECTORY) in {bin}
     std::set<string> inputs; // every file read (CMake files, file(READ/STRINGS), CMAKE_CONFIGURE_DEPENDS): a change means read again
     bool readText(const string& path, string& out) {
         auto w = written.find(path); if (w != written.end()) { out = w->second; return true; }
@@ -273,6 +303,7 @@ struct Interp {
         auto colon = body.find(':'); string head = body.substr(0, colon), rest = colon == string::npos ? "" : body.substr(colon + 1);
         if (head == "BUILD_INTERFACE") { tally.genex["BUILD_INTERFACE"]++; return expand(rest); }
         if (head == "INSTALL_INTERFACE") { tally.genex["INSTALL_INTERFACE"]++; return ""; }
+        if (head == "TARGET_OBJECTS") { tally.genex["TARGET_OBJECTS"]++; return "{TARGET_OBJECTS:" + expand(rest) + "}"; } // the objects of an OBJECT library: linked in whole
         if (head == "TARGET_FILE") { tally.genex["TARGET_FILE"]++; return "{target:" + expand(rest) + "}"; }
         if (head == "TARGET_PROPERTY") {
             tally.genex["TARGET_PROPERTY"]++; auto comma = rest.find(','); string tn = expand(rest.substr(0, comma)), pn = comma == string::npos ? "" : rest.substr(comma + 1);
@@ -615,6 +646,11 @@ inline void Interp::doProperty(const string& n, const vector<string>& a) {
             for (auto& f : names) { string key = abs(f, curSrc) + "|" + prop; string slot = srcProps.count(key) ? srcProps[key] : ""; put(slot); srcProps[key] = slot; }
             return;
         }
+        if (scope == "TEST") { // the tests made so far with these names (labels, environment, ...); the last test of a name is the one meant
+            for (auto& nm : names) for (auto it = tests.rbegin(); it != tests.rend(); ++it) if (it->name == nm) { put(it->props[prop]); break; }
+            return;
+        }
+        if (scope == "CACHE") return; // STRINGS, HELPSTRING, ADVANCED: hints for CMake's editors; nothing to build
         tally.unknown["set_property(" + scope + ")"]++; return;
     }
     // get_property(<var> <scope> [name] PROPERTY <prop> [SET|DEFINED])
@@ -626,7 +662,12 @@ inline void Interp::doProperty(const string& n, const vector<string>& a) {
     if (scope == "GLOBAL") { auto it = globalProps.find(prop); if (it != globalProps.end()) { found = true; v = it->second; } }
     else if (scope == "TARGET") { if (Target* t = tgt(name)) { auto it = t->props.find(prop); if (it != t->props.end()) { found = true; v = it->second; } } }
     else if (scope == "SOURCE") { auto it = srcProps.find(abs(name, curSrc) + "|" + prop); if (it != srcProps.end()) { found = true; v = it->second; } }
-    else { tally.unknown["get_property(" + scope + ")"]++; }
+    else if (scope == "DIRECTORY" && prop == "TESTS") { // the tests added so far in that folder, in order
+        string dir = name.empty() ? curSrc : abs(name, curSrc); vector<string> names;
+        for (auto& t : tests) if (t.dir == dir) names.push_back(t.name);
+        found = true; v = joinList(names);
+    }
+    else { tally.unknown["get_property(" + scope + (scope == "DIRECTORY" ? " " + prop : string()) + ")"]++; }
     vars[var] = askSet ? (found ? "1" : "0") : v;
 }
 
@@ -686,7 +727,8 @@ inline void Interp::doString(const vector<string>& a) {
                 vars[a[3]] = joinList(found); return;
             }
         }
-        if (op == "MD5" || op == "SHA1" || op == "SHA256") { vars[a[2]] = "0"; tally.unknown["string(" + op + ")"]++; return; }
+        if (op == "MD5" && a.size() >= 2) { string in; for (size_t k = 2; k < a.size(); ++k) in += a[k]; vars[a[1]] = md5Hex(in); return; }
+        if (op == "SHA1" || op == "SHA256") { if (a.size() >= 2) vars[a[1]] = "0"; tally.unknown["string(" + op + ")"]++; return; }
     } catch (const std::regex_error&) { tally.unknown["string(regex)"]++; return; }
     tally.unknown["string(" + op + ")"]++;
 }
@@ -801,7 +843,11 @@ inline void Interp::doFile(const vector<string>& a) {
         if (op == "WRITE") written[p] = text; else { string old; readText(p, old); written[p] = old + text; }
         return;
     }
-    if (op == "MAKE_DIRECTORY" || op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
+    if (op == "MAKE_DIRECTORY") { // a folder in the build folder is made by the build (a linker map, a log folder ...); others are not ours to make
+        for (size_t k = 1; k < a.size(); ++k) { string p = abs(a[k], curSrc); if (inBin(p)) folders.insert(p); else if (p.compare(0, 5, "{bin}") == 0) tally.unknown["write outside the build folder"]++; }
+        return;
+    }
+    if (op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
     tally.unknown["file(" + op + ")"]++;
 }
 
@@ -1191,6 +1237,17 @@ static string emitManifest(Interp& in, Report& rep) {
     }
     // add_compile_definitions applies to every target of its folder, also to targets made before it: use the folder's final list
     for (auto& n : in.order) { Target& t = in.targets[n]; auto it = in.dirDefsFinal.find(t.dir); if (it != in.dirDefsFinal.end()) t.dirDefs = it->second; }
+    // $<TARGET_OBJECTS:lib> among the sources: the program links that OBJECT library whole (every object in, as CMake adds them)
+    for (auto& n : in.order) {
+        Target& t = in.targets[n]; vector<string> keep;
+        for (auto& s : t.sources) {
+            auto at = s.find("{TARGET_OBJECTS:");
+            if (at == string::npos) { keep.push_back(s); continue; }
+            string lib = s.substr(at + 16); lib = lib.substr(0, lib.find('}'));
+            if (std::find(t.links.begin(), t.links.end(), lib) == t.links.end()) t.links.push_back(lib);
+        }
+        t.sources = keep;
+    }
     // 1. skip what cannot be written: missing sources, downloads, unsupported kinds. Dependents of a skipped target are skipped too.
     for (auto& n : in.order) {
         Target& t = in.targets[n]; if (t.kind != "exe" && t.kind != "lib") continue;
@@ -1227,6 +1284,7 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!f.git.empty()) out << "  git = " << qw(f.git) << "\n  commit = " << qw(f.tag) << "\n"; else out << "  url = " << qw(f.url) << "\n  sha256 = " << qw(f.sha256) << "\n";
         out << "  dir = _deps/" << fu << "-src\nend\n"; ++rep.fetches;
     }
+    for (auto& f : in.folders) out << "folder " << qw(f) << "\n";
     for (auto& g : in.written) { // files the CMake code wrote while it was read: the build writes them (only when the text changed)
         out << "generate " << qw(g.first) << "\n";
         const size_t chunk = 4000; // several text lines keep each line short; they are joined with nothing in between
@@ -1251,7 +1309,13 @@ static string emitManifest(Interp& in, Report& rep) {
         { std::stringstream ss(btFlags); string w; while (ss >> w) addUnique(opts, w); }
         for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.opts) addUnique(opts, x); for (auto& x : t.pubOpts) addUnique(opts, x);
         for (auto& x : r.opts) addUnique(opts, x);
-        for (auto& x : t.dirLinkOpts) addUnique(linkFlags, x); for (auto& x : t.linkOpts) addUnique(linkFlags, x);
+        // LINKER:a,b is the compiler driver's -Wl,a,b; SHELL:"x y" is several words (CMake's link-option prefixes)
+        auto linkWord = [&](const string& x) {
+            if (x.compare(0, 7, "LINKER:") == 0) { addUnique(linkFlags, "-Wl," + x.substr(7)); return; }
+            if (x.compare(0, 6, "SHELL:") == 0) { std::istringstream ws(x.substr(6)); string w; while (ws >> w) linkFlags.push_back(w); return; }
+            addUnique(linkFlags, x);
+        };
+        for (auto& x : t.dirLinkOpts) linkWord(x); for (auto& x : t.linkOpts) linkWord(x);
         out << "target " << qw(n) << " " << (t.kind == "lib" ? (t.libKind.empty() ? "lib" : t.libKind.c_str()) : "exe") << "\n";
         out << "  sources =";
         for (auto& s : t.sources) { out << " " << qw(rootRel(s, root)); ++rep.sources; }

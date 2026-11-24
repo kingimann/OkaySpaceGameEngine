@@ -1,0 +1,22 @@
+// okay-ms own standard header: std::type_index, written from ISO/IEC 14882 [type.index]: a copyable handle on a
+// type_info that can be compared and ordered (so it can key a std::map or our std::unordered_map, which order by <).
+// std::hash<type_index> is not here (our unordered containers do not hash).
+#pragma once
+#include <cstddef>
+#include <typeinfo>
+namespace std {
+class type_index {
+    const type_info* target_;
+
+public:
+    type_index(const type_info& t) : target_(&t) {}
+    const char* name() const { return target_->name(); }
+    size_t hash_code() const { return target_->hash_code(); }
+    bool operator==(const type_index& o) const { return *target_ == *o.target_; }
+    bool operator!=(const type_index& o) const { return !(*target_ == *o.target_); }
+    bool operator<(const type_index& o) const { return target_->before(*o.target_); }
+    bool operator>(const type_index& o) const { return o.target_->before(*target_); }
+    bool operator<=(const type_index& o) const { return !o.target_->before(*target_); }
+    bool operator>=(const type_index& o) const { return !target_->before(*o.target_); }
+};
+}

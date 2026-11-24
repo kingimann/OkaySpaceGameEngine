@@ -4,7 +4,7 @@
 // Both draw the same model (shared/EditorPanelModels.hpp, sample data in okayui/tests/EditorPanelFixtures.hpp) into the same
 // rectangle: a 560 x 420 canvas (560 x 780 for Tags and Layers and the Profiler, 560 x 1240 for Post-processing) in the editor's panel colour, the panel's content inside the editor window's padding (16, 12).
 // Dear ImGui runs with the editor's look (Roboto Medium 18 px, the Slate theme and spacing from editor/main.cpp ApplyTheme), the
-// body is editor/EditorPanelViews.cpp, the one the editor itself calls. OkayUI runs with the launcher look the editor uses.
+// body is editor/EditorPanelViews.cpp, the one the editor itself calls (History's, which the editor no longer has, is below). OkayUI runs with the launcher look the editor uses.
 // Both pictures go through the same rasteriser (OkayUI's software render backend; Dear ImGui's vertices are handed to it as they
 // are), so the comparison is between the two toolkits' geometry, not between two rasterisers.
 //
@@ -50,6 +50,68 @@ using okayuitest::Bitmap;
 
 #include "okayui_compare_rig.hpp"
 using namespace okaycompare;
+
+// ---- History: the Dear ImGui body the editor had --------------------------------------------------------------------------
+// The editor's History panel is drawn by OkayUI only now (editor/OkayPanels.cpp, docs/ui/own_ui_toolkit.md section 24); its Dear
+// ImGui body was moved here from editor/EditorPanelViews.cpp, unchanged, as the reference this comparison measures the port against.
+// It is not in the editor any more.
+static P::HistoryIntent HistoryBodyImGuiReference(const P::HistoryModel& m) {
+    P::HistoryIntent out;
+    ImGui::BeginDisabled(m.undoDepth <= 0);
+    if (ImGui::Button("Undo##hist")) out.undo = 1;
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m.redoDepth <= 0);
+    if (ImGui::Button("Redo##hist")) out.redo = 1;
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", P::HistoryStatusText(m).c_str());
+    ImGui::Separator();
+    ImGui::BeginChild("##histlist");
+    if (m.undoDepth <= 0 && m.redoDepth <= 0) {
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::TextDisabled("%s", P::kHistoryEmpty);
+        ImGui::EndChild();
+        return out;
+    }
+    // Timeline rail down the left: a node per state, the current one filled with the accent colour, future (redo) states
+    // hollow and dimmed.
+    ImDrawList* hdl = ImGui::GetWindowDrawList();
+    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
+    const float railTopY = ImGui::GetCursorScreenPos().y;
+    const std::vector<P::HistoryRow> rows = P::HistoryRows(m);
+    {
+        const float rowH = ImGui::GetTextLineHeightWithSpacing();
+        hdl->AddLine(ImVec2(railX, railTopY + 4.0f), ImVec2(railX, railTopY + (float)rows.size() * rowH - 4.0f),
+                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
+    }
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        const P::HistoryRow& row = rows[r];
+        const bool current = row.kind == P::HistoryCurrent, ahead = row.kind == P::HistoryAhead;
+        char lbl[220]; std::snprintf(lbl, sizeof(lbl), "     %s##hrow%d", row.label.c_str(), (int)r);
+        if (ahead) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        const bool hit = ImGui::Selectable(lbl, current);
+        if (ahead) ImGui::PopStyleColor();
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        const float cy = (mn.y + mx.y) * 0.5f;
+        if (current) hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f, ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
+        else hdl->AddCircle(ImVec2(railX, cy), 3.0f,
+                            ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text, 0.55f), 12, 1.5f);
+        bool jump = hit;
+        if (ImGui::BeginPopupContextItem()) {
+            if (!current && ImGui::MenuItem("Jump to this state")) jump = true;
+            if (ImGui::MenuItem("Copy name")) out.copy = (int)r;
+            ImGui::EndPopup();
+        }
+        if (jump && !current && out.undo == 0 && out.redo == 0) {
+            if (ahead) out.redo = row.steps; else out.undo = row.steps;
+        }
+    }
+    ImGui::EndChild();
+    return out;
+}
 
 struct Row { const char* panel; Timing t; Diff d; };
 static std::vector<Row> g_rows;
@@ -98,7 +160,7 @@ static int Profile(const char* spec) {
     else if (s.rfind("post", 0) == 0) { imBody = [&] { oked::DrawPostProcessBodyImGui(pod.model, hooks); }; okBody = [&] { okayuiscreens::DrawPostProcess(pod.model, bx, by, bw, bh); }; }
     else if (s.rfind("player", 0) == 0) { imBody = [&] { oked::DrawPlayerSettingsBodyImGui(pld.model, hooks); }; okBody = [&] { okayuiscreens::DrawPlayerSettings(pld.model, bx, by, bw, bh); }; }
     else if (s.rfind("rendering", 0) == 0) { imBody = [&] { oked::DrawRenderingSettingsBodyImGui(rnd.model, hooks); }; okBody = [&] { okayuiscreens::DrawRenderingSettings(rnd.model, bx, by, bw, bh); }; }
-    else { imBody = [&] { oked::DrawHistoryBodyImGui(hm, hooks); }; okBody = [&] { okayuiscreens::DrawHistory(hm, bx, by, bw, bh); }; }
+    else { imBody = [&] { HistoryBodyImGuiReference(hm); }; okBody = [&] { okayuiscreens::DrawHistory(hm, bx, by, bw, bh); }; }
     for (int i = 0; i < 10; ++i) { if (im) imr.Frame(imBody); else ok.Frame(okBody); }   // warm up: atlases, tables, layouts
     if (im) ProfiledFrames([&] { imr.Frame(imBody); }); else ProfiledFrames([&] { ok.Frame(okBody); });
     return 0;
@@ -176,7 +238,7 @@ int main() {
         ImGuiRig im; OkayRig ok; Raster ras;
         okayuiscreens::HistoryResult okRes;
         P::HistoryIntent imSeen, okSeen;
-        auto imBody = [&] { const P::HistoryIntent in = oked::DrawHistoryBodyImGui(m, hooks); if (in.undo || in.redo) imSeen = in; };
+        auto imBody = [&] { const P::HistoryIntent in = HistoryBodyImGuiReference(m); if (in.undo || in.redo) imSeen = in; };
         auto okBody = [&] { okRes = okayuiscreens::DrawHistory(m, bx, by, bw, bh); if (okRes.intent.undo || okRes.intent.redo) okSeen = okRes.intent; };
         for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
         ras.DrawImGui(); const Bitmap imPic = ras.bmp;

@@ -1,0 +1,3 @@
+// okay-ms own standard header <ios>: the stream classes are in okay_iostream (one shared body, see there).
+#pragma once
+#include <okay_iostream>

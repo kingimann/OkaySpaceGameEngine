@@ -41,13 +41,13 @@ static std::vector<std::vector<unsigned char>> loadLibc() {
     return objs;
 }
 
-static void diffOne(const std::string& name, const std::string& srcPath) {
+static void diffOne(const std::string& name, const std::string& srcPath, const std::vector<std::string>& inc = {}) {
     std::string src = readFile(srcPath);
     okaycc::Diagnostics d;
-    std::vector<unsigned char> bin = okaycc::compileToElf(src, d, srcPath);
+    std::vector<unsigned char> bin = okaycc::compileToElf(src, d, srcPath, inc);
     if (!d.ok() || bin.empty()) {
         okaycc::Diagnostics d2;
-        auto obj = okaycc::compileToObject(src, d2, srcPath);
+        auto obj = okaycc::compileToObject(src, d2, srcPath, inc);
         auto libc = loadLibc();
         std::string error;
         if (d2.ok() && !obj.empty() && !libc.empty()) {
@@ -156,8 +156,10 @@ static void linkTwo() {
 // that includes its header. Both are compiled by okay-cc, linked by our linker with our libc, and
 // the output must match g++ building the same two files. The inline Font8x8::Pixel is defined in
 // both objects (a weak symbol).
-static void engineFont() {
-    const char* files[] = {"tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp"};
+// Round 17 adds engine/src/UI/FocusGraph.cpp (std::vector, <algorithm>, lambdas, enum class,
+// default member initializers, default arguments, range-for, auto), with our own headers.
+static void engineDiff(const char* driver, const char* engineFile) {
+    const char* files[] = {driver, engineFile};
     std::vector<std::string> inc = {"../../engine/include", "include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -205,7 +207,7 @@ static void engineFont() {
     std::string s2 = readFile(folder + "/o2");
     std::system(("rm -rf " + folder).c_str());
     if (e1 != e2 || s1 != s2 || s1.empty()) {
-        std::fprintf(stderr, "FAIL engine Font.cpp okay-cc exit %d [%s] gcc exit %d [%s]\n", e1, s1.c_str(), e2,
+        std::fprintf(stderr, "FAIL engine %s okay-cc exit %d [%s] gcc exit %d [%s]\n", engineFile, e1, s1.c_str(), e2,
                      s2.c_str());
         ++okaycc_test::gFail;
         return;
@@ -242,10 +244,23 @@ int main() {
         ++files;
     }
     closedir(dir);
+    // Programs that include standard headers: okay-cc reads ours (include/), g++ its own.
+    if (DIR* sd = opendir("tests/progs_cpp_std")) {
+        while (dirent* ent = readdir(sd)) {
+            std::string name = ent->d_name;
+            if (name.size() < 5 || name.compare(name.size() - 4, 4, ".cpp") != 0) continue;
+            const char* only = std::getenv("CPPDIFF_ONLY");
+            if (only && name != only) continue;
+            diffOne(name, "tests/progs_cpp_std/" + name, {"include"});
+            ++files;
+        }
+        closedir(sd);
+    }
     if (!std::getenv("CPPDIFF_ONLY")) {
         linkTwo();
         expectNewArrayError();
-        engineFont();
+        engineDiff("tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp");
+        engineDiff("tests/progs_cpp_engine/focus_main.cpp", "../../engine/src/UI/FocusGraph.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

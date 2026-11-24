@@ -716,8 +716,9 @@ std::string emitAssembly(const Module& m) {
     return s;
 }
 
-std::string compileToAssembly(const std::string& source, Diagnostics& diags, const std::string& file) {
-    Module m = lowerSource(source, diags, file);
+std::string compileToAssembly(const std::string& source, Diagnostics& diags, const std::string& file,
+                              const std::vector<std::string>& includes) {
+    Module m = lowerSource(source, diags, file, includes);
     if (!diags.ok()) return {};
     return emitAssembly(m);
 }

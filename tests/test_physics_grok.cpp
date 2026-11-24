@@ -434,10 +434,14 @@ int main() {
     {
         auto sphere = [](Mesh& m, int rings, int around, float radius, bool inward) {
             const float pi = 3.14159265f;
+            m.vertices.clear();   // (a new MeshRenderer starts with a cube)
+            m.triangles.clear();
             for (int i = 0; i <= rings; ++i)
                 for (int j = 0; j < around; ++j) {
                     const float th = pi * (float)i / (float)rings, ph = 2.0f * pi * (float)j / (float)around;
-                    m.vertices.push_back({radius * std::sin(th) * std::cos(ph), radius * std::cos(th), radius * std::sin(th) * std::sin(ph)});
+                    const bool pole = i == 0 || i == rings;   // the poles are single points, exactly
+                    const float ring = pole ? 0.0f : std::sin(th);
+                    m.vertices.push_back({radius * ring * std::cos(ph), i == rings ? -radius : radius * std::cos(th), radius * ring * std::sin(ph)});
                 }
             for (int i = 0; i < rings; ++i)
                 for (int j = 0; j < around; ++j) {
@@ -573,7 +577,7 @@ int main() {
         slope->AddComponent<BoxCollider3D>()->size = {30.0f, 0.2f, 6.0f};
         auto* body = s.CreateGameObject("Player");
         body->AddComponent<BoxCollider3D>()->size = {0.5f, 1.8f, 0.5f};
-        const RaycastHit3D ground = s.physics3D().Raycast(s, {0, 20, 0}, {0, -1, 0}, 40.0f, nullptr, Physics3D::kAllLayers, false);
+        const RaycastHit3D ground = s.physics3D().Raycast(s, {0, 20, 0}, {0, -1, 0}, 40.0f, body, Physics3D::kAllLayers, false);
         CHECK(ground.hit);
         body->transform->localPosition = {0, 20.0f - ground.distance + 1.0f, 0};   // 1 m above the slope under it, pivot at the centre
         const float x0 = body->transform->Position().x;

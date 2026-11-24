@@ -12,8 +12,8 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   Home: `cmake/`. Entry: `CMakeLists.txt`. Also called: CMake, build scripts, toolchain.
 - **What:** One CMake project builds everything: the engine library, the unit tests, the launcher, the player, the editor, the relay, the sandbox and examples, and the developer tools. Options turn parts on or off; defaults suit a plain developer build.
 - **Parts:**
-  - 41.1.1 Root options - `CMakeLists.txt` - `OKAY_BUILD_SANDBOX` (on), `OKAY_BUILD_TESTS` (on), `OKAY_BUILD_LAUNCHER` (on), `OKAY_BUILD_EDITOR` (off), `OKAY_BUILD_PLAYER` (off), `OKAY_USE_SODIUM` (on), `OKAY_USE_ASSIMP` (off), `OKAY_PREFER_OWN_READERS` (off; with Assimp, STL/PLY read with our own readers first), `OKAY_OWN_COLLADA` (off; read `.dae` with our own reader first), `OKAY_OWN_3DS` (off; same for `.3ds`), `OKAY_OWN_BVH` (off; same for `.bvh`), `OKAY_BUILD_TOOLS` (off), `OKAY_SANITIZE`; C++17; `-Wall -Wextra -Wpedantic`
-  - 41.1.2 Engine library - `engine/CMakeLists.txt` - `okay_engine` (alias `okay::engine`) built from an explicit source list (nothing is globbed, so a new `.cpp` must be added; all `engine/src` files are listed today); optional backends: libsodium, Steamworks, Photon, Assimp; four network sources include `shared/` headers (ed25519, clock heartbeat, request builder, HMAC)
+  - 41.1.1 Root options - `CMakeLists.txt` - `OKAY_BUILD_SANDBOX` (on), `OKAY_BUILD_TESTS` (on), `OKAY_BUILD_LAUNCHER` (on), `OKAY_BUILD_EDITOR` (off), `OKAY_BUILD_PLAYER` (off), `OKAY_USE_SODIUM` (on), `OKAY_OWN_<FMT>` (on, one per model reader; NDO off; Assimp and its `OKAY_USE_ASSIMP` / `OKAY_PREFER_OWN_READERS` were deleted 2026-11-24), `OKAY_BUILD_TOOLS` (off), `OKAY_SANITIZE`; C++17; `-Wall -Wextra -Wpedantic`
+  - 41.1.2 Engine library - `engine/CMakeLists.txt` - `okay_engine` (alias `okay::engine`) built from an explicit source list (nothing is globbed, so a new `.cpp` must be added; all `engine/src` files are listed today); optional backends: libsodium, Steamworks, Photon; four network sources include `shared/` headers (ed25519, clock heartbeat, request builder, HMAC)
   - 41.1.3 Per-program files - `launcher/CMakeLists.txt`, `player/CMakeLists.txt`, `relay/CMakeLists.txt`, `sandbox/CMakeLists.txt`, `examples/CMakeLists.txt`, `tools/CMakeLists.txt`, `tests/CMakeLists.txt` - each makes its target and sets `bin/` as the output folder; `editor/CMakeLists.txt` and `okayui/CMakeLists.txt` are the editor's and OkayUI's
   - 41.1.4 Baked defaults - `CMakeLists.txt` - default account server URL and key (`OKAY_DEFAULT_ACCOUNT_URL`, `OKAY_DEFAULT_ACCOUNT_KEY`; read from `config/public-account.json`, -D and environment override), `OKAY_DEFAULT_VOICE_RELAY`, `OKAY_STEAM_APP_ID`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_AC_PLAYER_TRUSTED_KEYS`, `OKAY_AC_HW_SALT` as compile definitions
   - 41.1.5 SDL2.dll copy - `CMakeLists.txt` - on Windows builds a target that copies `SDL2.dll` beside the binaries unless static SDL is on
@@ -199,7 +199,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **What:** What the build needs and which versions are pinned, so surprises are findable.
 - **Parts:**
   - 41.10.1 System libraries - SDL2 (system package; MinGW 2.30.9 fetched in CI and release; Emscripten's own port on the web), libsodium (system package, or MinGW prebuilt 1.0.20, optional)
-  - 41.10.2 Fetched at configure time - Dear ImGui docking commit `036bf939...` (editor and launcher; the tag is written in both `CMakeLists.txt` and `launcher/CMakeLists.txt`), Assimp v5.4.3 (only with `OKAY_USE_ASSIMP=ON`, on in the Windows dist)
+  - 41.10.2 Fetched at configure time - Dear ImGui docking commit `036bf939...` (editor and launcher; the tag is written in both `CMakeLists.txt` and `launcher/CMakeLists.txt`)
   - 41.10.3 Vendored single files - none left: `engine/third_party` is gone (ufbx was deleted on 2026-11-23; the stb image code earlier) and the editor's ImGuiColorTextEdit copy was deleted on 2026-11-23 (replaced by `OkayUI::CodeEdit`)
   - 41.10.4 Tool versions in CI - Emscripten 3.1.51, ubuntu-latest, ubuntu-22.04 for the Linux server, windows-latest for the export check
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
@@ -208,9 +208,9 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Docs:** `docs/release/packaging.md`, `docs/status/THIRD_PARTY.md`, `docs/status/own_code_roadmap.md` (every third-party library is planned for removal, with criteria), `docs/platform/crypto_review_package.md`, `docs/platform/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`
 - **Tests:** none
 - **Status:** Works - versions read from the CMake and workflow files
-- **Open:** the ImGui tag is duplicated in two files and must be changed together; configuring the editor, launcher or Assimp needs network access (offline: point `FETCHCONTENT_SOURCE_DIR_IMGUI` at a checkout)
+- **Open:** the ImGui tag is duplicated in two files and must be changed together; configuring the editor or launcher needs network access (offline: point `FETCHCONTENT_SOURCE_DIR_IMGUI` at a checkout)
 - **Related:** 41.1, 18.3
-- **Words:** dependencies, SDL2, libsodium, ImGui, Assimp, FetchContent, third_party, vendored, pinned version, emsdk
+- **Words:** dependencies, SDL2, libsodium, ImGui, FetchContent, third_party, vendored, pinned version, emsdk
 - **Seen as:** configure fails offline; ImGui API mismatch after changing the tag
 - **Ask me like:** "which ImGui commit do we pin and where?"
 

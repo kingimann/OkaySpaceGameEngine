@@ -194,10 +194,10 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 1);
         CHECK(Read3mfFile(path, m, &err) && m.parts.size() == 1);
         CHECK(!Read3mfFile((dir / "missing.3mf").u8string(), m, &err) && !err.empty());
-        // off by default: with no Assimp the file does not import, and the message says how to switch the reader on
+        // switched off: the file does not import, and the message says how to switch the reader on
         SetImportBackend(".3mf", ImportBackend::Default);
         unsetenv("OKAY_OWN_3MF");
-        if (EffectiveImportBackend(".3mf") == ImportBackend::Default) {   // no reader at all: no Assimp in this build and ours off
+        if (EffectiveImportBackend(".3mf") == ImportBackend::Default) {   // no reader at all: ours is switched off
             CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_3MF") != std::string::npos);
             CHECK(ImportableExtensions().find(".3mf") == std::string::npos);
         }

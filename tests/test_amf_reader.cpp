@@ -135,7 +135,7 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 1);
         SetImportBackend(".amf", ImportBackend::Default);
         unsetenv("OKAY_OWN_AMF");
-        if (EffectiveImportBackend(".amf") == ImportBackend::Default) {   // no reader at all: no Assimp in this build and ours off
+        if (EffectiveImportBackend(".amf") == ImportBackend::Default) {   // no reader at all: ours is switched off
             CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_AMF") != std::string::npos);
         }
         setenv("OKAY_OWN_AMF", "1", 1);

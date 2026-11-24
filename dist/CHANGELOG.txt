@@ -2,11 +2,17 @@ OkaySpace Game Engine — Changelog
 
 v2.903.6
   Bug fixes and more of our own model readers
-  - Fixed from 2.903.5's known problems: the project's module list is
-    saved again, a streamed sound now matches the same sound loaded
-    whole, the picture import filter setting is read again, and the
-    Visual Script checks cover the new On Damaged and On Button Clicked
-    nodes.
+  - Fixed all of 2.903.5's known problems:
+    - Jumping: a double jump can no longer jump a third time.
+    - Standing still on a slope no longer slowly slides you downhill.
+    - The project's module list is saved again.
+    - A streamed sound now matches the same sound loaded whole.
+    - The picture import filter setting is read again.
+    - The Visual Script checks cover the On Damaged and On Button
+      Clicked nodes.
+  - Windows: a failed game zip no longer leaves a broken file behind,
+    and changing a texture's import settings takes effect at once
+    (both not yet tried on a Windows PC).
   - Model files: .vrm, .prj, .ask, .scn, .x3db and .vta files open with
     our own readers, Doom 3 camera paths (.md5camera) are read, and
     OGRE characters with a separate skeleton file get their bones.

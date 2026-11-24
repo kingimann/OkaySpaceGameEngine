@@ -243,6 +243,8 @@ private:
 /// skinning, AssetManager background loads and navmesh bakes. It is Global() unless
 /// SetEngineJobs chose another one (tests compare JobSystem(0) with JobSystem(4)).
 JobSystem& EngineJobs();
+/// The system SetEngineJobs installed, or null when nothing has. Does not create Global().
+JobSystem* RunningEngineJobs();
 /// Use `js` for the engine's work from now on (nullptr = back to Global()). `js` must
 /// outlive everything that was started on it; set it before starting work, not during.
 void SetEngineJobs(JobSystem* js);

@@ -113,7 +113,16 @@ std::string EncodeField(const std::string& v, bool key) {
 bool DataAsset::Save(const std::string& path) const {
     std::string out = std::string(kHeader) + "\n";
     for (const auto& f : m_fields) out += EncodeField(f.first, true) + " = " + EncodeField(f.second, false) + "\n";
-    return savefmt::AtomicWrite(path, out);
+    if (!savefmt::AtomicWrite(path, out)) return false;
+    // This object is the cache entry: a later Set must survive the next Cached() call.
+    for (auto& kv : g_cache) {
+        if (&kv.second != this) continue;
+        DataAsset& self = const_cast<DataAsset&>(*this);
+        self.m_loaded = true;
+        self.RememberStamp(ReadablePath(path));
+        break;
+    }
+    return true;
 }
 
 bool DataAsset::Load(const std::string& path) {
@@ -159,10 +168,12 @@ void DataAsset::RememberStamp(const std::string& openedPath) {
 
 DataAsset& DataAsset::Cached(const std::string& path) {
     DataAsset& a = g_cache[path];
-    // An entry whose file wasn't there is a place for scripts to Set() into. Every later
-    // call tries the file again until one succeeds, so a file created after those Set()s
-    // is what Cached() returns (the script values were only a stand-in while it was missing).
-    if (!a.m_loaded && a.Load(path)) {
+    if (a.m_loaded) return a;   // an unsaved Set on this entry stays until ReloadIfChanged
+    // A missing file is not opened. The next call looks again only when the file exists,
+    // so a script can Set into the empty entry without a disk read on every lookup.
+    const FileStat st = StampOf(ReadablePath(path));
+    if (!st.sizeOk || !st.timeOk) return a;
+    if (a.Load(path)) {
         a.m_loaded = true;
         a.RememberStamp(ReadablePath(path));
     }

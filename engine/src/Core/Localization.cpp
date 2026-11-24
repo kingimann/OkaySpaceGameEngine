@@ -1309,7 +1309,7 @@ void ReverseRun(std::vector<std::uint32_t>& s, std::vector<int>& level, int leas
 
 }
 
-std::string ShapeForDisplay(const std::string& text) {
+std::string ShapeLine(const std::string& text) {
     std::vector<std::uint32_t> cps;
     for (std::size_t i = 0; i < text.size();) cps.push_back(utf8::Next(text, i));
     if (cps.empty()) return {};
@@ -1317,14 +1317,17 @@ std::string ShapeForDisplay(const std::string& text) {
     for (std::size_t i = 0; i < cps.size(); ++i) {
         const Arab* a = ArabOf(cps[i]);
         if (!a) continue;
+        auto gap = [](std::uint32_t cp) {
+            return KindOf(cp) == Dir::N || (cp >= 0x064B && cp <= 0x0652);   // short vowels sit on a letter, they don't break its join
+        };
         bool prev = false, next = false;
         for (std::size_t p = i; p-- > 0;) {
-            if (KindOf(cps[p]) == Dir::N) continue;
+            if (gap(cps[p])) continue;
             prev = JoinsNext(cps[p]);
             break;
         }
         for (std::size_t n = i + 1; n < cps.size(); ++n) {
-            if (KindOf(cps[n]) == Dir::N) continue;
+            if (gap(cps[n])) continue;
             next = JoinsPrev(cps[n]) && JoinsNext(cps[i]);
             break;
         }
@@ -1362,6 +1365,23 @@ std::string ShapeForDisplay(const std::string& text) {
     for (int lv = top; lv >= 1; --lv) ReverseRun(shaped, level, lv);
     std::string out;
     for (std::uint32_t cp : shaped) utf8::Append(out, cp);
+    return out;
+}
+
+std::string ShapeForDisplay(const std::string& text) {
+    // One line at a time. A newline inside one reverse run swapped the lines.
+    std::string out;
+    std::size_t i = 0;
+    while (i <= text.size()) {
+        std::size_t n = text.find('\n', i);
+        if (n == std::string::npos) n = text.size();
+        std::size_t e = n;
+        if (e > i && text[e - 1] == '\r') --e;
+        out += ShapeLine(text.substr(i, e - i));
+        if (n >= text.size()) break;
+        out.push_back('\n');
+        i = n + 1;
+    }
     return out;
 }
 

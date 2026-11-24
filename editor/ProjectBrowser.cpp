@@ -470,7 +470,9 @@ Browser::Browser(std::string assetsRoot) : m_root(Norm(assetsRoot)) {
         for (okay::FoundRef& r : okay::ExtractTextRefs(text)) out.push_back(std::move(r));
     });
 }
-Browser::~Browser() = default;
+Browser::~Browser() {
+    if (okay::SceneAssetIndex() == &m_db) okay::SetSceneAssetIndex(nullptr);
+}
 
 std::string Browser::ProjectDir() const { return ParentOf(m_root); }
 
@@ -529,6 +531,7 @@ bool Browser::DoScan() {
     if (!rep.removed.empty() || !rep.moved.empty()) m_prunePending = true;
     m_indexed = true;
     m_scanChanged = changed;
+    okay::SetSceneAssetIndex(&m_db);   // scene saves can write a sprite's asset id
     return true;
 }
 
@@ -536,13 +539,13 @@ bool Browser::Sync() { return DoScan(); }
 
 bool Browser::Poll(std::uint64_t nowMs) {
     if (!m_indexed) return false;
-    if (!m_watchStarted) {
+    if (!m_watchTried) {
+        m_watchTried = true;   // one try: a failure must not open the folder on every poll
         std::string err;
         m_watchStarted = m_db.StartWatch(&err);   // the operating-system watch; the timer below stays as a fallback
     }
-    bool fromWatch = false;
-    if (m_watchStarted) fromWatch = !m_db.PollWatch().empty();
-    if (!fromWatch && nowMs < m_nextPoll) return false;
+    if (m_watchStarted) (void)m_db.PollWatch();   // drain the kernel queue; the scan below still waits for the gap
+    if (nowMs < m_nextPoll) return false;   // a burst of watch events waits for the same gap as a quiet poll
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }

@@ -450,7 +450,7 @@ int main() {
         CHECK(searchMs < 200.0 && listMs < 50.0);
     }
 
-    // A file that appears on disk shows up before the 2-second poll, via the operating-system watch.
+    // A watch event does not skip the poll gap. The file shows up on the next due poll.
     {
         RUN_SUITE("project_watch");
         TempDir td;
@@ -459,15 +459,10 @@ int main() {
         CHECK(b.Sync());
         CHECK(b.AssetCount() == 1);
         const std::uint64_t rev = b.Revision();
-        b.Poll(1000);                        // first poll also arms the watch; it may find nothing new
+        b.Poll(1000);                        // arms the watch and starts the gap
         WriteFile(td.at("b.okaydata"), "name = B\n");
-        bool saw = false;
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (std::chrono::steady_clock::now() < deadline && !saw) {
-            if (b.Poll(1000) && b.AssetCount() >= 2) saw = true;
-            else std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        CHECK(saw);
+        CHECK(!b.Poll(1001));                // inside the gap: the watch must not force a scan
+        CHECK(b.Poll(1000 + 100000) && b.AssetCount() >= 2);
         CHECK(b.Revision() > rev);
     }
 

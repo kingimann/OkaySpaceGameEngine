@@ -699,6 +699,7 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
 static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       GameObject** firstNew, std::string* error,
                       std::vector<std::string>* warnings = nullptr) {
+    SceneFileLoadScope loadingFile;   // don't invent components the file didn't write
     std::vector<std::string> found;
     auto report = [&]() {
         if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());

@@ -1,5 +1,6 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Core/EventBus.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -123,6 +124,22 @@ void Game::ForceQuit(const std::string& reason, int exitCode) {
     s_quit.store(true, std::memory_order_release);
 }
 
+namespace {
+void PublishQuitEvent(const GameQuit& ev) {
+    auto send = [ev]() {
+        try { EngineBus().Publish(ev); }
+        catch (const std::exception& e) { Log::Warning("Game quit event threw: ", e.what()); }
+        catch (...) { Log::Warning("Game quit event threw"); }
+    };
+    // The bus is not safe to publish from a worker. When a pool is already running and
+    // this is not its main thread, the event is delivered there. No pool is created here.
+    if (JobSystem* js = RunningEngineJobs()) {
+        if (!js->IsMainThread()) { js->RunOnMainThread(send); return; }
+    }
+    send();
+}
+} // namespace
+
 bool Game::RequestQuit(const std::string& reason, int exitCode) {
     if (g_inGuard) return false;   // the guard itself asked: it is deciding, not quitting
     if (!QuitRequested() && g_guard) {
@@ -135,13 +152,13 @@ bool Game::RequestQuit(const std::string& reason, int exitCode) {
         g_inGuard = false;
         if (!allow) {
             ++g_vetoes;
-            EngineBus().Publish(GameQuit{reason, exitCode, false});
+            PublishQuitEvent(GameQuit{reason, exitCode, false});
             return false;
         }
     }
     const bool already = QuitRequested();
     ForceQuit(reason, exitCode);
-    if (!already) EngineBus().Publish(GameQuit{reason, exitCode, true});
+    if (!already) PublishQuitEvent(GameQuit{reason, exitCode, true});
     return true;
 }
 

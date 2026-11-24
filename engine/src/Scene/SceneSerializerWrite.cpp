@@ -252,17 +252,20 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  sprite " << static_cast<int>(sr->glyph) << " "
             << sr->color.r << " " << sr->color.g << " " << sr->color.b << " "
             << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
-            << Quote(sr->texture);
-        {
-            const std::string gid = SceneAssetGuid(sr->texture);
-            if (!gid.empty()) out << " guid " << gid;
-        }
-        out << " " << sr->uvMin.x << " " << sr->uvMin.y
+            << Quote(sr->texture)
+            << " " << sr->uvMin.x << " " << sr->uvMin.y
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
             << " " << sr->sortingLayer
-            << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
+            << " " << (int)sr->texFilter;
+        {
+            // A named field at the end. Putting "guid <id>" in the middle shifted the
+            // positional fields PrefabTools compares (uv, sort, flips).
+            const std::string gid = SceneAssetGuid(sr->texture);
+            if (!gid.empty()) out << " guid=" << gid;
+        }
+        out << "\n";
     }
     for (auto* cam : go->GetComponents<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "

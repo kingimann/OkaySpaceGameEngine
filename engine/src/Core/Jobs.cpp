@@ -226,17 +226,20 @@ struct JobSystem::Impl {
             if (StatePtr m = PopMainLocked()) return m;
         }
         const int self = (t_ctx.laneSys == this) ? t_ctx.lane : -1;
-        if (self >= 0 && self < (int)laneQ[0].size()) {
-            for (int p = 0; p < 3; ++p)
+        const bool haveSelf = self >= 0 && self < (int)laneQ[0].size();
+        // One priority at a time, highest first, across this worker's queue and the shared
+        // queue. Draining the whole local queue first let three Low jobs run before a High
+        // one that was waiting on the shared queue.
+        for (int p = 0; p < 3; ++p) {
+            if (haveSelf)
                 if (StatePtr s = TakeLocked(laneQ[p][(std::size_t)self], true, false)) return s;
-            for (int p = 0; p < 3; ++p)
-                for (std::size_t w = 0; w < laneQ[p].size(); ++w) {
-                    if ((int)w == self) continue;
-                    if (StatePtr s = TakeLocked(laneQ[p][w], false, true)) return s;
-                }
-        }
-        for (int p = 0; p < 3; ++p)
             if (StatePtr s = TakeLocked(ready[p], false, false)) return s;
+            if (!haveSelf) continue;
+            for (std::size_t w = 0; w < laneQ[p].size(); ++w) {
+                if ((int)w == self) continue;
+                if (StatePtr s = TakeLocked(laneQ[p][w], false, true)) return s;
+            }
+        }
         return nullptr;
     }
 
@@ -554,8 +557,10 @@ namespace {
 std::atomic<JobSystem*> g_engineJobs{nullptr};
 } // namespace
 
+JobSystem* RunningEngineJobs() { return g_engineJobs.load(std::memory_order_acquire); }
+
 JobSystem& EngineJobs() {
-    JobSystem* js = g_engineJobs.load(std::memory_order_acquire);
+    JobSystem* js = RunningEngineJobs();
     return js ? *js : JobSystem::Global();
 }
 

@@ -9,11 +9,12 @@ int main() {
     RUN_SUITE("profiler_jobs");
     JobSystem jobs(0);
     SetEngineJobs(&jobs);
-    jobs.Submit([] {});
+    jobs.Submit([] {});   // before the profiler is on: must not land in the first frame
     Profiler& p = Prof();
     p.enabled = true;
     p.paused = false;
     p.BeginFrame();
+    jobs.Submit([] {});
     p.EndFrame(16.0);
     bool found = false;
     const Profiler::Frame& frame = p.FrameAt(p.Count() - 1);

@@ -35,6 +35,18 @@ int main() {
     CHECK(HasCp(beh, 0xFE91));   // beh initial
     CHECK(First(beh) == 0xFE90);
 
+    // A short vowel between the letters must not stop them joining.
+    const std::string vowelled = ShapeForDisplay("\u0628\u064E\u0628");
+    CHECK(HasCp(vowelled, 0xFE91));
+    CHECK(HasCp(vowelled, 0xFE90));
+
+    // Each line keeps its own order. One reverse of the whole string swapped the lines.
+    const std::string two = ShapeForDisplay(hebrew + "\n" + hebrew);
+    const std::size_t nl = two.find('\n');
+    CHECK(nl != std::string::npos);
+    CHECK(First(two.substr(0, nl)) == 0x05DD);
+    CHECK(First(two.substr(nl + 1)) == 0x05DD);
+
     TtfFont font;
     const std::string face = std::string(OKAY_SOURCE_DIR) + "/assets/fonts/DejaVuSans.ttf";
     CHECK(font.LoadFromFile(face, 32.0f));

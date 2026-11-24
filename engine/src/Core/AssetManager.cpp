@@ -6,7 +6,6 @@
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Render/Mesh.hpp"
-#include "okay/Debug/DebugUtil.hpp"
 #include <algorithm>
 #include <map>
 #include <chrono>
@@ -18,25 +17,9 @@
 
 namespace okay {
 
-namespace {
-thread_local int g_materialDirect = 0;
-debugutil::SpinLock g_materialHoldLock;
-std::map<std::string, AssetHandle<Material>> g_materialHeld;
-}
-
 bool Material::LoadFromFile(const std::string& path, Material& out) {
-    if (g_materialDirect == 0) {
-        ++g_materialDirect;
-        auto handle = AssetManager::Instance().Get<Material>(path);
-        --g_materialDirect;
-        if (!handle) return false;
-        {
-            debugutil::SpinGuard hold(g_materialHoldLock);
-            g_materialHeld[handle.Path()] = handle;
-        }
-        out = *handle.Get();
-        return true;
-    }
+    // Direct read. Routing this through AssetManager made a save-then-reopen return the
+    // old material, and the loader called Get on itself from a worker thread.
     std::ifstream f(path);
     if (!f) return false;
     std::stringstream ss;

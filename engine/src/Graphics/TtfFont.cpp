@@ -81,7 +81,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     int aw = bakeHeightPx <= 24.0f ? 256 : 512, ah = aw;   // small faces need little room (95 glyphs of 12 px fit in 256 x 256); it doubles if they do not fit
     std::vector<unsigned char> gray;
     int rows = -1;
-    for (int attempt = 0; attempt < 6 && rows < 0; ++attempt) {   // up to 8192: dialogue text past Latin-1 needs the room
+    for (int attempt = 0; attempt < 6 && rows < 0 && aw <= 8192 && ah <= 8192; ++attempt) {
         gray.assign((std::size_t)aw * ah, 0);
         ttf::ShelfPacker packer(aw, ah, kPad);
         bool fit = true;
@@ -89,7 +89,8 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
             fit = ttf::BakeGlyph(info->face, info->face.FindGlyph((std::uint32_t)(kFirst + i)), scale, packer,
                                  gray.data(), cdata[i]);
         if (fit) rows = packer.Bottom();
-        else { aw *= 2; ah *= 2; }   // didn't fit: try a bigger atlas
+        else if (aw >= 8192 || ah >= 8192) break;   // six doublings from 512 would reach 16384; stop at 8192
+        else { aw *= 2; ah *= 2; }
     }
     if (rows <= 0) { Log::Error("[ttf] atlas bake failed: ", path); return false; }
 

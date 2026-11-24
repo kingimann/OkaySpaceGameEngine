@@ -74,7 +74,14 @@ namespace detail {
 std::uint64_t ComponentRulesGeneration() { return g_rulesGeneration.load(std::memory_order_relaxed); }
 } // namespace detail
 
+namespace {
+thread_local int g_sceneFileLoad = 0;
+}
+SceneFileLoadScope::SceneFileLoadScope() { ++g_sceneFileLoad; }
+SceneFileLoadScope::~SceneFileLoadScope() { --g_sceneFileLoad; }
+
 void GameObject::ApplyRequirements(std::type_index owner) {
+    if (g_sceneFileLoad > 0) return;   // the file already lists what the object has
     for (const auto& t : t_applying) if (t == owner) return;   // A needs B needs A: stop the loop
     const auto reqs = ComponentRules::RequirementsOf(owner);
     if (reqs.empty()) return;

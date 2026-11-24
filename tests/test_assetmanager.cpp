@@ -279,13 +279,18 @@ int main() {
         Image first, second;
         CHECK(first.Load(path) && first.Width() == 1 && first.Height() == 1);
         CHECK(second.Load(path));
+        // Image::Load and Material::LoadFromFile stay direct. Routing them through the
+        // manager returned stale bytes and left the Xbox build without a symbol.
+        CHECK(AssetManager::Instance().CachedCount() == before);
+        CHECK(!AssetManager::Instance().Find<Image>(path).Ready());
+        auto held = AssetManager::Instance().Get<Image>(path);
+        CHECK(held.Ready() && held.Get()->Width() == 1);
         CHECK(AssetManager::Instance().CachedCount() == before + 1);
-        CHECK(AssetManager::Instance().Find<Image>(path).Ready());
         Material mat;
         CHECK(mat.SaveToFile((dir / "box.okaymat").string()));
         Material loaded;
         CHECK(Material::LoadFromFile((dir / "box.okaymat").string(), loaded));
-        CHECK(AssetManager::Instance().Find<Material>((dir / "box.okaymat").string()).Ready());
+        CHECK(!AssetManager::Instance().Find<Material>((dir / "box.okaymat").string()).Ready());
     }
 
     std::error_code ec; fs::remove_all(dir, ec);

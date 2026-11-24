@@ -118,6 +118,16 @@ public:
         m_stack.clear();
         m_frameStart = Now();
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
+        // Baseline at the start of the first profiled frame, so earlier job time
+        // (everything since the pool started) is not charged to this frame.
+        if (!m_jobPrimed) {
+            const JobFrameNote jobs = NoteRunningJobs();
+            if (jobs.live) {
+                m_prevJobBusy = jobs.busyMs;
+                m_prevJobDone = jobs.completed;
+                m_jobPrimed = true;
+            }
+        }
     }
     void Begin(const char* name) {
         if (!enabled || !OnOwnerThread()) return;
@@ -150,8 +160,9 @@ public:
                 calls = static_cast<int>(jobs.completed - m_prevJobDone);
             m_prevJobBusy = jobs.busyMs;
             m_prevJobDone = jobs.completed;
-            // Always named, including a quiet frame, so the profiler window can show the row at zero.
-            m_build.push_back(Bucket{"Jobs", busy, busy, calls, 0, 0.0});
+            // Depth -1: job time is already inside the systems that waited on it. Adding it
+            // at depth 0 made cpuMs count that time twice (a 16 ms frame with two 30 ms jobs read as 60 ms).
+            m_build.push_back(Bucket{"Jobs", busy, busy, calls, -1, 0.0});
         }
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;
@@ -315,6 +326,7 @@ private:
     bool    m_haveEpoch = false;
     double  m_prevJobBusy = 0.0;
     std::uint64_t m_prevJobDone = 0;
+    bool    m_jobPrimed = false;
 
     static std::chrono::steady_clock::time_point Now() { return std::chrono::steady_clock::now(); }
     static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }

@@ -45,7 +45,11 @@ int main() {
     sr->texture = "hero.png";
     const std::string saved = SceneSerializer::Serialize(scene);
     CHECK(saved.find(kGuid) != std::string::npos);
-    CHECK(saved.find("guid ") != std::string::npos);
+    CHECK(saved.find(std::string("guid=") + kGuid) != std::string::npos);
+    const std::size_t spriteAt = saved.find("\n  sprite ");
+    CHECK(spriteAt != std::string::npos);
+    const std::string spriteLine = saved.substr(spriteAt, saved.find('\n', spriteAt + 1) - spriteAt);
+    CHECK(spriteLine.find(" guid ") == std::string::npos);   // not between the positional fields
 
     Scene round("round");
     std::string err;

@@ -368,6 +368,7 @@ private:
 /// The asset database scene save/load uses to turn a path into a GUID and a GUID back into
 /// the file's current path. Null (the default) leaves every path as it was written.
 void SetSceneAssetIndex(const AssetDatabase* db);
+const AssetDatabase* SceneAssetIndex();
 /// The GUID text of `path` in the bound index, or empty when there is no index or no such file.
 std::string SceneAssetGuid(const std::string& path);
 /// `storedPath`, or the index's current path for `guidText` when that file is still known.

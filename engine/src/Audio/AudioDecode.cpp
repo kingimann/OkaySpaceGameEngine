@@ -3,9 +3,7 @@
 // through the engine's own decoder (VorbisDecoder.cpp, whole file or
 // incrementally through VorbisStream); MP3 through Mp3Decoder.cpp; FLAC through
 // FlacDecoder.cpp.
-#include "okay/Core/AssetManager.hpp"
 #include "okay/Audio/AudioClip.hpp"
-#include "okay/Debug/DebugUtil.hpp"
 #include <map>
 #include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
@@ -109,11 +107,6 @@ bool AudioClip::LoadFLAC(const std::string& path, std::string* error, bool downm
     return true;
 }
 
-namespace {
-debugutil::SpinLock g_audioHoldLock;
-std::map<std::string, AssetHandle<AudioClip>> g_audioHeld;
-}
-
 bool AudioClip::Load(const std::string& path, std::string* error, bool downmix) {
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
     const std::string ext = LowerExt(path);
@@ -157,14 +150,7 @@ std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.si
 
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
-    // The plain clip (no resample, no forced mono) is the asset manager's copy. Streaming reads the file itself.
-    if (!mono && rate == 0) {
-        auto handle = AssetManager::Instance().Get<AudioClip>(path, error);
-        if (!handle) return nullptr;
-        debugutil::SpinGuard hold(g_audioHoldLock);
-        g_audioHeld[path] = handle;
-        return std::shared_ptr<const AudioClip>(handle.Shared());
-    }
+    // Streaming reads the file itself (AudioStream). This cache is the one LoadCached already had.
     const auto key = std::make_pair(CacheName(path) + (mono ? "\n:mono" : ""), rate);
     std::uintmax_t size = 0; std::int64_t time = 0;
     FileStamp(path, size, time);

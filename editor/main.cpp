@@ -54204,11 +54204,8 @@ int main(int argc, char** argv) {
         // The slow-frame log (okay_editor_perf.log) reads the profiler's scopes, so the timers stay on while it is (the default).
         static okay::editor::perf::SlowFrameLog s_slowLog = [] {
             okay::editor::perf::SlowFrameLog l; l.thresholdMs = okay::editor::perf::SlowFrameLog::ThresholdFrom(std::getenv("OKAY_SLOW_FRAME_MS")); return l; }();
-        {   // one job system for the editor, so the profiler can show the Jobs row (0 workers: jobs run on this thread).
-            // Left alive for the process: std::exit from a screenshot must not destroy it mid-shutdown.
-            static okay::JobSystem* editorJobs = nullptr;
-            if (!editorJobs) { editorJobs = new okay::JobSystem(0); okay::SetEngineJobs(editorJobs); }
-        }
+        // No editor-owned JobSystem(0): that ran navmesh, decode and skinning on the UI thread.
+        // The Jobs profiler row reads whatever pool is already running (NoteRunningJobs).
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).

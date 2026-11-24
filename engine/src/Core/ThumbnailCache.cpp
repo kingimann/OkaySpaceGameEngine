@@ -312,7 +312,7 @@ bool ThumbnailCache::OnDisk(const Guid& guid, std::uint64_t hash) const {
 }
 
 std::shared_ptr<const Image> ThumbnailCache::Placeholder(AssetType kind, const std::string& ext, bool error) {
-    const std::string key = std::string(AssetTypeName(kind)) + "/" + ext + (error ? "/e" : "");
+    const std::string key = std::to_string(m_opt.size) + "/" + AssetTypeName(kind) + "/" + ext + (error ? "/e" : "");
     auto it = m_placeholders.find(key);
     if (it != m_placeholders.end()) return it->second;
     auto img = std::make_shared<const Image>(MakePlaceholderThumbnail(kind, ext, m_opt.size, error));

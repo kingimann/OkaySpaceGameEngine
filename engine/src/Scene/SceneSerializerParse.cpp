@@ -611,6 +611,15 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                    in >> std::ws;   // optional guid=<id> after the positional fields
+                    if (in.peek() == 'g') {
+                        const auto mark = in.tellg();
+                        std::string word;
+                        in >> word;
+                        if (word.size() > 5 && word.compare(0, 5, "guid=") == 0)
+                            sr->texture = ResolveSceneAssetPath(sr->texture, word.substr(5));
+                        else if (mark != std::streampos(-1)) { in.clear(); in.seekg(mark); }
+                    }
                 } else if (field == "camera") {
                     Color c; int proj = 0; float ortho = 5.0f, fov = 60.0f; int main = 1;
                     in >> proj >> ortho >> fov >> c.r >> c.g >> c.b >> c.a >> main;

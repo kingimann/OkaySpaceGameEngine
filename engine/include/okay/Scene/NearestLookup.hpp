@@ -9,6 +9,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/Joint3D.hpp"
 #include <string>
 #include <vector>
 
@@ -59,6 +60,18 @@ inline GameObject* CachedPartner(const Scene& scene, J* j) {
     c.object = FindNearest(scene, j->connectedBody, j->gameObject);
     c.version = c.object ? version : 0;
     return c.object;
+}
+
+/// The other body of a Joint3D: the object ConnectTo linked, or (when that was not used) the one named
+/// `connectedBody`. A linked object that is gone does not fall back to a same-named stand-in.
+inline GameObject* Joint3DPartner(const Scene& scene, Joint3D* j) {
+    if (!j) return nullptr;
+    if (j->connectedId != 0) {
+        GameObject* g = j->Linked();
+        if (!g || g->scene() != &scene) return nullptr;
+        return g;
+    }
+    return j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);
 }
 
 } // namespace okay

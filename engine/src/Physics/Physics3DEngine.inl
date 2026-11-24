@@ -615,7 +615,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
         auto bodyIt = ra ? E.bodies.find(ra) : E.bodies.end();
         if (bodyIt == E.bodies.end()) continue;   // the joint moves THIS body
-        GameObject* partner = j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);
+        GameObject* partner = Joint3DPartner(scene, j);
         Rigidbody3D* rbB = partner ? partner->GetComponent<Rigidbody3D>() : nullptr;
         auto partnerIt = rbB ? E.bodies.find(rbB) : E.bodies.end();
         const phys::BodyId other = partnerIt != E.bodies.end() ? partnerIt->second.id : phys::kInvalidId;

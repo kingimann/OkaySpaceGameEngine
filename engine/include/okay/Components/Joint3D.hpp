@@ -22,6 +22,7 @@
 // point (`anchor`); set it to another object's name to link two bodies.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include <cstdint>
@@ -35,6 +36,10 @@ public:
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
+    /// Instance id of the other body when the joint is linked to that object rather than by name.
+    /// 0 means "use connectedBody". ConnectTo sets it. A saved scene keeps the name; this is for bodies
+    /// created while playing, and for two objects that share a name (a clone). It wins over the name.
+    std::uint64_t connectedId = 0;
     Vec3  anchor{0, 0, 0};            ///< world anchor point when there's no connected body
     float distance = 1.0f;            ///< rest length (Distance / Spring)
     bool  autoConfigure = true;       ///< set `distance`/offset from the start separation
@@ -72,6 +77,22 @@ public:
         PartnerCache(const PartnerCache&) {}
         PartnerCache& operator=(const PartnerCache&) { object = nullptr; version = 0; return *this; }
     } partner;
+
+    /// Link this joint to `other` by object, not by name. nullptr clears the link and the name is used again.
+    /// The id is remembered, so the link survives the other object being renamed and is not stolen by a clone
+    /// that happens to have the same name. A destroyed object resolves to no partner (a world anchor).
+    void ConnectTo(GameObject* other) {
+        connectedId = (other && !other->IsDestroyed()) ? other->InstanceId() : 0;
+        partner.object = connectedId ? other : nullptr;
+        partner.version = 0;
+    }
+    /// The object ConnectTo remembered, or nullptr when the link is by name or that object is gone.
+    GameObject* Linked() const {
+        if (connectedId == 0) return nullptr;
+        GameObject* g = GameObject::FromInstanceId(connectedId);
+        if (!g || g->IsDestroyed()) return nullptr;
+        return g;
+    }
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;

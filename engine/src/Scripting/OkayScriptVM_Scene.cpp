@@ -54,7 +54,7 @@ void OkayScriptVM::Impl::RegisterObjectLifecycleBuiltins(BuiltinCtx& c) {
         // ---- Objects: Destroy(obj[, seconds]), Instantiate(prefab, pos, rot), CompareTag ----
         b["Destroy"] = [this, findNamed](std::vector<Value>& a) {
             Value target = a.empty() ? Value{std::string()} : a[0];
-            if (IsComponentRef(target)) return Value{};   // Destroy(component): ignore
+            if (IsComponentRef(target) || target.IsComponentHandle()) return Value{};   // Destroy(component): ignore
             const float delay = a.size() > 1 ? a[1].AsFloat() : 0.0f;
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
             // A plain name equal to this object's own name means this object (as before);
@@ -178,19 +178,27 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
             if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>();
             return nullptr;
         };
-        b["GetComponent"] = [this, compOf](std::vector<Value>& a) -> Value {
+        // Every other component class: a handle from the generic binding layer (okay/Scripting/ScriptBindings.hpp),
+        // whose generated methods and registry properties the script then uses; null when the object has none.
+        auto boundHandle = [](GameObject* g, const std::string& t) -> Value {
+            const scriptbind::ClassBinding* cls = nullptr;
+            Component* c = BoundComponentOf(g, t, &cls);
+            return c ? scriptbind::MakeHandle(c, cls) : Value{};
+        };
+        b["GetComponent"] = [this, compOf, boundHandle](std::vector<Value>& a) -> Value {
             if (!rt.host || !rt.host->gameObject || a.empty()) return Value{};
             const std::string c = a[0].AsString();
-            return compOf(rt.host->gameObject, c) ? Value{"@" + c} : Value{};
+            return compOf(rt.host->gameObject, c) ? Value{"@" + c} : boundHandle(rt.host->gameObject, c);
         };
         alias("gameObject.GetComponent", "GetComponent");
         alias("TryGetComponent", "GetComponent");
         // other.GetComponent<T>(): "@T#<id>" names that object's component, so
         // what is done with it lands on `other` (#888 F111: it used to be "@T",
         // which every handler below read as this script's own component).
-        b["__object_GetComponent"] = [findNamed, compOf, go](std::vector<Value>& a) -> Value {
+        b["__object_GetComponent"] = [findNamed, compOf, go, boundHandle](std::vector<Value>& a) -> Value {
             GameObject* g = a.empty() ? nullptr : findNamed(a[0]);
-            if (!g || a.size() < 2 || !compOf(g, a[1].AsString())) return Value{};
+            if (!g || a.size() < 2) return Value{};
+            if (!compOf(g, a[1].AsString())) return boundHandle(g, a[1].AsString());
             if (g == go()) return Value{"@" + a[1].AsString()};
             return Value{"@" + a[1].AsString() + "#" + std::to_string(g->InstanceId())};
         };
@@ -242,6 +250,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (p == "friction") return Value{rb->friction};
                 if (p == "position") return Value{g->transform ? g->transform->Position() : Vec3::Zero};
                 if (p == "sleeping" || p == "isSleeping") return Value{rb->sleeping};
+                if (Value bv; BoundGet(g, "Rigidbody2D", p, bv)) return bv;
                 unknownMember("Rigidbody2D", p);
                 return Value{};
             }
@@ -260,6 +269,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (p == "maxFallSpeed") return Value{rb->maxFallSpeed};
                 if (p == "position") return Value{g->transform ? g->transform->Position() : Vec3::Zero};
                 if (p == "sleeping" || p == "isSleeping") return Value{rb->sleeping};
+                if (Value bv; BoundGet(g, "Rigidbody3D", p, bv)) return bv;
                 unknownMember("Rigidbody", p);
                 return Value{};
             }
@@ -287,6 +297,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (p == "value") return Value{sv->Get()};
             }
             if (t == "FirstPersonHands") return FpHandsGet(g->GetComponent<FirstPersonHands>(), p);
+            if (Value bv; BoundGet(g, t, p, bv)) return bv;
             return Value{};
         };
         b["__set_component"] = [this, compTarget, compPtr, unknownMember](std::vector<Value>& a) -> Value {
@@ -308,8 +319,8 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (auto* tr = g->GetComponent<TextRenderer>(); tr && (t == "Text" || t == "TextRenderer" || t.rfind("TMP", 0) == 0 || t.rfind("TextMesh", 0) == 0)) tr->color = col(tr->color);
                 return Value{};
             }
-            if (p == "flipX") if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->flipX = v.AsBool();
-            if (p == "text") if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = v.AsString();
+            if (p == "flipX") if (auto* sr = g->GetComponent<SpriteRenderer>()) { sr->flipX = v.AsBool(); return Value{}; }
+            if (p == "text") if (auto* tr = g->GetComponent<TextRenderer>()) { tr->text = v.AsString(); return Value{}; }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {
                 if (p == "velocity" || p == "linearVelocity") { Vec3 q = v.AsVec3(); rb->velocity = {q.x, q.y}; rb->WakeUp(); }
                 else if (p == "gravityScale") { rb->gravityScale = v.AsFloat(); rb->WakeUp(); }
@@ -330,7 +341,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 else if (p == "bounciness") rb->bounciness = v.AsFloat();
                 else if (p == "friction") rb->friction = v.AsFloat();
                 else if (p == "position") { if (g->transform) g->transform->SetPosition(v.AsVec3()); rb->WakeUp(); }
-                else if (p != "enabled") unknownMember("Rigidbody2D", p);
+                else if (p != "enabled" && !BoundSet(g, "Rigidbody2D", p, v)) unknownMember("Rigidbody2D", p);
                 return Value{};
             }
             if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>()) {
@@ -354,21 +365,23 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 else if (p == "friction") rb->friction = v.AsFloat();
                 else if (p == "maxFallSpeed") rb->maxFallSpeed = std::max(0.0f, v.AsFloat());
                 else if (p == "position") { if (g->transform) g->transform->SetPosition(v.AsVec3()); rb->WakeUp(); }
-                else if (p != "enabled") unknownMember("Rigidbody", p);
+                else if (p != "enabled" && !BoundSet(g, "Rigidbody3D", p, v)) unknownMember("Rigidbody", p);
                 return Value{};
             }
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (p == "volume") au->volume = v.AsFloat();
-                if (p == "pitch") au->pitch = v.AsFloat();
-                if (p == "pan") au->pan = v.AsFloat();
-                if (p == "lowPass") au->lowPass = v.AsFloat();
-                if (p == "doppler") au->doppler = v.AsBool();
-                if (p == "dopplerScale") au->dopplerScale = v.AsFloat();
-                if (p == "occlude") au->occlude = v.AsBool();
-                if (p == "occlusionVolume") au->occlusionVolume = v.AsFloat();
-                if (p == "occlusionLowPass") au->occlusionLowPass = v.AsFloat();
-                if (p == "distanceLowPass") au->distanceLowPass = v.AsBool();
-                if (p == "distanceLowPassHz") au->distanceLowPassHz = v.AsFloat();
+                else if (p == "pitch") au->pitch = v.AsFloat();
+                else if (p == "pan") au->pan = v.AsFloat();
+                else if (p == "lowPass") au->lowPass = v.AsFloat();
+                else if (p == "doppler") au->doppler = v.AsBool();
+                else if (p == "dopplerScale") au->dopplerScale = v.AsFloat();
+                else if (p == "occlude") au->occlude = v.AsBool();
+                else if (p == "occlusionVolume") au->occlusionVolume = v.AsFloat();
+                else if (p == "occlusionLowPass") au->occlusionLowPass = v.AsFloat();
+                else if (p == "distanceLowPass") au->distanceLowPass = v.AsBool();
+                else if (p == "distanceLowPassHz") au->distanceLowPassHz = v.AsFloat();
+                else BoundSet(g, "AudioSource", p, v);
+                return Value{};
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
@@ -379,7 +392,8 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (p == "name") sv->name = v.AsString();
                 if (p == "value") sv->Set(v.AsString());
             }
-            if (t == "FirstPersonHands") FpHandsSet(g->GetComponent<FirstPersonHands>(), p, v);
+            if (t == "FirstPersonHands") { FpHandsSet(g->GetComponent<FirstPersonHands>(), p, v); return Value{}; }
+            if (t != "NetworkObject" && t != "SyncVar") BoundSet(g, t, p, v);
             return Value{};
         };
         b["__call_component"] = [this, compTarget](std::vector<Value>& a) -> Value {
@@ -447,8 +461,10 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (m == "Sleep") { rb->sleeping = true; return Value{}; }
                 if (m == "IsSleeping") return Value{rb->sleeping};
                 if (m == "IsAwake") return Value{!rb->sleeping};
-                if (m != "AddExplosionForce" && m != "MovePosition")
+                if (m != "AddExplosionForce" && m != "MovePosition") {
+                    if (Value bv; BoundCall(g, "Rigidbody2D", m, rest, bv)) return bv;
                     throw ScriptError("Rigidbody2D has no method '" + m + "'");
+                }
                 if (m == "AddExplosionForce") {
                     float up = 0.0f;
                     Vec2 c; float force = 0.0f, radius = 0.0f;
@@ -515,6 +531,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (m == "Sleep") { rb->sleeping = true; return Value{}; }
                 if (m == "IsSleeping") return Value{rb->sleeping};
                 if (m == "IsAwake") return Value{!rb->sleeping};
+                if (Value bv; BoundCall(g, "Rigidbody3D", m, rest, bv)) return bv;
                 throw ScriptError("Rigidbody has no method '" + m + "'");
             }
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
@@ -525,6 +542,9 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 if (m == "PlayOneShot") au->PlayOneShot(rest.empty() ? 1.0f : arg(0).AsFloat());
                 if (m == "FadeIn") au->FadeIn(rest.empty() ? 1.0f : arg(0).AsFloat());
                 if (m == "FadeOut") au->FadeOut(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m != "Play" && m != "Stop" && m != "Pause" && m != "Resume" && m != "PlayOneShot" && m != "FadeIn" &&
+                    m != "FadeOut")
+                    if (Value bv; BoundCall(g, "AudioSource", m, rest, bv)) return bv;
                 return Value{};
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
@@ -543,6 +563,7 @@ void OkayScriptVM::Impl::RegisterComponentAccessBuiltins(BuiltinCtx& c) {
                 std::vector<Value> x = rest;
                 return rt.Call("transform." + m, x);
             }
+            if (Value bv; BoundCall(g, t, m, rest, bv)) return bv;
             return Value{};
         };
         b["ForceMode2D.Impulse"] = [](std::vector<Value>&) { return Value{1.0f}; };

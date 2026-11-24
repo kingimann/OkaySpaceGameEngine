@@ -109,6 +109,7 @@ How the code is built, how the work is shared, and the replacement work.
 - [Input](engine/input.md), [Math and geometry](engine/math_geometry.md), [Debug tools](engine/debug_tools.md), [Optimization tools](engine/optimization_tools.md), [Performance log](engine/perf_log.md), [Editor speed](editor/editor_performance.md).
 - [Our own physics core](physics/physics_core.md): `okay::phys`, what each file was written from.
 - [Script API registry](scripting/script_api_registry.md): one table of engine functions for every script language.
+- [Script bindings](scripting/script_bindings.md): every component class, method and property reachable from scripts (generated), and the gap audit.
 - [engine/code_index.md](engine/code_index.md): every source file with one line (generated).
 
 **Our own replacements for outside code**

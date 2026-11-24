@@ -148,7 +148,7 @@ struct Manifest {
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches; vector<GenFile> gens;
+    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches; vector<GenFile> gens; vector<std::pair<string, int>> folders; // folders: `folder {bin}/x` lines (path, line)
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -268,6 +268,12 @@ static Manifest parseManifest(const string& file) {
                 for (auto& x : m.fetches) if (x.name == t[1]) throw err("duplicate fetch '" + t[1] + "'");
                 FetchDecl f; f.name = t[1]; f.line = ln; f.dir = "_deps/" + t[1] + "-src"; m.fetches.push_back(f); mode = FETCH; continue;
             }
+            if (t[0] == "folder") { // a folder in the build folder that a real build makes (CMake's file(MAKE_DIRECTORY)), for example for a linker map
+                if (t.size() != 2) throw err("expected: folder PATH");
+                string fp = cmr::binNormal(t[1]);
+                if (!cmr::inBin(fp)) throw err("folder path '" + t[1] + "' must be inside the build folder: {bin}/<path> with no '..' above {bin}");
+                m.folders.push_back({fp, ln}); continue;
+            }
             if (t[0] == "generate") {
                 if (t.size() != 2) throw err("expected: generate PATH");
                 string gp = cmr::binNormal(t[1]); // one file has one spelling: {bin}/a/../b.cpp is {bin}/b.cpp
@@ -313,7 +319,7 @@ static Manifest parseManifest(const string& file) {
                 CondBlock c; c.opt = t[1]; c.line = ln; if (t.size() == 4) { c.hasEquals = true; c.equals = t[3]; }
                 m.conds.push_back(c); mode = COND; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target, package, config, option, if, pool, action, buildfile, generate or outdir)");
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, package, config, option, if, pool, action, buildfile, generate, folder or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
@@ -560,7 +566,7 @@ struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
     vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
-struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; vector<std::pair<string, const string*>> gens; /* generate files the planned steps need: full path, text */ };
+struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; vector<std::pair<string, const string*>> gens; /* generate files the planned steps need: full path, text */ vector<string> folders; /* folder lines, full paths */ };
 static string gBuildDir = ".";
 static string under(const string& rel) { return gBuildDir == "." ? rel : gBuildDir + "/" + rel; }
 static string resolve(const string& dir, const string& p) {
@@ -665,22 +671,24 @@ static vector<RawAction> expandImporters(const Manifest& m) {
 // Where each generate block's file goes: {bin} is <build dir>/<outdir>/ctest. The path must stay inside that folder after links are
 // followed (a folder in the build tree that links elsewhere is refused), so a manifest cannot write anywhere else.
 static string binTreeOf(const Manifest& m) { return fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string(); }
-static std::map<string, const GenFile*> genFilePaths(const Manifest& m) {
-    std::map<string, const GenFile*> r; if (m.gens.empty()) return r;
+static string binPathChecked(const Manifest& m, const string& what, const string& path, int line) {
     string tree = binTreeOf(m); std::error_code ec;
     string realTree = fs::weakly_canonical(tree, ec).generic_string(); if (ec) realTree = tree;
-    for (auto& gf : m.gens) {
-        if (!cmr::inBin(gf.path)) throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") is outside the build folder");
-        string p = (fs::path(tree) / gf.path.substr(6)).lexically_normal().generic_string();
-        string real = fs::weakly_canonical(p, ec).generic_string(); if (ec) real = p;
-        if (p.compare(0, tree.size() + 1, tree + "/") != 0 || real.compare(0, realTree.size() + 1, realTree + "/") != 0)
-            throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") resolves to " + real + ", outside the build folder " + realTree);
-        r[p] = &gf;
-    }
+    if (!cmr::inBin(path)) throw Fail(what + " '" + path + "' (line " + std::to_string(line) + ") is outside the build folder");
+    string p = (fs::path(tree) / path.substr(6)).lexically_normal().generic_string();
+    string real = fs::weakly_canonical(p, ec).generic_string(); if (ec) real = p;
+    if (p.compare(0, tree.size() + 1, tree + "/") != 0 || real.compare(0, realTree.size() + 1, realTree + "/") != 0)
+        throw Fail(what + " '" + path + "' (line " + std::to_string(line) + ") resolves to " + real + ", outside the build folder " + realTree);
+    return p;
+}
+static std::map<string, const GenFile*> genFilePaths(const Manifest& m) {
+    std::map<string, const GenFile*> r;
+    for (auto& gf : m.gens) r[binPathChecked(m, "generate", gf.path, gf.line)] = &gf;
     return r;
 }
 // A real build writes the generate files its steps need before it runs them; unchanged text is left alone (its time stamp too).
 static void writeGenerated(const Graph& g) {
+    for (auto& f : g.folders) { std::error_code ec; fs::create_directories(f, ec); if (ec) throw Fail("cannot make folder " + f + ": " + ec.message()); }
     for (auto& [p, text] : g.gens) {
         string old; bool same = false;
         { std::ifstream f(p, std::ios::binary); if (f) { old.assign((std::istreambuf_iterator<char>(f)), {}); same = old == *text; } }
@@ -746,6 +754,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     string binTree = binTreeOf(m);
     auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
     std::map<string, const GenFile*> genAt = genFilePaths(m); // checked here (inside the build folder); written only by a real build
+    vector<string> folderPaths; for (auto& f : m.folders) folderPaths.push_back(binPathChecked(m, "folder", f.first, f.second));
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
@@ -767,7 +776,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
                 for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
-                for (auto& f : t.flags) a.argv.push_back(spellMsvc(f, false));
+                for (auto& f : t.flags) a.argv.push_back(spellMsvc(fixBin(f), false));
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
@@ -781,7 +790,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
                 if (t.libKind == "shared") a.argv.push_back("-fPIC");
-                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(f); } // a C++ standard does not apply to a C file
+                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
@@ -818,7 +827,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-Wl,-soname," + fs::path(a.output).filename().string()); // so a program records "libX.so", not the path we linked with
             for (auto& o : objs) a.argv.push_back(o);
             for (auto& f : m.tc.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
-            for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
+            for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(fixBin(f), true) : fixBin(f)); // {bin}: a map file, a linker script in the build folder
             vector<string> sys = t.libs; std::set<string> rpaths;
             for (auto& l : linkClosure(t)) {
                 bool whole = byName[l]->libKind == "object" && !m.tc.msvc, shared = byName[l]->libKind == "shared" && !m.tc.msvc;
@@ -893,6 +902,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
         std::set<string> compiled; bool anyCompile = false;
         for (auto& a : g.acts) if (a.kind == "CC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
+        if (!g.acts.empty()) g.folders = folderPaths; // cheap and harmless: every planned build gets them (a link step may write into one)
         static const std::set<string> headerExt = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp"};
         for (auto& kv : genAt)
             if (compiled.count(kv.first) || compiled.count(resolve("", kv.first)) || (anyCompile && headerExt.count(fs::path(kv.first).extension().string())))

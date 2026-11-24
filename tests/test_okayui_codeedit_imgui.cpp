@@ -23,10 +23,7 @@ namespace {
 
 const std::uint8_t kCodeBg[3] = {5, 6, 7};        // the code's background: a colour nothing else uses
 const std::uint8_t kPopup[3] = {250, 0, 250};     // the ImGui popup's background
-bool Is(const Bitmap& b, int x, int y, const std::uint8_t c[3]) {
-    const std::uint8_t* p = &b.rgba[((size_t)y * (size_t)b.w + (size_t)x) * 4];
-    return std::abs(p[0] - c[0]) <= 2 && std::abs(p[1] - c[1]) <= 2 && std::abs(p[2] - c[2]) <= 2;
-}
+bool Is(const Bitmap& b, int x, int y, const std::uint8_t c[3]) { return PixelIs(b, x, y, c); }
 int CountNot(const Bitmap& b, int x0, int y0, int x1, int y1, const std::uint8_t c[3]) {
     int n = 0;
     for (int y = y0; y < y1; ++y) for (int x = x0; x < x1; ++x) if (!Is(b, x, y, c)) ++n;

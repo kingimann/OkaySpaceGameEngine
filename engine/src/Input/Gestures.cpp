@@ -76,6 +76,7 @@ void Gestures::Reset() {
 }
 
 void Gestures::Tick(double timeSeconds) {
+    Input::ReleaseTouchBegins();   // the down was reported; a later sample in this gesture is a move
     Frame& f = State();
     f.events.clear();
     f.pinchDelta = 0.0f;

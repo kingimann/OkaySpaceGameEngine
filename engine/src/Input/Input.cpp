@@ -74,7 +74,21 @@ void Input::EndSession() {
     s_previous.fill(false);
 }
 
+namespace {
+struct PadNote { int player; bool connected; };
+PadNote g_padNotes[8];
+int g_padNoteCount = 0;
+void NotePad(int player, bool connected) {
+    if (g_padNoteCount >= 8) return;
+    g_padNotes[g_padNoteCount++] = {player, connected};
+}
+void ClearPadNotes() { g_padNoteCount = 0; }
+}
+
+void Input::DropPadEdges() { ClearPadNotes(); }
+
 void Input::Poll() {
+    DropPadEdges();   // edges last one frame; a note nobody took does not sit in the 8 slots
     s_previous = s_current;
     // Keys are momentary: a key counts as "down" only on the frame it arrives.
     s_current.fill(false);
@@ -236,16 +250,6 @@ void Input::FeedGamepadAt(int player, const Vec2& axis, unsigned buttonMask) {
     p.current = buttonMask;
     if (buttonMask != p.previous || axis.x * axis.x + axis.y * axis.y > 0.25f) NoteDevice(Device::Gamepad, i);
 }
-namespace {
-struct PadNote { int player; bool connected; };
-PadNote g_padNotes[8];
-int g_padNoteCount = 0;
-void NotePad(int player, bool connected) {
-    if (g_padNoteCount >= 8) return;
-    g_padNotes[g_padNoteCount++] = {player, connected};
-}
-}
-
 void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, float rt, bool connected) {
     const int i = PadIndex(player);
     if (i < 0) return;
@@ -274,6 +278,10 @@ void Input::FeedGamepadRaw(int player, const Vec2& rawLeft, const Vec2& rawRight
     buttonMask &= ~((1u << PadLT) | (1u << PadRT));
     if (lt >= cfg.triggers.threshold && lt > 0.0f) buttonMask |= 1u << PadLT;
     if (rt >= cfg.triggers.threshold && rt > 0.0f) buttonMask |= 1u << PadRT;
+    // The connect edge is recorded here, not only when someone calls FeedGamepadExtraAt.
+    // Setting connected first means ExtraAt does not record the same edge again.
+    if (s_pads[i].connected != connected) NotePad(i, connected);
+    s_pads[i].connected = connected;
     FeedGamepadAt(i, ProcessStick(rawLeft, cfg.left), buttonMask);
     FeedGamepadExtraAt(i, ProcessStick(rawRight, cfg.right), lt, rt, connected);
 }
@@ -369,10 +377,17 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
     if (!t) return;
     t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
     t->position = position;
-    // A later sample is a move even when the press is still marked Began. Otherwise a swipe
-    // never reaches the gesture reader unless something else clears the touch list first.
     if (state == 2) t->phase = Touch::Phase::Ended;
-    else if (state == 1) t->phase = Touch::Phase::Moved;
+    else if (state == 1) {
+        // A press and a move in the same frame still report Began. The next sample,
+        // after that Began has been released, is the move.
+        if (!(t->phase == Touch::Phase::Began && t->began)) t->phase = Touch::Phase::Moved;
+    }
+}
+
+void Input::ReleaseTouchBegins() {
+    for (Touch& t : s_touches)
+        if (t.phase == Touch::Phase::Began) t.began = false;
 }
 
 float Input::MouseWheel() { return s_mouseWheel; }

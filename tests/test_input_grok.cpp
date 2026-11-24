@@ -221,5 +221,31 @@ int main() {
         Gestures::Reset();
     }
 
+    RUN_SUITE("raw feed records a controller edge");
+    {
+        int who = -1; bool on = false;
+        while (Input::TakePadEdge(who, on)) {}
+        Input::FeedGamepadRaw(3, {}, {}, 0, 0, 0, false);
+        Input::DropPadEdges();
+        Input::FeedGamepadRaw(3, {}, {}, 0, 0, 0, true);
+        CHECK(Input::TakePadEdge(who, on) && who == 3 && on);
+        Input::FeedGamepadRaw(2, {}, {}, 0, 0, 0, true);
+        Input::DropPadEdges();
+        CHECK(!Input::TakePadEdge(who, on));
+    }
+
+    RUN_SUITE("press and move in one frame still began");
+    {
+        Input::ClearTypedText();
+        Input::FeedTouch(9, 0, {10, 10});
+        Input::FeedTouch(9, 1, {40, 80});
+        const Input::Touch* found = nullptr;
+        for (int i = 0; i < Input::TouchCount(); ++i)
+            if (Input::GetTouch(i).id == 9) found = &Input::GetTouch(i);
+        CHECK(found && found->phase == Input::Touch::Phase::Began && found->began);
+        CHECK(found && found->position.x == 40.0f && found->delta.y == 70.0f);
+        Input::ClearTypedText();
+    }
+
     TEST_MAIN_RESULT();
 }

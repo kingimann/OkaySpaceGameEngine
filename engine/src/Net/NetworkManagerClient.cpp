@@ -139,8 +139,14 @@ void NetworkManager::ClientTick(float dt) {
         if (!(from == m_serverEp)) {   // only our server talks to us
             // ...but a player on the host's migration list knocking (a join) means the host is
             // gone and we are the one it chose as the next host: move now (host migration).
-            if (m_joined && !m_migPeers.empty() && n >= 1 && (buf[0] == Join || buf[0] == JoinHello))
-                for (const MigPeer& mp : m_migPeers) if (mp.ep == from && mp.id != m_localId) { m_migrateNow = true; break; }
+            if (n >= 1 && (buf[0] == Join || buf[0] == JoinHello)) {
+                if (m_joined && !m_migPeers.empty())
+                    for (const MigPeer& mp : m_migPeers) if (mp.ep == from && mp.id != m_localId) { m_migrateNow = true; break; }
+                // Still looking for the new host, and someone on the list is joining US: it gave up on
+                // everyone before us, so we host now (MigrationTick) instead of waiting out our own try.
+                if (m_migrating && !m_joined)
+                    for (const MigPeer& mp : m_mig.candidates) if (mp.ep == from && mp.id > m_mig.myOldId) { m_migrateNow = true; break; }
+            }
             continue;
         }
         heard = true;

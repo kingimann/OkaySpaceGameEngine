@@ -5,7 +5,8 @@
 // How it works, with no extra round of talking:
 //   1. The host sends each client in its room the same list ("__mig", reliable and
 //      ordered, again whenever it changes): every client's id, name and address as
-//      the host sees it. Only when the session may migrate (MigrationAllowedHere).
+//      the host sees it. Only when the session may migrate (MigrationAllowedHere)
+//      and has at least two clients (an empty list clears it again).
 //   2. The host leaving: Stop() sends "__bye" to every client (three times); a host
 //      that crashed is noticed after serverTimeoutSeconds of silence.
 //   3. Every client takes the lowest id on the list. That player hosts on the local
@@ -14,7 +15,9 @@
 //      address on the list and gives it its old id back (TakeExpectedId).
 //   4. A chosen host that does not answer in migrationJoinTimeoutSeconds is struck
 //      off and the next lowest is tried. A player that hears a join from someone on
-//      the list while it still waits for the old host knows the host is gone too.
+//      the list while it still waits for the old host knows the host is gone too,
+//      and one still trying a lower id that hears a join from a higher one hosts at
+//      once (the higher one gave up on the lower ids already).
 //   5. Everyone keeps the shared variables, the ownership table, the synced objects
 //      and the player stand-ins. The new host is player 0; the old host's stand-in
 //      and its own spawned objects ("sp/0/...") go, as a leaving client's do, and
@@ -81,6 +84,7 @@ void NetworkManager::MigrationHostTick(float dt) {
         std::vector<const Client*> room;
         for (const auto& [ep, c] : m_clients) if (c.room == m_localRoom) room.push_back(&c);
         std::sort(room.begin(), room.end(), [](const Client* a, const Client* b) { return a->id < b->id; });
+        if (room.size() < 2) room.clear();   // one client has nobody to go on with: no list (and no traffic)
         for (const Client* c : room) {
             if (list.size() > 8000) break;
             std::string name = c->name.substr(0, 64);
@@ -227,6 +231,14 @@ void NetworkManager::MigrationTick(float dt) {
     if (m_mode != Mode::Client) { m_migrating = false; return; }
     if (m_mig.candidates.empty()) { TryNextHost(); return; }
     if (m_joined) { FinishMigration(m_mig.candidates.front().id); return; }
+    if (m_migrateNow) {   // a player after us on the list is joining us: everyone before us is gone for it
+        m_migrateNow = false;
+        auto& cs = m_mig.candidates;
+        cs.erase(std::remove_if(cs.begin(), cs.end(), [&](const MigPeer& p) { return p.id < m_mig.myOldId; }), cs.end());
+        OKAY_INFO("net: another player is joining this one as the new host; hosting now");
+        TryNextHost();
+        return;
+    }
     if ((m_migWait += dt) >= migrationJoinTimeoutSeconds || m_joinRejected) {
         OKAY_INFO("net: player ", m_mig.candidates.front().id, m_joinRejected ? " refused us" : " did not answer",
                   " as the new host; trying the next one");

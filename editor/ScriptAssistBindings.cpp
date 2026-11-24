@@ -14,25 +14,6 @@ namespace {
 
 namespace sb = okay::scriptbind;
 
-const char* KindWord(sb::ArgKind k) {
-    switch (k) {
-        case sb::ArgKind::Void: return "void";
-        case sb::ArgKind::Bool: return "bool";
-        case sb::ArgKind::Int: return "int";
-        case sb::ArgKind::Float: return "float";
-        case sb::ArgKind::String: return "string";
-        case sb::ArgKind::Vec2: return "Vector2";
-        case sb::ArgKind::Vec3: return "Vector3";
-        case sb::ArgKind::Vec4: return "Vector4";
-        case sb::ArgKind::Quat: return "Quaternion";
-        case sb::ArgKind::Color: return "Color";
-        case sb::ArgKind::Enum: return "int";
-        case sb::ArgKind::Object: return "GameObject";
-        case sb::ArgKind::Component: return "Component";
-    }
-    return "value";
-}
-
 const char* TypeWord(okay::PropertyType t) {
     switch (t) {
         case okay::PropertyType::Bool: return "bool";
@@ -53,12 +34,12 @@ const char* TypeWord(okay::PropertyType t) {
 
 // "void AddForce(Vector3, [int])": optional arguments in brackets.
 std::string MethodLine(const sb::MethodBinding& m) {
-    std::string s = std::string(KindWord(m.ret)) + " " + m.name + "(";
+    std::string s = std::string(sb::ArgKindTypeName(m.ret)) + " " + m.name + "(";
     for (size_t i = 0; i < m.params.size(); ++i) {
         if (i) s += ", ";
         const bool opt = (int)i >= m.required;
         if (opt) s += "[";
-        s += KindWord(m.params[i]);
+        s += sb::ArgKindTypeName(m.params[i]);
         if (opt) s += "]";
     }
     return s + ")";

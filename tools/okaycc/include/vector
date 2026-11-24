@@ -59,6 +59,17 @@ public:
         return *this;
     }
 
+    void swap(vector<T> &o) {
+        T *d = data_;
+        unsigned long s = size_;
+        unsigned long c = cap_;
+        data_ = o.data_;
+        size_ = o.size_;
+        cap_ = o.cap_;
+        o.data_ = d;
+        o.size_ = s;
+        o.cap_ = c;
+    }
     unsigned long size() const { return size_; }
     unsigned long capacity() const { return cap_; }
     bool empty() const { return size_ == 0; }

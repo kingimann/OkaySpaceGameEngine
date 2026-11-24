@@ -566,7 +566,24 @@ private:
         return t;
     }
 
+    // The base type with a leading const recorded on it (const B, const char): overload ranking
+    // and template deduction need it ([over.ics.rank], [temp.deduct.call]).
     std::unique_ptr<Type> parseBase() {
+        std::size_t start = i_;
+        auto t = parseBase0();
+        if (t) {
+            int depth = 0;
+            for (std::size_t k = start; k < i_ && k < toks_.size(); ++k) {
+                if (isP(toks_[k], "<")) ++depth;
+                else if (isP(toks_[k], ">")) --depth;
+                else if (isP(toks_[k], ">>")) depth -= 2;
+                else if (depth == 0 && isKwTok(toks_[k], "const")) t->cnst = true;
+            }
+        }
+        return t;
+    }
+
+    std::unique_ptr<Type> parseBase0() {
         if (eatKw("auto")) return autoType();
         if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
         if (isKw("enum")) return parseEnum();
@@ -990,8 +1007,20 @@ private:
         return comma;
     }
 
+    // A class whose body is being parsed: its own inline member functions see it complete
+    // ([class.mem]/6), so what it needs (constructors, a destructor) is decided by the checker.
+    bool inProgress(const std::string& tag) const {
+        for (const Type* c : classStack_)
+            if (c && c->tag == tag) return true;
+        return false;
+    }
     std::unique_ptr<Expr> dtorCall(const std::string& tag, std::unique_ptr<Expr> self, const Pos& p) {
         const Param* d = special(classOf(tag), "<dtor>");
+        if (!d && inProgress(tag)) {
+            std::vector<std::unique_ptr<Expr>> args;
+            args.push_back(std::move(self));
+            return eCall(eName("\x01" "dtorif:" + tag, p), std::move(args), p);
+        }
         if (!d) return nullptr;
         std::vector<std::unique_ptr<Expr>> args;
         args.push_back(std::move(self));
@@ -2311,8 +2340,7 @@ private:
                 if (base && base->kind == Type::Kind::Reference) {
                     // Reference collapsing ([dcl.ref] p6): T& && is T&, T&& && is T&&.
                     if (m.kind == Mod::Kind::Ref) base->rref = false;
-                    t = std::move(base);
-                    continue;
+                    continue;  // base stays the (collapsed) reference
                 }
                 t->kind = Type::Kind::Reference;
                 t->rref = m.kind == Mod::Kind::RRef;
@@ -3322,7 +3350,7 @@ private:
         bool hasInit = decl->init != nullptr;
         std::unique_ptr<Expr> copyFrom;
         if (cls && hasInit && !haveCtorArgs && decl->init->kind != Expr::Kind::Brace &&
-            (hasCopyCtor(cls) || cls->needCtor || cls->needDtor)) {
+            (hasCopyCtor(cls) || cls->needCtor || cls->needDtor || inProgress(tag))) {
             // "T x = y;" runs the copy constructor when y is an object (decided by the checker).
             copyFrom = std::move(decl->init);
             hasInit = false;
@@ -3345,16 +3373,17 @@ private:
             a.push_back(eAddr(eName(name, p), p));
             a.push_back(std::move(copyFrom));
             out.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
-            if (cls->needDtor && !dscopes_.empty()) {
+            if ((cls->needDtor || (inProgress(tag) && !eh_)) && !dscopes_.empty()) {
                 if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
                 dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
             }
             return;
         }
-        if (cls->needCtor && (haveCtorArgs || !hasInit)) {
+        const bool open = inProgress(tag);
+        if ((cls->needCtor || open) && (haveCtorArgs || !hasInit)) {
             out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
         }
-        if (cls->needDtor && !dscopes_.empty()) {
+        if ((cls->needDtor || (open && !eh_)) && !dscopes_.empty()) {
             if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
             dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
         }
@@ -3377,7 +3406,7 @@ private:
         }
         enumDef_ = false;
         bool classBase = !td && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
-                         (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor);
+                         (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor || inProgress(base->tag));
         for (;;) {
             // "T x(args);" for a class: constructor arguments, not a function declarator.
             if (classBase && !atEnd() && cur().kind == Tok::Ident && nextIs("(") && i_ + 2 < toks_.size() &&
@@ -3562,11 +3591,16 @@ private:
     }
 
     // Destructor calls for the objects declared in scopes from 'base' up, innermost first.
-    std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p) {
+    std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p, const std::string& keep = "") {
         std::vector<std::unique_ptr<Stmt>> out;
+        bool kept = keep.empty();
         for (std::size_t sc = dscopes_.size(); sc-- > base;) {
             auto& vars = dscopes_[sc];
             for (std::size_t i = vars.size(); i-- > 0;) {
+                if (!kept && vars[i].kind == 0 && vars[i].count == 0 && vars[i].name == keep) {
+                    kept = true;  // the returned object itself (see parseReturn)
+                    continue;
+                }
                 if (vars[i].kind == 1) {
                     out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
                     continue;
@@ -3845,7 +3879,7 @@ private:
                 auto base = parseBase();
                 Parsed d = parseDeclarator(false);
                 auto type = apply(std::move(base), d.mods);
-                h.name = mangleType(type->kind == Type::Kind::Reference && type->inner ? *type->inner : *type);
+                h.name = mangleTypeNoCv(type->kind == Type::Kind::Reference && type->inner ? *type->inner : *type);
                 if (!d.name.empty()) {
                     // The caught object: a copy for a type, the object itself for a reference.
                     auto decl = std::make_unique<Decl>();
@@ -4172,7 +4206,24 @@ private:
         p.line = s->line;
         p.col = s->col;
         p.file = s->file;
-        auto ds = pendingDtors(dbase_, p);
+        // return x; for a local object x of the returned class: x itself becomes the returned
+        // object (the copy elision of [class.copy.elision]/1.1, which g++ always does): its bytes
+        // move to the result and its destructor does not run on this path.
+        std::string nrvo;
+        if (!eh_ && s->expr && s->expr->kind == Expr::Kind::Name && curRet_ && curRet_->kind == Type::Kind::Struct &&
+            !curRet_->tag.empty()) {
+            bool found = false;
+            for (std::size_t sc = dscopes_.size(); sc-- > dbase_ && !found;) {
+                const auto& vars = dscopes_[sc];
+                for (std::size_t i = vars.size(); i-- > 0 && !found;)
+                    if (vars[i].kind == 0 && vars[i].name == s->expr->text) {
+                        found = true;
+                        if (vars[i].count == 0 && vars[i].guard.empty() && vars[i].tag == curRet_->tag)
+                            nrvo = vars[i].name;
+                    }
+            }
+        }
+        auto ds = pendingDtors(dbase_, p, nrvo);
         if (ds.empty() || !curRet_) return s;
         auto blk = sBlock(p);
         if (!s->expr) {
@@ -4191,7 +4242,7 @@ private:
             decl->type = cloneType(*curRet_);
             std::string nm = decl->name;
             Type* cls = curRet_->kind == Type::Kind::Struct && !curRet_->tag.empty() ? classOf(curRet_->tag) : nullptr;
-            if (cls && (hasCopyCtor(cls) || cls->needCtor || cls->needDtor)) {
+            if (nrvo.empty() && cls && (hasCopyCtor(cls) || cls->needCtor || cls->needDtor || inProgress(curRet_->tag))) {
                 // The returned object is copied with its copy constructor before the locals are
                 // destroyed ([stmt.return], [class.copy.ctor]); a bytewise copy would share what
                 // a local's destructor is about to free.
@@ -4309,6 +4360,9 @@ private:
         for (std::size_t k = i_ + 1; k < toks_.size(); ++k) {
             if (toks_[k].kind == Tok::Newline) continue;
             if (!isTypeKw(toks_[k])) return false;
+            // A qualified type (N::T): look at what follows the whole name.
+            std::size_t qend = 0;
+            if (k + 1 < toks_.size() && isP(toks_[k + 1], "::") && qualTypeAt(k, qend) && qend > k) k = qend - 1;
             // (T(x) ...) and (T{...} ...) are a functional cast or a temporary inside parentheses,
             // not a cast; (T(*)(int)) is still a cast to a pointer to function.
             if (k + 2 < toks_.size() && isP(toks_[k + 1], "{")) return false;

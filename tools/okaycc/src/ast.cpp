@@ -42,6 +42,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->unsized = t.unsized;
     n->variadic = t.variadic;
     n->rref = t.rref;
+    n->cnst = t.cnst;
     n->base = t.base;
     n->nonpod = t.nonpod;
     n->hasVptr = t.hasVptr;

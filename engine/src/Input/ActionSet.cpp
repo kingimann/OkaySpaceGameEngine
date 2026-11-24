@@ -1,6 +1,7 @@
 // Typed actions, composites, processors and control schemes (see ActionSet.hpp). Written from the general idea of
 // action maps: our own value rules, text forms and thresholds, checked by tests/test_action_set.cpp.
 #include "okay/Input/ActionSet.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/StringUtil.hpp"
@@ -42,7 +43,7 @@ float InputValue::Length() const { return std::sqrt(x * x + y * y + z * z); }
 
 // ---- processors -----------------------------------------------------------------------------------------------------
 
-InputValue Processor::Apply(const InputValue& in, float dt) {
+InputValue Processor::Apply(const InputValue& in, float dt, int slot) {
     InputValue v = in;
     switch (kind) {
         case Kind::Deadzone: {   // below `a` reads 0, the rest is stretched so `b` (default 1) reads 1; on the length
@@ -51,6 +52,18 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
             if (len <= lo) return {};
             const float k = std::min(1.0f, (len - lo) / (hi - lo)) / len;
             return {v.x * k, v.y * k, v.z * k};
+        }
+        case Kind::Axial: {   // Input::ProcessStick's axial ramp, one component at a time (no second dead-zone path)
+            Input::StickSettings stick;
+            stick.shape = Input::StickSettings::Shape::Axial;
+            stick.deadZone = a;
+            stick.outerZone = b > a ? b : 1.0f;
+            stick.curve = 1.0f;
+            auto one = [&](float x) {
+                if (!std::isfinite(x)) return 0.0f;
+                return Input::ProcessStick(Vec2{x, 0.0f}, stick).x;
+            };
+            return {one(v.x), one(v.y), one(v.z)};
         }
         case Kind::Invert:
             if (mask & 1) v.x = -v.x;
@@ -70,11 +83,14 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
             for (int i = 0; i < 3; ++i) { const int src = (mask >> (3 * i)) & 7; SetComp(o, i, Comp(v, src > 2 ? i : src)); }
             return o;
         }
-        case Kind::Smooth: {   // exponential approach: `a` seconds to cover most of the way
-            if (!primed || a <= 0 || dt <= 0) { state[0] = v.x; state[1] = v.y; state[2] = v.z; primed = true; return v; }
+        case Kind::Smooth: {   // exponential approach: `a` seconds to cover most of the way. Each slot remembers its own output.
+            float* st = state;
+            bool* pr = &primed;
+            if (slot >= 1 && slot <= 4) { st = slotState[slot - 1]; pr = &slotPrimed[slot - 1]; }
+            if (!*pr || a <= 0 || dt <= 0) { st[0] = v.x; st[1] = v.y; st[2] = v.z; *pr = true; return v; }
             const float k = 1.0f - std::exp(-dt / a);
-            state[0] += (v.x - state[0]) * k; state[1] += (v.y - state[1]) * k; state[2] += (v.z - state[2]) * k;
-            return {state[0], state[1], state[2]};
+            st[0] += (v.x - st[0]) * k; st[1] += (v.y - st[1]) * k; st[2] += (v.z - st[2]) * k;
+            return {st[0], st[1], st[2]};
         }
         case Kind::Curve: {   // out = in ^ a keeping the sign; a vector keeps its direction and its length is curved
             const float p = a > 0 ? a : 1.0f;
@@ -94,6 +110,7 @@ InputValue Processor::Apply(const InputValue& in, float dt) {
 std::string Processor::ToString() const {
     switch (kind) {
         case Kind::Deadzone: return b > a ? "deadzone(" + Num(a) + "," + Num(b) + ")" : "deadzone(" + Num(a) + ")";
+        case Kind::Axial: return b > a ? "axial(" + Num(a) + "," + Num(b) + ")" : "axial(" + Num(a) + ")";
         case Kind::Invert: { std::string s; if (mask & 1) s += 'x'; if (mask & 2) s += 'y'; if (mask & 4) s += 'z'; return "invert(" + s + ")"; }
         case Kind::Scale: return mask >= 3 ? "scale(" + Num(a) + "," + Num(b) + "," + Num(c) + ")" : mask == 2 ? "scale(" + Num(a) + "," + Num(b) + ")" : "scale(" + Num(a) + ")";
         case Kind::Normalize: return "normalize";
@@ -116,6 +133,7 @@ bool Processor::Parse(const std::string& text, Processor& out) {
     const std::vector<float> n = Nums(args);
     Processor p;
     if (name == "deadzone") { if (n.empty() || n[0] < 0) return false; p.kind = Kind::Deadzone; p.a = n[0]; p.b = n.size() > 1 ? n[1] : 0; }
+    else if (name == "axial") { if (n.empty() || n[0] < 0) return false; p.kind = Kind::Axial; p.a = n[0]; p.b = n.size() > 1 ? n[1] : 0; }
     else if (name == "invert") {
         p.kind = Kind::Invert; p.mask = 0;
         if (args.empty()) p.mask = 7;
@@ -448,7 +466,7 @@ void ActionSet::EvalAction(ActionDef& a, bool enabled, float dt) {
             BindingSpec& b = a.bindings[i];
             if (!BindingActive(b)) continue;
             InputValue v = Eval(b, pad);
-            for (Processor& p : b.processors) v = p.Apply(v, dt);
+            for (Processor& p : b.processors) v = p.Apply(v, dt, pad < 0 ? 0 : pad + 1);
             const float len = v.Length();
             if (len > bestLen) { bestLen = len; best = v; bestIdx = (int)i; }
             total.x += v.x; total.y += v.y; total.z += v.z;
@@ -743,6 +761,37 @@ bool ActionSet::Pressed(const std::string& n) const { const ActionDef* a = Find(
 bool ActionSet::Held(const std::string& n) const { const ActionDef* a = Find(n); return a && a->down; }
 bool ActionSet::Released(const std::string& n) const { const ActionDef* a = Find(n); return a && a->released; }
 
+bool ActionSet::Buffered(const std::string& name, float window) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || a->pressConsumed || !(window >= 0.0f) || a->pressedAt < -1.0e8) return false;
+    return m_time - a->pressedAt <= (double)window;
+}
+bool ActionSet::ConsumeAny(const std::string& name) {
+    ActionDef* a = FindNoCase(name);
+    if (!a || a->pressConsumed || a->pressedAt < -1.0e8) return false;
+    a->pressConsumed = true;
+    return true;
+}
+bool ActionSet::Consume(const std::string& name, float window) {
+    if (!Buffered(name, window)) return false;
+    return ConsumeAny(name);
+}
+bool ActionSet::DoubleTap(const std::string& name, float window) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || !a->pressed || !(window >= 0.0f) || a->prevPressedAt < -1.0e8) return false;
+    return a->pressedAt - a->prevPressedAt <= (double)window;
+}
+float ActionSet::HeldFor(const std::string& name) const {
+    const ActionDef* a = FindNoCase(name);
+    return a && a->heldSince >= 0.0 ? (float)(m_time - a->heldSince) : 0.0f;
+}
+bool ActionSet::HoldReached(const std::string& name, float seconds) const {
+    const ActionDef* a = FindNoCase(name);
+    if (!a || a->heldSince < 0.0 || !(seconds > 0.0f)) return false;
+    const double held = m_time - a->heldSince;
+    return held >= (double)seconds && held - (double)m_lastDt < (double)seconds;
+}
+
 // ---- runtime rebinding -------------------------------------------------------------------------------------------
 
 bool ActionSet::Rebind(const std::string& action, int binding, int part, const std::string& path) {
@@ -843,6 +892,13 @@ std::string ActionSet::ExportOverrides() const {
             for (std::size_t i = 0; i < b.parts.size(); ++i) s += (i ? "," : "") + b.parts[i];
             s += "\n";
         }
+        const InputActions::Response& r = a.response;
+        if (r.deadzone != 0.0f || r.curve != 1.0f || r.sensitivity != 1.0f || r.invertX || r.invertY) {
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "ovresp %s %g %g %g %d %d\n", a.name.c_str(), r.deadzone, r.curve,
+                          r.sensitivity, r.invertX ? 1 : 0, r.invertY ? 1 : 0);
+            s += buf;
+        }
     }
     for (const std::string& k : m_keep) {   // lines for actions this set cannot take, unless it now has its own line for one
         const std::size_t s1 = k.find(' '), s2 = s1 == std::string::npos ? s1 : k.find(' ', s1 + 1);
@@ -888,6 +944,28 @@ int ActionSet::ImportOverrides(const std::string& text) {
                 list.push_back(std::move(b));
             }
             if (ok && SetBindings(a->name, list)) ++applied;
+            continue;
+        }
+        if (line.rfind("ovresp ", 0) == 0) {
+            // "ovresp <name> dz curve sens invertX invertY": the five numbers are the last five words, so a name may hold spaces.
+            float dz = 0, curve = 1, sens = 1;
+            int ix = 0, iy = 0;
+            std::size_t cut = line.size();
+            for (int w = 0; w < 5 && cut != std::string::npos; ++w) cut = cut > 0 ? line.rfind(' ', cut - 1) : std::string::npos;
+            if (cut == std::string::npos || cut <= 7) continue;
+            if (std::sscanf(line.c_str() + cut, "%f %f %f %d %d", &dz, &curve, &sens, &ix, &iy) != 5) continue;
+            const std::string name = line.substr(7, cut - 7);
+            ActionDef* a = Find(name);
+            if (!a) {
+                if (std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line);
+                continue;
+            }
+            a->response.deadzone = std::clamp(dz, 0.0f, 0.95f);
+            a->response.curve = std::clamp(curve, 0.1f, 8.0f);
+            a->response.sensitivity = std::clamp(sens, 0.05f, 20.0f);
+            a->response.invertX = ix != 0;
+            a->response.invertY = iy != 0;
+            ++applied;
             continue;
         }
         if (line.rfind("ov ", 0) != 0) continue;

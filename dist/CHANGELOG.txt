@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.9
+  Easy multiplayer and much faster OkayScript
+  - Multiplayer is much easier: add a Network Manager, tick "Networked"
+    on objects, and press Play in two copies of the game to test with
+    two players. Host or join with one node, one script line
+    (net.host_or_join()) or one C++ call. Send named events, see the
+    player list, and get told when players join or leave.
+  - If the host leaves a game on a home network, another player takes
+    over and the game goes on. There is also an optional rollback mode
+    for fighting-style games, an in-game network stats overlay, and big
+    messages now arrive quickly on a bad connection.
+  - Multiplayer security: a player can no longer fake events, split a
+    game in two, or make others store huge amounts of data.
+  - OkayScript scripts run several times faster, and can now reach every
+    engine component and its settings (GetComponent("Light").intensity).
+    Game scripts cannot read or write files or open network connections.
+  - Known problem: on Windows, okay vc init, undo and resolve can refuse
+    to work when the project is in a folder with a shortened Windows name
+    (for example inside your user folder). The fix is being tested and
+    comes in the next update.
+
 v2.903.8
   The okay command line, OkayScript on its own, and our own FBX and WAV
   - New: okay.exe (in the Tools folder), the engine's own command line.

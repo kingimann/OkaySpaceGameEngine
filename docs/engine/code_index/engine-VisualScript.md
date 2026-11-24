@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 31 headers, 604 names.
+Back to the [code index](../code_index.md). 31 headers, 623 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -31,101 +31,120 @@ Back to the [code index](../code_index.md). 31 headers, 604 names.
 
 ## `engine/include/okay/VisualScript/Nodes.hpp`
 
-- `VsRandom01` function, line 33: A shared, lazily-seeded RNG for the Random nodes. Deterministic seed so graph
-- `EventNode` struct, line 41: ---- Event entry nodes (one exec output) ------------------------------
-- `ConstNode` struct, line 47: ---- Data nodes -------------------------------------------------------
-- `GetVarNode` struct, line 53
-- `TimeNode` struct, line 62
-- `DeltaTimeNode` struct, line 66
-- `AxisXNode` struct, line 70
-- `AxisYNode` struct, line 73
-- `BinaryOpNode` struct, line 77
-- `CompareNode` struct, line 95
-- `UnaryMathNode` struct, line 135: One-input math: Abs, Neg, Sqrt, Sin, Cos, Floor, Round, Sign (trig in radians).
-- `MathFnNode` struct, line 155: Two-input math beyond the basic arithmetic ops: Mod, Min, Max, Pow.
-- `ClampNode` struct, line 173
-- `LerpNode` struct, line 183
-- `RandomNode` struct, line 193
-- `RandomRangeNode` struct, line 196
-- `LogicNode` struct, line 205: Boolean logic: And, Or, Xor (two inputs) and Not (one input).
-- `NotNode` struct, line 219
-- `EqualsNode` struct, line 226: ---- More conditions (data nodes returning a bool) --------------------
-- `ApproxNode` struct, line 240: /a - b/ <= epsilon (in2, default 0.001) — float-safe equality.
-- `BetweenNode` struct, line 250: in1 <= in0 <= in2 (range test).
-- `ChanceNode` struct, line 261: True with probability p (0..1) — a coin-flip condition for variety.
-- `HasVarNode` struct, line 268: True if the named blackboard variable has been set.
-- `KeyUpNode` struct, line 276
-- `SelectNode` struct, line 284: Ternary: in0 = condition, in1 = if-true, in2 = if-false. Passes the *value
-- `ConcatNode` struct, line 290
-- `MakeVec3Node` struct, line 296
-- `BreakVec3Node` struct, line 301
-- `KeyNode` struct, line 312: Input query data nodes. The key comes from Input::KeyFromName, matching
-- `KeyDownNode` struct, line 317
-- `MouseXNode` struct, line 322
-- `MouseYNode` struct, line 325
-- `GestureSwipeDirectionNode` struct, line 328
-- `GesturePinchScaleNode` struct, line 331
-- `GestureTwistNode` struct, line 334
-- `GetPositionNode` struct, line 339: Transform getters (read this object's local position).
-- `GetAxisNode` struct, line 344
-- `SetVarNode` struct, line 355: ---- Exec nodes (perform side effects) --------------------------------
-- `PrintNode` struct, line 376: Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
-- `TranslateNode` struct, line 388
-- `SetPositionNode` struct, line 398
-- `RotateNode` struct, line 409
-- `BranchNode` struct, line 417
-- `AddVarNode` struct, line 426: Add the data input to a variable in place (a counter / accumulator). Equivalent
-- `SetScaleNode` struct, line 447
-- `SetRotationNode` struct, line 458
-- `VsResolveObject` function, line 468: Defined with the object helpers in NodesExtra.hpp (an object reference or a name).
-- `DestroyNode` struct, line 470
-- `SequenceNode` struct, line 490: Fan-out: fire each exec output in order (then stop this chain). Drives the
-- `OnceNode` struct, line 506: Passes control through only the first time it's reached; afterward it stops the
-- `TimerNode` struct, line 522: A self-resetting timer: passes through at most once every 'interval' seconds
-- `FlipFlopNode` struct, line 546: Alternates between its two exec outputs on each execution (out 0, then 1, ...).
-- `RepeatNode` struct, line 560: ---- More instructions (exec nodes) -----------------------------------
-- `ToggleNode` struct, line 596: Flip a boolean variable (false<->true); creates it as true if unset.
-- `LogNode` struct, line 608
-- `SpawnPrefabNode` struct, line 623: Instantiate a prefab at this object's position (replicated object creation
-- `WaitNode` struct, line 657: A one-shot wait: the first time control reaches it, the chain pauses here
-- `VsNet` function, line 690: ---- Multiplayer (NetworkManager) -------------------------------------
-- `VsNetOrSay` function, line 700: The same, for a node that has to do something: with no network session it says so (the flow carries on)
-- `NetConnectedNode` struct, line 706
-- `NetIsServerNode` struct, line 709
-- `NetIsClientNode` struct, line 712
-- `NetPeersNode` struct, line 715
-- `NetIdNode` struct, line 718
-- `NetGetVarNode` struct, line 721
-- `NetHostNode` struct, line 727
-- `NetJoinNode` struct, line 737
-- `NetSendNode` struct, line 747
-- `NetSetVarNode` struct, line 753
-- `NetDisconnectNode` struct, line 759
-- `NetChatNode` struct, line 764: Broadcast a chat line (in0 = text).
-- `NetObjRpcNode` struct, line 769: RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
-- `SyncVarSetNode` struct, line 783: Write this object's SyncVar (in0 = value). Creates nothing: the component must be there,
-- `SyncVarGetNode` struct, line 802
-- `NetRpcNode` struct, line 817: Fire a named RPC on every other peer (in0 = payload string).
-- `NetSpawnOwnedNode` struct, line 824: Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
-- `NetDespawnNode` struct, line 835: Despawn a SpawnOwned object on every peer (in0 = its sync id).
-- `NetReadyNode` struct, line 840: Mark this peer ready / not ready in the lobby (in0 = bool).
-- `NetStartMatchNode` struct, line 845: Host only: start the match for everyone in the room.
-- `NetMatchStartedNode` struct, line 850: True once the match has started for this peer's room.
-- `NetAllReadyNode` struct, line 854: Host only: true when every client in the room is ready.
-- `SteamNameNode` struct, line 859: ---- Steam ------------------------------------------------------------
-- `SteamUnlockedNode` struct, line 862
-- `SteamGetStatNode` struct, line 867
-- `SteamUnlockNode` struct, line 872
-- `SteamSetStatNode` struct, line 878
-- `SteamStoreNode` struct, line 884
-- `SteamLeaderboardNode` struct, line 888
-- `PlaySoundNode` struct, line 897: ---- Audio ------------------------------------------------------------
-- `AddForceNode` struct, line 908: ---- Physics (sibling Rigidbody2D) ------------------------------------
-- `AddImpulseNode` struct, line 918
-- `SetVelocityNode` struct, line 928
-- `VelAxisNode` struct, line 938
-- `RaycastNode` struct, line 951: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
-- `EaseNode` struct, line 962: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
+- `VsRandom01` function, line 34: A shared, lazily-seeded RNG for the Random nodes. Deterministic seed so graph
+- `EventNode` struct, line 42: ---- Event entry nodes (one exec output) ------------------------------
+- `ConstNode` struct, line 48: ---- Data nodes -------------------------------------------------------
+- `GetVarNode` struct, line 54
+- `TimeNode` struct, line 63
+- `DeltaTimeNode` struct, line 67
+- `AxisXNode` struct, line 71
+- `AxisYNode` struct, line 74
+- `BinaryOpNode` struct, line 78
+- `CompareNode` struct, line 96
+- `UnaryMathNode` struct, line 136: One-input math: Abs, Neg, Sqrt, Sin, Cos, Floor, Round, Sign (trig in radians).
+- `MathFnNode` struct, line 156: Two-input math beyond the basic arithmetic ops: Mod, Min, Max, Pow.
+- `ClampNode` struct, line 174
+- `LerpNode` struct, line 184
+- `RandomNode` struct, line 194
+- `RandomRangeNode` struct, line 197
+- `LogicNode` struct, line 206: Boolean logic: And, Or, Xor (two inputs) and Not (one input).
+- `NotNode` struct, line 220
+- `EqualsNode` struct, line 227: ---- More conditions (data nodes returning a bool) --------------------
+- `ApproxNode` struct, line 241: /a - b/ <= epsilon (in2, default 0.001) — float-safe equality.
+- `BetweenNode` struct, line 251: in1 <= in0 <= in2 (range test).
+- `ChanceNode` struct, line 262: True with probability p (0..1) — a coin-flip condition for variety.
+- `HasVarNode` struct, line 269: True if the named blackboard variable has been set.
+- `KeyUpNode` struct, line 277
+- `SelectNode` struct, line 285: Ternary: in0 = condition, in1 = if-true, in2 = if-false. Passes the *value
+- `ConcatNode` struct, line 291
+- `MakeVec3Node` struct, line 297
+- `BreakVec3Node` struct, line 302
+- `KeyNode` struct, line 313: Input query data nodes. The key comes from Input::KeyFromName, matching
+- `KeyDownNode` struct, line 318
+- `MouseXNode` struct, line 323
+- `MouseYNode` struct, line 326
+- `GestureSwipeDirectionNode` struct, line 329
+- `GesturePinchScaleNode` struct, line 332
+- `GestureTwistNode` struct, line 335
+- `GetPositionNode` struct, line 340: Transform getters (read this object's local position).
+- `GetAxisNode` struct, line 345
+- `SetVarNode` struct, line 356: ---- Exec nodes (perform side effects) --------------------------------
+- `PrintNode` struct, line 377: Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
+- `TranslateNode` struct, line 389
+- `SetPositionNode` struct, line 399
+- `RotateNode` struct, line 410
+- `BranchNode` struct, line 418
+- `AddVarNode` struct, line 427: Add the data input to a variable in place (a counter / accumulator). Equivalent
+- `SetScaleNode` struct, line 448
+- `SetRotationNode` struct, line 459
+- `VsResolveObject` function, line 469: Defined with the object helpers in NodesExtra.hpp (an object reference or a name).
+- `DestroyNode` struct, line 471
+- `SequenceNode` struct, line 491: Fan-out: fire each exec output in order (then stop this chain). Drives the
+- `OnceNode` struct, line 507: Passes control through only the first time it's reached; afterward it stops the
+- `TimerNode` struct, line 523: A self-resetting timer: passes through at most once every 'interval' seconds
+- `FlipFlopNode` struct, line 547: Alternates between its two exec outputs on each execution (out 0, then 1, ...).
+- `RepeatNode` struct, line 561: ---- More instructions (exec nodes) -----------------------------------
+- `ToggleNode` struct, line 597: Flip a boolean variable (false<->true); creates it as true if unset.
+- `LogNode` struct, line 609
+- `SpawnPrefabNode` struct, line 624: Instantiate a prefab at this object's position (replicated object creation
+- `WaitNode` struct, line 658: A one-shot wait: the first time control reaches it, the chain pauses here
+- `VsNet` function, line 691: ---- Multiplayer (NetworkManager) -------------------------------------
+- `VsNetOrSay` function, line 701: The same, for a node that has to do something: with no network session it says so (the flow carries on)
+- `NetConnectedNode` struct, line 707
+- `NetIsServerNode` struct, line 710
+- `NetIsClientNode` struct, line 713
+- `NetPeersNode` struct, line 716
+- `NetIdNode` struct, line 719
+- `NetGetVarNode` struct, line 722
+- `NetHostNode` struct, line 728
+- `NetJoinNode` struct, line 738
+- `NetSendNode` struct, line 748
+- `NetSetVarNode` struct, line 754
+- `NetDisconnectNode` struct, line 760
+- `NetChatNode` struct, line 765: Broadcast a chat line (in0 = text).
+- `NetObjRpcNode` struct, line 770: RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
+- `SyncVarSetNode` struct, line 784: Write this object's SyncVar (in0 = value). Creates nothing: the component must be there,
+- `SyncVarGetNode` struct, line 803
+- `NetRpcNode` struct, line 818: Fire a named RPC on every other peer (in0 = payload string).
+- `NetSpawnOwnedNode` struct, line 825: Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
+- `NetDespawnNode` struct, line 836: Despawn a SpawnOwned object on every peer (in0 = its sync id).
+- `NetReadyNode` struct, line 841: Mark this peer ready / not ready in the lobby (in0 = bool).
+- `NetStartMatchNode` struct, line 846: Host only: start the match for everyone in the room.
+- `NetMatchStartedNode` struct, line 851: True once the match has started for this peer's room.
+- `NetAllReadyNode` struct, line 855: Host only: true when every client in the room is ready.
+- `NetHostOrJoinNode` struct, line 861: ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
+- `NetSendEventNode` struct, line 872: Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
+- `NetEventSenderNode` struct, line 883: Who sent the network event being handled (a player id; 0 = the host).
+- `NetPlayerCountNode` struct, line 890: Players in the game, this one included.
+- `NetPlayerIdAtNode` struct, line 894: The id of player number in0 (0 = the first, in id order); -1 past the end.
+- `NetPlayerNameNode` struct, line 905: The name of the player with id in0.
+- `NetLastErrorNode` struct, line 915
+- `NetTimeNode` struct, line 918
+- `NetPingNode` struct, line 921
+- `VsSyncId` function, line 925: This object's network id: its Network Sync's (blank = the object's name); "" without one.
+- `NetIsMineNode` struct, line 930: Does this player drive this object now? (True offline or without a Network Sync.)
+- `NetIsPredictedNode` struct, line 937: Is this object the local player that this client predicts (authoritative movement)?
+- `NetGiveOwnershipNode` struct, line 941: Host: give this object to player in0. A client: ask the host for it.
+- `NetRequestOwnershipNode` struct, line 954
+- `NetOwnerNode` struct, line 965: Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
+- `NetSimulateNode` struct, line 969: Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
+- `NetStatsNode` struct, line 981: Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
+- `NetShowStatsNode` struct, line 996: Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
+- `NetMigratingNode` struct, line 1004: Is Migrating: between the host leaving and the new host taking over (host migration).
+- `SteamNameNode` struct, line 1009: ---- Steam ------------------------------------------------------------
+- `SteamUnlockedNode` struct, line 1012
+- `SteamGetStatNode` struct, line 1017
+- `SteamUnlockNode` struct, line 1022
+- `SteamSetStatNode` struct, line 1028
+- `SteamStoreNode` struct, line 1034
+- `SteamLeaderboardNode` struct, line 1038
+- `PlaySoundNode` struct, line 1047: ---- Audio ------------------------------------------------------------
+- `AddForceNode` struct, line 1058: ---- Physics (sibling Rigidbody2D) ------------------------------------
+- `AddImpulseNode` struct, line 1068
+- `SetVelocityNode` struct, line 1078
+- `VelAxisNode` struct, line 1088
+- `RaycastNode` struct, line 1101: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
+- `EaseNode` struct, line 1112: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
 
 ## `engine/include/okay/VisualScript/NodesActions.hpp`
 

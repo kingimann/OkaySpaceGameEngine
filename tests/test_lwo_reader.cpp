@@ -459,7 +459,7 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 2);
         SetImportBackend(".lwo", ImportBackend::Default);
         unsetenv("OKAY_OWN_LWO");
-        // no reader at all: no Assimp in this build and ours off
+        // no reader at all: ours is switched off
         if (EffectiveImportBackend(".lwo") == ImportBackend::Default) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_LWO") != std::string::npos);
         setenv("OKAY_OWN_LWO", "1", 1);
         CHECK(EffectiveImportBackend(".lwo") == ImportBackend::Own && ImportableExtensions().find(".lwo") != std::string::npos);

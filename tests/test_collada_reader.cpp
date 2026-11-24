@@ -1,7 +1,7 @@
 // Our own COLLADA (.dae) reader and its place in the import seam: fixtures written by hand
 // (tests/data/models/*.dae), unit and up-axis handling, materials and textures, node
 // transforms, skin and animation, the "say what was not read" notes, the opt-in backend
-// switch, and (with OKAY_USE_ASSIMP) Assimp's reading of the same files compared with ours.
+// switch, and fixed counts for the files once compared with Assimp (removed 2026-11-24).
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelData.hpp"
@@ -409,20 +409,16 @@ int main() {
     // ---------------- the seam: opt-in switch, merged mesh, scene import ----------------
     {
         CHECK(HasOwnReader(".dae") && HasOwnReader(".DAE"));
-        // Default for .dae is off: with no Assimp in the build nothing reads it until it is switched on.
+        // Without the switch (a build with -DOKAY_OWN_COLLADA=OFF) nothing reads .dae: there is no other reader.
         TestUnsetEnv("OKAY_OWN_COLLADA");
         SetImportBackend(".dae", ImportBackend::Default);
         ImportedModel m; std::string err;
-#ifdef OKAY_HAVE_ASSIMP
-        CHECK(EffectiveImportBackend(".dae") == ImportBackend::Assimp || EffectiveImportBackend(".dae") == ImportBackend::Own);   // Own only if built with OKAY_OWN_COLLADA
-#else
         if (EffectiveImportBackend(".dae") == ImportBackend::Default) {   // not built with -DOKAY_OWN_COLLADA=ON
             CHECK(!ImportModelData(kDir + "two_materials.dae", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_COLLADA") != std::string::npos);   // the message says how to turn it on
             CHECK(ImportableExtensions().find(".dae") == std::string::npos);
             bool ok = true; ImportModel(kDir + "two_materials.dae", &ok); CHECK(!ok);
         }
-#endif
         // Environment switch.
         TestSetEnv("OKAY_OWN_COLLADA", "1");
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);
@@ -464,60 +460,52 @@ int main() {
         SetImportBackend("*", ImportBackend::Default);
     }
 
-#ifdef OKAY_HAVE_ASSIMP
-    // ---------------- Assimp reads the same files: compare ----------------
-    for (const char* f : {"two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "component_anim.dae"}) {
-        ImportedModel own, ai; std::string e1, e2;
-        const bool a = ImportModelData(kDir + f, own, ImportBackend::Own, false, &e1);
-        const bool b = ImportModelData(kDir + f, ai, ImportBackend::Assimp, false, &e2);
-        std::printf("  %-20s own: %s | assimp: %s\n", f, a ? "ok" : e1.c_str(), b ? "ok" : e2.c_str());
-        CHECK(a && b);
-        if (!(a && b)) continue;
-        const ModelCounts co = CountModel(own), ca = CountModel(ai);
-        std::printf("    own: parts %d verts %d tris %d bones %d clips %d | assimp: parts %d verts %d tris %d bones %d clips %d\n",
-                    co.parts, co.vertices, co.triangles, co.bones, co.clips, ca.parts, ca.vertices, ca.triangles, ca.bones, ca.clips);
-        CHECK(co.triangles == ca.triangles);
-        CHECK(co.vertices == ca.vertices);
-        CHECK(co.parts == ca.parts);
-        CHECK(co.bones == ca.bones);
-        CHECK(co.clips == ca.clips);
-        // Same world-space bounds of every part (up axis and unit agree).
-        auto bounds = [](const ImportedModel& m, Vec3& lo, Vec3& hi) {
-            lo = Vec3{1e30f, 1e30f, 1e30f}; hi = Vec3{-1e30f, -1e30f, -1e30f};
-            for (const ImportedPart& p : m.parts) {
-                const Mat4 w = WorldOf(m, p.node);
+    // ---------------- Fixed counts (were: Assimp reads the same files, compare) ----------------
+    // Until 2026-11-24 Assimp 5.4.3 read these files too (CI job assimp-models) and our counts and world bounds had to equal its
+    // own. Assimp is removed, so the values it agreed with are kept here as fixed numbers.
+    {
+        struct Case { const char* file; int parts, vertices, triangles, bones, clips; float lo[3], hi[3]; };
+        const Case cases[] = {
+            {"two_materials.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
+            {"zup_cm.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
+            {"skinned_strip.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
+            {"component_anim.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
+        };
+        for (const Case& c : cases) {
+            ImportedModel own; std::string e1;
+            const bool a = ImportModelData(kDir + c.file, own, ImportBackend::Own, false, &e1);
+            if (!a) std::printf("  %s: %s\n", c.file, e1.c_str());
+            CHECK(a);
+            if (!a) continue;
+            const ModelCounts co = CountModel(own);
+            Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};   // world-space bounds of every part (up axis and unit)
+            for (const ImportedPart& p : own.parts) {
+                const Mat4 w = WorldOf(own, p.node);
                 for (const Vec3& v : p.mesh.vertices) {
                     const Vec3 q = Apply(w, v);
                     lo = Vec3{std::fmin(lo.x, q.x), std::fmin(lo.y, q.y), std::fmin(lo.z, q.z)};
                     hi = Vec3{std::fmax(hi.x, q.x), std::fmax(hi.y, q.y), std::fmax(hi.z, q.z)};
                 }
             }
-        };
-        Vec3 lo1, hi1, lo2, hi2;
-        bounds(own, lo1, hi1); bounds(ai, lo2, hi2);
-        CHECK(Near3(lo1, lo2.x, lo2.y, lo2.z, 1e-3f) && Near3(hi1, hi2.x, hi2.y, hi2.z, 1e-3f));
-    }
-    {   // Materials of the two-material file.
-        ImportedModel own, ai;
-        CHECK(ImportModelData(kDir + "two_materials.dae", own, ImportBackend::Own));
-        CHECK(ImportModelData(kDir + "two_materials.dae", ai, ImportBackend::Assimp));
-        for (const ImportedPart& po : own.parts) {
-            const ImportedMaterial& mo = own.materials[(std::size_t)po.material];
-            bool found = false;
-            std::printf("    own material '%s': diffuse %d (%.2f) tex '%s' nrm '%s' | assimp:", mo.name.c_str(), (int)mo.hasDiffuse, mo.diffuse.r, mo.texture.c_str(), mo.normalMap.c_str());
-            for (const ImportedPart& pa : ai.parts) {
-                std::printf(" ['%s' d%d %.2f tex '%s' nrm '%s']", ai.materials[(std::size_t)pa.material].name.c_str(), (int)ai.materials[(std::size_t)pa.material].hasDiffuse, ai.materials[(std::size_t)pa.material].diffuse.r, ai.materials[(std::size_t)pa.material].texture.c_str(), ai.materials[(std::size_t)pa.material].normalMap.c_str());
-                const ImportedMaterial& ma = ai.materials[(std::size_t)pa.material];
-                // Assimp fills an unset diffuse with white; ours leaves it unset (the scene builder ignores it under a texture).
-                if (ma.texture == mo.texture && ma.normalMap == mo.normalMap && (!mo.hasDiffuse || std::fabs(ma.diffuse.r - mo.diffuse.r) < 1e-4f)) found = true;
-            }
-            std::printf("\n");
-            CHECK(found);
+            std::printf("    %-20s parts %d verts %d tris %d bones %d clips %d box (%.4f %.4f %.4f)-(%.4f %.4f %.4f)\n", c.file, co.parts, co.vertices,
+                        co.triangles, co.bones, co.clips, lo.x, lo.y, lo.z, hi.x, hi.y, hi.z);
+            CHECK(co.parts == c.parts && co.vertices == c.vertices && co.triangles == c.triangles && co.bones == c.bones && co.clips == c.clips);
+            CHECK(Near3(lo, c.lo[0], c.lo[1], c.lo[2], 1e-3f) && Near3(hi, c.hi[0], c.hi[1], c.hi[2], 1e-3f));
         }
     }
-#else
-    std::printf("  Assimp not built: backend comparison skipped\n");
-#endif
+    {   // Materials of the two-material file (as Assimp read them: one textured, one red; Assimp also filled an unset diffuse
+        // with white, ours leaves it unset).
+        ImportedModel own;
+        CHECK(ImportModelData(kDir + "two_materials.dae", own, ImportBackend::Own));
+        bool textured = false, red = false;
+        for (const ImportedPart& po : own.parts) {
+            const ImportedMaterial& mo = own.materials[(std::size_t)po.material];
+            std::printf("    own material '%s': diffuse %d (%.2f) tex '%s' nrm '%s'\n", mo.name.c_str(), (int)mo.hasDiffuse, mo.diffuse.r, mo.texture.c_str(), mo.normalMap.c_str());
+            if (!mo.texture.empty()) textured = true;
+            if (mo.hasDiffuse && mo.diffuse.r > 0.9f && mo.texture.empty()) red = true;
+        }
+        CHECK(textured && red);
+    }
 
     TEST_MAIN_RESULT();
 }

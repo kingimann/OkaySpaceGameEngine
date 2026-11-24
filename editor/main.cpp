@@ -5949,7 +5949,6 @@ static oked::menubar::State MenuBarState(EditorState& ed) {
     s.redoName = meshR ? std::string("Mesh Edit") : ed.RedoName();
     s.clipboardHasObject = !g_clipboard.empty();
     s.recentCount = (int)g_recent.size();
-    s.assimp = okay::AssimpAvailable();
     s.isolating = g_isolate != nullptr;
     s.darkMode = g_darkMode;
     return s;
@@ -7519,7 +7518,7 @@ static void PickFolderInto(const char* title, const std::string& start, char* bu
 // The answer of the Animation window's Export / Import clips pickers, picked up by the window on the next frame (it holds locals a callback can't keep).
 static std::string g_animExportPick, g_animImportPick;
 
-// Every model format this build can import (built-in + Assimp's own list).
+// Every model format this build can import (our own readers; okay::ImportableExtensions).
 bool IsModelExt(const std::string& extLower) {
     static const std::string list = " " + okay::ImportableExtensions() + " ";
     return list.find(" " + extLower + " ") != std::string::npos;
@@ -16310,9 +16309,8 @@ void DrawAboutPopup() {
                            "script them, and export a standalone game with File > Build Game.");
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
-                            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
-                            okay::AssimpAvailable() ? "on" : "off");
+        ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s",
+                            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/status/own_stack_rollout.md)
         {   // the update signature check: ON, or OFF with the reason (docs/online/security.md "Updater signing")
             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());

@@ -12,6 +12,11 @@ v2.903.5
   - Behind the scenes: duplicate code removed (mesh hashes, node names,
     Base64, PNG writer and more), big files split into smaller files by
     job (no change in behaviour), and a script to build on Windows.
+  - Known problems in this build (being fixed for the next release):
+    jumping and player movement may feel off, a streamed sound may not
+    match the same sound loaded whole, one project setting is not
+    saved, one picture import setting is wrong, and three Visual Script
+    node checks fail.
 
 v2.903.4
   Release notes, one physics engine, Windows fixes

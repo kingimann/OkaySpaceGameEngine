@@ -230,6 +230,14 @@ public:
     bool EnsureMeta(const Guid& guid, std::string* error = nullptr);
     /// Remove the metas of orphaned assets from disk. Returns how many.
     int RemoveOrphanMetas();
+    /// Watch the scanned folder with the operating system (inotify on Linux, ReadDirectoryChangesW
+    /// on Windows). False when nothing was scanned or the watch cannot be opened. The watcher is
+    /// stopped when the database is destroyed.
+    bool StartWatch(std::string* error = nullptr);
+    /// Project-relative paths that changed since the last poll (a file or a folder). Empty when
+    /// nothing changed or no watch is running.
+    std::vector<std::string> PollWatch();
+    void StopWatch();
 
     // --- Labels -------------------------------------------------------------------
     bool SetLabels(const Guid& guid, const std::vector<std::string>& labels, std::string* error = nullptr);

@@ -9,9 +9,17 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <cstring>
+#include <map>
 #include <random>
 #include <set>
 #include <sstream>
+#if defined(_WIN32)
+#else
+#include <poll.h>
+#include <sys/inotify.h>
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -299,7 +307,7 @@ std::string ScanReport::ToString() const {
 // --- Construction / paths ------------------------------------------------------------------
 
 AssetDatabase::AssetDatabase() { RegisterDefaultExtractors(); }
-AssetDatabase::~AssetDatabase() = default;
+AssetDatabase::~AssetDatabase() { StopWatch(); }
 
 void AssetDatabase::Clear() {
     m_root.clear();
@@ -1278,6 +1286,162 @@ void AssetDatabase::AttachHotReload(AssetManager& manager,
         hook(key, type);
         if (chain) chain(key, type);
     });
+}
+
+namespace {
+
+struct DirWatch {
+#if defined(_WIN32)
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    OVERLAPPED ov{};
+    std::vector<char> buf;
+    bool pending = false;
+#else
+    int fd = -1;
+    std::map<int, std::string> dirOf;
+#endif
+    std::string root;
+};
+
+std::map<const AssetDatabase*, DirWatch> g_watches;
+
+std::string Slash(std::string s) {
+    for (char& c : s) if (c == '\\') c = '/';
+    return s;
+}
+
+#if defined(_WIN32)
+bool Arm(DirWatch& w) {
+    if (w.handle == INVALID_HANDLE_VALUE) return false;
+    std::memset(&w.ov, 0, sizeof(w.ov));
+    w.ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!w.ov.hEvent) return false;
+    w.buf.assign(64 * 1024, 0);
+    const BOOL ok = ReadDirectoryChangesW(w.handle, w.buf.data(), (DWORD)w.buf.size(), TRUE,
+        FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
+        FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_CREATION,
+        nullptr, &w.ov, nullptr);
+    w.pending = ok == TRUE;
+    return w.pending;
+}
+#endif
+
+} // namespace
+
+bool AssetDatabase::StartWatch(std::string* error) {
+    StopWatch();
+    if (m_root.empty()) { if (error) *error = "scan a folder before watching it"; return false; }
+    DirWatch w;
+    w.root = m_root;
+#if defined(_WIN32)
+    const fs::path root = PathFromU8(m_root);
+    w.handle = CreateFileW(root.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    if (w.handle == INVALID_HANDLE_VALUE) { if (error) *error = "cannot watch the folder"; return false; }
+    if (!Arm(w)) {
+        if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
+        CloseHandle(w.handle);
+        if (error) *error = "cannot watch the folder";
+        return false;
+    }
+#else
+    w.fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (w.fd < 0) { if (error) *error = "cannot watch the folder"; return false; }
+    auto add = [&](const fs::path& p, const std::string& rel) {
+        const int wd = inotify_add_watch(w.fd, p.c_str(),
+            IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB);
+        if (wd >= 0) w.dirOf[wd] = rel;
+    };
+    std::error_code ec;
+    const fs::path root = PathFromU8(m_root);
+    add(root, "");
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_directory()) continue;
+        std::string rel = Slash(U8(it->path().lexically_relative(root)));
+        if (rel.empty() || rel[0] == '.') { it.disable_recursion_pending(); continue; }
+        add(it->path(), rel);
+    }
+#endif
+    g_watches.emplace(this, std::move(w));
+    return true;
+}
+
+std::vector<std::string> AssetDatabase::PollWatch() {
+    std::vector<std::string> out;
+    auto it = g_watches.find(this);
+    if (it == g_watches.end()) return out;
+    DirWatch& w = it->second;
+    std::set<std::string> seen;
+    auto add = [&](std::string path) {
+        path = Slash(std::move(path));
+        if (path.empty() || path[0] == '.') return;
+        if (seen.insert(path).second) out.push_back(path);
+    };
+#if defined(_WIN32)
+    if (!w.pending || !w.ov.hEvent) return out;
+    if (WaitForSingleObject(w.ov.hEvent, 0) != WAIT_OBJECT_0) return out;
+    DWORD got = 0;
+    if (!GetOverlappedResult(w.handle, &w.ov, &got, FALSE) || got == 0) {
+        CloseHandle(w.ov.hEvent);
+        w.ov.hEvent = nullptr;
+        Arm(w);
+        return out;
+    }
+    std::size_t off = 0;
+    while (off + sizeof(FILE_NOTIFY_INFORMATION) <= got) {
+        auto* ev = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(w.buf.data() + off);
+        const int chars = (int)(ev->FileNameLength / sizeof(wchar_t));
+        std::wstring name(ev->FileName, ev->FileName + chars);
+        std::string utf8;
+        if (!name.empty()) {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), nullptr, 0, nullptr, nullptr);
+            if (n > 0) { utf8.resize((std::size_t)n); WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), utf8.data(), n, nullptr, nullptr); }
+        }
+        add(utf8);
+        if (ev->NextEntryOffset == 0) break;
+        off += ev->NextEntryOffset;
+    }
+    CloseHandle(w.ov.hEvent);
+    w.ov.hEvent = nullptr;
+    Arm(w);
+#else
+    pollfd pfd{};
+    pfd.fd = w.fd;
+    pfd.events = POLLIN;
+    while (poll(&pfd, 1, 0) > 0) {
+        alignas(inotify_event) char buf[4096];
+        const ssize_t n = ::read(w.fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        for (ssize_t i = 0; i < n; ) {
+            const auto* ev = reinterpret_cast<const inotify_event*>(buf + i);
+            const std::string name = ev->len ? Slash(ev->name) : std::string();
+            const auto dir = w.dirOf.find(ev->wd);
+            const std::string folder = dir == w.dirOf.end() ? std::string() : dir->second;
+            if (!name.empty()) add(folder.empty() ? name : folder + "/" + name);
+            if ((ev->mask & IN_ISDIR) && (ev->mask & IN_CREATE) && !name.empty()) {
+                const std::string rel = folder.empty() ? name : folder + "/" + name;
+                const int wd = inotify_add_watch(w.fd, (w.root + "/" + rel).c_str(),
+                    IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_ATTRIB);
+                if (wd >= 0) w.dirOf[wd] = rel;
+            }
+            i += sizeof(inotify_event) + ev->len;
+        }
+    }
+#endif
+    return out;
+}
+
+void AssetDatabase::StopWatch() {
+    auto it = g_watches.find(this);
+    if (it == g_watches.end()) return;
+#if defined(_WIN32)
+    if (it->second.ov.hEvent) CloseHandle(it->second.ov.hEvent);
+    if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
+#else
+    if (it->second.fd >= 0) ::close(it->second.fd);
+#endif
+    g_watches.erase(it);
 }
 
 } // namespace okay

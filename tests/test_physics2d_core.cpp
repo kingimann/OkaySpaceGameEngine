@@ -10,7 +10,8 @@ using namespace okay;
 //  1. a stack of 10 crates stays standing and does not sink for 5 seconds at 30, 60 and 120 steps a second;
 //  2. a sleeping crate wakes and falls when what holds it up goes away;
 //  3. a heavy crate on a light crate does not squash it;
-//  4. a fast small ball does not pass a thin wall (with and without Continuous Collision ticked).
+//  4. a fast small ball does not pass a thin wall (with and without Continuous Collision ticked);
+//  5. a platform moved by its transform lifts and carries a crate.
 // Every case prints the numbers it measured, so a failure says how far off it was.
 
 namespace {
@@ -138,6 +139,29 @@ int main() {
             CHECK(maxX < 10.0f);              // never got to the far side of the wall
             CHECK(maxX > 9.0f);               // and did reach it
         }
+    }
+
+    // ---- 5. a platform moved by its transform (no Rigidbody2D) lifts and carries what stands on it ----
+    // (A guard added with the move to the core, not one of the cases measured on the old step.)
+    for (int sideways = 0; sideways < 2; ++sideways) {
+        Scene s("lift");
+        GameObject* plat = Box(s, "Platform", 0, -0.5f, 4, 1, false);
+        GameObject* crate = Box(s, "Crate", 0, 0.5f, 1, 1, true);
+        s.Start();
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // settle
+        float worstGap = 0;
+        for (int i = 0; i < 60; ++i) {                          // one second at 2 units a second
+            plat->transform->localPosition += sideways ? Vec3{2.0f / 60.0f, 0, 0} : Vec3{0, 2.0f / 60.0f, 0};
+            s.Update(1.0f / 60.0f);
+            const float top = plat->transform->Position().y + 0.5f;
+            worstGap = std::max(worstGap, std::fabs((crate->transform->Position().y - 0.5f) - top));
+        }
+        const Vec3 pp = plat->transform->Position(), cp = crate->transform->Position();
+        std::printf("  platform moved %s: platform at (%.3f, %.3f), crate at (%.3f, %.3f), worst gap or overlap %.4f\n",
+                    sideways ? "sideways" : "up", pp.x, pp.y, cp.x, cp.y, worstGap);
+        CHECK(worstGap < 0.03f);                       // the crate stays on the platform's top
+        if (sideways) CHECK(std::fabs(cp.x - pp.x) < 0.2f);   // and rides along with it
+        else CHECK(std::fabs(cp.y - (pp.y + 1.0f)) < 0.03f);
     }
 
     TEST_MAIN_RESULT();

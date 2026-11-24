@@ -204,6 +204,15 @@ void World::SetInertia(BodyId id, const M33& inertiaLocal) {
     m->bodies[id].setInertia = inertiaLocal;
     UpdateMass(*m, id);
 }
+void World::Configure(BodyId id, const BodySettings& s) {
+    if (!IsValid(id)) return;
+    SetType(id, s.type);   // (does nothing when the type is the same)
+    SetDamping(id, s.linearDamping, s.angularDamping);
+    SetGravityScale(id, s.gravityScale);
+    SetLocks(id, s.lockLinear, s.lockAngular);
+    SetBullet(id, s.bullet);
+    SetAllowSleep(id, s.allowSleep);
+}
 void World::SetDamping(BodyId id, float l, float a) { if (IsValid(id)) { m->bodies[id].linDamp = l; m->bodies[id].angDamp = a; } }
 void World::SetGravityScale(BodyId id, float s) { if (IsValid(id)) m->bodies[id].gravityScale = s; }
 void World::SetLocks(BodyId id, std::uint8_t l, std::uint8_t a) { if (IsValid(id)) { m->bodies[id].lockLin = l; m->bodies[id].lockAng = a; } }

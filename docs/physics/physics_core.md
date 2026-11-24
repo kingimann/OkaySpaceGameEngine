@@ -81,7 +81,7 @@ components and the saved-scene fields are unchanged.
 | --- | --- |
 | Rigidbody2D | one core body with linear z and angular x, y locked (`SetLocks(4, 3)`; Freeze Rotation locks z as well). The object's z position and its other angles are left alone. Mass, drag, angular drag, gravity scale, allow sleep, Continuous Collision (a wider margin; every body is stopped by speculative contacts anyway). A pose or speed set by game code is copied in; a kinematic body moved by game code is driven there (it carries and pushes) unless the jump is faster than 50 units a second |
 | Box, Circle, Capsule, Polygon, Composite, Edge colliders | the collider's convex pieces (`shape2d::PiecesOf`) pushed out along z: rectangle -> box, circle -> ball, capsule -> capsule, convex polygon -> prism (hull), edge segment -> a strip 2 mm thick. Each shape is at least twice as deep along z as it reaches in the plane, so the shallowest way out of an overlap is always in the plane. Each piece's density is set so it weighs its 2D area, and the body's turning inertia is the real 2D figure (`World::SetInertia`): a disc turns as a disc, not as a ball |
-| A collider with no Rigidbody2D on its object | a static core body of its own, moved when the object moves (as in 3D) |
+| A collider with no Rigidbody2D on its object | a kinematic core body of its own that never moves by itself. When game code moves the object (a platform on a tween) it is driven there like a kinematic body, so it lifts and carries what stands on it; a jump faster than 50 units a second is a teleport |
 | Triggers, layers, materials | sensors with the tag and layer filter checked every step; the scene's layer matrix; per-collider friction and bounciness with the combine modes (`CombineSurface`); hits slower than 0.5 units a second do not bounce (the old 2D rule) |
 | One-way platforms (Edge collider) | `World::contactEnabled`: asked every step for each close pair; the pair is switched off while the other collider's centre is on the far side of the edge (the old rule) |
 | Joint2D Distance, Spring, Pin, Hinge | core Distance (rod, or spring in N/m), Fixed, Hinge about z with limits and motor. A partner object without a body is followed when it moves. `breakForce` is a stretch length, as before |
@@ -89,8 +89,12 @@ components and the saved-scene fields are unchanged.
 | Queries | `Physics2D`'s own ray, overlap and cast code, unchanged (it never used the step) |
 | Step length | a step longer than 1/45 s is solved in equal slices (forces are applied in every slice) |
 
-Two small entry points were added to the core for this: `World::contactEnabled` (a per-step switch for a pair) and
-`World::SetInertia` (a given inertia instead of the shapes'). The solver, the narrow phase and the locks are the ones 3D uses.
+Added to the core for this: `World::contactEnabled` (a per-step switch for a pair), `World::SetInertia` (a given
+inertia instead of the shapes') and `World::Configure` (the per-step body settings in one call; the 3D bridge uses it
+too). One core fault was fixed: a joint that holds a point (Fixed, Ball, Hinge) did nothing on a body with a locked
+axis, because the point constraint's matrix had an empty row and no inverse; an axis neither body can move along is
+now left out (`PointInverse` in `Joint.cpp`, tested in `physcore_world` and by the 2D pin and hinge tests). The solver,
+the narrow phase and the locks are the ones 3D uses.
 
 What a 2D game can notice (measured in `physics2d_core` and the older 2D tests): stacks stand instead of sinking; resting
 things sit up to about 1 cm into each other (the core's slop and soft position correction) instead of exactly touching;

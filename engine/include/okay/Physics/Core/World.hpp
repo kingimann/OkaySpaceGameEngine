@@ -70,6 +70,16 @@ struct BodyDef {
     std::uint64_t user = 0;
 };
 
+/// What a scene hands a body every step, in one call (World::Configure): its kind, damping, gravity, locks and flags.
+struct BodySettings {
+    BodyType type = BodyType::Dynamic;
+    float linearDamping = 0.0f, angularDamping = 0.05f;
+    float gravityScale = 1.0f;
+    std::uint8_t lockLinear = 0, lockAngular = 0;   // as in BodyDef
+    bool bullet = false;
+    bool allowSleep = true;
+};
+
 struct ColliderDef {
     Shape shape;
     Xf local;                         // collider frame in the body frame
@@ -213,6 +223,7 @@ public:
     /// Use this inertia (about the centre of mass, body frame) instead of the one worked out from the shapes; an all-zero
     /// matrix goes back to the shapes'. For bodies whose shapes stand in for something else (a 2D disc is a ball here).
     void SetInertia(BodyId id, const M33& inertiaLocal);
+    void Configure(BodyId id, const BodySettings& s);   // SetType (when it differs) and the five setters below
     void SetDamping(BodyId id, float linear, float angular);
     void SetGravityScale(BodyId id, float s);
     void SetLocks(BodyId id, std::uint8_t linear, std::uint8_t angular);

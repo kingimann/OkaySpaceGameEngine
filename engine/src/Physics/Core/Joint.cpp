@@ -33,6 +33,30 @@ struct Frames {
     float twist = 0, sy = 0, sz = 0;
 };
 
+// The inverse of the point constraint's matrix K = sum over both bodies of (1/m per axis) - [r] I^-1 [r]: the push
+// that cancels a given drift of the two anchors. A world axis that neither body can move along (locked on both, such
+// as z for bodies kept in the x/y plane) leaves K with an empty row and no inverse; the anchors cannot drift that way
+// and need no push, so the rest is solved and nothing is pushed along that axis.
+M33 PointInverse(const SolverBody& A, const SolverBody& B, const V3& rA, const V3& rB) {
+    M33 K = M33::Zero();
+    for (int k = 0; k < 3; ++k) K.m[k][k] = A.invMassAxis[k] + B.invMassAxis[k];
+    if (A.dynamic) { const M33 S = Skew(rA); K = K + (S * A.invI * S) * -1.0f; }
+    if (B.dynamic) { const M33 S = Skew(rB); K = K + (S * B.invI * S) * -1.0f; }
+    const float size = K.m[0][0] + K.m[1][1] + K.m[2][2];
+    bool empty[3];
+    for (int k = 0; k < 3; ++k) {
+        empty[k] = !(K.m[k][k] > 1e-9f * size);
+        if (!empty[k]) continue;
+        for (int i = 0; i < 3; ++i) { K.m[k][i] = 0.0f; K.m[i][k] = 0.0f; }
+        K.m[k][k] = 1.0f;
+    }
+    M33 inv = K.Inverse();
+    for (int k = 0; k < 3; ++k)
+        if (empty[k])
+            for (int i = 0; i < 3; ++i) { inv.m[k][i] = 0.0f; inv.m[i][k] = 0.0f; }
+    return inv;
+}
+
 float Wrap(float a) {
     while (a > kPi) a -= 2.0f * kPi;
     while (a < -kPi) a += 2.0f * kPi;
@@ -188,11 +212,7 @@ void JointsPrepare(World::Impl& w, const IslandWork& island, std::vector<SolverB
             if (allLocked) {
                 j.point = true;
                 j.pointAcc = &jd.linImpulse;
-                M33 K = M33::Zero();
-                for (int k = 0; k < 3; ++k) K.m[k][k] = A.invMassAxis[k] + B.invMassAxis[k];
-                if (A.dynamic) { const M33 S = Skew(f.rA); K = K + (S * A.invI * S) * -1.0f; }
-                if (B.dynamic) { const M33 S = Skew(f.rB); K = K + (S * B.invI * S) * -1.0f; }
-                j.pointInvK = K.Inverse();
+                j.pointInvK = PointInverse(A, B, f.rA, f.rB);
             } else {
                 const V3 armA = f.rA + f.d;   // B's anchor seen from A's centre (so a slider's arm grows with travel)
                 for (int k = 0; k < 3; ++k) {
@@ -406,14 +426,10 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
         if (j.point) {
             const V3 C = f.d;
             if (LenSq(C) > 1e-12f) {
-                M33 K = M33::Zero();
-                for (int k = 0; k < 3; ++k) K.m[k][k] = A.invMassAxis[k] + B.invMassAxis[k];
-                if (A.dynamic) { const M33 S = Skew(f.rA); K = K + (S * A.invI * S) * -1.0f; }
-                if (B.dynamic) { const M33 S = Skew(f.rB); K = K + (S * B.invI * S) * -1.0f; }
                 V3 Cc = C;
                 const float l = Len(Cc);
                 if (l > s.maxCorrection) Cc *= s.maxCorrection / l;
-                const V3 P = (K.Inverse() * Cc) * -1.0f;
+                const V3 P = (PointInverse(A, B, f.rA, f.rB) * Cc) * -1.0f;
                 moveLin(P, f.rA, f.rB);
             }
         } else {

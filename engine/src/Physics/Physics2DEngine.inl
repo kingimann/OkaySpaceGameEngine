@@ -5,7 +5,8 @@
 // A 2D body is a core body that cannot leave the x/y plane and turns about z only (the core's axis locks). A 2D shape is
 // the same outline pushed out along z: a box is a box, a circle a ball, a capsule a capsule, a convex polygon a prism, an
 // edge segment a strip 2 mm thick. Every shape is deep along z (at least twice its reach), so two shapes that overlap in
-// the plane always overlap further along z and the contact normal stays in the plane.
+// the plane always overlap further along z and the contact normal stays in the plane. A collider whose object has no
+// Rigidbody2D gets a kinematic body of its own that never moves by itself.
 //
 // Each step: scene -> world (bodies, colliders, joints made, changed or removed to match the components; a pose or speed
 // game code changed is copied in), world.Step, world -> scene (pose, speed, sleeping), then the Enter / Stay / Exit
@@ -171,10 +172,10 @@ struct Physics2D::EngineBridge {
     struct ColRec {
         std::vector<phys::ColliderId> ids;
         phys::BodyId owner = phys::kInvalidId;
-        bool ownStatic = false;         // owner is a static body made for this collider alone
+        bool ownBody = false;           // owner is a body made for this collider alone (its object has no Rigidbody2D)
         const Rigidbody2D* body = nullptr;
         std::string sig;
-        Vec2 pos{0, 0};                 // an own static body: the transform's position and turn (radians) it was placed at
+        Vec2 pos{0, 0};                 // an own body: the transform's position and turn (radians) it was placed at
         float angle = 0.0f;
         Vec2 centerLocal{0, 0};         // the collider's centre in its body's frame (the one-way test)
         bool oneWay = false;            // a one-way edge: its points and blocked side in the world, this step
@@ -219,7 +220,7 @@ struct Physics2D::EngineBridge {
             const std::size_t i = phys::IdIndex(id);
             if (i < back.size() && back[i].id == id) back[i] = Back{};
         }
-        if (r.ownStatic) world.DestroyBody(r.owner);
+        if (r.ownBody) world.DestroyBody(r.owner);
     }
     // A one-way edge lets through what is on its far side: true when the pair must not push this step. (Called from the
     // narrow phase, maybe on several threads: it only reads the records and the world.)
@@ -280,6 +281,18 @@ void Physics2D::Step(Scene& scene, float dt) {
     else
         W.SetParallelFor(nullptr);
 
+    // A kinematic body that game code moved (a lift, a moving platform) gets the speed that takes it to its new place
+    // in this step, so what stands on it is carried and what it meets is pushed. False (nothing done) when the jump is
+    // too fast to be a move: that is a teleport.
+    auto driveTo = [&W, dt](phys::BodyId id, const Vec2& pos, float radians) {
+        const phys::Xf now = W.GetTransform(id);
+        if ((pos - InPlane(now.p)).Magnitude() > kKinematicCarrySpeed * dt) return false;
+        const float turn = std::remainder(radians - TurnOf(now.q), 6.28318530718f);
+        W.SetLinearVelocity(id, (Flat(pos) - now.p) * (1.0f / dt));
+        W.SetAngularVelocity(id, phys::V3{0.0f, 0.0f, turn / dt});
+        return true;
+    };
+
     // ---- 1a. bodies ----
     struct Push { phys::BodyId id; Vec2 force; float torque; };
     std::vector<Push> pushes;   // forces and torques handed over this step (every slice applies them)
@@ -317,12 +330,16 @@ void Physics2D::Step(Scene& scene, float dt) {
         EngineBridge::BodyRec& r = it->second;
         r.seen = true;
         const phys::BodyId id = r.id;
-        if (W.GetType(id) != type) W.SetType(id, type);
-        W.SetDamping(id, std::max(rb->drag, 0.0f), std::max(rb->angularDrag, 0.0f));
-        W.SetGravityScale(id, rb->gravityScale);
-        W.SetLocks(id, 4, rb->freezeRotation ? 7 : 3);   // stays in the plane, turns about z only (or not at all)
-        W.SetBullet(id, rb->continuousCollision);
-        W.SetAllowSleep(id, rb->allowSleep);
+        phys::BodySettings set;
+        set.type = type;
+        set.linearDamping = std::max(rb->drag, 0.0f);
+        set.angularDamping = std::max(rb->angularDrag, 0.0f);
+        set.gravityScale = rb->gravityScale;
+        set.lockLinear = 4;                              // stays in the plane,
+        set.lockAngular = rb->freezeRotation ? 7 : 3;    // turns about z only (or not at all)
+        set.bullet = rb->continuousCollision;
+        set.allowSleep = rb->allowSleep;
+        W.Configure(id, set);
         const float mass = rb->mass > 0.0f && std::isfinite(rb->mass) ? rb->mass : 1.0f;
         if (mass != r.mass) { W.SetMass(id, mass); r.mass = mass; r.shapeChanged = true; }
         if ((!goodPose || !goodSpeed) && !r.warned) {
@@ -332,16 +349,8 @@ void Physics2D::Step(Scene& scene, float dt) {
         }
         r.badPose = !goodPose;
         const bool moved = goodPose && (!(pos == r.pos) || angle != r.angle);
-        const phys::Xf now = W.GetTransform(id);
-        r.carried = moved && type == phys::BodyType::Kinematic && (pos - InPlane(now.p)).Magnitude() <= kKinematicCarrySpeed * dt;
-        if (r.carried) {
-            // a kinematic body game code moved (a lift, a moving platform): it gets the speed that takes it there this
-            // step, so what stands on it is carried and what it meets is pushed
-            float turn = angle * Mathf::Deg2Rad - TurnOf(now.q);
-            turn = std::remainder(turn, 6.28318530718f);
-            W.SetLinearVelocity(id, (Flat(pos) - now.p) * (1.0f / dt));
-            W.SetAngularVelocity(id, phys::V3{0.0f, 0.0f, turn / dt});
-        } else {
+        r.carried = moved && type == phys::BodyType::Kinematic && driveTo(id, pos, angle * Mathf::Deg2Rad);
+        if (!r.carried) {
             if (moved) {
                 W.SetTransform(id, Flat(pos), TurnZ(angle * Mathf::Deg2Rad));
                 r.corePos = Flat(pos);
@@ -357,7 +366,8 @@ void Physics2D::Step(Scene& scene, float dt) {
         if (type == phys::BodyType::Dynamic && (push.force.SqrMagnitude() > 0.0f || push.torque != 0.0f)) pushes.push_back(push);
     }
 
-    // ---- 1b. colliders (one without a body gets a static body of its own, so a moved one can be moved alone) ----
+    // ---- 1b. colliders (one without a Rigidbody2D gets a body of its own, so a moved one can be moved alone) ----
+    std::vector<phys::BodyId> drivenOwn;   // own bodies game code moved this step
     for (auto& kv : E.colliders) kv.second.seen = false;
     const std::vector<Collider2D*> cols = CachedComponents<Collider2D>(scene);
     std::vector<CorePiece> pieces;
@@ -398,11 +408,12 @@ void Physics2D::Step(Scene& scene, float dt) {
                 bodyIt->second.shapeChanged = true;
             } else {
                 phys::BodyDef bd;
-                bd.type = phys::BodyType::Static;
+                bd.type = phys::BodyType::Kinematic;   // it never moves by itself; game code moving its object drives it
                 bd.position = Flat(pos);
                 bd.rotation = TurnZ(angle);
+                bd.awake = false;
                 r.owner = W.CreateBody(bd);
-                r.ownStatic = true;
+                r.ownBody = true;
             }
             const phys::Xf bodyX = W.GetTransform(r.owner);
             const phys::Xf toBody{phys::InvRotate(bodyX.q, -bodyX.p), phys::Conj(bodyX.q)};
@@ -424,7 +435,7 @@ void Physics2D::Step(Scene& scene, float dt) {
                 if (id != phys::kInvalidId) r.ids.push_back(id);
             }
             if (r.ids.empty()) {
-                if (r.ownStatic) W.DestroyBody(r.owner);
+                if (r.ownBody) W.DestroyBody(r.owner);
                 continue;
             }
             r.centerLocal = InPlane(bodyX.ApplyInv(Flat(c->WorldCenter())));
@@ -433,8 +444,10 @@ void Physics2D::Step(Scene& scene, float dt) {
         }
         EngineBridge::ColRec& r = it->second;
         r.seen = true;
-        if (r.ownStatic && (!(pos == r.pos) || angle != r.angle)) {   // a collider without a body, moved by game code
-            W.SetTransform(r.owner, Flat(pos), TurnZ(angle));
+        if (r.ownBody && (!(pos == r.pos) || angle != r.angle)) {
+            // a collider without a Rigidbody2D, moved by game code (a platform on a tween): it is driven like a kinematic body
+            if (driveTo(r.owner, pos, angle)) drivenOwn.push_back(r.owner);
+            else W.SetTransform(r.owner, Flat(pos), TurnZ(angle));
             r.pos = pos;
             r.angle = angle;
         }
@@ -577,6 +590,10 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (p.torque != 0.0f) W.ApplyTorque(p.id, phys::V3{0.0f, 0.0f, p.torque});
         }
         W.Step(dt / (float)slices);
+    }
+    for (phys::BodyId id : drivenOwn) {   // their made-up speed was for this step only
+        W.SetLinearVelocity(id, phys::V3{});
+        W.SetAngularVelocity(id, phys::V3{});
     }
 
     // A breakable joint breaks when its two ends were pulled further apart than breakForce (a length, the Joint2D

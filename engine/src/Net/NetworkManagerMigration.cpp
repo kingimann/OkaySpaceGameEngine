@@ -85,7 +85,7 @@ void NetworkManager::MigrationHostTick(float dt) {
             TryNextHostRelay();
             return;
         }
-        if (m_relayPromoteWait > std::max(2.0f * migrationJoinTimeoutSeconds, 4.0f * kRelaySuccessionQuietSeconds)) {
+        if (m_relayPromoteWait > std::max(2.0f * migrationJoinTimeoutSeconds, 4.0f * net::kRelaySuccessionQuietSeconds)) {
             m_relayError = "the relay did not let this player take over as host";
             m_relayLost = true;   // ServerTick ends it with LastError
             return;

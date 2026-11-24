@@ -237,7 +237,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 ### 16. Networking & multiplayer
 
 | [16.7](../feature_map/16-networking.md#167-voice-chat-server) | Voice chat server | Partial | no tests for ADPCM, jitter buffer or room-key handling; launcher voice calls now send version-3 hellos with the relay cookie and... |
-| [16.15](../feature_map/16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) | The easy layer (Net::Host, Host or Join node, net.on) | Partial | tested on Linux over loopback only (`net_easy`); not run on Windows, between two computers or in the editor (the Networked tick and the new palette entries are not built here); event validators see RPC names, not event names; a client hears joins and leaves with the roster, about once a second; not done: rollback mode, host migration; the bad-network settings are not saved in the scene |
+| [16.15](../feature_map/16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) | The easy layer (Net::Host, Host or Join node, net.on), host migration, rollback, stats overlay | Partial | tested on Linux over loopback only (`net_easy`, `net_session`); not run on Windows, between two computers or in the editor (the Networked tick, the new palette entries and the player's overlay window are not built here); host migration only where players reach each other directly (LAN by default; not through a relay or across home routers), build/quest/anti-cheat state not checked across it, a split network can pick two hosts; rollback needs every player to start it after the list is complete, no late joiners, no state saving for Visual Script graphs; the bad-network settings are not saved in the scene |
 
 ### 17. Launcher & platform
 

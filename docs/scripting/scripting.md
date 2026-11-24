@@ -1758,7 +1758,7 @@ function on_trigger()   { /* entered a trigger volume */ }
 - **Language:** the engine VM's grammar and rules without classes, coroutines, events, statics and scene objects.
   Same rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so lambdas
   do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==` compares text as
-  text, anything else as numbers. Differences from the engine: numbers are 64-bit (the engine: 32-bit floats); a
+  text, anything else as numbers. Numbers are 32-bit floats in both. Differences from the engine: a
   declaration's words stop at the end of its line; `"abc"[1]` gives `"b"`; `m.key = v` sets a map entry; runtime errors
   carry the line of the statement that failed; `print` of a lambda shows `<function>`.
 - **Natives:** `Interpreter::Define(name, fn, Arity)`. `Args::Number/String/Bool/List/Map(i)` check one argument's type;

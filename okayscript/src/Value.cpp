@@ -24,14 +24,14 @@ bool Value::ParseFinite(const std::string& s, double& out) {
     if (b >= e) return false;
     const std::string t = s.substr(b, e - b);
     char* end = nullptr;
-    const double v = std::strtod(t.c_str(), &end);
+    const float v = std::strtof(t.c_str(), &end);   // a float, as the engine reads text
     if (end != t.c_str() + t.size() || !std::isfinite(v)) return false;
     out = v;
     return true;
 }
 
 double Value::AsNumber() const {
-    if (auto* f = std::get_if<double>(&m_data)) return *f;
+    if (auto* f = std::get_if<Number>(&m_data)) return *f;
     if (auto* b = std::get_if<bool>(&m_data)) return *b ? 1.0 : 0.0;
     if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a ? static_cast<double>((*a)->size()) : 0.0;
     if (auto* m = std::get_if<MapRef>(&m_data)) return *m ? static_cast<double>((*m)->size()) : 0.0;
@@ -44,7 +44,7 @@ double Value::AsNumber() const {
 
 bool Value::AsBool() const {
     if (auto* b = std::get_if<bool>(&m_data)) return *b;
-    if (auto* f = std::get_if<double>(&m_data)) return !std::isnan(*f) && *f != 0.0;
+    if (auto* f = std::get_if<Number>(&m_data)) return !std::isnan(*f) && *f != 0.0;
     if (auto* s = std::get_if<std::string>(&m_data)) {
         std::string t;
         for (char c : *s) {
@@ -62,10 +62,11 @@ bool Value::AsBool() const {
     return false;
 }
 
-std::string Value::FormatNumber(double f) {
+std::string Value::FormatNumber(double d) {
+    const float f = static_cast<float>(d);   // the engine formats its float
     if (std::isnan(f)) return "nan";
     if (std::isinf(f)) return f < 0 ? "-inf" : "inf";
-    if (std::fabs(f) < 9.0e18 && f == static_cast<double>(static_cast<long long>(f)))
+    if (std::fabs(f) < 9.0e18f && f == static_cast<float>(static_cast<long long>(f)))
         return std::to_string(static_cast<long long>(f));
     std::string s = std::to_string(f);   // six decimals, then trim the zeros
     const std::size_t dot = s.find('.');
@@ -80,7 +81,7 @@ std::string Value::FormatNumber(double f) {
 std::string Value::AsString() const {
     if (auto* s = std::get_if<std::string>(&m_data)) return *s;
     if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";
-    if (auto* f = std::get_if<double>(&m_data)) return FormatNumber(*f);
+    if (auto* f = std::get_if<Number>(&m_data)) return FormatNumber(*f);
     if (auto* a = std::get_if<ArrayRef>(&m_data)) {
         if (!*a) return "[]";
         std::string s = "[";

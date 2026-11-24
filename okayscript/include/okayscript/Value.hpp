@@ -3,7 +3,8 @@
 //
 // The conversion rules (AsNumber, AsBool, AsString) are the ones the engine's script value (vs::VsValue,
 // engine/include/okay/VisualScript/VsValue.hpp) uses, written again here without its engine-only kinds (vectors,
-// colours, object references). One difference: numbers are 64-bit doubles here; the engine keeps 32-bit floats.
+// colours, object references). Numbers are stored as 32-bit floats (`Number`), as in the engine, so scripts compute
+// exactly the same results in both; AsNumber() hands them out as double.
 // There is no separate null: a missing value is the number 0, exactly as in the engine (IsNullish below).
 #include <cstdint>
 #include <map>
@@ -14,6 +15,9 @@
 
 namespace okayscript {
 
+/// The one number type of the language: 32-bit float, the engine's choice (16777217 is not representable).
+using Number = float;
+
 class Value {
 public:
     using Array = std::vector<Value>;
@@ -21,11 +25,11 @@ public:
     using Map = std::map<std::string, Value>;
     using MapRef = std::shared_ptr<Map>;
 
-    Value() : m_data(0.0) {}
-    Value(double v) : m_data(v) {}
-    Value(float v) : m_data(static_cast<double>(v)) {}
-    Value(int v) : m_data(static_cast<double>(v)) {}
-    Value(long long v) : m_data(static_cast<double>(v)) {}
+    Value() : m_data(Number{0}) {}
+    Value(double v) : m_data(static_cast<Number>(v)) {}
+    Value(float v) : m_data(static_cast<Number>(v)) {}
+    Value(int v) : m_data(static_cast<Number>(v)) {}
+    Value(long long v) : m_data(static_cast<Number>(v)) {}
     Value(bool v) : m_data(v) {}
     Value(std::string v) : m_data(std::move(v)) {}
     Value(const char* v) : m_data(std::string(v)) {}
@@ -36,7 +40,7 @@ public:
     static Value MakeMap() { return Value(std::make_shared<Map>()); }
     static Value List(std::vector<Value> items) { return Value(std::make_shared<Array>(std::move(items))); }
 
-    bool IsNumber() const { return std::holds_alternative<double>(m_data); }
+    bool IsNumber() const { return std::holds_alternative<Number>(m_data); }
     bool IsBool() const { return std::holds_alternative<bool>(m_data); }
     bool IsString() const { return std::holds_alternative<std::string>(m_data); }
     bool IsArray() const { return std::holds_alternative<ArrayRef>(m_data); }
@@ -63,7 +67,7 @@ public:
     static bool ParseFinite(const std::string& s, double& out);
 
 private:
-    std::variant<double, bool, std::string, ArrayRef, MapRef> m_data;
+    std::variant<Number, bool, std::string, ArrayRef, MapRef> m_data;
 };
 
 /// The engine's null: the number 0, or an empty list/map reference. Text and true/false are never null.

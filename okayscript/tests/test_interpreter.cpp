@@ -43,7 +43,7 @@ int main() {
     CHECK_EQ(Eval("1 / 0"), std::string("0"));             // the engine rule: a division by zero gives 0
     CHECK_EQ(Eval("0.1 + 0.2"), std::string("0.3"));
     CHECK_EQ(Eval("2 * -3"), std::string("-6"));
-    CHECK_EQ(Eval("16777217 + 1"), std::string("16777218"));   // 64-bit numbers (the engine keeps 32-bit floats)
+    CHECK_EQ(Eval("16777217 + 1"), std::string("16777216"));   // 32-bit float numbers, exactly as the engine computes
     CHECK_EQ(Eval("6 & 3"), std::string("2"));
     CHECK_EQ(Eval("6 | 3"), std::string("7"));
     CHECK_EQ(Eval("6 ^ 3"), std::string("5"));

@@ -13,6 +13,7 @@ namespace okayscript {
 template <class V> BasicInterpreter<V>::BasicInterpreter() {
     m_rt.out = &std::cout;
     m_rt.in = &std::cin;
+    m_rt.scriptFunctionsFirst = true;   // a program's own functions are not hidden by the library's
     m_rt.builtins["__new_list"] = detail::NewList<V>;
     m_rt.builtins["__new_array"] = detail::NewArray<V>;
     m_rt.builtins["__new_map"] = detail::NewMap<V>;
@@ -42,18 +43,18 @@ template <class V> bool BasicInterpreter<V>::HasGlobal(const std::string& name) 
 template <class V> const Program& BasicInterpreter<V>::Parse(const std::string& source) {
     auto prog = std::make_unique<Program>();
     ParseSource(source, *prog);   // SyntaxError on failure: nothing is added
-    for (auto& kv : prog->functions) m_rt.functions[kv.first] = &kv.second;
-    m_rt.BumpCalls();
-    for (auto& kv : prog->classes) m_rt.classes[kv.first] = &kv.second;
-    m_rt.localNames.insert(prog->localNames.begin(), prog->localNames.end());
-    m_rt.statics = BasicRuntime<V>::SharedStatics(source);   // `static` variables are shared by every run of this source
+    m_rt.AddProgram(*prog, source);
     m_programs.push_back(std::move(prog));
     return *m_programs.back();
 }
 
-template <class V> void BasicInterpreter<V>::Load(const std::string& source, const std::string&) { Parse(source); }
+template <class V> void BasicInterpreter<V>::Load(const std::string& source, const std::string& file) {
+    if (!file.empty()) m_rt.currentFile = file;
+    Parse(source);
+}
 
-template <class V> void BasicInterpreter<V>::Run(const std::string& source, const std::string&) {
+template <class V> void BasicInterpreter<V>::Run(const std::string& source, const std::string& file) {
+    if (!file.empty()) m_rt.currentFile = file;
     const Program& prog = Parse(source);
     try {
         m_rt.RunBody(prog.top, prog.topCode);   // `return` (or a stray break) at the top level ends the program
@@ -90,6 +91,14 @@ template <class V> V BasicInterpreter<V>::Call(const std::string& name, std::vec
         m_rt.BumpVars();
         throw RuntimeError(e);
     }
+}
+
+template <class V> void BasicInterpreter<V>::SetModuleLoader(ModuleLoader load) {
+    if (!m_rt.modules) {
+        m_rt.modules = std::make_shared<ModuleSystem<V>>();
+        m_rt.modules->byId.push_back(&m_rt);
+    }
+    m_rt.modules->load = std::move(load);
 }
 
 template <class V> void BasicInterpreter<V>::SetOutput(std::ostream* out) { m_rt.out = out ? out : &std::cout; }

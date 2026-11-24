@@ -6,6 +6,10 @@
 // engine/include/okay/VisualScript/VsValue.hpp), so the one interpreter core (Runtime.hpp, a template over the value
 // type) runs either. Numbers are 32-bit floats (`Number`), the engine's choice. There is no separate null: a missing
 // value is the number 0.
+//
+// The standalone value also has whole numbers of 64 bits (`Value::Int`), which the engine's value does not: a script
+// makes one with a literal written `123L`, `(long)x` or `long(x)`, and integer maths stays exact (Eval.ipp Arith).
+// Plain literals stay 32-bit floats, so every engine rule is unchanged (docs/scripting/okayscript_vm.md "Integers").
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -32,6 +36,9 @@ struct Vec3 {
     static const Vec3 Zero;
 };
 inline const Vec3 Vec3::Zero{};
+
+/// A whole number of 64 bits (only the standalone value has these).
+struct Int64 { std::int64_t v = 0; };
 
 /// A reference to an object the host owns (an instance id; 0 = none). The host says what it is called and whether
 /// it still exists (SetHandleHooks); without hooks a handle has no name and is alive while its id is not 0.
@@ -70,8 +77,13 @@ public:
     static Value MakeArray() { return Value(std::make_shared<Array>()); }
     static Value MakeMap() { return Value(std::make_shared<Map>()); }
     static Value List(std::vector<Value> items) { return Value(std::make_shared<Array>(std::move(items))); }
+    static Value Int(std::int64_t i) { Value v; v.m_data = Int64{i}; return v; }
 
-    bool IsNumber() const { return std::holds_alternative<Number>(m_data); }
+    /// A number: a float, or a whole number (Int).
+    bool IsNumber() const { return std::holds_alternative<Number>(m_data) || std::holds_alternative<Int64>(m_data); }
+    bool IsInt() const { return std::holds_alternative<Int64>(m_data); }
+    /// The whole number itself when this is one, else nullptr (the core's integer maths).
+    const std::int64_t* IntPtr() const { auto* p = std::get_if<Int64>(&m_data); return p ? &p->v : nullptr; }
     /// The number itself when this is a number, else nullptr (the interpreter's fast path for number maths).
     const Number* NumberPtr() const { return std::get_if<Number>(&m_data); }
     /// Make this the number f / the bool b (in place when it already is one: the interpreter's hot path).
@@ -100,7 +112,7 @@ public:
     /// Numbers without trailing zeros ("3", "1.5"), vectors "(1, 2, 3)", colours "#rrggbbaa", lists "[a, b]",
     /// maps "{k: v}", a handle its name.
     std::string AsString() const;
-    /// "number", "bool", "string", "vector", "colour", "object", "list", "map" or "function".
+    /// "number", "int", "bool", "string", "vector", "colour", "object", "list", "map" or "function".
     const char* TypeName() const;
 
     static std::string HexColor(const Color4& c);
@@ -109,7 +121,7 @@ public:
     static bool ParseFinite(const std::string& s, float& out);
 
 private:
-    std::variant<Number, bool, Vec3, std::string, ArrayRef, MapRef, Handle, Color4> m_data;
+    std::variant<Number, bool, Vec3, std::string, ArrayRef, MapRef, Handle, Color4, Int64> m_data;
 };
 
 } // namespace okayscript

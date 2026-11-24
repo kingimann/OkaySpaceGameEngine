@@ -42,9 +42,12 @@ std::vector<Token> Lexer::Scan() {
         char c = Peek();
         Token t = (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1)))) ? Number()
                 : (std::isalpha((unsigned char)c) || c == '_') ? Ident()
+                : (c == '"' && Peek(1) == '"' && Peek(2) == '"') ? TripleString(false)
                 : c == '"' ? String()
                 : c == '\'' ? CharLiteral()
+                : (c == '$' && Peek(1) == '"' && Peek(2) == '"' && Peek(3) == '"') ? TripleString(true)
                 : (c == '$' && Peek(1) == '"') ? InterpString()
+                : (c == '@' && Peek(1) == '"') ? VerbatimString()
                 : Operator();
         t.line = line;
         t.column = col;
@@ -85,10 +88,17 @@ Token Lexer::Number() {
     while (std::isdigit((unsigned char)Peek()) || Peek() == '.') s += Advance();
     // Accept C# numeric suffixes (5f, 1.0f, 2d) so pasted code runs; every
     // number is already a decimal, so the editor flags them as unnecessary.
-    bool suffix = false;
+    bool suffix = false, isLong = false;
     if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') { Advance(); suffix = true; }
+    else if ((Peek() == 'L' || Peek() == 'l') && !std::isalnum((unsigned char)Peek(1)) && Peek(1) != '_') {
+        // 123L: a 64-bit whole number (where the value type has them; else the same number as 123)
+        if (s.find('.') != std::string::npos) throw ScriptError("a number with a fraction can't be a whole number (L)", m_line, m_col);
+        Advance();
+        isLong = true;
+    }
     Token t{Tok::Number, s, std::stod(s), m_line};
     t.suffix = suffix;
+    t.isLong = isLong;
     return t;
 }
 
@@ -149,6 +159,38 @@ Token Lexer::InterpString() {
     if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
     Advance(); // closing quote
     return {Tok::InterpString, s, 0, m_line};
+}
+
+Token Lexer::TripleString(bool interp) {
+    const int sl = m_line, sc = m_col;
+    if (interp) Advance();                    // '$'
+    Advance(); Advance(); Advance();          // the opening quotes
+    if (Peek() == '\r' && Peek(1) == '\n') { Advance(); Advance(); }
+    else if (Peek() == '\n') Advance();
+    std::string s;
+    while (!AtEnd() && !(Peek() == '"' && Peek(1) == '"' && Peek(2) == '"')) {
+        const char c = Advance();
+        if (c != '\r') s += c;
+    }
+    if (AtEnd()) throw ScriptError("unterminated string (\"\"\" with no closing \"\"\")", sl, sc);
+    Advance(); Advance(); Advance();
+    return {interp ? Tok::InterpString : Tok::String, s, 0, m_line};
+}
+
+Token Lexer::VerbatimString() {
+    const int sl = m_line, sc = m_col;
+    Advance(); Advance();   // @ and the opening quote
+    std::string s;
+    for (;;) {
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
+        const char c = Advance();
+        if (c == '"') {
+            if (Peek() == '"') { Advance(); s += '"'; continue; }
+            break;
+        }
+        if (c != '\r') s += c;
+    }
+    return {Tok::String, s, 0, m_line};
 }
 
 Token Lexer::Ident() {

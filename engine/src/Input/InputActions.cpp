@@ -192,14 +192,14 @@ std::string InputBinding::Label(Input::PadFamily family) const {
 
 float InputBinding::Value() const {
     switch (kind) {
-        case Kind::Key:       return Input::GetKeyGame((char)code) ? 1.0f : 0.0f;
+        case Kind::Key:       return Input::GetKeyGameExact((char)code) ? 1.0f : 0.0f;
         case Kind::Mouse:     return Input::GetMouseButton(code) ? 1.0f : 0.0f;
         case Kind::Wheel:     // one notch this frame: code +1 up, -1 down, +2 right, -2 left
             if (code == 2 || code == -2) return Input::MouseWheelX() * (code > 0 ? 1.0f : -1.0f) > 0.0f ? 1.0f : 0.0f;
             return Input::MouseWheel() * (code >= 0 ? 1.0f : -1.0f) > 0.0f ? 1.0f : 0.0f;
         case Kind::Gesture:   return Gestures::Happened(code) ? 1.0f : 0.0f;
         case Kind::Chord: {
-            for (int i = 0; i < 4 && keys[i]; ++i) if (!Input::GetKeyGame(keys[i])) return 0.0f;
+            for (int i = 0; i < 4 && keys[i]; ++i) if (!Input::GetKeyGameExact(keys[i])) return 0.0f;
             return 1.0f;
         }
         case Kind::PadButton:
@@ -217,8 +217,8 @@ float InputBinding::Value() const {
 Vec2 InputBinding::Vector() const {
     switch (kind) {
         case Kind::Keys4:
-            return {(Input::GetKeyGame(keys[3]) ? 1.0f : 0.0f) - (Input::GetKeyGame(keys[2]) ? 1.0f : 0.0f),
-                    (Input::GetKeyGame(keys[0]) ? 1.0f : 0.0f) - (Input::GetKeyGame(keys[1]) ? 1.0f : 0.0f)};
+            return {(Input::GetKeyGameExact(keys[3]) ? 1.0f : 0.0f) - (Input::GetKeyGameExact(keys[2]) ? 1.0f : 0.0f),
+                    (Input::GetKeyGameExact(keys[0]) ? 1.0f : 0.0f) - (Input::GetKeyGameExact(keys[1]) ? 1.0f : 0.0f)};
         case Kind::StickLeft:  return Input::GamepadAxis(player);
         case Kind::StickRight: return Input::GamepadRightAxis(player);
         case Kind::DPad:

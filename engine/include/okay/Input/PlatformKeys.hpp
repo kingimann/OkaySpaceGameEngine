@@ -27,8 +27,8 @@ inline platform::Key KeyForLetter(platform::Key found, char c) {
 inline platform::Key KeyForLetter(platform::Backend& pb, char c) { return KeyForLetter(pb.KeyForChar(c), c); }
 
 /// The characters Input.FeedKeys uses for platform key `k`, for Input::FeedKeyTap: the letter
-/// or digit on that key, Space, Enter, Escape, Backspace, and an arrow key as itself plus W A
-/// S D (the same pairing the held-key feed makes). `charKey(c)` gives the key for a character
+/// or digit on that key, Space, Enter, Escape, Backspace, and an arrow key as itself (Input::FeedKeys
+/// adds its W A S D letter for the raw reads, as for a held arrow). `charKey(c)` gives the key for a character
 /// (KeyForLetter on the backend). Empty when the key means nothing to the game.
 template <class CharKey>
 inline void TapCharsForKey(platform::Key k, CharKey charKey, std::vector<char>& out) {
@@ -42,10 +42,10 @@ inline void TapCharsForKey(platform::Key k, CharKey charKey, std::vector<char>& 
         case Key::Escape:    out.push_back((char)27); break;
         case Key::Backspace: out.push_back((char)8); break;
         case Key::Tab:       out.push_back('\t'); break;
-        case Key::Up:        out.push_back('w'); out.push_back(Input::KeyUp); break;
-        case Key::Left:      out.push_back('a'); out.push_back(Input::KeyLeft); break;
-        case Key::Down:      out.push_back('s'); out.push_back(Input::KeyDown); break;
-        case Key::Right:     out.push_back('d'); out.push_back(Input::KeyRight); break;
+        case Key::Up:        out.push_back(Input::KeyUp); break;
+        case Key::Left:      out.push_back(Input::KeyLeft); break;
+        case Key::Down:      out.push_back(Input::KeyDown); break;
+        case Key::Right:     out.push_back(Input::KeyRight); break;
         default: break;
     }
 }
@@ -67,11 +67,11 @@ inline void AppendHeldMainKeys(Held held, CharKey charKey, bool escape, std::vec
     if (held(Key::Backspace)) down.push_back((char)8);                             // text editing
     if (held(Key::Return) || held(Key::KpEnter)) down.push_back('\r');
     if (escape) down.push_back((char)27);
-    // Arrows count as themselves and as W A S D, so axis_x / axis_y and key("w") agree.
-    if (held(Key::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-    if (held(Key::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-    if (held(Key::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-    if (held(Key::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
+    // Arrows are fed as themselves; Input::FeedKeys adds W A S D for the raw reads (and not for bindings).
+    if (held(Key::Up))    down.push_back(Input::KeyUp);
+    if (held(Key::Left))  down.push_back(Input::KeyLeft);
+    if (held(Key::Down))  down.push_back(Input::KeyDown);
+    if (held(Key::Right)) down.push_back(Input::KeyRight);
 }
 /// The same on a backend: held keys from Backend::IsKeyDown, letters by KeyForLetter, Escape when it is held.
 inline void AppendHeldMainKeys(platform::Backend& pb, std::vector<char>& down) {

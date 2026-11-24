@@ -368,7 +368,7 @@ bool Claimed(int id, const std::vector<int>& a, const std::vector<int>* b) {
 // A binding read with some of its inputs swallowed: the free keys of a four-key direction or the d-pad still count.
 Vec2 MaskedVector(const InputBinding& b, const std::vector<int>& a, const std::vector<int>* c) {
     using K = InputBinding::Kind;
-    auto key = [&](char k) { return !Claimed(KeyId(k), a, c) && Input::GetKeyGame(k) ? 1.0f : 0.0f; };
+    auto key = [&](char k) { return !Claimed(KeyId(k), a, c) && Input::GetKeyGameExact(k) ? 1.0f : 0.0f; };
     auto pad = [&](int btn) { return !Claimed(PadId(btn, b.player), a, c) && Input::GetGamepadButton(btn, b.player) ? 1.0f : 0.0f; };
     switch (b.kind) {
         case K::Keys4: return {key(b.keys[3]) - key(b.keys[2]), key(b.keys[0]) - key(b.keys[1])};

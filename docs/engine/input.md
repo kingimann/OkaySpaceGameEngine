@@ -109,10 +109,7 @@ pieces existed but were not connected. Nothing here was run on Windows, in a rea
    154..175: numpad 0-9, divide, multiply, minus, plus, Enter, period, Caps Lock, Print Screen, Scroll Lock, Pause, Num
    Lock, Menu. No existing code moved, so saved bindings load as before. Numpad Enter is fed as itself and as Enter:
    `key:kpenter` is the numpad key alone, `key:enter` is still either, and a "press a key" field gets the numpad key.
-   While a text field has focus the numpad's digits and signs are typing keys. **Not done: the arrows.** An arrow is
-   still fed as itself and as W, A, S or D. `key:up` is the arrow alone already; `key:w` also fires on Up. Taking the
-   alias away would change every raw reader (14 `GetKey('w')`-style reads in the engine, and game scripts), and a
-   per-game switch needs a place to live in the asset format and the Input Actions window. It was left as it is.
+   While a text field has focus the numpad's digits and signs are typing keys. **Arrows.** The feeds (`AppendHeldMainKeys`, `TapCharsForKey`) give an arrow as itself only; `Input::FeedKeys` then adds its W, A, S or D letter for the raw reads (`GetKey('w')`, `AxisWASD`, script `key("w")`), so old games and the 14 raw reads in the engine keep walking on the arrows. A letter held only because of its arrow is marked, and the bindings read `Input::GetKeyGameExact`: `key:w` no longer fires on Up, so the arrows and W A S D can be bound to different actions. The default assets already bind the arrows on their own. An older asset that binds only W A S D no longer moves on the arrows through that binding (it is not migrated); the input recorder records the arrow alone and adds the letter on replay.
 6. **Eight controllers.** `Input::kMaxGamepads` is 8, the same as `PlayerInputManager::kMaxPlayers`. The literal fours
    tied to it follow: `pad0`..`pad7` (`ia_join`), `pad:a@7`, the Player Input component's `controller` (0..7), the
    per-controller Smooth memory of a processor. Saved files do not change. More than four real pads was never tried.

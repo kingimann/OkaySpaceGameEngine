@@ -16,6 +16,7 @@ namespace okay {
 std::array<bool, 256> Input::s_current{};
 std::array<bool, 256> Input::s_previous{};
 std::array<bool, 256> Input::s_tapKeys{};
+std::array<bool, 256> Input::s_aliasOnly{};
 unsigned Input::s_tapMouse = 0;
 bool Input::s_interactive = false;
 bool Input::s_textFocused = false;
@@ -73,12 +74,14 @@ void Input::EndSession() {
 #endif
     s_current.fill(false);
     s_previous.fill(false);
+    s_aliasOnly.fill(false);
 }
 
 void Input::Poll() {
     s_previous = s_current;
     // Keys are momentary: a key counts as "down" only on the frame it arrives.
     s_current.fill(false);
+    s_aliasOnly.fill(false);
 
 #if defined(__unix__) || defined(__APPLE__)
     if (!s_interactive) return;
@@ -91,6 +94,18 @@ void Input::Poll() {
         }
     }
 #endif
+}
+
+// An arrow also reads as W A S D for the raw reads (GetKey('w'), AxisWASD, scripts' key("w")), so old games keep
+// walking on the arrows. A letter held only because of its arrow is marked: a binding (GetKeyGameExact) sees the arrow
+// alone, so the arrows and W A S D can be bound to different actions.
+void Input::ApplyArrowAliases() {
+    s_aliasOnly.fill(false);
+    static const char kArrowLetter[4][2] = {{KeyUp, 'w'}, {KeyLeft, 'a'}, {KeyDown, 's'}, {KeyRight, 'd'}};
+    for (const auto& al : kArrowLetter) {
+        const unsigned char arrow = (unsigned char)al[0], letter = (unsigned char)al[1];
+        if (s_current[arrow] && !s_current[letter]) { s_current[letter] = true; s_aliasOnly[letter] = true; }
+    }
 }
 
 void Input::FeedKeys(const std::vector<char>& downKeys) {
@@ -106,6 +121,7 @@ void Input::FeedKeys(const std::vector<char>& downKeys) {
     if (held(KeyLShift) || held(KeyRShift)) s_current[(unsigned char)KeyShift] = true;
     if (held(KeyLCtrl) || held(KeyRCtrl))   s_current[(unsigned char)KeyCtrl] = true;
     if (held(KeyLAlt) || held(KeyRAlt))     s_current[(unsigned char)KeyAlt] = true;
+    ApplyArrowAliases();
     // A newly pressed key means the keyboard, except W A S D and Space while a controller is
     // being used: the runtime also types those for a pad (see FeedPadAt), which is not the keyboard.
     bool padBusy = false;
@@ -442,6 +458,12 @@ bool IsTypingKey(char key) {
 } // namespace
 bool Input::GetKeyGame(char key) { return !(s_textFocused && IsTypingKey(key)) && GetKey(key); }
 bool Input::GetKeyDownGame(char key) { return !(s_textFocused && IsTypingKey(key)) && GetKeyDown(key); }
+bool Input::GetKeyGameExact(char key) {
+    return GetKeyGame(key) && !s_aliasOnly[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)))];
+}
+bool Input::GetKeyDownGameExact(char key) {
+    return GetKeyDownGame(key) && !s_aliasOnly[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)))];
+}
 
 std::string Input::KeyName(char key) {
     switch (key) {

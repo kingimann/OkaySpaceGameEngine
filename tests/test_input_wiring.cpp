@@ -6,6 +6,7 @@
 //   5 punctuation, numpad, CapsLock, PrintScreen, Pause, NumLock and Menu have names and codes; old codes stay
 //   6 eight controllers, so players 5 to 8 get a pad
 //   7 a controller connecting or leaving shows a toast through the UI the host installed
+//   8 the arrows can be bound apart from W A S D (raw reads still see an arrow as its letter)
 // player/main.cpp and editor/BuildGame.cpp cannot be linked into a test, so their one-line calls are guarded by source
 // (as test_editor_play_input does); everything behind those calls is run here for real.
 #include "test_framework.hpp"
@@ -373,6 +374,52 @@ void TestPadToasts() {
     PadEvent e; while (PadProfiles::PopEvent(e)) {}
 }
 
+void TestArrowsApartFromWasd() {
+    RUN_SUITE("8 arrows bound apart from W A S D");
+    Prefs::Clear(); InputRuntime::Reset(); InputActions::Restore(); QuietInput();
+    // The held-key feed (player and editor's Play) and the tap feed give the arrow alone now.
+    {
+        using pf::Key;
+        bool held[pf::kKeyCount] = {};
+        held[(int)Key::Up] = true;
+        std::vector<char> d;
+        AppendHeldMainKeys([&](Key k) { return (int)k >= 0 && (int)k < pf::kKeyCount && held[(int)k]; },
+                           [](char c) { return KeyForLetter(Key::Unknown, c); }, false, d);
+        CHECK(d.size() == 1 && d[0] == Input::KeyUp);
+        std::vector<char> t;
+        TapCharsForKey(Key::Left, [](char c) { return KeyForLetter(Key::Unknown, c); }, t);
+        CHECK(t.size() == 1 && t[0] == Input::KeyLeft);
+    }
+    InputActions::Define("Forward", {"key:w"});
+    InputActions::Define("Menu Up", {"key:up"});
+    InputActions::Define("Walk", {"keys:w,s,a,d"}, true);
+    // Up alone: the arrow's action fires, W's does not; raw reads still see W (old games and scripts keep walking).
+    Input::FeedKeys({Input::KeyUp}); InputActions::Tick(0.016f);
+    CHECK(InputActions::Get("Menu Up"));
+    CHECK(!InputActions::Get("Forward"));
+    CHECK(InputActions::Vector("Walk").y == 0.0f);
+    CHECK(Input::GetKey('w') && Input::GetKeyGame('w') && Input::AxisWASD().y == 1.0f);
+    CHECK(Input::GetKeyGameExact(Input::KeyUp) && !Input::GetKeyGameExact('w'));
+    CHECK(InputActions::Vector("Move").y == 1.0f);       // the default Move binds the arrows on their own
+    // W alone: the other way round.
+    Input::FeedKeys({'w'}); InputActions::Tick(0.016f);
+    CHECK(InputActions::Get("Forward") && !InputActions::Get("Menu Up"));
+    CHECK(InputActions::Vector("Walk").y == 1.0f);
+    // Both held: both fire, and W is not "only an arrow".
+    Input::FeedKeys({'w', Input::KeyUp}); InputActions::Tick(0.016f);
+    CHECK(InputActions::Get("Forward") && InputActions::Get("Menu Up"));
+    CHECK(Input::GetKeyGameExact('w'));
+    // A tap of the arrow (down and up between two polls) is the arrow alone too.
+    Input::FeedKeys({}); Input::FeedKeyTap(Input::KeyDown); Input::FeedKeys({}); InputActions::Tick(0.016f);
+    CHECK(Input::GetKey('s') && !Input::GetKeyGameExact('s') && Input::GetKeyGameExact(Input::KeyDown));
+    // Holding the arrow, W A S D's key-down fires once (the alias is not "pressed" every frame).
+    Input::FeedKeys({}); Input::FeedKeys({Input::KeyRight});
+    CHECK(Input::GetKeyDown('d'));
+    Input::FeedKeys({Input::KeyRight});
+    CHECK(!Input::GetKeyDown('d') && Input::GetKey('d'));
+    InputActions::Restore(); InputRuntime::Reset(); Prefs::Clear(); QuietInput();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -384,5 +431,6 @@ int main(int argc, char** argv) {
     if (!only || only == 5) TestMoreKeys();
     if (!only || only == 6) TestEightPads();
     if (!only || only == 7) TestPadToasts();
+    if (!only || only == 8) TestArrowsApartFromWasd();
     TEST_MAIN_RESULT();
 }

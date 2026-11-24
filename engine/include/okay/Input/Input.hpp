@@ -22,8 +22,9 @@ public:
     /// Command on macOS, the Windows / Super key elsewhere. Either side. Text
     /// fields treat it like Ctrl for copy, cut and paste.
     static constexpr char KeyCmd   = static_cast<char>(153);
-    // Arrow keys, distinct from WASD. AxisWASD counts either. The player and
-    // the editor feed both, so a script that asks for "up" or for W agrees.
+    // Arrow keys, distinct from WASD. AxisWASD counts either. FeedKeys also
+    // reports an arrow as its W A S D letter to the raw reads, so a script that asks
+    // for "up" or for W agrees; bindings read the arrow alone (GetKeyGameExact).
     static constexpr char KeyUp    = 1;
     static constexpr char KeyDown  = 2;
     static constexpr char KeyLeft  = 3;
@@ -73,7 +74,7 @@ public:
     /// Map a friendly key NAME to the char code this layer uses ("space",
     /// "enter", "shift", "up", "f5", "lshift", "pageup", "a", "7"...). A single
     /// character is taken as-is (lowercased). Arrows are KeyUp / KeyDown / KeyLeft /
-    /// KeyRight; the player and editor also report them as WASD, and AxisWASD counts
+    /// KeyRight; FeedKeys also reports them as WASD to raw reads, and AxisWASD counts
     /// both. Names are case-insensitive and ignore spaces, '_' and '-' ("Left Shift",
     /// "page_up"). An unknown multi-char name falls back to its first letter (kept so
     /// old scripts behave the same; check IsKnownKeyName first). Shared by
@@ -120,6 +121,11 @@ public:
     /// TextFocused(). Escape, Enter, F-keys, modifiers and Tab still come through.
     static bool GetKeyGame(char key);
     static bool GetKeyDownGame(char key);
+    /// The same as a binding reads it: W, A, S or D held only because its arrow is down does not count (the raw
+    /// reads above still see the arrows as W A S D, so old games and scripts keep walking on them). Action bindings
+    /// (key:w, four-key directions, chords) read this, so the arrows can be bound apart from W A S D.
+    static bool GetKeyGameExact(char key);
+    static bool GetKeyDownGameExact(char key);
     /// True only on the frame the key was first pressed.
     static bool GetKeyDown(char key);
     /// True only on the frame the key was released.
@@ -332,10 +338,12 @@ private:
     static void BeginSession();   // put terminal into raw, non-blocking mode
     static void EndSession();     // restore terminal
     static void Poll();           // sample input once per frame
+    static void ApplyArrowAliases();   // arrows also read as W A S D (raw reads only; see GetKeyGameExact)
 
     static std::array<bool, 256> s_current;
     static std::array<bool, 256> s_previous;
     static std::array<bool, 256> s_tapKeys;   // taps seen since the last FeedKeys
+    static std::array<bool, 256> s_aliasOnly; // W A S D held only because their arrow is (FeedKeys)
     static unsigned s_tapMouse;
     static bool s_interactive;
     static bool s_textFocused;

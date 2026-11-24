@@ -1,0 +1,2 @@
+print("big")
+exit(300)

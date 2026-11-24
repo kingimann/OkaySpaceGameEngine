@@ -786,7 +786,7 @@ Not verified on real files: `MESH` (no real file has one; synthetic only), polyg
 
 *Was `docs/own_fbx_reader.md` until 2026-11-20.*
 
-Status: **the default FBX reader since 2026-11-18 (#982), with ufbx as the fallback.** ufbx (`engine/third_party/ufbx`) is still compiled in and reads any file ours refuses; `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` sends every file to ufbx. Nothing has been removed. (This page said "off by default" until 2026-11-21; the CMake option has been `ON` since #982.) This follows stage 2 of `docs/status/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
+Status: **the only FBX reader since 2026-11-23.** ufbx (`engine/third_party/ufbx`), its import path and the `OKAY_OWN_FBX` switch are deleted. A file this reader refuses fails the import with the reader's reason; no other reader is asked. (It was the default from 2026-11-18, #982, with ufbx as the fallback.)
 
 ### What it is
 
@@ -794,23 +794,22 @@ Written from the public description of the FBX format, with no code from ufbx, t
 
 | File | What |
 |---|---|
-| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs, the on/off switch |
-| `engine/src/Render/FbxReader.cpp` | Our own zlib/deflate decoder, binary FBX 7.x reader (32-bit and 64-bit record offsets), ASCII FBX reader |
+| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs |
+| `engine/src/Render/FbxReader.cpp` | Binary FBX reader, 6.0 to 7.x (32-bit and 64-bit record offsets), ASCII FBX reader, the version message; zlib arrays through the engine inflate |
 | `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes, skins, blend shapes, materials, textures, baked animation |
-| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the same GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips the ufbx path builds |
-| `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) |
+| `engine/src/Render/FbxLegacy.hpp` | FBX 6.0 / 6.1 element tree rewritten in the 7.x layout before the scene is built (section "FBX 6.x and 7.0") |
+| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips |
+| `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) and `tests/assets/fbx/legacy/` (6.0, 6.1, 7.0, and two 5.0 files that must be refused) |
 
 The reader files use the standard library and one header-only file of our own, `engine/include/okay/Core/Inflate.hpp` (the engine's shared inflate; no `<mutex>`/`<thread>`, no engine library), so the hostile-input test still builds them on their own under sanitizers (it only needs `engine/include` on the include path).
 
 ### Turning it on
 
-- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `ON` since #982; `OFF` makes ufbx the default).
-- Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
-- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
+Always on: there is no CMake option or environment variable for it any more. A leftover `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` changes nothing for FBX.
 
 ### What it handles
 
-- Binary FBX 7.1 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 7.x. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
+- Binary FBX 6.0 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 6.x and 7.x (6.x through the rewrite in section "FBX 6.x and 7.0"). FBX 5.x and older are refused with a message that names the version and says to export again as FBX 2011 or newer. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
 - Embedded textures (`Video` / `Content`, raw bytes in binary, base64 in ASCII) and texture file names.
 - Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, every UV set with its name (section "UV sets" below), vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
 - Triangulation: triangles directly, quads and n-gons by ear clipping on the polygon's dominant plane (concave polygons keep their winding), fan fallback for degenerate input and for polygons over 256 corners.
@@ -845,7 +844,7 @@ The reader files use the standard library and one header-only file of our own, `
 Say plainly what a user might trip over:
 
 - **Real files: one outside corpus only.** 43 files from the test directories of an Assimp 5.4.3 checkout were read (`docs/content/model_corpus.md`): 42 read and agree with ufbx on counts, names, bounding boxes, surface area, skin weights, inverse binds and clip samples (within the tolerances listed there); one damaged file is rejected by every reader. Five bugs came out of it and are fixed (byte-array properties, takes sharing a timeline, stored slopes of auto keys, bridged polygons, integer conversions of hostile doubles). That is a handful of exporters and several tiny test cases: a file from another exporter can still break us. Keep ufbx as the default.
-- FBX 6.x and older (no `Objects` section / different layout) and binary versions below 7100. `Properties60` is not read.
+- FBX 5.x and older: refused with a clear message (`UnsupportedVersionMessage`). FBX 6.x: what is not read is listed in section "FBX 6.x and 7.0".
 - `InheritType` other than the default (`RrSs`, `Rrs` scale inheritance) is treated as the default. ufbx can compensate for these.
 - Only `Mesh` geometry. NURBS, patches, lines, cameras, lights, skeleton node attributes, `Pose`/`BindPose` objects, templates in `Definitions` and visibility are ignored (clusters carry the bind matrices we use).
 - Mesh data: every UV set is read, but the engine's `Mesh` has one UV channel, so the import uses set 0 only (the other sets and the names stay in `okay::fbx` data); vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).
@@ -992,6 +991,28 @@ What the clip gets (`engine/src/Render/FbxScene.cpp`, `BakeNodeFileKeys`; writte
 
 Accuracy (`fbx_file_keys`, 2026-11-21, fixtures and real files: 15 animated files, 119 animated nodes, 217,033 samples at 240 Hz against the curves): 1,878 keys where the 30 Hz bake had 27,294; worst error 0.56 of the tolerance; worst rotation error 0.028 degrees (the 30 Hz clip's: 1.18 degrees, on the 25 Hz file `huesitos.fbx`).
 
+### FBX 6.x and 7.0
+
+Since 2026-11-23 (branch `claude/third-party-2`, the change that deleted ufbx, which used to read these files).
+
+- **7.0 (FBX 2010):** the 7.x object layout; only the binary version gate (7100 before) kept it out. Read like 7.4.
+- **6.0 / 6.1 (FBX 2006 to 2009):** a different object layout. `FbxLegacy.hpp` rewrites the element tree in the 7.x layout, then the one builder reads it. Chosen by the version (6000 to 6999), else by the shape (`Connect` records, or objects named instead of numbered).
+  - Objects are named (`"Model::Cube"`); each gets a number, connections are matched by name (`"Model::Scene"` is the root); binary names `Name\0\1Class` are matched too.
+  - `Properties60` (`Property: name, type, flags, values`) becomes `Properties70` (an empty label added).
+  - The mesh inside a `Model` (`Vertices`, `PolygonVertexIndex`, every `LayerElement*`, `Layer`) becomes a `Geometry` of its own; a `Skin` deformer connected to the model is moved to that geometry.
+  - ASCII value lists (`Vertices: 1,2,3,...`, wrapped over lines with a trailing or leading comma, and `Key:` with its values on the next line) become arrays. This needed a small change in the ASCII parser (FbxReader.cpp): a line that starts with a comma, or a line of values after an element with no value yet, continues the element.
+  - Textures connect to the model in 6.x: each material of the model gets the texture its polygons use (`LayerElementTexture` / `TextureId`, `AllSame` or `ByPolygon`), as its diffuse texture; without that layer texture k goes on material k. `Video` `Filename` is read as `FileName`.
+  - Blend shapes: `Shape: "name"` inside the mesh becomes a BlendShape deformer, one channel per shape, weight from the model property with the shape's name.
+  - `GlobalSettings` inside `Objects` is used as the top-level one.
+  - Animation: each `Take` becomes a stack (its `LocalTime` gives the span) with one layer; each model's `Transform` / `T` `R` `S` / `X` `Y` `Z` channels become curve nodes and curves; a channel named as one of the model's shapes animates its weight. Keys: time, value, `C` (constant), `L` (linear) or `U` (cubic); the extra values after the letter are skipped by finding where the next key starts.
+- **Not read in 6.x (UNFINISHED row "FBX 6.x"):** the tangent numbers of cubic keys (the curve takes its slopes from the neighbouring keys, so it passes every key but may bend differently between keys); texture assignment when a model has textures but no material; per-polygon textures beyond one texture per material; takes' channels on anything but models (materials, lights, cameras); constraints, characters and other 6.x objects; FBX 5.x and older.
+- **How sure:** checked only on files our own script writes (`tests/assets/fbx/legacy/`, from `cube_scene6` / `rig_scene6`): each imports like its 7.4 / 7.5 twin. No real 6.x file was available: the details that only real files can confirm are unverified, in particular how binary 6.x files spell names (`Model::Cube` is assumed, `Name\0\1Class` accepted too), whether their key letters are strings (assumed; a `C`-typed byte would be read as 0 / 1), and the key tangent letters after `U`.
+- **Sources** (rule 19a: prose and data only, no code from any FBX reader or writer, Blender's included, was read):
+  - "FBX binary file format specification", Blender developers blog, 2013 (`code.blender.org/2013/08/fbx-binary-file-format-specification/`), and its comments: the binary record layout (end offset, property count, property list length, name, nested list closed by a 13-byte null record; 64-bit fields and a 25-byte null record from 7.5), the property type letters and the array encodings. It says the 32-bit layout was tested on files from 2011 "and should work with earlier ones"; it says nothing of 6.x objects.
+  - Autodesk FBX SDK documentation (concepts: `Properties60` / `Properties70`, takes and animation stacks, KTime of 46186158000 a second), from general knowledge; not re-read for this change.
+  - General public knowledge of the 6.x ASCII layout (objects named `Class::Name`, `Connect:` records, `Takes` / `Channel` / `Key` lists); a web search on 2026-11-23 found no prose description of the 6.x key list, only exporter source code, which was not opened.
+  - Byte study: of our own generated fixtures only.
+
 ### Exact ASCII numbers
 
 ASCII FBX numbers are converted to the correctly rounded double (what `strtod` gives) by `engine/src/Render/DecimalToDouble.hpp`, written for this engine from Clinger's fast path (PLDI 1990) and the method described in Lemire, "Number Parsing at a Gigabyte per Second" (2021), with its own error analysis; the 5^q table (`Pow5Table.inc`) is generated by `scripts/gen_pow5_table.py` from exact integers. When the method cannot decide, it falls back to `strtod`. `decimal_to_double` checks it against `strtod` bit for bit and re-derives every table entry with its own big-integer arithmetic; `fbx_exact` checks the reader's fast paths against the plain code they replaced.
@@ -1008,6 +1029,7 @@ ASCII FBX numbers are converted to the correctly rounded double (what `strtod` g
 - `fbx_reader` also checks the UV sets (`uv2_bin.fbx`, `uv2_ascii.fbx` by hand, every file against ufbx; section "UV sets").
 - `fbx_file_keys` (standalone): the clip keys against the curves at 240 Hz, the tolerances, jumps and the 30 Hz clip; `fbx_exact` (standalone): the fast paths bit for bit against the plain code; `decimal_to_double` (standalone): the ASCII number conversion against `strtod`.
 - Sanitizers, 2026-11-21 (after the UV-set and skin changes): `fbx_hostile` (20,000 mutations per fixture), `fbx_file_keys` and a driver that loads, triangulates and keys every corpus file and fixture, all built standalone with `-fsanitize=address,undefined,float-cast-overflow`: clean. The engine-linked `fbx_reader` was not rebuilt under sanitizers this time.
+- `fbx_reader` "fbx legacy" suites: every file in `tests/assets/fbx/legacy/` against its 7.4 / 7.5 twin (nodes and world matrices, corners, materials and textures, skin clusters, weights and inverse binds, blend shape, clips at nine times, key times only for the cubic curve), the scene and single-mesh import paths, FBX 5.0 refused with its message, and a file with no objects failing instead of importing as nothing. `fbx_hostile` truncates and fuzzes the legacy files too (not the 5.0 ones).
 - Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 1 to 12 KB each.
 
 ## Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)

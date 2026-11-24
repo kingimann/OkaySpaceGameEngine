@@ -826,48 +826,48 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 - `SetIfUnset` function, line 75
 - `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
 - `Info` struct, line 95
-- `FormatLine` function, line 107: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 127: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 134: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 141: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 182
-- `Startup` function, line 186: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `FormatLine` function, line 106: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 125: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 132: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 139: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 177
+- `Startup` function, line 181: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
 - `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
-- `AlternativeExe` struct, line 61: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
-- `Alternative` function, line 65
-- `Context` struct, line 79: What is true on this machine: used to hide items that cannot work here.
-- `Available` function, line 94
-- `SplitIds` function, line 102
-- `JoinIds` function, line 111
-- `Has` function, line 116
-- `Find` function, line 120
-- `Select` function, line 126: The ids of 'items' for which 'pick(id)' is true, in table order.
-- `Parse` function, line 135: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
-- `Serialize` function, line 145: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
-- `AllOn` function, line 152: The default: everything on.
-- `AllOff` function, line 154: "Back to the third-party parts": everything off.
-- `Set` function, line 155
-- `AppliedVar` function, line 164
-- `PutEnv` function, line 166
-- `DropEnv` function, line 173
-- `AppliedNow` function, line 180
-- `SetByUser` function, line 186: True when the person set the item's variable themselves (it is set and we did not set it).
-- `Apply` function, line 192: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
-- `Status` enum, line 207
-- `StatusOf` function, line 210: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
-- `StatusText` function, line 217
-- `DefaultPath` function, line 228: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
-- `LoadFile` function, line 242
-- `SaveFile` function, line 249
-- `State` struct, line 260: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
-- `Global` function, line 265
-- `Startup` function, line 268: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-- `SaveChosen` function, line 275: Save the screen's choice to the file Startup() read.
+- `AlternativeExe` struct, line 60: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
+- `Alternative` function, line 64
+- `Context` struct, line 78: What is true on this machine: used to hide items that cannot work here.
+- `Available` function, line 93
+- `SplitIds` function, line 101
+- `JoinIds` function, line 110
+- `Has` function, line 115
+- `Find` function, line 119
+- `Select` function, line 125: The ids of 'items' for which 'pick(id)' is true, in table order.
+- `Parse` function, line 134: Read the file text and return the ids that are ON, in table order. Only the 'off=' line decides: every item not listed
+- `Serialize` function, line 144: Write the choice: 'off=' (what Parse reads) and 'on=' (what the older off-by-default programs read, so they agree).
+- `AllOn` function, line 151: The default: everything on.
+- `AllOff` function, line 153: "Back to the third-party parts": everything off.
+- `Set` function, line 154
+- `AppliedVar` function, line 163
+- `PutEnv` function, line 165
+- `DropEnv` function, line 172
+- `AppliedNow` function, line 179
+- `SetByUser` function, line 185: True when the person set the item's variable themselves (it is set and we did not set it).
+- `Apply` function, line 191: Set the variables of the chosen (on), available items (not over a variable the person set), remove the ones a parent program set that
+- `Status` enum, line 206
+- `StatusOf` function, line 209: 'chosen': the saved choice. 'runningWith': the ids that were on when this program started (the AppliedNow() taken in Startup).
+- `StatusText` function, line 216
+- `DefaultPath` function, line 227: Where the shared file lives (see the top). 'home' overrides are for the tests; "" = ask the environment.
+- `LoadFile` function, line 241
+- `SaveFile` function, line 248
+- `State` struct, line 259: What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+- `Global` function, line 264
+- `Startup` function, line 267: The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+- `SaveChosen` function, line 274: Save the screen's choice to the file Startup() read.
 
 ## `shared/PainterBridge.hpp`
 

@@ -251,7 +251,7 @@ inline FetchResult PerformWithRetry(const std::string& method, const std::string
 enum class DownloadStatus {
     Ok,                ///< the whole file arrived, matched, and is at `dest`
     HttpError,         ///< a final answer other than 200/206 (after any retries); `httpStatus` says which
-    ChecksumMismatch,  ///< the SHA-256 differs from `expectedSha256` (never retried; the temporary file is removed)
+    ChecksumMismatch,  ///< the SHA-256 differs from `expectedSha256` (the temporary file is removed; tried once more from byte 0 only when the bytes came from a resume)
     SizeMismatch,      ///< more or fewer bytes than `expectedSize`
     Cancelled,         ///< the cancel check or the progress callback said stop
     TooLarge,          ///< more than `maxBytes`, announced or sent
@@ -497,6 +497,7 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
         return cancelled;
     };
 
+    bool wholeRetried = false;      // a checksum mismatch after a resume was already tried again from byte 0
     for (int attempt = 1;; ++attempt) {
         out.retry.attempts = attempt;
         if (cancelNow()) return fail(DownloadStatus::Cancelled, "cancelled", true);
@@ -583,7 +584,18 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             out.bytes = written;
             if (knownTotal && written != knownTotal) return fail(DownloadStatus::SizeMismatch, "the answer ended before the announced size", false);
             if (spec.expectedSize && written != spec.expectedSize) return fail(DownloadStatus::SizeMismatch, "the file is not the expected size", false);
-            if (!wantHex.empty() && out.sha256Hex != wantHex) return fail(DownloadStatus::ChecksumMismatch, "SHA-256 does not match", false);
+            if (!wantHex.empty() && out.sha256Hex != wantHex) {
+                // Bytes from two answers (a resume, or a part an earlier run left) may be two versions of the file glued
+                // together: a resume with only the expected checksum has no If-Range to send. Fetch it once more from
+                // byte 0 before calling the file wrong (PR #1186 review); a file that was never resumed fails at once.
+                if (!wholeRetried && (out.resumes > 0 || out.reusedBytes > 0)) {
+                    wholeRetried = true;
+                    if (!startOver()) return fail(DownloadStatus::WriteFailed, "cannot reset the temporary file", false);
+                    ++out.restarts;
+                    continue;
+                }
+                return fail(DownloadStatus::ChecksumMismatch, "SHA-256 does not match", false);
+            }
             if (spec.syncBeforeRename && ::fsync(fd) != 0) return fail(DownloadStatus::WriteFailed, "cannot sync the temporary file", false);
             // Rename while the lock is still held, so no other run can take the finished file over in between.
             if (::rename(temp.c_str(), dest.c_str()) != 0) return fail(DownloadStatus::WriteFailed, "cannot move the file into place", false);

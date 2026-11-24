@@ -314,8 +314,41 @@ static void Mdl7ManySkins() {
     CHECK(r.ok && r.m.parts.size() == (std::size_t)ns && secs < (budget::kSanitizerBuild ? 20.0 : 2.0));
 }
 
+// MDL7 data size (a review of #1213): a data size of 1 to 47 made the group cursor start past the end it was checked
+// against, so `end - pos` wrapped and no bounds check held (an ASan heap overflow on a 48-byte file, a crash on a 120-byte
+// one). Every data size below the header and one above the file are refused with a reason; 0 still means "the whole file".
+static void Mdl7DataSize() {
+    std::string h;
+    h += "MDL7"; P32(h, 0); P32(h, 0); P32(h, 1); P32(h, 0); P32(h, 0); P32(h, 0);
+    for (unsigned v : {36u, 28u, 16u, 68u, 8u, 16u, 26u, 26u, 68u, 24u}) gs::P16(h, v);
+    CHECK(h.size() == 48);
+    for (std::uint32_t ds = 1; ds < 48; ++ds) {
+        std::string t = h;
+        gs::Put32At(t, gs::mdl7off::kDataSize, ds);
+        ImportedModel m; std::string err;
+        CHECK(!ReadMdlBuffer(t, "", m, &err) && err.find("data size") != std::string::npos && m.parts.empty());
+    }
+    {   // the 120-byte file: data size 1, one group of size 0x7fffffff, one skin of type 0x16 that is 1 GiB wide
+        std::string t = h;
+        gs::Put32At(t, gs::mdl7off::kDataSize, 1);
+        P32(t, 1); P32(t, 0x7fffffff); gs::PStr(t, "g", 16);
+        P32(t, 1); P32(t, 0); P32(t, 0); P32(t, 0); P32(t, 0);
+        P32(t, 0x16); P32(t, 1 << 30); P32(t, 1); gs::PStr(t, "s", 16);
+        CHECK(t.size() == 120);
+        ImportedModel m; std::string err;
+        CHECK(!ReadMdlBuffer(t, "", m, &err) && err.find("data size") != std::string::npos && m.parts.empty());
+        gs::Put32At(t, gs::mdl7off::kDataSize, 121);   // one byte more than the file
+        err.clear();
+        CHECK(!ReadMdlBuffer(t, "", m, &err) && err.find("larger than the file") != std::string::npos && m.parts.empty());
+        gs::Put32At(t, gs::mdl7off::kDataSize, 0);   // the whole file: the group size is then the thing refused
+        err.clear();
+        CHECK(!ReadMdlBuffer(t, "", m, &err) && err.find("bad byte size") != std::string::npos);
+    }
+}
+
 int main() {
     RUN_SUITE("e4_hostile");
+    Mdl7DataSize();
     Mdl7ManySkins();
     GameStudioBudgets();
     OgexHugeMatrix();

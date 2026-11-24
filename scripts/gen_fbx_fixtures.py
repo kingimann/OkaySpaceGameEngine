@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Writes the small FBX test fixtures in tests/assets/fbx/ (binary 7.4, binary 7.5 with 64-bit
-offsets, and ASCII), from one scene description, using only the standard library.
+offsets, and ASCII), from one scene description, using only the standard library; and in
+tests/assets/fbx/legacy/ the same scenes in the older layouts (FBX 6.0 / 6.1 and 7.0, binary and ASCII)
+plus two FBX 5.0 files the reader must refuse with a clear message.
 
   python3 scripts/gen_fbx_fixtures.py [outdir]
 
@@ -52,6 +54,9 @@ def bin_prop(p, compress):
         b = v.encode('latin-1')
         return b'S' + struct.pack('<I', len(b)) + b
     if k == 'R': return b'R' + struct.pack('<I', len(v)) + v
+    if k == 'T':   # a bare ASCII token (6.x key interpolation letter): a string in a binary file
+        b = v.encode('latin-1')
+        return b'S' + struct.pack('<I', len(b)) + b
     fmt = {'d': 'd', 'f': 'f', 'l': 'q', 'i': 'i', 'b': 'B', 'c': 'B'}[k]
     raw = struct.pack('<%d%s' % (len(v), fmt), *v)
     if compress and len(raw) >= 64:
@@ -130,6 +135,56 @@ def asc_node(n, ind, out):
         out.append(pad + '}')
     else:
         out.append(line)
+
+
+def asc_values(vals, per_line=12, lead_comma=False):
+    """A plain comma-separated value list (FBX 6.x ASCII: no '*N { a: }' block), wrapped every `per_line` values: the
+    line ends with a comma (the list goes on), or, with lead_comma, the next line starts with one."""
+    lines = []
+    for k in range(0, len(vals), per_line):
+        lines.append(','.join(num(x) for x in vals[k:k + per_line]))
+    if lead_comma:
+        return '\n,'.join(lines)
+    return ',\n'.join(lines)
+
+
+def asc_node6(n, ind, out):
+    """One element in the FBX 6.x ASCII layout: arrays are plain value lists; a 'Key' list starts on the next line (as
+    exporters of that time write it)."""
+    pad = '\t' * ind
+    parts = []
+    for p in n.props:
+        if p.kind in ('d', 'f', 'l', 'i', 'b'):
+            parts.append(asc_values(p.value, lead_comma=(n.name == 'PolygonVertexIndex')))
+        elif p.kind == 'S':
+            parts.append('"%s"' % p.value)
+        elif p.kind == 'R':
+            parts.append('"%s"' % __import__('base64').b64encode(p.value).decode())
+        elif p.kind == 'T':   # a bare token (interpolation letters of a 6.x key list: L, C, U, n, s, a)
+            parts.append(p.value)
+        else:
+            parts.append(num(p.value))
+    if n.name == 'Key':
+        out.append('%sKey: ' % pad)
+        out.append('%s\t%s' % (pad, ','.join(parts)))
+        return
+    line = '%s%s: %s' % (pad, n.name, ','.join(parts))
+    if n.children:
+        out.append(line + ' {')
+        for c in n.children:
+            asc_node6(c, ind + 1, out)
+        out.append(pad + '}')
+    else:
+        out.append(line)
+
+
+def write_ascii6(path, top, version):
+    out = ['; FBX %d.%d.0 project file' % (version // 1000, (version % 1000) // 100), '; written by scripts/gen_fbx_fixtures.py (FBX 6.x layout)', '; ------------------', '']
+    for n in top:
+        asc_node6(n, 0, out)
+        out.append('')
+    with open(path, 'w') as f:
+        f.write('\n'.join(out))
 
 
 def write_ascii(path, top, version):
@@ -348,10 +403,8 @@ def curve_node(sc, name, target, prop, defaults, curves):
     return i
 
 
-def rig_scene(ascii_names):
-    """A 3-segment tube skinned to a 3-bone chain, with a blend shape and a 2 s animation."""
-    sc = Scene(ascii_names)
-    rings = 4
+def tube_mesh(rings=4):
+    """The rig's tube: `rings` square rings one unit apart along Y, joined by quads."""
     verts, polys = [], []
     for r in range(rings):
         for (x, z) in [(-0.5, 0.5), (0.5, 0.5), (0.5, -0.5), (-0.5, -0.5)]:
@@ -360,6 +413,33 @@ def rig_scene(ascii_names):
         for k in range(4):
             a, b = r * 4 + k, r * 4 + (k + 1) % 4
             polys += [a, b, (r + 1) * 4 + (k + 1) % 4, ~((r + 1) * 4 + k)]
+    return verts, polys
+
+
+def cluster_arrays(bi, rings=4):
+    """Indexes, Weights, Transform and TransformLink of bone bi's cluster on the tube."""
+    weights = [[(0, 1.0)], [(0, 0.5), (1, 0.5)], [(1, 0.5), (2, 0.5)], [(2, 1.0)]]
+    idx, w = [], []
+    for r in range(rings):
+        for (b, wt) in weights[r]:
+            if b == bi:
+                for k in range(4):
+                    idx.append(r * 4 + k); w.append(wt)
+    meshtobone = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -float(bi), 0, 1]   # Transform = mesh node relative to the bone (what Blender writes)
+    link = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, float(bi), 0, 1]   # bone bind world: translation (0, bi, 0), column-major
+    return [N('Indexes', [AI(idx)]), N('Weights', [AD(w)]), N('Transform', [AD(meshtobone)]), N('TransformLink', [AD(link)])]
+
+
+def fat_shape():
+    """The "Fat" shape: the top ring moved outwards."""
+    return [N('Indexes', [AI([12, 13, 14, 15])]), N('Vertices', [AD([-0.2, 0, 0.2, 0.2, 0, 0.2, 0.2, 0, -0.2, -0.2, 0, -0.2])]),
+            N('Normals', [AD([0] * 12)])]
+
+
+def rig_scene(ascii_names):
+    """A 3-segment tube skinned to a 3-bone chain, with a blend shape and a 2 s animation."""
+    sc = Scene(ascii_names)
+    verts, polys = tube_mesh()
     g = sc.geometry('Tube', geo_children(verts, polys, None, None, [(0, 0), (1, 0), (1, 1), (0, 1)], [i % 4 for i in range(len(polys))]))
     mesh = sc.model('Tube', 0, t=(0, 0, 0))
     mat = sc.material('Skin', (0.3, 0.6, 0.9))
@@ -373,20 +453,9 @@ def rig_scene(ascii_names):
     skin = sc.nid()
     sc.objects.append(N('Deformer', [L(skin), sc.nm('Deformer', 'Skin'), S('Skin')], [N('Version', [I(101)])]))
     sc.connect(skin, g)
-    weights = [[(0, 1.0)], [(0, 0.5), (1, 0.5)], [(1, 0.5), (2, 0.5)], [(2, 1.0)]]
     for bi, bone in enumerate(bones):
-        idx, w = [], []
-        for r in range(rings):
-            for (b, wt) in weights[r]:
-                if b == bi:
-                    for k in range(4):
-                        idx.append(r * 4 + k); w.append(wt)
         cl = sc.nid()
-        meshtobone = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -float(bi), 0, 1]   # Transform = mesh node relative to the bone (what Blender writes)
-        link = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, float(bi), 0, 1]   # bone bind world: translation (0, bi, 0), column-major
-        sc.objects.append(N('Deformer', [L(cl), sc.nm('SubDeformer', 'Cluster%d' % bi), S('Cluster')], [
-            N('Version', [I(100)]), N('Indexes', [AI(idx)]), N('Weights', [AD(w)]),
-            N('Transform', [AD(meshtobone)]), N('TransformLink', [AD(link)])]))
+        sc.objects.append(N('Deformer', [L(cl), sc.nm('SubDeformer', 'Cluster%d' % bi), S('Cluster')], [N('Version', [I(100)])] + cluster_arrays(bi)))
         sc.connect(cl, skin)
         sc.connect(bone, cl)
     # blend shape moving the top ring outwards
@@ -400,9 +469,7 @@ def rig_scene(ascii_names):
     sc.connect(ch, bs)
     shp = sc.nid()
     sc.objects.append(N('Geometry', [L(shp), sc.nm('Geometry', 'FatShape'), S('Shape')], [
-        N('Version', [I(100)]), N('Indexes', [AI([12, 13, 14, 15])]),
-        N('Vertices', [AD([-0.2, 0, 0.2, 0.2, 0, 0.2, 0.2, 0, -0.2, -0.2, 0, -0.2])]),
-        N('Normals', [AD([0] * 12)])]))
+        N('Version', [I(100)])] + fat_shape()))
     sc.connect(shp, ch)
     # animation: stack -> layer -> curve nodes -> curves
     stack = sc.nid()
@@ -555,6 +622,196 @@ def uv2_scene(ascii_names):
     return sc.top()
 
 
+# ---------------------------------------------------------------- FBX 6.x (2006-2009) layout
+# What differs from 7.x (from the public descriptions of the format and byte study of files of that time; see
+# docs/content/model_readers.md, "FBX 6.x and 7.0"): objects are named ("Model::Cube"), not numbered; connections are
+# "Connect" records between names; properties are "Property" records in "Properties60" (name, type, flags, values: no
+# label); a mesh's geometry sits inside its Model; textures connect to the Model and a LayerElementTexture picks them;
+# GlobalSettings sits inside Objects; animation is in a "Takes" section, as channels per model ("Transform" / "T" /
+# "X", each a "Key" list of time, value, interpolation letter and its extra values); blend shapes are "Shape" elements
+# inside the mesh, their weight a model property with the shape's name.
+def T(v): return P('T', v)
+
+
+def prop60(name, typ, flags, *vals):
+    ps = [S(name), S(typ), S(flags)]
+    for v in vals:
+        ps.append(S(v) if isinstance(v, str) else D(float(v)))
+    return N('Property', ps)
+
+
+def props60(*ps):
+    return N('Properties60', [], ps)
+
+
+class Legacy:
+    def __init__(self):
+        self.objects, self.conns, self.takes = [], [], []
+
+    def connect(self, child, parent):
+        self.conns.append(N('Connect', [S('OO'), S(child), S(parent)]))
+
+    def model(self, name, parent='Model::Scene', t=(0, 0, 0), r=(0, 0, 0), s=(1, 1, 1), kind='Mesh', extra=(), geo=None):
+        full = 'Model::' + name
+        pl = [prop60('Lcl Translation', 'Lcl Translation', 'A+', *t), prop60('Lcl Rotation', 'Lcl Rotation', 'A+', *r),
+              prop60('Lcl Scaling', 'Lcl Scaling', 'A+', *s)] + list(extra)
+        ch = [N('Version', [I(232)]), props60(*pl), N('MultiLayer', [I(0)]), N('MultiTake', [I(1)]),
+              N('Shading', [T('Y')]), N('Culling', [S('CullingOff')])]
+        if geo:
+            ch += geo
+        self.objects.append(N('Model', [S(full), S(kind)], ch))
+        self.connect(full, parent)
+        return full
+
+    def material(self, name, diffuse=(0.8, 0.8, 0.8), emissive=None, shininess=None):
+        full = 'Material::' + name
+        pl = [prop60('ShadingModel', 'KString', '', 'Phong'), prop60('DiffuseColor', 'ColorRGB', '', *diffuse)]
+        if emissive: pl.append(prop60('EmissiveColor', 'ColorRGB', '', *emissive))
+        if shininess is not None: pl.append(prop60('ShininessExponent', 'double', '', shininess))
+        self.objects.append(N('Material', [S(full), S('')], [N('Version', [I(102)]), N('ShadingModel', [S('phong')]),
+                                                            N('MultiLayer', [I(0)]), props60(*pl)]))
+        return full
+
+    def texture(self, name, filename, content=None):
+        full = 'Texture::' + name
+        base = filename.replace('\\', '/').split('/')[-1]
+        self.objects.append(N('Texture', [S(full), S('TextureVideoClip')], [
+            N('Type', [S('TextureVideoClip')]), N('Version', [I(202)]), N('TextureName', [S(full)]),
+            props60(prop60('Translation', 'Vector', 'A+', 0, 0, 0)), N('Media', [S('Video::' + name)]),
+            N('FileName', [S(filename)]), N('RelativeFilename', [S(base)])]))
+        if content is not None:
+            v = 'Video::' + name
+            self.objects.append(N('Video', [S(v), S('Clip')], [
+                N('Type', [S('Clip')]), props60(prop60('Path', 'KString', '', filename)), N('UseMipMap', [I(0)]),
+                N('Filename', [S(filename)]), N('RelativeFilename', [S(base)]), N('Content', [R(content)])]))
+            self.connect(v, full)
+        return full
+
+    def top(self, version=6100, up=1, upsign=1, front=2, frontsign=1, coord=0, coordsign=1, unit=1.0):
+        gs = N('GlobalSettings', [], [N('Version', [I(1000)]), props60(
+            prop60('UpAxis', 'int', '', up), prop60('UpAxisSign', 'int', '', upsign),
+            prop60('FrontAxis', 'int', '', front), prop60('FrontAxisSign', 'int', '', frontsign),
+            prop60('CoordAxis', 'int', '', coord), prop60('CoordAxisSign', 'int', '', coordsign),
+            prop60('UnitScaleFactor', 'double', '', unit))])
+        out = [
+            N('FBXHeaderExtension', [], [N('FBXHeaderVersion', [I(1003)]), N('FBXVersion', [I(version)]),
+                                         N('Creator', [S('okay gen_fbx_fixtures.py')])]),
+            N('CreationTime', [S('2008-01-01 10:00:00:000')]),
+            N('Creator', [S('okay gen_fbx_fixtures.py')]),
+            N('Definitions', [], [N('Version', [I(100)]), N('Count', [I(len(self.objects) + 1)])]),
+            N('Objects', [], self.objects + [gs]),
+            N('Connections', [], self.conns),
+        ]
+        if self.takes:
+            out.append(N('Takes', [], [N('Current', [S(self.takes[0].props[0].value)])] + self.takes))
+        out.append(N('Version5', [], [N('Settings', [], [N('FrameRate', [S('30')]), N('TimeFormat', [I(1)])])]))
+        return out
+
+
+def key_tokens(keys):
+    """A 6.x key list: time (KTime), value, interpolation letter, and what that letter needs after it: C (constant) a
+    step letter, L (linear) nothing, U (cubic) a tangent letter and, for 's' (user slopes), two numbers."""
+    toks = []
+    for t, v, kind in keys:
+        toks += [L(int(round(t * KTIME))), D(float(v))]
+        if kind == 'C': toks += [T('C'), T('n')]
+        elif kind == 'L': toks += [T('L')]
+        else: toks += [T('U'), T('s'), D(30.0), D(30.0)]
+    return toks
+
+
+def channel6(name, default, keys=None):
+    ch = [N('Default', [D(float(default))]), N('KeyVer', [I(4005)])]
+    if keys:
+        ch += [N('KeyCount', [I(len(keys))]), N('Key', key_tokens(keys))]
+    ch.append(N('Color', [D(1.0), D(1.0), D(1.0)]))
+    return N('Channel', [S(name)], ch)
+
+
+def take_model6(name, groups, extra=()):
+    """groups: {'T' | 'R' | 'S': [(default, keys) for X, Y, Z]}."""
+    gs = []
+    for g, lt in (('T', 1), ('R', 2), ('S', 3)):
+        if g in groups:
+            gs.append(N('Channel', [S(g)], [channel6(a, *groups[g][i]) for i, a in enumerate('XYZ')] + [N('LayerType', [I(lt)])]))
+    return N('Model', [S('Model::' + name)], [N('Version', [D(1.1)]), N('Channel', [S('Transform')], gs)] + list(extra))
+
+
+def cube_scene6(version, tex_content=None):
+    """cube_scene in the 6.x layout (Z up, -Y front, centimeters): the same cube, material, texture and transform."""
+    sc = Legacy()
+    polys = quad_polys(CUBE_Q)
+    normals = [n for n in CUBE_N for _ in range(4)]
+    uvs = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    uvidx = [i % 4 for i in range(24)]
+    geo = geo_children(CUBE_V, polys, normals, 'ByPolygonVertex', uvs, uvidx, [0], 'AllSame')
+    at = next(i for i, n in enumerate(geo) if n.name == 'Layer')
+    geo.insert(at, N('LayerElementTexture', [I(0)], [N('Version', [I(101)]), N('Name', [S('')]),
+               N('MappingInformationType', [S('AllSame')]), N('ReferenceInformationType', [S('IndexToDirect')]),
+               N('BlendMode', [S('Translucent')]), N('TextureAlpha', [D(1.0)]), N('TextureId', [AI([0])])]))
+    cube = sc.model('Cube', t=(10, 20, 30), r=(0, 30, 0), s=(1, 2, 1), geo=geo)
+    mat = sc.material('Red', (0.9, 0.1, 0.1), emissive=(0.1, 0.0, 0.0), shininess=25)
+    tex = sc.texture('Diffuse', 'C:\\art\\red.png', tex_content)
+    sc.connect(mat, cube)
+    sc.connect(tex, cube)
+    return sc.top(version, 2, 1, 1, -1, 0, 1, 1.0)
+
+
+def rig_scene6(version):
+    """rig_scene in the 6.x layout: the tube skinned to three bones, the "Fat" shape, and one take with the same curves
+    (the cubic one written with user tangents)."""
+    sc = Legacy()
+    verts, polys = tube_mesh()
+    geo = geo_children(verts, polys, None, None, [(0, 0), (1, 0), (1, 1), (0, 1)], [i % 4 for i in range(len(polys))])
+    geo.append(N('Shape', [S('Fat')], fat_shape()))
+    tube = sc.model('Tube', geo=geo, extra=[prop60('Fat', 'Number', 'AN', 25.0)])
+    mat = sc.material('Skin', (0.3, 0.6, 0.9))
+    sc.connect(mat, tube)
+    b0 = sc.model('Bone0', kind='Limb')
+    b1 = sc.model('Bone1', b0, t=(0, 1, 0), kind='Limb', extra=[prop60('PreRotation', 'Vector3D', '', 0, 0, 10)])
+    b2 = sc.model('Bone2', b1, t=(0, 1, 0), kind='Limb', extra=[prop60('RotationOrder', 'enum', '', 5)])
+    skin = 'Deformer::Skin Tube'
+    sc.objects.append(N('Deformer', [S(skin), S('Skin')], [N('Version', [I(100)]), N('MultiLayer', [I(0)]), N('Type', [S('Skin')]),
+                                                           props60(), N('Link_DeformAcuracy', [D(50.0)])]))
+    sc.connect(skin, tube)
+    for bi, bone in enumerate((b0, b1, b2)):
+        cl = 'SubDeformer::Cluster Tube Bone%d' % bi
+        sc.objects.append(N('Deformer', [S(cl), S('Cluster')], [
+            N('Version', [I(100)]), N('MultiLayer', [I(0)]), N('Type', [S('Cluster')]), props60(), N('UserData', [S(''), S('')])] + cluster_arrays(bi)))
+        sc.connect(cl, skin)
+        sc.connect(bone, cl)
+    none = (0, None)
+    sc.takes.append(N('Take', [S('Take 001')], [
+        N('FileName', [S('Take_001.tak')]), N('LocalTime', [L(0), L(2 * KTIME)]), N('ReferenceTime', [L(0), L(2 * KTIME)]),
+        take_model6('Bone1', {'R': [none, none, (0, [(0.0, 0.0, 'U'), (0.5, 45.0, 'U'), (1.0, 0.0, 'U'), (1.5, -45.0, 'U')])]}),
+        take_model6('Bone2', {'T': [none, (1, [(0.0, 1.0, 'L'), (2.0, 1.5, 'L')]), none]}),
+        take_model6('Bone0', {'S': [(1, [(0.0, 1.0, 'C'), (1.0, 1.0, 'C'), (2.0, 2.0, 'C')]), (1, None), (1, None)]}),
+        N('Model', [S('Model::Tube')], [N('Version', [D(1.1)]), channel6('Fat', 0, [(0.0, 0.0, 'L'), (2.0, 100.0, 'L')])]),
+    ]))
+    return sc.top(version, up=1, unit=1.0)
+
+
+def write_legacy(out, png):
+    """tests/assets/fbx/legacy/: files in the layouts before FBX 7.1 (FBX 2011). Kept out of the main fixture folder,
+    whose files are checked against the values recorded when ufbx and ours agreed; these are checked against the 7.4
+    fixtures of the same scene instead (test_fbx_reader, LegacyTests)."""
+    os.makedirs(out, exist_ok=True)
+    write_binary(os.path.join(out, 'cube61_bin.fbx'), cube_scene6(6100, png), 6100)
+    write_ascii6(os.path.join(out, 'cube61_ascii.fbx'), cube_scene6(6100), 6100)
+    write_ascii6(os.path.join(out, 'cube60_ascii.fbx'), cube_scene6(6000), 6000)
+    write_binary(os.path.join(out, 'rig61_bin.fbx'), rig_scene6(6100), 6100)
+    write_ascii6(os.path.join(out, 'rig61_ascii.fbx'), rig_scene6(6100), 6100)
+    # FBX 7.0 (FBX 2010): the 7.x object layout in a file whose version is 7000.
+    write_binary(os.path.join(out, 'cube70_bin.fbx'), cube_scene(False, 2, 1, 1, -1, 1.0, png), 7000)
+    write_ascii(os.path.join(out, 'cube70_ascii.fbx'), cube_scene(True, 2, 1, 1, -1, 1.0), 7000)
+    # FBX 5.x (2005 and before): not read; the reader must say so (not "succeed" empty).
+    with open(os.path.join(out, 'old50_ascii.fbx'), 'w') as f:
+        f.write('; FBX 5.0.0 project file\n; ----\n\nFBXHeaderExtension:  {\n\tFBXHeaderVersion: 1002\n\tFBXVersion: 5000\n}\n\n'
+                'Objects:  {\n\tModel: "Model::Cube", "Mesh" {\n\t\tVersion: 196\n\t\tVertices: 0,0,0,1,0,0,0,1,0\n'
+                '\t\tPolygonVertexIndex: 0,1,-3\n\t}\n}\n')
+    write_binary(os.path.join(out, 'old50_bin.fbx'), [N('FBXHeaderExtension', [], [N('FBXVersion', [I(5000)])])], 5000)
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -578,8 +835,10 @@ def main():
     write_binary(os.path.join(out, 'pbr_bin.fbx'), pbr_scene(), 7400, compress=False)
     write_binary(os.path.join(out, 'uv2_bin.fbx'), uv2_scene(False), 7400)
     write_ascii(os.path.join(out, 'uv2_ascii.fbx'), uv2_scene(True), 7400)
+    write_legacy(os.path.join(out, 'legacy'), png)
     for f in sorted(os.listdir(out)):
-        print(f, os.path.getsize(os.path.join(out, f)))
+        if os.path.isfile(os.path.join(out, f)):
+            print(f, os.path.getsize(os.path.join(out, f)))
 
 
 if __name__ == '__main__':

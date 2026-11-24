@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.903.7
+    VERSION 2.903.8
     DESCRIPTION "A modern C++ game engine"
-    LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
+    LANGUAGES C CXX)   # C enabled for C dependencies built from source (Assimp's bundled zlib and similar)
 
 # Stamp the version into binaries (used by the editor's self-updater).
 # The version string is only compiled into the editor and launcher (their targets
@@ -42,18 +42,17 @@ if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND 
     message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
 endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
-# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp and ufbx
-# stay compiled in as the fallback: a file our reader refuses goes to them, OKAY_OWN_<FMT>=0 switches one format back and
+# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp (when
+# built) stays the fallback: a file our reader refuses goes to it (not for FBX: ufbx was deleted on 2026-11-23 and FBX has no fallback), OKAY_OWN_<FMT>=0 switches one format back and
 # OKAY_THIRD_PARTY=1 (okay/Core/ThirdParty.hpp) switches every format back at run time. NDO stays OFF: that reader is a seam that
 # refuses every file. An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
-# Q3BSP), our own WAV decoder and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
+# Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
 # that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the two extra
 # OkayUI programs (OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI: not built by CI yet; docs/status/own_code_roadmap.md).
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_WAV       "Load .wav with our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM) by default (run-time env OKAY_OWN_WAV=0/1 overrides)" ON)
 option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" ON)
@@ -96,7 +95,6 @@ option(OKAY_OWN_MDL      "Read .mdl (Quake 1, Half-Life 1 and 3D GameStudio MDL3
 option(OKAY_OWN_Q3BSP    "Read .bsp / .pk3 (Quake III Arena maps) with our own Q3BSP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3BSP=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused: .gltf / .glb never go to Assimp; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" ON)
 option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
 option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/platform/xbox_uwp.md" OFF)
@@ -269,6 +267,10 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 # ---- The engine library ----------------------------------------------
 # Engine modules (docs/design/modular_gameplay_contracts.md): read engine/modules/*/module.okaymodule. Stage 0 only groups
 # files and labels tests (ctest -L module:<name>); the build itself is unchanged.
+# ---- OkayScript: the engine-independent scripting language (library, CLI, tests) ----
+# Before the engine: the engine's OkayScriptVM links okayscript_lang (its lexer lives there).
+add_subdirectory(okayscript)
+
 include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
 okay_modules_read()
 add_subdirectory(engine)
@@ -337,6 +339,30 @@ if(OKAY_BUILD_CONTENT_TOOL AND NOT EMSCRIPTEN)
         target_link_libraries(okay-content PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     endif()
     set_target_properties(okay-content PROPERTIES OUTPUT_NAME "okay-content")
+endif()
+
+# ---- okay: the engine's command line (tools/okay-cli) -------------------------
+# new / open / play / run / build / export / test / info / doctor, project / scene / script / vs / asset (wrapping the
+# engine's and editor's own code: Content.cpp), completion, okay engine build (the editor, launcher and player from an
+# engine checkout), and version control with the person's own git underneath
+# (okay vc ...; scenes and prefabs merge and diff through SceneMerge / SceneDiff as git's drivers). Built by default.
+# okay_cli_lib holds everything but main() so tests/test_okay_cli.cpp checks the same code.
+option(OKAY_BUILD_CLI "Build the okay command-line program" ON)
+if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
+    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
+                tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp
+                editor/ProjectBrowser.cpp editor/ProjectUpgrade.cpp)   # the editor's own import and project upgrade, no copy
+    target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                               PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(okay_cli_lib PUBLIC okay::engine)
+    target_compile_definitions(okay_cli_lib PRIVATE ${OKAY_VERSION_DEFINE})
+    add_executable(okay_cli tools/okay-cli/main.cpp)
+    target_link_libraries(okay_cli PRIVATE okay_cli_lib)
+    if(WIN32)
+        target_link_libraries(okay_cli PRIVATE shell32)
+        okay_win_version(okay_cli "OkaySpace command line" "okay.exe")
+    endif()
+    set_target_properties(okay_cli PROPERTIES OUTPUT_NAME "okay")
 endif()
 
 # ---- Ship SDL2.dll beside the binaries ----

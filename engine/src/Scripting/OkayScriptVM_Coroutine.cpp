@@ -21,7 +21,7 @@ struct Runtime::Coroutine {
         std::size_t baseDepth = 0;
     };
 
-Runtime::Runtime() = default;
+Runtime::Runtime() { InitEngineRuntime(*this); }
 Runtime::~Runtime() = default;
 
 

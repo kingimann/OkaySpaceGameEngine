@@ -26,8 +26,10 @@ endif()
 
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
+# FBX is not in the list: its option (OKAY_OWN_FBX) was deleted with ufbx and our FBX reader is always on. Listing it made the
+# undefined option count as OFF, so no build got OKAY_EXPECT_OWN_READERS (own_stack, own_dispatch_c/_d/_gap went red).
 set(_okay_all_readers_on TRUE)
-foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
+foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
         Q3D RAW IQM COB PMX LWS OGREBIN ZAE XML LXO)
     if(NOT OKAY_OWN_${_f})
         set(_okay_all_readers_on FALSE)
@@ -1035,6 +1037,51 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# OkayScript, the standalone language (okayscript/, docs/scripting/scripting.md "Standalone OkayScript"): its tests link
+# only okayscript_lang, never the engine. Lexer, parser, interpreter, natives and errors run real code and check output.
+foreach(_oks lexer parser interpreter native errors classes)
+    add_executable(test_okayscript_lang_${_oks} ${PROJECT_SOURCE_DIR}/okayscript/tests/test_${_oks}.cpp)
+    target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
+    add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
+endforeach()
+# The same core instantiated for the engine's own value (vs::VsValue), as the engine's OkayScriptVM runs it.
+add_executable(test_okayscript_engine_value test_okayscript_engine_value.cpp)
+target_link_libraries(test_okayscript_engine_value PRIVATE okay::engine okayscript::lang)
+add_test(NAME okayscript_engine_value COMMAND test_okayscript_engine_value)
+# OkayScript hot loops (arithmetic, calls, 50-deep reads) counted with callgrind against a stored baseline; fails at
+# more than 10% slower. Release only (the baseline is for optimised code); skips without valgrind.
+add_executable(bench_okayscript bench_okayscript.cpp)
+target_link_libraries(bench_okayscript PRIVATE okay::engine)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT OKAY_SANITIZE)
+    find_program(OKAY_VALGRIND valgrind)
+    add_test(NAME okayscript_bench
+             COMMAND ${CMAKE_COMMAND} -DVALGRIND=${OKAY_VALGRIND} -DBENCH=$<TARGET_FILE:bench_okayscript>
+                     -DBASELINE=${CMAKE_CURRENT_SOURCE_DIR}/okayscript_bench_baseline.txt -DOUT=${CMAKE_CURRENT_BINARY_DIR}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_bench.cmake)
+    set_tests_properties(okayscript_bench PROPERTIES SKIP_REGULAR_EXPRESSION "okayscript_bench skipped" TIMEOUT 600 RUN_SERIAL TRUE)
+endif()
+# The okayscript CLI: each tests/okayscript_cli/<case> runs the real program and checks stdout, stderr and the exit code.
+file(GLOB _oks_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.out ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.err
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.code)
+set(_oks_names "")
+foreach(_c IN LISTS _oks_cases)
+    get_filename_component(_n ${_c} NAME_WE)
+    list(APPEND _oks_names ${_n})
+endforeach()
+list(REMOVE_DUPLICATES _oks_names)
+foreach(_n IN LISTS _oks_names)
+    add_test(NAME okayscript_cli_${_n}
+             COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:okayscript_cli> -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+                     -DCASE=${_n} -P ${PROJECT_SOURCE_DIR}/okayscript/tests/run_cli_case.cmake)
+endforeach()
+# The language and its CLI do not depend on the engine: no engine include in okayscript/, no engine library anywhere in
+# the link closure of okayscript_lang or the CLI.
+add_test(NAME okayscript_no_engine
+         COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}/okayscript
+                 -DCLOSURE=${CMAKE_BINARY_DIR}/okayscript_link_closure.txt
+                 -P ${PROJECT_SOURCE_DIR}/okayscript/tests/check_no_engine.cmake)
+
 # Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
 add_executable(test_physcore_tree test_physcore_tree.cpp)
 target_link_libraries(test_physcore_tree PRIVATE okay::physcore)
@@ -3223,6 +3270,16 @@ target_link_libraries(test_core_cli PRIVATE okay::engine)
 target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
 add_test(NAME core_cli COMMAND test_core_cli)
 
+# The okay command line (tools/okay-cli): arguments, help, .gitignore/.gitattributes, git status grouping, empty projects,
+# and with git installed: init, save, history, undo, branches, sync and the scene merge/diff drivers on temp repos (77 = no git).
+if(TARGET okay_cli_lib)
+    add_executable(test_okay_cli test_okay_cli.cpp)
+    target_link_libraries(test_okay_cli PRIVATE okay_cli_lib)
+    target_include_directories(test_okay_cli PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    add_test(NAME okay_cli COMMAND test_okay_cli)
+    set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
@@ -4024,14 +4081,21 @@ if(OKAY_NODE)
                      ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
 endif()
 
-# Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
+# Our own FBX reader (okay::fbx): fixtures from scripts/gen_fbx_fixtures.py, checked against hand-computed values and the importer output
+# recorded when ufbx and ours last agreed (tests/assets/fbx/expected_import.txt, tests/data/fbx_corpus_expected.txt)
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-target_include_directories(test_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)   # ufbx is the oracle for UV sets
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
-# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+# FBX is read only by our own reader: no ufbx in the build, and every .fbx of the corpora (tests/, examples/, assets/ and, with
+# OKAY_MODEL_CORPUS, the Assimp test folder) is read by okay::fbx.
+add_executable(test_fbx_route test_fbx_route.cpp)
+target_link_libraries(test_fbx_route PRIVATE okay::engine)
+target_compile_definitions(test_fbx_route PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_route COMMAND test_fbx_route)
+
+# Hostile FBX files through the importer (our reader): deep node chains, animation counts, the whole-file bake budget.
 add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
 target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
 add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
@@ -4066,11 +4130,10 @@ add_test(NAME fbx_exact COMMAND test_fbx_exact)
 add_executable(test_decimal_to_double test_decimal_to_double.cpp)
 add_test(NAME decimal_to_double COMMAND test_decimal_to_double)
 set_tests_properties(decimal_to_double PROPERTIES TIMEOUT 300)
-# Not a test: speed and peak heap of our FBX reader against ufbx (docs/content/model_readers.md (FBX part), "Speed and memory").
+# Not a test: speed and peak heap of our FBX reader and import (docs/content/model_readers.md (FBX part), "Speed and memory").
 # Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
 add_executable(bench_fbx_reader bench_fbx_reader.cpp)
 target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
-target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
 target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
@@ -4388,8 +4451,8 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the option-off vs option-on
-# equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the launcher's seam.
+# check_wav_seam_wiring fails if SDL_LoadWAV or the deleted OKAY_OWN_WAV switch comes back anywhere in shipped code.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
 find_package(SDL2 QUIET)

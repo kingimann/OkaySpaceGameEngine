@@ -1,0 +1,9 @@
+print("before the error")
+function helper(x) {
+    return x * 2
+}
+function main() {
+    print(helper(21))
+    explode(1)
+    print("never")
+}

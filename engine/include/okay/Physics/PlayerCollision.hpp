@@ -8,35 +8,54 @@
 
 namespace okay {
 
+// How far a sideways push may be turned into a lift on a slope (a body 1 cm into a ramp is lifted out, never slid down it).
+constexpr float kSeatLift = 0.35f;
+
 // A sideways push from a walkable floor or a low riser is turned into a step up, so a body
-// resting in a slope is lifted straight out (no downhill creep) and a kerb lower than
-// `stepUp` is walked onto. A wall that still blocks at that height keeps the raw push.
+// resting in a slope is lifted straight out (no downhill creep) and a kerb no taller than
+// `stepUp` is walked onto. A wall that still blocks at that height keeps the raw push, and so does a
+// ledge taller than `stepUp`: the body is never left hanging on its corner above the floor.
+// `bottom` is the distance from `center` to the feet, `radius` the capsule radius.
 template <class F>
-Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float bottom, F resolveAt) {
+Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float bottom, float radius, float stepUp, F resolveAt) {
     Vec3 fixed = resolveAt(center);
     Vec3 d = fixed - center;
     if (d.x * d.x + d.z * d.z <= 1e-8f) return fixed;
-    const float stepUp = 0.35f;
-    Vec3 raised = center + Vec3{0.0f, stepUp, 0.0f};
+    Vec3 raised = center + Vec3{0.0f, kSeatLift, 0.0f};
     Vec3 rf = resolveAt(raised);
     Vec3 rd = rf - raised;
     if (rd.x * rd.x + rd.z * rd.z > 2.5e-3f) return fixed;
     RaycastHit3D g = scene.physics3D().Raycast(scene, rf, Vec3{0.0f, -1.0f, 0.0f},
-                                               stepUp + bottom + 0.2f, self, Physics3D::kAllLayers, false);
+                                               kSeatLift + bottom + 0.2f, self, Physics3D::kAllLayers, false);
     if (!g.hit || g.normal.y < 0.35f) return fixed;
     float drop = g.distance - bottom;
-    if (drop < -0.05f || drop > stepUp + 0.15f) return fixed;
+    if (drop < -0.05f || drop > kSeatLift + 0.15f) return fixed;
     Vec3 landed{center.x, rf.y - drop, center.z};
-    for (int k = 0; k < 5; ++k) {
+    bool settled = false;
+    for (int k = 0; k < 5 && !settled; ++k) {
         Vec3 check = resolveAt(landed);
         float cx = check.x - landed.x, cy = check.y - landed.y, cz = check.z - landed.z;
-        if (cx * cx + cz * cz < 1e-6f && cy < 0.001f && cy > -0.001f) return landed;
-        float lift = std::sqrt(cx * cx + cy * cy + cz * cz);
-        if (!(lift > 1e-5f)) return landed;
+        if (cx * cx + cz * cz < 1e-6f && cy < 0.001f && cy > -0.001f) { settled = true; break; }
+        float up = std::sqrt(cx * cx + cy * cy + cz * cz);
+        if (!(up > 1e-5f)) break;
         landed.x = center.x;
-        landed.y += lift;
+        landed.y += up;
         landed.z = center.z;
     }
+    // What is the body now standing on? Look at the surface in front of it, on the side the push came from. A slope is
+    // walked up. A flat top is only climbed when it is no taller than a step (from where the feet were): a body is
+    // never lifted onto the corner of a ledge or crate that is higher than that, and left hanging there.
+    const float hx = -d.x, hz = -d.z;
+    const float hl = std::sqrt(hx * hx + hz * hz);
+    const float rise = landed.y - center.y;
+    if (rise > kSeatLift + 0.01f) return fixed;
+    const float feetY = landed.y - bottom;
+    Vec3 probe{landed.x + (hl > 1e-6f ? hx / hl : 0.0f) * radius * 1.3f, feetY + 0.9f,
+               landed.z + (hl > 1e-6f ? hz / hl : 0.0f) * radius * 1.3f};
+    RaycastHit3D top = scene.physics3D().Raycast(scene, probe, Vec3{0.0f, -1.0f, 0.0f}, 1.3f, self,
+                                                 Physics3D::kAllLayers, false);
+    if (!top.hit || top.normal.y < 0.35f) return fixed;
+    if (top.normal.y > 0.9995f && top.point.y - (center.y - bottom) > stepUp + 0.02f) return fixed;   // a flat top taller than a step
     return landed;
 }
 
@@ -44,8 +63,9 @@ Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float botto
 /// A capsule, and a tall box (the usual character), is pushed out as a capsule: the head meets a
 /// ceiling and the feet meet a floor. That push is the default. On a walkable slope the separation
 /// is straight up, so standing still does not slide downhill, and a riser lower than a step is
-/// walked over. A cube stays a sphere at the waist. Call right after moving the Transform.
-inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
+/// walked over. `stepUp` is the tallest riser it climbs (MovePlayerBody passes its stepHeight); a slope is always
+/// walked. A cube stays a sphere at the waist. Call right after moving the Transform.
+inline void ResolvePlayerBody(Scene& scene, GameObject* self, float stepUp = kSeatLift) {
     if (!self || !self->transform) return;
     auto shift = [&](const Vec3& from, const Vec3& fixed) {
         Vec3 delta = fixed - from;
@@ -62,7 +82,7 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
             auto resolveAt = [&](const Vec3& c) {
                 return scene.physics3D().ResolveCapsule(scene, c, axis, half, radius, self);
             };
-            shift(center, SeatUpright(scene, self, center, half + radius, resolveAt));
+            shift(center, SeatUpright(scene, self, center, half + radius, radius, stepUp, resolveAt));
             return;
         }
     }
@@ -75,7 +95,7 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
             auto resolveAt = [&](const Vec3& c) {
                 return scene.physics3D().ResolveCapsule(scene, c, Vec3{0, 1, 0}, half, radius, self);
             };
-            shift(center, SeatUpright(scene, self, center, half + radius, resolveAt));
+            shift(center, SeatUpright(scene, self, center, half + radius, radius, stepUp, resolveAt));
         } else {
             shift(center, scene.physics3D().ResolveSphere(scene, center, radius, self));
         }
@@ -83,6 +103,18 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
     }
     Vec3 center = self->transform->Position() + Vec3{0.0f, 0.9f, 0.0f};
     shift(center, scene.physics3D().ResolveSphere(scene, center, 0.4f, self));
+}
+
+/// Where the body's feet are: the bottom of its collider under the pivot, or the pivot when it has no collider.
+/// (A box is usually centred on its Transform, so the pivot is half a body above the floor.)
+inline Vec3 FeetOf(GameObject* self) {
+    Vec3 p = self->transform->Position();
+    if (Collider3D* col = self->GetComponent<Collider3D>()) {
+        Vec3 mn, mx;
+        col->WorldAABB(mn, mx);
+        if (std::isfinite(mn.y + mx.y + mn.x + mx.x + mn.z + mx.z)) return Vec3{(mn.x + mx.x) * 0.5f, mn.y, (mn.z + mx.z) * 0.5f};
+    }
+    return p;
 }
 
 /// Degrees between `normal` and straight up. A flat floor is 0. A wall is 90.
@@ -104,7 +136,7 @@ inline void MovePlayerBody(Scene& scene, GameObject* self, const Vec3& delta,
     const Vec3 start = self->transform->Position();
     auto place = [&](const Vec3& p) {
         self->transform->SetPosition(p);
-        ResolvePlayerBody(scene, self);
+        ResolvePlayerBody(scene, self, stepHeight);
         return self->transform->Position();
     };
     auto along = [](const Vec3& a, const Vec3& b) {
@@ -124,7 +156,8 @@ inline void MovePlayerBody(Scene& scene, GameObject* self, const Vec3& delta,
         else
             self->transform->SetPosition(blocked);
     }
-    Vec3 feet = self->transform->Position();
+    const Vec3 footOffset = FeetOf(self) - self->transform->Position();   // 0 for a pivot at the feet
+    Vec3 feet = FeetOf(self);
     RaycastHit3D ground = scene.physics3D().Raycast(scene, feet + Vec3{0.0f, 0.2f, 0.0f}, {0.0f, -1.0f, 0.0f},
                                                     0.8f, self, Physics3D::kAllLayers, false);
     if (ground.hit && GroundSlopeDegrees(ground.normal) > maxSlopeDegrees) {
@@ -139,7 +172,7 @@ inline void MovePlayerBody(Scene& scene, GameObject* self, const Vec3& delta,
             // move into the solid would cancel the slide.
             Vec3 pos = self->transform->Position() + slide * (0.5f / sl);
             self->transform->SetPosition(pos);
-            RaycastHit3D seat = scene.physics3D().Raycast(scene, pos + Vec3{0.0f, 0.4f, 0.0f}, {0.0f, -1.0f, 0.0f},
+            RaycastHit3D seat = scene.physics3D().Raycast(scene, pos + footOffset + Vec3{0.0f, 0.4f, 0.0f}, {0.0f, -1.0f, 0.0f},
                                                           1.5f, self, Physics3D::kAllLayers, false);
             if (seat.hit && seat.distance > 0.05f)
                 self->transform->SetPosition(self->transform->Position() + Vec3{0.0f, -(seat.distance - 0.05f), 0.0f});

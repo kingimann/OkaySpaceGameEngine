@@ -1,0 +1,291 @@
+; FBX 6.1.0 project file
+; written by scripts/gen_fbx_fixtures.py (FBX 6.x layout)
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 6100
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+CreationTime: "2008-01-01 10:00:00:000"
+
+Creator: "okay gen_fbx_fixtures.py"
+
+Definitions:  {
+	Version: 100
+	Count: 10
+}
+
+Objects:  {
+	Model: "Model::Tube","Mesh" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation","Lcl Translation","A+",0.0,0.0,0.0
+			Property: "Lcl Rotation","Lcl Rotation","A+",0.0,0.0,0.0
+			Property: "Lcl Scaling","Lcl Scaling","A+",1.0,1.0,1.0
+			Property: "Fat","Number","AN",25.0
+		}
+		MultiLayer: 0
+		MultiTake: 1
+		Shading: Y
+		Culling: "CullingOff"
+		Vertices: -0.5,0.0,0.5,0.5,0.0,0.5,0.5,0.0,-0.5,-0.5,0.0,-0.5,
+-0.5,1.0,0.5,0.5,1.0,0.5,0.5,1.0,-0.5,-0.5,1.0,-0.5,
+-0.5,2.0,0.5,0.5,2.0,0.5,0.5,2.0,-0.5,-0.5,2.0,-0.5,
+-0.5,3.0,0.5,0.5,3.0,0.5,0.5,3.0,-0.5,-0.5,3.0,-0.5
+		PolygonVertexIndex: 0,1,5,-5,1,2,6,-6,2,3,7,-7
+,3,0,4,-8,4,5,9,-9,5,6,10,-10
+,6,7,11,-11,7,4,8,-12,8,9,13,-13
+,9,10,14,-14,10,11,15,-15,11,8,12,-16
+		GeometryVersion: 124
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: 0,0,1,0,1,1,0,1
+			UVIndex: 0,1,2,3,0,1,2,3,0,1,2,3,
+0,1,2,3,0,1,2,3,0,1,2,3,
+0,1,2,3,0,1,2,3,0,1,2,3,
+0,1,2,3,0,1,2,3,0,1,2,3
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+		Shape: "Fat" {
+			Indexes: 12,13,14,15
+			Vertices: -0.2,0,0.2,0.2,0,0.2,0.2,0,-0.2,-0.2,0,-0.2
+			Normals: 0,0,0,0,0,0,0,0,0,0,0,0
+		}
+	}
+	Material: "Material::Skin","" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+		Properties60:  {
+			Property: "ShadingModel","KString","","Phong"
+			Property: "DiffuseColor","ColorRGB","",0.3,0.6,0.9
+		}
+	}
+	Model: "Model::Bone0","Limb" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation","Lcl Translation","A+",0.0,0.0,0.0
+			Property: "Lcl Rotation","Lcl Rotation","A+",0.0,0.0,0.0
+			Property: "Lcl Scaling","Lcl Scaling","A+",1.0,1.0,1.0
+		}
+		MultiLayer: 0
+		MultiTake: 1
+		Shading: Y
+		Culling: "CullingOff"
+	}
+	Model: "Model::Bone1","Limb" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation","Lcl Translation","A+",0.0,1.0,0.0
+			Property: "Lcl Rotation","Lcl Rotation","A+",0.0,0.0,0.0
+			Property: "Lcl Scaling","Lcl Scaling","A+",1.0,1.0,1.0
+			Property: "PreRotation","Vector3D","",0.0,0.0,10.0
+		}
+		MultiLayer: 0
+		MultiTake: 1
+		Shading: Y
+		Culling: "CullingOff"
+	}
+	Model: "Model::Bone2","Limb" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation","Lcl Translation","A+",0.0,1.0,0.0
+			Property: "Lcl Rotation","Lcl Rotation","A+",0.0,0.0,0.0
+			Property: "Lcl Scaling","Lcl Scaling","A+",1.0,1.0,1.0
+			Property: "RotationOrder","enum","",5.0
+		}
+		MultiLayer: 0
+		MultiTake: 1
+		Shading: Y
+		Culling: "CullingOff"
+	}
+	Deformer: "Deformer::Skin Tube","Skin" {
+		Version: 100
+		MultiLayer: 0
+		Type: "Skin"
+		Properties60: 
+		Link_DeformAcuracy: 50.0
+	}
+	Deformer: "SubDeformer::Cluster Tube Bone0","Cluster" {
+		Version: 100
+		MultiLayer: 0
+		Type: "Cluster"
+		Properties60: 
+		UserData: "",""
+		Indexes: 0,1,2,3,4,5,6,7
+		Weights: 1.0,1.0,1.0,1.0,0.5,0.5,0.5,0.5
+		Transform: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,-0.0,0,1
+		TransformLink: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,0.0,0,1
+	}
+	Deformer: "SubDeformer::Cluster Tube Bone1","Cluster" {
+		Version: 100
+		MultiLayer: 0
+		Type: "Cluster"
+		Properties60: 
+		UserData: "",""
+		Indexes: 4,5,6,7,8,9,10,11
+		Weights: 0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5
+		Transform: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,-1.0,0,1
+		TransformLink: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,1.0,0,1
+	}
+	Deformer: "SubDeformer::Cluster Tube Bone2","Cluster" {
+		Version: 100
+		MultiLayer: 0
+		Type: "Cluster"
+		Properties60: 
+		UserData: "",""
+		Indexes: 8,9,10,11,12,13,14,15
+		Weights: 0.5,0.5,0.5,0.5,1.0,1.0,1.0,1.0
+		Transform: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,-2.0,0,1
+		TransformLink: 1,0,0,0,0,1,0,0,0,0,1,0,
+0,2.0,0,1
+	}
+	GlobalSettings:  {
+		Version: 1000
+		Properties60:  {
+			Property: "UpAxis","int","",1.0
+			Property: "UpAxisSign","int","",1.0
+			Property: "FrontAxis","int","",2.0
+			Property: "FrontAxisSign","int","",1.0
+			Property: "CoordAxis","int","",0.0
+			Property: "CoordAxisSign","int","",1.0
+			Property: "UnitScaleFactor","double","",1.0
+		}
+	}
+}
+
+Connections:  {
+	Connect: "OO","Model::Tube","Model::Scene"
+	Connect: "OO","Material::Skin","Model::Tube"
+	Connect: "OO","Model::Bone0","Model::Scene"
+	Connect: "OO","Model::Bone1","Model::Bone0"
+	Connect: "OO","Model::Bone2","Model::Bone1"
+	Connect: "OO","Deformer::Skin Tube","Model::Tube"
+	Connect: "OO","SubDeformer::Cluster Tube Bone0","Deformer::Skin Tube"
+	Connect: "OO","Model::Bone0","SubDeformer::Cluster Tube Bone0"
+	Connect: "OO","SubDeformer::Cluster Tube Bone1","Deformer::Skin Tube"
+	Connect: "OO","Model::Bone1","SubDeformer::Cluster Tube Bone1"
+	Connect: "OO","SubDeformer::Cluster Tube Bone2","Deformer::Skin Tube"
+	Connect: "OO","Model::Bone2","SubDeformer::Cluster Tube Bone2"
+}
+
+Takes:  {
+	Current: "Take 001"
+	Take: "Take 001" {
+		FileName: "Take_001.tak"
+		LocalTime: 0,92372316000
+		ReferenceTime: 0,92372316000
+		Model: "Model::Bone1" {
+			Version: 1.1
+			Channel: "Transform" {
+				Channel: "R" {
+					Channel: "X" {
+						Default: 0.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Y" {
+						Default: 0.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Z" {
+						Default: 0.0
+						KeyVer: 4005
+						KeyCount: 4
+						Key: 
+							0,0.0,U,s,30.0,30.0,23093079000,45.0,U,s,30.0,30.0,46186158000,0.0,U,s,30.0,30.0,69279237000,-45.0,U,s,30.0,30.0
+						Color: 1.0,1.0,1.0
+					}
+					LayerType: 2
+				}
+			}
+		}
+		Model: "Model::Bone2" {
+			Version: 1.1
+			Channel: "Transform" {
+				Channel: "T" {
+					Channel: "X" {
+						Default: 0.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Y" {
+						Default: 1.0
+						KeyVer: 4005
+						KeyCount: 2
+						Key: 
+							0,1.0,L,92372316000,1.5,L
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Z" {
+						Default: 0.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					LayerType: 1
+				}
+			}
+		}
+		Model: "Model::Bone0" {
+			Version: 1.1
+			Channel: "Transform" {
+				Channel: "S" {
+					Channel: "X" {
+						Default: 1.0
+						KeyVer: 4005
+						KeyCount: 3
+						Key: 
+							0,1.0,C,n,46186158000,1.0,C,n,92372316000,2.0,C,n
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Y" {
+						Default: 1.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					Channel: "Z" {
+						Default: 1.0
+						KeyVer: 4005
+						Color: 1.0,1.0,1.0
+					}
+					LayerType: 3
+				}
+			}
+		}
+		Model: "Model::Tube" {
+			Version: 1.1
+			Channel: "Fat" {
+				Default: 0.0
+				KeyVer: 4005
+				KeyCount: 2
+				Key: 
+					0,0.0,L,92372316000,100.0,L
+				Color: 1.0,1.0,1.0
+			}
+		}
+	}
+}
+
+Version5:  {
+	Settings:  {
+		FrameRate: "30"
+		TimeFormat: 1
+	}
+}

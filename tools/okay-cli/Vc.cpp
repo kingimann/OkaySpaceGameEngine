@@ -415,12 +415,25 @@ int VcClone(const std::vector<std::string>& args, const std::string&, const Io& 
 
 int VcStatus(const std::vector<std::string>& args, const std::string& project, const Io& io) {
     okay::CommandLine cl;
+    cl.Flag("json");
     if (!ParseArgs(cl, args, "vc status", io)) return 2;
     if (cl.Has("help")) { io.Say(HelpText("vc status")); return 0; }
     vc::Git git(VcFolder(project));
     if (!NeedRepo(git, io)) return 1;
     const std::string top = git.TopLevel();
     ClearStaleReports(git, top);
+    if (cl.Has("json")) {
+        const std::vector<vc::Change> changes = git.Status();
+        std::string j = "{\"branch\":" + JsonText(git.Branch()) + ",\"saved\":" + (git.HasCommits() ? "true" : "false") + ",\"changes\":[";
+        for (std::size_t i = 0; i < changes.size(); ++i)
+            j += std::string(i ? "," : "") + "{\"path\":" + JsonText(changes[i].path) + ",\"state\":" + JsonText(vc::StateWord(changes[i].state)) +
+                 ",\"group\":" + JsonText(vc::GroupName(changes[i].group)) + (changes[i].from.empty() ? std::string() : ",\"from\":" + JsonText(changes[i].from)) + "}";
+        j += "],\"clashes\":[";
+        const std::vector<std::string> reports = ClashReports(top);
+        for (std::size_t i = 0; i < reports.size(); ++i) j += (i ? "," : "") + JsonText(reports[i]);
+        io.Say(j + "]}");
+        return 0;
+    }
     std::string t = vc::StatusText(git.Status(), git.Branch());
     const std::vector<std::string> reports = ClashReports(top);
     if (!reports.empty()) {

@@ -11,7 +11,7 @@
 #   SDL2, win32 window, WGL        -> the UWP platform backend (platform/xbox_uwp/XboxUwpBackend.hpp) and UwpPlatform.cpp replace Platform.cpp
 #   getenv("APPDATA"/"LOCALAPPDATA") -> Paths::SetEnvOverride(ApplicationData folders)
 #   libsodium                      -> not available: packet encryption OFF by default (OKAY_XBOX_OWN_CRYPTO=ON is an experiment), Ed25519 uses okay::crypto (unreviewed; this target is never a release)
-#   ufbx, Assimp                   -> not compiled: our own readers only (OKAY_OWN_*_DEFAULT below)
+#   Assimp                         -> not compiled: our own readers only (OKAY_OWN_*_DEFAULT below; ufbx was deleted from the engine)
 # 2D drawing: SDL_Renderer does not exist here. The software painter (okayui/soft) draws into RGBA pixels that the app shell shows with
 # the Direct3D 11 swap chain (XboxPresent.hpp) or Window::PresentPixels.
 cmake_minimum_required(VERSION 3.20)
@@ -65,7 +65,7 @@ if(MSVC)
 endif()
 
 # ---- our own code instead of third-party code (docs/platform/xbox_uwp.md) ----
-# Models: ufbx.c is excluded (uwp_exclude.txt), Assimp is never linked (no OKAY_HAVE_ASSIMP), so every model format goes through our own readers. Their
+# Models: FBX is our own okay::fbx in every build (ufbx was deleted), Assimp is never linked (no OKAY_HAVE_ASSIMP), so every model format goes through our own readers. Their
 # OKAY_OWN_<FMT>_DEFAULT switches are read from the ON options of the root CMakeLists.txt, so a reader added there is on here too without an edit.
 # ModelImport.cpp and FbxScene.cpp also compile their "other reader" paths out under OKAY_XBOX_UWP: a file our reader refuses fails with a plain message.
 include(${CMAKE_CURRENT_LIST_DIR}/uwp_own_readers.cmake)
@@ -73,8 +73,7 @@ okay_uwp_own_readers("${OKAY_SOURCE_ROOT}/CMakeLists.txt" _mi_defs _own_on)
 set_source_files_properties(${OKAY_SOURCE_ROOT}/engine/src/Render/ModelImport.cpp PROPERTIES COMPILE_DEFINITIONS "${_mi_defs}")
 list(LENGTH _own_on _own_n)
 message(STATUS "okay_engine_uwp: own model readers ON by default: ${_own_n} switches (${_own_on})")
-# Sound: the own WAV decoder is the WAV reader here (there is no SDL_LoadWAV); OGG, MP3 and FLAC are our own decoders in every build.
-target_compile_definitions(okay_engine_uwp PRIVATE OKAY_OWN_WAV_DEFAULT=1)
+# Sound: WAV, OGG, MP3 and FLAC are read by our own decoders in every build (okay::wav is the only WAV reader).
 
 # Crypto. Default: NO packet encryption (libsodium does not exist here and our own crypto stays off, CLAUDE.md rule 18). Hashes (SHA-256), random bytes and Ed25519
 # checks are our own okay_crypto_uwp code either way. OKAY_XBOX_OWN_CRYPTO=ON is an EXPERIMENT switch: it turns packet encryption on through okay::crypto,

@@ -49,9 +49,6 @@ std::string Lit(const std::string& s) {
     return o + "\"";
 }
 
-/// The C# type of a binding kind: the shared table in ScriptBindings (scriptbind::ArgKindTypeWord).
-const char* ArgType(sb::ArgKind k) { return sb::ArgKindTypeWord(k); }
-
 const char* PropType(PropertyType t) {
     switch (t) {
         case PropertyType::Bool: return "bool";
@@ -122,23 +119,23 @@ std::string GenerateApiSource() {
         std::set<std::string> methodNames;
         for (const sb::MethodBinding& m : cls.methods) {
             std::string id = m.name ? Ident(m.name) : std::string();
-            const char* ret = ArgType(m.ret);
-            if (id.empty() || !ret || (used.count(id) && !methodNames.count(id))) { ++st.skipped; continue; }
+            const char* ret = sb::ArgKindTypeName(m.ret);   // "var": a kind C# has no type for, so the method is left out
+            if (id.empty() || std::string(ret) == "var" || (used.count(id) && !methodNames.count(id))) { ++st.skipped; continue; }
             bool ok = true;
-            for (sb::ArgKind a : m.params) if (!ArgType(a) || a == sb::ArgKind::Void) ok = false;
+            for (sb::ArgKind a : m.params) if (std::string(sb::ArgKindTypeName(a)) == "var" || a == sb::ArgKind::Void) ok = false;
             if (!ok) { ++st.skipped; continue; }
             // one overload per argument count from `required` to all (the C++ defaults fill the rest)
             int lo = m.required < 0 ? 0 : m.required, hi = (int)m.params.size();
             if (lo > hi) lo = hi;
             for (int n = lo; n <= hi; ++n) {
                 std::string sig = id + "(";
-                for (int i = 0; i < n; ++i) sig += std::string(ArgType(m.params[(std::size_t)i])) + ",";
+                for (int i = 0; i < n; ++i) sig += std::string(sb::ArgKindTypeName(m.params[(std::size_t)i])) + ",";
                 if (!sigs.insert(sig).second) continue;
                 methodNames.insert(id);
                 used.insert(id);
                 ++st.methods;
                 o << "        public " << ret << " " << id << "(";
-                for (int i = 0; i < n; ++i) o << (i ? ", " : "") << ArgType(m.params[(std::size_t)i]) << " a" << i;
+                for (int i = 0; i < n; ++i) o << (i ? ", " : "") << sb::ArgKindTypeName(m.params[(std::size_t)i]) << " a" << i;
                 o << ") => ";
                 if (m.ret == sb::ArgKind::Void) o << "CallVoid(" << Lit(m.name);
                 else o << "Call<" << ret << ">(" << Lit(m.name);

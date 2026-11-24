@@ -133,7 +133,7 @@ const char* ArgKindName(ArgKind k) {
     return "a value";
 }
 
-const char* ArgKindTypeWord(ArgKind k) {
+const char* ArgKindTypeName(ArgKind k) {
     switch (k) {
         case ArgKind::Void: return "void";
         case ArgKind::Bool: return "bool";
@@ -148,7 +148,7 @@ const char* ArgKindTypeWord(ArgKind k) {
         case ArgKind::Object: return "GameObject";
         case ArgKind::Component: return "Component";
     }
-    return nullptr;
+    return "var";
 }
 
 void AddClass(ClassBinding c) {

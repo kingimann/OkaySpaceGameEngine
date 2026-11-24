@@ -790,9 +790,8 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
-#include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
-#include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
+#include "ScriptEditorWidget.hpp" // the script editor's code widget: our own OkayUI::CodeEdit
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -2010,10 +2009,9 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
-bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > Experimental sets the variable before main() reads anything)
+bool UseOkayUICodeEdit() {   // the script editor's code is always our own OkayUI::CodeEdit (the vendored ImGuiColorTextEdit is deleted)
 #ifdef OKAY_HAVE_OKAYUI
-    static const bool item = okayuibackend::DevMode(std::getenv("OKAY_UI_CODEEDIT"));
-    return UseOkayUIBackend() || item;
+    return true;
 #else
     return false;
 #endif
@@ -11513,9 +11511,8 @@ static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
-        te->SetLanguageDefinition(OkayScriptLangDef());
+        te->SetLanguage(OkayScriptLanguageWords());
         te->SetPalette(OkayScriptPalette());
-        te->SetShowWhitespaces(false);
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
         te->SetLeftMargin(22);
@@ -12228,7 +12225,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (!UseOkayUICodeEdit() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
+            // (Ctrl+/ is the code widget's own: OkayUI::CodeEdit's line commands)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -12836,8 +12833,8 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::Separator();
         }
 
-        // --- Editor surface: ImGuiColorTextEdit code widget -------------------
-        // The code widget (editor/vendor) owns editing, selection, undo/redo, syntax
+        // --- Editor surface: the code widget (OkayUI::CodeEdit) -----------------
+        // The code widget (ScriptEditorWidget) owns editing, selection, undo/redo, syntax
         // colouring, line numbers and the current-line highlight. We keep it in sync
         // with the shared CodeBuffer and feed it our diagnostics + bookmarks.
         int lines = 1; for (const char* p = buf.data(); *p; ++p) if (*p == '\n') ++lines;
@@ -13284,8 +13281,7 @@ void DrawScriptEditor(EditorState& ed) {
             const int col = te.GetCursorPosition().mColumn;
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
-        s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
-                                       : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
+        s_codeFocus = te.OkayHasKeyboard();
         if (stepOver) {
             ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
@@ -14072,9 +14068,9 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
-            // The OkayUI code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands,
-            // one undo step each); here they are only for the Dear ImGui editor, or they would run twice.
-            const bool widgetLineKeys = te.UsingOkayUI();
+            // The code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands, one undo
+            // step each), so the key paths below never run; the toolbar's "toggle comment" still comes here.
+            const bool widgetLineKeys = true;
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;

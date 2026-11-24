@@ -127,7 +127,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_BVH");
         SetImportBackend(".bvh", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".bvh") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".bvh") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "walk.bvh", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_BVH") != std::string::npos);
             CHECK(ImportableExtensions().find(".bvh") == std::string::npos);

@@ -94,18 +94,16 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_BUILD_TYPE=Release \
       -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
       -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON \
-      -DOKAY_USE_ASSIMP=ON \
       -DOKAY_BUILD_XBOX_UWP=ON \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
-# Our own model readers are the default since 2026-11-17 (FBX is ours only: ufbx was deleted); Assimp must stay in the release as their
-# fallback and as what OKAY_THIRD_PARTY=1 switches back to. Refuse a tree whose cache lost Assimp.
-if ! grep -q '^OKAY_USE_ASSIMP:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; then
-    echo "refused: $BUILD_DIR is configured without Assimp (OKAY_USE_ASSIMP is not ON): the model-reader fallback and OKAY_THIRD_PARTY=1 need it" >&2
-    exit 1
+# Every model reader is our own (Assimp was removed on 2026-11-24, ufbx on 2026-11-23). A tree configured before that may still
+# carry OKAY_USE_ASSIMP in its cache; the option no longer exists, so it does nothing, but say so rather than leave it unexplained.
+if grep -q '^OKAY_USE_ASSIMP:' "$BUILD_DIR/CMakeCache.txt"; then
+    echo "note: $BUILD_DIR/CMakeCache.txt still names OKAY_USE_ASSIMP from an old configure; the option was removed and is ignored" >&2
 fi
-echo "Model readers: own by default, Assimp compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back; FBX is always our own)."
+echo "Model readers: our own for every format (no Assimp, no ufbx)."
 # The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
 # is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not

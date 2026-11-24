@@ -826,12 +826,12 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 - `SetIfUnset` function, line 75
 - `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
 - `Info` struct, line 95
-- `FormatLine` function, line 106: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 125: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 132: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 139: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 177
-- `Startup` function, line 181: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `FormatLine` function, line 105: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 123: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 130: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 137: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 172
+- `Startup` function, line 176: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 

@@ -42,18 +42,16 @@ static bool Has(const std::string& s, const char* part) { return s.find(part) !=
 
 static void TestText() {
     Info old;   // the stack of a default build
-    old.platform = "sdl2"; old.http = "curl"; old.ownReaders = {"fbx"}; old.assimp = true; old.crypto = "libsodium"; old.ui = "imgui";
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx)+assimp crypto=libsodium ui=imgui");
-    old.assimp = false;
+    old.platform = "sdl2"; old.http = "curl"; old.ownReaders = {"fbx"}; old.crypto = "libsodium"; old.ui = "imgui";
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui");
     old.switches = "okayui,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui switches=okayui,http");
     old.switches.clear();
 
     Info mix;
-    mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"}; mix.assimp = true;
+    mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"};
     mix.crypto = "libsodium"; mix.ui = "imgui";
-    CHECK(FormatLine(mix) == "[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui");
+    CHECK(FormatLine(mix) == "[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui");
 
     Info all;
     all.platform = "own"; all.http = "own"; all.ownReaders = {"fbx"}; all.crypto = "own(test)"; all.ui = "okayui";
@@ -214,22 +212,19 @@ static void TestEnvironment() {
     CHECK(Gather("imgui").crypto == i.crypto);
 }
 
-// OKAY_THIRD_PARTY=1 at run time (okay/Core/ThirdParty.hpp): every model reader back to Assimp, whatever the build default
-// and whatever OKAY_OWN_<FMT> says. Its own ctest entry: the FBX choice is decided on first use and then kept.
+// OKAY_THIRD_PARTY=1 at run time (okay/Core/ThirdParty.hpp). The model readers have no third-party fallback any more (Assimp was
+// removed on 2026-11-24, ufbx on 2026-11-23), so it changes nothing for them: every reader stays ours. Its own ctest entry.
 static void TestThirdParty() {
     ClearStackEnvironment();
     Set("OKAY_THIRD_PARTY", "1");
-    Set("OKAY_OWN_3DS", "1");   // the master switch wins over a per-format 1
+    Set("OKAY_OWN_3DS", "1");
     CHECK(okay::ThirdPartyForced());
     const Info i = Gather("imgui");
     std::printf("%s\n", FormatLine(i).c_str());
     CHECK(!i.ownReaders.empty() && i.ownReaders[0] == "fbx");   // FBX has no third-party reader left: always ours
-#ifdef OKAY_HAVE_ASSIMP
-    CHECK(i.ownReaders.size() == 1);
-    CHECK(Has(FormatLine(i), "readers=own(fbx)+assimp"));
-#else
-    // no Assimp compiled in: ours still read those formats (nothing else could)
-    CHECK(i.ownReaders.size() >= Readers().size() || i.ownReaders.size() == 1);
+    CHECK(!Has(FormatLine(i), "assimp"));
+#if defined(OKAY_EXPECT_OWN_READERS)
+    CHECK(i.ownReaders.size() == Readers().size() + 1);   // ours still read every format (nothing else could)
 #endif
     Set("OKAY_THIRD_PARTY", "0");
     CHECK(!okay::ThirdPartyForced());

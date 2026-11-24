@@ -246,7 +246,7 @@ int main() {
         unsetenv("OKAY_OWN_BLEND");
         SetImportBackend(".blend", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable()) {
+        {
             if (EffectiveImportBackend(".blend") == ImportBackend::Default) {   // not built with -DOKAY_OWN_BLEND=ON
                 CHECK(!ImportModelData(kDir + "blend_attr_41.blend", m, ImportBackend::Default, false, &err));
                 CHECK(err.find("OKAY_OWN_BLEND") != std::string::npos);

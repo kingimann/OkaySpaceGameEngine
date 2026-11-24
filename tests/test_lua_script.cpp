@@ -2,6 +2,8 @@
 #include <Okay.hpp>
 #include "okay/Lua/LuaScriptVM.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
+#include "okay/Components/Light.hpp"
+#include "okay/Scripting/ScriptVM.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -401,6 +403,81 @@ return C
         LuaScriptVM vm;
         CHECK(vm.ValidateAll(got).empty());
     }
+
+    // 15. The generated binding layer (Scripting/ScriptBindings, shared with OkayScript): a component the
+    //     typed table does not list (Light) is a handle with its PropertyRegistry properties and generated
+    //     methods; a member the typed table lacks on its own component (Rigidbody:InvMass) falls through;
+    //     a removed component is a clear error, never a crash.
+    {
+        Scene scene{"B"};
+        GameObject* lamp = scene.CreateGameObject("Lamp");
+        Light* light = lamp->AddComponent<Light>();
+        lamp->AddComponent<Rigidbody3D>();
+        auto* sc = lamp->AddComponent<ScriptComponent>("lua");
+        std::string err;
+        g_errs.clear();
+        CHECK(sc->LoadSource(R"LUA(
+local S = {}
+function S:Start()
+    local l = GetComponent("Light")
+    l.intensity = 2.5
+    got = l.intensity
+    kind = type(l)
+    text = tostring(l)
+    owner = l.gameObject.name
+    l.type = "Spot"
+    flicker = l:FlickerFactor()
+    held = l
+    same = (GetComponent("Light") == l)
+    inv = GetComponent("Rigidbody"):InvMass()
+    missing = GetComponent("AudioSource") == nil
+    ok, bad = pcall(function() l.intensity = "bright" end)
+    ok2, nomember = pcall(function() return l.noSuchThing end)
+end
+function S:Update(dt)
+    later, gone = pcall(function() return held.intensity end)
+end
+return S
+)LUA", &err));
+        if (!err.empty()) std::cerr << "  load: " << err << "\n";
+        scene.Start();
+        for (const auto& e : g_errs) std::cerr << "  error: " << e << "\n";
+        CHECK_NEAR(light->intensity, 2.5f, 1e-5f);
+        CHECK_NEAR(sc->VM()->GetGlobal("got").AsFloat(), 2.5f, 1e-5f);
+        CHECK(sc->VM()->GetGlobal("kind").AsString() == "userdata");
+        CHECK(sc->VM()->GetGlobal("text").AsString().find("Light") != std::string::npos);
+        CHECK(sc->VM()->GetGlobal("owner").AsString() == "Lamp");
+        CHECK(light->type == Light::Type::Spot);
+        CHECK(sc->VM()->GetGlobal("same").AsBool());
+        CHECK(sc->VM()->GetGlobal("inv").AsFloat() > 0.0f);
+        CHECK(sc->VM()->GetGlobal("missing").AsBool());
+        CHECK(!sc->VM()->GetGlobal("ok").AsBool());
+        CHECK(sc->VM()->GetGlobal("bad").AsString().find("intensity") != std::string::npos);
+        CHECK(sc->VM()->GetGlobal("nomember").AsString().find("no member 'noSuchThing'") != std::string::npos);
+        lamp->RemoveComponent(light);
+        scene.Update(kDt);
+        CHECK(!sc->VM()->GetGlobal("later").AsBool());
+        CHECK(sc->VM()->GetGlobal("gone").AsString().find("null") != std::string::npos);
+    }
+
+    // 16. The sandbox: game scripts have no file, process or module access.
+    {
+        World w("names = {'io', 'require', 'dofile', 'loadfile', 'package', 'debug'}\n"
+                "open = 0 for _, n in ipairs(names) do if _G[n] ~= nil then open = open + 1 end end\n"
+                "for _, n in ipairs({'execute', 'exit', 'getenv', 'remove', 'rename', 'tmpname'}) do if os[n] ~= nil then open = open + 1 end end\n"
+                "safe = type(os.time()) == 'number' and type(os.clock()) == 'number'\n"
+                "bin = load('\\27Lua') == nil");
+        CHECK(w.loaded);
+        CHECK(w.Get("open").AsFloat() == 0.0f);
+        CHECK(w.Get("safe").AsBool());
+        CHECK(w.Get("bin").AsBool());
+    }
+
+    // 17. The language comes from the file extension: .lua is Lua, the rest stays as before.
+    CHECK(std::string(ScriptLanguageForExtension(".lua")) == "lua");
+    CHECK(std::string(ScriptLanguageForExtension("LUA")) == "lua");
+    CHECK(std::string(ScriptLanguageForExtension(".okay")) == "okayscript");
+    CHECK(std::string(ScriptLanguageForExtension(".cs")) == "cs");
 
     TEST_MAIN_RESULT();
 }

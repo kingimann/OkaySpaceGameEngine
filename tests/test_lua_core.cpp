@@ -217,6 +217,9 @@ void HostApi() {
 // errors with chunk:line messages, numbers / tables / utf8 / goto / os.
 void Programs(bool stress) {
     for (const char* name : {"classes", "text", "coroutines", "errors", "data"}) {
+        // under gcStress (a collection at every safe point) "errors" would collect at each of its
+        // 200 000 overflow frames; the other four still run that way
+        if (stress && std::string(name) == "errors") continue;
         const std::string dir = std::string(OKAY_SOURCE_DIR) + "/tests/lua/programs/";
         const std::string src = ReadFile(dir + name + ".lua"), want = ReadFile(dir + name + ".expected");
         CHECK(!src.empty() && !want.empty());
@@ -272,6 +275,13 @@ void Fuzz() {
         "local x = 0 while x < 10 do x = x + 1 if x % 2 == 0 then goto c end ::c:: end return x",
         "return pcall(error, {}), xpcall(function() error('e') end, function(m) return m end)",
         "local t = {} for i = 10, 1, -1 do t[i] = i end table.sort(t, function(a, b) return a > b end) return table.concat(t, ',')",
+        // the loop-frame paths: method lookup, concat chains, __close on exits, ephemerons, string.pack
+        "local o = setmetatable({}, {__index = function(t, k) coroutine.yield(k) return function(s, x) return x end end}) "
+        "local c = coroutine.wrap(function() return o:m(1), 'a' .. 'b' .. setmetatable({}, {__concat = function() return 'c' end}) end) return c(), c()",
+        "local co = coroutine.wrap(function() for i = 1, 3 do local x <close> = setmetatable({}, {__close = function() coroutine.yield(i) end}) "
+        "if i == 2 then break end end return 'r' end) return co(), co(), co()",
+        "local e = setmetatable({}, {__mode = 'k'}) for i = 1, 20 do local k = {} e[k] = {k} end collectgarbage() "
+        "return string.unpack('<i4 z', string.pack('<i4 z', 7, 'hi'))",
     };
     const char* tokens[] = {"local", "function", "end", "(", ")", "{", "}", "[", "]", "=", "==", "..", "...", "x", "y",
                             "1", "2.5", "'s'", "[[l]]", "if", "then", "else", "for", "in", "do", "while", "return",

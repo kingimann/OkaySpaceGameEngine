@@ -3,11 +3,15 @@
 // The engine API comes from the typed-language binding table (Script/EngineApi,
 // feature 14.7): every type, property and method there is reachable from Lua,
 // so Lua, the C#-style language and the visual-script Engine API nodes share
-// one set of bindings. Engine objects are userdata holding an object id (and
+// one set of bindings. Every other component, property and method comes from the
+// generated binding layer (Scripting/ScriptBindings, the one OkayScript uses):
+// GetComponent of a class EngineApi does not list gives a component handle, and a
+// member EngineApi does not list on a component falls through to that layer. Engine objects are userdata holding an object id (and
 // which component); a destroyed object reads as an error, never as freed
 // memory. Vector3 is a userdata with x, y, z and the usual operators.
 #include "okay/Lua/LuaScriptVM.hpp"
 #include "okay/Lua/Lua.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"   // the generated binding layer: every component, property and method
 #include "../Script/ScriptInternal.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -24,7 +28,7 @@ using lua::State;
 namespace sc = script;
 
 namespace {
-enum UdTag { kObjTag = 1, kVecTag = 2 };
+enum UdTag { kObjTag = 1, kVecTag = 2, kCompTag = 3 };   // kCompTag: a scriptbind component handle
 
 const char* const kLuaKeywords[] = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function",
                                     "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then",
@@ -48,6 +52,7 @@ struct LuaScriptVM::Impl {
     int running = 0;              ///< nested calls into this VM (the budget is set by the outermost one)
     lua::Table* objMeta = nullptr;
     lua::Table* vecMeta = nullptr;
+    lua::Table* compMeta = nullptr;      ///< component handles of the generated binding layer
     lua::Table* methodCache = nullptr;   ///< "Type.name" -> bound method closure
     std::set<std::string> builtinGlobals;
     LuaScriptVM* owner = nullptr;
@@ -109,6 +114,10 @@ const char* LuaTypeWord(State& L, const LV& v) {
     if (IsObj(v)) {
         int t = v.UD()->i32;
         return t >= 0 && t < (int)Api().types.size() ? Api().types[(std::size_t)t].name.c_str() : "object";
+    }
+    if (v.t == lua::Type::Userdata && v.UD()->tag == kCompTag) {
+        const scriptbind::ClassBinding* cls = scriptbind::ClassByKey((std::uint32_t)v.UD()->i32);
+        return cls ? cls->name.c_str() : "component";
     }
     return L.TypeName(v);
 }
@@ -322,13 +331,21 @@ int GetComponentFn(State& L, int n) {
     GameObject* g = nullptr;
     int nameArg = 0;
     if (n >= 1 && IsObj(L.Arg(0))) { g = ResolveObj(L, L.Arg(0)); nameArg = 1; }
-    else g = Ctx(L).ctx.self;
+    else if (n >= 1 && L.Arg(0).t == lua::Type::Userdata && L.Arg(0).UD()->tag == kCompTag) {   // comp:GetComponent(...)
+        Component* c = scriptbind::Resolve(vs::VsValue::ComponentHandle(L.Arg(0).UD()->id, (std::uint32_t)L.Arg(0).UD()->i32,
+                                                                       (std::uint32_t)L.Arg(0).UD()->v[0]));
+        if (!c || !c->gameObject) L.Error("the component is null (its object was destroyed or the component was removed)");
+        g = c->gameObject;
+        nameArg = 1;
+    } else g = Ctx(L).ctx.self;
     if (!g) L.Error("This script isn't attached to an object");
     LV nm = L.Arg(nameArg);
     if (!nm.IsString()) L.Error("GetComponent needs a component name, e.g. GetComponent(\"Rigidbody\")");
     int idx = LuaFind(nm.Str()->s);
-    if (idx < 0 || !Api().types[(std::size_t)idx].isComponent)
+    if (idx < 0 || !Api().types[(std::size_t)idx].isComponent) {
+        if (BindGetComponent(L, g, nm.Str()->s)) return 1;   // any other bound component class
         L.Error("'" + nm.Str()->s + "' isn't a component type scripts can use");
+    }
     const sc::ApiType& t = Api().types[(std::size_t)idx];
     if (t.find && t.find(g)) L.Push(MakeObj(L, g->InstanceId(), idx));
     else L.PushNil();
@@ -341,6 +358,15 @@ int DestroyFn(State& L, int n) {
     if (Scene* s = g->scene()) s->Destroy(g);
     return 0;
 }
+
+// ---- the generated binding layer (defined after ToVs / FromVs below)
+bool BindIndex(State& L, const LV& self, const std::string& key);
+bool BindNewIndex(State& L, const LV& self, const std::string& key, const LV& val);
+bool BindGetComponent(State& L, GameObject* g, const std::string& name);
+int CompIndex(State& L, int n);
+int CompNewIndex(State& L, int n);
+int CompEq(State& L, int n);
+int CompToString(State& L, int n);
 
 // ---- engine objects
 int ObjIndex(State& L, int n) {
@@ -375,6 +401,7 @@ int ObjIndex(State& L, int n) {
         L.Push(Str(L, ResolveObj(L, o)->name));
         return 1;
     }
+    if (t.isComponent && BindIndex(L, o, k)) return 1;   // the generated layer: rb:InvMass(), light.range
     L.Error(t.name + " has no member '" + k + "'");
 }
 
@@ -398,6 +425,7 @@ int ObjNewIndex(State& L, int n) {
         }
         return 0;
     }
+    if (t.isComponent && BindNewIndex(L, o, k, val)) return 0;
     L.Error(t.name + " has no settable property '" + k + "'");
 }
 
@@ -571,6 +599,14 @@ void InstallBindings(LuaScriptVM::Impl& I) {
     SetField(L, I.vecMeta, "__tostring", LV::Obj(L.NewNative(VecToString, "__tostring")));
     SetField(L, I.vecMeta, "__concat", LV::Obj(L.NewNative(AnyConcat, "__concat")));
     SetField(L, I.vecMeta, "__metatable", Str(L, "Vector3"));
+    I.compMeta = L.NewTable();
+    L.Ref(LV::Obj(I.compMeta));
+    SetField(L, I.compMeta, "__index", LV::Obj(L.NewNative(CompIndex, "__index")));
+    SetField(L, I.compMeta, "__newindex", LV::Obj(L.NewNative(CompNewIndex, "__newindex")));
+    SetField(L, I.compMeta, "__eq", LV::Obj(L.NewNative(CompEq, "__eq")));
+    SetField(L, I.compMeta, "__tostring", LV::Obj(L.NewNative(CompToString, "__tostring")));
+    SetField(L, I.compMeta, "__concat", LV::Obj(L.NewNative(AnyConcat, "__concat")));
+    SetField(L, I.compMeta, "__metatable", Str(L, "engine component"));
     I.methodCache = L.NewTable();
     L.Ref(LV::Obj(I.methodCache));
     // one global table per engine type with static members (Input, Time, Debug, Mathf, GameObject, Vector3, ...)
@@ -632,6 +668,18 @@ vs::VsValue ToVs(const LV& v) {
         default:
             if (IsVec(v)) return vs::VsValue{VecOf(v)};
             if (IsObj(v)) return vs::VsValue::Object(v.UD()->id);
+            if (v.t == lua::Type::Userdata && v.UD()->tag == kCompTag)
+                return vs::VsValue::ComponentHandle(v.UD()->id, (std::uint32_t)v.UD()->i32, (std::uint32_t)v.UD()->v[0]);
+            if (v.IsTable()) {   // {r = , g = , b = [, a = ]}: a colour
+                lua::Table* t = v.Tab();
+                auto num = [&](const char* k, double def) {
+                    for (const auto& n : t->node)
+                        if (n.k.IsString() && n.k.Str()->s == k && n.v.IsNumber()) return n.v.AsNum();
+                    return def;
+                };
+                if (num("r", -1) >= 0 || num("g", -1) >= 0 || num("b", -1) >= 0)
+                    return vs::VsValue::Color((float)num("r", 0), (float)num("g", 0), (float)num("b", 0), (float)num("a", 1));
+            }
             return vs::VsValue{};
     }
 }
@@ -646,6 +694,28 @@ LV FromVs(State& L, const vs::VsValue& v, const LV& like = LV()) {
     }
     if (v.IsString()) return Str(L, v.AsString());
     if (v.IsVec3()) return MakeVec(L, v.AsVec3());
+    if (v.IsComponentHandle()) {
+        const vs::VsObject r = v.AsObjectRef();
+        if (!scriptbind::Resolve(v)) return LV();
+        lua::UData* u = L.NewUData();
+        u->tag = kCompTag;
+        u->meta = Ctx(L).compMeta;
+        u->id = r.id;
+        u->i32 = (int)r.comp;
+        u->v[0] = r.index;
+        return LV::Obj(u);
+    }
+    if (v.IsColor()) {
+        const vs::VsColor c = v.AsColor();
+        lua::Table* t = L.NewTable();
+        L.Push(LV::Obj(t));
+        t->Set(L, Str(L, "r"), LV::Num(c.r));
+        t->Set(L, Str(L, "g"), LV::Num(c.g));
+        t->Set(L, Str(L, "b"), LV::Num(c.b));
+        t->Set(L, Str(L, "a"), LV::Num(c.a));
+        L.Pop();
+        return LV::Obj(t);
+    }
     if (v.IsObject()) {
         GameObject* g = GameObject::FromInstanceId(v.AsObjectId());
         return g ? MakeObj(L, g->InstanceId(), Api().gameObject) : LV();
@@ -663,6 +733,139 @@ LV FromVs(State& L, const vs::VsValue& v, const LV& like = LV()) {
 }
 
 bool IsSetting(const LV& v) { return v.IsNumber() || v.IsString() || v.t == lua::Type::Bool || IsVec(v); }
+
+// ---- the generated binding layer (Scripting/ScriptBindings): a thin adapter, values go through ToVs / FromVs
+bool IsComp(const LV& v) { return v.t == lua::Type::Userdata && v.UD()->tag == kCompTag; }
+
+// The handle `self` stands for: a component handle as it is, or an EngineApi component object as the
+// first component of the bound class with the same name on its object. False when there is none.
+bool HandleOf(State& L, const LV& self, vs::VsValue& out) {
+    if (IsComp(self)) { out = ToVs(self); return true; }
+    if (!IsObj(self)) return false;
+    const int typeIdx = self.UD()->i32;
+    if (typeIdx < 0 || typeIdx >= (int)Api().types.size()) return false;
+    const scriptbind::ClassBinding* cls = scriptbind::FindClass(Api().types[(std::size_t)typeIdx].name);
+    if (!cls) return false;
+    GameObject* g = ResolveObj(L, self);
+    Component* c = scriptbind::FindComponent(*g, *cls, 0);
+    if (!c) return false;
+    out = scriptbind::MakeHandle(c, cls);
+    return true;
+}
+
+// obj:Method(...) on the generated layer: up = {method name}
+int BindCall(State& L, int n) {
+    lua::NClosure* fn = L.Current()->frames.back().ncl;
+    const std::string name = fn->up[0].Str()->s;
+    vs::VsValue h;
+    if (n < 1 || !HandleOf(L, L.Arg(0), h))
+        L.Error("call " + name + " with ':' on a component (comp:" + name + "(...))");
+    std::vector<vs::VsValue> args;
+    for (int i = 1; i < n; ++i) args.push_back(ToVs(L.Arg(i)));
+    vs::VsValue out;
+    std::string err;
+    Prepare(L);
+    scriptbind::Result r = scriptbind::CallMethod(h, name, args, out, err);
+    if (r == scriptbind::Result::NotFound) L.Error("the component has no method '" + name + "'");
+    if (r == scriptbind::Result::Error) L.Error(err);
+    L.Push(FromVs(L, out));
+    return 1;
+}
+
+bool HasBoundMethod(const vs::VsValue& h, const std::string& name) {
+    const scriptbind::ClassBinding* cls = nullptr;
+    Component* c = scriptbind::Resolve(h, &cls);
+    if (!c) return false;
+    for (const scriptbind::ClassBinding* k : {cls, scriptbind::ClassOf(*c)}) {
+        if (!k) continue;
+        for (const auto& m : k->methods) if (name == m.name) return true;
+    }
+    return false;
+}
+
+bool BindIndex(State& L, const LV& self, const std::string& key) {
+    vs::VsValue h;
+    if (!HandleOf(L, self, h)) return false;
+    vs::VsValue out;
+    std::string err;
+    scriptbind::Result r = scriptbind::GetMember(h, key, out, err);
+    if (r == scriptbind::Result::Error) L.Error(err);
+    if (r == scriptbind::Result::Ok) {
+        L.Push(key == "gameObject" ? MakeObj(L, out.AsObjectId(), Api().gameObject) : FromVs(L, out));
+        return true;
+    }
+    if (!HasBoundMethod(h, key)) return false;
+    LuaScriptVM::Impl& I = Ctx(L);
+    LV k = Str(L, "bind:" + key);
+    L.Push(k);
+    LV f = I.methodCache->Get(k);
+    if (f.IsNil()) {
+        f = LV::Obj(L.NewNative(BindCall, "component method", {Str(L, key)}));
+        I.methodCache->Set(L, k, f);
+    }
+    L.Pop();
+    L.Push(f);
+    return true;
+}
+
+bool BindNewIndex(State& L, const LV& self, const std::string& key, const LV& val) {
+    vs::VsValue h;
+    if (!HandleOf(L, self, h)) return false;
+    std::string err;
+    scriptbind::Result r = scriptbind::SetMember(h, key, ToVs(val), err);
+    if (r == scriptbind::Result::Error) L.Error(err);
+    return r == scriptbind::Result::Ok;
+}
+
+bool BindGetComponent(State& L, GameObject* g, const std::string& name) {
+    const scriptbind::ClassBinding* cls = scriptbind::FindClass(name);
+    if (!cls) return false;
+    Component* c = scriptbind::FindComponent(*g, *cls, 0);
+    L.Push(c ? FromVs(L, scriptbind::MakeHandle(c, cls)) : LV());
+    return true;
+}
+
+int CompIndex(State& L, int n) {
+    (void)n;
+    LV o = L.Arg(0), key = L.Arg(1);
+    if (!key.IsString()) L.Error("component fields are named with strings");
+    const std::string& k = key.Str()->s;
+    if (k == "GetComponent") { L.Push(LV::Obj(L.NewNative(GetComponentFn, "GetComponent"))); return 1; }
+    vs::VsValue h = ToVs(o);
+    if (k == "transform" || k == "name") {
+        Component* c = scriptbind::Resolve(h);
+        if (!c || !c->gameObject) L.Error("the component is null (its object was destroyed or the component was removed)");
+        if (k == "name") L.Push(Str(L, c->gameObject->name));
+        else L.Push(MakeObj(L, c->gameObject->InstanceId(), Api().transform));
+        return 1;
+    }
+    if (BindIndex(L, o, k)) return 1;
+    const scriptbind::ClassBinding* cls = scriptbind::ClassByKey((std::uint32_t)o.UD()->i32);
+    L.Error((cls ? cls->name : std::string("component")) + " has no member '" + k + "'");
+}
+
+int CompNewIndex(State& L, int n) {
+    (void)n;
+    LV o = L.Arg(0), key = L.Arg(1), val = L.Arg(2);
+    if (!key.IsString()) L.Error("component fields are named with strings");
+    if (BindNewIndex(L, o, key.Str()->s, val)) return 0;
+    const scriptbind::ClassBinding* cls = scriptbind::ClassByKey((std::uint32_t)o.UD()->i32);
+    L.Error((cls ? cls->name : std::string("component")) + " has no settable property '" + key.Str()->s + "'");
+}
+
+int CompEq(State& L, int n) {
+    (void)n;
+    LV a = L.Arg(0), b = L.Arg(1);
+    L.Push(LV::Bool(IsComp(a) && IsComp(b) && a.UD()->id == b.UD()->id && a.UD()->i32 == b.UD()->i32 &&
+                    a.UD()->v[0] == b.UD()->v[0]));
+    return 1;
+}
+
+int CompToString(State& L, int n) {
+    (void)n;
+    L.Push(Str(L, vs::VsComponentName(ToVs(L.Arg(0)).AsObjectRef())));
+    return 1;
+}
 
 } // namespace
 

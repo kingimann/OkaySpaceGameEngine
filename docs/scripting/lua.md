@@ -18,7 +18,7 @@ other Lua implementation was used, ported or followed (CLAUDE.md rule 19a). Per 
 | `engine/src/Lua/LuaLibString.cpp` | manual 6.4, 6.4.1 (string functions and patterns) and 6.4.2 (pack format strings); our own backtracking matcher and format reader |
 | `engine/src/Lua/LuaLibTable.cpp` | manual 6.6 (table functions); our own quicksort |
 | `engine/src/Lua/LuaLibUtf8.cpp` | manual 6.5 (UTF-8 support) and the UTF-8 encoding rules |
-| `engine/src/Lua/LuaScriptVM.cpp` | the engine's `IScriptVM` interface and the typed-language binding table (`engine/src/Script/EngineApi.cpp`) |
+| `engine/src/Lua/LuaScriptVM.cpp` | the engine's `IScriptVM` interface, the typed-language binding table (`engine/src/Script/EngineApi.cpp`) and the generated binding layer (`okay/Scripting/ScriptBindings.hpp`) |
 
 Why bytecode and not a tree-walker: coroutines must not use operating system threads (rule 21a). With an explicit frame
 stack a yield saves the frames and returns; resuming continues the same loop. The instruction counter for the run budget
@@ -43,18 +43,20 @@ Not supported (documented differences):
 - `__gc` finalizers (manual 2.5.3) work for tables: `setmetatable` with a `__gc` field marks the table; when nothing
   reaches it any more, a collection clears its weak-value entries, keeps it alive for that cycle and calls `__gc`
   once, in reverse order of marking, at the end of the collection (a safe point). A finalizer may resurrect its
-  object. An error in a finalizer prints "warning: error in __gc metamethod (...)" and does not stop the script. Not
-  done: finalizers are not called when the State is destroyed (the manual calls them at `lua_close`), and engine
-  userdata have no finalizers.
-- Weak tables (`__mode` "k", "v", "kv") work, but weak keys are not full ephemerons (a value that refers to its own
-  key keeps the entry alive); strings are never removed, as the manual says.
-- Yielding works inside `pcall` and `xpcall` of a Lua function, and inside Lua metamethods for `__index`,
-  `__newindex`, the arithmetic and bitwise events, `__unm`, `__bnot`, `__len`, `__eq`, `__lt`, `__le` and `__concat`
-  of two values (these run as frames of the interpreter loop, no C++ recursion). Still "attempt to yield across a
-  C-call boundary": a metamethod or callback a library function calls (`tostring` -> `__tostring`, `pairs` ->
-  `__pairs`, `table.sort`'s comparator, `string.gsub`'s function), `__close`, `__gc`, a method lookup through
-  `__index` (`obj:m()`), a `__concat` in a chain of three or more values (`a .. b .. c`), and a native (engine)
-  metamethod.
+  object. An error in a finalizer prints "warning: error in __gc metamethod (...)" and does not stop the script.
+  `State::Close()` runs the finalizers still pending, newest first (the manual's `lua_close`); the embedder calls it
+  while its natives and print sink still work. Not done: game scripts (`LuaScriptVM`) are freed without `Close`
+  (the scene may be half torn down), and engine userdata have no finalizers.
+- Weak tables (`__mode` "k", "v", "kv") work; a weak-key table with strong values is an ephemeron table (its value
+  is kept only while the key is reachable from elsewhere, converged during marking). Strings are never removed, as
+  the manual says.
+- Yielding works inside `pcall` and `xpcall` of a Lua function, inside Lua metamethods for `__index` (also a method
+  lookup `obj:m()`), `__newindex`, the arithmetic and bitwise events, `__unm`, `__bnot`, `__len`, `__eq`, `__lt`,
+  `__le` and `__concat` (also in a chain `a .. b .. c`), and inside `__close` on a block exit, `break`, `goto` or
+  `return` (these run as frames of the interpreter loop, no C++ recursion). Still "attempt to yield across a C-call
+  boundary", as in the reference interpreter: a metamethod or callback a library function calls (`tostring` ->
+  `__tostring`, `pairs` -> `__pairs`, `table.sort`'s comparator, `string.gsub`'s function), `__gc`, a `__close` run
+  by an error, and a native (engine) metamethod.
 - Binary chunks: `load` refuses them.
 - String comparison is by bytes (the C locale), character classes are ASCII.
 
@@ -70,7 +72,9 @@ like the lifecycle run by name with the table as `self`: `Awake`, `OnEnable`, `S
 `OnTriggerEnter(other)`; `other` is the other GameObject). A script that returns nothing uses its global functions
 (old scenes: `function update(dt)`), with lowercase names allowed.
 
-Engine access, all from the binding table `Script/EngineApi`:
+Engine access comes from two existing binding tables, never a Lua copy: the typed table `Script/EngineApi` first,
+then the generated binding layer `Scripting/ScriptBindings` (the one OkayScript uses, `docs/scripting/script_bindings.md`)
+for every component and member the typed table does not list:
 - `self.gameObject`, `self.transform` (also globals `gameObject`, `transform`), `GetComponent("Rigidbody")`,
   `obj:GetComponent(...)`, `Destroy(obj)`.
 - Instance members: `obj.prop`, `obj.prop = v`, `obj:Method(args)` (overloads chosen by argument count and types).
@@ -78,6 +82,11 @@ Engine access, all from the binding table `Script/EngineApi`:
   `Vector3.up`, `Vector3.Distance(a, b)`.
 - `Vector3.new(x, y, z)` or `Vector3(x, y, z)`; `v.x`, `v.magnitude`, `v.normalized`, `+ - * /`, unary `-`, `==`,
   `tostring`, `..`.
+- Any other component: `local l = GetComponent("Light")` gives a component handle (`l.intensity = 2`, `l.type = "Spot"`,
+  `l:FlickerFactor()`, `l.gameObject`); a typed-table component reaches the generated methods too
+  (`GetComponent("Rigidbody"):InvMass()`). Values cross as the layer's `vs::VsValue`: numbers, booleans, strings,
+  Vector3, objects, handles, and colours as `{r, g, b, a}` tables. A handle is looked up again on every use, so a
+  removed component raises "... is null ...".
 - Engine objects are userdata holding an object id: a destroyed object raises "This object was destroyed", never
   touches freed memory. A property read returns a copy of a Vector3, so `transform.position.x = 1` changes the copy;
   assign the whole vector back.

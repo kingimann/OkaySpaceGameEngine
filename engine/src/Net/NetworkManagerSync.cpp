@@ -31,6 +31,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Net/NetBuildSync.hpp"
 #include "okay/Net/NetQuestSync.hpp"
+#include "okay/Net/Rollback.hpp"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -440,8 +441,12 @@ void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     else if (m_reconnecting) ReconnectTick(dt);
+    MigrationTick(dt);
     InterpolateRemotes(dt);
     SyncTick(dt);
+    PlayersTick(dt);
+    m_rollback->Tick(dt);
+    ErrorsTick();
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
@@ -575,6 +580,14 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         }
         return;
     }
+    // Named network events (the easy layer, NetworkManagerEvents.cpp) and the host's clock.
+    if (channel == "__ev") { OnEventWire(from, data); return; }
+    if (channel == "__own") { OnOwnerWire(from, data); return; }
+    if (channel == "__ownreq") { OnOwnerRequest(from, data); return; }
+    if (channel == "__time") { if (m_mode == Mode::Client && from == 0) OnHostTime(data); return; }
+    if (channel == "__mig") { OnMigWire(from, data); return; }                          // host migration: the player list
+    if (channel == "__bye") { if (m_mode == Mode::Client && from == 0) m_migrateNow = true; return; }   // the host is leaving
+    if (channel == "__rb") { m_rollback->OnMessage(from, data); return; }                // rollback inputs
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
@@ -710,12 +723,93 @@ void NetworkManager::SetVar(const std::string& key, const std::string& value) {
     net::NoteObject(key, key.size() + value.size(), false);
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
-        net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, p.Data(), p.Size());
+        BumpVar(key);
+        for (auto& [ep, c] : m_clients) SendVarTo(c, key);
     } else if (m_mode == Mode::Client && m_joined) {
-        net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
-        SendDatagram(m_serverEp, p.Data(), p.Size());
+        VarPending v; v.ver = ++m_varCounter; v.value = value;
+        SendOwnVar(key, v);
+        if (m_varOut.size() < kMaxVarPending || m_varOut.count(key)) m_varOut[key] = std::move(v);
+    }
+}
+
+// Reliable shared variables. The host's SyncVar is [key][value][u32 version]; a client's is
+// [key][value][u64 cookie, if it has one][u32 version]. An older peer reads only key and value
+// (it ignores what follows) and never acknowledges: the newest value is then sent again
+// kVarResendTries times and dropped, as before (a lossy link could lose it there).
+void NetworkManager::SendVarTo(Client& c, const std::string& key) {
+    auto it = m_syncVars.find(key);
+    auto vit = m_varVer.find(key);
+    const std::uint32_t ver = vit == m_varVer.end() ? 0 : vit->second;
+    net::Packet p(SyncVar); p.Write(key); p.Write(it != m_syncVars.end() ? it->second : std::string()); p.Write(ver);
+    SendDatagram(c.endpoint, p.Data(), p.Size());
+    if (c.varOut.size() < kMaxVarPending || c.varOut.count(key)) c.varOut[key] = VarPending{ver, 0, std::string()};
+}
+
+// VarAck: [u8 n] n x ([string key][u32 version]). A client gathers its receipts over a frame and
+// sends them together (a join's full sync is one receipt datagram per ~1 KB, not one per variable).
+void NetworkManager::SendVarAck(const net::Endpoint& to, const std::string& key, std::uint32_t ver) {
+    net::Packet a(VarAck); a.Write(std::uint8_t(1)); a.Write(key); a.Write(ver);
+    SendDatagram(to, a.Data(), a.Size());
+}
+
+void NetworkManager::FlushVarAcks() {
+    std::size_t at = 0;
+    while (at < m_varAcks.size()) {
+        net::Packet a(VarAck);
+        std::size_t n = 0, bytes = 0;
+        while (at + n < m_varAcks.size() && n < 64 && bytes + m_varAcks[at + n].first.size() + 8 < 1000) {
+            bytes += m_varAcks[at + n].first.size() + 8; ++n;
+        }
+        a.Write(std::uint8_t(n));
+        for (std::size_t i = 0; i < n; ++i) { a.Write(m_varAcks[at + i].first); a.Write(m_varAcks[at + i].second); }
+        SendDatagram(m_serverEp, a.Data(), a.Size());
+        at += n;
+    }
+    m_varAcks.clear();
+}
+
+void NetworkManager::SendOwnVar(const std::string& key, const VarPending& v) {
+    net::Packet p(SyncVar); p.Write(key); p.Write(v.value);
+    if (m_sessionCookie) WriteU64(p, m_sessionCookie);
+    p.Write(v.ver);
+    SendDatagram(m_serverEp, p.Data(), p.Size());
+}
+
+std::size_t NetworkManager::VarsUnacked() const {
+    if (m_mode == Mode::Client) return m_varOut.size();
+    std::size_t n = 0;
+    for (const auto& [ep, c] : m_clients) n += c.varOut.size();
+    return n;
+}
+
+void NetworkManager::VarResendTick(float dt) {
+    // Each change waits kReliableResend for its receipt, then goes again (the newest value).
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients) {
+            std::vector<std::string> due;
+            for (auto it = c.varOut.begin(); it != c.varOut.end(); ) {
+                if ((it->second.age += dt) < kReliableResend) { ++it; continue; }
+                if (++it->second.tries > kVarResendTries) { it = c.varOut.erase(it); continue; }   // never acked: an older client
+                if (due.size() < 64) due.push_back(it->first);   // a few at a time: the rest next frame
+                ++it;
+            }
+            for (const std::string& key : due) {
+                const int tries = c.varOut[key].tries;
+                SendVarTo(c, key);          // the newest value and version (what changed since replaces what was lost)
+                c.varOut[key].tries = tries;
+            }
+        }
+    } else if (m_mode == Mode::Client && m_joined) {
+        int sent = 0;
+        for (auto it = m_varOut.begin(); it != m_varOut.end(); ) {
+            VarPending& v = it->second;
+            if ((v.age += dt) < kReliableResend || sent >= 64) { ++it; continue; }
+            if (++v.tries > kVarResendTries) { it = m_varOut.erase(it); continue; }
+            v.age = 0.0f;
+            SendOwnVar(it->first, v);
+            ++sent;
+            ++it;
+        }
     }
 }
 
@@ -952,10 +1046,36 @@ bool NetworkManager::Encrypted() const {
 
 void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size,
                                   bool allowEncrypt) {
+    // Per-piece resend: a reliable message (resent until acked) that went in pieces is
+    // remembered; when the same bytes are sent again, only the pieces the far side has
+    // not acknowledged go out (the same sealed pieces, same id). Once every piece was
+    // acknowledged, or after kMaxPieceResends partial resends, it goes out fresh.
+    const bool resendable = size > 0 && (data[0] == ReliableMsg || data[0] == net::kChanRel);
+    if (resendable && size + 64 > net::kFragmentThreshold) {
+        auto oit = m_fragOut.find(to);
+        if (oit != m_fragOut.end()) {
+            auto& outs = oit->second;
+            for (auto f = outs.begin(); f != outs.end(); ++f) {
+                if (f->allowEncrypt != allowEncrypt || f->plain.size() != size ||
+                    std::memcmp(f->plain.data(), data, size) != 0) continue;
+                const bool allAcked = std::all_of(f->acked.begin(), f->acked.end(), [](bool b) { return b; });
+                if (!allAcked && f->resends < kMaxPieceResends) {
+                    ++f->resends; f->age = 0.0f; ++m_pieceResends;
+                    for (std::size_t i = 0; i < f->pieces.size(); ++i)
+                        if (!f->acked[i]) { Transmit(to, f->pieces[i].data(), f->pieces[i].size()); ++m_piecesResent; }
+                    return;
+                }
+                outs.erase(f);   // all there (the message's own ack was lost) or stuck: a fresh copy
+                break;
+            }
+        }
+    }
     // Encrypt once the session for this peer is established. The sealed blob is
     // tagged with kEncEnvelope, then handed to the fragmentation step below — so
     // encryption sits above fragmentation (the receiver reassembles, then decrypts).
     std::vector<std::uint8_t> enc;
+    const std::uint8_t* plain = data;
+    const std::size_t plainSize = size;
     if (allowEncrypt && encryption) {
         if (net::SecureChannel* s = SessionFor(to)) {
             if (s->Ready() && s->Seal(data, size, enc)) {
@@ -969,6 +1089,8 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
     const std::size_t chunkMax = net::kFragmentThreshold - header;
     std::uint32_t count = static_cast<std::uint32_t>((size + chunkMax - 1) / chunkMax);
     std::uint32_t id = m_fragNextId++;
+    FragOut keep;
+    const bool remember = resendable && plainSize <= kMaxFragOutBytes;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::size_t off = static_cast<std::size_t>(i) * chunkMax;
         std::size_t len = std::min(chunkMax, size - off);
@@ -976,6 +1098,42 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
         std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
         dg.insert(dg.end(), data + off, data + off + len);
         Transmit(to, dg.data(), dg.size());
+        if (remember) keep.pieces.push_back(std::move(dg));
+    }
+    if (remember) {
+        keep.plain.assign(plain, plain + plainSize);
+        keep.acked.assign(count, false);
+        keep.id = id;
+        keep.allowEncrypt = allowEncrypt;
+        auto& outs = m_fragOut[to];
+        if (outs.size() >= kMaxFragOutPerPeer) outs.erase(outs.begin());   // the oldest goes back to whole resends
+        outs.push_back(std::move(keep));
+    }
+}
+
+// The far side's receipt for one message's pieces: [u32 id][u32 count][bitmask, piece i = bit i].
+void NetworkManager::SendFragAck(const net::Endpoint& to, std::uint32_t id, std::uint32_t count, const FragAsm* a) {
+    if (!m_socket.IsOpen() || count == 0 || count > kMaxFragments) return;
+    net::Packet h(FragAck); h.Write(id); h.Write(count);
+    std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
+    std::vector<std::uint8_t> bits((count + 7) / 8, a ? 0 : 0xFF);   // no assembly: every piece (done already)
+    if (a) for (std::uint32_t i = 0; i < count && i < a->chunks.size(); ++i) if (!a->chunks[i].empty()) bits[i / 8] |= (std::uint8_t)(1u << (i % 8));
+    dg.insert(dg.end(), bits.begin(), bits.end());
+    Transmit(to, dg.data(), dg.size());
+}
+
+void NetworkManager::OnFragAck(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) {
+    auto oit = m_fragOut.find(from);
+    if (oit == m_fragOut.end() || size < 9) return;
+    net::Packet p(data, size);
+    p.ReadU8();
+    const std::uint32_t id = p.ReadU32(), count = p.ReadU32();
+    if (!p.Ok() || size < 9 + (count + 7) / 8) return;
+    const std::uint8_t* bits = data + 9;
+    for (FragOut& f : oit->second) {
+        if (f.id != id || f.acked.size() != count) continue;
+        for (std::uint32_t i = 0; i < count; ++i) if (bits[i / 8] & (1u << (i % 8))) f.acked[i] = true;
+        return;
     }
 }
 
@@ -984,6 +1142,7 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
 // address) and sends it to the relay, which forwards it on.
 void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
     if (!m_relay) {
+        m_bytesOutAcc += size;
         if (!net::HoldDatagram(m_socket, to, data, size)) {
             if (m_socket.SendTo(to, data, size)) net::NoteWire(size, false);
         }
@@ -1009,6 +1168,7 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
     for (;;) {
         if (m_relay && consumed++ >= kMaxRelayFramesPerCall) return 0;
         int n = net::TakeDatagram(m_socket, buffer, capacity, from);
+        if (n > 0) m_bytesInAcc += (std::size_t)n;
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
@@ -1130,6 +1290,12 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
     const bool known = Handshaken(from);
     const std::uint32_t maxCount = known ? kMaxFragments : kStrangerMaxFragments;
     if (!p.Ok() || count == 0 || count > maxCount || index >= count) return false;
+    if (known) {   // a piece of a message already put together (its receipt was lost): say so again
+        auto d = m_fragDone.find(from);
+        if (d != m_fragDone.end())
+            for (const auto& done : d->second)
+                if (done.first == id && done.second == count) { SendFragAck(from, id, count, nullptr); return false; }
+    }
     auto epIt = m_fragIn.find(from);
     if (epIt == m_fragIn.end()) {
         if (!known) {                             // only so many strangers mid-message at once
@@ -1142,7 +1308,16 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
     auto& msgs = epIt->second;
     auto mIt = msgs.find(id);
     if (mIt == msgs.end()) {
-        if (msgs.size() >= (known ? kMaxPendingMessages : 1)) return false;
+        if (msgs.size() >= (known ? kMaxPendingMessages : 1)) {
+            if (!known) return false;
+            // A known peer's table is full: its stalest half-built message goes, so a
+            // resend (a new message id) after losses can still get through. The cap holds.
+            auto stalest = msgs.begin();
+            for (auto it = msgs.begin(); it != msgs.end(); ++it)
+                if (it->second.age > stalest->second.age) stalest = it;
+            if (stalest->second.age <= 0.0f) return false;   // all touched this frame: a burst, not a stall
+            msgs.erase(stalest);
+        }
         mIt = msgs.emplace(id, FragAsm{}).first;
         mIt->second.count = count;
         mIt->second.chunks.resize(count);
@@ -1158,11 +1333,17 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
         asm_.got++;
     }
     asm_.age = 0.0f;
+    if (known) SendFragAck(from, id, count, &asm_);   // which pieces are here: a resend sends only the rest
     if (asm_.got < asm_.count) return false;
     out.clear();
     for (auto& c : asm_.chunks) out.insert(out.end(), c.begin(), c.end());
     msgs.erase(mIt);
     if (msgs.empty()) m_fragIn.erase(epIt);
+    if (known) {
+        auto& done = m_fragDone[from];
+        if (done.size() >= kFragDoneKept) done.erase(done.begin());
+        done.emplace_back(id, count);
+    }
     return true;
 }
 
@@ -1178,6 +1359,19 @@ void NetworkManager::PruneFragments(float dt) {
         if (epIt->second.empty()) epIt = m_fragIn.erase(epIt);
         else ++epIt;
     }
+    for (auto oIt = m_fragOut.begin(); oIt != m_fragOut.end(); ) {   // sent messages nobody resends any more
+        auto& outs = oIt->second;
+        for (auto f = outs.begin(); f != outs.end(); )
+            f = (f->age += dt) > kFragmentTtl ? outs.erase(f) : std::next(f);
+        oIt = outs.empty() ? m_fragOut.erase(oIt) : std::next(oIt);
+    }
+    // "Put together lately" lists of peers who are gone (left, timed out, kicked): a long-running
+    // host would otherwise keep one per address it ever heard from.
+    for (auto d = m_fragDone.begin(); d != m_fragDone.end(); )
+        d = Handshaken(d->first) ? std::next(d) : m_fragDone.erase(d);
+    // Sent messages for a peer who is gone are never acknowledged: drop them now, not after the TTL.
+    for (auto oIt = m_fragOut.begin(); oIt != m_fragOut.end(); )
+        oIt = (m_mode == Mode::Server && !Handshaken(oIt->first)) ? m_fragOut.erase(oIt) : std::next(oIt);
 }
 
 void NetworkManager::Send(const std::string& channel, const std::string& data) {
@@ -1234,6 +1428,10 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
     }
     if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
+    if (channel == "__ownreq") return data.size() <= kMaxVarKey;   // asking the host for an object
+    if (channel == "__rb") return data.size() <= 8192;              // rollback inputs (net::Rollback), relayed to the room
+    if (channel == "__ev")   // a named event (checked again when it is opened): bounded
+        return data.size() <= kMaxEventData + kMaxEventName + 16;
     return false;   // __match_start and any other reserved channel: host only
 }
 

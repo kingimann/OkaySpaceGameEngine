@@ -260,7 +260,7 @@ static void RichPopulate(Scene& s, GameObject*& me, int variant) {
 static bool NeedsOnline(const VsDef& d) {
     const std::string t = d.type;
     return d.cat == CAT_NET || t.rfind("Net", 0) == 0 || t.rfind("Steam", 0) == 0 || t.rfind("Pf", 0) == 0 || t.rfind("PlayFab", 0) == 0 ||
-           t.rfind("Fn.net_", 0) == 0 || t.rfind("Fn.steam", 0) == 0 || t.rfind("Fn.pf_", 0) == 0 || t.rfind("Fn.Steam", 0) == 0;
+           t.rfind("Fn.net_", 0) == 0 || t.rfind("Fn.net.", 0) == 0 || t.rfind("Fn.steam", 0) == 0 || t.rfind("Fn.pf_", 0) == 0 || t.rfind("Fn.Steam", 0) == 0;
 }
 // Proven by their own suites: the gameplay library (scene with the node against one without,
 // and value nodes against an empty scene) and, for the pure value nodes of the logic sets, test_vs_node_effect.
@@ -595,7 +595,8 @@ static std::vector<Ev> BuildEvents() {
         sp->Play();
         for (int i = 0; i < 6; ++i) s.Update(0.1f);
     }});
-    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
+    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged",
+                          "OnPlayerJoined", "OnPlayerLeft", "OnOwnershipChanged", "OnHostMigrated"})   // the real dispatch is in net_easy / net_session
         e.push_back({t, "", "bus", "Me", raise(t, "")});
     // A finger stream the recogniser turns into one gesture, then one scene update so the
     // graph's event runs. The clock starts far from any earlier sample.

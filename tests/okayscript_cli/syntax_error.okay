@@ -1,0 +1,6 @@
+print("this never prints: the whole file is read first")
+var ok = 1
+
+if (ok == 1 {
+    print("missing paren above")
+}

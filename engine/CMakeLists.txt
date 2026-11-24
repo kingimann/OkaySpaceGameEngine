@@ -569,6 +569,7 @@ endif()
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
 target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PRIVATE okayscript_lang)   # the OkayScript lexer (okayscript/, engine-independent)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
     if(OKAY_OWN_CRYPTO OR OKAY_OWN_STACK_CRYPTO_TEST)

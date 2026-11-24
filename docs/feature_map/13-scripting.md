@@ -11,7 +11,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   Home: `engine/include/okay/Scripting/`, `engine/src/Scripting/`. Entry: `engine/include/okay/Scripting/OkayScriptVM.hpp`. Also called: OkayScriptVM, ScriptVM, .okayscript, scripts, Lua-style script.
 - **What:** The default scripting language. A script file is a component: fields are Inspector settings, `Start()` and `Update()` (or `start()`, `update(dt)`) run by name; C#-style and C-style syntax both parse; hundreds of built-in functions drive the scene.
 - **Parts:**
-  - 13.1.1 Lexer, parser and runtime - `Scripting/OkayScriptVM` - the interpreter core inside one 10.5k-line file (lexer ~359, AST ~581, runtime ~593, parser ~2256)
+  - 13.1.1 Lexer, parser and runtime - `okayscript/` (13.8), run by `Scripting/OkayScriptVM` - the language core is the engine-independent library; the VM instantiates it for the engine's value and adds scene names, object references, components and coroutines through `EngineHooks`
   - 13.1.2 C#-style syntax - `Scripting/OkayScriptVM` - typed fields, `[Header]`/`[Range]`, enums, switch, `$"..."`, lists and dictionaries, lambdas and LINQ-style helpers, `??`, `?.`, classes with `new`, try/catch/throw
   - 13.1.3 Coroutines and waits - `Scripting/OkayScriptVM` - `IEnumerator`, `yield return`, `WaitForSeconds`, `WaitUntil`, `WaitWhile`, StartCoroutine/StopCoroutine
   - 13.1.4 Event handlers - `Scripting/OkayScriptVM` - on_click, on_collision, OnTriggerEnter, OnMouseDown, OnCollisionEnter/Stay/Exit and the lifecycle (Awake, OnEnable, Start, Update, LateUpdate, FixedUpdate, OnDisable, OnDestroy)
@@ -161,3 +161,26 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text
 - **Seen as:** "unknown function"; a function behaves differently than the reference says; a function exists in OkayScript but not in a graph node or the typed API
 - **Ask me like:** "work on 13.7.6, add a capsule cast"; "list the built-ins for camera shake"
+
+### 13.8 Standalone OkayScript language and CLI
+- **System:** OkayScript Home: `okayscript/`
+- **What:** The whole OkayScript language (lexer, parser, syntax tree, interpreter core) as a library that needs only the C++17 standard library, plus the `okayscript` command-line program that runs `.okay` files. The interpreter core is a template over the value type: the CLI and embedders run it on `okayscript::Value`, the engine's OkayScriptVM runs the same code on `vs::VsValue`.
+- **Parts:**
+  - 13.8.1 Tokens, lexer, errors - `okayscript/include/okayscript/Token.hpp`, `Lexer.hpp`, `Error.hpp` - SyntaxError and RuntimeError with line and column
+  - 13.8.2 Syntax tree and parser - `okayscript/include/okayscript/Ast.hpp`, `Parser.hpp` - C#-style and C-style syntax, classes, enums, yield, events; `ValidateSource` lists every problem; `Dump()` prints the tree's shape
+  - 13.8.3 Interpreter core - `okayscript/include/okayscript/Runtime.hpp`, `detail/*.ipp` - scopes, calls, classes, statics, events, lambdas, vector maths; call-depth and loop limits; `BasicHost` hooks for the embedder's names, objects and coroutines
+  - 13.8.4 Values - `okayscript/include/okayscript/Value.hpp` - the standalone value: 32-bit numbers (the engine's), text, vectors, colours, handles, lists, maps
+  - 13.8.5 Native functions - `okayscript/include/okayscript/Native.hpp`, `Interpreter.hpp` - `Define(name, fn, Arity)` with arity and argument-type errors on the calling line; raw `builtins` for the engine's commands
+  - 13.8.6 Shared builtins and standard library - `okayscript/include/okayscript/CoreBuiltins.hpp`, `Stdlib.hpp` - the maths and conversion builtins the engine and the CLI both register (same rules: missing arguments read 0, never an error); the CLI adds print, println, write, input, exit
+  - 13.8.7 Command-line runner - `okayscript/cli/main.cpp` - `okayscript file.okay [args]`, `okayscript -e "code"`; runs the top level then `main()`; `--` before a file name; exit 0 / 1 runtime error or out of memory / 2 syntax error / 64 usage / 66 unreadable file, `exit(n)` clamped to 0..255; errors as `file:line: message`
+- **Code:** `okayscript/`
+- **API:** `okayscript::Interpreter` (`Define`, `Run`, `Call`, `SetGlobal`, `GetGlobal`, `SetHost`, `GetLimits`), `okayscript::BasicInterpreter<V>`, `BasicRuntime<V>`, `BasicHost<V>`, `Args`, `Arity`, `InstallStandardLibrary`, `ParseSource`, `ValidateSource`
+- **Editor:** none (the Script Editor reaches it through OkayScriptVM)
+- **Docs:** `docs/scripting/scripting.md` ("Standalone OkayScript")
+- **Tests:** `okayscript_lang_lexer`, `okayscript_lang_parser`, `okayscript_lang_interpreter`, `okayscript_lang_native`, `okayscript_lang_errors`, `okayscript_lang_classes`, `okayscript_engine_value`, `okayscript_bench` (callgrind instruction counts of hot loops against `tests/okayscript_bench_baseline.txt`, fails at +10%; skips without valgrind), `okayscript_cli_*` (cases in `tests/okayscript_cli/`), `okayscript_no_engine`, and every engine script test (the engine runs this core)
+- **Status:** Partial - works and is tested on Linux; Windows build unverified (MinGW syntax check and link only)
+- **Open:** the standalone value repeats the engine `vs::VsValue` conversion rules (one value type for both is not done); the engine keeps runtime errors without a line (`Limits::runtimeErrorLines` off) to keep its messages as they were
+- **Related:** 13.1, 13.7
+- **Words:** okayscript cli, okayscript.exe, run .okay file, standalone script language, embed OkayScript, native function, register C++ function, okayscript_lang, interpreter library, BasicHost, script core
+- **Seen as:** "okayscript: can't read"; a native says "takes 2 arguments, got 3"; a script error names the wrong line
+- **Ask me like:** "work on 13.8.5, add a native"; "why does the CLI and the engine print a number differently"

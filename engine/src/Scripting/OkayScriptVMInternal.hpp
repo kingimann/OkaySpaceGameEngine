@@ -156,6 +156,11 @@
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Math/Easing.hpp"
+#include "okayscript/Lexer.hpp"      // Tok, Token, ScriptError, Lexer (the engine-independent OkayScript core)
+#include "okayscript/Parser.hpp"     // the OkayScript parser and syntax tree
+#include "okayscript/Runtime.hpp"    // the interpreter core (a template over the value type)
+#include "okayscript/detail/Support.hpp"
+#include "okayscript/CoreBuiltins.hpp"    // the builtins the engine and the okayscript CLI share
 
 #include <algorithm>
 #include <cctype>
@@ -390,270 +395,20 @@ struct JsonReader {
 };
 
 // ===================== Lexer =====================
-enum class Tok {
-    End, Number, String, InterpString, Ident,
-    Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
-    Question, Colon, QuestionQuestion, QuestionQuestionEq, QuestionDot,
-    Plus, Minus, Star, Slash, Percent,
-    Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
-    Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon,
-    Dot,  // a '.' after ')' or ']' — member access on an expression: (a + b).magnitude
-    PercentEq, BitAnd, BitOr, BitXor, Arrow   // Arrow: '=>' (lambdas)
-};
+// Tok, Token, ScriptError and Lexer live in the engine-independent OkayScript core (okayscript/include/okayscript/,
+// target okayscript_lang); they were moved there unchanged. The engine VM uses them under its own names.
+using okayscript::Tok;
+using okayscript::Token;
+using okayscript::ScriptError;
+using okayscript::Lexer;
 
-struct Token {
-    Tok type;
-    std::string text;
-    double number = 0.0;
-    int line = 0;
-    bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
-    int column = 0;        ///< 1-based column where this token starts
-};
-
-struct ScriptError : std::runtime_error {
-    using std::runtime_error::runtime_error;
-    int line = 0;                                  // source line (0 = unknown)
-    int column = 0;                                // 1-based column (0 = unknown)
-    ScriptError(const std::string& msg, int ln, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
-};
-
-class Lexer {
-public:
-    explicit Lexer(const std::string& src) : m_src(src) {}
-
-    std::vector<Token> Scan() {
-        std::vector<Token> out;
-        while (!AtEnd()) {
-            SkipTrivia();
-            if (AtEnd()) break;
-            const int line = m_line, col = m_col;
-            char c = Peek();
-            Token t = (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1)))) ? Number()
-                    : (std::isalpha((unsigned char)c) || c == '_') ? Ident()
-                    : c == '"' ? String()
-                    : c == '\'' ? CharLiteral()
-                    : (c == '$' && Peek(1) == '"') ? InterpString()
-                    : Operator();
-            t.line = line;
-            t.column = col;
-            out.push_back(std::move(t));
-        }
-        Token end{Tok::End, "", 0, m_line};
-        end.column = m_col;
-        out.push_back(std::move(end));
-        return out;
-    }
-
-private:
-    bool AtEnd() const { return m_pos >= m_src.size(); }
-    char Peek(int o = 0) const { return (m_pos + o < m_src.size()) ? m_src[m_pos + o] : '\0'; }
-    char Advance() {
-        char c = m_src[m_pos++];
-        if (c == '\n') { ++m_line; m_col = 1; }
-        else if (c != '\r') ++m_col;
-        return c;
-    }
-
-    void SkipTrivia() {
-        while (!AtEnd()) {
-            char c = Peek();
-            if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { Advance(); }
-            else if (c == '/' && Peek(1) == '/') { while (!AtEnd() && Peek() != '\n') Advance(); }
-            else if (c == '/' && Peek(1) == '*') {           // C#-style /* block comment */
-                Advance(); Advance();
-                while (!AtEnd() && !(Peek() == '*' && Peek(1) == '/')) Advance();
-                if (!AtEnd()) { Advance(); Advance(); }
-            }
-            else if (c == '#') { while (!AtEnd() && Peek() != '\n') Advance(); }
-            else break;
-        }
-    }
-
-    Token Number() {
-        std::string s;
-        while (std::isdigit((unsigned char)Peek()) || Peek() == '.') s += Advance();
-        // Accept C# numeric suffixes (5f, 1.0f, 2d) so pasted code runs; every
-        // number is already a decimal, so the editor flags them as unnecessary.
-        bool suffix = false;
-        if (Peek() == 'f' || Peek() == 'F' || Peek() == 'd' || Peek() == 'D') { Advance(); suffix = true; }
-        Token t{Tok::Number, s, std::stod(s), m_line};
-        t.suffix = suffix;
-        return t;
-    }
-
-    Token String() {
-        const int sl = m_line, sc = m_col;
-        Advance(); // opening quote
-        std::string s;
-        while (!AtEnd() && Peek() != '"') {
-            char c = Advance();
-            if (c == '\\' && !AtEnd()) {
-                char e = Advance();
-                switch (e) { case 'n': c = '\n'; break; case 't': c = '\t'; break;
-                             case '"': c = '"'; break; case '\\': c = '\\'; break;
-                             default: c = e; }
-            }
-            s += c;
-        }
-        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
-        Advance(); // closing quote
-        return {Tok::String, s, 0, m_line};
-    }
-
-    // C# char literal 'x' (or '\n') — a one-character string.
-    Token CharLiteral() {
-        const int sl = m_line, sc = m_col;
-        Advance();   // opening quote
-        std::string s;
-        while (!AtEnd() && Peek() != '\'' && Peek() != '\n') {
-            char c = Advance();
-            if (c == '\\' && !AtEnd()) {
-                char e = Advance();
-                switch (e) { case 'n': c = '\n'; break; case 't': c = '\t'; break; case '0': c = '\0'; break; default: c = e; }
-            }
-            s += c;
-        }
-        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", sl, sc);
-        Advance();   // closing quote
-        return {Tok::String, s, 0, m_line};
-    }
-
-    // C#-style interpolated string: $"Score: {score}". The raw inner text (with
-    // {expr} markers preserved) is stored; the parser splits and compiles it.
-    Token InterpString() {
-        const int sl = m_line, sc = m_col;
-        Advance(); // '$'
-        Advance(); // opening quote
-        std::string s;
-        while (!AtEnd() && Peek() != '"') {
-            char c = Advance();
-            if (c == '\\' && !AtEnd()) {
-                char e = Advance();
-                switch (e) { case 'n': c = '\n'; break; case 't': c = '\t'; break;
-                             case '"': c = '"'; break; case '\\': c = '\\'; break;
-                             default: c = e; }
-            }
-            s += c;
-        }
-        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
-        Advance(); // closing quote
-        return {Tok::InterpString, s, 0, m_line};
-    }
-
-    Token Ident() {
-        std::string s;
-        while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
-        // dotted names are a single token: Input.GetKeyDown,
-        // Time.deltaTime, transform.position.x, gameObject.SetActive.
-        while (Peek() == '.' && (std::isalpha((unsigned char)Peek(1)) || Peek(1) == '_')) {
-            s += Advance();                                   // the '.'
-            while (std::isalnum((unsigned char)Peek()) || Peek() == '_') s += Advance();
-        }
-        static const std::unordered_map<std::string, Tok> kw = {
-            {"var", Tok::Var}, {"if", Tok::If}, {"else", Tok::Else},
-            {"while", Tok::While}, {"for", Tok::For}, {"in", Tok::In},
-            {"function", Tok::Function}, {"return", Tok::Return},
-            {"true", Tok::True}, {"false", Tok::False},
-            {"break", Tok::Break}, {"continue", Tok::Continue}};
-        // `this.hp` stays one token. With no plain-class object in play it still
-        // means the global `hp` (a component's fields are its globals). Inside a
-        // method, `this.name` is that object's field, not a parameter of the same name.
-        auto it = kw.find(s);
-        return {it != kw.end() ? it->second : Tok::Ident, s, 0, m_line};
-    }
-
-    Token Operator() {
-        const int sl = m_line, sc = m_col;
-        char c = Advance();
-        auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
-        switch (c) {
-            case '+': { if (Peek() == '+') { Advance(); return {Tok::Inc, "", 0, m_line}; }
-                        auto t = two('=', Tok::PlusEq);  return t.type != Tok::End ? t : Token{Tok::Plus, "", 0, m_line}; }
-            case '-': { if (Peek() == '-') { Advance(); return {Tok::Dec, "", 0, m_line}; }
-                        auto t = two('=', Tok::MinusEq); return t.type != Tok::End ? t : Token{Tok::Minus, "", 0, m_line}; }
-            case '*': { auto t = two('=', Tok::StarEq);  return t.type != Tok::End ? t : Token{Tok::Star, "", 0, m_line}; }
-            case '/': { auto t = two('=', Tok::SlashEq); return t.type != Tok::End ? t : Token{Tok::Slash, "", 0, m_line}; }
-            case '%': { auto t = two('=', Tok::PercentEq); return t.type != Tok::End ? t : Token{Tok::Percent, "", 0, m_line}; }
-            case '^': return {Tok::BitXor, "", 0, m_line};
-            case '(': return {Tok::LParen, "", 0, m_line};
-            case ')': return {Tok::RParen, "", 0, m_line};
-            case '{': return {Tok::LBrace, "", 0, m_line};
-            case '}': return {Tok::RBrace, "", 0, m_line};
-            case '[': return {Tok::LBracket, "", 0, m_line};
-            case ']': return {Tok::RBracket, "", 0, m_line};
-            case '?':
-                if (Peek() == '?') {
-                    Advance();
-                    if (Peek() == '=') { Advance(); return {Tok::QuestionQuestionEq, "", 0, m_line}; }
-                    return {Tok::QuestionQuestion, "", 0, m_line};
-                }
-                if (Peek() == '.') { Advance(); return {Tok::QuestionDot, "", 0, m_line}; }
-                return {Tok::Question, "", 0, m_line};
-            case ':': return {Tok::Colon, "", 0, m_line};
-            case ',': return {Tok::Comma, "", 0, m_line};
-            case ';': return {Tok::Semicolon, "", 0, m_line};
-            case '.': return {Tok::Dot, "", 0, m_line};
-            case '=': { if (Peek() == '>') { Advance(); return {Tok::Arrow, "", 0, m_line}; }
-                        auto t = two('=', Tok::Eq); return t.type != Tok::End ? t : Token{Tok::Assign, "", 0, m_line}; }
-            case '!': { auto t = two('=', Tok::Ne); return t.type != Tok::End ? t : Token{Tok::Not, "", 0, m_line}; }
-            case '<': { auto t = two('=', Tok::Le); return t.type != Tok::End ? t : Token{Tok::Lt, "", 0, m_line}; }
-            case '>': { auto t = two('=', Tok::Ge); return t.type != Tok::End ? t : Token{Tok::Gt, "", 0, m_line}; }
-            case '&': if (Peek() == '&') { Advance(); return {Tok::And, "", 0, m_line}; } return {Tok::BitAnd, "", 0, m_line};
-            case '|': if (Peek() == '|') { Advance(); return {Tok::Or, "", 0, m_line}; } return {Tok::BitOr, "", 0, m_line};
-        }
-        throw ScriptError(std::string("unexpected character '") + c + "'", sl, sc);
-    }
-
-    const std::string& m_src;
-    std::size_t m_pos = 0;
-    int m_line = 1;
-    int m_col = 1;
-};
-
-// ===================== AST =====================
-struct Runtime;
-
-struct Expr { virtual ~Expr() = default; virtual Value Eval(Runtime&) = 0; };
-struct Stmt { virtual ~Stmt() = default; virtual void Exec(Runtime&) = 0; };
-using ExprPtr = std::unique_ptr<Expr>;
-using StmtPtr = std::unique_ptr<Stmt>;
-
-struct ReturnSignal { Value value; };
-struct BreakSignal {};
-struct ContinueSignal {};
-
-// ===================== Environment / Runtime =====================
-// What a declared variable may hold. `int x`, `float x`, `bool x` and `string x`
-// are real types: assignments convert (an int drops its fraction) or fail with a
-// clear error instead of silently storing the wrong kind of value. `const` /
-// `readonly` variables can't change after they're set. `var` and other types
-// (Vector3, List<int>, ...) hold anything.
-enum VarKind : unsigned char { KAny = 0, KInt = 1, KFloat = 2, KBool = 3, KString = 4, KConst = 0x10, KStatic = 0x20 };
-
-inline unsigned char TypeKind(const std::string& t) {
-    static const std::unordered_map<std::string, unsigned char> k = {
-        {"int", KInt}, {"long", KInt}, {"short", KInt}, {"byte", KInt}, {"uint", KInt},
-        {"ulong", KInt}, {"ushort", KInt}, {"sbyte", KInt},
-        {"float", KFloat}, {"double", KFloat}, {"decimal", KFloat},
-        {"bool", KBool}, {"string", KString}};
-    auto it = k.find(t);
-    return it == k.end() ? KAny : it->second;
-}
-inline const char* KindName(unsigned char k) {
-    switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
-                        case KString: return "a string"; default: return "a variable"; }
-}
-// This VM spells null as the number 0 (an unset variable, a missed Find or
-// GetComponent, the name `null`). A real object name, a bool, a vector, or any
-// other number is present. A destroyed object reference (instance id) is null too.
-inline bool IsNullish(const Value& v) {
-    if (v.IsBool() || v.IsString() || v.IsVec3()) return false;
-    if (v.IsObject()) return v.AsObjectId() == 0 || !vs::VsObjectAlive(v.AsObjectId());
-    if (v.IsArray()) return !v.AsArray();
-    if (v.IsMap()) return !v.AsMap();
-    return v.IsNumber() && v.AsFloat() == 0.0f;
-}
+// ===================== The language core =====================
+// The parser, syntax tree and interpreter are the engine-independent OkayScript core (okayscript/: Parser.hpp,
+// Runtime.hpp), instantiated in OkayScriptVM.cpp for the engine's value (vs::VsValue). The engine adds its scene
+// names, object references and components through its okayscript::BasicHost (EngineHooks in OkayScriptVM.cpp).
+using Environment = okayscript::BasicEnvironment<Value>;
+using okayscript::IsNullish;
+using okayscript::detail::IsClassInstance;
 
 // ---- Object references (#888 Findings 108 and 111) ----------------------------
 // A reference to a scene object is the object's instance id (a VsValue object),
@@ -728,111 +483,19 @@ struct ActAsObject {
     ActAsObject& operator=(const ActAsObject&) = delete;
 };
 
-inline const char* ValueKindName(const Value& v) {
-    if (v.IsString()) return "text";
-    if (v.IsBool()) return "true/false";
-    if (v.IsNumber()) return "a number";
-    if (v.IsVec3()) return "a vector";
-    if (v.IsArray()) return "a list";
-    if (v.IsMap()) return "a map";
-    return "that value";
-}
-/// A plain-class object: a map tagged with the class that made it. Other maps
-/// (dictionaries, lambdas) are not objects, so `==` keeps treating them as before.
-inline bool IsClassInstance(const Value& v) {
-    auto m = v.AsMap();
-    if (!m) return false;
-    auto it = m->find("__class");
-    return it != m->end() && it->second.IsString();
-}
-/// Convert `v` for a variable of `kind`, or throw a readable error.
-inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string& name) {
-    const unsigned char t = kind & 0x0F;
-    auto fail = [&](const char* hint) -> Value {
-        throw ScriptError("'" + name + "' is " + KindName(kind) + ", so it can't hold " + ValueKindName(v) + hint, 0);
-    };
-    switch (t) {
-        case KInt:
-            if (v.IsNumber()) return Value{(float)SafeInt64(v.AsFloat())};   // drops the fraction, like (int)
-            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
-            return fail(v.IsString() ? " (use int.Parse(text))" : "");
-        case KFloat:
-            if (v.IsNumber()) return v;
-            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
-            return fail(v.IsString() ? " (use float.Parse(text))" : "");
-        case KBool:
-            if (v.IsBool()) return v;
-            if (v.IsNumber()) return Value{v.AsFloat() != 0.0f};
-            if (v.IsObject()) return Value{v.AsBool()};   // an object reference: true while it exists
-            return fail("");
-        case KString:
-            if (v.IsString()) return v;
-            // `void OnCollisionEnter(string other)`: an object reference keeps its
-            // identity in a string variable and still reads as the object's name.
-            if (v.IsObject()) return v;
-            return fail(" (turn it into text with $\"{value}\" or .ToString())");
-        default: return v;
-    }
-}
-inline Value DefaultForKind(unsigned char kind) {
-    switch (kind & 0x0F) { case KBool: return Value{false}; case KString: return Value{std::string()};
-                           default: return Value{}; }
-}
+struct Runtime;
+/// Gives a new Runtime the engine's hooks and settings (OkayScriptVM.cpp).
+void InitEngineRuntime(Runtime& rt);
 
-struct Environment {
-    std::unordered_map<std::string, Value> vars;
-    std::unordered_map<std::string, unsigned char> kinds;   ///< typed / const variables only
-};
-
-// `static` variables: one copy shared by every object running the same script
-// (keyed by its source), so e.g. `static int alive;` counts all the enemies.
-inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
-    static std::unordered_map<std::size_t, std::shared_ptr<Environment>> all;
-    auto& e = all[std::hash<std::string>{}(source)];
-    if (!e) e = std::make_shared<Environment>();
-    return e;
-}
-
-struct FunctionDecl {
-    std::vector<std::string> params;
-    std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
-    std::vector<ExprPtr> defaults;           ///< null unless the parameter was written `a = expr`
-    std::vector<StmtPtr> body;
-    unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
-};
-
-// A plain class (no base type). Instances are maps, so copies share one object
-// and an unset variable stays null. A class WITH a base is not one of these:
-// it is still the component, and its fields and methods are hoisted.
-struct FieldDef {
-    std::string name;
-    unsigned char kind = KAny;
-    bool isPublic = false;
-    ExprPtr init;
-};
-struct MethodDef {
-    FunctionDecl decl;
-    bool isPublic = false;
-};
-struct UserClass {
-    std::string name;
-    std::vector<FieldDef> fields;
-    std::unordered_map<std::string, MethodDef> methods;
-    std::unordered_map<int, MethodDef> ctors;   ///< one constructor per number of arguments
-};
-
-struct Runtime {
-    std::vector<Environment> scopes{1};                 // scopes[0] = global
-    std::shared_ptr<Environment> statics;               // `static` variables shared by this script's objects
-    std::unordered_map<std::string, FunctionDecl> functions;
-    std::unordered_map<std::string, UserClass> classes;
-    Value self;                 ///< plain-class object a method or constructor is running on
-    std::string selfClass;
-    std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
+struct Runtime : okayscript::BasicRuntime<Value> {
     ScriptHost* host = nullptr;
     /// ref.Method(args) on an object reference (other.SetActive(false),
     /// door.transform.Translate(1, 0, 0), other.GetComponent<Rigidbody>()).
     Value CallOnObject(const Value& ref, const std::string& method, std::vector<Value>& args);
+    /// The engine's own dotted names (Time.deltaTime, transform.position, gameObject.name, Color.red, a component
+    /// or object reference in a variable): read / write by their whole text. EngineHooks hands them to the core.
+    Value EngineDotted(const std::string& name, bool& ok);
+    bool EngineSetDotted(const std::string& name, const Value& v);
 
     // Details of the most recent raycast()/raycast3() call, exposed to scripts
     // through ray_object()/ray_x()/ray_dist()/... accessors.
@@ -872,9 +535,6 @@ struct Runtime {
     void Resume(Coroutine* co);
     // Called on the coroutine's own thread by `yield return`.
     void YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond = Value{}, bool condWhile = false, bool real = false);
-    // Names from the call that started a coroutine (StartCoroutine(Blink(delay: 0.2))).
-    // Set only while that builtin runs, on the caller's thread.
-    const std::vector<std::string>* activeArgNames = nullptr;
     int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {});
     void StopCoroutine(Coroutine* co);
     void StopCoroutines(const std::string& fn);   // "" = all
@@ -902,126 +562,14 @@ struct Runtime {
         for (const auto& fn : due) if (functions.count(fn)) Call(fn, none);
     }
 
-    Environment& Global() { return scopes.front(); }
-
-    void Define(const std::string& n, const Value& v) {
-        Environment& e = scopes.back();
-        e.vars[n] = v;
-        if (!e.kinds.empty()) e.kinds.erase(n);
-    }
-    /// A typed / const declaration: converts the value and remembers the type.
-    void DefineTyped(const std::string& n, const Value& v, unsigned char kind) {
-        Environment& e = scopes.back();
-        e.vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
-        if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
-    }
-    /// A `static` declaration: only the first object to run it sets the value;
-    /// everyone else shares it from then on.
-    void DefineStatic(const std::string& n, const Value& v, unsigned char kind) {
-        if (!statics) statics = std::make_shared<Environment>();
-        if (statics->vars.count(n)) return;
-        statics->vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
-        statics->kinds[n] = kind;
-    }
-    static bool AssignIn(Environment& e, const std::string& n, const Value& v) {
-        auto f = e.vars.find(n);
-        if (f == e.vars.end()) return false;
-        if (!e.kinds.empty()) {
-            auto k = e.kinds.find(n);
-            if (k != e.kinds.end()) {
-                if (k->second & KConst) throw ScriptError("'" + n + "' is const, so it can't change after it's set", 0);
-                f->second = (k->second & 0x0F) ? CoerceToKind(k->second, v, n) : v;
-                return true;
-            }
-        }
-        f->second = v;
-        return true;
-    }
-    /// A field of the object the current method is running on (locals and parameters
-    /// are checked first by Get/Assign, so they shadow the field).
-    FieldDef* SelfField(const std::string& n) {
-        if (selfClass.empty()) return nullptr;
-        auto cit = classes.find(selfClass);
-        if (cit == classes.end()) return nullptr;
-        for (auto& f : cit->second.fields) if (f.name == n) return &f;
-        return nullptr;
-    }
-    void WriteField(const Value& inst, const FieldDef& f, const Value& v) {
-        auto mp = inst.AsMap();
-        if (!mp) throw ScriptError("can't set '" + f.name + "': the object is null");
-        (*mp)[f.name] = (f.kind & 0x0F) ? CoerceToKind(f.kind, v, f.name) : v;
-    }
-    void Assign(const std::string& n, const Value& v) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (AssignIn(*it, n, v)) return;
-        if (statics && AssignIn(*statics, n, v)) return;
-        if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
-        Global().vars[n] = v; // create global on first assignment
-    }
     /// Set a global from outside (the Inspector): converted to its declared type
     /// when it has one; a value that can't convert is ignored.
     void SetGlobalChecked(const std::string& n, const Value& v) {
         Environment& g = Global();
         auto k = g.kinds.find(n);
         if (k == g.kinds.end()) { g.vars[n] = v; return; }
-        try { g.vars[n] = CoerceToKind(k->second, v, n); } catch (const ScriptError&) {}
+        try { g.vars[n] = okayscript::CoerceToKind<Value>(k->second, v, n); } catch (const ScriptError&) {}
     }
-    Value Get(const std::string& n) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-            auto f = it->vars.find(n);
-            if (f != it->vars.end()) return f->second;
-        }
-        if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
-        if (SelfField(n)) {
-            auto mp = self.AsMap();
-            if (!mp) return Value{};
-            auto it = mp->find(n);
-            return it == mp->end() ? Value{} : it->second;
-        }
-        return Value{}; // undefined reads as 0/false/empty
-    }
-    bool Has(const std::string& n) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
-            if (it->vars.count(n)) return true;
-        if (statics && statics->vars.count(n)) return true;
-        return SelfField(n) != nullptr;
-    }
-
-    Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
-    Value InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args);
-    Value MakeInstance(const std::string& type, std::vector<Value>& args);
-    Value GetMember(const Value& inst, const std::string& name, bool external);
-    void SetMember(const Value& inst, const std::string& name, const Value& v, bool external);
-    Value CallMethod(const Value& inst, const std::string& method, std::vector<Value>& args, bool external);
-    UserClass* ClassOf(const Value& inst);
-    bool SameInstance(const Value& inst) const;
-    bool HasMethod(const std::string& name);
-
-    // C# lambdas (x => x * 2, (a, b) => { ... }): a lambda value is {"__lambda": id};
-    // calling it runs its body in a new frame on top of the current scopes, so it
-    // sees the locals of the code that called it (fine for ForEach/Find/Where...).
-    struct LambdaBody {
-        const std::vector<std::string>* params;
-        const std::vector<StmtPtr>* body;
-        const std::vector<ExprPtr>* defaults = nullptr;
-    };
-    std::unordered_map<int, LambdaBody> lambdas;
-    static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
-    Value CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
-
-    // dotted property read/write (transform.position.x, Time.timeScale,
-    // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
-    // SetDotted returns true when it handled the assignment.
-    Value GetDotted(const std::string& name, bool& ok);
-    bool  SetDotted(const std::string& name, const Value& v);
-
-    // `OnClick += handler` listeners. Fired by the engine event (CallEvent) and
-    // by raise(). A listener is a lambda value or {"__fn": "FunctionName"}.
-    struct Sub { std::string name; Value fn; };
-    std::vector<Sub> subs;
-    void AddSub(const std::string& event, const Value& fn);
-    void RemoveSub(const std::string& event, const Value& fn);
-    void FireSubs(const std::string& event, std::vector<Value>& args);
-    bool HasSub(const std::string& event) const;
 };
 
 // A component reference returned by GetComponent<T>(): the string "@T" for this
@@ -1129,7 +677,7 @@ struct OkayScriptVM::Impl {
     // Tweens and timers outlive a call; their callbacks check this so they do
     // nothing once the script is gone (its component removed or reloaded).
     std::shared_ptr<int> life = std::make_shared<int>(0);
-    std::vector<StmtPtr> topLevel;
+    std::unique_ptr<okayscript::Program> program;   // the loaded source: functions, classes and lambdas point into it
     bool loaded = false;
     ~Impl() { rt.StopCoroutines(""); }   // unwind every suspended coroutine thread
     // "Bare mode": a script with NO functions at all — its top-level statements ARE the

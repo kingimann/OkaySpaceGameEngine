@@ -1166,70 +1166,9 @@ void OkayScriptVM::Impl::RegisterAccountBuiltins(BuiltinCtx& c) {
             const std::string file = saveFile(a, 0);
             return Value{!file.empty() && Save::DeleteFile(file)};
         };
-        // Math helpers
-        b["abs"]   = [](std::vector<Value>& a) { return Value{Mathf::Abs(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sin"]   = [](std::vector<Value>& a) { return Value{Mathf::Sin(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["cos"]   = [](std::vector<Value>& a) { return Value{Mathf::Cos(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sqrt"]  = [](std::vector<Value>& a) { return Value{Mathf::Sqrt(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["floor"] = [](std::vector<Value>& a) { return Value{Mathf::Floor(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["min"]   = [](std::vector<Value>& a) { return Value{Mathf::Min(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["max"]   = [](std::vector<Value>& a) { return Value{Mathf::Max(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["tan"]   = [](std::vector<Value>& a) { return Value{std::tan(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["pow"]   = [](std::vector<Value>& a) { return Value{std::pow(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 1)}; };
-        b["round"] = [](std::vector<Value>& a) { return Value{Mathf::Round(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["ceil"]  = [](std::vector<Value>& a) { return Value{Mathf::Ceil(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sign"]  = [](std::vector<Value>& a) { float v = a.empty() ? 0 : a[0].AsFloat(); return Value{v > 0 ? 1.0f : v < 0 ? -1.0f : 0.0f}; };
-        b["atan2"] = [](std::vector<Value>& a) { return Value{std::atan2(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["clamp"] = [](std::vector<Value>& a) {
-            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
-            return Value{Mathf::Clamp(v, lo, hi)};
-        };
-        b["lerp"]  = [](std::vector<Value>& a) {
-            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0, t = a.size() > 2 ? a[2].AsFloat() : 0;
-            return Value{Mathf::Lerp(x, y, t)};
-        };
-        b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
-        b["hypot"] = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
-        b["atan"]  = [](std::vector<Value>& a) { return Value{std::atan(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["asin"]  = [](std::vector<Value>& a) { return Value{std::asin(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["acos"]  = [](std::vector<Value>& a) { return Value{std::acos(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["log"]   = [](std::vector<Value>& a) { return Value{std::log(a.empty() ? 1 : a[0].AsFloat())}; };
-        b["exp"]   = [](std::vector<Value>& a) { return Value{std::exp(a.empty() ? 0 : a[0].AsFloat())}; };
-        // Wrap a value into [lo, hi) — angles, looping indices, scrolling.
-        b["wrap"]  = [](std::vector<Value>& a) {
-            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
-            float span = hi - lo;
-            if (span <= 0.0f) return Value{lo};
-            float r = std::fmod(v - lo, span);
-            if (r < 0) r += span;
-            return Value{lo + r};
-        };
-        // Triangle wave 0..len..0 — patrols, breathing scale, bobbing.
-        b["ping_pong"] = [](std::vector<Value>& a) {
-            float t = a.size() > 0 ? a[0].AsFloat() : 0, len = a.size() > 1 ? a[1].AsFloat() : 1;
-            if (len <= 0.0f) return Value{0.0f};
-            float m = std::fmod(t, 2.0f * len);
-            if (m < 0) m += 2.0f * len;
-            return Value{m <= len ? m : 2.0f * len - m};
-        };
-        // Smooth (ease in/out) interpolation between a and b.
-        b["smoothstep"] = [](std::vector<Value>& a) {
-            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 1, t = a.size() > 2 ? a[2].AsFloat() : 0;
-            t = Mathf::Clamp01(t);
-            t = t * t * (3.0f - 2.0f * t);
-            return Value{Mathf::Lerp(x, y, t)};
-        };
-        // Clamp to [0,1] (Mathf.Clamp01).
-        b["clamp01"] = [](std::vector<Value>& a) {
-            return Value{Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat())};
-        };
-        // Where v lies between a and b, as 0..1 (Mathf.InverseLerp).
-        b["inverse_lerp"] = [](std::vector<Value>& a) {
-            float lo = a.size() > 0 ? a[0].AsFloat() : 0, hi = a.size() > 1 ? a[1].AsFloat() : 1,
-                  v  = a.size() > 2 ? a[2].AsFloat() : 0;
-            if (hi - lo == 0.0f) return Value{0.0f};
-            return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
-        };
+        // Math helpers: the language core's shared set (okayscript/include/okayscript/CoreBuiltins.hpp), the same
+        // functions and rules as in the okayscript CLI.
+        okayscript::InstallMathBuiltins<Value>(b);
 }
 
 } // namespace okay

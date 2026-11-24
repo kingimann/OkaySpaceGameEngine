@@ -1,0 +1,216 @@
+// Dump(): the syntax tree as small S-expressions, for tests and debugging. Written for this project.
+#include "okayscript/Ast.hpp"
+#include "okayscript/Environment.hpp"
+#include "okayscript/Value.hpp"
+
+namespace okayscript {
+
+namespace {
+// An operator as written: TokName gives it in quotes ("'+'"); the tree prints it bare.
+std::string OpText(Tok t) {
+    const std::string s = TokName(t);
+    return s.size() > 2 && s.front() == '\'' ? s.substr(1, s.size() - 2) : std::string("?");
+}
+std::string Opt(const ExprPtr& e) { return e ? e->Dump() : std::string("nil"); }
+std::string Quote(const std::string& s) { return "\"" + s + "\""; }
+std::string ArgList(const std::vector<ExprPtr>& a) {
+    std::string s;
+    for (auto& e : a) s += " " + e->Dump();
+    return s;
+}
+} // namespace
+
+std::string DumpList(const StmtList& list) {
+    std::string s = "(block";
+    for (auto& st : list) s += " " + st->Dump();
+    return s + ")";
+}
+
+std::string NumberExpr::Dump() const { return Value::FormatNumber((float)v); }
+std::string StringExpr::Dump() const { return Quote(v); }
+std::string BoolExpr::Dump() const { return v ? "true" : "false"; }
+std::string InterpStringExpr::Dump() const {
+    std::string s = "(interp";
+    for (auto& g : segs) s += " " + (g.isExpr ? g.expr->Dump() : Quote(g.lit));
+    return s + ")";
+}
+std::string VarExpr::Dump() const { return n; }
+std::string AssignExpr::Dump() const { return "(= " + n + " " + value->Dump() + ")"; }
+std::string UnaryExpr::Dump() const { return std::string("(") + (op == Tok::Minus ? std::string("neg") : OpText(op)) + " " + e->Dump() + ")"; }
+std::string LogicalExpr::Dump() const { return std::string("(") + OpText(op) + " " + l->Dump() + " " + r->Dump() + ")"; }
+std::string CoalesceExpr::Dump() const { return "(?? " + l->Dump() + " " + r->Dump() + ")"; }
+std::string NullishAssignExpr::Dump() const { return "(?\?= " + n + " " + value->Dump() + ")"; }
+std::string BinaryExpr::Dump() const { return std::string("(") + OpText(op) + " " + l->Dump() + " " + r->Dump() + ")"; }
+std::string MemberExpr::Dump() const { return std::string(safe ? "(?. " : "(. ") + obj->Dump() + " " + name + ")"; }
+std::string MemberAssignExpr::Dump() const { return "(=. " + obj->Dump() + " " + name + " " + value->Dump() + ")"; }
+std::string CastExpr::Dump() const { return "(cast " + type + " " + e->Dump() + ")"; }
+std::string MethodCallExpr::Dump() const { return "(method " + obj->Dump() + " " + name + ArgList(args) + ")"; }
+std::string CallExpr::Dump() const {
+    std::string s = "(call " + name;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        s += " ";
+        if (i < argNames.size() && !argNames[i].empty()) s += argNames[i] + ":";
+        s += args[i]->Dump();
+    }
+    return s + ")";
+}
+std::string TernaryExpr::Dump() const { return "(? " + cond->Dump() + " " + a->Dump() + " " + b->Dump() + ")"; }
+std::string ArrayExpr::Dump() const { return "(list" + ArgList(elems) + ")"; }
+std::string IndexExpr::Dump() const { return "([] " + arr->Dump() + " " + index->Dump() + ")"; }
+std::string IndexAssignExpr::Dump() const { return "([]= " + arr->Dump() + " " + index->Dump() + " " + value->Dump() + ")"; }
+std::string IndexCompoundAssignExpr::Dump() const {
+    return std::string("([]") + OpText(op) + "= " + arr->Dump() + " " + index->Dump() + " " + value->Dump() + ")";
+}
+std::string LambdaExpr::Dump() const {
+    std::string s = "(lambda (";
+    for (std::size_t i = 0; i < params.size(); ++i) s += (i ? " " : "") + params[i];
+    return s + ") " + DumpList(body) + ")";
+}
+
+std::string NewExpr::Dump() const { return "(new " + type + ArgList(args) + ")"; }
+std::string EventOrCompoundExpr::Dump() const {
+    return std::string("(") + (remove ? "-=" : "+=") + " " + name + " " + rhs->Dump() + ")";
+}
+std::string YieldStmt::Dump() const { return "(yield " + Opt(e) + ")"; }
+
+std::string ExprStmt::Dump() const { return e->Dump(); }
+std::string VarDeclStmt::Dump() const {
+    return std::string("(var") + ((kind & 0x0F) ? std::string(" ") + KindName(kind) : "") + ((kind & KConst) ? " const" : "") +
+           " " + n + " " + Opt(init) + ")";
+}
+std::string ReturnStmt::Dump() const { return "(return " + Opt(e) + ")"; }
+std::string BreakStmt::Dump() const { return "(break)"; }
+std::string ContinueStmt::Dump() const { return "(continue)"; }
+std::string ThrowStmt::Dump() const { return "(throw " + Opt(e) + ")"; }
+std::string TryStmt::Dump() const {
+    return "(try " + DumpList(body) + (hasCatch ? " (catch " + (catchVar.empty() ? std::string("_") : catchVar) + " " + DumpList(catchB) + ")" : "") + ")";
+}
+std::string BlockStmt::Dump() const { return DumpList(body); }
+std::string IfStmt::Dump() const { return "(if " + cond->Dump() + " " + DumpList(thenB) + (elseB.empty() ? "" : " " + DumpList(elseB)) + ")"; }
+std::string WhileStmt::Dump() const { return "(while " + cond->Dump() + " " + DumpList(body) + ")"; }
+std::string DoWhileStmt::Dump() const { return "(do " + DumpList(body) + " " + cond->Dump() + ")"; }
+std::string SwitchStmt::Dump() const {
+    std::string s = "(switch " + subject->Dump();
+    for (auto& c : cases) s += " (" + (c.isDefault ? std::string("default") : "case " + c.match->Dump()) + " " + DumpList(c.body) + ")";
+    return s + ")";
+}
+std::string ForStmt::Dump() const {
+    return "(for " + (init ? init->Dump() : std::string("nil")) + " " + Opt(cond) + " " + Opt(step) + " " + DumpList(body) + ")";
+}
+std::string ForEachStmt::Dump() const { return "(foreach " + var + " " + iterable->Dump() + " " + DumpList(body) + ")"; }
+std::string MultiStmt::Dump() const {
+    std::string s = "(multi";
+    for (auto& st : list) s += " " + st->Dump();
+    return s + ")";
+}
+
+// ---- Local names -------------------------------------------------------------------------------------------------
+namespace {
+struct LocalNameWalker {
+    std::unordered_set<std::string>& out;
+    void Fn(const FunctionDecl& f) {
+        for (auto& p : f.params) out.insert(p);
+        for (auto& d : f.defaults) if (d) E(*d);
+        List(f.body, true);
+    }
+    void List(const StmtList& l, bool local) { for (auto& s : l) S(*s, local); }
+    void S(const Stmt& st, bool local) {
+        switch (st.kind) {
+            case StmtKind::Expr: E(*static_cast<const ExprStmt&>(st).e); break;
+            case StmtKind::VarDecl: {
+                auto& s = static_cast<const VarDeclStmt&>(st);
+                if (local) out.insert(s.n);
+                if (s.init) E(*s.init);
+                break;
+            }
+            case StmtKind::Return: { auto& s = static_cast<const ReturnStmt&>(st); if (s.e) E(*s.e); break; }
+            case StmtKind::Throw: { auto& s = static_cast<const ThrowStmt&>(st); if (s.e) E(*s.e); break; }
+            case StmtKind::Yield: { auto& s = static_cast<const YieldStmt&>(st); if (s.e) E(*s.e); break; }
+            case StmtKind::Try: {
+                auto& s = static_cast<const TryStmt&>(st);
+                if (local && !s.catchVar.empty()) out.insert(s.catchVar);
+                List(s.body, local); List(s.catchB, local);
+                break;
+            }
+            case StmtKind::Block: List(static_cast<const BlockStmt&>(st).body, local); break;
+            case StmtKind::If: { auto& s = static_cast<const IfStmt&>(st); E(*s.cond); List(s.thenB, local); List(s.elseB, local); break; }
+            case StmtKind::While: { auto& s = static_cast<const WhileStmt&>(st); E(*s.cond); List(s.body, local); break; }
+            case StmtKind::DoWhile: { auto& s = static_cast<const DoWhileStmt&>(st); E(*s.cond); List(s.body, local); break; }
+            case StmtKind::Switch: {
+                auto& s = static_cast<const SwitchStmt&>(st);
+                E(*s.subject);
+                for (auto& c : s.cases) { if (c.match) E(*c.match); List(c.body, local); }
+                break;
+            }
+            case StmtKind::For: {
+                auto& s = static_cast<const ForStmt&>(st);
+                if (s.init) S(*s.init, local);
+                if (s.cond) E(*s.cond);
+                if (s.step) E(*s.step);
+                List(s.body, local);
+                break;
+            }
+            case StmtKind::ForEach: {
+                auto& s = static_cast<const ForEachStmt&>(st);
+                if (local) out.insert(s.var);
+                E(*s.iterable); List(s.body, local);
+                break;
+            }
+            case StmtKind::Multi: List(static_cast<const MultiStmt&>(st).list, local); break;
+            case StmtKind::Break: case StmtKind::Continue: break;
+        }
+    }
+    void Args(const std::vector<ExprPtr>& a) { for (auto& e : a) E(*e); }
+    void E(const Expr& ex) {
+        switch (ex.kind) {
+            case ExprKind::Number: case ExprKind::String: case ExprKind::Bool: case ExprKind::Var: break;
+            case ExprKind::InterpString:
+                for (auto& g : static_cast<const InterpStringExpr&>(ex).segs) if (g.isExpr) E(*g.expr);
+                break;
+            case ExprKind::Assign: E(*static_cast<const AssignExpr&>(ex).value); break;
+            case ExprKind::Unary: E(*static_cast<const UnaryExpr&>(ex).e); break;
+            case ExprKind::Logical: { auto& e = static_cast<const LogicalExpr&>(ex); E(*e.l); E(*e.r); break; }
+            case ExprKind::Coalesce: { auto& e = static_cast<const CoalesceExpr&>(ex); E(*e.l); E(*e.r); break; }
+            case ExprKind::NullishAssign: E(*static_cast<const NullishAssignExpr&>(ex).value); break;
+            case ExprKind::Binary: { auto& e = static_cast<const BinaryExpr&>(ex); E(*e.l); E(*e.r); break; }
+            case ExprKind::Member: E(*static_cast<const MemberExpr&>(ex).obj); break;
+            case ExprKind::MemberAssign: { auto& e = static_cast<const MemberAssignExpr&>(ex); E(*e.obj); E(*e.value); break; }
+            case ExprKind::Cast: E(*static_cast<const CastExpr&>(ex).e); break;
+            case ExprKind::MethodCall: { auto& e = static_cast<const MethodCallExpr&>(ex); E(*e.obj); Args(e.args); break; }
+            case ExprKind::Call: Args(static_cast<const CallExpr&>(ex).args); break;
+            case ExprKind::Ternary: { auto& e = static_cast<const TernaryExpr&>(ex); E(*e.cond); E(*e.a); E(*e.b); break; }
+            case ExprKind::Array: Args(static_cast<const ArrayExpr&>(ex).elems); break;
+            case ExprKind::Index: { auto& e = static_cast<const IndexExpr&>(ex); E(*e.arr); E(*e.index); break; }
+            case ExprKind::IndexAssign: { auto& e = static_cast<const IndexAssignExpr&>(ex); E(*e.arr); E(*e.index); E(*e.value); break; }
+            case ExprKind::IndexCompoundAssign: {
+                auto& e = static_cast<const IndexCompoundAssignExpr&>(ex);
+                E(*e.arr); E(*e.index); E(*e.value);
+                break;
+            }
+            case ExprKind::Lambda: {   // a lambda's parameters and declarations are locals of the lambda's own scope
+                auto& e = static_cast<const LambdaExpr&>(ex);
+                for (auto& p : e.params) out.insert(p);
+                for (auto& d : e.defaults) if (d) E(*d);
+                List(e.body, true);
+                break;
+            }
+            case ExprKind::New: Args(static_cast<const NewExpr&>(ex).args); break;
+            case ExprKind::EventOrCompound: E(*static_cast<const EventOrCompoundExpr&>(ex).rhs); break;
+        }
+    }
+};
+} // namespace
+
+void CollectLocalNames(Program& prog) {
+    LocalNameWalker w{prog.localNames};
+    w.List(prog.top, false);   // top-level declarations are globals
+    for (auto& kv : prog.functions) w.Fn(kv.second);
+    for (auto& kv : prog.classes) {
+        for (auto& f : kv.second.fields) if (f.init) w.E(*f.init);
+        for (auto& m : kv.second.methods) w.Fn(m.second.decl);
+        for (auto& c : kv.second.ctors) w.Fn(c.second.decl);
+    }
+}
+
+} // namespace okayscript
+

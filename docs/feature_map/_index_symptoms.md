@@ -179,6 +179,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | a Modules tab in Build Game's report | [41.13](41-build-tools-infra.md#4113-engine-modules-stage-0-groups-test-labels-module-list-dependency-check) Engine modules (stage 0: groups, test labels, module list, dependency check) |
 | a nameplate does not follow its object | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
+| a native says "takes 2 arguments, got 3 | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | a new account on the same PC still banned | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | a new feature works in one language and not the other | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a new light feature works on one backend only | [38.8](38-render-backends.md#388-shader-pipeline) Shader pipeline |
@@ -259,6 +260,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script clip is overwritten by locomotion | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
 | a script does nothing or errors at runtime | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a script edit does not reload | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
+| a script error names the wrong line | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
@@ -776,6 +778,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | objects shake far from the centre | [45.2](43-proposals.md#452-large-world-coordinates) Large world coordinates |
 | objects vanish at screen edges | [2.8](02-rendering-world.md#28-culling-and-skinning) Culling and skinning |
 | odd files named `x` or `map` at the repo root | [19.6](19-docs-tests-health.md#196-repository-hygiene) Repository hygiene |
+| okayscript: can't read | [13.8](13-scripting.md#138-standalone-okayscript-language-and-cli) Standalone OkayScript language and CLI |
 | OkaySpace crashed" box | [22.3](20-35-planned.md#223-crash-recovery) Crash recovery |
 | OkayUI draws under ImGui or the game | [40.3](40-okayui-library.md#403-backends-and-frame-loop) Backends and frame loop |
 | old project opens with missing pieces | [25.3](20-35-planned.md#253-migration) Migration |

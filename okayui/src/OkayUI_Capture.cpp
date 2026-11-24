@@ -29,15 +29,17 @@ struct CaptureMark {
     int nwrec = 0, wrecOpen = -1;
     int onv = 0, oni = 0, novSpans = 0;   // the overlay batch
     bool haveOvLast = false; OverlaySpan ovLast{};
+    bool keepOverlay = false;             // Capture_KeepOverlay: the overlay batch is left alone
 };
 CaptureMark g_cap;
 long long captureFrameNow() { return (long long)g_frame; }
 } // namespace
 
-void BeginCapture() {
+void BeginCapture(int flags) {
     if (g_cap.depth > 0 && g_cap.frame != captureFrameNow()) g_cap.depth = 0;   // left open last frame: forget it
     if (g_cap.depth++ > 0) return;
     g_cap.frame = captureFrameNow();
+    g_cap.keepOverlay = (flags & Capture_KeepOverlay) != 0;
     g_cap.nv = g_nv; g_cap.ni = g_ni; g_cap.nspans = g_nspans;
     g_cap.haveLast = g_nspans > 0; if (g_cap.haveLast) g_cap.last = g_spans[g_nspans - 1];
     g_cap.clipOn = g_curClipOn; g_cap.clip = g_curClipRect; g_cap.tex = g_curTex;
@@ -91,8 +93,9 @@ void EndCapture(CapturedGeometry& out) {
         }
         flushTo(g_ni);
     }
-    // ---- the overlay layer: after the main shapes, never clipped (as mergeOverlay appends it)
-    {
+    // ---- the overlay layer: after the main shapes, never clipped (as mergeOverlay appends it); left in the frame with KeepOverlay
+    out.overlayFrom = (int)out.cmds.size();
+    if (!g_cap.keepOverlay) {
         const int ov0 = g_cap.onv, oi0 = g_cap.oni, base = (int)out.vertices.size();
         for (int i = ov0; i < g_onv; ++i) {
             DrawVertex d; std::memcpy(&d, &g_ovVerts[i], sizeof d);
@@ -125,8 +128,10 @@ void EndCapture(CapturedGeometry& out) {
     if (g_cap.haveLast && g_nspans > 0) g_spans[g_nspans - 1] = g_cap.last;
     g_curClipOn = g_cap.clipOn; g_curClipRect = g_cap.clip; g_curTex = g_cap.tex;
     g_nwrec = g_cap.nwrec; g_wrecOpen = g_cap.wrecOpen;
-    g_onv = g_cap.onv; g_oni = g_cap.oni; g_novSpans = g_cap.novSpans;
-    if (g_cap.haveOvLast && g_novSpans > 0) g_ovSpans[g_novSpans - 1] = g_cap.ovLast;
+    if (!g_cap.keepOverlay) {
+        g_onv = g_cap.onv; g_oni = g_cap.oni; g_novSpans = g_cap.novSpans;
+        if (g_cap.haveOvLast && g_novSpans > 0) g_ovSpans[g_novSpans - 1] = g_cap.ovLast;
+    }
 }
 
 bool GetTexturePixels(const void* texture, TexturePixels& out) {

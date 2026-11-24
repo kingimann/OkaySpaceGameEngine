@@ -38,9 +38,11 @@ struct Linker {
     }
 };
 
+} // namespace
+
 // Turns the indices recorded while parsing into the pointers of the public tree. Run once, after the last element:
-// before that the flat arrays may still move.
-void Fixup(Document& d) {
+// before that the flat arrays may still move. (Also used by the 6.x rewrite, FbxLegacy.hpp.)
+void LinkTree(Document& d) {
     Elem* const E = d.elems.data();
     auto at = [&](std::uint64_t i1) -> const Elem* { return i1 == 0 ? nullptr : E + (i1 - 1); };   // index + 1
     for (Elem& e : d.elems) {
@@ -52,7 +54,6 @@ void Fixup(Document& d) {
     d.root.children.first = at(d.root.links_ >> 32);
     d.root.next = nullptr;
 }
-} // namespace
 
 // ============================================================================
 // Inflate (RFC 1950 wrapper around RFC 1951 deflate)
@@ -218,7 +219,8 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
     std::memcpy(&r.version, data + 23, 4);
     out.version = r.version;
     out.binary = true;
-    if (r.version < 7100 || r.version > 9999) return fail("unsupported FBX version " + std::to_string(r.version));
+    // FBX 6.0 (2006) on: 6.x and 7.0 use the same record layout as 7.1 to 7.4 (32-bit offsets); 7.5 widened them.
+    if (r.version < 6000 || r.version > 9999) return fail(UnsupportedVersionMessage(r.version));
     std::size_t pos = 27;
     {
         std::size_t ne = 0, np = 0;
@@ -237,7 +239,7 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
         if (rc == 0) break;
         link.Link(kNone, last, idx);
     }
-    Fixup(out);
+    LinkTree(out);
     if (!ok) return fail(r.err);
     return true;
 }
@@ -457,7 +459,20 @@ struct Text {
         for (;;) {
             SkipSpace(false);
             const char c = Cur();
-            if (Eof() || c == '\n') break;
+            if (Eof() || c == '\n') {
+                // FBX 6.x writes long value lists over several lines: a line that starts with ',' goes on with the list,
+                // and so does a line of values after an element that has none yet ("Key:" then the keys on the next
+                // line). Nothing else starts a line with a digit or a comma (an element starts with its name).
+                if (Eof()) break;
+                const std::size_t save = pos;
+                SkipSpace(true);
+                const char d = Cur();
+                const bool digitNext = pos + 1 < n && s[pos + 1] >= '0' && s[pos + 1] <= '9';
+                if (d == ',') { ++pos; SkipSpace(true); continue; }
+                if (count == 0 && ((d >= '0' && d <= '9') || ((d == '-' || d == '+' || d == '.') && digitNext))) continue;
+                pos = save;
+                break;
+            }
             if (c == '{') break;
             if (c == '}') break;
             if (c == ',') { ++pos; SkipSpace(true); continue; }   // a comma continues onto the next line
@@ -520,9 +535,18 @@ bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::
     // The two flat arrays grew by doubling (the text gives no counts up front): give back the slack before the scene
     // is built, which is when memory peaks. They hold indices until Fixup, so moving them is safe here.
     out.elems.shrink_to_fit(); out.props.shrink_to_fit();
-    Fixup(out);
+    LinkTree(out);
     if (!ok) return fail(t.err);
     return true;
+}
+
+std::string UnsupportedVersionMessage(std::uint32_t v) {
+    const std::string ver = std::to_string(v / 1000) + "." + std::to_string((v % 1000) / 100);
+    if (v < 6000)
+        return "this is an FBX " + ver + " file (FBX 2005 or older), which this reader does not read (it reads FBX 6.0 and newer): "
+               "open it in the program that made it, or in a converter, and export it again as FBX 2011 (FBX 7.1) or newer";
+    return "this is an FBX " + ver + " file, newer than this reader knows (it reads FBX 6.0 to 7.x): export it again as FBX 2011 to "
+           "FBX 2020 (FBX 7.1 to 7.7)";
 }
 
 bool Parse(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim) {

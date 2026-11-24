@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 
 namespace scripteditor {
 
@@ -12,7 +13,7 @@ ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
     language_ = OkayUI::OkayScriptLanguage();
     ed_.SetLanguage(language_);
     ed_.SetTabSize(4);
-    ed_.SetLineSpacing(1.55f);          // what the script editor sets on the ImGui editor
+    ed_.SetLineSpacing(1.55f);          // what the script editor sets
     seenVersion_ = ed_.Version();
 }
 
@@ -89,7 +90,7 @@ void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& mar
         OkayUI::CodeMarker cm;
         cm.line = m.first - 1;
         cm.colStart = 0; cm.colEnd = -1;                // the whole line's text, like the library's red line
-        // As the Dear ImGui editor: a message that starts with "warning: " is a warning (an amber wash), and the tooltip names the line.
+        // A message that starts with "warning: " is a warning (an amber wash), and the tooltip names the line.
         static const char kWarn[] = "warning: ";
         const bool warn = m.second.compare(0, sizeof(kWarn) - 1, kWarn) == 0;
         const std::string msg = warn ? m.second.substr(sizeof(kWarn) - 1) : m.second;
@@ -121,15 +122,23 @@ void ScriptEditorCodeEdit::SetLanguage(const LanguageWords& w) {
     for (const std::string& c : w.lineComments) if (!c.empty()) l.lineComments.push_back(c);
     l.blockStart = w.blockEnd.empty() ? std::string() : w.blockStart;
     l.blockEnd = w.blockEnd;
-    l.callBeforeKnown = true;            // the Dear ImGui editor's order: print( is a call
+    l.callBeforeKnown = true;            // the script editor's order: print( is a call
     language_ = l;
+    if (w.docs.empty()) ed_.SetHoverInfo(nullptr);
+    else {
+        auto docs = std::make_shared<const std::map<std::string, std::string>>(w.docs);
+        ed_.SetHoverInfo([docs](const std::string& word) {
+            const auto it = docs->find(word);
+            return it == docs->end() ? std::string() : it->second;
+        });
+    }
     if (colorize_) { ed_.SetLanguage(language_); if (!userTypes_.empty()) ed_.SetUserTypes(userTypes_); }
 }
 
-void ScriptEditorCodeEdit::SetPaletteFromImGui(const unsigned* c, int count) {
-    if (!c || count < kImGuiPaletteSize) return;
+void ScriptEditorCodeEdit::SetPaletteColors(const unsigned* c, int count) {
+    if (!c || count < kScriptPaletteSize) return;
     OkayUI::CodePalette p = ed_.Palette();
-    // TextEditor::PaletteIndex order (see the header)
+    // PaletteIndex order (see the header)
     p.text[OkayUI::CodeColor_Default] = c[0];  p.text[OkayUI::CodeColor_Keyword] = c[1];  p.text[OkayUI::CodeColor_Number] = c[2];
     p.text[OkayUI::CodeColor_String] = c[3];   p.text[OkayUI::CodeColor_Char] = c[4];     p.text[OkayUI::CodeColor_Punct] = c[5];
     p.text[OkayUI::CodeColor_Preproc] = c[6];  p.text[OkayUI::CodeColor_Known] = c[8];    p.text[OkayUI::CodeColor_Comment] = c[10];

@@ -9,7 +9,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
-#include "okay/Audio/WavDecoder.hpp"   // OwnWavEnabled: the slow-frame log names the switches that were on
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "okay/Render/TextureCacheFiles.hpp"   // InvalidateTextureCacheForFile: a changed picture is shown changed
@@ -124,7 +123,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
-#include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client first, curl only as its last fallback)
 #include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
 #include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
@@ -132,6 +131,7 @@
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
+#include "OkayUIHostImGui.hpp"           // MouseInOtherViewport: a hosted panel in another OS window gets ImGui's mouse
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -789,17 +789,15 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
-#include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
 #include "ScriptAssist.hpp"     // Scripting Reference, completion, signatures, docs, C# members, palette (ScriptAssist.cpp)
-#include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
+#include "ScriptEditorWidget.hpp" // the script editor's code widget: our own OkayUI::CodeEdit
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
-#include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
 
-// Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
+// Holding D in EditorState::Play, through AppendHeldMainKeys (the Play key mapping), walks a Move
 // with WASD cube into a Door. E then changes the Press E colour.
 static void RunStaleGraphTest(int& failures) {
     using namespace okay;
@@ -912,7 +910,6 @@ static void RunEditorPlayKeyTest(int& failures) {
     auto check = [&](bool cond, const char* what) {
         if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
     };
-    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
     EditorState ped;
     auto place = [&](const char* name, const char* which, Vec3 at) {
         GameObject* go = ped.scene().CreateGameObject(name);
@@ -930,23 +927,27 @@ static void RunEditorPlayKeyTest(int& failures) {
     GameObject* sw = place("Switch", "Press E", {4, 0, 2});
     if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
     ped.Play();
-    Uint8 ks[SDL_NUM_SCANCODES] = {};
-    ks[SDL_SCANCODE_D] = 1;
+    // Held keys are faked; letters at their US places, as the Play feed reads them with no layout loaded.
+    using PKey = okay::platform::Key;
+    bool ks[okay::platform::kKeyCount] = {};
+    auto held = [&](PKey k) { return (int)k >= 0 && (int)k < okay::platform::kKeyCount && ks[(int)k]; };
+    auto usPlace = [](char c) { return okay::KeyForLetter(PKey::Unknown, c); };
+    ks[(int)PKey::D] = true;
     for (int i = 0; i < 70; ++i) {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
     check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
     check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
-    ks[SDL_SCANCODE_D] = 0;
+    ks[(int)PKey::D] = false;
     Input::FeedKeys({});
     ped.Tick(1.0f / 60.0f);
-    ks[SDL_SCANCODE_E] = 1;
+    ks[(int)PKey::E] = true;
     {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
@@ -2008,15 +2009,19 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
-bool UseOkayUICodeEdit() {   // read once, like the other switches (Settings > Experimental sets the variable before main() reads anything)
+bool UseOkayUICodeEdit() {   // the script editor's code is always our own OkayUI::CodeEdit (the vendored ImGuiColorTextEdit is deleted)
 #ifdef OKAY_HAVE_OKAYUI
-    static const bool item = okayuibackend::DevMode(std::getenv("OKAY_UI_CODEEDIT"));
-    return UseOkayUIBackend() || item;
+    return true;
 #else
     return false;
 #endif
 }
-bool OkayUIInputOn() { return UseOkayUIBackend() || UseOkayUICodeEdit(); }
+// Hosted OkayUI screens take the mouse, keys and text: with the "OkayUI screens" backend (as before), and otherwise only for OkayUI's
+// own hosted pieces: a panel drawn by OkayUI only that is hovered or focused, a hosted area under the mouse, or a focused OkayUI code
+// field (okayuihost::HostedInputWanted, taken once at the start of OkayUI's frame). With the backend off a game's ui_* widgets in the
+// Game view get what they got before.
+bool g_okayHostedInput = false;
+bool OkayUIInputOn() { return UseOkayUIBackend() || g_okayHostedInput; }
 bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are read once (Settings > Experimental sets them before main() reads anything)
     static const bool dev = okayuibackend::DevMode(std::getenv("OKAY_DEV")), item = okayuibackend::DevMode(std::getenv("OKAY_UI_INSPECTOR"));
     return okayuibackend::InspectorOn(g_uiBackend, dev ? "1" : nullptr, item ? "1" : nullptr);
@@ -2038,7 +2043,6 @@ static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs
     }
     if (const int lost = OkayUIRegionOverflow()) ctx += ", " + std::to_string(lost) + " OkayUI areas without the mouse";
 #endif
-    if (okay::wav::OwnWavEnabled()) ctx += ", own WAV";
     const okay::Profiler& pr = okay::Prof();
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
     const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);
@@ -6119,14 +6123,15 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
     h.cpuCores = SDL_GetCPUCount();
     h.ramMB = SDL_GetSystemRAM();
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0) h.displayHz = dm.refresh_rate;
+    okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
+    if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
 }
 // Turn the saved modes into the values in use (g_ssaa, g_vsync). Called at start-up and when the user changes a mode.
@@ -7202,55 +7207,7 @@ std::string OkayExeDir() {
 // Audio Mixer: the same levels a game's settings menu drives (master, each group,
 // mutes), live output meters during Play, and music ducking under voice.
 void DrawAudioMixer() {
-    if (UseOkayUIBackend() && DrawAudioMixerOkayUI(&g_showAudioMixer)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
-    if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
-    auto meter = [](const char* id, float v) {
-        const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
-        const float t = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v >= 1.0f ? ImVec4(0.85f, 0.3f, 0.3f, 1) : ImVec4(0.35f, 0.7f, 0.45f, 1));
-        ImGui::ProgressBar(t, ImVec2(-1, 6), "");
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %.1f dB", id, db);
-    };
-    ImGui::TextDisabled("Output");
-    meter("Left", AudioMixer::peak[0]);
-    meter("Right", AudioMixer::peak[1]);
-    ImGui::Spacing();
-    if (ImGui::BeginTable("##mix", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("Volume", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Master");
-        ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##master", &AudioMixer::masterVolume, 0.0f, 1.0f, "%.2f");
-        ImGui::TableNextColumn(); ImGui::Checkbox("##mastermute", &AudioMixer::muted);
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) {
-            ImGui::PushID(i);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(AudioMixer::GroupName((AudioGroup)i));
-            ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##v", &AudioMixer::groupVolume[i], 0.0f, 1.0f, "%.2f");
-            ImGui::TableNextColumn(); ImGui::Checkbox("##m", &AudioMixer::groupMuted[i]);
-            ImGui::PopID();
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Duck music under voice", &AudioMixer::duckMusicUnderVoice);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While a Voice-group source plays, the Music group dips to the duck level.");
-    if (AudioMixer::duckMusicUnderVoice) {
-        ImGui::SliderFloat("Duck level", &AudioMixer::duckLevel, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Attack (s)", &AudioMixer::duckAttack, 0.0f, 2.0f, "%.2f");
-        ImGui::SliderFloat("Release (s)", &AudioMixer::duckRelease, 0.0f, 4.0f, "%.2f");
-        ImGui::TextDisabled("Music now at %.0f%%", AudioMixer::duckGain * 100.0f);
-    }
-    ImGui::Spacing();
-    if (ImGui::Button("Reset")) {
-        AudioMixer::masterVolume = 1.0f; AudioMixer::muted = false;
-        for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Editor only; players set their own in the pause menu.");
-    ImGui::End();
+    DrawAudioMixerOkayUI(&g_showAudioMixer);   // drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24)
 }
 
 // Crash Log viewer: shows the crash reports the exception handler writes next to the
@@ -7277,56 +7234,13 @@ void DrawCrashLog() {
         ++revision;
     };
     if (!loaded) load();
-    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): same reports, same four actions
-        CrashLogActions act;
-        act.refresh = load;
-        act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
-        act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
-        if (DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act)) return;
-    }
-    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
-
-    if (ImGui::Button("Refresh")) load();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(text.empty());
-    if (ImGui::Button("Copy All")) ImGui::SetClipboardText(text.c_str());
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && !text.empty()) ImGui::SetTooltip("%s", "Copy every report to the clipboard, then paste it to support.");
-    ImGui::SameLine();
-    if (ImGui::Button("Open Folder")) extide::RevealInFiles(dir.string());
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) ImGui::OpenPopup("Clear crash reports?");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Delete the saved crash reports.");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Delete all saved crash reports from disk?");
-        ImGui::TextDisabled("This can't be undone.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doClear) {
-            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine(); ImGui::TextDisabled("%s", histPath.string().c_str());
-    ImGui::Separator();
-
-    if (text.empty()) {
-        ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1.0f), "No crash reports \xE2\x80\x94 nice.");
-        ImGui::TextDisabled("%s", "If the editor ever crashes, a report is written next to the exe and\nappears here. Use Copy All to send it to support.");
-    } else {
-        ImGui::TextDisabled("Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)text.size());
-        // Read-only multiline: selectable + scrollable; Copy All grabs everything.
-        ImGui::InputTextMultiline("##crashbody", (char*)text.data(), text.size() + 1,
-                                  ImVec2(-1, -1), ImGuiInputTextFlags_ReadOnly);
-    }
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24): Refresh, Copy All, Open Folder, Clear with
+    // its confirmation, and the reports newest last.
+    CrashLogActions act;
+    act.refresh = load;
+    act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
+    act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
+    DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act);
 }
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
@@ -7335,79 +7249,16 @@ void DrawCrashLog() {
 // click any step to jump straight there (applies that many undos/redos).
 void DrawHistory(EditorState& ed) {
     if (!g_showHistory) return;
-    if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
-    ed.CommitUndo();
-    const std::vector<std::string> histUndo = ed.UndoNames(200), histRedo = ed.RedoNames(200);
-    ImGui::BeginDisabled(!ed.CanUndo());
-    if (ImGui::Button("Undo##hist")) ed.Undo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ed.CanRedo());
-    if (ImGui::Button("Redo##hist")) ed.Redo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
-    ImGui::Separator();
-    ImGui::BeginChild("##histlist");
-    if (!ed.CanUndo() && !ed.CanRedo()) {
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextDisabled("No edits yet — changes will appear here.");
-        ImGui::EndChild(); ImGui::End(); return;
-    }
-    // Timeline rail down the left: a node per state, the current one filled
-    // with the accent color, future (redo) states hollow and dimmed.
-    ImDrawList* hdl = ImGui::GetWindowDrawList();
-    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
-    const float railTopY = ImGui::GetCursorScreenPos().y;
-    {
-        int rows = ed.RedoDepth() + 1 + ed.UndoDepth();
-        float rowH = ImGui::GetTextLineHeightWithSpacing();
-        hdl->AddLine(ImVec2(railX, railTopY + 4.0f),
-                     ImVec2(railX, railTopY + rows * rowH - 4.0f),
-                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
-    }
-    auto histRow = [&](const char* lbl, bool current, bool ahead) {
-        char pad[220]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
-        bool hit = ImGui::Selectable(pad, current);
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float cy = (mn.y + mx.y) * 0.5f;
-        if (current) {
-            hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f,
-                                 ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
-        } else {
-            ImU32 col = ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
-                              : ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
-            hdl->AddCircle(ImVec2(railX, cy), 3.0f, col, 12, 1.5f);
-        }
-        return hit;
-    };
-    // Future (redo) states first, newest-forward at the top; then the current
-    // state; then the past, most recent first. Click any row to jump there.
-    bool jumped = false;
-    for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[160]; std::snprintf(lbl, sizeof(lbl), "After: %s##hr%d", (size_t)i <= histRedo.size() ? histRedo[(size_t)i - 1].c_str() : "Edit", i);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        bool hit = histRow(lbl, false, true);
-        ImGui::PopStyleColor();
-        if (hit) {
-            for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
-            jumped = true;
-        }
-    }
-    if (!jumped) {
-        histRow("Current state", true, false);
-        for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[160]; std::snprintf(lbl, sizeof(lbl), "Before: %s##hu%d", (size_t)i <= histUndo.size() ? histUndo[(size_t)i - 1].c_str() : "Edit", i);
-            if (histRow(lbl, false, false)) {
-                for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
-                jumped = true;
-            }
-        }
-    }
-    ImGui::EndChild();
-    ImGui::End();
+    // Drawn by OkayUI only (editor/OkayPanels.cpp; docs/ui/own_ui_toolkit.md section 24). The model is built only while the window
+    // shows, after the pending undo step is committed, as before; Undo, Redo and a click on a row come back as counts.
+    okaypanels::HistoryIntent in;
+    DrawHistoryOkayUI(&g_showHistory, [&](okaypanels::HistoryModel& m) {
+        ed.CommitUndo();
+        m.undoNames = ed.UndoNames(200); m.redoNames = ed.RedoNames(200);
+        m.undoDepth = ed.UndoDepth(); m.redoDepth = ed.RedoDepth();
+    }, in);
+    for (int k = 0; k < in.undo && ed.CanUndo(); ++k) ed.Undo();
+    for (int k = 0; k < in.redo && ed.CanRedo(); ++k) ed.Redo();
 }
 
 // Lowercase a copy of a string (for case-insensitive compares).
@@ -11657,9 +11508,8 @@ static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
-        te->SetLanguageDefinition(OkayScriptLangDef());
+        te->SetLanguage(OkayScriptLanguageWords());
         te->SetPalette(OkayScriptPalette());
-        te->SetShowWhitespaces(false);
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
         te->SetLeftMargin(22);
@@ -12372,7 +12222,7 @@ void DrawScriptEditor(EditorState& ed) {
         //   Ctrl+G       go to line              Ctrl+Alt+L  reformat the file
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl) {
             ImGuiIO& kio = ImGui::GetIO();
-            if (!UseOkayUICodeEdit() && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) caret.toggleComment = true;   // (the OkayUI code widget does Ctrl+/ itself)
+            // (Ctrl+/ is the code widget's own: OkayUI::CodeEdit's line commands)
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E, false))
                 ImGui::OpenPopup("##tabswitcher");
             if (!kio.KeyAlt && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false))
@@ -12980,8 +12830,8 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::Separator();
         }
 
-        // --- Editor surface: ImGuiColorTextEdit code widget -------------------
-        // The code widget (editor/vendor) owns editing, selection, undo/redo, syntax
+        // --- Editor surface: the code widget (OkayUI::CodeEdit) -----------------
+        // The code widget (ScriptEditorWidget) owns editing, selection, undo/redo, syntax
         // colouring, line numbers and the current-line highlight. We keep it in sync
         // with the shared CodeBuffer and feed it our diagnostics + bookmarks.
         int lines = 1; for (const char* p = buf.data(); *p; ++p) if (*p == '\n') ++lines;
@@ -13428,8 +13278,7 @@ void DrawScriptEditor(EditorState& ed) {
             const int col = te.GetCursorPosition().mColumn;
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
-        s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
-                                       : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
+        s_codeFocus = te.OkayHasKeyboard();
         if (stepOver) {
             ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
@@ -14216,9 +14065,9 @@ void DrawScriptEditor(EditorState& ed) {
                 for (int i = l0; i <= l1 && i < (int)ls.size(); ++i) out.push_back(ls[i]);
                 return out;
             };
-            // The OkayUI code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands,
-            // one undo step each); here they are only for the Dear ImGui editor, or they would run twice.
-            const bool widgetLineKeys = te.UsingOkayUI();
+            // The code widget does Ctrl+/, Ctrl+D, Ctrl+Shift+K and Alt+Up/Down itself (OkayUI::CodeEdit line commands, one undo
+            // step each), so the key paths below never run; the toolbar's "toggle comment" still comes here.
+            const bool widgetLineKeys = true;
             // Ctrl+/ — toggle "// " on the selected lines (also the toolbar button).
             bool wantComment = caret.toggleComment;
             caret.toggleComment = false;
@@ -53551,6 +53400,7 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -53559,7 +53409,7 @@ int main(int argc, char** argv) {
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
-    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, OkayEditorBuildStamp());   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
         if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);
@@ -54246,16 +54096,12 @@ int main(int argc, char** argv) {
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
-                    const PKey sc = e.key;
-                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
-                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
-                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
-                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                    // The same rule as the held keys and the player: letters by the layout, or by position when
+                    // "keys by position" is on (KeyForLetter). Esc is left out: the editor gives it to the game by its
+                    // own release rule (PlayPointerFrame::feedEscapeToGame).
+                    std::vector<char> tapped;
+                    okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*sdlSeam, c); }, tapped);
+                    for (char c : tapped) if (c != (char)27) Input::FeedKeyTap(c);
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
@@ -54273,7 +54119,7 @@ int main(int argc, char** argv) {
             // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
             bool okayOverlay = false;
 #ifdef OKAY_HAVE_OKAYUI
-            if (UseOkayUIBackend() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
+            if (OkayUIInputOn() && (e.type == EvT::MouseButtonDown || e.type == EvT::MouseWheel)) {
                 int ox = e.x, oy = e.y;
                 if (e.type == EvT::MouseWheel) sdlSeam->MouseState(&ox, &oy);
                 okayOverlay = e.windowId == winSeam->Id() && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
@@ -54486,28 +54332,9 @@ int main(int argc, char** argv) {
             auto keyHeld = [&](PKey k) { return kb && kb->IsKeyDown(k); };
             std::vector<char> down;
             // By the layout's letter (AZERTY W is the key labelled W); a layout with no Latin letters
-            // (Russian, Greek...) falls back to the US place so W A S D stay alive.
-            auto letterDown = [&](char c) {
-                PKey sc = kb ? kb->KeyForChar(c) : PKey::Unknown;
-                if (sc == PKey::Unknown) sc = (PKey)(c >= 'a' ? (int)PKey::A + (c - 'a')
-                                                  : c == '0' ? (int)PKey::N0 : (int)PKey::N1 + (c - '1'));
-                return keyHeld(sc);
-            };
-            for (char c = 'a'; c <= 'z'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            for (char c = '0'; c <= '9'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            if (keyHeld(PKey::Space)) down.push_back(' ');
-            if (keyHeld(PKey::LShift) || keyHeld(PKey::RShift)) down.push_back(Input::KeyShift); // sprint
-            if (keyHeld(PKey::LCtrl)  || keyHeld(PKey::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-            if (keyHeld(PKey::LGui)   || keyHeld(PKey::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-            if (keyHeld(PKey::Backspace)) down.push_back((char)8); // text editing
-            if (keyHeld(PKey::Return) || keyHeld(PKey::KpEnter)) down.push_back('\r');
-            if (pointer.feedEscapeToGame) down.push_back((char)27);
-            if (keyHeld(PKey::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-            if (keyHeld(PKey::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-            if (keyHeld(PKey::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-            if (keyHeld(PKey::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
+            // (Russian, Greek...) falls back to the US place so W A S D stay alive. Same mapping as the player.
+            okay::AppendHeldMainKeys(keyHeld, [&](char c) { return okay::KeyForLetter(kb ? kb->KeyForChar(c) : PKey::Unknown, c); },
+                                     pointer.feedEscapeToGame, down);
 
             // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
             if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
@@ -54681,6 +54508,10 @@ int main(int argc, char** argv) {
             int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
+            {   // over another OS window of Dear ImGui's (a hosted panel dragged out): ImGui's mouse, in the main window's pixels
+                ImVec2 vm;
+                if (okayuihost::MouseInOtherViewport(vm)) { uin.mouseX = vm.x; uin.mouseY = vm.y; }
+            }
             uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
@@ -54688,6 +54519,7 @@ int main(int argc, char** argv) {
             {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
+                g_okayHostedInput = okayuihost::HostedInputWanted(g_okayRegion, g_scriptCodeOwnsKeys);   // last frame's hover and focus
                 const bool left = uin.mouseDown;
                 const bool owns = OkayUIInputOn() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
@@ -55832,7 +55664,7 @@ int main(int argc, char** argv) {
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((uint32_t)(wait * 1000.0)); }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).

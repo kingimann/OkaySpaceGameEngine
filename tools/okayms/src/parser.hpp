@@ -52,6 +52,100 @@ struct Parser {
     // so a declaration or a call of an operator function reads like any other function. A conversion function
     // `operator T()` is written the way a function with a return type is read: T moves in front and the name is
     // "operator conv" and T's spelling ([class.conv.fct], [over.oper]).
+    // template <class T> using X = type; ([temp.alias]) becomes a class template holding the type,
+    //   template <class T> struct X__alias { typedef type type; };
+    // and each later X<args> becomes X__alias<args>::type. Own stand-in for alias templates, at the token level.
+    void expand_alias_templates() {
+        std::set<std::string> names;
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        auto make = [&](const Token& like, Tok kind, const std::string& text) {
+            Token t = like;
+            t.kind = kind;
+            t.text = text;
+            return t;
+        };
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            if (t.kind == TIdent && t.text == "template" && i + 1 < tokens.size() && tokens[i + 1].kind == TLt) {
+                // the parameter list
+                size_t j = i + 1;
+                int angle = 0;
+                for (; j < tokens.size(); ++j) {
+                    if (tokens[j].kind == TLt) ++angle;
+                    else if (tokens[j].kind == TGt && --angle == 0) break;
+                }
+                if (j + 4 < tokens.size() && tokens[j + 1].kind == TIdent && tokens[j + 1].text == "using" &&
+                    tokens[j + 2].kind == TIdent && tokens[j + 3].kind == TAssign) {
+                    size_t e = j + 4;
+                    while (e < tokens.size() && tokens[e].kind != TSemi && tokens[e].kind != TEnd) ++e;
+                    const std::string name = tokens[j + 2].text;
+                    for (size_t k = i; k <= j; ++k) out.push_back(tokens[k]);
+                    Token st = make(tokens[j + 1], TStruct, "struct");
+                    out.push_back(st);
+                    out.push_back(make(tokens[j + 2], TIdent, name + "__alias"));
+                    out.push_back(make(tokens[j + 2], TLBrace, "{"));
+                    out.push_back(make(tokens[j + 2], TTypedef, "typedef"));
+                    // the aliased type, itself with earlier aliases expanded
+                    std::vector<Token> body(tokens.begin() + static_cast<std::ptrdiff_t>(j + 4),
+                                            tokens.begin() + static_cast<std::ptrdiff_t>(e));
+                    std::vector<Token> fixed;
+                    expand_alias_uses(body, names, &fixed);
+                    for (const Token& b : fixed) out.push_back(b);
+                    out.push_back(make(tokens[j + 2], TIdent, "type"));
+                    out.push_back(make(tokens[j + 2], TSemi, ";"));
+                    out.push_back(make(tokens[j + 2], TRBrace, "}"));
+                    out.push_back(make(tokens[j + 2], TSemi, ";"));
+                    names.insert(name);
+                    i = e;  // the ';'
+                    continue;
+                }
+            }
+            out.push_back(t);
+        }
+        std::vector<Token> fixed;
+        expand_alias_uses(out, names, &fixed);
+        tokens = std::move(fixed);
+    }
+    // X<args> for an alias template X: X__alias<args>::type.
+    static void expand_alias_uses(const std::vector<Token>& in, const std::set<std::string>& names, std::vector<Token>* out) {
+        for (size_t i = 0; i < in.size(); ++i) {
+            const Token& t = in[i];
+            if (t.kind == TIdent && names.count(t.text) > 0 && i + 1 < in.size() && in[i + 1].kind == TLt &&
+                !(i > 0 && (in[i - 1].kind == TStruct))) {
+                size_t j = i + 1;
+                int angle = 0;
+                int paren = 0;
+                for (; j < in.size(); ++j) {
+                    if (in[j].kind == TLParen) ++paren;
+                    else if (in[j].kind == TRParen) --paren;
+                    else if (paren == 0 && in[j].kind == TLt) ++angle;
+                    else if (paren == 0 && in[j].kind == TGt && --angle == 0) break;
+                }
+                if (j >= in.size()) {
+                    out->push_back(t);
+                    continue;
+                }
+                Token n = t;
+                n.text = t.text + "__alias";
+                out->push_back(n);
+                std::vector<Token> inner(in.begin() + static_cast<std::ptrdiff_t>(i + 1),
+                                         in.begin() + static_cast<std::ptrdiff_t>(j + 1));
+                expand_alias_uses(inner, names, out);
+                Token cc = in[j];
+                cc.kind = TColonColon;
+                cc.text = "::";
+                out->push_back(cc);
+                Token ty = in[j];
+                ty.kind = TIdent;
+                ty.text = "type";
+                out->push_back(ty);
+                i = j;
+                continue;
+            }
+            out->push_back(t);
+        }
+    }
     void collapse_operators() {
         std::vector<Token> out;
         out.reserve(tokens.size());
@@ -379,6 +473,55 @@ struct Parser {
     // A name written with its namespaces in front (geo::unit::kScale, std::uint8_t) is read as the
     // bare name: types, variables and enumerators of a namespace share one table. A call keeps its
     // qualification, because functions are registered with it (and decorated with it).
+    // namespace fs = std::filesystem; ([namespace.alias]): the declaration is removed and each later `fs::` is
+    // replaced by the namespace it names. Own simplification: the alias holds from its declaration to the end of the
+    // file, also when it was declared inside a block.
+    void expand_namespace_aliases() {
+        std::map<std::string, std::vector<Token>> aliases;
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            if (tokens[i].kind == TNamespace && i + 3 < tokens.size() && tokens[i + 1].kind == TIdent &&
+                tokens[i + 2].kind == TAssign) {
+                size_t j = i + 3;
+                std::vector<Token> target;
+                if (j < tokens.size() && tokens[j].kind == TColonColon) ++j;  // namespace x = ::a::b;
+                while (j < tokens.size() && (tokens[j].kind == TIdent || tokens[j].kind == TColonColon)) {
+                    // an alias of an alias is expanded in place
+                    if (tokens[j].kind == TIdent && aliases.count(tokens[j].text) > 0 && target.empty() &&
+                        j + 1 < tokens.size() && tokens[j + 1].kind == TColonColon) {
+                        const std::vector<Token>& inner = aliases[tokens[j].text];
+                        target.insert(target.end(), inner.begin(), inner.end());
+                        j += 2;  // the inner alias's `::` is the last token of its replacement
+                        continue;
+                    }
+                    target.push_back(tokens[j]);
+                    ++j;
+                }
+                if (j < tokens.size() && tokens[j].kind == TSemi && !target.empty() && target.back().kind == TIdent) {
+                    Token cc = target.back();
+                    cc.kind = TColonColon;
+                    cc.text = "::";
+                    target.push_back(cc);  // the replacement of `fs::` ends in its own `::`
+                    aliases[tokens[i + 1].text] = target;
+                    i = j;
+                    continue;
+                }
+            }
+            if (tokens[i].kind == TIdent && aliases.count(tokens[i].text) > 0 && i + 1 < tokens.size() &&
+                tokens[i + 1].kind == TColonColon && !(i > 0 && (tokens[i - 1].kind == TColonColon ||
+                                                                 tokens[i - 1].kind == TDot || tokens[i - 1].kind == TArrow))) {
+                for (Token t : aliases[tokens[i].text]) {
+                    t.line = tokens[i].line;
+                    out.push_back(t);
+                }
+                ++i;  // the alias's own `::` is in the replacement
+                continue;
+            }
+            out.push_back(tokens[i]);
+        }
+        tokens = std::move(out);
+    }
     void strip_namespace_qualifiers() {
         for (size_t i = 0; i + 1 < tokens.size(); ++i) {
             if (tokens[i].kind != TNamespace) continue;
@@ -451,9 +594,18 @@ struct Parser {
     bool cur_implicit_copy = false;
     int rv_count = 0;
 
+    // A constructor template is a constructor too, before any instance of it is made.
+    bool has_ctor_template(int sid) const {
+        for (const auto& mt : member_tmpls)
+            if (mt.first.first == sid && mt.first.second == mt.second.owner) return true;
+        return false;
+    }
     bool class_needs_ctor(const StructDef& d) const {
         for (const Method& m : d.methods)
             if (m.name == "<ctor>") return true;
+        if (!structs.empty() && &d >= &structs.front() && &d <= &structs.back() &&
+            has_ctor_template(static_cast<int>(&d - &structs.front())))
+            return true;
         if (d.poly) return true;  // the constructor stores the table pointer
         if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)])) return true;
         for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
@@ -490,7 +642,7 @@ struct Parser {
     // an aggregate whose members have default initializers.
     bool aggregate_with_defaults(int sid, const std::vector<Node>& args) const {
         const StructDef& sd = structs[static_cast<size_t>(sid)];
-        if (sd.poly || sd.base >= 0 || sd.fields.empty()) return false;
+        if (sd.poly || sd.base >= 0 || sd.fields.empty() || has_ctor_template(sid)) return false;
         for (const Method& m : sd.methods)
             if (m.name == "<ctor>" && !m.implicit) return false;
         if (args.size() == 1) {
@@ -551,6 +703,12 @@ struct Parser {
         if (which[1] == 'c' && !ensure_ctor_template(sid, args, &tctor)) return false;
         const Method* m = which[1] == 'c' ? find_ctor(sid, args) : find_method(sid, which, args.size());
         if (!tctor.empty()) m = find_ctor_instance(sid, tctor);
+        // A copy: adjust_args can add constructor template instances to a class and move its methods.
+        Method m_copy;
+        if (m != nullptr) {
+            m_copy = *m;
+            m = &m_copy;
+        }
         if (m != nullptr && which[1] == 'c' && !pad_defaults(m->defaults, m->params.size(), &args)) return false;
         if (m != nullptr && which[1] == 'c' && !adjust_args(m->params, &args)) return false;
         if (m == nullptr && which[1] == 'c' && args.size() == 1 && !class_has_copy(sid)) {
@@ -873,6 +1031,40 @@ struct Parser {
         return false;
     }
 
+    // typeid ([expr.typeid]): one type information object per type and file, `__okay_ti_` and the decorated name of the
+    // type. Its layout is std::type_info's in <typeinfo>: one pointer to the decorated name as text (".?AVC@@" for a
+    // class C, "H" for int). Objects of two files for the same type compare equal by that text, not by address. Own
+    // model, not the MSVC run-time type information records (no ??_R0 type descriptor, no complete object locator).
+    std::string type_info_symbol(int sid, const std::string& decorated) {
+        const std::string text = sid >= 0 ? ".?A" + std::string(structs[static_cast<size_t>(sid)].is_union ? "T" :
+                                                                structs[static_cast<size_t>(sid)].is_class ? "V" : "U") +
+                                                decorated + "@@"
+                                          : decorated;
+        std::string sym;
+        for (char c : text) sym += (std::isalnum(static_cast<unsigned char>(c)) || c == '_') ? c : '$';
+        sym = "__okay_ti_" + sym;
+        for (const Global& g : globals)
+            if (g.name == sym) return sym;
+        Global name;
+        name.name = sym + "_name";
+        name.is_static = true;
+        name.bss = false;
+        name.type.base = 2;
+        name.type.array_len = static_cast<int>(text.size()) + 1;
+        name.init_bytes.assign(text.begin(), text.end());
+        name.init_bytes.push_back(0);
+        globals.push_back(name);
+        Global ti;
+        ti.name = sym;
+        ti.is_static = true;
+        ti.bss = false;
+        ti.type.base = 0;
+        ti.type.pointers = 1;
+        ti.init_bytes.assign(8, 0);
+        ti.addr_relocs.push_back({0u, name.name});
+        globals.push_back(ti);
+        return sym;
+    }
     // The first token at or after k that is not one of the keywords of a built-in type (unsigned long, double).
     size_t after_type_keywords(size_t k) const {
         while (k < tokens.size() && (tokens[k].kind == TInt || tokens[k].kind == TFloat || tokens[k].kind == TDouble ||
@@ -1053,6 +1245,29 @@ struct Parser {
         type->is_const = false;
         type->is_bool = false;
         type->wide = false;
+        if (is(TIdent) && cur().text == "decltype" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+            // decltype(expression) ([dcl.type.decltype]): the expression's type as okay-ms knows it. Own simplification:
+            // a reference is not added for an lvalue in parentheses, and the expression is not evaluated (its code is
+            // dropped; a lambda in it is still made).
+            next();
+            next();
+            Node e;
+            const std::vector<Node> keep_pre = stmt_pre;
+            const std::vector<Temp> keep_temps = stmt_temps;
+            if (!parse_expr(1, &e)) return false;
+            stmt_pre = keep_pre;
+            stmt_temps = keep_temps;
+            if (!expect(TRParen, "')'")) return false;
+            Type t;
+            if (!static_type(e, &t)) {
+                error = "decltype of an expression whose type is not known";
+                return false;
+            }
+            t.is_ref = false;
+            t.rref = false;
+            *type = t;
+            return true;
+        }
         if (is(TStruct) || is(TUnion)) {
             const bool as_union = is(TUnion);
             const bool as_class = is(TStruct) && cur().text == "class";
@@ -1116,10 +1331,15 @@ struct Parser {
                 // The enumeration's name is a type name too, as in C++ ([dcl.enum]); its values are int.
                 Type enum_type;
                 enum_type.base = 1;
+                enum_type.enum_id = static_cast<int>(enum_names().size());
+                enum_names().push_back(cur().text);
                 typedefs[cur().text] = enum_type;
+                cur_enum_id = enum_type.enum_id;
                 next();
             }
-            if (!parse_enum_body()) return false;
+            const bool enum_ok = parse_enum_body();
+            cur_enum_id = -1;
+            if (!enum_ok) return false;
             type->base = 1;
             return true;
         }
@@ -1204,6 +1424,8 @@ struct Parser {
                 if (!parse_const(&next_value, "an enumerator value")) return false;
             }
             enum_values[name] = next_value;
+            if (cur_enum_id >= 0) enum_of[name] = cur_enum_id;
+            else enum_of.erase(name);
             enums_declared.push_back(name);  // the class being read gets it as a member (parse_struct_body)
             ++next_value;
             if (!accept(TComma)) break;
@@ -1369,6 +1591,51 @@ struct Parser {
     }
     bool parse_init(Node* out);
     bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
+    int conv_depth = 0;
+    // The enumeration being read and, for each enumerator of a named enumeration, its enum_id: an enumerator's type is
+    // its enumeration ([dcl.enum] 5), so a template deduces the enumeration from it.
+    int cur_enum_id = -1;
+    std::map<std::string, int> enum_of{};
+    int enum_id_of(const std::string& name) const {
+        const auto it = enum_of.find(name);
+        return it == enum_of.end() ? -1 : it->second;
+    }
+    // A call through a function pointer of type fpt: the arguments from index `first` are bound as for a direct call
+    // (a reference parameter gets an address, a temporary or a converted value).
+    bool adjust_fp_args(const Type& fpt, std::vector<Node>* args, size_t first) {
+        if (fpt.func_id < 0 || fpt.func_id >= static_cast<int>(func_types.size())) return true;
+        const std::vector<Type> params = func_types[static_cast<size_t>(fpt.func_id)].params;
+        return adjust_args(params, args, first);
+    }
+    // A call through a pointer to a function that returns a reference: the call gives an address, read through.
+    void fp_reference_result(const Type& fpt, Node* call) {
+        if (fpt.func_id < 0 || fpt.func_id >= static_cast<int>(func_types.size())) return;
+        FuncType& ft = func_types[static_cast<size_t>(fpt.func_id)];
+        if (!ft.ret.is_ref) return;
+        const bool rref = ft.ret.rref;
+        call->type = ft.ret;
+        *call = reference_result(std::move(*call), true, rref);
+    }
+    // A name that is a function (and not a local or global variable).
+    bool names_function(const std::string& name) const {
+        if (local_visible(name)) return false;
+        for (const Global& g : globals)
+            if (g.name == name) return false;
+        for (const FuncDecl& f : funcs)
+            if (f.name == name) return true;
+        return false;
+    }
+    // Members of class template instances whose bodies did not compile, with the error: a call of one is an error.
+    std::map<std::string, std::string> unusable_members{};
+    bool find_unusable_call(const Node& n, std::string* which) const {
+        if (n.kind == Node::Call && unusable_members.count(n.text) > 0) {
+            *which = n.text;
+            return true;
+        }
+        for (const Node& k : n.kids)
+            if (find_unusable_call(k, which)) return true;
+        return false;
+    }
     // Every enumerator name in the order read; a class body takes the ones declared inside it as members.
     std::vector<std::string> enums_declared{};
     // The parts of a static initializer that are not constants, while flatten_init runs (see dyn_leaf_stmts).
@@ -1399,6 +1666,18 @@ struct Parser {
             if (!parse_type(&pt, &imp, &exp)) return false;
             if (accept(TConst)) lead_const = true;
             pt.pconst = lead_const;
+            {
+                // R& (*f)(A): the '*' and '&' before the parenthesis belong to the return type.
+                size_t k = at;
+                while (k < tokens.size() && (tokens[k].kind == TStar || tokens[k].kind == TAmp || tokens[k].kind == TAndAnd)) ++k;
+                if (k > at && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind == TStar) {
+                    while (at < k) {
+                        if (is(TStar)) ++pt.pointers;
+                        else pt.is_ref = true;
+                        next();
+                    }
+                }
+            }
             if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
                 next();
                 int stars = 0;
@@ -1418,6 +1697,8 @@ struct Parser {
                 ft.ret = pt;
                 ft.params = fp.params;
                 ft.vararg = fp.vararg;
+                pt.is_ref = false;  // a reference result is in ft.ret; the parameter itself is a pointer
+                pt.rref = false;
                 pt.pointers += stars;
                 pt.func_id = static_cast<int>(func_types.size());
                 func_types.push_back(ft);
@@ -1505,6 +1786,18 @@ struct Parser {
     }
 
     bool parse_declarator(Type base, Declarator* out) {
+        {
+            // R* (*f)(A) and R& (*f)(A): the '*' and '&' before the parenthesis belong to the return type.
+            size_t k = at;
+            while (k < tokens.size() && (tokens[k].kind == TStar || tokens[k].kind == TAmp || tokens[k].kind == TAndAnd)) ++k;
+            if (k > at && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind == TStar) {
+                while (at < k) {
+                    if (is(TStar)) ++base.pointers;
+                    else base.is_ref = true;
+                    next();
+                }
+            }
+        }
         out->type = base;
         if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
             next();
@@ -1524,6 +1817,8 @@ struct Parser {
             ft.ret = base;
             ft.params = out->params;
             ft.vararg = out->vararg;
+            out->type.is_ref = false;  // a reference result is in ft.ret
+            out->type.rref = false;
             out->type.pointers += stars;
             out->type.func_id = static_cast<int>(func_types.size());
             func_types.push_back(ft);
@@ -1601,6 +1896,7 @@ struct Parser {
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
             return true;
+        if (is(TIdent) && cur().text == "decltype" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) return true;
         return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name() ||
                is_template_name_at(at) || (is(TIdent) && cur().text == "typename") ||
                (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
@@ -1664,6 +1960,9 @@ struct Parser {
     bool qualified_call(Node* out, int cls, const std::string& name, std::vector<TArg> targs = {});
     bool parse_expr(int min_prec, Node* out);
     bool parse_unary(Node* out);
+    bool parse_typeid(Node* out);
+    bool skip_stmt();
+    bool parse_type_trait(Node* out);
     bool parse_postfix(Node* out);
     // The class a qualifier names: a class, or a typedef (a template parameter) of a class type.
     int scope_class(const std::string& text) const {
@@ -2007,9 +2306,56 @@ struct Parser {
         }
         return false;
     }
+    // A constructor of class sid that can make an object from one argument of type a: its first parameter takes a by
+    // a standard conversion (or is a's own class), and any other parameters have defaults. Copy and move constructors
+    // do not count, and a parameter of another class is not tried, so only one user-defined conversion is made
+    // ([over.best.ics] 4). `explicit` is not recorded here, so an explicit constructor counts too.
+    bool converts_by_ctor(int sid, const Node& arg, const Type& a) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
+        // A constructor template (std::function's) is taken to accept the argument; its instance is made by the call.
+        if (has_ctor_template(sid) && !(a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == sid)) return true;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name != "<ctor>" || m.params.empty() || required_args(m.defaults, m.params.size()) > 1) continue;
+            Type first = m.params[0];
+            if (first.base == 3 && first.pointers == 0 && !first.is_array()) {
+                if (first.struct_id == sid) continue;  // copy or move
+                if (a.base == 3 && a.pointers == 0 && !a.is_array() && a.struct_id == first.struct_id) return true;
+                continue;
+            }
+            if (a.base == 3 && a.pointers == 0 && !a.is_array()) continue;
+            if (arg_score(arg, first) >= 0) return true;
+        }
+        return false;
+    }
+    // Two function types with the same result and parameters (a reference and a pointer to the same type count as the
+    // same here, as both are passed as an address).
+    bool same_signature(int f1, int f2) const {
+        if (f1 == f2) return true;
+        if (f1 < 0 || f2 < 0 || f1 >= static_cast<int>(func_types.size()) || f2 >= static_cast<int>(func_types.size()))
+            return false;
+        const FuncType& a = func_types[static_cast<size_t>(f1)];
+        const FuncType& b = func_types[static_cast<size_t>(f2)];
+        if (a.params.size() != b.params.size() || a.vararg != b.vararg) return false;
+        auto norm = [&](Type t) {
+            if (t.is_ref) {
+                t.is_ref = false;
+                t.rref = false;
+                t.pointers += 1;
+            }
+            t.pconst = false;
+            t.is_const = false;
+            return cxx_type(t, &structs);
+        };
+        if (norm(a.ret) != norm(b.ret)) return false;
+        for (size_t i = 0; i < a.params.size(); ++i)
+            if (norm(a.params[i]) != norm(b.params[i])) return false;
+        return true;
+    }
     int arg_score(const Node& arg, Type p) const {
         Type a;
         if (!static_type(arg, &a)) return 1;
+        if (arg.kind == Node::IntLit && arg.text == "char" && a.base == 1) a.base = 2;  // a character literal is a char
+        if (arg.kind == Node::IntLit && arg.text == "bool" && a.base == 1) a = bool_type();  // true and false are bool
         const bool want_ref = p.is_ref;
         const bool want_rref = p.rref;
         a.is_ref = false;
@@ -2020,6 +2366,9 @@ struct Parser {
             a.pointers += 1;
         }
         if (p.pointers > 0) {
+            // A function (or pointer to one) for a function pointer parameter: the signatures decide ([over.ics.scs]),
+            // so operator<<(ios_base& (*)(ios_base&)) takes std::hex and the const void* overload does not win.
+            if (a.func_id >= 0 && p.func_id >= 0) return same_signature(a.func_id, p.func_id) ? 0 : -1;
             if (a.pointers == p.pointers && a.base == p.base && (p.base != 3 || a.struct_id == p.struct_id) &&
                 (a.func_id >= 0) == (p.func_id >= 0))
                 return 0;
@@ -2030,13 +2379,24 @@ struct Parser {
             return -1;
         }
         if (p.base == 3) {
-            if (a.pointers != 0 || a.base != 3) return -1;
-            if (a.struct_id == p.struct_id) return want_ref && !want_rref && is_rvalue(arg) ? 1 : 0;
-            return derives_from(a.struct_id, p.struct_id) ? 2 : -1;
+            if (a.pointers == 0 && a.base == 3 && a.struct_id == p.struct_id)
+                return want_ref && !want_rref && is_rvalue(arg) ? 1 : 0;
+            if (a.pointers == 0 && a.base == 3 && derives_from(a.struct_id, p.struct_id)) return 2;
+            // A user-defined conversion by a converting constructor of the parameter's class ([over.ics.user]): it
+            // ranks after every standard conversion. Only by value or through a const reference (a temporary).
+            if (p.pointers == 0 && p.struct_id >= 0 && (!want_ref || p.is_const || p.pconst || want_rref) &&
+                converts_by_ctor(p.struct_id, arg, a))
+                return 4;
+            return -1;
         }
         if (a.pointers > 0) return p.is_bool && p.base == 2 ? 3 : -1;
         if (a.base == 3) return conv_for(a.struct_id, p) != nullptr ? 3 : -1;
         if (a.base == 0 || p.base == 0) return -1;
+        // A reference to a non-const scalar binds only to an lvalue of that same type ([dcl.init.ref] 5): int& does not
+        // take a double, so from_chars(first, last, int_value) does not pick the double overload.
+        if (want_ref && !want_rref && !p.is_const && !p.pconst &&
+            !(a.base == p.base && a.wide == p.wide && a.is_bool == p.is_bool && (a.base >= 5 || a.is_unsigned == p.is_unsigned)))
+            return -1;
         if (a.base == p.base && a.wide == p.wide && a.is_bool == p.is_bool && (a.base >= 5 || a.is_unsigned == p.is_unsigned))
             return 0;
         if (p.base == 6 && a.base == 5) return 1;
@@ -2175,7 +2535,10 @@ struct Parser {
         const Method* best = nullptr;
         int best_score = -1;
         for (const Method& m : def.methods) {
-            if (m.name != "<ctor>" || m.params.size() != args.size()) continue;
+            if (m.name != "<ctor>") continue;
+            // A constructor whose last parameters have defaults takes fewer arguments ([dcl.fct.default]).
+            const bool exact = m.params.size() == args.size();
+            if (!exact && !(args.size() < m.params.size() && required_args(m.defaults, m.params.size()) <= args.size())) continue;
             if (args.size() == 1) {
                 Type at;
                 bool is_obj = static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array();
@@ -2190,7 +2553,8 @@ struct Parser {
             }
             // Of several constructors of one arity the best match by the ranks of [over.match] wins; a tie, or no
             // viable one, goes to the one declared last (the order used before).
-            const int score = args.empty() ? 0 : call_score(m.params, args);
+            int score = args.empty() ? 0 : call_score(m.params, args);
+            if (score >= 0 && !exact) score += 1;  // an exact count wins a tie
             if (best == nullptr || best_score < 0 || (score >= 0 && score <= best_score)) {
                 best = &m;
                 best_score = score;
@@ -2242,6 +2606,27 @@ struct Parser {
     std::vector<Node> stmt_pre{};
     int tmp_count = 0;
 
+    // A hidden local of type t given `value` before the statement (stmt_pre), destroyed after it when its class has a
+    // destructor (stmt_temps). Returns its name.
+    std::string materialize_temp(const Type& t, Node value) {
+        Local hidden;
+        hidden.name = "__bt" + std::to_string(tmp_count++);
+        hidden.type = t;
+        place_local(cur_locals, hidden);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(node_name(hidden.name));
+        assign.kids.push_back(std::move(value));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        stmt_pre.push_back(std::move(stmt));
+        if (t.base == 3 && t.pointers == 0 && t.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]))
+            stmt_temps.push_back(Temp{hidden.name, t.struct_id});
+        return hidden.name;
+    }
     // Arguments for a call: a reference parameter gets the address of its argument, a class
     // parameter with a copy constructor gets a copy made by that constructor into a hidden local
     // (destroyed after the statement).
@@ -2272,12 +2657,17 @@ struct Parser {
                 arg = std::move(made);
             }
             if (pt.is_ref) {
-                const bool object = arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
-                                    (arg.kind == Node::Unary && arg.op == TStar);
+                // The name of a function is not an object: a reference to a function pointer is bound to a temporary
+                // holding its address.
+                const bool object = (arg.kind == Node::Name && !names_function(arg.text)) || arg.kind == Node::Field ||
+                                    arg.kind == Node::Index || (arg.kind == Node::Unary && arg.op == TStar);
                 Type from;
                 if (cur_locals != nullptr && pt.base == 3 && pt.pointers == 0 && !pt.is_array() && pt.struct_id >= 0 &&
                     class_needs_ctor(structs[static_cast<size_t>(pt.struct_id)]) && static_type(arg, &from) &&
-                    !(from.base == 3 && from.pointers == 0 && !from.is_array()) && !(from.base == 0 && from.pointers == 0)) {
+                    !(from.base == 3 && from.pointers == 0 && !from.is_array() &&
+                      (from.struct_id == pt.struct_id || derives_from(from.struct_id, pt.struct_id) ||
+                       !converts_by_ctor(pt.struct_id, arg, from))) &&
+                    !(from.base == 0 && from.pointers == 0)) {
                     // const C& given a value that is not a class object ("abc" for a const std::string&): a temporary C
                     // is made from it by a converting constructor ([dcl.init.ref], [over.ics.user]) and bound to the
                     // reference; it is destroyed after the statement.
@@ -2292,8 +2682,16 @@ struct Parser {
                     std::vector<Node> cargs;
                     cargs.push_back(std::move(arg));
                     Node call;
-                    if (!special_call(pt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                    // Only one user-defined conversion is made for an argument ([over.best.ics] 4): the constructor's
+                    // own arguments are not converted again by this path.
+                    ++conv_depth;
+                    const bool made = conv_depth <= 1 &&
+                                      special_call(pt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call);
+                    --conv_depth;
+                    if (!made) {
+                        if (error.empty()) error = "no conversion to " + structs[static_cast<size_t>(pt.struct_id)].name;
                         return false;
+                    }
                     stmt_pre.push_back(std::move(call));
                     if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
                         stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
@@ -2302,28 +2700,22 @@ struct Parser {
                 }
                 if (!object && cur_locals != nullptr) {
                     // A reference bound to a temporary: the value goes into a hidden local first.
-                    Local hidden;
-                    hidden.name = "__bt" + std::to_string(tmp_count++);
-                    hidden.type = pt;
-                    hidden.type.is_ref = false;
-                    place_local(cur_locals, hidden);
-                    Node assign;
-                    assign.kind = Node::Assign;
-                    assign.op = TAssign;
-                    assign.number = 1;
-                    assign.kids.push_back(node_name(hidden.name));
-                    assign.kids.push_back(std::move(arg));
-                    Node stmt;
-                    stmt.kind = Node::ExprStmt;
-                    stmt.kids.push_back(std::move(assign));
-                    stmt_pre.push_back(std::move(stmt));
-                    if (hidden.type.base == 3 && hidden.type.pointers == 0 && class_needs_dtor(structs[static_cast<size_t>(hidden.type.struct_id)]))
-                        stmt_temps.push_back(Temp{hidden.name, hidden.type.struct_id});
-                    arg = node_addr(node_name(hidden.name));
+                    Type held = pt;
+                    held.is_ref = false;
+                    arg = node_addr(node_name(materialize_temp(held, std::move(arg))));
                     continue;
                 }
                 Node a = node_addr(std::move(arg));
                 arg = std::move(a);
+            } else if (cur_locals != nullptr && pt.base == 3 && pt.pointers == 0 && !pt.is_array() && pt.struct_id >= 0 &&
+                       arg.kind == Node::Call && class_prvalue(pt, arg)) {
+                // f(g()) with g returning the parameter's class by value: the result is made in a hidden local (the
+                // callee writes it there) and that object is the argument ([class.temporary]); the code generator
+                // takes the address of a class argument, which a call is not.
+                Type held = pt;
+                held.is_const = false;
+                held.pconst = false;
+                arg = node_name(materialize_temp(held, std::move(arg)));
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -2492,7 +2884,8 @@ struct Parser {
         }
         def.sym_name = pending_sym;
         pending_sym.clear();
-        const std::string ctor_name = inst_base_name.empty() ? name : inst_base_name;
+        // The instance itself is named by its template (Box<int> has the constructor Box); a class nested in it by its own name.
+        const std::string ctor_name = inst_base_name.empty() || def.sym_name.empty() ? name : inst_base_name;
         def.is_union = as_union;
         def.is_class = is_class;
         def.cxx = is_class;
@@ -2530,6 +2923,21 @@ struct Parser {
             Type old{};
         };
         std::vector<ScopedTd> scoped_tds;
+        if (base_id >= 0) {
+            // The member types of the base class are names in this class too ([class.member.lookup]).
+            def.tdefs = structs[static_cast<size_t>(base_id)].tdefs;
+            for (const auto& td : def.tdefs) {
+                ScopedTd saved_td;
+                saved_td.name = td.first;
+                auto old_td = typedefs.find(td.first);
+                if (old_td != typedefs.end()) {
+                    saved_td.had = true;
+                    saved_td.old = old_td->second;
+                }
+                scoped_tds.push_back(std::move(saved_td));
+                typedefs[td.first] = td.second;
+            }
+        }
         while (!is(TRBrace) && !is(TEnd)) {
             if (is(TTypedef) || (is(TIdent) && cur().text == "using" && at + 2 < tokens.size() &&
                                  tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TAssign)) {
@@ -3011,6 +3419,7 @@ struct Parser {
             table.bss = false;
             table.vtable = true;
             table.slots = def.vtable;
+            table.rtti = type_info_symbol(self, def.symname());
             globals.push_back(std::move(table));
         }
         structs[static_cast<size_t>(self)] = def;
@@ -3024,9 +3433,20 @@ struct Parser {
                 if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
                     deferred_bodies.push_back({self, mi});
         } else {
-            for (size_t mi = 0; mi < def.methods.size(); ++mi)
-                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
-                    if (!define_method(self, mi)) return false;
+            for (size_t mi = 0; mi < def.methods.size(); ++mi) {
+                if (def.methods[mi].body_at == 0 || def.methods[mi].owner != self) continue;
+                const size_t pre_before = stmt_pre.size();
+                const size_t temps_before = stmt_temps.size();
+                if (define_method(self, mi)) continue;
+                if (inst_base_name.empty()) return false;
+                // A member of a class template instance is made only when it is used ([temp.inst] 11): one whose body
+                // does not compile for these arguments (pair<K, V>'s default constructor when V has none) is an error
+                // only if a call of it is made (checked in finish_program).
+                unusable_members[def.methods[mi].qname] = error;
+                error.clear();
+                stmt_pre.resize(std::min(stmt_pre.size(), pre_before));
+                stmt_temps.resize(std::min(stmt_temps.size(), temps_before));
+            }
             if (struct_nest == 1) {
                 while (!deferred_bodies.empty()) {
                     const std::vector<std::pair<int, size_t>> batch = std::move(deferred_bodies);
@@ -3546,6 +3966,14 @@ struct Parser {
         FuncType ft;
         ft.ret = fn->ret;
         ft.params = fn->params;
+        // The pointer's signature keeps the reference parameters as references, as a declared function pointer type
+        // has them: a call through it binds its arguments the same way (adjust_fp_args), and the code generator passes
+        // a reference as an address.
+        for (size_t i = 0; i < ft.params.size(); ++i)
+            if (fn->param_ref[i]) {
+                ft.params[i].pointers -= 1;
+                ft.params[i].is_ref = true;
+            }
         ft.vararg = fn->vararg;
         fn->func_id = static_cast<int>(func_types.size());
         func_types.push_back(ft);
@@ -3791,6 +4219,40 @@ struct Parser {
             bool exp = false;
             if (!parse_type(&a->type, &imp, &exp)) return false;
             while (accept(TStar)) ++a->type.pointers;
+            if (accept(TAmp)) {
+                a->type.is_ref = true;
+            } else if (accept(TAndAnd)) {
+                a->type.is_ref = true;
+                a->type.rref = true;
+            }
+            if (is(TLParen)) {
+                // A function type as a template argument: R(A, B) or a function pointer R(*)(A, B) ([dcl.fct]).
+                next();
+                int stars = 0;
+                if (is(TStar)) {
+                    while (accept(TStar)) ++stars;
+                    if (!expect(TRParen, "')'") || !expect(TLParen, "'('")) return false;
+                }
+                Declarator fd;
+                if (!parse_param_list(&fd)) return false;
+                FuncType ft;
+                ft.ret = a->type;
+                ft.params = fd.params;
+                ft.vararg = fd.vararg;
+                // A function pointer is its return type with one more '*' and the signature (as parse_declarator makes
+                // it); a function type itself is void with the signature and no '*' (so a function returning a pointer
+                // stays apart from a pointer to a function).
+                Type fnt;
+                if (stars > 0) {
+                    fnt = a->type;
+                    fnt.pointers += stars;
+                } else {
+                    fnt.base = 0;
+                }
+                fnt.func_id = static_cast<int>(func_types.size());
+                func_types.push_back(ft);
+                a->type = fnt;
+            }
             return true;
         }
         if (pat_values != nullptr && is(TIdent) && pat_values->count(cur().text) > 0 && at + 1 < tokens.size() &&
@@ -3961,6 +4423,18 @@ struct Parser {
     }
 
     bool instantiate_class(const std::string& name, const std::vector<TArg>& args_in, Type* out) {
+        if (args_in.size() == 1 && !args_in[0].is_value && !args_in[0].is_pack && args_in[0].type.func_id >= 0 &&
+            args_in[0].type.pointers == 0 && args_in[0].type.base == 0 && class_templates.count(name + "__fn") > 0) {
+            // function<R(A...)>: a class template given a function type, with a companion template name__fn<R, A...>.
+            // Own stand-in for the partial specialization `template <class R, class... A> class function<R(A...)>`
+            // ([temp.class.spec]); okay-ms does not match patterns made of function types.
+            const FuncType ft = func_types[static_cast<size_t>(args_in[0].type.func_id)];
+            std::vector<TArg> split(2);
+            split[0].type = ft.ret;
+            split[1].is_pack = true;
+            split[1].pack = ft.params;
+            return instantiate_class(name + "__fn", split, out);
+        }
         const TDecl* tdp = &class_templates[name];
         std::vector<TArg> args = args_in;
         // A specialization that matches the arguments replaces the primary template: the one with
@@ -4115,12 +4589,16 @@ struct Parser {
                 }
             }
             if (tp.is_type && accept(TEllipsis)) tp.is_pack = true;
-            if (!is(TIdent)) {
+            if (tp.is_type && (is(TAssign) || is(TComma) || is(TGt))) {
+                // template <class T, class = enable_if_t<...>>: a parameter without a name ([temp.param]).
+                tp.name = "__tparam" + std::to_string(td.params.size());
+            } else if (!is(TIdent)) {
                 error = "expected a template parameter name";
                 return false;
+            } else {
+                tp.name = cur().text;
+                next();
             }
-            tp.name = cur().text;
-            next();
             if (accept(TAssign)) {
                 tp.has_def = true;
                 tp.def_at = at;
@@ -4163,6 +4641,9 @@ struct Parser {
             if (!expect(TGt, "'>'")) return false;
             has_outer = true;
         }
+        // template <typename T> static T f(...) at namespace scope: an instance has an internal symbol here anyway, so
+        // the `static` is dropped (in a class it means a static member function and stays).
+        if (struct_nest == 0 && is(TStatic)) next();
         td.start = at;
         // The declaration ends after its first top-level body or semicolon.
         size_t k = at;
@@ -4544,8 +5025,13 @@ struct Parser {
                     if (walk == sid) return true;  // a copy
             }
         }
-        for (const Method& m : def.methods)
-            if (m.name == "<ctor>" && m.tsym.empty() && m.params.size() == args.size()) return true;
+        // A constructor that is not a template and takes the arguments without a user-defined conversion is the
+        // better match ([over.match.best]: a non-template wins a tie); otherwise the template is tried.
+        for (const Method& m : def.methods) {
+            if (m.name != "<ctor>" || !m.tsym.empty() || m.params.size() != args.size()) continue;
+            const int score = call_score(m.params, args);
+            if (score >= 0 && score < 4) return true;
+        }
         const MemberTmpl mt = *found;
         std::vector<TArg> targs;
         if (!deduce_args(mt.td, mt.owner, &targs, args)) return false;
@@ -4781,6 +5267,28 @@ struct Parser {
                 args[i].is_pack = true;  // a pack with no arguments
                 given[i] = true;
             }
+        for (size_t i = 0; i < td.params.size(); ++i) {
+            if (given[i] || !td.params[i].has_def) continue;
+            // A default template argument ([temp.deduct] 5), read with the parameters before it bound. Own
+            // simplification: one that does not compile is an error (no SFINAE: the template is not set aside).
+            bool all_before = true;
+            for (size_t k = 0; k < i; ++k)
+                if (!given[k]) all_before = false;
+            if (!all_before) continue;
+            TDecl head = td;
+            head.params.resize(i);
+            std::vector<TArg> head_args(args.begin(), args.begin() + static_cast<std::ptrdiff_t>(i));
+            const auto bound = bind_params(head, head_args);
+            const size_t saved = at;
+            at = td.params[i].def_at;
+            TArg a;
+            const bool ok = parse_one_arg(td.params[i], &a);
+            at = saved;
+            unbind_params(bound);
+            if (!ok) return false;
+            args[i] = a;
+            given[i] = true;
+        }
         for (size_t i = 0; i < td.params.size(); ++i)
             if (!given[i]) {
                 error = "cannot deduce template argument " + td.params[i].name;
@@ -5494,6 +6002,28 @@ struct Parser {
     }
 
     bool finish_program() {
+        // A template instance's function that calls one of them is not made either (vector<pair<K, V>>::resize when
+        // pair<K, V>() cannot be); any other function that calls one is an error.
+        for (bool changed = !unusable_members.empty(); changed;) {
+            changed = false;
+            for (size_t i = 0; i < funcs.size(); ++i) {
+                std::string which;
+                if (!funcs[i].defined || funcs[i].symbol.find("?$") == std::string::npos ||
+                    !find_unusable_call(funcs[i].body, &which))
+                    continue;
+                unusable_members[funcs[i].name] = unusable_members[which];
+                funcs.erase(funcs.begin() + static_cast<std::ptrdiff_t>(i));
+                --i;
+                changed = true;
+            }
+        }
+        for (const FuncDecl& f : funcs) {
+            std::string which;
+            if (f.defined && find_unusable_call(f.body, &which)) {
+                error = which + " (called in " + f.name + ") cannot be made for these template arguments: " + unusable_members[which];
+                return false;
+            }
+        }
         {
             // static int f(int); ... static int f(int p) { ... }: the declaration and the definition are one function
             // ([basic.link]); a declaration left beside an internal definition would ask the linker for an external f.
@@ -5596,7 +6126,9 @@ struct Parser {
 
     bool parse() {
         collapse_operators();
+        expand_alias_templates();
         lower_cxx_spellings();
+        expand_namespace_aliases();
         strip_namespace_qualifiers();
         for (const Token& t : tokens)
             if (t.kind == TIdent && (t.text == "try" || t.text == "throw")) eh_ = true;

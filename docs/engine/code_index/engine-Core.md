@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 80 headers, 488 names.
+Back to the [code index](../code_index.md). 80 headers, 489 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -600,6 +600,7 @@ Back to the [code index](../code_index.md). 80 headers, 488 names.
 
 - `LowerAscii` function, line 11: ASCII-only lowercase: bytes 'A'..'Z' become 'a'..'z', every other byte (UTF-8 included) is left as it is.
 - `EqualsNoCaseAscii` function, line 18: ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
+- `Trim` function, line 30: 's' without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
 
 ## `engine/include/okay/Core/Subtitles.hpp`
 

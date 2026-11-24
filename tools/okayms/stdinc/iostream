@@ -1,0 +1,24 @@
+// okay-ms own standard header <iostream> ([iostream.objects]): cout, cerr and clog write through __okay_console_write
+// (declared in okay_iostream and not defined: a program that writes to them links only against a library that
+// defines it). cin is not here (there is no console input device). Own simplification: each file that includes this
+// header has its own objects; they keep no state between files except their format flags.
+#pragma once
+#include <okay_iostream>
+namespace std {
+extern "C" long long __okay_console_write(int which, const char* data, long long n);
+class okay_consolebuf : public streambuf {
+    int which_;
+
+public:
+    explicit okay_consolebuf(int which) : which_(which) {}
+    size_t put(const char* s, size_t n) {
+        const long long done = __okay_console_write(which_, s, (long long)n);
+        return done < 0 ? 0 : (size_t)done;
+    }
+};
+static okay_consolebuf okay_out_buf(1);
+static okay_consolebuf okay_err_buf(2);
+static ostream cout(&okay_out_buf);
+static ostream cerr(&okay_err_buf);
+static ostream clog(&okay_err_buf);
+}

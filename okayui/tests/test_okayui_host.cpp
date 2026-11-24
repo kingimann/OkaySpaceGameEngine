@@ -276,6 +276,28 @@ int main() {
         for (int i = 0; i < sections; ++i) all = all && r.Owns(10, (float)i * 40 + 5);
         CHECK(all);                                            // the last component's body takes the mouse like the first
     }
+    {   // a panel drawn by OkayUI only noted as active (hovered or focused): true for that frame and the next, then not
+        Region r;
+        CHECK(!r.Active());
+        r.NoteActive();
+        CHECK(r.Active());
+        r.NextFrame();
+        CHECK(r.Active());                                     // the host asks at the start of the next frame
+        r.NextFrame();
+        CHECK(!r.Active());
+        r.NoteActive(); r.NextFrame(); r.NoteActive(); r.NextFrame();
+        CHECK(r.Active());
+        for (int i = 0; i < 5; ++i) r.NextFrame();
+        CHECK(!r.Active());
+        // what the host asks: input for OkayUI's own hosted pieces only
+        CHECK(!HostedInputWanted(r, false));                   // nothing hovered, nothing focused: a game's ui_* widgets stay as they were
+        CHECK(HostedInputWanted(r, true));                     // a code field has the keyboard
+        r.Offer(0, 0, 100, 100, false); CHECK(!r.AnyHovered() && !HostedInputWanted(r, false));   // offered but covered
+        r.Offer(0, 0, 100, 100, true);  CHECK(r.AnyHovered() && HostedInputWanted(r, false));     // hovered (a code editor's area)
+        r.NextFrame(); r.NextFrame();
+        CHECK(!r.AnyHovered() && !HostedInputWanted(r, false));
+        r.NoteActive(); CHECK(HostedInputWanted(r, false));
+    }
     {   // an open menu offered as an overlay: the host keeps a press there from ImGui (OwnsOverlay); the panel itself is not an overlay
         Region r;
         r.Offer(0, 0, 300, 600, true);                         // the Hierarchy panel

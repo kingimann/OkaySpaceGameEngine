@@ -45,9 +45,6 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
-#if !defined(OKAY_XBOX_UWP)
-#include "ufbx.h"   // not in the Xbox UWP build (own FBX reader only)
-#endif
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Core/ThirdParty.hpp"
 #include <filesystem>
@@ -72,7 +69,7 @@ namespace okay {
 using model_import::Lower;
 using model_import::BaseName;
 // Which reader read the last model (set by the import paths below, logged once per ImportModelScene): "the own LXO
-// reader", "Assimp", "ufbx", ... and the reading time in ms (-1 = not measured). Thread-local: imports on two threads
+// reader", "the own FBX reader", "Assimp", ... and the reading time in ms (-1 = not measured). Thread-local: imports on two threads
 // do not mix.
 static thread_local std::string g_readBy;
 static thread_local double g_readMs = -1.0;
@@ -95,7 +92,7 @@ bool AssimpAvailable() {
 }
 
 std::string ImportableExtensions() {
-    // Built in: OBJ, glTF, FBX (ufbx) and our own STL / PLY readers, plus everything
+    // Built in: OBJ, glTF, FBX (our own okay::fbx) and our own STL / PLY readers, plus everything
     // the Assimp build can read. .dae is added when our own Collada reader is switched on
     // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
@@ -115,8 +112,8 @@ std::string ImportableExtensions() {
     for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
-    // Extensions read by an existing reader under another name (aliases); not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
-    for (const char* opt : {".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})
+    // Extensions read by an existing reader under another name (aliases), and .sib (added after main's list was frozen); not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".sib", ".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -131,7 +128,7 @@ static bool EndsWith(const std::string& s, const char* suf) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
-static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture);   // our own reader (okay::fbx)
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture, std::string* err);   // our own reader (okay::fbx)
 static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err);
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
@@ -171,10 +168,12 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     }
     if ((EndsWith(p, ".gltf") || EndsWith(p, ".glb")) && !Gltf1Wanted(path)) { g_readBy = "the own glTF reader"; return LoadGLTF(path, ok, outTexture); }
     if (EndsWith(p, ".fbx")) {
-        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";   // (Xbox UWP: always the own reader)   // (the own reader is the default; OKAY_OWN_FBX=0 or OKAY_THIRD_PARTY=1: ufbx)
+        g_readBy = "the own FBX reader (one mesh)";   // the only FBX reader (ufbx was deleted on 2026-11-23)
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
-        if (fok) { if (ok) *ok = true; return m; }
+        // There is no other FBX reader: a file ours refuses (or that holds no mesh) fails here, as in the scene path.
+        if (ok) *ok = fok;
+        return fok ? m : Mesh();
     }
     // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
     // STL / PLY readers, or Assimp when the build has it. One static mesh.
@@ -610,6 +609,12 @@ constexpr bool kOwnCobDefault = true;
 constexpr bool kOwnCobDefault = false;
 #endif
 
+#ifdef OKAY_OWN_SIB_DEFAULT
+constexpr bool kOwnSibDefault = true;
+#else
+constexpr bool kOwnSibDefault = false;
+#endif
+
 #ifdef OKAY_OWN_NDO_DEFAULT
 constexpr bool kOwnNdoDefault = true;
 #else
@@ -714,15 +719,14 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
     {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
     {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
-    // Slot 32 is kept for SIB (no reader yet): an empty row, never reached (OwnSlot returns none of it), so that Q3D and RAW sit at the agreed numbers.
     {"OKAY_OWN_Q3D",     "Q3D",     kOwnQ3dDefault},       // 31
-    {"", "", false},                                       // 32 (SIB, not written yet)
+    {"OKAY_OWN_SIB",     "SIB",     kOwnSibDefault},       // 32 (.sib: Nevercenter Silo)
     {"OKAY_OWN_RAW",     "RAW",     kOwnRawDefault},       // 33
     {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
     {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
     {"OKAY_OWN_NDO",     "NDO",     kOwnNdoDefault},       // 36
     {"OKAY_OWN_OPENGEX", "OpenGEX", kOwnOpengexDefault},   // 37 (.ogex)
-    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38 (.mdl: Quake 1 and Half-Life 1)
+    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38 (.mdl: Quake 1, Half-Life 1, 3D GameStudio MDL3 to MDL7)
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
     {"OKAY_OWN_GLTF1",   "glTF 1.0", kOwnGltf1Default},    // 41: glTF 1.0 (pseudo-extension ".gltf1"; .gltf / .glb files of version 1)
@@ -732,7 +736,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XML",     "XML",     kOwnXmlDefault},       // 45 (.xml: the reader is picked by the root element)
     {"OKAY_OWN_LXO",     "LXO",     kOwnLxoDefault},       // 46 (.lxo: Modo, read by the LWO reader)
 };
-constexpr int kOwnSlots = 47;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL, 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"), 42 is Q3BSP (.bsp, .pk3), 43 to 45 are OGRE binary, ZAE and .xml (the gap batch), 46 is LXO; raise this (and add rows above) when a reader needs a slot beyond 46
+constexpr int kOwnSlots = 47;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 to 33 are Q3D, SIB and RAW, 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL, 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"), 42 is Q3BSP (.bsp, .pk3), 43 to 45 are OGRE binary, ZAE and .xml (the gap batch), 46 is LXO; raise this (and add rows above) when a reader needs a slot beyond 46
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -769,6 +773,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".hmp") return 29;
     if (e == ".csm") return 30;
     if (e == ".q3o" || e == ".q3s") return 31;
+    if (e == ".sib") return 32;
     if (e == ".raw") return 33;
     if (e == ".iqm") return 34;
     if (e == ".cob" || e == ".scn") return 35;   // .scn: a trueSpace scene, the same Caligari file as .cob
@@ -1069,6 +1074,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 29 ? ReadHmpFile(path, out, &e1)
                   : s == 30 ? ReadCsmFile(path, out, &e1)
                   : s == 31 ? ReadQ3dFile(path, out, &e1)
+                  : s == 32 ? ReadSibFile(path, out, &e1)
                   : s == 33 ? ReadRawFile(path, out, &e1)
                   : s == 34 ? ReadIqmFile(path, out, &e1)
                   : s == 35 ? ReadCobFile(path, out, &e1)
@@ -1083,7 +1089,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 46 ? ReadLwoFile(path, out, &e1)   // LXOB is read by the LWO reader (LWO2 geometry chunks)
                   : s == 41 ? ReadGltf1File(path, out, &e1)
                   : s == 42 ? ReadQ3bspFile(path, out, &e1)   // a file named *.gltf1: read it as glTF 1.0
-                  : (e1 = "no reader is wired to this slot", false); }, e1);   // every slot but 32 (kept for SIB, which has no reader of ours) is wired above
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // every slot is wired above
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || (s >= 17 && s != 44))) FlattenImportedModel(out);   // ZAE (44) is flattened by the COLLADA reader   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
@@ -1316,508 +1322,11 @@ GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const 
     return root;
 }
 
-#if !defined(OKAY_XBOX_UWP)
 // ============================================================================
-// FBX (built in, via the vendored ufbx — no Assimp needed). Mixamo characters,
-// Blender/Maya/3ds Max exports: node hierarchy, meshes split per material,
-// skinning (top 4 weights per vertex), PBR/Phong materials with external or
-// embedded textures, and every animation take baked to per-node TRS keys.
-// Converted on load to Y-up, meters (ufbx does the axis/unit math).
+// FBX: read only by OUR reader (okay::fbx, Render/FbxReader; the vendored ufbx it replaced was deleted on 2026-11-23,
+// CLAUDE.md rule 17). A file it refuses fails with a plain message: there is no other FBX reader to fall back to.
 // ============================================================================
-namespace {
-
-Mat4 UfbxToMat4(const ufbx_matrix& a) {
-    Mat4 r = Mat4::Identity();
-    r.at(0, 0) = (float)a.m00; r.at(0, 1) = (float)a.m10; r.at(0, 2) = (float)a.m20;
-    r.at(1, 0) = (float)a.m01; r.at(1, 1) = (float)a.m11; r.at(1, 2) = (float)a.m21;
-    r.at(2, 0) = (float)a.m02; r.at(2, 1) = (float)a.m12; r.at(2, 2) = (float)a.m22;
-    r.at(3, 0) = (float)a.m03; r.at(3, 1) = (float)a.m13; r.at(3, 2) = (float)a.m23;
-    return r;
-}
-std::string UfbxStr(const ufbx_string& s) { return std::string(s.data, s.length); }
-
-// Hardening: the ufbx path enforces the same numbers as okay::fbx::Limits (one source of truth).
-// The node hierarchy depth is capped inside ufbx itself (node_depth_limit; its default of 0 lets a
-// flat file declare an arbitrarily deep Model chain), and the node / animation counts are checked
-// right after loading, before anything is built from them. `limitHit` is set when the file was
-// refused for size or shape rather than because it could not be read.
-ufbx_scene* LoadFbx(const std::string& path, std::string* err, bool* limitHit = nullptr) {
-    const fbx::Limits lim;
-    ufbx_load_opts opts{};
-    opts.target_axes = ufbx_axes_right_handed_y_up;
-    opts.target_unit_meters = 1.0f;
-    opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;   // bake units/axes into the data, not extra nodes
-    // Maya/MotionBuilder scale-inheritance modes the engine's transforms don't
-    // model: ufbx folds them into the transforms (helper nodes only if it must).
-    opts.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_COMPENSATE;
-    opts.generate_missing_normals = true;
-    opts.ignore_missing_external_files = true;
-    opts.evaluate_skinning = false;
-    opts.node_depth_limit = (uint32_t)lim.maxNodeDepth;
-    if (limitHit) *limitHit = false;
-    ufbx_error e{};
-    ufbx_scene* sc = ufbx_load_file(path.c_str(), &opts, &e);
-    if (!sc) {
-        if (err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
-        if (limitHit && (e.type == UFBX_ERROR_NODE_DEPTH_LIMIT || e.type == UFBX_ERROR_MEMORY_LIMIT || e.type == UFBX_ERROR_ALLOCATION_LIMIT)) *limitHit = true;
-        return nullptr;
-    }
-    std::string why;
-    if (sc->nodes.count > lim.maxNodes) why = "too many nodes";
-    else if (sc->anim_stacks.count > lim.maxAnimStacks) why = "too many animation stacks";
-    else if (sc->anim_layers.count > lim.maxAnimLayers) why = "too many animation layers";
-    else if (sc->anim_curves.count > lim.maxAnimCurves) why = "too many animation curves";
-    else {
-        std::size_t keys = 0;
-        for (const ufbx_anim_curve* c : sc->anim_curves) { keys += c->keyframes.count; if (keys > lim.maxAnimKeys) { why = "too many animation keys"; break; } }
-    }
-    if (!why.empty()) {
-        ufbx_free_scene(sc);
-        if (err) *err = "FBX rejected: " + why;
-        if (limitHit) *limitHit = true;
-        return nullptr;
-    }
-    return sc;
-}
-
-// A texture as a file the renderer can load: the referenced file when it's on
-// disk (next to the model, then the absolute path), else the embedded bytes
-// written beside the model.
-std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath, int serial) {
-    if (!tex) return {};
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path dir = fs::u8path(modelPath).parent_path();
-    for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
-        if (!s->length) continue;
-        const fs::path p = fs::u8path(UfbxStr(*s));
-        if (fs::exists(p, ec)) return p.u8string();
-        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
-        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).u8string();
-        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).u8string();
-    }
-    if (tex->content.size > 0 && tex->content.data) {
-        std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
-        if (ext.empty()) {
-            const unsigned char* d = (const unsigned char*)tex->content.data;
-            ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
-        }
-        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
-        if (!fs::exists(out, ec)) {
-            std::ofstream of(out, std::ios::binary);
-            if (!of) return {};
-            of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
-        }
-        return out.u8string();
-    }
-    return {};
-}
-
-void ApplyFbxMaterial(MeshRenderer& mr, const ufbx_material* m, const std::string& modelPath, int serial) {
-    if (!m) return;
-    const ufbx_material_map& bc = m->pbr.base_color.has_value || m->pbr.base_color.texture ? m->pbr.base_color : m->fbx.diffuse_color;
-    if (const ufbx_texture* t = bc.texture ? bc.texture : m->fbx.diffuse_color.texture) {
-        std::string p = FbxTexturePath(t, modelPath, serial);
-        if (!p.empty()) mr.texture = p;
-    }
-    if (bc.has_value) {
-        // With a texture the factor is a tint; Mixamo exports often carry a grey
-        // 0.8 diffuse factor that would just darken the texture, so only use it
-        // untextured.
-        if (mr.texture.empty())
-            mr.color = Color((float)bc.value_vec4.x, (float)bc.value_vec4.y, (float)bc.value_vec4.z, 1.0f);
-    }
-    const ufbx_material_map& nm = m->pbr.normal_map.texture ? m->pbr.normal_map : m->fbx.normal_map;
-    if (nm.texture) { std::string p = FbxTexturePath(nm.texture, modelPath, serial + 1000); if (!p.empty()) mr.normalMap = p; }
-    if (m->pbr.emission_color.has_value) {
-        const float f = m->pbr.emission_factor.has_value ? (float)m->pbr.emission_factor.value_real : 1.0f;
-        const ufbx_vec4& e = m->pbr.emission_color.value_vec4;
-        if (e.x + e.y + e.z > 0.0) mr.emissive = Color((float)e.x * f, (float)e.y * f, (float)e.z * f, 1.0f);
-    }
-    if (m->pbr.roughness.has_value || m->pbr.metalness.has_value) {
-        const float rough = m->pbr.roughness.has_value ? (float)m->pbr.roughness.value_real : 0.6f;
-        const float metal = m->pbr.metalness.has_value ? (float)m->pbr.metalness.value_real : 0.0f;
-        const float smooth = 1.0f - std::fmin(1.0f, std::fmax(0.0f, rough));
-        mr.metallic = metal;
-        mr.shininess = 4.0f + smooth * 124.0f;
-        mr.specular = 0.15f + smooth * 0.85f;
-        mr.reflectivity = metal * smooth;
-    }
-}
-
-// One vertex as ufbx_generate_indices dedups it (plain-old-data, compared bytewise).
-struct FbxVert {
-    float px, py, pz, nx, ny, nz, u, v;
-    int   j[4];
-    float w[4];
-    uint32_t vi;   ///< control point (for blend shape offsets)
-};
-
-// Build one material part of a mesh: triangulated, deduplicated, optionally
-// with skin influences (indices into the skin's clusters).
-Mesh BuildFbxPart(const ufbx_mesh* mesh, const ufbx_mesh_part& part, const ufbx_skin_deformer* skin,
-                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
-                  std::vector<uint32_t>* outVi = nullptr) {
-    Mesh out;
-    std::vector<uint32_t> tri(mesh->max_face_triangles * 3);
-    std::vector<FbxVert> verts;
-    verts.reserve(part.num_triangles * 3);
-    for (uint32_t fi : part.face_indices) {
-        const ufbx_face face = mesh->faces.data[fi];
-        const uint32_t nt = ufbx_triangulate_face(tri.data(), tri.size(), mesh, face);
-        for (uint32_t k = 0; k < nt * 3; ++k) {
-            const uint32_t ix = tri[k];
-            FbxVert fv{};
-            const ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, ix);
-            fv.px = (float)p.x; fv.py = (float)p.y; fv.pz = (float)p.z;
-            if (mesh->vertex_normal.exists) {
-                const ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, ix);
-                fv.nx = (float)n.x; fv.ny = (float)n.y; fv.nz = (float)n.z;
-            }
-            if (mesh->vertex_uv.exists) {
-                const ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, ix);
-                fv.u = (float)uv.x; fv.v = 1.0f - (float)uv.y;   // FBX UVs are bottom-up
-            }
-            fv.w[0] = 1.0f;
-            fv.vi = mesh->vertex_indices.data[ix];
-            if (skin) {
-                const uint32_t vi = fv.vi;
-                if (vi < skin->vertices.count) {
-                    const ufbx_skin_vertex sv = skin->vertices.data[vi];
-                    float sum = 0.0f;
-                    fv.w[0] = 0.0f;
-                    const uint32_t nw = sv.num_weights < 4 ? sv.num_weights : 4;   // ufbx sorts by weight
-                    for (uint32_t wi = 0; wi < nw; ++wi) {
-                        const ufbx_skin_weight sw = skin->weights.data[sv.weight_begin + wi];
-                        fv.j[wi] = (int)sw.cluster_index; fv.w[wi] = (float)sw.weight; sum += fv.w[wi];
-                    }
-                    if (sum > 1e-6f) for (float& w : fv.w) w /= sum;   // (no weights: stays at the bind pose)
-                }
-            }
-            verts.push_back(fv);
-        }
-    }
-    if (verts.empty()) return out;
-    std::vector<uint32_t> indices(verts.size());
-    ufbx_vertex_stream stream{verts.data(), verts.size(), sizeof(FbxVert)};
-    ufbx_error e{};
-    const size_t nv = ufbx_generate_indices(&stream, 1, indices.data(), indices.size(), nullptr, &e);
-    if (e.type != UFBX_ERROR_NONE) return out;
-    const bool hasN = mesh->vertex_normal.exists, hasUV = mesh->vertex_uv.exists;
-    out.vertices.reserve(nv);
-    for (size_t i = 0; i < nv; ++i) {
-        const FbxVert& v = verts[i];
-        out.vertices.push_back(Vec3{v.px, v.py, v.pz});
-        if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
-        if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
-        if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
-        if (outVi) outVi->push_back(v.vi);
-    }
-    out.triangles.reserve(indices.size());
-    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
-    return out;
-}
-
-// The mesh's blend shape channels (every deformer, in order) as BlendShapes on
-// `g`, for one built part whose vertices came from control points `vi`. Offsets
-// go through `lin` (the geometry-to-node offset for unskinned meshes). An
-// unskinned mesh also gets a pass-through skin so the renderers see it change.
-void AddFbxBlendShapes(const ufbx_mesh* mesh, const std::vector<uint32_t>& vi, GameObject* g, const Mat4* lin) {
-    if (!mesh || !g || mesh->blend_deformers.count == 0) return;
-    BlendShapes* bs = nullptr;
-    for (const ufbx_blend_deformer* bd : mesh->blend_deformers)
-        for (const ufbx_blend_channel* ch : bd->channels) {
-            const ufbx_blend_shape* sh = ch->target_shape;
-            if (!sh && ch->keyframes.count) sh = ch->keyframes.data[ch->keyframes.count - 1].shape;
-            std::vector<Vec3> dp(vi.size(), Vec3{0, 0, 0}), dn;
-            bool hasN = sh && sh->normal_offsets.count == sh->num_offsets && sh->num_offsets > 0;
-            if (hasN) dn.assign(vi.size(), Vec3{0, 0, 0});
-            if (sh) {
-                // Control point -> its offset slot, then out to every split vertex.
-                std::unordered_map<uint32_t, uint32_t> slot;
-                for (size_t k = 0; k < sh->num_offsets && k < sh->offset_vertices.count; ++k) slot[sh->offset_vertices.data[k]] = (uint32_t)k;
-                for (size_t v = 0; v < vi.size(); ++v) {
-                    auto it = slot.find(vi[v]);
-                    if (it == slot.end()) continue;
-                    const ufbx_vec3 o = sh->position_offsets.data[it->second];
-                    float ow = it->second < sh->offset_weights.count ? (float)sh->offset_weights.data[it->second] : 1.0f;
-                    Vec3 d{(float)o.x * ow, (float)o.y * ow, (float)o.z * ow};
-                    dp[v] = lin ? lin->MultiplyVector(d) : d;
-                    if (hasN) {
-                        const ufbx_vec3 n = sh->normal_offsets.data[it->second];
-                        Vec3 dnn{(float)n.x * ow, (float)n.y * ow, (float)n.z * ow};
-                        dn[v] = lin ? lin->MultiplyVector(dnn) : dnn;
-                    }
-                }
-            }
-            if (!bs) bs = g->AddComponent<BlendShapes>();
-            std::string nm = UfbxStr(ch->name);
-            if (std::size_t dot = nm.find_last_of('.'); dot != std::string::npos && dot + 1 < nm.size()) nm = nm.substr(dot + 1);
-            if (nm.empty()) nm = "shape" + std::to_string(bs->shapes.size());
-            bs->AddShape(nm, dp, dn, (float)ch->weight);
-        }
-    if (!bs) return;
-    if (!g->GetComponent<SkinnedMesh>())
-        if (auto* mr = g->GetComponent<MeshRenderer>()) {
-            auto* sm = g->AddComponent<SkinnedMesh>();
-            sm->bind = mr->mesh;
-            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
-            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
-            sm->joints = {g->transform}; sm->jointNames = {g->name};
-            sm->inverseBind = {Mat4::Identity()};
-        }
-    bs->Apply(true);
-}
-
-Mesh TransformedMesh(Mesh m, const Mat4& t) {
-    for (auto& v : m.vertices) v = t.MultiplyPoint(v);
-    for (auto& n : m.normals) { n = t.MultiplyVector(n); const float l = n.Magnitude(); if (l > 1e-8f) n = n * (1.0f / l); }
-    return m;
-}
-bool IsIdentity(const ufbx_matrix& m) {
-    const double id[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
-    const double* v = &m.m00;
-    for (int i = 0; i < 12; ++i) if (std::fabs(v[i] - id[i]) > 1e-6) return false;
-    return true;
-}
-
-} // namespace
-
-// Every mesh flattened into one (world space) — the single-mesh ImportModel path.
-static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
-    Mesh merged;
-    if (fbx::OwnReaderEnabled()) {   // our reader first (the default since 2026-11-17); ufbx below if it could not read the file
-        bool ownOk = false;
-        Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
-        if (ownOk) { if (ok) *ok = true; return m; }
-    }
-    ufbx_scene* sc = LoadFbx(path, nullptr);
-    if (!sc) { if (ok) *ok = false; return merged; }
-    for (const ufbx_node* node : sc->nodes) {
-        if (!node->mesh) continue;
-        const Mat4 g2w = UfbxToMat4(node->geometry_to_world);
-        for (const ufbx_mesh_part& part : node->mesh->material_parts) {
-            Mesh m = TransformedMesh(BuildFbxPart(node->mesh, part, nullptr, nullptr, nullptr), g2w);
-            const int base = (int)merged.vertices.size();
-            const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
-            const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
-            merged.vertices.insert(merged.vertices.end(), m.vertices.begin(), m.vertices.end());
-            if (keepN) merged.normals.insert(merged.normals.end(), m.normals.begin(), m.normals.end()); else merged.normals.clear();
-            if (keepUV) merged.uvs.insert(merged.uvs.end(), m.uvs.begin(), m.uvs.end()); else merged.uvs.clear();
-            for (int t : m.triangles) merged.triangles.push_back(base + t);
-            if (outTexture && outTexture->empty() && part.index < node->mesh->materials.count) {
-                MeshRenderer tmp; ApplyFbxMaterial(tmp, node->mesh->materials.data[part.index], path, 0);
-                *outTexture = tmp.texture;
-            }
-        }
-    }
-    ufbx_free_scene(sc);
-    if (ok) *ok = !merged.vertices.empty();
-    return merged;
-}
-
-// `rejected` is set when the file was refused for going past a size/shape limit (fbx::Limits): the
-// caller must then fail the import instead of falling back to another reader that would take the
-// same hostile file.
-static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
-    const bool ownFbx = fbx::OwnReaderEnabled();
-    if (ownFbx)
-        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { g_readBy = "the own FBX reader"; return r; }
-    g_readBy = ownFbx ? "ufbx (the own FBX reader could not read it)" : "ufbx";
-    ufbx_scene* sc = LoadFbx(path, err, rejected);
-    if (!sc) { if (ok) *ok = false; return nullptr; }
-
-    GameObject* root = scene.CreateGameObject(BaseName(path));
-    std::vector<GameObject*> goOf(sc->nodes.count, nullptr);   // by node typed_id
-    std::unordered_map<std::string, int> nameUse;
-    int texSerial = 0;
-
-    // Hierarchy: one GameObject per FBX node (names made unique: clips and
-    // skins refer to nodes by name). Iterative (explicit stack, depth-first in child order),
-    // so the depth of the file never becomes call depth.
-    {
-        std::vector<std::pair<const ufbx_node*, Transform*>> todo;
-        for (std::size_t i = sc->root_node->children.count; i-- > 0;) todo.push_back({sc->root_node->children.data[i], root->transform});
-        while (!todo.empty()) {
-            const ufbx_node* n = todo.back().first; Transform* parent = todo.back().second; todo.pop_back();
-            std::string nm = UfbxStr(n->name);
-            if (nm.empty()) nm = n->mesh ? "mesh" : "node";
-            if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
-            GameObject* g = scene.CreateGameObject(nm);
-            goOf[n->typed_id] = g;
-            const ufbx_transform& t = n->local_transform;
-            g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
-            g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
-            g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
-            g->transform->SetParent(parent, false);
-            for (std::size_t i = n->children.count; i-- > 0;) todo.push_back({n->children.data[i], g->transform});
-        }
-    }
-
-    // Meshes (after the hierarchy, so skins can find every bone).
-    for (const ufbx_node* node : sc->nodes) {
-        if (!node->mesh || !goOf[node->typed_id]) continue;
-        const ufbx_mesh* mesh = node->mesh;
-        GameObject* host = goOf[node->typed_id];
-        const ufbx_skin_deformer* skin = mesh->skin_deformers.count ? mesh->skin_deformers.data[0] : nullptr;
-        if (skin && skin->clusters.count == 0) skin = nullptr;
-        const bool geomOffset = !IsIdentity(node->geometry_to_node);
-        const Mat4 g2n = UfbxToMat4(node->geometry_to_node);
-        const size_t parts = mesh->material_parts.count;
-        int made = 0;
-        for (size_t pi = 0; pi < parts; ++pi) {
-            const ufbx_mesh_part& part = mesh->material_parts.data[pi];
-            if (part.num_triangles == 0) continue;
-            std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
-            std::vector<uint32_t> vi;
-            Mesh bind = BuildFbxPart(mesh, part, skin, skin ? &jIdx : nullptr, skin ? &jWt : nullptr,
-                                     mesh->blend_deformers.count ? &vi : nullptr);
-            if (bind.vertices.empty()) continue;
-            GameObject* g = host;
-            if (made++ > 0 || (parts > 1)) {   // one child per material when there are several
-                const ufbx_material* mat = part.index < mesh->materials.count ? mesh->materials.data[part.index] : nullptr;
-                g = scene.CreateGameObject(host->name + "_" + (mat ? UfbxStr(mat->name) : ("mat" + std::to_string(pi))));
-                g->transform->SetParent(host->transform, false);
-            }
-            auto* mr = g->AddComponent<MeshRenderer>();
-            mr->doubleSided = true;
-            ApplyFbxMaterial(*mr, part.index < mesh->materials.count ? mesh->materials.data[part.index] : nullptr, path, texSerial);
-            texSerial += 2;
-            if (!skin) {
-                mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
-                AddFbxBlendShapes(mesh, vi, g, geomOffset ? &g2n : nullptr);
-                continue;
-            }
-            // Skinned: vertices stay in geometry space; each cluster's
-            // geometry_to_bone is its inverse bind. The renderer shows the
-            // bind pose (in node space) until the first Skin().
-            mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
-            auto* sm = g->AddComponent<SkinnedMesh>();
-            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
-            for (const ufbx_skin_cluster* cl : skin->clusters) {
-                GameObject* bg = cl->bone_node ? goOf[cl->bone_node->typed_id] : nullptr;
-                sm->joints.push_back(bg ? bg->transform : nullptr);
-                sm->jointNames.push_back(bg ? bg->name : std::string());
-                // geometry_to_bone maps the SKINNED geometry (this part's mesh,
-                // which may sit under a child object) into bone space.
-                sm->inverseBind.push_back(UfbxToMat4(cl->geometry_to_bone));
-            }
-            ValidateSkinJoints(*sm, path);
-            if (g != host) {   // the part's object is a child of the mesh node: same space
-                g->transform->localPosition = Vec3{0, 0, 0};
-            }
-            AddFbxBlendShapes(mesh, vi, g, nullptr);
-        }
-    }
-
-    // Animation takes -> a ModelAnimator clip library on the root.
-    // Blend channel element -> (mesh node name, shape index), for weight tracks.
-    std::unordered_map<uint32_t, std::pair<std::string, int>> chanOf;
-    for (const ufbx_node* node : sc->nodes) {
-        if (!node->mesh || !goOf[node->typed_id]) continue;
-        int k = 0;
-        for (const ufbx_blend_deformer* bd : node->mesh->blend_deformers)
-            for (const ufbx_blend_channel* ch : bd->channels)
-                chanOf.emplace(ch->element_id, std::make_pair(goOf[node->typed_id]->name, k++));
-    }
-    if (sc->anim_stacks.count > 0) {
-        auto* ma = root->AddComponent<ModelAnimator>();
-        // Whole-file bake budget (a hostile file can point any number of stacks at the same curves):
-        // baked keys over all stacks, and each bake may not allocate more than what is left.
-        const std::size_t bakeKeyBudget = fbx::Limits().maxTotalBakedSamples;
-        const std::size_t kBakedKeyBytes = 40;   // sizeof(ufbx_baked_quat), the largest baked key
-        std::size_t bakedKeys = 0;
-        for (const ufbx_anim_stack* st : sc->anim_stacks) {
-            ufbx_bake_opts bo{};
-            bo.trim_start_time = true;
-            bo.resample_rate = 30.0;
-            bo.result_allocator.memory_limit = std::max<std::size_t>(1, (bakeKeyBudget - bakedKeys) * kBakedKeyBytes);   // 0 would mean unlimited
-            ufbx_error be{};
-            ufbx_baked_anim* bake = ufbx_bake_anim(sc, st->anim, &bo, &be);
-            if (!bake) {
-                if (be.type == UFBX_ERROR_MEMORY_LIMIT || be.type == UFBX_ERROR_ALLOCATION_LIMIT) {
-                    if (err) *err = "FBX rejected: animation bake budget exceeded";
-                    if (rejected) *rejected = true;
-                    ufbx_free_scene(sc);
-                    scene.Destroy(root);
-                    if (ok) *ok = false;
-                    return nullptr;
-                }
-                continue;
-            }
-            for (const ufbx_baked_node& bn : bake->nodes) bakedKeys += bn.translation_keys.count + bn.rotation_keys.count + bn.scale_keys.count;
-            for (const ufbx_baked_element& be3 : bake->elements) for (const ufbx_baked_prop& bp : be3.props) bakedKeys += bp.keys.count;
-            if (bakedKeys > bakeKeyBudget) {
-                ufbx_free_baked_anim(bake);
-                if (err) *err = "FBX rejected: animation bake budget exceeded";
-                if (rejected) *rejected = true;
-                ufbx_free_scene(sc);
-                scene.Destroy(root);
-                if (ok) *ok = false;
-                return nullptr;
-            }
-            ModelAnimator::Clip clip;
-            std::string cn = UfbxStr(st->name);
-            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
-            if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::u8path(path).stem().u8string();   // Mixamo: the file name says what it is
-                if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
-            }
-            clip.name = cn;
-            for (const ufbx_baked_node& bn : bake->nodes) {
-                if (bn.typed_id >= goOf.size() || !goOf[bn.typed_id]) continue;
-                clip.nodes.push_back({goOf[bn.typed_id]->name, AnimationClip{}});
-                AnimationClip& ac = clip.nodes.back().clip;
-                ac.smoothKeys = false;   // baked for linear playback
-                for (const ufbx_baked_vec3& k : bn.translation_keys) {
-                    const float t = (float)k.time;
-                    ac.AddKey("position.x", t, (float)k.value.x); ac.AddKey("position.y", t, (float)k.value.y); ac.AddKey("position.z", t, (float)k.value.z);
-                }
-                ufbx_quat prev{0, 0, 0, 1}; bool hasPrev = false;
-                for (const ufbx_baked_quat& k : bn.rotation_keys) {
-                    ufbx_quat q = k.value;
-                    if (hasPrev && q.x * prev.x + q.y * prev.y + q.z * prev.z + q.w * prev.w < 0.0) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }
-                    prev = q; hasPrev = true;
-                    const float t = (float)k.time;
-                    ac.AddKey("rotation.qx", t, (float)q.x); ac.AddKey("rotation.qy", t, (float)q.y);
-                    ac.AddKey("rotation.qz", t, (float)q.z); ac.AddKey("rotation.qw", t, (float)q.w);
-                }
-                for (const ufbx_baked_vec3& k : bn.scale_keys) {
-                    const float t = (float)k.time;
-                    ac.AddKey("scale.x", t, (float)k.value.x); ac.AddKey("scale.y", t, (float)k.value.y); ac.AddKey("scale.z", t, (float)k.value.z);
-                }
-                if (ac.Tracks().empty()) clip.nodes.pop_back();
-            }
-            // Blend shape channels' DeformPercent (0..100) -> "weights.<i>" on the mesh node.
-            for (const ufbx_baked_element& be2 : bake->elements) {
-                auto it = chanOf.find(be2.element_id);
-                if (it == chanOf.end()) continue;
-                for (const ufbx_baked_prop& bp : be2.props) {
-                    if (UfbxStr(bp.name) != "DeformPercent" || bp.keys.count == 0) continue;
-                    ModelAnimator::NodeClip* ncp = nullptr;
-                    for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
-                    if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
-                    const std::string track = "weights." + std::to_string(it->second.second);
-                    for (const ufbx_baked_vec3& k : bp.keys) ncp->clip.AddKey(track, (float)k.time, (float)k.value.x * 0.01f);
-                }
-            }
-            ufbx_free_baked_anim(bake);
-            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
-        }
-        if (ma->clips.empty()) root->RemoveComponent<ModelAnimator>();
-        else { ma->active = 0; ma->autoPlay = true; }
-    }
-
-    ufbx_free_scene(sc);
-    NormalizeImportedClips(root);
-    AutoNormalizeImportScale(scene, root);
-    if (ok) *ok = true;
-    return root;
-}
-
-#else   // OKAY_XBOX_UWP: no ufbx in the UWP build (it is a third-party library that is being replaced). FBX is read ONLY by our own reader (okay::fbx); a file it
-        // refuses fails with a plain message instead of falling back to a library that is not there. docs/platform/xbox_uwp.md
-namespace {   // the two helpers our own reader's code below shares with the ufbx block (which is compiled out here)
+namespace {   // helpers of our own reader's import below
 struct FbxVert {
     float px, py, pz, nx, ny, nz, u, v;
     int   j[4];
@@ -1831,28 +1340,23 @@ Mesh TransformedMesh(Mesh m, const Mat4& t) {
 }
 } // namespace
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
-    bool ownOk = false;
-    Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+    bool ownOk = false; std::string err;
+    Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture, &err);
     if (ok) *ok = ownOk;
-    if (!ownOk) Log::Error("model import '", path, "': the own FBX reader could not read this file (the Xbox build has no other FBX reader)");
+    if (!ownOk) Log::Error("model import '", path, "': ", err.empty() ? std::string("the own FBX reader could not read this file (there is no other FBX reader)") : err);
     return m;
 }
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
     if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { g_readBy = "the own FBX reader"; return r; }
-    if (err && err->empty()) *err = "the own FBX reader could not read this file (the Xbox build has no other FBX reader)";
+    if (err && err->empty()) *err = "the own FBX reader could not read this file (there is no other FBX reader)";
     if (rejected) *rejected = true;   // fail the import: nothing else can read an FBX here
     if (ok) *ok = false;
     return nullptr;
 }
-#endif   // !OKAY_XBOX_UWP
 
 // ============================================================================
-// FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx
-// path above and OFF by default: selected by -DOKAY_OWN_FBX=ON, the OKAY_OWN_FBX
-// environment variable, or okay::fbx::SetOwnReaderEnabled(true). It produces the
-// same scene data (hierarchy, per-material meshes, skins, blend shapes, baked
-// clips) so the rest of the engine does not care which reader ran. On failure
-// the ufbx path runs instead.
+// FBX via OUR reader (okay::fbx, Render/FbxReader): the hierarchy, per-material
+// meshes, skins, blend shapes and baked clips the rest of the engine uses.
 // ============================================================================
 namespace {
 
@@ -1925,7 +1429,7 @@ int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
     return slot >= 0 && slot < (int)m.materials.size() ? m.materials[(std::size_t)slot] : -1;
 }
 
-// One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+// One material part: deduplicated vertices + triangle list (first occurrence order).
 // The reader already shares corners that are equal byte for byte (numbered in order of first use), so the engine
 // vertex is built once per reader vertex; reader vertices that differ only in what the engine drops (vertex colour)
 // are merged here. Numbering by first use of the reader vertices is the same as numbering by first use of the
@@ -2045,11 +1549,11 @@ bool OwnIsIdentity(const fbx::Mat& m) {
 
 } // namespace
 
-static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture, std::string* errOut) {
     Mesh merged;
     fbx::Scene sc; std::string err;
     // The reader gives polygons; the import triangulates them (each mesh's polygon arrays freed once it has its parts).
-    if (!fbx::LoadFile(path, sc, &err) || !fbx::BuildParts(sc, &err, fbx::Limits(), true)) { if (ok) *ok = false; return merged; }
+    if (!fbx::LoadFile(path, sc, &err) || !fbx::BuildParts(sc, &err, fbx::Limits(), true)) { if (ok) *ok = false; if (errOut) *errOut = err; return merged; }
     for (const fbx::SceneNode& node : sc.nodes) {
         if (node.mesh < 0) continue;
         const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
@@ -2070,6 +1574,9 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
         }
     }
     if (ok) *ok = !merged.vertices.empty();
+    if (merged.vertices.empty() && errOut)
+        *errOut = sc.nodes.empty() ? "the FBX file was read but holds no objects (no models, meshes or bones)"
+                                   : "the FBX file was read but holds no meshes (only empty nodes, bones, cameras, lights or animation)";
     return merged;
 }
 
@@ -2078,6 +1585,11 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
     // The reader gives polygons and animation curves; the import triangulates the polygons (each mesh's polygon arrays
     // freed once it has its parts) and makes the clips' keys.
     if (!fbx::LoadFile(path, sc, err) || !fbx::BuildParts(sc, err, fbx::Limits(), true) || !fbx::BuildClips(sc, err)) { if (ok) *ok = false; return nullptr; }
+    if (sc.nodes.empty()) {   // read, but nothing to make: a failure with its reason, not an empty object
+        if (err) *err = "the FBX file was read but holds no objects (no models, meshes or bones)";
+        if (ok) *ok = false;
+        return nullptr;
+    }
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
     std::unordered_map<std::string, int> nameUse;
@@ -2219,8 +1731,8 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
     std::string p = Lower(path);
     bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb") || EndsWith(p, ".vrm");   // .vrm: VRM avatars are binary glTF 2.0
 
-    // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
-    // compiled in) is the fallback for files ufbx can't read.
+    // FBX: our own reader only (okay::fbx), full hierarchy + skins + animations. A file it
+    // refuses fails the import (no other FBX reader is asked).
     if (EndsWith(p, ".fbx")) {
         std::string ferr; bool rejected = false;
         if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr, &rejected)) return r;

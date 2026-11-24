@@ -26,8 +26,10 @@ endif()
 
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
+# FBX is not in the list: its option (OKAY_OWN_FBX) was deleted with ufbx and our FBX reader is always on. Listing it made the
+# undefined option count as OFF, so no build got OKAY_EXPECT_OWN_READERS (own_stack, own_dispatch_c/_d/_gap went red).
 set(_okay_all_readers_on TRUE)
-foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
+foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
         Q3D RAW IQM COB PMX LWS OGREBIN ZAE XML LXO)
     if(NOT OKAY_OWN_${_f})
         set(_okay_all_readers_on FALSE)
@@ -1902,6 +1904,25 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
+# The editor's Crash Log, Audio Mixer and History windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
+# (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
+# reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
+if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
+    add_executable(test_okayui_panels_imgui test_okayui_panels_imgui.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_panels_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
+    target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
+    set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
+
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
@@ -2442,7 +2463,21 @@ add_executable(test_launcher_versions test_launcher_versions.cpp
 target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
+if(WIN32)
+    target_link_libraries(test_launcher_versions PRIVATE winhttp)   # VersionsNet.cpp downloads through the HTTP seam (WinHTTP)
+endif()
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
+
+# The HTTP seam (NativeFetch.hpp) on WinHTTP against a loopback server, with the curl fallback off: downloads, retries, a size
+# cap, cancel, resume with Range, HEAD, a prefix fetch, a POST. Windows only (the Windows test job runs it).
+if(WIN32)
+    add_executable(test_winhttp_loopback test_winhttp_loopback.cpp)
+    target_compile_features(test_winhttp_loopback PRIVATE cxx_std_17)
+    target_include_directories(test_winhttp_loopback PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_winhttp_loopback PRIVATE winhttp ws2_32)
+    add_test(NAME winhttp_loopback COMMAND test_winhttp_loopback)
+    set_tests_properties(winhttp_loopback PROPERTIES TIMEOUT 120)
+endif()
 
 # The same download through our own HTTP client (docs/platform/own_http.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
@@ -3237,6 +3272,16 @@ target_link_libraries(test_core_cli PRIVATE okay::engine)
 target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
 add_test(NAME core_cli COMMAND test_core_cli)
 
+# The okay command line (tools/okay-cli): arguments, help, .gitignore/.gitattributes, git status grouping, empty projects,
+# and with git installed: init, save, history, undo, branches, sync and the scene merge/diff drivers on temp repos (77 = no git).
+if(TARGET okay_cli_lib)
+    add_executable(test_okay_cli test_okay_cli.cpp)
+    target_link_libraries(test_okay_cli PRIVATE okay_cli_lib)
+    target_include_directories(test_okay_cli PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    add_test(NAME okay_cli COMMAND test_okay_cli)
+    set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
@@ -3788,11 +3833,20 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     set_tests_properties(platform_default_env_own_short PROPERTIES
         ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
     # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
-    if(TARGET okay-platform-selftest)
+    # Not in a Windows build: there it runs as its own step of .github/workflows/windows-tests.yml (`--ci`), on
+    # the runner's real desktop, with its report in the job summary.
+    if(TARGET okay-platform-selftest AND NOT WIN32)
         add_test(NAME platform_selftest_auto
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
         set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+        # The --ci mode the Windows workflow uses, here with no sound device at all: audio is NOT TESTED, not FAIL,
+        # and the event pump check (pushed event, resize through the X server) must pass.
+        add_test(NAME platform_selftest_ci
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --ci)
+        set_tests_properties(platform_selftest_ci PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=okay-no-such-device"
+                             PASS_REGULAR_EXPRESSION "\\[PASS\\] event pump.*RESULT: nothing failed")
     endif()
 endif()
 
@@ -4029,14 +4083,21 @@ if(OKAY_NODE)
                      ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
 endif()
 
-# Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
+# Our own FBX reader (okay::fbx): fixtures from scripts/gen_fbx_fixtures.py, checked against hand-computed values and the importer output
+# recorded when ufbx and ours last agreed (tests/assets/fbx/expected_import.txt, tests/data/fbx_corpus_expected.txt)
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-target_include_directories(test_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)   # ufbx is the oracle for UV sets
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
-# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+# FBX is read only by our own reader: no ufbx in the build, and every .fbx of the corpora (tests/, examples/, assets/ and, with
+# OKAY_MODEL_CORPUS, the Assimp test folder) is read by okay::fbx.
+add_executable(test_fbx_route test_fbx_route.cpp)
+target_link_libraries(test_fbx_route PRIVATE okay::engine)
+target_compile_definitions(test_fbx_route PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_route COMMAND test_fbx_route)
+
+# Hostile FBX files through the importer (our reader): deep node chains, animation counts, the whole-file bake budget.
 add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
 target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
 add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
@@ -4071,11 +4132,10 @@ add_test(NAME fbx_exact COMMAND test_fbx_exact)
 add_executable(test_decimal_to_double test_decimal_to_double.cpp)
 add_test(NAME decimal_to_double COMMAND test_decimal_to_double)
 set_tests_properties(decimal_to_double PROPERTIES TIMEOUT 300)
-# Not a test: speed and peak heap of our FBX reader against ufbx (docs/content/model_readers.md (FBX part), "Speed and memory").
+# Not a test: speed and peak heap of our FBX reader and import (docs/content/model_readers.md (FBX part), "Speed and memory").
 # Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
 add_executable(bench_fbx_reader bench_fbx_reader.cpp)
 target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
-target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
 target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
@@ -4393,8 +4453,8 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the option-off vs option-on
-# equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the launcher's seam.
+# check_wav_seam_wiring fails if SDL_LoadWAV or the deleted OKAY_OWN_WAV switch comes back anywhere in shipped code.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
 find_package(SDL2 QUIET)
@@ -4409,6 +4469,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
+# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
+add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
@@ -4670,7 +4733,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers.md): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB has its own tests below, sib_reader and sib_import): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -5110,6 +5173,16 @@ function(okay_e4_reader_test name src)
 endfunction()
 okay_e4_reader_test(ogex_reader OgexReader.cpp)
 okay_e4_reader_test(mdl_reader MdlReader.cpp)
+# Our own SIB (Silo) reader (docs/content/model_readers.md, section SIB): synthetic files with hand-computed values, instances, every
+# truncation, a mutation sweep and budgets (sib_reader), and the import seam plus, with OKAY_MODEL_CORPUS set, the one real file (sib_import).
+okay_e4_reader_test(sib_reader SibReader.cpp)   # reader source only, so it can also be built by hand under the sanitizers
+set_tests_properties(sib_reader PROPERTIES TIMEOUT 600)
+add_executable(test_sib_import test_sib_import.cpp)
+target_link_libraries(test_sib_import PRIVATE okay::engine)
+if(OKAY_OWN_SIB)
+    target_compile_definitions(test_sib_import PRIVATE OKAY_EXPECT_OWN_SIB)
+endif()
+add_test(NAME sib_import COMMAND test_sib_import WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_e4_hostile test_e4_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)

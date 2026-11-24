@@ -394,6 +394,18 @@ struct Preprocessor {
                     }
                     cur_arg.push_back(ch);
                 }
+                {
+                    // The arguments from the variadic parameter on are one argument, commas kept ([cpp.replace] 12).
+                    const std::vector<std::string>& ps = it->second.params;
+                    if (!ps.empty() && ps.back() == "__VA_ARGS__" && args.size() >= ps.size()) {
+                        std::string joined = args[ps.size() - 1];
+                        for (size_t a = ps.size(); a < args.size(); ++a) joined += "," + args[a];
+                        args.resize(ps.size());
+                        args.back() = joined;
+                    } else if (!ps.empty() && ps.back() == "__VA_ARGS__" && args.size() + 1 == ps.size()) {
+                        args.push_back(std::string());
+                    }
+                }
                 // Every parameter is replaced in one pass over the body, so an argument that happens to contain another
                 // parameter's name (CHECK_NEAR(f(a, b), 1, 2) with parameters a and b) is not substituted a second time.
                 std::string substituted;
@@ -576,10 +588,17 @@ struct Preprocessor {
                         size_t p = 1;
                         while (p < rest.size() && rest[p] != ')') {
                             while (p < rest.size() && (rest[p] == ' ' || rest[p] == '\t' || rest[p] == ',')) ++p;
+                            if (rest.compare(p, 3, "...") == 0) {
+                                // A variadic macro ([cpp.replace] 12): the rest of the arguments are __VA_ARGS__.
+                                macro.params.push_back("__VA_ARGS__");
+                                p += 3;
+                                continue;
+                            }
                             size_t e = p;
                             while (e < rest.size() && (std::isalnum(static_cast<unsigned char>(rest[e])) || rest[e] == '_')) ++e;
                             if (e > p) macro.params.push_back(rest.substr(p, e - p));
-                            p = e;
+                            else if (p < rest.size() && rest[p] != ')') ++p;  // anything else: step over it (no endless loop)
+                            p = std::max(p, e);
                         }
                         if (p < rest.size() && rest[p] == ')') ++p;
                         while (p < rest.size() && (rest[p] == ' ' || rest[p] == '\t')) ++p;

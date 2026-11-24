@@ -1,11 +1,15 @@
-// Our own MDL reader (engine/src/Render/MdlReader.cpp): the Quake 1 model and the Half-Life 1 studio model. SYNTHETIC files built in
+// Our own MDL reader (engine/src/Render/MdlReader.cpp): the Quake 1 model, the Half-Life 1 studio model and the 3D GameStudio
+// MDL3 / MDL4 / MDL5 / MDL7 models (tests/gs_fixtures.hpp). SYNTHETIC files built in
 // memory (tests/e4_fixtures.hpp), checked against numbers worked out by hand. No real .mdl file is in this repository: the reader
 // is unverified against real files. Builds on its own with -DOKAY_STANDALONE_TEST (reader source only).
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "e4_fixtures.hpp"
+#include "gs_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <string>
 
 using namespace okay;
@@ -96,12 +100,151 @@ int main() {
         }
     }
 
-    // ---- 3D GameStudio and other files ----------------------------------------------------------------------------------------------
+    // ---- 3D GameStudio MDL3 / MDL4 / MDL5 (Conitec's published layout) ----------------------------------------------------------
+    {
+        for (const char* ver : {"3", "4", "4w", "5"}) {
+            gs::Mdl5Spec sp; sp.version = ver[0]; sp.wordFrames = ver[1] == 'w';
+            ImportedModel m; std::string err;
+            const bool ok = Read(gs::Mdl5(sp), m, err);
+            if (!ok) std::fprintf(stderr, "  MDL%s: %s\n", ver, err.c_str());
+            CHECK(ok && m.backend == "own" && fx::Sane(m));
+            if (!ok) continue;
+            CHECK(m.nodes.size() == 1 && m.parts.size() == 1 && m.materials.size() == 1 && m.clips.empty());
+            CHECK(Near(m.nodes[0].rotation.x, -0.70710678f) && Near(m.nodes[0].rotation.w, 0.70710678f));   // Z-up becomes Y-up
+            const Mesh& me = m.parts[0].mesh;
+            CHECK(me.vertices.size() == 4 && me.triangles.size() == 6 && me.uvs.size() == 4 && me.normals.size() == 4);
+            const bool five = sp.version == '5';
+            const float u0 = five ? 0.0625f : 0.125f, u1 = five ? 0.9375f : 0.875f, v0 = five ? 0.0625f : 0.25f, v1 = five ? 0.5625f : 0.75f;
+            CHECK(FindVertex(me, 1, 2, 3, u0, v0) >= 0 && FindVertex(me, 2, 2, 3, u1, v0) >= 0 && FindVertex(me, 1, 3, 3, u0, v1) >= 0 && FindVertex(me, 2, 3, 5, u1, v1) >= 0);
+            // the file's (0,1,2) is clockwise: the first triangle is v2, v1, v0
+            CHECK(Near(me.vertices[(std::size_t)me.triangles[0]].y, 3) && Near(me.vertices[(std::size_t)me.triangles[0]].x, 1) && Near(me.vertices[(std::size_t)me.triangles[1]].x, 2) && Near(me.vertices[(std::size_t)me.triangles[2]].y, 2) && Near(me.vertices[(std::size_t)me.triangles[2]].x, 1));
+            CHECK(me.name == "stand");
+            CHECK(m.materials[0].texture.empty() && HasNote(m, "embedded skin"));
+            CHECK(five || HasNote(m, "2 frames"));
+            CHECK(HasNote(m, "3D GameStudio"));
+        }
+        {   // MDL5 skin types: 2 and 3 (16 bit), 10 / 11 / 13 (mipmapped); an unknown type is refused (its size is unknown)
+            for (int t : {2, 3, 10, 11, 13}) { gs::Mdl5Spec sp; sp.version = '5'; sp.mdl5SkinType = t; ImportedModel m; std::string err; CHECK(Read(gs::Mdl5(sp), m, err)); }
+            for (int t : {1, 6, 7, 9, 14, 255, -1}) { gs::Mdl5Spec sp; sp.version = '5'; sp.mdl5SkinType = t; ImportedModel m; std::string err; CHECK(!Read(gs::Mdl5(sp), m, err) && err.find("skin") != std::string::npos && m.parts.empty()); }
+        }
+        {   // no skin: no texture coordinates (nothing to measure them against), still a model
+            gs::Mdl5Spec sp; sp.version = '5'; sp.skins = 0;
+            ImportedModel m; std::string err;
+            CHECK(Read(gs::Mdl5(sp), m, err) && m.parts.size() == 1 && m.parts[0].mesh.uvs.empty() && HasNote(m, "no skin"));
+        }
+        {   // hostile headers and indices
+            gs::Mdl5Offsets o;
+            const std::string f = gs::Mdl5(gs::Mdl5Spec{}, &o);
+            ImportedModel m; std::string err;
+            for (std::size_t at : {(std::size_t)48, (std::size_t)60, (std::size_t)64, (std::size_t)68, (std::size_t)72}) {
+                for (std::int32_t v : {0, -1, 0x7FFFFFFF, (std::int32_t)0x80000000}) {
+                    std::string g = f; Put32(g, at, v);
+                    const bool ok = Read(g, m, err);
+                    CHECK(!ok || fx::Sane(m));
+                }
+            }
+            std::string g = f; Put32(g, 60, 0); CHECK(!Read(g, m, err) && err.find("vertex count") != std::string::npos);
+            g = f; Put32(g, 64, 0); CHECK(!Read(g, m, err) && err.find("triangle count") != std::string::npos);
+            g = f; Put32(g, 68, 0); CHECK(!Read(g, m, err) && err.find("frame") != std::string::npos);
+            g = f; g[o.tris] = 9; CHECK(Read(g, m, err) && HasNote(m, "out-of-range") && m.parts[0].mesh.triangles.size() == 3);   // a vertex index past the end: that triangle is skipped
+            g = f; g[o.tris + 6] = 9; CHECK(Read(g, m, err) && HasNote(m, "skin vertex"));                                     // a skin-vertex index past the end: (0, 0)
+            g = f; g[o.frames] = 5; CHECK(!Read(g, m, err) && err.find("frame type") != std::string::npos);
+            for (std::size_t cut = 0; cut < f.size(); cut += 3) { const bool ok = Read(f.substr(0, cut), m, err); CHECK(!ok || (cut >= o.frames + 28 + 16 && fx::Sane(m))); }
+            // a scale of NaN or infinity
+            g = f; float nanf = std::nanf(""); std::memcpy(&g[8], &nanf, 4); CHECK(!Read(g, m, err) && err.find("scale") != std::string::npos);
+        }
+    }
+
+    {   // MDL3 / MDL4 / MDL5 vertex indices are unsigned 16-bit: a model of 40,000 vertices keeps a triangle that uses vertex 39,999
+        std::string o = "MDL3";
+        auto p32 = [&](std::uint32_t v) { gs::P32(o, v); };
+        p32(0); for (float f : {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f}) gs::PF(o, f);
+        p32(0); gs::PF(o, 0); gs::PF(o, 0); gs::PF(o, 0);
+        p32(0); p32(0); p32(0); p32(40000); p32(1); p32(1); p32(1); p32(0); p32(0);
+        gs::P16(o, 0); gs::P16(o, 0);                                                   // one skin vertex
+        for (unsigned v : {39999u, 39998u, 0u, 0u, 0u, 0u}) gs::P16(o, v);              // the triangle
+        p32(0); o.append(8, '\0'); gs::PStr(o, "f", 16);
+        for (int v = 0; v < 40000; ++v) { gs::P8(o, (unsigned)(v % 7)); gs::P8(o, (unsigned)(v % 11)); gs::P8(o, (unsigned)(v % 13)); gs::P8(o, 0); }
+        ImportedModel m; std::string err;
+        const bool ok = Read(o, m, err);
+        if (!ok) std::fprintf(stderr, "  40,000 vertices: %s\n", err.c_str());
+        CHECK(ok && m.parts.size() == 1 && m.parts[0].mesh.triangles.size() == 3);
+        // 39999 % 7 = 1, % 11 = 3, % 13 = 11: that corner is in the mesh
+        CHECK(ok && FindVertex(m.parts[0].mesh, 1, 3, 11) >= 0);
+    }
+
+    // ---- 3D GameStudio MDL7 (worked out from three real files) --------------------------------------------------------------------
     {
         ImportedModel m; std::string err;
-        for (const char* magic : {"MDL3", "MDL4", "MDL5", "MDL7"}) {
-            CHECK(!Read(std::string(magic) + std::string(200, '\0'), m, err) && err.find("3D GameStudio") != std::string::npos && err.find(magic) != std::string::npos && err.find("not supported") != std::string::npos);
+        const bool ok = Read(gs::Mdl7(), m, err);
+        if (!ok) std::fprintf(stderr, "  MDL7: %s\n", err.c_str());
+        CHECK(ok && m.backend == "own" && fx::Sane(m));
+        if (ok) {
+            CHECK(m.nodes.size() == 3 && m.nodes[1].name == "body" && m.nodes[2].name == "group 1" && m.nodes[1].parent == 0 && m.nodes[2].parent == 0);
+            CHECK(Near(m.nodes[0].rotation.x, -0.70710678f) && Near(m.nodes[0].rotation.w, 0.70710678f));
+            CHECK(m.materials.size() == 2 && m.materials[0].name == "red" && m.materials[1].name == "wood");
+            const ImportedMaterial& red = m.materials[0];
+            CHECK(red.hasDiffuse && Near(red.diffuse.r, 1) && Near(red.diffuse.g, 0) && Near(red.diffuse.b, 0) && Near(red.diffuse.a, 0.5f));
+            CHECK(red.hasEmissive && Near(red.emissive.r, 0.1f) && Near(red.emissive.g, 0.2f) && Near(red.emissive.b, 0.3f) && Near(red.shininess, 20));
+            CHECK(red.texture.empty());
+            const std::string& tx = m.materials[1].texture;
+            CHECK(tx.size() >= 12 && tx.compare(tx.size() - 12, 12, "tex/wood.png") == 0);
+            CHECK(m.parts.size() == 3);
+            int seen = 0;
+            for (const ImportedPart& p : m.parts) {
+                const Mesh& me = p.mesh;
+                if (p.node == 1 && p.material == 0) {   // v (0,1,2) st (0,1,2), reversed
+                    ++seen;
+                    CHECK(me.triangles.size() == 3 && me.vertices.size() == 3 && me.uvs.size() == 3);
+                    CHECK(FindVertex(me, 0, 0, 0, 0, 0) >= 0 && FindVertex(me, 1, 0, 0, 1, 0) >= 0 && FindVertex(me, 0, 1, 0, 0, 1) >= 0);
+                    CHECK(Near(me.vertices[(std::size_t)me.triangles[0]].y, 1) && Near(me.vertices[(std::size_t)me.triangles[1]].x, 1) && Near(me.vertices[(std::size_t)me.triangles[2]].x, 0) && Near(me.vertices[(std::size_t)me.triangles[2]].y, 0));
+                } else if (p.node == 1 && p.material == 1) {
+                    ++seen;
+                    CHECK(me.triangles.size() == 3 && FindVertex(me, 1, 1, 1, 1, 1) >= 0);
+                } else if (p.node == 2 && p.material == 0) {
+                    ++seen;
+                    CHECK(me.triangles.size() == 3 && me.uvs.empty() && FindVertex(me, 6, 0, 0) >= 0);
+                }
+            }
+            CHECK(seen == 3);
+            CHECK(HasNote(m, "MDL7"));
         }
+        {   // a texture path that leaves the model's folder is not used
+            gs::Mdl7Spec sp; sp.texture = "../x.png";
+            ImportedModel e; CHECK(Read(gs::Mdl7(sp), e, err) && e.materials[1].texture.empty() && HasNote(e, "not used"));
+            sp.texture = "C:\\art\\x.png";
+            CHECK(Read(gs::Mdl7(sp), e, err) && e.materials[1].texture.empty());
+        }
+        {   // frame records are not read (the group size gives the next group) and are noted; a non-zero word at offset 8 (0 in every
+            // real file; bones are not understood) is refused
+            gs::Mdl7Spec sp; sp.animatedFrameVerts = 4;
+            ImportedModel a; CHECK(Read(gs::Mdl7(sp), a, err) && a.parts.size() == 3 && HasNote(a, "frame record"));
+            gs::Mdl7Spec bn; bn.bones = 2;
+            ImportedModel c; CHECK(!Read(gs::Mdl7(bn), c, err) && err.find("offset 8") != std::string::npos && c.parts.empty());
+        }
+        {   // hostile: counts, sizes and struct sizes at extreme values never crash; the obvious ones are refused
+            const std::string f = gs::Mdl7();
+            for (std::size_t at = 4; at + 4 <= f.size(); at += 2) {
+                for (std::uint32_t v : {0u, 0xFFFFFFFFu, 0x7FFFFFFFu, 0x8000u, 1u}) {
+                    std::string g = f; Put32(g, at, (std::int32_t)v);
+                    ImportedModel h; std::string e2;
+                    if (Read(g, h, e2)) CHECK(fx::Sane(h));
+                }
+            }
+            std::string g = f; Put32(g, gs::mdl7off::kGroups, 0); ImportedModel h; CHECK(!Read(g, h, err) && err.find("group") != std::string::npos);
+            g = f; Put32(g, gs::mdl7off::kGroup0 + 4, 3); CHECK(!Read(g, h, err) && err.find("group") != std::string::npos);
+            g = f; g[gs::mdl7off::kSizes + 10] = 4; CHECK(!Read(g, h, err) && err.find("size") != std::string::npos);   // a triangle record of 4 bytes
+            for (std::size_t cut = 0; cut < f.size(); ++cut) { ImportedModel c; CHECK(!Read(f.substr(0, cut), c, err)); }
+        }
+    }
+
+    // ---- other files ----------------------------------------------------------------------------------------------------------------
+    {
+        ImportedModel m; std::string err;
+        for (const char* magic : {"MDL3", "MDL4", "MDL5", "MDL7"}) {   // all zeros: refused, and the message names the format
+            CHECK(!Read(std::string(magic) + std::string(200, '\0'), m, err) && err.find("3D GameStudio") != std::string::npos && err.find(magic) != std::string::npos);
+        }
+        for (const char* magic : {"MDL0", "MDL2", "MDL6", "MDL8"}) CHECK(!Read(std::string(magic) + std::string(200, '\0'), m, err) && err.find("not supported") != std::string::npos);
         CHECK(!Read("IDSQ" + std::string(200, '\0'), m, err) && err.find("sequence group") != std::string::npos);
         CHECK(!Read("IDP2" + std::string(200, '\0'), m, err) && err.find("not a supported MDL") != std::string::npos);
         CHECK(!Read("", m, err) && !Read("IDPO", m, err));

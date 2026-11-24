@@ -4,7 +4,7 @@
 #   cmake --build <dir> --config Release
 # Written from Microsoft's CMake "cross compiling for UWP" notes and the Windows SDK's C++/WinRT, DXGI and Direct3D 11 headers.
 cmake_minimum_required(VERSION 3.20)
-project(OkaySpaceXbox LANGUAGES CXX)   # C is enabled only in engine mode (the engine's ufbx.c), below
+project(OkaySpaceXbox LANGUAGES CXX)   # C is enabled only in engine mode, below (the engine has no C file since ufbx was deleted; kept until a Windows build confirms it can go)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     message(FATAL_ERROR "This is the Xbox UWP app. Configure it with -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 "

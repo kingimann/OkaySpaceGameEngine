@@ -567,11 +567,7 @@ void OkayScriptVM::Impl::RegisterBitsJsonStringBuiltins(BuiltinCtx& c) {
             }
             return Value{out};
         };
-        b["to_num"] = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{0.0f};
-            try { return Value{std::stof(a[0].AsString())}; } catch (...) { return Value{0.0f}; }
-        };
-        b["to_str"] = [](std::vector<Value>& a) { return Value{a.empty() ? std::string{} : a[0].AsString()}; };
+        okayscript::InstallConversionBuiltins<Value>(b);   // to_num / num, to_str / str (shared with the okayscript CLI)
         b["split"] = [](std::vector<Value>& a) {
             Value out = Value::MakeArray();
             if (a.empty()) return out;

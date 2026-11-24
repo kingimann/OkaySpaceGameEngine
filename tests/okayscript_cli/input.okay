@@ -1,0 +1,3 @@
+var name = input("name? ")
+var n = num(input())
+print($"hi {name}, twice {n} is {n * 2}")

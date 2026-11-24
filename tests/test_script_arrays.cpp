@@ -22,6 +22,27 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("n").AsFloat(), 3.0f, 0.001f);
     }
 
+    // --- Compound %= on an element (found while porting to okayscript/: it used to store the right side) ---
+    {
+        const char* src = R"SCRIPT(
+            var a = [10, 7];
+            a[0] %= 3;       // 1
+            a[1] %= 4;       // 3
+            var m = map();
+            m["k"] = 9;
+            m["k"] %= 5;     // 4
+            var r0 = a[0];
+            var r1 = a[1];
+            var rk = m["k"];
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK_NEAR(vm->GetGlobal("r0").AsFloat(), 1.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("r1").AsFloat(), 3.0f, 0.001f);
+        CHECK_NEAR(vm->GetGlobal("rk").AsFloat(), 4.0f, 0.001f);
+    }
+
     // --- Element assignment and append-at-end ---
     {
         const char* src = R"SCRIPT(

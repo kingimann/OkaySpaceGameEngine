@@ -26,4 +26,13 @@ inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
     return true;
 }
 
+// `s` without the spaces, tabs, carriage returns and newlines at its two ends (ASCII whitespace only).
+inline std::string Trim(const std::string& s) {
+    std::size_t b = 0, e = s.size();
+    auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; };
+    while (b < e && space(s[b])) ++b;
+    while (e > b && space(s[e - 1])) --e;
+    return s.substr(b, e - b);
+}
+
 }  // namespace okay::str

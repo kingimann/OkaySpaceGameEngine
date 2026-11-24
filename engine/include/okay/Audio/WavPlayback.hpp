@@ -7,8 +7,8 @@
 // A-law, mu-law, MS and IMA ADPCM) gives native-endian signed 16-bit. Channel count and rate are kept.
 // The conversion is ours (okay::wav::ToS16 and a plain copy); no SDL_ConvertAudio.
 //
-// The launcher calls this through shared/WavPlayback.hpp, which is the only file allowed to call
-// SDL_LoadWAV (it does so while the own decoder is off). tests/check_wav_seam_wiring.cmake enforces that.
+// The launcher calls this through shared/WavPlayback.hpp. This is the only WAV reader: SDL_LoadWAV was
+// deleted, and tests/check_wav_seam_wiring.cmake fails if it comes back.
 #include <cstddef>
 #include <cstdint>
 #include <string>

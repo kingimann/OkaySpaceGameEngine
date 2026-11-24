@@ -27,7 +27,7 @@ that nothing else was copied; see "Method and limits".
 | 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | ~~Probable copy of public-domain constants (not listed)~~ **CLOSED: replaced** | was `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Done: the owner said nothing may be copied; the whole reverb was rewritten as our own feedback delay network from the papers (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
-| 5 | Vendored third-party code (allowed, listed) | `engine/third_party/ufbx/` (ImGuiColorTextEdit in `editor/vendor/` was deleted 2026-11-23, replaced by `OkayUI::CodeEdit`) | ufbx (MIT or public domain) | Keep until replaced; ufbx public-domain option needs the owner's approval (F5) |
+| 5 | Vendored third-party code (allowed, listed) | none left: ImGuiColorTextEdit (`editor/vendor/`) was deleted 2026-11-23, replaced by `OkayUI::CodeEdit`; ufbx (`engine/third_party/ufbx/`) was deleted 2026-11-23 | - | Nothing to keep; F5 is moot |
 | 6 | Notice or licence gap | Roboto Medium (no licence file); no packaging step copies any notice file | Roboto: Apache 2.0 (per the font's own name table) | Owner must supply the licence; add notices to release archives (F6) |
 | 7 | Behaviour copied, code not (judgement call) | Own model readers, comments such as "as Assimp does", "imports like Assimp" | Assimp, BSD 3-clause | Rule 19a does not forbid matching behaviour; ask the owner to confirm (F7) |
 | 8 | Standard table / standard algorithm | MP3 Huffman tables and window, SHA-2 constants, CRC-32, inflate tables, JPEG tables, Ed25519 constants | ISO, FIPS, RFC, ITU specs | Keep; say so in the file headers (F8) |
@@ -53,7 +53,7 @@ All of these are in `docs/status/THIRD_PARTY.md`. Notice files were checked by l
 |---|---|---|---|
 | SDL2 | system package, `SDL2.dll` bundled in Windows builds | zlib | No file in the repository (not vendored). The Windows distribution ships the DLL; whether it ships `COPYING.txt` is **unverified** |
 | Dear ImGui | downloaded at configure time (`editor/CMakeLists.txt`, `launcher/CMakeLists.txt`, `tests/CMakeLists.txt`) | MIT | Not vendored. A binary that contains ImGui needs its MIT notice; none is shipped by any script (F6) |
-| ufbx | `engine/third_party/ufbx/` | MIT or public domain, both offered | Yes: `engine/third_party/ufbx/LICENSE`. Which ufbx version this is was not checked |
+| ufbx | deleted 2026-11-23 (was `engine/third_party/ufbx/`) | MIT or public domain, both offered | No longer in the repository |
 | Assimp 5.4.3 | downloaded at configure time (`engine/CMakeLists.txt`, optional) | BSD 3-clause | Not vendored. A binary that links it needs its notice (F6) |
 | libsodium | system package, optional | ISC | Not vendored |
 | TweetNaCl port | was `shared/AntiCheatCrypto.hpp` | Public domain | Deleted (F2, closed) |
@@ -118,8 +118,8 @@ What follows is the original finding.
 ### F5. Vendored libraries (allowed, listed)
 
 - ImGuiColorTextEdit (`editor/vendor/TextEditor.*`) was deleted on 2026-11-23; the script editor uses our own `OkayUI::CodeEdit`.
-- `engine/third_party/ufbx/ufbx.c` and `.h` (MIT or public domain; the file offers a choice of two licences). To stay clear of rule 19a's "public-domain needs approval", the MIT option is the one to choose; the owner should record that (question 5).
-- ufbx is on the removal plan in `docs/status/own_code_roadmap.md`. The own FBX reader (`FbxReader.cpp`, `FbxScene.cpp`) says "no third-party code". An overlap run of our sources against `ufbx` found no matching runs of 3 or more lines.
+- (deleted 2026-11-23) `engine/third_party/ufbx/ufbx.c` and `.h` (MIT or public domain; the file offered a choice of two licences). To stay clear of rule 19a's "public-domain needs approval", the MIT option is the one to choose; the owner should record that (question 5).
+- Both are gone. The own FBX reader (`FbxReader.cpp`, `FbxScene.cpp`) says "no third-party code". An overlap run of our sources against `ufbx` found no matching runs of 3 or more lines.
 
 ### F6. Notice gaps
 
@@ -196,7 +196,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 2. **TweetNaCl port (F2). Answered and done: the owner approved replacing it.** (Original question: do you approve keeping it, as public-domain code, until `okay::crypto` has passed the outside review? If not, what should the launcher use in the meantime?)
 3. **Freeverb numbers (F3).** Are public-domain reverb constants acceptable, or should the delay lengths and gains be re-chosen by us?
 4. **Behaviour matching with Assimp (F7).** Confirm that matching Assimp's output (by running it) is acceptable, and that reading Assimp's source to do so is not.
-5. **ufbx licence choice (F5).** Record that we take ufbx under the MIT option, not the public-domain option?
+5. **ufbx licence choice (F5).** Moot since ufbx was deleted on 2026-11-23. Record that we take ufbx under the MIT option, not the public-domain option?
 6. **Wycheproof test vectors (F9).** Apache-2.0 test data stored in the repository: keep, or download at test time only?
 7. **Roboto (F6).** Where did the font come from, and can you add its licence text?
 8. **Notices in releases (F6).** Should I add a `THIRD_PARTY_NOTICES.txt` to the release archives and installer (docs and packaging only)?

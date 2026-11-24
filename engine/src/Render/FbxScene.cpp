@@ -4,7 +4,6 @@
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Core/Base64.hpp"
 #include "okay/Render/FbxReader.hpp"
-#include "okay/Core/ThirdParty.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,6 +19,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "FbxSceneInternal.hpp"
+#include "FbxLegacy.hpp"
 
 namespace okay {
 namespace fbx {
@@ -249,13 +249,26 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
 } // namespace
 
 namespace {
-bool BuildFrom(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
-    out = Scene();
+bool BuildModern(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
     Builder b(doc, out, opt);
     b.steal = steal;
     const bool ok = b.Run();
     if (!ok) { out = Scene(); if (err) *err = b.err.empty() ? "FBX build failed" : b.err; }
     return ok;
+}
+
+/// The 7.x element tree as it is; FBX 6.x (and 5.x, which is refused) first rewritten in the 7.x layout (FbxLegacy.hpp).
+bool BuildFrom(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
+    out = Scene();
+    std::uint32_t version = 0;
+    const legacy::Layout layout = legacy::LayoutOf(doc, version);
+    if (layout == legacy::Layout::TooOld) { if (err) *err = UnsupportedVersionMessage(version); return false; }
+    if (layout == legacy::Layout::Legacy) {
+        Document up; std::string why;
+        if (!legacy::Upgrade(doc, steal, up, why)) { if (err) *err = why; return false; }
+        return BuildModern(up, steal ? &up : nullptr, out, err, opt);
+    }
+    return BuildModern(doc, steal, out, err, opt);
 }
 } // namespace
 
@@ -309,25 +322,6 @@ bool LoadFile(const std::string& path, Scene& out, std::string* err, const Build
     return LoadMemory(buf.data(), buf.size(), out, err, opt);
 }
 
-namespace {
-int g_own = -1;   // -1: not decided yet
-}
-bool OwnReaderEnabled() {
-#if defined(OKAY_XBOX_UWP)
-    return true;   // the Xbox UWP build has no ufbx: our reader is the only one (OKAY_OWN_FBX / OKAY_THIRD_PARTY cannot switch it off)
-#endif
-    if (g_own >= 0) return g_own != 0;
-    if (okay::ThirdPartyForced()) { g_own = 0; return false; }   // OKAY_THIRD_PARTY=1: ufbx for every FBX file
-#ifdef OKAY_OWN_FBX_DEFAULT
-    bool v = true;
-#else
-    bool v = false;
-#endif
-    if (const char* e = std::getenv("OKAY_OWN_FBX")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
-    g_own = v ? 1 : 0;
-    return v;
-}
-void SetOwnReaderEnabled(bool on) { g_own = on ? 1 : 0; }
 bool FileKeysDefault() {
     static const bool v = [] { const char* e = std::getenv("OKAY_FBX_BAKE30"); return !(e && e[0] == '1'); }();
     return v;

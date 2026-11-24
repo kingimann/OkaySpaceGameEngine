@@ -1,0 +1,3 @@
+// A standard native called with the wrong number of arguments.
+print(sqrt(16))
+var name = input("a", "b")

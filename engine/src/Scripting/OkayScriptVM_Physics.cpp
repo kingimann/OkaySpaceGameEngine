@@ -685,7 +685,7 @@ void OkayScriptVM::Impl::RegisterMaterialEventBuiltins(BuiltinCtx& c) {
             if (a.size() > 1) args.push_back(a[1]);
             const std::string ev = a[0].AsString();
             try {
-                if (rt.functions.count(ev)) rt.Call(ev, args);
+                if (rt.functions.count(ev)) rt.CallFunction(ev, args);
                 rt.FireSubs(ev, args);
             } catch (const std::exception& e) { Log::Error("OkayScript raise: ", e.what()); }
             return Value{};

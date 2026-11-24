@@ -3,7 +3,7 @@
 // (OKAY_NO_CURL=1) and PATH is emptied, so every answer here comes from WinHTTP or the case fails.
 // Checks: WinHTTP is compiled in (it was silently off from #1001 to claude/third-party-1), downloads (success, redirect,
 // 404, 503 retries, a size cap, cancel, a cut answer resumed with Range + If-Range, a file that changed (200 to the
-// resume: started again), no validator (the next try starts from 0)), HEAD, a Range prefix fetch, a POST with headers and
+// resume: started again), no validator (the next try starts from 0), only a checksum (a resumed file that fails it is fetched again from 0)), HEAD, a Range prefix fetch, a POST with headers and
 // a body, and the PR #1186 review fixes: Send's timeout, a cancel and the whole-call limit on a silent server (before the
 // fix they waited for the receive timeout), a 407 that is no answer (curl would be tried), no redirect for a call with a
 // credential header, CR/LF taken out of header lines, a body file with a non-ASCII name and one that is missing. Windows only (built by the Windows test job; also runs under Wine). No <thread>/<mutex> (rule 21a):
@@ -35,7 +35,7 @@ static int g_fail = 0, g_checks = 0;
 
 static SOCKET g_listen = INVALID_SOCKET;
 static int g_port = 0;
-static volatile LONG g_flaky = 0, g_trunc = 0, g_stop = 0;
+static volatile LONG g_flaky = 0, g_trunc = 0, g_stop = 0, g_shaFull = 0, g_shaRange = 0;
 static std::string Changed() { return std::string(5000, 'z'); }
 static void QuietWait() { for (int i = 0; i < 400 && !g_stop; ++i) Sleep(25); }   // up to 10 s of silence
 static std::string g_lastHead;   // written by the server thread before it answers, read after the call returned
@@ -88,6 +88,18 @@ static void Serve(SOCKET c) {
         if (head.find("Range: bytes=") == std::string::npos && InterlockedIncrement(&g_trunc) % 2 == 1)
             SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5000\r\n\r\n" + pl.substr(0, 2000));
         else SendAll(c, Ok(pl));
+    }
+    else if (path == "/shachange") {   // no validator; cut half way, and the file changes to Changed() before the resume
+        const size_t r = head.find("Range: bytes=");
+        const std::string now = Changed();
+        if (r != std::string::npos) {
+            InterlockedIncrement(&g_shaRange);
+            const size_t from = (size_t)std::atoi(head.c_str() + r + 13);
+            SendAll(c, "HTTP/1.1 206 Partial Content\r\nConnection: close\r\nContent-Length: " + std::to_string(now.size() - from) +
+                       "\r\nContent-Range: bytes " + std::to_string(from) + "-4999/5000\r\n\r\n" + now.substr(from));
+        } else if (InterlockedIncrement(&g_shaFull) == 1) {
+            SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5000\r\n\r\n" + pl.substr(0, 2000));
+        } else SendAll(c, Ok(now));
     }
     else if (path == "/silent") QuietWait();   // never answers
     else if (path == "/stall") { SendAll(c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 1000\r\n\r\n" + pl.substr(0, 100)); QuietWait(); }
@@ -185,6 +197,15 @@ int main() {
         r = FetchToFile(base + "/novalid", out, sp);   // no validator, no checksum: the second try starts from byte 0
         CHECK(r.outcome == OwnOutcome::Ok && r.resumes == 0 && Slurp(out) == pl);
         CHECK(LastHead().find("Range:") == std::string::npos);
+        // no validator but an expected SHA-256: the resume (no If-Range to send) glues the new file's tail onto the old
+        // start; the checksum fails, and the file is fetched once more from byte 0 instead of ending as ChecksumMismatch
+        const fs::path want = dir / "want.bin";
+        { std::ofstream f(want, std::ios::binary); f << Changed(); }
+        sp.expectedSha256 = fetch_detail::Sha256File(want);
+        g_shaFull = 0; g_shaRange = 0;
+        r = FetchToFile(base + "/shachange", out, sp);
+        CHECK_OUTCOME(r, OwnOutcome::Ok); CHECK(Slurp(out) == Changed()); CHECK(g_shaRange == 1 && g_shaFull == 2); CHECK(NoParts(dir));
+        sp.expectedSha256.clear();
     }
     {   // a silent server: Send's timeout holds; a cancel and the whole-call limit end a blocked call quickly
         DWORD t0 = GetTickCount();

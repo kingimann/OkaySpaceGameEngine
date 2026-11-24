@@ -2,7 +2,7 @@
 
 # Code index: engine-Scripting
 
-Back to the [code index](../code_index.md). 6 headers, 29 names.
+Back to the [code index](../code_index.md). 7 headers, 67 names.
 
 ## `engine/include/okay/Scripting/NextScriptVM.hpp`
 
@@ -24,6 +24,47 @@ Back to the [code index](../code_index.md). 6 headers, 29 names.
 - `FindScriptApi` function, line 78: The entry with this OkayScript name or alias, or null.
 - `ScriptApiDuplicateCount` function, line 89: How many times a language tried to define a function the shared table already has (a second copy).
 - `NoteScriptApiDuplicate` function, line 90
+
+## `engine/include/okay/Scripting/ScriptBindings.hpp`
+
+- `ArgKind` enum, line 33: What one argument or result of a bound method is, as a script value carries it.
+- `ArgKindName` function, line 35: "a number", "text", "a vector" ... for error messages.
+- `MethodBinding` struct, line 41: One bound method. Arguments past 'required' have defaults in C++ and may be left out.
+- `ClassBinding` struct, line 51: One bound component class.
+- `IsA` function, line 59
+- `AddA` function, line 60
+- `MakeClass` function, line 65: What the generated file calls once per class.
+- `AddClass` function, line 74
+- `RegisterGeneratedBindings` function, line 76: Defined in ScriptBindingsGenerated.cpp.
+- `AllClasses` function, line 80: ---- The table ------------------------------------------------------------------------------------------------
+- `FindClass` function, line 83: By C++ name ("Rigidbody3D"), any case, by scene-record name ("rigidbody3d"), or by the script names the engine
+- `ClassOf` function, line 85: The exact class of 'c' (its dynamic type), or null when it is not bound.
+- `ClassByKey` function, line 86
+- `KeyOf` function, line 87
+- `FindComponent` function, line 91: ---- Handles --------------------------------------------------------------------------------------------------
+- `MakeHandle` function, line 93: A handle to 'c' as the class 'cls' (its own class when null). Null value (0) when 'c' is null.
+- `IsHandle` function, line 94
+- `Resolve` function, line 96: The component a handle names, or null once its object or the component is gone (or 'v' is no handle).
+- `Result` enum, line 99: ---- Use --------------------------------------------------------------------------------------------------------
+- `GetMember` function, line 102: 'handle.name': a registered property of the component's class, or 'gameObject' (its object), 'enabled'.
+- `SetMember` function, line 104: 'handle.name = v' through the PropertyRegistry (validated, clamped, change hook fired).
+- `PropertyToScript` function, line 116: ---- Property values <-> script values (one conversion for OkayScript and visual scripts) ---------------------
+- `ScriptToProperty` function, line 118: A script value in the type 'desc' wants, or false with 'error' ("Light.intensity wants a number, got text").
+- `ArgError` struct, line 123: ---- Helpers the generated code uses ----------------------------------------------------------------------------
+- `ArgInt` function, line 124
+- `ArgIntIn` function, line 126: A whole number in [lo, hi] (an enum's values, the range of the C++ type), else ArgError for argument idx.
+- `ArgCount` function, line 128: A count or an index: -1 .. max (so one call cannot make the engine allocate gigabytes), else ArgError.
+- `ArgVec2` function, line 129
+- `ArgVec4` function, line 130
+- `ArgQuat` function, line 131
+- `ArgColor` function, line 132
+- `ArgObject` function, line 133
+- `RetVec2` function, line 134
+- `RetVec4` function, line 135
+- `RetQuat` function, line 136
+- `RetColor` function, line 137
+- `RetObject` function, line 138
+- `RetComponent` function, line 139
 
 ## `engine/include/okay/Scripting/ScriptUI.hpp`
 

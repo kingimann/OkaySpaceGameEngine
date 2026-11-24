@@ -8,6 +8,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/NetworkObject.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -691,7 +692,7 @@ inline NetworkManager* VsNet(VsContext& ctx, bool create = false) {
     if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
     Scene* s = ctx.gameObject->scene();
     NetworkManager* n = s->FindObjectOfType<NetworkManager>();
-    if (!n && create) n = s->CreateGameObject("__Network")->AddComponent<NetworkManager>();
+    if (!n && create) n = NetworkManager::Ensure(*s);
     return n;
 }
 
@@ -730,7 +731,7 @@ struct NetHostNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* n = VsNet(ctx, true))
-            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, "could not start the server on port " + std::to_string(port) + " (is it already in use?)");
+            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, n->LastError());
         return 0;
     }
 };
@@ -740,7 +741,7 @@ struct NetJoinNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* n = VsNet(ctx, true))
-            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, "could not connect to " + host + ":" + std::to_string(port));
+            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, n->LastError());
         return 0;
     }
 };
@@ -853,6 +854,155 @@ struct NetMatchStartedNode : VsNode {
 // Host only: true when every client in the room is ready.
 struct NetAllReadyNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->AllReady(); }
+};
+
+// ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
+// Host if the port is free on this computer, else join the game hosted on it.
+struct NetHostOrJoinNode : VsNode {
+    int port;
+    explicit NetHostOrJoinNode(int p) : port(p) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->HostOrJoin((std::uint16_t)port)) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+// Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
+struct NetSendEventNode : VsNode {
+    std::string name;
+    explicit NetSendEventNode(std::string nm) : name(std::move(nm)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNetOrSay(this, g, ctx))
+            if (!n->SendEvent(name, In(0, g, ctx).AsString())) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+// Who sent the network event being handled (a player id; 0 = the host).
+struct NetEventSenderNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto it = ctx.variables.find("event_sender");
+        return it != ctx.variables.end() ? it->second : VsValue(0.0f);
+    }
+};
+// Players in the game, this one included.
+struct NetPlayerCountNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->Players().size() : 0.0f; }
+};
+// The id of player number in0 (0 = the first, in id order); -1 past the end.
+struct NetPlayerIdAtNode : VsNode {
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return -1.0f;
+        const auto list = n->Players();
+        const float f = In(0, g, ctx).AsFloat();
+        const int i = std::isfinite(f) ? (int)f : -1;
+        return i >= 0 && i < (int)list.size() ? (float)list[(std::size_t)i].id : -1.0f;
+    }
+};
+// The name of the player with id in0.
+struct NetPlayerNameNode : VsNode {
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return std::string{};
+        const float f = In(0, g, ctx).AsFloat();
+        for (const auto& p : n->Players())
+            if (std::isfinite(f) && (float)p.id == f) return p.name;
+        return std::string{};
+    }
+};
+struct NetLastErrorNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->LastError() : std::string{}; }
+};
+struct NetTimeNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->NetworkTime() : 0.0f; }
+};
+struct NetPingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->RttMs() : 0.0f; }
+};
+// This object's network id: its Network Sync's (blank = the object's name); "" without one.
+inline std::string VsSyncId(const VsContext& ctx) {
+    auto* ns = ctx.gameObject ? ctx.gameObject->GetComponent<NetworkSync>() : nullptr;
+    return ns ? (ns->netId.empty() ? ctx.gameObject->name : ns->netId) : std::string();
+}
+// Does this player drive this object now? (True offline or without a Network Sync.)
+struct NetIsMineNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* ns = ctx.gameObject ? ctx.gameObject->GetComponent<NetworkSync>() : nullptr;
+        return !ns || ns->IsLocallyOwned();
+    }
+};
+// Is this object the local player that this client predicts (authoritative movement)?
+struct NetIsPredictedNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->Predicted(VsSyncId(ctx)); }
+};
+// Host: give this object to player in0. A client: ask the host for it.
+struct NetGiveOwnershipNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNetOrSay(this, g, ctx);
+        const std::string id = VsSyncId(ctx);
+        if (!n) return 0;
+        if (id.empty()) { g.Error(this, ctx, "this object is not Networked (it has no Network Sync)"); return 0; }
+        if (!n->IsServer()) { n->RequestOwnership(id); return 0; }
+        const float who = In(0, g, ctx).AsFloat();
+        if (!(who >= 0.0f) || !n->GiveOwnership(id, (std::uint32_t)who)) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+struct NetRequestOwnershipNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNetOrSay(this, g, ctx);
+        const std::string id = VsSyncId(ctx);
+        if (n && !id.empty()) n->RequestOwnership(id);
+        else if (n) g.Error(this, ctx, "this object is not Networked (it has no Network Sync)");
+        return 0;
+    }
+};
+// Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
+struct NetOwnerNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->OwnerOf(VsSyncId(ctx)) : -1.0f; }
+};
+// Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
+struct NetSimulateNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true)) {
+            n->simulateLatencyMs = In(0, g, ctx).AsFloat();
+            n->simulateJitterMs = In(1, g, ctx).AsFloat();
+            n->simulateLossPercent = In(2, g, ctx).AsFloat();
+        }
+        return 0;
+    }
+};
+// Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
+struct NetStatsNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return 0.0f;
+        const auto st = n->Stats();
+        switch (pin) {
+            case 1: return st.lossPercent;
+            case 2: return st.bytesInPerSec;
+            case 3: return st.bytesOutPerSec;
+            default: return st.rttMs;
+        }
+    }
+};
+
+// Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
+struct NetShowStatsNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true)) n->showStatsOverlay = In(0, g, ctx).AsBool();
+        return 0;
+    }
+};
+// Is Migrating: between the host leaving and the new host taking over (host migration).
+struct NetMigratingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->Migrating(); }
 };
 
 // ---- Steam ------------------------------------------------------------

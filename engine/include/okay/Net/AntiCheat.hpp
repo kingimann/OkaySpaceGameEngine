@@ -237,7 +237,8 @@ public:
     /// May a client claim this unowned object by driving it (its NetworkSync's
     /// clientClaimable)? Without this hook, or false: the object is the server's.
     std::function<bool(const std::string& netId)> claimable;
-    /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it.
+    /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it. Named network
+    /// events ("__ev") come here too, by their event name.
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.
     std::function<void(const CheatReport&)> onCheat;

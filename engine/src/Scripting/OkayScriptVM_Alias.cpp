@@ -316,26 +316,9 @@ void OkayScriptVM::Impl::RegisterCsCompatBuiltins(BuiltinCtx& c) {
         // ---- C# compatibility -------------------------------------------
         // Collections created by `new List<T>()`, `new Dictionary<K,V>()`, `new T[n]`
         // (the parser lowers those to these calls). Lists/arrays share one type.
-        b["__new_list"] = [](std::vector<Value>& a) {
-            Value v = Value::MakeArray();
-            if (!a.empty()) if (auto src = a[0].AsArray()) *v.AsArray() = *src;   // initializer / copy
-            return v;
-        };
-        b["__new_array"] = [](std::vector<Value>& a) {
-            Value v = Value::MakeArray();
-            int n = a.empty() ? 0 : SafeInt(a[0].AsFloat());
-            if (n > 0) v.AsArray()->assign((std::size_t)std::min(n, 1 << 20), Value{0.0f});
-            return v;
-        };
-        b["__new_map"] = [](std::vector<Value>& a) {
-            Value v = Value::MakeMap();
-            if (a.empty()) return v;
-            if (auto src = a[0].AsMap()) { *v.AsMap() = *src; return v; }
-            if (auto pairs = a[0].AsArray())                          // { {"a", 1}, {"b", 2} }
-                for (auto& pr : *pairs)
-                    if (auto kv = pr.AsArray(); kv && kv->size() >= 2) (*v.AsMap())[(*kv)[0].AsString()] = (*kv)[1];
-            return v;
-        };
+        b["__new_list"] = okayscript::detail::NewList<Value>;     // the language core's (okayscript/detail/Support.hpp)
+        b["__new_array"] = okayscript::detail::NewArray<Value>;
+        b["__new_map"] = okayscript::detail::NewMap<Value>;
         // Invoke("Fire", 2f) / InvokeRepeating("Spawn", 1f, 0.5f) / CancelInvoke().
         b["Invoke"] = [this](std::vector<Value>& a) {
             if (!a.empty()) rt.timers.push_back({a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f, a[0].AsString(), false});

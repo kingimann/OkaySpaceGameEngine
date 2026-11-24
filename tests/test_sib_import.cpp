@@ -47,7 +47,7 @@ int main() {
     CHECK(HasOwnReader(".sib"));
     if (!kOnByDefault) {
         CHECK(EffectiveImportBackend(".sib") != ImportBackend::Own);
-        if (!AssimpAvailable()) {
+        {
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find("OKAY_OWN_SIB") != std::string::npos);
         }
@@ -55,14 +55,12 @@ int main() {
         ImportedModel d; std::string e2;
         CHECK(EffectiveImportBackend(".sib") == ImportBackend::Own);
         CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
-        // a file ours refuses: with the default choice the seam hands it to Assimp when the build has it (like every own reader);
-        // without Assimp the refusal is ours and says why
+        // a file ours refuses: there is no other reader, the refusal is ours and says why
         const std::string bad = (dir / "bad.sib").string();
         { std::ofstream w(bad, std::ios::binary); w << "HEAD not a silo file at all"; }
         ImportedModel r; std::string e3;
         const bool read = ImportModelData(bad, r, ImportBackend::Default, false, &e3);
-        if (!AssimpAvailable()) CHECK(!read && e3.find("SIB") != std::string::npos);
-        else CHECK(read ? r.backend != "own" : !e3.empty());
+        CHECK(!read && e3.find("SIB") != std::string::npos);
     }
     SetEnv("OKAY_OWN_SIB", "1");
     CHECK(EffectiveImportBackend(".sib") == ImportBackend::Own);

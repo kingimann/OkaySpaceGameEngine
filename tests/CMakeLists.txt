@@ -3298,6 +3298,8 @@ if(TARGET okay_cli_lib)
     add_executable(test_okay_cli test_okay_cli.cpp)
     target_link_libraries(test_okay_cli PRIVATE okay_cli_lib)
     target_include_directories(test_okay_cli PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    # The checkout, for build-local.ps1 and the example graph: __FILE__ is relative under Ninja (Windows job runs elsewhere).
+    target_compile_definitions(test_okay_cli PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME okay_cli COMMAND test_okay_cli)
     set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
@@ -4067,11 +4069,11 @@ if(_okay_xc_sodium)
 endif()
 
 # Our own model readers (OBJ+MTL, STL, PLY) + the import seam: fixtures in tests/data/models,
-# malformed input, a fuzz sweep, the backend switch, and (with OKAY_USE_ASSIMP) both backends compared.
+# malformed input, a fuzz sweep, the backend switch, and fixed counts for the files once compared with Assimp.
 add_executable(test_model_readers test_model_readers.cpp)
 target_link_libraries(test_model_readers PRIVATE okay::engine)
 target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-if(_okay_all_readers_on AND OKAY_PREFER_OWN_READERS)
+if(_okay_all_readers_on)
     target_compile_definitions(test_model_readers PRIVATE OKAY_EXPECT_OWN_READERS)
 endif()
 add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -4627,8 +4629,8 @@ target_link_libraries(test_model_corpus PRIVATE okay::engine)
 target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
-# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/content/own_readers_speed.md).
-# Built, never run by ctest. Configure with -DOKAY_USE_ASSIMP=ON for the Assimp side; OKAY_MODEL_CORPUS names the files.
+# Not a test: speed and peak heap of our own model readers, per corpus file (docs/content/own_readers_speed.md).
+# Built, never run by ctest. OKAY_MODEL_CORPUS names the files.
 add_executable(bench_model_readers bench_model_readers.cpp)
 target_link_libraries(bench_model_readers PRIVATE okay::engine)
 

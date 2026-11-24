@@ -1,8 +1,11 @@
-// <vector> for okay-cc (ISO/IEC 14882 [vector]). Our own header, minimal. The elements live in an
-// array made with new T[capacity], so T needs a default constructor, and growing assigns the old
-// elements into the new array. Iterators are pointers.
+// <vector> for okay-cc (ISO/IEC 14882 [vector]). Our own header, minimal. The elements live in raw
+// memory from malloc and are built and destroyed one by one (placement new, p->~T()), so T needs no
+// default constructor; growing moves the elements into the new block. Iterators are pointers.
 #pragma once
 #include <cstddef>
+#include <cstdlib>
+#include <initializer_list>
+#include <new>
 #include <utility>
 namespace std {
 template <typename T>
@@ -12,16 +15,26 @@ public:
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
     vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {
         reserve((unsigned long)(last - first));
-        for (const T *p = first; p != last; ++p) data_[size_++] = *p;
+        for (const T *p = first; p != last; ++p) {
+            new (data_ + size_) T(*p);
+            ++size_;
+        }
     }
     vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
         reserve(n);
-        for (unsigned long i = 0; i < n; ++i) data_[i] = v;
+        for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(v);
         size_ = n;
+    }
+    vector(initializer_list<T> il) : data_(nullptr), size_(0), cap_(0) {
+        reserve(il.size());
+        for (const T *p = il.begin(); p != il.end(); ++p) {
+            new (data_ + size_) T(*p);
+            ++size_;
+        }
     }
     vector(const vector<T> &o) : data_(nullptr), size_(0), cap_(0) {
         reserve(o.size_);
-        for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
+        for (unsigned long i = 0; i < o.size_; ++i) new (data_ + i) T(o.data_[i]);
         size_ = o.size_;
     }
     vector(vector<T> &&o) : data_(o.data_), size_(o.size_), cap_(o.cap_) {
@@ -29,24 +42,28 @@ public:
         o.size_ = 0;
         o.cap_ = 0;
     }
-    ~vector() { delete[] data_; }
+    ~vector() {
+        clear();
+        free(data_);
+    }
+    vector<T> &operator=(const vector<T> &o) {
+        if (this == &o) return *this;
+        clear();
+        reserve(o.size_);
+        for (unsigned long i = 0; i < o.size_; ++i) new (data_ + i) T(o.data_[i]);
+        size_ = o.size_;
+        return *this;
+    }
     vector<T> &operator=(vector<T> &&o) {
         if (this == &o) return *this;
-        delete[] data_;
+        clear();
+        free(data_);
         data_ = o.data_;
         size_ = o.size_;
         cap_ = o.cap_;
         o.data_ = nullptr;
         o.size_ = 0;
         o.cap_ = 0;
-        return *this;
-    }
-    vector<T> &operator=(const vector<T> &o) {
-        if (this == &o) return *this;
-        size_ = 0;
-        reserve(o.size_);
-        for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
-        size_ = o.size_;
         return *this;
     }
 
@@ -74,9 +91,12 @@ public:
 
     void reserve(unsigned long n) {
         if (n <= cap_) return;
-        T *grown = new T[n];
-        for (unsigned long i = 0; i < size_; ++i) grown[i] = data_[i];
-        delete[] data_;
+        T *grown = (T *)malloc(n * sizeof(T));
+        for (unsigned long i = 0; i < size_; ++i) {
+            new (grown + i) T(std::move(data_[i]));
+            (data_ + i)->~T();
+        }
+        free(data_);
         data_ = grown;
         cap_ = n;
     }
@@ -84,9 +104,9 @@ public:
         if (size_ == cap_) {
             T keep = v;  // v may be an element of this vector
             reserve(cap_ == 0 ? 4 : cap_ * 2);
-            data_[size_] = keep;
+            new (data_ + size_) T(std::move(keep));
         } else {
-            data_[size_] = v;
+            new (data_ + size_) T(v);
         }
         ++size_;
     }
@@ -94,9 +114,9 @@ public:
         if (size_ == cap_) {
             T keep = std::move(v);
             reserve(cap_ == 0 ? 4 : cap_ * 2);
-            data_[size_] = std::move(keep);
+            new (data_ + size_) T(std::move(keep));
         } else {
-            data_[size_] = std::move(v);
+            new (data_ + size_) T(std::move(v));
         }
         ++size_;
     }
@@ -109,25 +129,39 @@ public:
     void emplace_back(A a, B b) {
         push_back(T(a, b));
     }
-    void pop_back() { --size_; }
-    void clear() { size_ = 0; }
-    void resize(unsigned long n) {
+    void pop_back() {
+        --size_;
+        (data_ + size_)->~T();
+    }
+    void clear() {
+        for (unsigned long i = 0; i < size_; ++i) (data_ + i)->~T();
+        size_ = 0;
+    }
+    void assign(unsigned long n, const T &v) {
+        T copy = v;  // v may be one of the elements
+        clear();
         reserve(n);
-        for (unsigned long i = size_; i < n; ++i) data_[i] = T();
+        for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(copy);
+        size_ = n;
+    }
+    void resize(unsigned long n) {
+        while (size_ > n) pop_back();
+        reserve(n);
+        for (unsigned long i = size_; i < n; ++i) new (data_ + i) T();
         size_ = n;
     }
     T *erase(T *pos) {
         T *last = data_ + size_;
-        for (T *p = pos; p + 1 != last; ++p) *p = *(p + 1);
-        --size_;
+        for (T *p = pos; p + 1 != last; ++p) *p = std::move(*(p + 1));
+        pop_back();
         return pos;
     }
     T *insert(T *pos, const T &v) {
         T keep = v;  // v may be an element of this vector: copy it before anything moves or is freed
         unsigned long at = (unsigned long)(pos - data_);
         push_back(keep);
-        for (unsigned long i = size_ - 1; i > at; --i) data_[i] = data_[i - 1];
-        data_[at] = keep;
+        for (unsigned long i = size_ - 1; i > at; --i) data_[i] = std::move(data_[i - 1]);
+        data_[at] = std::move(keep);
         return data_ + at;
     }
 

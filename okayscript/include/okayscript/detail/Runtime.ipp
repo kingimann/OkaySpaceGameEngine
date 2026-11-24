@@ -8,6 +8,7 @@
 namespace okayscript {
 
 namespace detail {
+template <class V> V Arith(Tok op, const V& a, const V& b);   // Eval.ipp
 // The error names the function only when it is raised: building that text on every call cost a heap allocation.
 struct CallDepthGuard {
     int& depth;
@@ -132,6 +133,47 @@ template <class V> void StoreTypedSlot(V& slot, unsigned char state, const V& v,
     if (kind & KConst) throw RuntimeError("'" + name + "' is const, so it can't change after it's set", 0);
     slot = (kind & 0x0F) ? CoerceToKind<V>(kind, v, name) : v;
 }
+
+// ---- Closure boxes (BasicEnvironment::env): a map of captured variables, "__up" the box around it, "__k" the kinds
+// of its typed variables ----
+template <class V> bool IsBoxed(const BasicEnvironment<V>& e, const std::string& n) {
+    if (!e.boxed) return false;
+    for (const std::string& b : *e.boxed) if (b == n) return true;
+    return false;
+}
+/// The variable n in the box chain from `env` outwards, or nullptr; `kind` gets its type rule (0 = none).
+template <class V> V* BoxFind(const V& env, const std::string& n, unsigned char* kind = nullptr) {
+    for (auto m = env.AsMap(); m;) {
+        auto f = m->find(n);
+        if (f != m->end()) {
+            if (kind) {
+                *kind = 0;
+                auto k = m->find("__k");
+                if (k != m->end()) if (auto km = k->second.AsMap()) {
+                    auto kk = km->find(n);
+                    if (kk != km->end()) *kind = (unsigned char)SafeInt(kk->second.AsFloat());
+                }
+            }
+            return &f->second;
+        }
+        auto up = m->find("__up");
+        if (up == m->end()) break;
+        m = up->second.AsMap();
+    }
+    return nullptr;
+}
+/// Declare n in a scope's own box with this type rule.
+template <class V> void BoxDeclare(BasicEnvironment<V>& e, const std::string& n, const V& v, unsigned char kind) {
+    auto m = e.env.AsMap();
+    (*m)[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
+    if (kind) {
+        V& k = (*m)["__k"];
+        if (!k.AsMap()) k = V::MakeMap();
+        (*k.AsMap())[n] = V{(float)kind};
+    } else if (auto k = m->find("__k"); k != m->end()) {
+        if (auto km = k->second.AsMap()) km->erase(n);
+    }
+}
 } // namespace detail
 
 // ---- Scopes ------------------------------------------------------------------------------------------------------
@@ -144,6 +186,7 @@ template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v
         if (e.slotState[slot] != kDeclared) { e.slotState[slot] = kDeclared; BumpVars(); }
         return;
     }
+    if (detail::IsBoxed(e, n)) { detail::BoxDeclare(e, n, v, 0); BumpVars(); return; }   // a captured local
     auto ins = e.vars.try_emplace(n);
     ins.first->second = v;
     // A new name may hide one further out, and a dropped type rule changes how it is written: places cached by
@@ -162,6 +205,7 @@ template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const
         BumpVars();
         return;
     }
+    if (detail::IsBoxed(e, n)) { detail::BoxDeclare(e, n, v, (unsigned char)(kind & 0x1F)); BumpVars(); return; }
     e.vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
     if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
     BumpVars();
@@ -177,7 +221,15 @@ template <class V> bool AssignIn(BasicEnvironment<V>& e, const std::string& n, c
         }
     }
     auto f = e.vars.find(n);
-    if (f == e.vars.end()) return false;
+    if (f == e.vars.end()) {
+        if (!e.env.IsMap()) return false;
+        unsigned char kind = 0;
+        V* b = BoxFind(e.env, n, &kind);   // a variable a lambda keeps
+        if (!b) return false;
+        if (kind) StoreTypedSlot<V>(*b, (unsigned char)(kDeclared | kind), v, n);
+        else *b = v;
+        return true;
+    }
     if (!e.kinds.empty()) {
         auto k = e.kinds.find(n);
         if (k != e.kinds.end()) {
@@ -197,6 +249,7 @@ template <class V> void BasicRuntime<V>::Assign(const std::string& n, const V& v
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (detail::AssignIn(*it, n, v)) return;
     if (statics && detail::AssignIn(*statics, n, v)) return;
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
+    if (methodClass) if (V* sf = StaticField(methodClass, n)) { *sf = v; return; }   // a static field of the class
     Global().vars[n] = v;   // a new name becomes a global
 }
 namespace detail {
@@ -223,12 +276,19 @@ template <class V> void BasicRuntime<V>::AssignCached(const std::string& n, cons
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
         if (!detail::AssignIn(*it, n, v)) continue;
         const int i = it->chunk ? detail::DeclaredSlot(*it, n) : -1;
-        if (i >= 0) detail::FillCache(&cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch);
-        else detail::FillCache(&cache, *it, n, &it->vars.find(n)->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+        if (i >= 0) { detail::FillCache(&cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch); return; }
+        auto f = it->vars.find(n);
+        if (f != it->vars.end()) {
+            detail::FillCache(&cache, *it, n, &f->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+            return;
+        }
+        unsigned char kind = 0;
+        if (V* b = detail::BoxFind(it->env, n, &kind)) detail::FillCache(&cache, b, kind == 0, varEpoch);
         return;
     }
     if (statics && detail::AssignIn(*statics, n, v)) return;
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
+    if (methodClass) if (V* sf = StaticField(methodClass, n)) { *sf = v; return; }
     auto& slot = Global().vars[n];   // a new name becomes a global
     slot = v;
     detail::FillCache(&cache, Global(), n, &slot, GlobalEpochFor(n));
@@ -246,11 +306,16 @@ template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n, NameCa
             const int i = detail::DeclaredSlot(*it, n);
             if (i >= 0) { detail::FillCache(cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch); return &it->slots[i]; }
         }
-        if (it->vars.empty()) continue;
-        auto f = it->vars.find(n);
-        if (f != it->vars.end()) {
-            detail::FillCache(cache, *it, n, &f->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
-            return &f->second;
+        if (!it->vars.empty()) {
+            auto f = it->vars.find(n);
+            if (f != it->vars.end()) {
+                detail::FillCache(cache, *it, n, &f->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+                return &f->second;
+            }
+        }
+        if (it->env.IsMap()) {   // a variable a lambda keeps (its own box, then the boxes it was made in)
+            unsigned char kind = 0;
+            if (V* b = detail::BoxFind(it->env, n, &kind)) { detail::FillCache(cache, b, kind == 0, varEpoch); return b; }
         }
     }
     if (statics && !statics->vars.empty()) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return &f->second; }
@@ -264,10 +329,12 @@ template <class V> V BasicRuntime<V>::Get(const std::string& n) const {
         auto it = mp->find(n);
         return it == mp->end() ? V{} : it->second;
     }
+    if (methodClass) if (V* sf = const_cast<BasicRuntime*>(this)->StaticField(methodClass, n)) return *sf;
     return V{};   // never set: 0
 }
 template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
     if (Lookup(n)) return true;
+    if (methodClass && const_cast<BasicRuntime*>(this)->StaticField(methodClass, n)) return true;
     return !selfClass.empty() && const_cast<BasicRuntime*>(this)->SelfField(n) != nullptr;
 }
 
@@ -300,22 +367,33 @@ template <class V> bool BasicRuntime<V>::SameInstance(const V& inst) const {
     auto a = self.AsMap(), b = inst.AsMap();
     return a && b && a.get() == b.get();
 }
-template <class V> bool BasicRuntime<V>::HasMethod(const std::string& name) {
-    if (selfClass.empty() || name.find('.') != std::string::npos) return false;
-    auto cit = classes.find(selfClass);
-    return cit != classes.end() && cit->second->methods.count(name) != 0;
+template <class V> const UserClass* BasicRuntime<V>::FindClass(const std::string& name) const {
+    auto it = classes.find(name);
+    return it == classes.end() ? nullptr : it->second;
 }
-namespace detail {
-inline const FieldDef* FindField(const UserClass& c, const std::string& n) {
-    for (auto& f : c.fields) if (f.name == n) return &f;
+template <class V> const UserClass* BasicRuntime<V>::BaseOf(const UserClass& c) const {
+    return c.base.empty() ? nullptr : FindClass(c.base);
+}
+template <class V>
+const MethodDef* BasicRuntime<V>::FindMethod(const UserClass* c, const std::string& name, const UserClass** owner) const {
+    for (int guard = 0; c && guard < 64; c = BaseOf(*c), ++guard) {
+        auto it = c->methods.find(name);
+        if (it != c->methods.end()) { if (owner) *owner = c; return &it->second; }
+    }
     return nullptr;
 }
-} // namespace detail
+template <class V> const FieldDef* BasicRuntime<V>::FindField(const UserClass* c, const std::string& name) const {
+    for (int guard = 0; c && guard < 64; c = BaseOf(*c), ++guard)
+        for (auto& f : c->fields) if (f.name == name) return &f;
+    return nullptr;
+}
+template <class V> bool BasicRuntime<V>::HasMethod(const std::string& name) {
+    if (selfClass.empty() || name.find('.') != std::string::npos) return false;
+    return FindMethod(FindClass(selfClass), name) != nullptr;
+}
 template <class V> const FieldDef* BasicRuntime<V>::SelfField(const std::string& n) {
     if (selfClass.empty()) return nullptr;
-    auto cit = classes.find(selfClass);
-    if (cit == classes.end()) return nullptr;
-    return detail::FindField(*cit->second, n);
+    return FindField(FindClass(selfClass), n);
 }
 template <class V> void BasicRuntime<V>::WriteField(const V& inst, const FieldDef& f, const V& v) {
     auto mp = inst.AsMap();
@@ -325,8 +403,17 @@ template <class V> void BasicRuntime<V>::WriteField(const V& inst, const FieldDe
 template <class V> V BasicRuntime<V>::GetMember(const V& inst, const std::string& name, bool external) {
     UserClass* c = ClassOf(inst);
     if (!c) throw RuntimeError("no field '" + name + "' on this value", 0);
-    const FieldDef* f = detail::FindField(*c, name);
-    if (!f) throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    const FieldDef* f = FindField(c, name);
+    if (!f) {
+        const UserClass* owner = nullptr;
+        if (const MethodDef* g = FindMethod(c, "get_" + name, &owner)) {   // a property
+            if (external && !g->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
+            std::vector<V> none;
+            return CallMethod(inst, "get_" + name, none, false);
+        }
+        if (FindMethod(c, "set_" + name)) throw RuntimeError("'" + name + "' on " + c->name + " can only be set", 0);
+        throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    }
     if (external && !f->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
     auto mp = inst.AsMap();
     auto it = mp->find(name);
@@ -335,19 +422,29 @@ template <class V> V BasicRuntime<V>::GetMember(const V& inst, const std::string
 template <class V> void BasicRuntime<V>::SetMember(const V& inst, const std::string& name, const V& v, bool external) {
     UserClass* c = ClassOf(inst);
     if (!c) throw RuntimeError("can't set '" + name + "' on this value", 0);
-    const FieldDef* f = detail::FindField(*c, name);
-    if (!f) throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    const FieldDef* f = FindField(c, name);
+    if (!f) {
+        if (const MethodDef* st = FindMethod(c, "set_" + name)) {   // a property
+            if (external && !st->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
+            std::vector<V> one{v};
+            CallMethod(inst, "set_" + name, one, false);
+            return;
+        }
+        if (FindMethod(c, "get_" + name)) throw RuntimeError("'" + name + "' on " + c->name + " can only be read", 0);
+        throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    }
     if (external && !f->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
     WriteField(inst, *f, v);
 }
 namespace detail {
 // Runs `fn` with `self` set to an object, and puts the old one back afterwards (also when it throws).
 template <class V> struct SelfScope {
-    BasicRuntime<V>& r; V prev; std::string prevClass;
-    SelfScope(BasicRuntime<V>& rt, const V& inst, const std::string& cls) : r(rt), prev(rt.self), prevClass(rt.selfClass) {
-        r.self = inst; r.selfClass = cls;
+    BasicRuntime<V>& r; V prev; std::string prevClass; const UserClass* prevMethodClass;
+    SelfScope(BasicRuntime<V>& rt, const V& inst, const std::string& cls, const UserClass* methodCls = nullptr)
+        : r(rt), prev(rt.self), prevClass(rt.selfClass), prevMethodClass(rt.methodClass) {
+        r.self = inst; r.selfClass = cls; r.methodClass = methodCls ? methodCls : rt.FindClass(cls);
     }
-    ~SelfScope() { r.self = prev; r.selfClass = prevClass; }
+    ~SelfScope() { r.self = prev; r.selfClass = prevClass; r.methodClass = prevMethodClass; }
     SelfScope(const SelfScope&) = delete;
     SelfScope& operator=(const SelfScope&) = delete;
 };
@@ -355,9 +452,10 @@ template <class V> struct SelfScope {
 template <class V> V BasicRuntime<V>::CallMethod(const V& inst, const std::string& method, std::vector<V>& args, bool external) {
     UserClass* c = ClassOf(inst);
     if (!c) throw RuntimeError("no method '" + method + "' on this value", 0);
-    auto mit = c->methods.find(method);
-    if (mit == c->methods.end()) {
-        if (const FieldDef* f = detail::FindField(*c, method)) {
+    const UserClass* owner = nullptr;
+    const MethodDef* md = FindMethod(c, method, &owner);
+    if (!md) {
+        if (const FieldDef* f = FindField(c, method)) {
             if (external && !f->isPublic && !SameInstance(inst))
                 throw RuntimeError("'" + method + "' is private on " + c->name, 0);
             auto mp = inst.AsMap();
@@ -367,11 +465,11 @@ template <class V> V BasicRuntime<V>::CallMethod(const V& inst, const std::strin
         }
         throw RuntimeError(c->name + " has no method '" + method + "'", 0);
     }
-    if (external && !mit->second.isPublic && !SameInstance(inst))
+    if (external && !md->isPublic && !SameInstance(inst))
         throw RuntimeError("'" + method + "' is private on " + c->name, 0);
-    detail::SelfScope<V> scope(*this, inst, c->name);
-    FunctionDecl& decl = mit->second.decl;
-    if (decl.name.empty()) decl.name = c->name + "." + method;
+    detail::SelfScope<V> scope(*this, inst, c->name, owner);
+    FunctionDecl& decl = const_cast<MethodDef*>(md)->decl;
+    if (decl.name.empty()) decl.name = owner->name + "." + method;
     return Invoke(decl, args, nullptr);
 }
 template <class V> V BasicRuntime<V>::MakeInstance(const std::string& type, std::vector<V>& args) {
@@ -381,21 +479,131 @@ template <class V> V BasicRuntime<V>::MakeInstance(const std::string& type, std:
     UserClass& c = *const_cast<UserClass*>(cit->second);
     V inst = V::MakeMap();
     (*inst.AsMap())["__class"] = V{type};
-    detail::SelfScope<V> scope(*this, inst, type);
-    for (auto& f : c.fields) {
-        V v = f.init ? EvalCode(*f.init, f.initCode) : DefaultForKind<V>(f.kind);
-        if (f.kind & 0x0F) v = CoerceToKind<V>(f.kind, v, f.name);
-        (*inst.AsMap())[f.name] = std::move(v);
+    // The fields of the classes it extends first (the furthest base first), each starting value worked out with
+    // `self` the new object.
+    std::vector<const UserClass*> chain;
+    for (const UserClass* k = &c; k && chain.size() < 64; k = BaseOf(*k)) chain.push_back(k);
+    for (auto k = chain.rbegin(); k != chain.rend(); ++k) {
+        detail::SelfScope<V> scope(*this, inst, type, *k);
+        for (auto& f : (*k)->fields) {
+            V v = f.init ? EvalCode(*f.init, f.initCode) : DefaultForKind<V>(f.kind);
+            if (f.kind & 0x0F) v = CoerceToKind<V>(f.kind, v, f.name);
+            (*inst.AsMap())[f.name] = std::move(v);
+        }
     }
-    auto ct = c.ctors.find((int)args.size());
-    if (ct != c.ctors.end()) {
-        if (ct->second.decl.name.empty()) ct->second.decl.name = type;
-        Invoke(ct->second.decl, args, nullptr);
-    } else if (!args.empty() || !c.ctors.empty()) {
+    // Its constructor for this many values; a class with no constructors of its own uses its base's.
+    const UserClass* withCtors = &c;
+    while (withCtors && withCtors->ctors.empty() && !withCtors->base.empty()) withCtors = BaseOf(*withCtors);
+    if (!withCtors) withCtors = &c;
+    auto ct = withCtors->ctors.find((int)args.size());
+    if (ct != withCtors->ctors.end()) {
+        detail::SelfScope<V> scope(*this, inst, type, withCtors);
+        FunctionDecl& decl = const_cast<MethodDef&>(ct->second).decl;
+        if (decl.name.empty()) decl.name = withCtors->name;
+        Invoke(decl, args, nullptr);
+    } else if (!args.empty() || !withCtors->ctors.empty()) {
         throw RuntimeError(type + " has no constructor that takes " + std::to_string(args.size()) +
                            (args.size() == 1 ? " value" : " values"), 0);
     }
     return inst;
+}
+template <class V> V* BasicRuntime<V>::StaticField(const UserClass* c, const std::string& name) {
+    for (int guard = 0; c && guard < 64; c = BaseOf(*c), ++guard) {
+        const FieldDef* f = nullptr;
+        for (auto& sf : c->staticFields) if (sf.name == name) f = &sf;
+        if (!f) continue;
+        V& box = classStatics[c->name];
+        if (!box.AsMap()) {   // first use: every static field of the class gets its starting value
+            box = V::MakeMap();
+            detail::SelfScope<V> scope(*this, V{}, c->name, c);
+            for (auto& sf : c->staticFields) {
+                V v = sf.init ? EvalCode(*sf.init, sf.initCode) : DefaultForKind<V>(sf.kind);
+                if (sf.kind & 0x0F) v = CoerceToKind<V>(sf.kind, v, sf.name);
+                (*box.AsMap())[sf.name] = std::move(v);
+            }
+        }
+        return &(*box.AsMap())[name];
+    }
+    return nullptr;
+}
+template <class V> bool BasicRuntime<V>::CallStatic(const std::string& cls, const std::string& method, std::vector<V>& args, V& out) {
+    for (const UserClass* c = FindClass(cls); c; c = BaseOf(*c)) {
+        auto it = c->staticMethods.find(method);
+        if (it == c->staticMethods.end()) continue;
+        detail::SelfScope<V> scope(*this, V{}, c->name, c);
+        out = Invoke(it->second.decl, args, nullptr);
+        return true;
+    }
+    return false;
+}
+template <class V> bool BasicRuntime<V>::ClassOperator(Tok op, const V& a, const V& b, V& out) {
+    const char* sym = nullptr;
+    switch (op) {
+        case Tok::Plus: sym = "operator+"; break; case Tok::Minus: sym = "operator-"; break;
+        case Tok::Star: sym = "operator*"; break; case Tok::Slash: sym = "operator/"; break;
+        case Tok::Percent: sym = "operator%"; break; case Tok::Eq: sym = "operator=="; break;
+        case Tok::Ne: sym = "operator!="; break; case Tok::Lt: sym = "operator<"; break;
+        case Tok::Gt: sym = "operator>"; break; case Tok::Le: sym = "operator<="; break;
+        case Tok::Ge: sym = "operator>="; break;
+        default: return false;
+    }
+    for (const V* side : {&a, &b}) {
+        const UserClass* c = ClassOf(*side);
+        for (; c; c = BaseOf(*c)) {
+            auto it = c->staticMethods.find(sym);
+            if (it == c->staticMethods.end()) continue;
+            std::vector<V> args{a, b};
+            detail::SelfScope<V> scope(*this, V{}, c->name, c);
+            out = Invoke(it->second.decl, args, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+template <class V> V BasicRuntime<V>::BinarySlow(Tok op, const V& a, const V& b) {
+    if (!classes.empty() && (detail::IsClassInstance(a) || detail::IsClassInstance(b))) {
+        V out;
+        if (ClassOperator(op, a, b, out)) return out;
+        if (op == Tok::Plus && (a.IsString() || b.IsString())) return V{detail::JoinText(Text(a), Text(b))};
+    }
+    return detail::Arith<V>(op, a, b);
+}
+template <class V> std::string BasicRuntime<V>::Text(const V& v) {
+    if (!classes.empty() && detail::IsClassInstance(v)) {
+        if (FindMethod(ClassOf(v), "ToString")) {
+            std::vector<V> none;
+            return CallMethod(v, "ToString", none, true).AsString();
+        }
+    }
+    return v.AsString();
+}
+template <class V> V BasicRuntime<V>::CallSuper(const std::string& name, std::vector<V>& args, int line) {
+    const UserClass* here = methodClass;
+    const UserClass* base = here ? BaseOf(*here) : nullptr;
+    if (!base || !detail::IsClassInstance(self))
+        throw RuntimeError("'" + name + "' only works in a method of a class that extends another", line);
+    if (name == "super") {   // the base's constructor, on this object
+        const UserClass* withCtors = base;
+        while (withCtors && withCtors->ctors.empty() && !withCtors->base.empty()) withCtors = BaseOf(*withCtors);
+        auto ct = withCtors ? withCtors->ctors.find((int)args.size()) : base->ctors.end();
+        if (!withCtors || ct == withCtors->ctors.end()) {
+            if (args.empty()) return V{};
+            throw RuntimeError(base->name + " has no constructor that takes " + std::to_string(args.size()) +
+                               (args.size() == 1 ? " value" : " values"), line);
+        }
+        detail::SelfScope<V> scope(*this, self, selfClass, withCtors);
+        FunctionDecl& decl = const_cast<MethodDef&>(ct->second).decl;
+        if (decl.name.empty()) decl.name = withCtors->name;
+        return Invoke(decl, args, nullptr);
+    }
+    const std::string method = name.substr(6);   // super.Method
+    const UserClass* owner = nullptr;
+    const MethodDef* md = FindMethod(base, method, &owner);
+    if (!md) throw RuntimeError(base->name + " has no method '" + method + "'", line);
+    detail::SelfScope<V> scope(*this, self, selfClass, owner);
+    FunctionDecl& decl = const_cast<MethodDef*>(md)->decl;
+    if (decl.name.empty()) decl.name = owner->name + "." + method;
+    return Invoke(decl, args, nullptr);
 }
 
 // ---- Events ------------------------------------------------------------------------------------------------------
@@ -453,6 +661,8 @@ template <class V> V BasicRuntime<V>::GetDotted(const std::string& name, bool& o
         const std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
         if (base == "this" && detail::IsClassInstance(self)) return GetMember(self, prop, false);
         if (base.find('.') == std::string::npos) {
+            if (!classes.empty() && !Has(base))   // ClassName.field: a static field
+                if (const UserClass* c = FindClass(base)) if (V* sf = StaticField(c, prop)) return *sf;
             if (Has(base)) {
                 const V bv = Get(base);
                 if (detail::IsClassInstance(bv)) return GetMember(bv, prop, true);
@@ -478,6 +688,8 @@ template <class V> bool BasicRuntime<V>::SetDotted(const std::string& name, cons
     const std::string base = name.substr(0, dot), field = name.substr(dot + 1);
     if (base.find('.') == std::string::npos) {
         if (base == "this" && detail::IsClassInstance(self)) { SetMember(self, field, v, false); return true; }
+        if (!classes.empty() && !Has(base))
+            if (const UserClass* c = FindClass(base)) if (V* sf = StaticField(c, field)) { *sf = v; return true; }
         if (Has(base) && detail::IsClassInstance(Get(base))) { SetMember(Get(base), field, v, true); return true; }
     }
     if (hooks && hooks->WriteName(*this, name, v)) return true;
@@ -510,10 +722,12 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const st
     return Invoke(fn, args.data(), args.size(), names);
 }
 namespace detail {
-/// Parameter i of a call: its slot, value and (for `int dmg`) type rule.
-template <class V> void BindParam(const Chunk& code, Frame<V>& frame, std::size_t i, V&& v, unsigned char kind,
-                                  const std::string& name) {
+/// Parameter i of a call: its slot, value and (for `int dmg`) type rule. A parameter a lambda in the body keeps
+/// (no slot) goes in the frame's box.
+template <class V> void BindParam(BasicRuntime<V>& rt, const Chunk& code, Frame<V>& frame, std::size_t i, V&& v,
+                                  unsigned char kind, const std::string& name) {
     const int at = code.paramSlot[i];
+    if (at < 0) { BoxDeclare(rt.scopes.back(), name, v, kind); return; }
     if (!kind) { frame.slots[at] = std::move(v); frame.state[at] = kDeclared; return; }
     frame.slots[at] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, name) : std::move(v);
     frame.state[at] = (unsigned char)(kDeclared | (kind & 0x1F));
@@ -535,6 +749,7 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, const V* args, std::size_t arg
     const int callerLine = curLine;
     scopes.push_back(Env{});
     frame.Attach(scopes.back(), code);
+    if (!code.boxNames.empty()) { scopes.back().env = V::MakeMap(); scopes.back().boxed = &code.boxNames; }
     BumpVars();
     detail::PopScope<V> pop{*this};
     const std::size_t np = fn.params.size();
@@ -546,7 +761,7 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, const V* args, std::size_t arg
             if (i < argc) v = args[i];
             else if (i < fn.defaults.size() && fn.defaults[i]) v = detail::DefaultArg(*this, fn.defaults, fn.defaultCode, i);
             else if (k) v = DefaultForKind<V>(k);
-            detail::BindParam(code, frame, i, std::move(v), k, fn.params[i]);
+            detail::BindParam(*this, code, frame, i, std::move(v), k, fn.params[i]);
         }
     } else {
         std::vector<char> present;
@@ -558,16 +773,29 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, const V* args, std::size_t arg
             if (present[i]) v = slot[i];
             else if (i < fn.defaults.size() && fn.defaults[i]) v = detail::DefaultArg(*this, fn.defaults, fn.defaultCode, i);
             else v = k ? DefaultForKind<V>(k) : V{};
-            detail::BindParam(code, frame, i, std::move(v), k, fn.params[i]);
+            detail::BindParam(*this, code, frame, i, std::move(v), k, fn.params[i]);
         }
     }
     BumpVars();   // the parameters are new names in this scope
+    if (code.generator) {   // a `yield value` in it: the call makes a generator, the body runs as it is asked
+        curLine = callerLine;
+        return MakeGenerator(fn.code, frame.slots, frame.state, frame.n, scopes.back().env, scopes.back().boxed);
+    }
     V ret;
     // A stray break/continue (no loop around it) ends the function, like return.
     if (RunChunk(code, frame.slots, frame.state) == Flow::Return) ret = std::move(retVal);
     curLine = callerLine;
     if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what());
     return ret;
+}
+
+template <class V> V BasicRuntime<V>::ClosureOf(const V& f) const {
+    if (closures.empty()) return V{};
+    auto m = f.AsMap();
+    if (!m) return V{};
+    auto it = closures.find(m.get());
+    if (it == closures.end() || it->second.fn.expired()) return V{};
+    return it->second.env;
 }
 
 template <class V> V BasicRuntime<V>::CallFunction(const std::string& name, std::vector<V>& args,
@@ -580,6 +808,13 @@ template <class V> V BasicRuntime<V>::CallFunction(const std::string& name, std:
 template <class V>
 V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names, int line) {
     line = Ln(line);
+    if (methodClass && name.compare(0, 5, "super") == 0 && (name.size() == 5 || name[5] == '.'))
+        return CallSuper(name, args, line);   // super(args) / super.Method(args)
+    if (scriptFunctionsFirst && (natives.empty() || !natives.count(name))) {
+        if (HasMethod(name)) return CallMethod(self, name, args, false);
+        auto f = functions.find(name);
+        if (f != functions.end()) return Invoke(*f->second, args, names);
+    }
     {
         auto bi = builtins.find(name);
         if (bi != builtins.end() && (natives.empty() || !natives.count(name))) {
@@ -619,16 +854,19 @@ V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std
                 if (base == "this" && detail::IsClassInstance(self)) { obj = self; ok = true; }
                 else if (Has(base)) { obj = Get(base); ok = true; }
             }
+            V out;
+            if (!ok && !classes.empty() && base.find('.') == std::string::npos && CallStatic(base, method, args, out))
+                return out;   // ClassName.Method(args)
             if (!ok) obj = GetDotted(base, ok);
             if (ok && detail::IsClassInstance(obj)) return CallMethod(obj, method, args, true);
-            V out;
             if (ok && hooks && hooks->CallMember(*this, obj, method, args, out)) return out;
+            if (ok && GeneratorMethod(obj, method, args, out)) return out;
+            if (ok && obj.AsMap()) {   // a lambda kept in a map (m.handler(1)), a module's function (mod.add(1, 2))
+                auto it = obj.AsMap()->find(method);
+                if (it != obj.AsMap()->end() && detail::IsCallableValue(it->second)) return CallValue(it->second, args, names);
+            }
             detail::LambdaInvoker<V> inv = [this](const V& fv, std::vector<V>& xs) { return CallLambda(fv, xs); };
             if (ok && detail::CallValueMethod<V>(obj, method, args, out, &inv)) return out;
-            if (ok && obj.AsMap()) {   // a lambda stored in a map: m.handler(1)
-                auto it = obj.AsMap()->find(method);
-                if (it != obj.AsMap()->end() && IsLambda(it->second)) return CallLambda(it->second, args, names);
-            }
         }
         if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args, names);   // Action f = () => ...; f();
         V out;
@@ -642,6 +880,7 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
     if (!m) throw RuntimeError("not a function", 0);
     auto it = m->find("__lambda");
     if (it == m->end()) throw RuntimeError("not a function", 0);
+    if (BasicRuntime* other = ModuleOf(f)) return other->CallLambda(f, args, names);   // made in another module
     auto lb = lambdas.find(detail::SafeInt(it->second.AsFloat()));
     if (lb == lambdas.end()) throw RuntimeError("lambda is no longer available", 0);
     detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, [] { return std::string("a lambda"); });
@@ -653,8 +892,16 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
     detail::PlaceArgs<V>(ps, args, names, present, slot, "lambda");
     const Chunk& code = CodeFor(ps, *lb->second.body, *lb->second.code);
     detail::Frame<V> frame(code);
+    V closure = ClosureOf(f);   // the box of the code it was made in (closures)
     scopes.push_back(Env{});
     frame.Attach(scopes.back(), code);
+    if (!code.boxNames.empty()) {
+        scopes.back().env = V::MakeMap();
+        if (closure.IsMap()) (*scopes.back().env.AsMap())["__up"] = closure;
+        scopes.back().boxed = &code.boxNames;
+    } else {
+        scopes.back().env = std::move(closure);
+    }
     BumpVars();
     detail::PopScope<V> pop{*this};
     for (std::size_t i = 0; i < ps.size(); ++i) {
@@ -662,6 +909,10 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
         if (present[i]) v = slot[i];
         else if (defs && i < defs->size() && (*defs)[i]) v = detail::DefaultArg(*this, *defs, *lb->second.defaultCode, i);
         Define(ps[i], v);
+    }
+    if (code.generator) {
+        curLine = callerLine;
+        return MakeGenerator(*lb->second.code, frame.slots, frame.state, frame.n, scopes.back().env, scopes.back().boxed);
     }
     V ret;
     if (RunChunk(code, frame.slots, frame.state) == Flow::Return) ret = std::move(retVal);
@@ -673,7 +924,10 @@ template <class V> V BasicRuntime<V>::CallValue(const V& fn, std::vector<V>& arg
     if (IsLambda(fn)) return CallLambda(fn, args, names);
     if (auto m = fn.AsMap()) {
         auto it = m->find("__fn");
-        if (it != m->end()) return Call(it->second.AsString(), args, names);
+        if (it != m->end()) {
+            if (BasicRuntime* other = ModuleOf(fn)) return other->Call(it->second.AsString(), args, names);   // a module's
+            return Call(it->second.AsString(), args, names);
+        }
     }
     if (fn.IsString()) return Call(fn.AsString(), args, names);
     throw RuntimeError(std::string("not a function (") + detail::ValueKindName(fn) + ")", 0);

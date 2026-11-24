@@ -9,6 +9,9 @@
 #  if defined(_MSC_VER)
 #    pragma comment(lib, "ws2_32.lib")
 #  endif
+#  ifndef SIO_UDP_CONNRESET
+#    define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)   // Windows SDK mstcpip.h / MinGW mswsock.h
+#  endif
    using socklen_t = int;
 #else
 #  include <sys/socket.h>
@@ -25,6 +28,17 @@ namespace okay::net {
 
 namespace {
     std::atomic<int> g_initCount{0};   // Startup/Shutdown can be called from any thread
+
+    // A receive error that only reports what happened to an earlier send ("port
+    // unreachable" from a closed port), not a broken socket: skip it and read on.
+    bool StaleSendError() {
+#if defined(_WIN32)
+        const int e = WSAGetLastError();
+        return e == WSAECONNRESET || e == WSAENETRESET;
+#else
+        return false;   // Linux reports it only on connected UDP sockets, and ours never connect
+#endif
+    }
 
     bool WouldBlock() {
 #if defined(_WIN32)
@@ -78,6 +92,14 @@ bool UdpSocket::Open() {
 #if defined(_WIN32)
     u_long mode = 1;
     if (ioctlsocket(static_cast<SOCKET>(m_handle), FIONBIO, &mode) != 0) { Close(); return false; }
+    // By default Windows turns the ICMP "port unreachable" that comes back after a
+    // send to a closed port (a player who quit, the old host after a migration) into
+    // a WSAECONNRESET error on the NEXT recvfrom, so a receive loop that stops at an
+    // error leaves the rest of the frame's datagrams unread. Linux only does that for
+    // connected UDP sockets, and ours never connect. Ask Windows to behave the same.
+    BOOL report = FALSE;
+    DWORD unused = 0;
+    WSAIoctl(static_cast<SOCKET>(m_handle), SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &unused, nullptr, nullptr);
 #else
     int flags = fcntl(m_handle, F_GETFL, 0);
     if (flags < 0 || fcntl(m_handle, F_SETFL, flags | O_NONBLOCK) < 0) { Close(); return false; }
@@ -154,11 +176,16 @@ int UdpSocket::RecvFrom(void* buffer, std::size_t capacity, Endpoint& from) {
     if (!IsOpen()) return -1;
     sockaddr_in addr{};
     socklen_t len = sizeof(addr);
-    int got = ::recvfrom(static_cast<int>(m_handle),
+    int got = -1;
+    for (int tries = 0; tries < 64; ++tries) {   // bounded: a flood of stale errors cannot hold the caller here
+        len = sizeof(addr);
+        got = ::recvfrom(static_cast<int>(m_handle),
                          reinterpret_cast<char*>(buffer),
                          static_cast<int>(capacity), 0,
                          reinterpret_cast<sockaddr*>(&addr), &len);
-    if (got < 0) return WouldBlock() ? 0 : -1;
+        if (got >= 0 || !StaleSendError()) break;
+    }
+    if (got < 0) return WouldBlock() || StaleSendError() ? 0 : -1;
     from.address = ntohl(addr.sin_addr.s_addr);
     from.port    = ntohs(addr.sin_port);
     return got;

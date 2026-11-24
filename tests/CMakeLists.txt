@@ -1855,6 +1855,25 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
+# The editor's Crash Log, Audio Mixer and History windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
+# (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
+# reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
+if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
+    add_executable(test_okayui_panels_imgui test_okayui_panels_imgui.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_panels_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
+    target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
+    set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
+
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
@@ -4481,6 +4500,14 @@ if(_okay_all_readers_on)
     target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_EXPECT_OWN_READERS)
 endif()
 add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# The last Assimp-only extensions routed to our readers: .ask (ASE), .scn (COB), .prj (3DS), .x3db (X3D), .vta (SMD), .md5camera
+# (the MD5 camera reader) and .vrm (glTF 2.0); fixtures built in memory
+add_executable(test_model_import_aliases test_model_import_aliases.cpp)
+target_link_libraries(test_model_import_aliases PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_model_import_aliases PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
+add_test(NAME model_import_aliases COMMAND test_model_import_aliases WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/content/model_corpus.md); without it the test prints "skipped" and passes.

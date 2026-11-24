@@ -979,7 +979,7 @@ private:
         // old test compared the other object's pivot height with ours, which fails for a floor whose pivot is not
         // below the player: such a floor refilled no jump.)
         if (!OldPlayerPath()) {
-            if (m_sense.Note(c.normal)) m_groundContact = 0.10f;
+            if (m_sense.Note(c.normal, c.relativeVelocity)) m_groundContact = 0.10f;
             else if (c.normal.y > -0.5f && c.normal.y < 0.5f && !IsPushableBody(c.gameObject)) m_wall.Note(c.normal);
             return;
         }

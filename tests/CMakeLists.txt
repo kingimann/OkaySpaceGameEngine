@@ -724,6 +724,7 @@ add_test(NAME net_rpc COMMAND test_net_rpc)
 # The easy multiplayer layer end to end: C++ (okay::Net), a Visual Script graph and .okay scripts on two peers.
 add_executable(test_net_easy test_net_easy.cpp)
 target_link_libraries(test_net_easy PRIVATE okay::engine)
+target_compile_definitions(test_net_easy PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME net_easy COMMAND test_net_easy)
 
 add_executable(test_net_sync test_net_sync.cpp)

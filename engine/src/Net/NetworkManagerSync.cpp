@@ -1147,7 +1147,16 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
     auto& msgs = epIt->second;
     auto mIt = msgs.find(id);
     if (mIt == msgs.end()) {
-        if (msgs.size() >= (known ? kMaxPendingMessages : 1)) return false;
+        if (msgs.size() >= (known ? kMaxPendingMessages : 1)) {
+            if (!known) return false;
+            // A known peer's table is full: its stalest half-built message goes, so a
+            // resend (a new message id) after losses can still get through. The cap holds.
+            auto stalest = msgs.begin();
+            for (auto it = msgs.begin(); it != msgs.end(); ++it)
+                if (it->second.age > stalest->second.age) stalest = it;
+            if (stalest->second.age <= 0.0f) return false;   // all touched this frame: a burst, not a stall
+            msgs.erase(stalest);
+        }
         mIt = msgs.emplace(id, FragAsm{}).first;
         mIt->second.count = count;
         mIt->second.chunks.resize(count);

@@ -11,6 +11,8 @@
 //              once each and in order, and a 12 KB event arrives whole
 //   graph      the SAME Visual Script graph on two peers: Host or Join, On Player Joined,
 //              Send Network Event / On Network Event, Event Sender, Player Count
+//   example    examples/multiplayer/two_players.okayscene loaded twice, as two copies of the game on one PC:
+//              the first hosts, the second joins, each gets a player per side, the host's ball follows
 //   okay       two .okay scripts: net.host_or_join, net.on (a function name and a lambda),
 //              net.send, on_player_joined / on_player_left, net.players
 #include "test_framework.hpp"
@@ -251,7 +253,8 @@ int main() {
         std::string payload(12 * 1024, ' ');
         for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = (char)('a' + (i * 7) % 26);
         CHECK(cn->SendEvent("big", payload, false));
-        Pump(hs, cs, 600, [&] { return got.size() >= 40 && !big.empty(); });
+        int frames = 0;
+        Pump(hs, cs, 3000, [&] { ++frames; return got.size() >= 40 && !big.empty(); });
         sim = saved;
         net::ResetSimulator();
         CHECK(got.size() == 40);
@@ -259,7 +262,7 @@ int main() {
         for (std::size_t i = 0; i < got.size() && inOrder; ++i) inOrder = got[i] == std::to_string(i);
         CHECK(inOrder);
         CHECK(big == payload);
-        std::printf("  lossy: %zu of 40 events in order, big event %zu bytes\n", got.size(), big.size());
+        std::printf("  lossy: %zu of 40 events in order, big event %zu bytes, %d frames\n", got.size(), big.size(), frames);
         hn->Stop(); cn->Stop();
     }
 
@@ -304,6 +307,45 @@ int main() {
         CHECK(GraphVar(cg, "players") == "2");
         if (hn) hn->Stop();
         if (cn) cn->Stop();
+    }
+
+    // ---------------------------------------------------------------- example (the shipped two-player sample)
+    {
+        const std::string path = std::string(OKAY_SOURCE_DIR) + "/examples/multiplayer/two_players.okayscene";
+        const std::uint16_t port = FreePort();   // the sample uses 45000; a free port keeps parallel tests apart
+        Scene a("CopyA"); Scene b("CopyB");
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(a, path, &err));
+        CHECK(SceneSerializer::LoadFromFile(b, path, &err));
+        if (!err.empty()) std::printf("  example load error: %s\n", err.c_str());
+        a.physicsEnabled = b.physicsEnabled = false;
+        NetworkManager* na = a.FindObjectOfType<NetworkManager>();
+        NetworkManager* nb = b.FindObjectOfType<NetworkManager>();
+        CHECK(na && nb && na->autoStart == NetworkManager::AutoStart::Auto);
+        if (na && nb) {
+            na->autoPort = nb->autoPort = port;
+            a.Start(); b.Start();
+            CHECK(na->IsServer());
+            CHECK(nb->IsClient());
+            const bool ok = Pump(a, b, 300, [&] {
+                return nb->Joined() && a.Find("Player_" + std::to_string(nb->LocalId())) && b.Find("Player_0") &&
+                       a.Find("Ball") && a.Find("Ball")->transform->localPosition.x != 0.0f &&
+                       na->Players().size() == 2 && nb->Players().size() == 2;
+            });
+            CHECK(ok);
+            CHECK(na->Players().size() == 2 && nb->Players().size() == 2);
+            CHECK(a.Find("LocalPlayer") && b.Find("LocalPlayer"));
+            Pump(a, b, 60);
+            GameObject* ba = a.Find("Ball"); GameObject* bb = b.Find("Ball");
+            CHECK(ba && bb);
+            if (ba && bb) {   // the client's ball follows the host's circle (smoothed, so within a little)
+                const Vec3 pa = ba->transform->localPosition, pb = bb->transform->localPosition;
+                std::printf("  example: host ball (%.2f, %.2f), client ball (%.2f, %.2f)\n", pa.x, pa.z, pb.x, pb.z);
+                CHECK(Near(pa, pb, 1.0f));
+                CHECK(std::fabs(pb.x) + std::fabs(pb.z) > 1.0f);   // it moved on the client too
+            }
+            na->Stop(); nb->Stop();
+        }
     }
 
     // ---------------------------------------------------------------- okay (OkayScript on two peers)

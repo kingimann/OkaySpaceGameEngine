@@ -54,7 +54,7 @@ All of these are in `docs/status/THIRD_PARTY.md`. Notice files were checked by l
 | SDL2 | system package, `SDL2.dll` bundled in Windows builds | zlib | No file in the repository (not vendored). The Windows distribution ships the DLL; whether it ships `COPYING.txt` is **unverified** |
 | Dear ImGui | downloaded at configure time (`editor/CMakeLists.txt`, `launcher/CMakeLists.txt`, `tests/CMakeLists.txt`) | MIT | Not vendored. A binary that contains ImGui needs its MIT notice; none is shipped by any script (F6) |
 | ufbx | deleted 2026-11-23 (was `engine/third_party/ufbx/`) | MIT or public domain, both offered | No longer in the repository |
-| Assimp 5.4.3 | downloaded at configure time (`engine/CMakeLists.txt`, optional) | BSD 3-clause | Not vendored. A binary that links it needs its notice (F6) |
+| Assimp 5.4.3 | deleted 2026-11-24 (was downloaded at configure time, `engine/CMakeLists.txt`, optional) | BSD 3-clause | No longer built or linked; its `test/` folder is still fetched by CI as corpus data only (not shipped) |
 | libsodium | system package, optional | ISC | Not vendored |
 | TweetNaCl port | was `shared/AntiCheatCrypto.hpp` | Public domain | Deleted (F2, closed) |
 | stb `stb_decompress` | removed from the engine; the old base85 arrays remain in `shared/RobotoFont.h` and `shared/JetBrainsMonoFont.h` | Public domain | n/a. The arrays are font data compressed with that format; the decoder is no longer used by the engine |

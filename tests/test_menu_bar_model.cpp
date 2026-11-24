@@ -28,7 +28,7 @@ std::vector<State> States() {
     std::vector<State> v;
     State a; v.push_back(a);                                   // a fresh editor
     State b; b.selectedCount = 1; b.objectCount = 5; b.canUndo = true; b.undoName = "Move"; b.clipboardHasObject = true;
-    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; b.assimp = true; v.push_back(b);
+    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; v.push_back(b);
     State c = b; c.selectedCount = 4; c.canRedo = true; c.redoName = "Delete"; c.isolating = true; v.push_back(c);
     State d = b; d.playing = true; d.canUndo = false; v.push_back(d);
     State e = b; e.inPrefabMode = true; v.push_back(e);
@@ -177,9 +177,7 @@ int main() {
         CHECK(FindId(FileMenu(State{}), "file.save")->tip.find("hasn't been saved yet") != std::string::npos);
         State saved; saved.scenePath = "Assets/Scenes/A.okayscene";
         CHECK(FindId(FileMenu(saved), "file.save")->tip == "Save this scene: Assets/Scenes/A.okayscene");
-        CHECK(FindId(FileMenu(State{}), "file.import")->tip.find("DAE") == std::string::npos);
-        State asm_; asm_.assimp = true;
-        CHECK(FindId(FileMenu(asm_), "file.import")->tip.find("DAE") != std::string::npos);
+        CHECK(FindId(FileMenu(State{}), "file.import")->tip.find("DAE") != std::string::npos);   // every build reads them (own readers)
     }
 
     {   // Edit: undo / redo, clipboard, select, preferences. Labels name the step; plural forms; reasons.

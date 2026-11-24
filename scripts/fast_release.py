@@ -162,7 +162,7 @@ def ci_jobs_decision(jobs):
 
 
 # The smaller "release gate": the CI jobs that build and test what ships (the Windows programs, the player/editor, the scripting
-# sanitizers, the update-signing tests). The other jobs (Assimp comparison, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
+# sanitizers, the update-signing tests). The other jobs (model corpus, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
 # informational for a release: they do not build anything that is released. Display names of ci.yml jobs; a test keeps this list honest.
 RELEASE_GATE_JOBS = (
     "Build & test (Ubuntu)",

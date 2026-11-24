@@ -1,9 +1,10 @@
 // Speed and memory of our own model readers (the ones behind the ImportModelData seam: Collada, 3DS, BVH, OFF, SMD,
 // MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, IrrMesh, B3D, X, AC3D, OGRE XML, XGL, Irr scene, NFF,
-// Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LWS, glTF 1.0, and OBJ / STL / PLY) against Assimp, on the same files.
+// Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LWS, glTF 1.0, and OBJ / STL / PLY). Until 2026-11-24 it also measured
+// Assimp on the same files (docs/content/own_readers_speed.md has those numbers); Assimp is removed, so only ours is measured.
 // FBX has its own bench (bench_fbx_reader, ufbx is its other side); glTF 2.0 does not go through this seam (glTF 1.0 does: "gltf1").
 //
-// Build with -DOKAY_USE_ASSIMP=ON (without Assimp only our side is measured). Not run by ctest: it prints numbers.
+// Not run by ctest: it prints numbers.
 //
 // Run:  bench_model_readers [--runs N] [--format F] [--quiet] [--digest | --import-digest | --compare | --dump | --only WHAT]
 //                           <file | directory> ...
@@ -15,24 +16,21 @@
 //
 // For every file it measures the median wall time and the peak heap of:
 //   own-read      ImportModelData(path, Own)    our reader alone: file read and our reader's ImportedModel
-//   assimp-read   ImportModelData(path, Assimp) Assimp's ReadFile with the engine's post-process steps, then its
-//                                               conversion to the same ImportedModel
 //   import-own    ImportModelScene with every format switched to our reader (file read, reader, GameObjects,
 //                 MeshRenderer / SkinnedMesh / clips): the full import through the seam
-//   import-assimp the same with every format switched to Assimp
 // The peak heap is the most bytes held at once during the call above what was held before it. It is counted by
 // replacing malloc / free / realloc / calloc / memalign in this program (glibc only; they forward to glibc's own
-// __libc_* functions), so Assimp's allocations, our C++ `new` and everything in the importer are counted the same way.
+// __libc_* functions), so C allocations, our C++ `new` and everything in the importer are counted the same way.
 // On other C libraries the memory columns print "-".
 //
 // --digest         per file, a hash of every field of our reader's ImportedModel (bit for bit), to show a speed change
 //                  did not change the output (run before and after, compare the lines)
 // --import-digest  per file, a hash of the whole imported scene (our readers on), as SceneSerializer writes it (object
 //                  guids, which are random, left out)
-// --compare        per file our reader's and Assimp's ImportedModel side by side (parts, triangles, vertices, nodes,
-//                  materials, clips, bones, bounding box in world space, missing node names), "DIFF" where they disagree
-// --dump           per file, our reader's and Assimp's result in words (nodes, materials, parts, notes)
-// --only WHAT      own-read | assimp-read | import-own | import-assimp: that call once per file (for a profiler)
+// --compare        per file our reader's ImportedModel in numbers (parts, triangles, vertices, nodes, materials, clips,
+//                  bones, bounding box in world space), one tab-separated line, to compare two runs
+// --dump           per file, our reader's result in words (nodes, materials, parts, notes)
+// --only WHAT      own-read | import-own: that call once per file (for a profiler)
 //
 // Written for this project (the counting allocator follows bench_fbx_reader, which is our own code).
 #include "okay/Render/ModelData.hpp"
@@ -56,12 +54,6 @@
 #include <set>
 #include <string>
 #include <vector>
-
-#if defined(__unix__) || defined(__APPLE__)
-#include <sys/wait.h>
-#include <unistd.h>
-#define OKAY_BENCH_FORK 1
-#endif
 
 #if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__)
 #include <malloc.h>
@@ -161,7 +153,7 @@ std::string FormatOf(const fs::path& p) {
     const std::string name = Lower(p.filename().string());
     if (name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0) return "ogre";
     const std::string ext = Lower(p.extension().string());
-    // glTF 2.0 does not go through this seam; glTF 1.0 does (our own glTF 1.0 reader, slot 41, against Assimp's glTF importer)
+    // glTF 2.0 does not go through this seam; glTF 1.0 does (our own glTF 1.0 reader, slot 41)
     if (ext == ".gltf" || ext == ".glb") return GltfFileIsVersion1(p.string()) ? "gltf1" : std::string();
     if (ext.size() < 2 || ext == ".fbx") return std::string();
     if (!HasOwnReader(ext)) return std::string();
@@ -232,24 +224,6 @@ bool ReadWith(const std::string& path, ImportBackend b, ImportedModel& out, std:
     SetAll(ImportBackend::Default);
     return ok;
 }
-// Assimp 5.4.3 crashes on some corpus files (RAW/WithColor.raw and RAW/WithTexture.raw: a node's child list holds a bad
-// pointer). Read the file once in a child process first; a file that kills the child is reported as "crash" and not
-// measured. 0 = read, 1 = refused, 2 = crashed.
-int ProbeAssimp(const std::string& path) {
-#ifdef OKAY_BENCH_FORK
-    std::fflush(nullptr);
-    const pid_t pid = fork();
-    if (pid == 0) { ImportedModel im; SetImportBackend("*", ImportBackend::Assimp); _exit(ImportModelData(path, im, ImportBackend::Assimp, false, nullptr) ? 0 : 1); }
-    if (pid < 0) return 0;
-    int st = 0;
-    if (waitpid(pid, &st, 0) != pid) return 0;
-    if (WIFEXITED(st)) return WEXITSTATUS(st) == 0 ? 0 : 1;
-    return 2;
-#else
-    (void)path; return 0;
-#endif
-}
-
 bool ImportWith(const std::string& path, ImportBackend b) {
     SetAll(b);
     Scene sc("bench"); bool ok = false;
@@ -290,24 +264,18 @@ Stats StatsOf(const ImportedModel& im) {
 }
 
 struct Row {
-    std::string name, format; std::size_t bytes = 0; bool assimpCrash = false;
-    Measure own, assimp, impOwn, impAssimp;
+    std::string name, format; std::size_t bytes = 0;
+    Measure own, impOwn;
 };
 
 std::string Mb(long long b) {
     if (b < 0) return "-";
     char s[32]; std::snprintf(s, sizeof(s), "%.2f", (double)b / (1024.0 * 1024.0)); return s;
 }
-std::string Ms(const Measure& m, bool crash = false) {
-    if (crash) return "crash";
+std::string Ms(const Measure& m) {
     if (!m.ok) return "fail";
     char s[32]; std::snprintf(s, sizeof(s), m.ms < 10 ? "%.3f" : "%.1f", m.ms); return s;
 }
-std::string Ratio(double a, double b) {
-    if (a < 0 || b <= 0) return "-";
-    char s[32]; std::snprintf(s, sizeof(s), "%.2fx", a / b); return s;
-}
-
 std::string ShortName(const std::string& path) {
     // parent folder too: the corpus has the same file name in several folders
     return (fs::path(path).parent_path().filename() / fs::path(path).filename()).generic_string();
@@ -343,7 +311,6 @@ int main(int argc, char** argv) {
     files.erase(std::unique(files.begin(), files.end()), files.end());
     if (files.empty()) { std::fprintf(stderr, "no model files with an own reader given (and OKAY_MODEL_CORPUS not set)\n"); return 1; }
     Log::Configure("error");   // our readers log every note as a warning: keep the output (and the timing) clean
-    const bool haveAssimp = AssimpAvailable();
 
     if (digest) {   // one line per file: format, name, then the hash of our reader's whole result (or the error)
         for (const std::string& path : files) {
@@ -360,7 +327,7 @@ int main(int argc, char** argv) {
             const bool ownOk = ReadWith(path, ImportBackend::Own, probe);
             std::string text = "-";
             bool ok = false;
-            if (ownOk) {   // only when our reader reads it: otherwise the scene import would fall back to Assimp
+            if (ownOk) {   // only when our reader reads it
                 SetAll(ImportBackend::Own);
                 Scene sc("digest");
                 ImportModelScene(sc, path, &ok);
@@ -382,11 +349,10 @@ int main(int argc, char** argv) {
     }
     if (dump) {   // per file and per backend: nodes, materials and parts in words (to see what a --compare DIFF is)
         for (const std::string& path : files) {
-            for (ImportBackend which : {ImportBackend::Own, ImportBackend::Assimp}) {
-                if (which == ImportBackend::Assimp && (!haveAssimp || ProbeAssimp(path) == 2)) continue;
+            {
                 ImportedModel m; std::string e;
-                const char* who = which == ImportBackend::Own ? "own" : "assimp";
-                if (!ReadWith(path, which, m, &e)) { std::printf("%s %s: error: %s\n", ShortName(path).c_str(), who, e.c_str()); continue; }
+                const char* who = "own";
+                if (!ReadWith(path, ImportBackend::Own, m, &e)) { std::printf("%s %s: error: %s\n", ShortName(path).c_str(), who, e.c_str()); continue; }
                 std::printf("%s %s: %zu node(s), %zu material(s), %zu part(s)\n", ShortName(path).c_str(), who, m.nodes.size(), m.materials.size(), m.parts.size());
                 for (std::size_t i = 0; i < m.nodes.size(); ++i) std::printf("  node %zu '%s' parent %d\n", i, m.nodes[i].name.c_str(), m.nodes[i].parent);
                 for (std::size_t i = 0; i < m.materials.size(); ++i) {
@@ -414,30 +380,14 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (compare) {
-        if (!haveAssimp) { std::fprintf(stderr, "--compare needs a build with OKAY_USE_ASSIMP=ON\n"); return 1; }
-        auto box = [](const Stats& s) {
-            char b[160]; std::snprintf(b, sizeof(b), "(%.4g %.4g %.4g)-(%.4g %.4g %.4g)", s.lo.x, s.lo.y, s.lo.z, s.hi.x, s.hi.y, s.hi.z); return std::string(b);
-        };
         for (const std::string& path : files) {
-            ImportedModel a, b; std::string ea, eb;
-            const bool crash = ProbeAssimp(path) == 2;
-            const bool oa = ReadWith(path, ImportBackend::Own, a, &ea), ob = !crash && ReadWith(path, ImportBackend::Assimp, b, &eb);
-            std::printf("%s\t%s\town=%s\tassimp=%s", FormatOf(path).c_str(), ShortName(path).c_str(), oa ? "ok" : "fail", crash ? "crash" : ob ? "ok" : "fail");
-            if (!oa || !ob) { std::printf("\t%s\n", (oa == ob) ? "both-fail" : "DIFF read"); continue; }
-            const Stats s = StatsOf(a), t = StatsOf(b);
-            std::string diff;
-            auto cmp = [&](const char* what, int x, int y) { std::printf("\t%s=%d/%d", what, x, y); if (x != y) diff += std::string(" ") + what; };
-            cmp("parts", s.parts, t.parts); cmp("tris", s.tris, t.tris); cmp("verts", s.verts, t.verts); cmp("nodes", s.nodes, t.nodes);
-            cmp("mats", s.mats, t.mats); cmp("clips", s.clips, t.clips); cmp("bones", s.bones, t.bones);
-            // bounding box: relative to its size (1e-3 of the diagonal)
-            const double d = std::max(1e-9, (double)(t.hi - t.lo).Magnitude());
-            const double e = std::max({std::fabs(s.lo.x - t.lo.x), std::fabs(s.lo.y - t.lo.y), std::fabs(s.lo.z - t.lo.z),
-                                       std::fabs(s.hi.x - t.hi.x), std::fabs(s.hi.y - t.hi.y), std::fabs(s.hi.z - t.hi.z)}) / d;
-            std::printf("\tbox=%s/%s", box(s).c_str(), box(t).c_str());
-            if (s.any != t.any || e > 1e-3) diff += " box";
-            int missing = 0; for (const std::string& n : t.names) if (!s.names.count(n)) ++missing;
-            std::printf("\tassimp-names-not-ours=%d", missing);
-            std::printf("\t%s\n", diff.empty() ? "same" : ("DIFF" + diff).c_str());
+            ImportedModel a; std::string ea;
+            const bool oa = ReadWith(path, ImportBackend::Own, a, &ea);
+            std::printf("%s\t%s\town=%s", FormatOf(path).c_str(), ShortName(path).c_str(), oa ? "ok" : "fail");
+            if (!oa) { std::printf("\t%s\n", ea.c_str()); continue; }
+            const Stats s = StatsOf(a);
+            std::printf("\tparts=%d\ttris=%d\tverts=%d\tnodes=%d\tmats=%d\tclips=%d\tbones=%d\tbox=(%.4g %.4g %.4g)-(%.4g %.4g %.4g)\n", s.parts, s.tris,
+                        s.verts, s.nodes, s.mats, s.clips, s.bones, s.lo.x, s.lo.y, s.lo.z, s.hi.x, s.hi.y, s.hi.z);
         }
         return 0;
     }
@@ -450,78 +400,45 @@ int main(int argc, char** argv) {
         if (!only.empty()) {
             bool ok = false; ImportedModel im;
             if (only == "own-read") ok = ReadWith(path, ImportBackend::Own, im);
-            else if (only == "assimp-read") ok = ReadWith(path, ImportBackend::Assimp, im);
             else if (only == "import-own") ok = ImportWith(path, ImportBackend::Own);
-            else if (only == "import-assimp") ok = ImportWith(path, ImportBackend::Assimp);
             else { std::fprintf(stderr, "unknown --only %s\n", only.c_str()); return 1; }
             std::printf("%s %s\n", r.name.c_str(), ok ? "ok" : "fail");
             continue;
         }
         r.own = Run(runs, [&] { ImportedModel im; return ReadWith(path, ImportBackend::Own, im); });
-        r.assimpCrash = haveAssimp && ProbeAssimp(path) == 2;
-        if (haveAssimp && !r.assimpCrash) r.assimp = Run(runs, [&] { ImportedModel im; return ReadWith(path, ImportBackend::Assimp, im); });
-        // the full import with our reader only when our reader reads the file (else the seam would fall back to Assimp)
         if (r.own.ok) r.impOwn = Run(runs, [&] { return ImportWith(path, ImportBackend::Own); });
-        if (haveAssimp && r.assimp.ok) r.impAssimp = Run(runs, [&] { return ImportWith(path, ImportBackend::Assimp); });
         if (!quiet)
-            std::fprintf(stderr, "%-6s %-52s %8zu KB  own %s ms  assimp %s ms  import own %s  assimp %s\n", r.format.c_str(), r.name.c_str(), r.bytes / 1024,
-                         Ms(r.own).c_str(), Ms(r.assimp).c_str(), Ms(r.impOwn).c_str(), Ms(r.impAssimp).c_str());
+            std::fprintf(stderr, "%-6s %-52s %8zu KB  own %s ms  import own %s\n", r.format.c_str(), r.name.c_str(), r.bytes / 1024,
+                         Ms(r.own).c_str(), Ms(r.impOwn).c_str());
         rows.push_back(std::move(r));
     }
     if (!only.empty()) return 0;
 
     // ---- per-file table (markdown) ----
-    std::printf("| Format | File | KB | own read ms | Assimp read ms | time own/A | own peak MB | Assimp peak MB | mem own/A | import own ms | import Assimp ms | import own/A | import own MB | import Assimp MB |\n");
-    std::printf("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
-    for (const Row& r : rows) {
-        const bool both = r.own.ok && r.assimp.ok, ib = r.impOwn.ok && r.impAssimp.ok;
-        std::printf("| %s | %s | %zu | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.format.c_str(), r.name.c_str(), r.bytes / 1024,
-                    Ms(r.own).c_str(), Ms(r.assimp, r.assimpCrash).c_str(), both ? Ratio(r.own.ms, r.assimp.ms).c_str() : "-",
-                    Mb(r.own.peak).c_str(), Mb(r.assimp.peak).c_str(), both ? Ratio((double)r.own.peak, (double)r.assimp.peak).c_str() : "-",
-                    Ms(r.impOwn).c_str(), Ms(r.impAssimp, r.assimpCrash).c_str(), ib ? Ratio(r.impOwn.ms, r.impAssimp.ms).c_str() : "-",
-                    Mb(r.impOwn.peak).c_str(), Mb(r.impAssimp.peak).c_str());
-    }
+    std::printf("| Format | File | KB | own read ms | own peak MB | import own ms | import own MB |\n");
+    std::printf("|---|---|---:|---:|---:|---:|---:|\n");
+    for (const Row& r : rows)
+        std::printf("| %s | %s | %zu | %s | %s | %s | %s |\n", r.format.c_str(), r.name.c_str(), r.bytes / 1024,
+                    Ms(r.own).c_str(), Mb(r.own.peak).c_str(), Ms(r.impOwn).c_str(), Mb(r.impOwn.peak).c_str());
 
-    // ---- per format, over the files both read: totals, and the files where ours loses ----
-    // time: the sum of the medians; memory: the largest peak (what decides whether a big file fits) and the sum of peaks.
-    // "met" = ours is not slower in total and its largest peak and summed peaks are not higher, for the read and for the import.
-    struct Agg { int files = 0, both = 0, ownOnly = 0, assimpOnly = 0, slower = 0, heavier = 0;
-                 double o = 0, a = 0, io = 0, ia = 0; long long po = 0, pa = 0, so = 0, sa = 0, ipo = 0, ipa = 0, iso = 0, isa = 0; };
+    // ---- per format: totals (time: the sum of the medians; memory: the largest peak and the sum of peaks) ----
+    struct Agg { int files = 0, read = 0; double o = 0, io = 0; long long po = 0, so = 0, ipo = 0; };
     std::map<std::string, Agg> agg;
     for (const Row& r : rows) {
         Agg& g = agg[r.format];
         ++g.files;
-        if (r.own.ok && !r.assimp.ok) ++g.ownOnly;
-        if (!r.own.ok && r.assimp.ok) ++g.assimpOnly;
-        // glTF 1.0: the engine's scene import never hands a .gltf / .glb to Assimp (it refuses glTF 1.0 when our reader is off), so
-        // "import, Assimp" always fails; that format is compared on the read alone (its import columns stay 0).
-        const bool readOnly = r.format == "gltf1";
-        if (!(r.own.ok && r.assimp.ok && (readOnly || (r.impOwn.ok && r.impAssimp.ok)))) continue;
-        ++g.both;
-        g.o += r.own.ms; g.a += r.assimp.ms;
-        if (!readOnly) { g.io += r.impOwn.ms; g.ia += r.impAssimp.ms; }
-        g.po = std::max(g.po, r.own.peak); g.pa = std::max(g.pa, r.assimp.peak); g.so += r.own.peak; g.sa += r.assimp.peak;
-        if (!readOnly) { g.ipo = std::max(g.ipo, r.impOwn.peak); g.ipa = std::max(g.ipa, r.impAssimp.peak); g.iso += r.impOwn.peak; g.isa += r.impAssimp.peak; }
-        if (r.own.ms > r.assimp.ms) ++g.slower;
-        if (r.own.peak > r.assimp.peak) ++g.heavier;
+        if (!r.own.ok) continue;
+        ++g.read;
+        g.o += r.own.ms; g.po = std::max(g.po, r.own.peak); g.so += r.own.peak;
+        if (r.impOwn.ok) { g.io += r.impOwn.ms; g.ipo = std::max(g.ipo, r.impOwn.peak); }
     }
-    std::printf("\n| Format | files | both read | only ours | only Assimp | read own ms | read Assimp ms | time | largest peak own MB | Assimp MB | summed peaks own/A | memory | import own ms | import Assimp ms | import time | import peak own MB | Assimp MB | import memory | files slower | files heavier |\n");
-    std::printf("|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---|---:|---:|---|---:|---:|\n");
+    std::printf("\n| Format | files | read | read own ms | largest peak own MB | summed peaks MB | import own ms | import peak own MB |\n");
+    std::printf("|---|---:|---:|---:|---:|---:|---:|---:|\n");
     for (const auto& kv : agg) {
         const Agg& g = kv.second;
-        const bool tm = g.both && g.o <= g.a, mm = g.both && g.po <= g.pa && g.so <= g.sa;
-        const bool itm = g.both && g.io <= g.ia, imm = g.both && g.ipo <= g.ipa && g.iso <= g.isa;
-        auto verdict = [&](bool met, double x, double y) {
-            if (!g.both) return std::string("-");
-            return std::string(met ? "met " : "NOT met ") + Ratio(x, y);
-        };
-        std::printf("| %s | %d | %d | %d | %d | %.2f | %.2f | %s | %s | %s | %s | %s | %.2f | %.2f | %s | %s | %s | %s | %d | %d |\n", kv.first.c_str(), g.files, g.both, g.ownOnly, g.assimpOnly,
-                    g.o, g.a, verdict(tm, g.o, g.a).c_str(), Mb(g.po).c_str(), Mb(g.pa).c_str(), Ratio((double)g.so, (double)g.sa).c_str(),
-                    verdict(mm, (double)g.po, (double)g.pa).c_str(), g.io, g.ia, verdict(itm, g.io, g.ia).c_str(), Mb(g.ipo).c_str(), Mb(g.ipa).c_str(),
-                    verdict(imm, (double)g.ipo, (double)g.ipa).c_str(), g.slower, g.heavier);
+        std::printf("| %s | %d | %d | %.2f | %s | %s | %.2f | %s |\n", kv.first.c_str(), g.files, g.read, g.o, Mb(g.po).c_str(), Mb(g.so).c_str(), g.io, Mb(g.ipo).c_str());
     }
-    for (const Row& r : rows) if (r.assimpCrash) std::printf("\nAssimp crashed (not measured; ours %s): %s\n", r.own.ok ? "reads it" : "refuses it", r.name.c_str());
-    std::printf("\n%zu files. Runs per measurement: at least %d (until 50 ms). Assimp: %s. Heap counting: %s.\n", rows.size(), runs, haveAssimp ? "on" : "not built",
+    std::printf("\n%zu files. Runs per measurement: at least %d (until 50 ms). Heap counting: %s.\n", rows.size(), runs,
 #ifdef OKAY_BENCH_COUNT_HEAP
                 "on"
 #else

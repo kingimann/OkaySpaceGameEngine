@@ -65,6 +65,15 @@ int main() {
     CHECK(edit.Save("edit.okaydata"));
     edit.Set("a", "5");
     CHECK(DataAsset::Cached("edit.okaydata").GetNumber("a") == 5.0);
+    CHECK(!DataAsset::ReloadIfChanged("edit.okaydata"));          // its own save is not a change
+    CHECK(edit.GetNumber("a") == 5.0);
+
+    // Saving a cached asset under another name does not mark that entry as loaded from this file.
+    DataAsset& other = DataAsset::Cached("other.okaydata");
+    other.Set("b", "2");
+    CHECK(other.Save("copy.okaydata"));
+    PutFile("other.okaydata", "b = 7\n");
+    CHECK(DataAsset::Cached("other.okaydata").GetNumber("b") == 7.0);
 
     DataAsset::InvalidateAll();
     fs::current_path(old);

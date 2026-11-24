@@ -118,12 +118,15 @@ public:
         m_stack.clear();
         m_frameStart = Now();
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
-        if (!m_jobPrimed) {
+        // Re-read the job totals on the first frame, and after a gap of more than a second (the
+        // profiler was off or paused by its owner), so a frame never counts job time from before it.
+        if (!m_jobPrimed || Ms(m_frameStart - m_jobNoted) > 1000.0) {
             const JobFrameNote jobs = NoteRunningJobs();
             if (jobs.live) {
                 m_prevJobBusy = jobs.busyMs;
                 m_prevJobDone = jobs.completed;
                 m_jobPrimed = true;
+                m_jobNoted = m_frameStart;
             }
         }
     }
@@ -158,6 +161,8 @@ public:
                 calls = static_cast<int>(jobs.completed - m_prevJobDone);
             m_prevJobBusy = jobs.busyMs;
             m_prevJobDone = jobs.completed;
+            m_jobNoted = Now();
+            m_jobPrimed = true;
             // Depth -1 so job time is not added into cpuMs. It is already inside the systems that waited.
             if (busy > 0.0 || calls > 0)
                 m_build.push_back(Bucket{"Jobs", busy, busy, calls, -1, 0.0});
@@ -325,6 +330,7 @@ private:
     double  m_prevJobBusy = 0.0;
     std::uint64_t m_prevJobDone = 0;
     bool    m_jobPrimed = false;
+    std::chrono::steady_clock::time_point m_jobNoted{};
 
     static std::chrono::steady_clock::time_point Now() { return std::chrono::steady_clock::now(); }
     static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }

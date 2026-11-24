@@ -2,6 +2,7 @@
 #include "test_framework.hpp"
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Game.hpp"
+#include <stdexcept>
 
 using namespace okay;
 
@@ -30,6 +31,19 @@ int main() {
     CHECK(quits == 2 && accepted);
     CHECK(Game::QuitRequested());
     Game::Reset();
+
+    // A handler that throws does not escape RequestQuit: the quit still happens.
+    {
+        auto bad = EngineBus().Listen<GameQuit>([](const GameQuit&) { throw std::runtime_error("handler"); });
+        bool threw = false;
+        bool ok = false;
+        try { ok = Game::RequestQuit("throwing handler", 1); } catch (...) { threw = true; }
+        CHECK(!threw);
+        CHECK(ok);
+        CHECK(Game::QuitRequested());
+        (void)bad;
+        Game::Reset();
+    }
     (void)pauseSub;
     (void)quitSub;
     TEST_MAIN_RESULT();

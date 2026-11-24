@@ -114,12 +114,14 @@ bool DataAsset::Save(const std::string& path) const {
     std::string out = std::string(kHeader) + "\n";
     for (const auto& f : m_fields) out += EncodeField(f.first, true) + " = " + EncodeField(f.second, false) + "\n";
     if (!savefmt::AtomicWrite(path, out)) return false;
-    for (auto& kv : g_cache) {
-        if (&kv.second != this) continue;
+    // The cache entry for this same path now matches the file it wrote, so Cached() keeps the
+    // fields in memory (later unsaved Set()s too) instead of reading the file back. A copy saved
+    // under another name leaves its own entry alone.
+    auto it = g_cache.find(path);
+    if (it != g_cache.end() && &it->second == this) {
         DataAsset& self = const_cast<DataAsset&>(*this);
         self.m_loaded = true;
         self.RememberStamp(ReadablePath(path));
-        break;
     }
     return true;
 }

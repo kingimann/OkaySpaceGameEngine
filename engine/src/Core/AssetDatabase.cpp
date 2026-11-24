@@ -1306,7 +1306,12 @@ struct DirWatch {
     std::string root;
 };
 
-std::map<const AssetDatabase*, DirWatch> g_watches;
+// Heap, never freed: a database that outlives this map (a static browser destroyed during std::exit)
+// must still be able to stop its watch. A normal static map can be destroyed first.
+std::map<const AssetDatabase*, DirWatch>& Watches() {
+    static auto* m = new std::map<const AssetDatabase*, DirWatch>();
+    return *m;
+}
 
 std::string Slash(std::string s) {
     for (char& c : s) if (c == '\\') c = '/';
@@ -1360,11 +1365,11 @@ bool AssetDatabase::StartWatch(std::string* error) {
         add(it->path(), rel);
     }
 #endif
-    g_watches.emplace(this, std::move(w));
+    Watches().emplace(this, std::move(w));
 #if defined(_WIN32)
     // Arm only once the OVERLAPPED lives in the map. Arming the stack copy left the kernel
     // writing into memory that the move had already finished with.
-    DirWatch& live = g_watches.find(this)->second;
+    DirWatch& live = Watches().find(this)->second;
     if (!Arm(live)) {
         StopWatch();
         if (error) *error = "cannot watch the folder";
@@ -1376,8 +1381,8 @@ bool AssetDatabase::StartWatch(std::string* error) {
 
 std::vector<std::string> AssetDatabase::PollWatch() {
     std::vector<std::string> out;
-    auto it = g_watches.find(this);
-    if (it == g_watches.end()) return out;
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return out;
     DirWatch& w = it->second;
     std::set<std::string> seen;
     auto add = [&](std::string path) {
@@ -1389,12 +1394,14 @@ std::vector<std::string> AssetDatabase::PollWatch() {
     if (!w.pending || !w.ov.hEvent) return out;
     if (WaitForSingleObject(w.ov.hEvent, 0) != WAIT_OBJECT_0) return out;
     DWORD got = 0;
-    if (!GetOverlappedResult(w.handle, &w.ov, &got, FALSE) || got == 0) {
-        const DWORD err = GetLastError();
+    const BOOL read = GetOverlappedResult(w.handle, &w.ov, &got, FALSE);
+    if (!read || got == 0) {
+        const DWORD err = read ? ERROR_SUCCESS : GetLastError();
         CloseHandle(w.ov.hEvent);
         w.ov.hEvent = nullptr;
         Arm(w);
-        if (err == ERROR_NOTIFY_ENUM_DIR) {
+        // got == 0 on success means the buffer overflowed: the kernel dropped the events.
+        if (err == ERROR_NOTIFY_ENUM_DIR || err == ERROR_SUCCESS || got == 0) {
             Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
             out.push_back(w.root);
         }
@@ -1427,6 +1434,11 @@ std::vector<std::string> AssetDatabase::PollWatch() {
         if (n <= 0) break;
         for (ssize_t i = 0; i < n; ) {
             const auto* ev = reinterpret_cast<const inotify_event*>(buf + i);
+            if (ev->mask & IN_Q_OVERFLOW) {
+                // The kernel dropped events: say so and ask for the whole folder.
+                Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
+                add(w.root);
+            }
             const std::string name = ev->len ? Slash(ev->name) : std::string();
             const auto dir = w.dirOf.find(ev->wd);
             const std::string folder = dir == w.dirOf.end() ? std::string() : dir->second;
@@ -1445,20 +1457,24 @@ std::vector<std::string> AssetDatabase::PollWatch() {
 }
 
 void AssetDatabase::StopWatch() {
-    auto it = g_watches.find(this);
-    if (it == g_watches.end()) return;
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return;
 #if defined(_WIN32)
-    if (it->second.pending && it->second.handle != INVALID_HANDLE_VALUE)
-        CancelIoEx(it->second.handle, &it->second.ov);
-    if (it->second.ov.hEvent) {
-        WaitForSingleObject(it->second.ov.hEvent, 2000);
-        CloseHandle(it->second.ov.hEvent);
+    DirWatch& w = it->second;
+    if (w.pending && w.handle != INVALID_HANDLE_VALUE) {
+        // Cancel the read and wait until the kernel is finished with the OVERLAPPED and the
+        // buffer before either is freed. bWait=TRUE returns once the cancelled read completes.
+        CancelIoEx(w.handle, &w.ov);
+        DWORD got = 0;
+        (void)GetOverlappedResult(w.handle, &w.ov, &got, TRUE);
+        w.pending = false;
     }
+    if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
 #else
     if (it->second.fd >= 0) ::close(it->second.fd);
 #endif
-    g_watches.erase(it);
+    Watches().erase(it);
 }
 
 } // namespace okay

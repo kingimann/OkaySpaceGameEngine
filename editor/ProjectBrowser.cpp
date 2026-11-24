@@ -541,15 +541,21 @@ bool Browser::Sync() { return DoScan(); }
 bool Browser::Poll(std::uint64_t nowMs) {
     if (!m_indexed) return false;
     if (!m_watchTried) {
-        m_watchTried = true;
+        m_watchTried = true;   // one try: a failed watch is not reopened on every poll
         std::string err;
         m_watchStarted = m_db.StartWatch(&err);
     }
-    if (m_watchStarted) (void)m_db.PollWatch();
+    // The operating-system watch says whether anything changed. With it running and quiet, the
+    // full folder scan is only a safety net every 10 seconds; a change heard waits for the usual
+    // gap, so a burst of events is still one scan.
+    if (m_watchStarted && !m_db.PollWatch().empty()) m_watchHeard = true;
     if (nowMs < m_nextPoll) return false;
+    if (m_watchStarted && !m_watchHeard && nowMs < m_lastScanMs + 10000) return false;
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }
+    m_watchHeard = false;
+    m_lastScanMs = nowMs;
     m_nextPoll = nowMs + std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs));
     return m_scanChanged;
 }

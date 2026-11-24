@@ -96,6 +96,46 @@ int main() {
     CHECK(First(two.substr(0, nl)) == 0x05DD);
     CHECK(First(two.substr(nl + 1)) == 0x05DD);
 
+    // The draw path's cached shaping: left-to-right text comes back as the same string (no copy), right-to-left
+    // text gives what ShapeForDisplay gives, and the second call returns the same cached string.
+    {
+        const std::string latin = "Start a new game, Score: 123456";
+        CHECK(&ShapedForDisplay(latin) == &latin);
+        const std::string greek = "\u0391\u03B2\u03B3 \u65E5\u672C";
+        CHECK(&ShapedForDisplay(greek) == &greek);
+        const std::string crlf = "ab\r\ncd";   // a carriage return is dropped, so this one is shaped
+        CHECK(ShapedForDisplay(crlf) == ShapeForDisplay(crlf));
+        const std::string arabic = "\u0645\u0631\u062D\u0628\u0627";
+        const std::string& once = ShapedForDisplay(arabic);
+        CHECK(once == ShapeForDisplay(arabic));
+        CHECK(&ShapedForDisplay(arabic) == &once);
+        // More distinct strings than the cache holds: each still comes back right.
+        for (int k = 0; k < kShapeCacheSize + 20; ++k) {
+            const std::string t = hebrew + std::to_string(k);
+            CHECK(ShapedForDisplay(t) == ShapeForDisplay(t));
+        }
+    }
+
+    // The caret on shaped text: the byte of the drawn string the caret sits at.
+    {
+        CHECK(ShapedCaretByte("abc", 0) == 0);
+        CHECK(ShapedCaretByte("abc", 2) == 2);
+        CHECK(ShapedCaretByte("abc", 99) == 3);
+        // All Hebrew: drawn backwards, so the caret before the first letter is at the right end, after the last at the left.
+        CHECK(ShapedCaretByte(hebrew, 0) == hebrew.size());
+        CHECK(ShapedCaretByte(hebrew, hebrew.size()) == 0);
+        // Before the second letter (lamed, 2 bytes in): lamed is drawn third of four, so the caret is after it, 6 bytes in.
+        CHECK(ShapedCaretByte(hebrew, 2) == 6);
+        // Latin then Hebrew: the Latin part keeps its offsets; before the first Hebrew letter is the far right.
+        const std::string mix = std::string("ab ") + hebrew;
+        CHECK(ShapedCaretByte(mix, 1) == 1);
+        CHECK(ShapedCaretByte(mix, 3) == mix.size());
+        CHECK(ShapedCaretByte(mix, mix.size()) == 3);
+        // A mark stays with its letter: a caret on the mark counts as on the letter.
+        const std::string pointed = "\u05E9\u05BC\u05DC";   // shin with dagesh, lamed
+        CHECK(ShapedCaretByte(pointed, 4) == 2);   // before lamed: lamed is drawn first, caret after it
+    }
+
     TtfFont font;
     const std::string face = std::string(OKAY_SOURCE_DIR) + "/assets/fonts/DejaVuSans.ttf";
     CHECK(font.LoadFromFile(face, 32.0f));

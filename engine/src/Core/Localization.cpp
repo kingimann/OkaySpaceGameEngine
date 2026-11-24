@@ -1,8 +1,10 @@
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/LocPreview.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/LocTable.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/StringId.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -1369,11 +1371,21 @@ void ReverseRun(std::vector<T>& s, std::vector<int>& level, int least) {
     }
 }
 
+// Where one drawn cluster came from: bytes [srcBegin, srcEnd) of the line, drawn as bytes [outBegin, outEnd)
+// of the shaped line, at bidi level `level` (odd = right to left).
+struct VisCluster { std::size_t srcBegin, srcEnd, outBegin, outEnd; int level; };
+
+// A base character and the transparent marks after it, with the bytes it came from.
+struct Cluster { std::vector<std::uint32_t> cps; std::size_t srcBegin, srcEnd; };
+
 // One line: joining forms first (in reading order), then the right-to-left runs are reversed.
 // A letter and the marks on it move as one cluster, so a mark is still drawn after its letter.
-std::string ShapeLine(const std::string& text) {
+// `map`, when given, receives one entry per drawn cluster in drawing order (for the caret).
+std::string ShapeLine(const std::string& text, std::vector<VisCluster>* map = nullptr) {
     std::vector<std::uint32_t> cps;
-    for (std::size_t i = 0; i < text.size();) cps.push_back(utf8::Next(text, i));
+    std::vector<std::size_t> at;   // byte where each code point starts; at.back() is the end
+    for (std::size_t i = 0; i < text.size();) { at.push_back(i); cps.push_back(utf8::Next(text, i)); }
+    at.push_back(text.size());
     if (cps.empty()) return {};
     std::vector<std::uint32_t> shaped = cps;
     for (std::size_t i = 0; i < cps.size(); ++i) {
@@ -1397,20 +1409,20 @@ std::string ShapeLine(const std::string& text) {
         else if (next) form = a->ini;
         shaped[i] = form;
     }
-    // Clusters: a base character and the transparent marks after it.
-    std::vector<std::vector<std::uint32_t>> clusters;
-    for (std::uint32_t cp : shaped) {
-        if (Transparent(cp) && !clusters.empty()) clusters.back().push_back(cp);
-        else clusters.push_back({cp});
+    std::vector<Cluster> clusters;
+    for (std::size_t k = 0; k < shaped.size(); ++k) {
+        const std::uint32_t cp = shaped[k];
+        if (Transparent(cp) && !clusters.empty()) { clusters.back().cps.push_back(cp); clusters.back().srcEnd = at[k + 1]; }
+        else clusters.push_back(Cluster{{cp}, at[k], at[k + 1]});
     }
     int base = 0;
     for (const auto& c : clusters) {
-        const Dir d = KindOf(c[0]);
+        const Dir d = KindOf(c.cps[0]);
         if (d == Dir::R) { base = 1; break; }
         if (d == Dir::L) break;
     }
     std::vector<Dir> dir(clusters.size(), Dir::N);
-    for (std::size_t i = 0; i < clusters.size(); ++i) dir[i] = KindOf(clusters[i][0]);
+    for (std::size_t i = 0; i < clusters.size(); ++i) dir[i] = KindOf(clusters[i].cps[0]);
     for (std::size_t i = 0; i < dir.size(); ++i) {
         if (dir[i] != Dir::N) continue;
         Dir left = Dir::N, right = Dir::N;
@@ -1427,13 +1439,36 @@ std::string ShapeLine(const std::string& text) {
     for (int lv : level) if (lv > top) top = lv;
     for (int lv = top; lv >= 1; --lv) ReverseRun(clusters, level, lv);
     std::string out;
-    for (const auto& c : clusters) for (std::uint32_t cp : c) utf8::Append(out, cp);
+    if (map) map->clear();
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
+        const std::size_t from = out.size();
+        for (std::uint32_t cp : clusters[i].cps) utf8::Append(out, cp);
+        if (map) map->push_back(VisCluster{clusters[i].srcBegin, clusters[i].srcEnd, from, out.size(), level[i]});
+    }
     return out;
+}
+
+// True when ShapeForDisplay would change the text: a right-to-left or Arabic character (every joining
+// letter and every mark that clusters is in the right-to-left blocks), or a carriage return, which it drops
+// before a newline. Without one, every level is 0 and nothing moves, so the bytes come back unchanged.
+// ASCII bytes are skipped without decoding, so a plain label costs one pass over its bytes.
+bool NeedsShaping(const std::string& text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char b = (unsigned char)text[i];
+        if (b < 0x80) {
+            if (b == '\r') return true;
+            ++i;
+            continue;
+        }
+        if (KindOf(utf8::Next(text, i)) == Dir::R) return true;
+    }
+    return false;
 }
 
 } // namespace
 
 std::string ShapeForDisplay(const std::string& text) {
+    if (!NeedsShaping(text)) return text;
     // One line at a time. A newline inside one reverse run swapped the lines.
     std::string out;
     std::size_t i = 0;
@@ -1448,6 +1483,42 @@ std::string ShapeForDisplay(const std::string& text) {
         i = n + 1;
     }
     return out;
+}
+
+const std::string& ShapedForDisplay(const std::string& text) {
+    if (!NeedsShaping(text)) return text;   // most text: no copy, no allocation
+    // A small table of recent results, so a right-to-left label is shaped once, not every frame. The least
+    // recently used entry is replaced; its strings keep their capacity, so a refill rarely allocates.
+    struct Entry { StringId::Value hash = 0; std::uint64_t used = 0; std::string in, out; };
+    static Entry cache[kShapeCacheSize];
+    static std::uint64_t tick = 0;
+    const StringId::Value h = StringId::HashOf(text);
+    Entry* victim = &cache[0];
+    for (Entry& e : cache) {
+        if (e.used && e.hash == h && e.in == text) { e.used = ++tick; return e.out; }
+        if (e.used < victim->used) victim = &e;
+    }
+    victim->hash = h;
+    victim->in = text;
+    victim->out = ShapeForDisplay(text);
+    victim->used = ++tick;
+    return victim->out;
+}
+
+std::size_t ShapedCaretByte(const std::string& line, std::size_t logicalByte) {
+    if (logicalByte > line.size()) logicalByte = line.size();
+    if (!NeedsShaping(line)) return logicalByte;
+    std::vector<VisCluster> map;
+    ShapeLine(line, &map);
+    if (map.empty()) return 0;
+    // The caret sits before the character that starts at logicalByte: on its left edge in a left-to-right
+    // run, on its right edge in a right-to-left run (where the drawn string runs backwards).
+    for (const VisCluster& c : map)
+        if (logicalByte >= c.srcBegin && logicalByte < c.srcEnd) return (c.level & 1) ? c.outEnd : c.outBegin;
+    // At the end of the line: after the last character typed, on its far side.
+    for (const VisCluster& c : map)
+        if (c.srcEnd == line.size()) return (c.level & 1) ? c.outBegin : c.outEnd;
+    return map.back().outEnd;
 }
 
 } // namespace okay

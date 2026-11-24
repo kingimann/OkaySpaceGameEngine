@@ -1749,7 +1749,8 @@ void ui_pass::RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, con
             float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
             DrawUIText(p, shown, o.x + pad, ty, px, tc);
             if (in->focused && in->CaretVisible()) {        // blinking caret at the caret position
-                int cx = (int)(o.x + pad + UITextW(full.substr(start, caretAt - start), px));
+                // Measured on the drawn (shaped) text, so the caret lands where it is in right-to-left text too.
+                int cx = (int)(o.x + pad + UICaretX(nullptr, shown, caretAt - start, px));
                 p.SetDrawColor(255, 255, 255, 220);
                 p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
             }
@@ -1774,7 +1775,7 @@ void ui_pass::RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, con
                 if (lineNo == caretLine) {   // the caret, measured from the first character drawn
                     const std::size_t dropped = line.size() - shown.size();
                     const std::size_t col = std::min(caretCol, line.size());
-                    caretX = col > dropped ? UITextW(line.substr(dropped, col - dropped), px) : 0.0f;
+                    caretX = UICaretX(nullptr, shown, col > dropped ? col - dropped : 0, px);
                     caretY = y;
                 }
                 ++lineNo;

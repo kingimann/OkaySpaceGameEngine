@@ -988,7 +988,7 @@ add_test(NAME ui_renderer_options COMMAND test_ui_renderer_options)
 
 add_executable(test_ui_render_bench test_ui_render_bench.cpp)
 target_link_libraries(test_ui_render_bench PRIVATE okay::engine)
-target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_render_bench COMMAND test_ui_render_bench)
 
 add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)

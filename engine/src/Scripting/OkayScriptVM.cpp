@@ -575,7 +575,7 @@ void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
                std::vector<Value>& args, const char* label) {
     for (const char* n : names) {
         if (rt.functions.count(n)) {
-            try { rt.Call(n, args); }
+            try { rt.CallFunction(n, args); }   // the script's own, even when a builtin has its name
             catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", e.what()); }
             return;
         }
@@ -756,7 +756,7 @@ vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::
         // declares beyond those its usual default for the parameter's type.
         const std::size_t want = std::min(m_impl->rt.functions[fn]->params.size(), all.size());
         std::vector<Value> args(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(want));
-        try { ret = m_impl->rt.Call(fn, args); }
+        try { ret = m_impl->rt.CallFunction(fn, args); }   // the script's own, even when a builtin has its name (shake)
         catch (const std::exception& e) {
             if (error) *error = e.what();
             else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());

@@ -37,7 +37,7 @@ void Runtime::Resume(Coroutine* co) {
             co->started = true;
             co->th = std::thread([this, co] {   // lint-allow: win32-thread
                 { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); }   // lint-allow: win32-thread
-                try { if (!co->abort) Call(co->fn, co->args, co->argNames.empty() ? nullptr : &co->argNames); }
+                try { if (!co->abort) CallFunction(co->fn, co->args, co->argNames.empty() ? nullptr : &co->argNames); }
                 catch (const CoroutineAbort&) {}
                 catch (const std::exception& e) { Log::Error("OkayScript coroutine ", co->fn, "(): ", e.what()); }
                 catch (...) { Log::Error("OkayScript coroutine ", co->fn, "(): error"); }

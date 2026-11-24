@@ -1044,8 +1044,9 @@ foreach(_oks lexer parser interpreter native errors classes vm)
     target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
     add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
 endforeach()
-# vm: the bytecode machine gives the tree walker's exact output, errors and lines (every CLI case script too).
-target_compile_definitions(test_okayscript_lang_vm PRIVATE OKS_CLI_CASES="${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli")
+# vm: the bytecode machine gives the recorded output, errors and lines (vm_expected.txt; every CLI case script too).
+target_compile_definitions(test_okayscript_lang_vm PRIVATE OKS_CLI_CASES="${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli"
+                           OKS_VM_EXPECTED="${PROJECT_SOURCE_DIR}/okayscript/tests/vm_expected.txt")
 # The same core instantiated for the engine's own value (vs::VsValue), as the engine's OkayScriptVM runs it.
 add_executable(test_okayscript_engine_value test_okayscript_engine_value.cpp)
 target_link_libraries(test_okayscript_engine_value PRIVATE okay::engine okayscript::lang)

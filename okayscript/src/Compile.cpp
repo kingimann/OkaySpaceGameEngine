@@ -1,10 +1,13 @@
 // The OkayScript compiler: a body's syntax tree to bytecode (Bytecode.hpp). Written for this project from general
 // code-generation ideas: each node emits its operands' code then its own instruction, jumps are patched once their
 // target is known, and the operand stack depth is tracked to size the frame. Constants are folded with the
-// runtime's own number rules (32-bit floats, x / 0 and x % 0 give 0).
+// runtime's own number rules (32-bit floats, x / 0 and x % 0 give 0). A function's locals get frame slots, worked
+// out from its declarations before its code is made.
 #include "okayscript/Bytecode.hpp"
 #include <cmath>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace okayscript {
 
@@ -13,7 +16,11 @@ namespace {
 struct LoopTargets {
     std::vector<std::size_t> breaks;      ///< jumps to patch to the loop's end
     std::vector<std::size_t> continues;   ///< jumps to patch to the loop's continue point
+    bool isSwitch = false;                ///< a switch: break ends it, continue belongs to the loop around it
+    int tryDepth = 0;                     ///< try bodies open where it starts (a jump out leaves the ones inside)
 };
+
+const std::string kEmptyText;
 
 class Compiler {
 public:
@@ -23,10 +30,39 @@ public:
         List(list);
         Emit(Op::End);
     }
+    /// A function or lambda: parameters take the first slots, then each name the body declares.
+    void Function(const std::vector<std::string>& params, const StmtList& body) {
+        for (const std::string& p : params) c.paramSlot.push_back(SlotOf(p, true));
+        std::vector<std::string> names;
+        std::unordered_set<std::string> statics;
+        CollectBodyLocals(body, names, statics);
+        for (const std::string& n : names)
+            if (!statics.count(n)) SlotOf(n, true);
+        Body(body);
+    }
+    void OneExpression(const Expr& e) {
+        Expression(e);
+        Emit(Op::Return);
+        Drop();
+        Emit(Op::End);
+    }
 
 private:
     int depth = 0;
+    int tryDepth = 0;
     std::vector<LoopTargets> loops;
+    std::unordered_map<std::string, int> slots;
+
+    /// The slot of a local name (made when `make`), or -1 for a name that is not a local of this body.
+    int SlotOf(const std::string& n, bool make = false) {
+        auto it = slots.find(n);
+        if (it != slots.end()) return it->second;
+        if (!make) return -1;
+        const int i = (int)c.slotNames.size();
+        c.slotNames.push_back(n);
+        slots.emplace(n, i);
+        return i;
+    }
 
     std::size_t Emit(Op op, int a = 0, const void* p = nullptr, Tok tok = Tok::End) {
         Instr in;
@@ -116,16 +152,18 @@ private:
             case ExprKind::String: Emit(Op::PushStr, 0, &static_cast<const StringExpr&>(ex).v); Push(); return;
             case ExprKind::Var: {
                 auto& e = static_cast<const VarExpr&>(ex);
-                if (e.dotted || e.thisPrefix) break;
-                c.code[Emit(Op::Load, 0, &e.n)].b = NewCache();
+                if (e.dotted || e.thisPrefix) { Emit(Op::LoadQualified, 0, &e); Push(); return; }
+                const int slot = SlotOf(e.n);
+                c.code[Emit(slot >= 0 ? Op::LoadSlot : Op::Load, slot, &e.n)].b = NewCache();
                 Push();
                 return;
             }
             case ExprKind::Assign: {
                 auto& e = static_cast<const AssignExpr&>(ex);
-                if (!e.plain) break;
                 Expression(*e.value);
-                c.code[Emit(Op::Store, 0, &e.n)].b = NewCache();
+                if (!e.plain) { Emit(Op::AssignQualified, 0, &e); return; }
+                const int slot = SlotOf(e.n);
+                c.code[Emit(slot >= 0 ? Op::StoreSlot : Op::Store, slot, &e.n)].b = NewCache();
                 return;
             }
             case ExprKind::Unary: {
@@ -172,47 +210,166 @@ private:
                 return;
             }
             case ExprKind::Index: {
-                // Only a side-effect-free index (a name or a constant), so working it out first changes nothing.
+                // The index is worked out only when the value can be indexed (a list or a map), as before.
                 auto& e = static_cast<const IndexExpr&>(ex);
-                if (e.safe || !SimpleIndex(*e.index)) break;
                 Expression(*e.arr);
+                std::size_t skipNull = 0;
+                if (e.safe) skipNull = Emit(Op::JumpIfNullishNull);
+                std::size_t skip = 0;
+                const bool simple = SimpleIndex(*e.index);
+                if (!simple) { skip = Emit(Op::SkipUnlessIndexable); c.code[skip].b = 1; c.code[skip].c = 0; }
                 Expression(*e.index);
                 Emit(Op::Index);
                 Drop();
+                const int end = Here();
+                if (!simple) PatchTo(skip, end);
+                if (e.safe) PatchTo(skipNull, end);
                 return;
             }
             case ExprKind::IndexAssign: {
                 auto& e = static_cast<const IndexAssignExpr&>(ex);
-                if (!SimpleIndex(*e.index)) break;
                 Expression(*e.arr);
                 Expression(*e.value);
-                Expression(*e.index);   // the walker works the index out last too
+                const bool simple = SimpleIndex(*e.index);
+                std::size_t skip = 0;
+                if (!simple) { skip = Emit(Op::SkipUnlessIndexable); c.code[skip].b = 2; c.code[skip].c = 1; }
+                Expression(*e.index);   // the index is worked out last
                 Emit(Op::IndexStore);
                 Drop(2);
+                if (!simple) PatchTo(skip, Here());
+                return;
+            }
+            case ExprKind::IndexCompoundAssign: {
+                auto& e = static_cast<const IndexCompoundAssignExpr&>(ex);
+                Expression(*e.arr);
+                Expression(*e.value);
+                const std::size_t skip = Emit(Op::SkipUnlessIndexable);
+                c.code[skip].b = 2;
+                c.code[skip].c = 0;
+                Expression(*e.index);
+                Emit(Op::IndexCompound, 0, &e);
+                Drop(2);
+                PatchTo(skip, Here());
                 return;
             }
             case ExprKind::MethodCall: {
                 auto& e = static_cast<const MethodCallExpr&>(ex);
-                if (e.safe) break;   // `v?.M(x)` skips its arguments when v is null: the walker
                 Expression(*e.obj);
+                std::size_t skip = 0;
+                if (e.safe) skip = Emit(Op::JumpIfNullishNull);   // `v?.M(x)` skips its arguments when v is null
                 for (auto& a : e.args) Expression(*a);
                 Emit(Op::MethodCall, (int)e.args.size(), &e);
                 Drop((int)e.args.size());
+                if (e.safe) PatchTo(skip, Here());
                 return;
             }
             case ExprKind::Call: {
                 auto& e = static_cast<const CallExpr&>(ex);
-                for (auto& n : e.argNames) if (!n.empty()) goto walker;   // named arguments: the walker
+                bool named = false;
+                for (auto& n : e.argNames) if (!n.empty()) named = true;
                 for (auto& a : e.args) Expression(*a);
-                c.code[Emit(Op::Call, (int)e.args.size(), &e)].b = NewCall();
+                const std::size_t at = Emit(named ? Op::CallNamed : Op::Call, (int)e.args.size(), &e);
+                if (!named) c.code[at].b = NewCall();
                 Drop((int)e.args.size());
                 Push();
                 return;
             }
-            default: break;
+            case ExprKind::InterpString: {
+                auto& e = static_cast<const InterpStringExpr&>(ex);
+                Emit(Op::PushStr, 0, &kEmptyText);
+                Push();
+                for (auto& g : e.segs) {
+                    if (!g.isExpr) { Emit(Op::AppendLit, 0, &g.lit); continue; }
+                    Expression(*g.expr);
+                    Emit(Op::AppendText);
+                    Drop();
+                }
+                return;
+            }
+            case ExprKind::Coalesce: {
+                auto& e = static_cast<const CoalesceExpr&>(ex);
+                Expression(*e.l);
+                const std::size_t j = Emit(Op::JumpUnlessNullishKeep);
+                Drop();
+                Expression(*e.r);
+                PatchTo(j, Here());
+                return;
+            }
+            case ExprKind::NullishAssign: {
+                auto& e = static_cast<const NullishAssignExpr&>(ex);
+                Emit(Op::GetName, 0, &e.n);
+                Push();
+                const std::size_t j = Emit(Op::JumpUnlessNullishKeep);
+                Drop();
+                Expression(*e.value);
+                Emit(Op::AssignName, 0, &e.n);
+                PatchTo(j, Here());
+                return;
+            }
+            case ExprKind::Member: {
+                auto& e = static_cast<const MemberExpr&>(ex);
+                Expression(*e.obj);
+                std::size_t skip = 0;
+                if (e.safe) skip = Emit(Op::JumpIfNullishNull);
+                Emit(Op::Member, 0, &e);
+                if (e.safe) PatchTo(skip, Here());
+                return;
+            }
+            case ExprKind::MemberAssign: {
+                auto& e = static_cast<const MemberAssignExpr&>(ex);
+                Expression(*e.obj);
+                Expression(*e.value);
+                Emit(Op::MemberSet, 0, &e);
+                Drop();
+                return;
+            }
+            case ExprKind::Cast: {
+                auto& e = static_cast<const CastExpr&>(ex);
+                Expression(*e.e);
+                Emit(Op::Cast, 0, &e);
+                return;
+            }
+            case ExprKind::Array: {
+                auto& e = static_cast<const ArrayExpr&>(ex);
+                for (auto& el : e.elems) Expression(*el);
+                Emit(Op::MakeList, (int)e.elems.size());
+                Drop((int)e.elems.size());
+                Push();
+                return;
+            }
+            case ExprKind::Lambda: Emit(Op::MakeLambda, 0, &ex); Push(); return;
+            case ExprKind::New: {
+                auto& e = static_cast<const NewExpr&>(ex);
+                for (auto& a : e.args) Expression(*a);
+                Emit(Op::New, (int)e.args.size(), &e);
+                Drop((int)e.args.size());
+                Push();
+                return;
+            }
+            case ExprKind::EventOrCompound: {
+                // `name += f`: f a lambda or a function name subscribes it; anything else is name = name op rhs.
+                auto& e = static_cast<const EventOrCompoundExpr&>(ex);
+                if (e.rhs->kind == ExprKind::Lambda) {
+                    Expression(*e.rhs);
+                    Emit(Op::Subscribe, 0, &e);
+                    return;
+                }
+                std::size_t taken = 0;
+                const bool byName = e.rhs->kind == ExprKind::Var;
+                if (byName) taken = Emit(Op::EventVar, 0, &e);
+                Emit(Op::CompoundCur, 0, &e);
+                Push();
+                Expression(*e.rhs);
+                Emit(Op::Binary, 0, nullptr, e.bin);
+                Drop();
+                Emit(Op::CompoundStore, 0, &e);
+                if (byName) PatchTo(taken, Here());
+                return;
+            }
+            case ExprKind::Number: case ExprKind::Bool: break;   // folded above
         }
-    walker:
-        Emit(Op::Eval, 0, &ex);
+        // Number and Bool are always folded above.
+        c.code[Emit(Op::PushNum)].f = 0.0f;
         Push();
     }
 
@@ -221,7 +378,8 @@ private:
         if (e.kind == ExprKind::Assign && static_cast<const AssignExpr&>(e).plain) {
             auto& a = static_cast<const AssignExpr&>(e);
             Expression(*a.value);
-            c.code[Emit(Op::StorePop, 0, &a.n)].b = NewCache();
+            const int slot = SlotOf(a.n);
+            c.code[Emit(slot >= 0 ? Op::StoreSlotPop : Op::StorePop, slot, &a.n)].b = NewCache();
             Drop();
             return;
         }
@@ -241,11 +399,95 @@ private:
                 return;
             case StmtKind::VarDecl: {
                 auto& s = static_cast<const VarDeclStmt&>(st);
-                if (s.kind != KAny) break;   // typed, const and static declarations: the walker
                 Emit(Op::Line, st.line);
-                if (s.init) Expression(*s.init); else { Emit(Op::PushNull); Push(); }
-                Emit(Op::Define, 0, &s.n);
+                if (s.kind & KStatic) {   // set once, by the first run of the source; later runs skip the initializer
+                    const std::size_t skip = Emit(Op::StaticSetJump, 0, &s.n);
+                    StartValue(s);
+                    Emit(Op::DefineStatic, 0, &s);
+                    Drop();
+                    PatchTo(skip, Here());
+                    return;
+                }
+                StartValue(s);
+                const int slot = SlotOf(s.n);
+                if (s.kind != KAny) Emit(Op::DefineTyped, slot, &s);
+                else if (slot >= 0) Emit(Op::DefineSlot, slot, &s.n);
+                else Emit(Op::Define, 0, &s.n);
                 Drop();
+                return;
+            }
+            case StmtKind::Throw: {
+                auto& s = static_cast<const ThrowStmt&>(st);
+                Emit(Op::Line, st.line);
+                if (s.e) { Expression(*s.e); c.code[Emit(Op::Throw, st.line)].b = 1; Drop(); }
+                else Emit(Op::Throw, st.line);
+                return;
+            }
+            case StmtKind::Yield: {
+                auto& s = static_cast<const YieldStmt&>(st);
+                Emit(Op::Line, st.line);
+                if (s.e) Expression(*s.e); else { Emit(Op::PushNull); Push(); }
+                Emit(Op::Yield, st.line);
+                Drop();
+                return;
+            }
+            case StmtKind::Try: {
+                // An error in the body goes to the catch (its variable holds the message), or is dropped without
+                // one (engine rule). Leaving the body any other way forgets the handler.
+                auto& s = static_cast<const TryStmt&>(st);
+                Emit(Op::Line, st.line);
+                const std::size_t begin = Emit(Op::TryBegin);
+                c.code[begin].b = (s.hasCatch && !s.catchVar.empty()) ? 1 : 0;
+                ++tryDepth;
+                List(s.body);
+                --tryDepth;
+                Emit(Op::TryEnd);
+                const std::size_t over = Emit(Op::Jump);
+                PatchTo(begin, Here());
+                if (s.hasCatch) {
+                    if (!s.catchVar.empty()) {
+                        Push();   // the message the handler pushes
+                        const int slot = SlotOf(s.catchVar);
+                        if (slot >= 0) Emit(Op::DefineSlot, slot, &s.catchVar);
+                        else Emit(Op::Define, 0, &s.catchVar);
+                        Drop();
+                    }
+                    List(s.catchB);
+                }
+                PatchTo(over, Here());
+                return;
+            }
+            case StmtKind::Switch: {
+                // The subject once; each case's value in order until one matches (text compares as text, anything
+                // else as numbers); else the default. Bodies fall through until a break.
+                auto& s = static_cast<const SwitchStmt&>(st);
+                Emit(Op::Line, st.line);
+                Expression(*s.subject);
+                std::vector<std::size_t> toBody(s.cases.size(), (std::size_t)-1);
+                for (std::size_t i = 0; i < s.cases.size(); ++i) {
+                    if (s.cases[i].isDefault) continue;
+                    Expression(*s.cases[i].match);
+                    toBody[i] = Emit(Op::SwitchCase);
+                    Drop();
+                }
+                Emit(Op::Pop);
+                Drop();
+                const std::size_t toDefault = Emit(Op::Jump);
+                int defaultAt = -1;
+                loops.emplace_back();
+                loops.back().isSwitch = true;
+                loops.back().tryDepth = tryDepth;
+                for (std::size_t i = 0; i < s.cases.size(); ++i) {
+                    const int at = Here();
+                    if (s.cases[i].isDefault && defaultAt < 0) defaultAt = at;
+                    if (toBody[i] != (std::size_t)-1) PatchTo(toBody[i], at);
+                    List(s.cases[i].body);
+                }
+                const int end = Here();
+                PatchTo(toDefault, defaultAt >= 0 ? defaultAt : end);
+                LoopTargets t = std::move(loops.back());
+                loops.pop_back();
+                for (std::size_t j : t.breaks) PatchTo(j, end);
                 return;
             }
             case StmtKind::Return: {
@@ -257,11 +499,16 @@ private:
             }
             case StmtKind::Break:
             case StmtKind::Continue: {
+                // break: the nearest loop or switch; continue: the nearest loop (a switch passes it on).
                 Emit(Op::Line, st.line);
                 const bool brk = st.kind == StmtKind::Break;
-                if (loops.empty()) { Emit(Op::EndFlow, (int)(brk ? Flow::Break : Flow::Continue)); return; }
+                LoopTargets* target = nullptr;
+                for (auto it = loops.rbegin(); it != loops.rend(); ++it)
+                    if (brk || !it->isSwitch) { target = &*it; break; }
+                if (!target) { Emit(Op::EndFlow, (int)(brk ? Flow::Break : Flow::Continue)); return; }
+                if (tryDepth > target->tryDepth) Emit(Op::TryPop, tryDepth - target->tryDepth);
                 const std::size_t j = Emit(Op::Jump);
-                (brk ? loops.back().breaks : loops.back().continues).push_back(j);
+                (brk ? target->breaks : target->continues).push_back(j);
                 return;
             }
             case StmtKind::Block: Emit(Op::Line, st.line); List(static_cast<const BlockStmt&>(st).body); return;
@@ -287,7 +534,7 @@ private:
                 const int top = Here();
                 Expression(*s.cond);
                 const std::size_t jf = JumpIfFalse();
-                loops.emplace_back();
+                OpenLoop();
                 List(s.body);
                 const int count = Here();
                 Emit(Op::LoopCount, counter, "while loop");
@@ -302,7 +549,7 @@ private:
                 const int counter = c.loops++;
                 Emit(Op::LoopInit, counter);
                 const int top = Here();
-                loops.emplace_back();
+                OpenLoop();
                 List(s.body);
                 const int count = Here();
                 Emit(Op::LoopCount, counter, "do-while loop");
@@ -313,17 +560,19 @@ private:
                 return;
             }
             case StmtKind::ForEach: {
-                // As the walker: the collection once, the variable declared here, a list's length taken at the start
+                // The collection once, the variable declared here, a list's length taken at the start
                 // (items added while looping are not visited), a map's keys copied first. No iteration limit.
                 auto& s = static_cast<const ForEachStmt&>(st);
                 Emit(Op::Line, st.line);
                 Expression(*s.iterable);
                 const int it = c.iterators++;
-                Emit(Op::ForEachStart, it, &s);
+                const int slot = SlotOf(s.var);
+                c.code[Emit(Op::ForEachStart, it, &s)].c = slot;
                 Drop();
                 const int top = Here();
                 const std::size_t next = Emit(Op::ForEachNext, it, &s);
-                loops.emplace_back();
+                c.code[next].c = slot;
+                OpenLoop();
                 List(s.body);
                 Emit(Op::Jump, top);
                 EndLoop(Here(), top);
@@ -339,7 +588,7 @@ private:
                 const int top = Here();
                 std::size_t jf = 0;
                 if (s.cond) { Expression(*s.cond); jf = JumpIfFalse(); }
-                loops.emplace_back();
+                OpenLoop();
                 List(s.body);
                 const int step = Here();
                 if (s.step) StepExpression(*s.step);
@@ -349,24 +598,22 @@ private:
                 if (s.cond) PatchTo(jf, Here());
                 return;
             }
-            default: break;
-        }
-        // Everything else runs through the tree walker. Its break and continue reach the loop around it here.
-        const std::size_t at = Emit(Op::Exec, -1, &st);
-        c.code[at].b = -1;
-        if (!loops.empty()) {
-            loops.back().breaks.push_back(at);
-            c.code[at].b = -2;   // patched in EndLoop (marks "continue goes to the loop" too)
         }
     }
 
+    /// The value a declaration starts with: its initializer, or its kind's starting value.
+    void StartValue(const VarDeclStmt& s) {
+        if (s.init) Expression(*s.init);
+        else { Emit(Op::PushDefault, s.kind); Push(); }
+    }
+    void OpenLoop() {
+        loops.emplace_back();
+        loops.back().tryDepth = tryDepth;
+    }
     void EndLoop(int end, int cont) {
         LoopTargets t = std::move(loops.back());
         loops.pop_back();
-        for (std::size_t j : t.breaks) {
-            if (c.code[j].op == Op::Exec) { c.code[j].a = end; c.code[j].b = cont; }
-            else PatchTo(j, end);
-        }
+        for (std::size_t j : t.breaks) PatchTo(j, end);
         for (std::size_t j : t.continues) PatchTo(j, cont);
     }
 };
@@ -374,18 +621,35 @@ private:
 const char* OpName(Op op) {
     switch (op) {
         case Op::Line: return "line"; case Op::PushNum: return "push_num"; case Op::PushBool: return "push_bool";
-        case Op::PushStr: return "push_str"; case Op::PushNull: return "push_null"; case Op::Pop: return "pop";
-        case Op::Load: return "load"; case Op::Store: return "store"; case Op::StorePop: return "store_pop";
-        case Op::Define: return "define"; case Op::Binary: return "binary"; case Op::Unary: return "unary";
+        case Op::PushStr: return "push_str"; case Op::PushNull: return "push_null"; case Op::PushDefault: return "push_default";
+        case Op::Pop: return "pop"; case Op::Load: return "load"; case Op::Store: return "store";
+        case Op::StorePop: return "store_pop"; case Op::LoadSlot: return "load_slot"; case Op::StoreSlot: return "store_slot";
+        case Op::StoreSlotPop: return "store_slot_pop"; case Op::Define: return "define";
+        case Op::DefineSlot: return "define_slot"; case Op::DefineTyped: return "define_typed";
+        case Op::StaticSetJump: return "static_set_jump"; case Op::DefineStatic: return "define_static";
+        case Op::LoadQualified: return "load_qualified"; case Op::AssignQualified: return "assign_qualified";
+        case Op::GetName: return "get_name"; case Op::AssignName: return "assign_name";
+        case Op::Binary: return "binary"; case Op::Unary: return "unary";
         case Op::ForEachStart: return "foreach_start"; case Op::ForEachNext: return "foreach_next";
         case Op::Index: return "index"; case Op::IndexStore: return "index_store";
-        case Op::MethodCall: return "method_call";
+        case Op::IndexCompound: return "index_compound"; case Op::Member: return "member";
+        case Op::MemberSet: return "member_set"; case Op::Cast: return "cast";
+        case Op::MethodCall: return "method_call"; case Op::CallNamed: return "call_named";
+        case Op::MakeList: return "make_list"; case Op::MakeLambda: return "make_lambda"; case Op::New: return "new";
+        case Op::AppendLit: return "append_lit"; case Op::AppendText: return "append_text";
+        case Op::EventVar: return "event_var"; case Op::Subscribe: return "subscribe";
+        case Op::CompoundCur: return "compound_cur"; case Op::CompoundStore: return "compound_store";
+        case Op::SwitchCase: return "switch_case"; case Op::Throw: return "throw"; case Op::TryBegin: return "try_begin";
+        case Op::TryEnd: return "try_end"; case Op::TryPop: return "try_pop"; case Op::Yield: return "yield";
+        case Op::JumpIfNullishNull: return "jump_if_nullish_null";
+        case Op::JumpUnlessNullishKeep: return "jump_unless_nullish_keep";
+        case Op::SkipUnlessIndexable: return "skip_unless_indexable";
         case Op::BinaryK: return "binary_k"; case Op::CompareJump: return "compare_jump";
         case Op::CompareJumpK: return "compare_jump_k";
         case Op::ToBool: return "to_bool"; case Op::Jump: return "jump"; case Op::JumpIfFalse: return "jump_if_false";
         case Op::JumpIfTrue: return "jump_if_true"; case Op::JumpIfFalseKeep: return "jump_if_false_keep";
-        case Op::JumpIfTrueKeep: return "jump_if_true_keep"; case Op::Call: return "call"; case Op::Eval: return "eval";
-        case Op::Exec: return "exec"; case Op::Return: return "return"; case Op::ReturnNone: return "return_none";
+        case Op::JumpIfTrueKeep: return "jump_if_true_keep"; case Op::Call: return "call";
+        case Op::Return: return "return"; case Op::ReturnNone: return "return_none";
         case Op::EndFlow: return "end_flow"; case Op::LoopInit: return "loop_init"; case Op::LoopCount: return "loop_count";
         case Op::End: return "end";
     }
@@ -399,6 +663,16 @@ ChunkPtr CompileBody(const StmtList& body) {
     comp.Body(body);
     return std::make_shared<const Chunk>(std::move(comp.c));
 }
+ChunkPtr CompileFunction(const std::vector<std::string>& params, const StmtList& body) {
+    Compiler comp;
+    comp.Function(params, body);
+    return std::make_shared<const Chunk>(std::move(comp.c));
+}
+ChunkPtr CompileExpr(const Expr& e) {
+    Compiler comp;
+    comp.OneExpression(e);
+    return std::make_shared<const Chunk>(std::move(comp.c));
+}
 
 std::string Disassemble(const Chunk& c) {
     std::ostringstream o;
@@ -408,17 +682,37 @@ std::string Disassemble(const Chunk& c) {
         switch (in.op) {
             case Op::PushNum: o << ' ' << in.f; break;
             case Op::PushBool: o << ' ' << (in.a ? "true" : "false"); break;
-            case Op::PushStr: case Op::Load: case Op::Store: case Op::StorePop: case Op::Define:
+            case Op::PushStr: case Op::Load: case Op::Store: case Op::StorePop: case Op::Define: case Op::GetName:
+            case Op::AssignName: case Op::AppendLit:
                 o << ' ' << *static_cast<const std::string*>(in.p); break;
+            case Op::LoadSlot: case Op::StoreSlot: case Op::StoreSlotPop: case Op::DefineSlot:
+                o << ' ' << in.a << ' ' << *static_cast<const std::string*>(in.p); break;
+            case Op::StaticSetJump: o << ' ' << *static_cast<const std::string*>(in.p) << ' ' << in.a; break;
+            case Op::DefineTyped: o << ' ' << in.a << ' ' << static_cast<const VarDeclStmt*>(in.p)->n; break;
+            case Op::DefineStatic: o << ' ' << static_cast<const VarDeclStmt*>(in.p)->n; break;
+            case Op::LoadQualified: o << ' ' << static_cast<const VarExpr*>(in.p)->n; break;
+            case Op::AssignQualified: o << ' ' << static_cast<const AssignExpr*>(in.p)->n; break;
+            case Op::Member: o << ' ' << static_cast<const MemberExpr*>(in.p)->name; break;
+            case Op::MemberSet: o << ' ' << static_cast<const MemberAssignExpr*>(in.p)->name; break;
+            case Op::Cast: o << ' ' << static_cast<const CastExpr*>(in.p)->type; break;
+            case Op::New: o << ' ' << static_cast<const NewExpr*>(in.p)->type << '/' << in.a; break;
+            case Op::EventVar: case Op::Subscribe: case Op::CompoundCur: case Op::CompoundStore:
+                o << ' ' << static_cast<const EventOrCompoundExpr*>(in.p)->name;
+                if (in.op == Op::EventVar) o << ' ' << in.a;
+                break;
             case Op::Binary: case Op::Unary: o << ' ' << TokName(in.tok); break;
             case Op::BinaryK: o << ' ' << TokName(in.tok) << ' ' << in.f; break;
             case Op::CompareJump: o << ' ' << TokName(in.tok) << ' ' << in.a; break;
             case Op::CompareJumpK: o << ' ' << TokName(in.tok) << ' ' << in.f << ' ' << in.a; break;
-            case Op::Call: o << ' ' << static_cast<const CallExpr*>(in.p)->name << '/' << in.a; break;
+            case Op::Call: case Op::CallNamed: o << ' ' << static_cast<const CallExpr*>(in.p)->name << '/' << in.a; break;
             case Op::MethodCall: o << ' ' << static_cast<const MethodCallExpr*>(in.p)->name << '/' << in.a; break;
             case Op::Line: case Op::Jump: case Op::JumpIfFalse: case Op::JumpIfTrue: case Op::JumpIfFalseKeep:
-            case Op::JumpIfTrueKeep: case Op::EndFlow: case Op::LoopInit: case Op::LoopCount: o << ' ' << in.a; break;
-            case Op::Exec: o << ' ' << in.a << ' ' << in.b; break;
+            case Op::JumpIfTrueKeep: case Op::EndFlow: case Op::LoopInit: case Op::LoopCount: case Op::PushDefault:
+            case Op::JumpIfNullishNull: case Op::JumpUnlessNullishKeep: case Op::SwitchCase: case Op::TryPop:
+            case Op::MakeList: case Op::Throw: case Op::Yield:
+                o << ' ' << in.a; break;
+            case Op::TryBegin: case Op::SkipUnlessIndexable: o << ' ' << in.a << ' ' << in.b; break;
+            case Op::ForEachStart: case Op::ForEachNext: o << ' ' << in.a << ' ' << in.b << ' ' << in.c; break;
             default: break;
         }
         o << '\n';

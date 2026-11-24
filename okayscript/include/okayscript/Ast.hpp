@@ -97,6 +97,7 @@ struct FunctionDecl {
     unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
     int line = 0;
     mutable ChunkPtr code;                   ///< `body` as bytecode, once it has run
+    mutable std::vector<ChunkPtr> defaultCode;   ///< the defaults as bytecode, once used
 };
 
 /// A plain class (`class Item { ... }`, no base type). Instances are maps tagged {"__class": name}, so copies share
@@ -106,6 +107,7 @@ struct FieldDef {
     unsigned char kind = 0;
     bool isPublic = false;
     ExprPtr init;
+    mutable ChunkPtr initCode;   ///< `init` as bytecode, once used
 };
 struct MethodDef {
     FunctionDecl decl;
@@ -132,6 +134,9 @@ struct Program {
 };
 /// Fill prog.localNames (ParseSource does this).
 void CollectLocalNames(Program& prog);
+/// The names a function or lambda body declares (var, typed declarations, foreach, catch), in the order they first
+/// appear, not looking into lambdas; `statics` gets the ones declared `static`. The compiler gives these slots.
+void CollectBodyLocals(const StmtList& body, std::vector<std::string>& names, std::unordered_set<std::string>& statics);
 
 // ---- Expressions -------------------------------------------------------------------------------------------------
 struct NumberExpr : ExprOf<ExprKind::Number> { double v; explicit NumberExpr(double x) : v(x) {} std::string Dump() const override; };
@@ -255,6 +260,7 @@ struct LambdaExpr : ExprOf<ExprKind::Lambda> {
     std::vector<ExprPtr> defaults;
     StmtList body;
     mutable ChunkPtr code;   ///< `body` as bytecode, once it has run
+    mutable std::vector<ChunkPtr> defaultCode;   ///< the defaults as bytecode, once used
     std::string Dump() const override;
 };
 

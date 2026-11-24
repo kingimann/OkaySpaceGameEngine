@@ -1,0 +1,393 @@
+#### arith
+9800
+0 0 -1
+
+[s=9800]
+#### text
+a0a1a2a0a1a2a0a1a2a0a1a2 24
+12 x1.5
+
+[t=a0a1a2a0a1a2a0a1a2a0a1a2]
+#### compare
+true true false false true false true true true
+
+#### logic
+false true true false false false true
+34
+
+[n=34]
+#### ternary
+big 2
+
+[x=5]
+#### while
+1
+2
+4
+5
+6
+end 7
+
+[n=7]
+#### do
+2
+6
+8
+10
+10
+
+[n=10]
+#### for
+1
+3
+5
+7
+
+#### nested
+1 0
+2 0
+2 1
+
+#### switch_in_loop
+d 0
+after 0
+one
+after 1
+d 3
+after 3
+d 4
+after 4
+
+#### try_in_loop
+caught boom
+3
+
+[n=3]
+#### calls
+20 20 6 20
+
+[s=20]
+#### recursion
+610
+
+#### dynamic_scope
+42
+0
+
+#### shadow
+1
+2
+3
+1
+
+[x=1]
+#### lambda
+7
+101
+[3, 6, 9]
+
+[a=3]
+[r=[3, 6, 9]]
+#### lists
+[0, 1, 99, 9, 16] 125 5 0
+
+[s=125]
+#### foreach_flow
+1
+3
+4
+9 5
+7
+
+[q=0]
+#### maps
+1 0
+1
+
+[k=1]
+#### typed
+3
+9
+k
+
+[s=k]
+[n=9]
+#### const_error
+1
+ERROR runtime 3: 'c' is const, so it can't change after it's set
+[c=1]
+#### error_line
+before
+ERROR runtime 3: call to undefined function 'x.Nope'
+[s=0]
+#### throw_line
+1
+ERROR runtime 3: stop at 2
+#### stray_break
+1
+
+#### top_return
+1
+2
+
+#### fn_stray
+in
+out
+
+#### statics
+3
+
+#### classes
+3 3
+
+#### interp
+x is 8 and true
+
+[x=4]
+#### unset
+0 1 0 true
+
+#### vectors
+ERROR runtime 1: call to undefined function 'vec3'
+#### undefined_call
+1
+ERROR runtime 2: call to undefined function 'nope'
+#### compound
+3
+2
+
+[a=3]
+[b=2]
+#### nullish
+7
+3
+
+[c=7]
+[y=0]
+#### dotted
+3
+4
+5
+2 false
+
+#### dotted_assign
+ERROR runtime 1: call to undefined function 'vec3'
+#### member
+3 3 3
+ERROR runtime 8: no property 'k' on this value
+[n=0]
+#### member_error
+a
+ERROR runtime 3: no property 'Nope' on this value
+[n=5]
+#### member_set_error
+a
+ERROR runtime 3: can't set 'k': the object is null
+[n=0]
+#### lambdas
+16 3 6
+9
+11
+10
+-3
+
+#### new
+25 3
+3
+5
+ERROR runtime 9: call to undefined function 'Nope'
+#### switch
+one few many
+B
+C
+def
+one-fall
+i1
+loop 1
+loop 2
+text two
+end
+
+[t=b]
+[k=0]
+#### switch_stray_continue
+a
+
+#### try
+0
+after 0
+1
+caught big 2
+caught big 3
+call to undefined function 'nope'
+5
+1
+out in
+from fn 0
+error
+end
+
+[a=in]
+[b=out in]
+#### try_nocatch
+end
+
+#### try_error_after
+1
+2
+ERROR runtime 3: call to undefined function 'nope'
+#### typed_locals
+v3 true
+0 0
+ERROR runtime 3: 'k' is const, so it can't change after it's set
+#### typed_error
+a
+ERROR runtime 1: 'a' is an int, so it can't hold text (use int.Parse(text))
+#### typed_param_error
+2
+ERROR runtime 3: 'a' is an int, so it can't hold text (use int.Parse(text))
+#### interp2
+3 items, 6 wheels, 4!
+<1> <a> plain
+
+[s=3 items, 6 wheels, 4!]
+[n=3]
+#### casts
+3 -3 2.5 51 false A 65 0
+
+#### index_compound
+[6, 6, 4] xy xy 1
+0
+0
+idx
+idx
+9
+idx
+idx
+0 6
+
+[n=0]
+[q=5]
+#### named_args
+115 211
+8
+ERROR runtime 5: h() has no parameter 'x'
+#### named_builtin
+ERROR runtime 1: 'abs' doesn't take named arguments
+#### events
+2.5
+ab
+
+[s=ab]
+[score=2.5]
+#### dynamic2
+3
+99 0
+global
+3
+1 0
+5 0
+
+[q=global]
+#### recursion_locals
+3628800
+
+#### deep_recursion
+go
+ERROR runtime 1: r() calls itself too deeply (endless recursion?)
+#### foreach_slot
+9
+
+
+#### yield
+ERROR runtime 1: 'yield return' only works in a coroutine the host runs
+#### nullish_member
+none 0 0
+2 AB
+
+[s=ab]
+#### methods
+ABC bc
+ERROR runtime 3: call to undefined function 's.Nope'
+[s=abc]
+#### nested_lists
+[[1, 2], [3, [4, 5]]] 4 2
+[] 0
+
+#### compound_this
+22
+
+[c={__class: C, n: 22}]
+#### method_locals
+6
+
+#### globals_from_fn
+1 two 0
+
+[a=1]
+[b=two]
+#### var_in_loop
+12
+
+#### static_typed
+xx
+
+#### exit
+1
+EXIT 3
+#### dict
+5 xy 2 3 5
+a 5
+b 2
+s xy
+abs
+3 3 3
+
+#### loop_limit
+ERROR runtime 3: while loop exceeded iteration limit
+[n=1001]
+#### for_limit
+5
+ERROR runtime 1: for loop exceeded iteration limit
+#### cli:algorithms.okay
+primes: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+fib(25) = 75025
+and 2
+bat 1
+cat 1
+hat 1
+the 3
+odd sum 25
+
+#### cli:-dash.okay
+ran 0
+
+#### cli:exit_code.okay
+leaving with 3
+EXIT 3
+#### cli:runtime_error.okay
+before the error
+
+#### cli:native_arity.okay
+4
+ERROR runtime 3: input() takes 0 to 1 arguments, got 2
+#### cli:uncaught_throw.okay
+caught: hp can't be negative: -1
+ERROR runtime 3: hp can't be negative: -5
+#### cli:main_args.okay
+top level first, args: 0
+
+#### cli:text_limit.okay
+ERROR runtime 2: text too long (more than 67108864 characters)
+[s=<67108864 characters>]
+#### cli:exit_clamp.okay
+big
+EXIT 255
+#### cli:lexer_error.okay
+ERROR syntax 2: unexpected character '@'
+#### cli:hello.okay
+Hello from OkayScript
+hello, world!
+
+#### cli:syntax_error.okay
+ERROR syntax 4: parse error: expected ')', got '{'

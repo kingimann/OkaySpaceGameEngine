@@ -1,11 +1,13 @@
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/StringId.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 namespace okay {
@@ -60,16 +62,14 @@ int TriMesh::ClosedWinding() const {
     m_winding = 0;
     const std::size_t n = m_tri.size() / 3;
     if (n < 4) return 0;
-    auto bits = [](float f) {   // -0 and +0 are the same corner (compared as bits, so a fast-math build keeps them apart no more)
-        std::uint32_t u;
-        std::memcpy(&u, &f, sizeof u);
-        return (std::uint64_t)((u & 0x7fffffffu) == 0 ? 0u : u);
-    };
-    auto vertexKey = [&](const Vec3& v) {
-        std::uint64_t h = 1469598103934665603ull;
-        for (float f : {v.x, v.y, v.z}) h = (h ^ bits(f)) * 1099511628211ull;
-        h ^= h >> 29;
-        return h * 0xbf58476d1ce4e5b9ull;
+    auto vertexKey = [](const Vec3& v) {   // the corner's coordinates as bits, -0 and +0 alike, hashed with the engine's string hash
+        std::uint32_t w[3];
+        const float f[3] = {v.x, v.y, v.z};
+        for (int i = 0; i < 3; ++i) {
+            std::memcpy(&w[i], &f[i], sizeof(std::uint32_t));
+            if ((w[i] & 0x7fffffffu) == 0) w[i] = 0;
+        }
+        return (std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(w), sizeof w));
     };
     struct Edge { std::uint64_t key; std::uint8_t forward; };
     std::vector<Edge> edges;
@@ -82,7 +82,9 @@ int TriMesh::ClosedWinding() const {
             const std::uint64_t a = k[e], b = k[(e + 1) % 3];
             if (a == b) return 0;
             const std::uint64_t lo = std::min(a, b), hi = std::max(a, b);
-            edges.push_back({lo * 0x9e3779b97f4a7c15ull ^ (hi + 0x7f4a7c15ull + (lo << 6) + (lo >> 2)), (std::uint8_t)(a < b ? 1 : 0)});
+            const std::uint64_t ends[2] = {lo, hi};
+            edges.push_back({(std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(ends), sizeof ends)),
+                             (std::uint8_t)(a < b ? 1 : 0)});
         }
         const Vec3 cr = Vec3::Cross(c[1], c[2]);
         volume += (double)c[0].x * cr.x + (double)c[0].y * cr.y + (double)c[0].z * cr.z;

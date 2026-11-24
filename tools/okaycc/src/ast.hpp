@@ -35,7 +35,9 @@ struct Param {
     int bits = -1;
     std::string mangled;
     int vslot = -1;     // virtual function table slot, or -1
+    bool cmethod = false;  // a const member function (mangled _ZNK...)
     bool pure = false;  // declared "= 0"
+    std::unique_ptr<Expr> defArg;  // a default argument ([dcl.fct.default]), or null
     Param();
     Param(Param&&) noexcept;
     Param& operator=(Param&&) noexcept;
@@ -122,8 +124,21 @@ struct Stmt {
     ~Stmt();
 };
 
+// A lambda expression ([expr.prim.lambda]). The parser makes its function (a static function whose
+// first parameter __self points to the closure object); the checker decides the captures while it
+// checks the body inside the enclosing function, gives the closure class its fields and appends
+// the function to the translation unit.
+struct LambdaInfo {
+    std::unique_ptr<Decl> fn;
+    std::string tag;     // the closure class
+    int mode = 0;        // capture default: 0 none, 1 [&], 2 [=]
+    std::vector<std::pair<std::string, bool>> caps;  // explicit captures: name, by reference
+    bool done = false;
+};
+
 struct Tu {
     std::vector<std::unique_ptr<Decl>> decls;
+    std::vector<LambdaInfo> lambdas;
 };
 
 std::unique_ptr<Type> cloneType(const Type& t);

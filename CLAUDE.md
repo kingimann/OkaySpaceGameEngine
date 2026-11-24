@@ -27,10 +27,11 @@ then this file gets updated. Keep this file short and true.
      duplicate found later is compared first, then merged or deleted.
    - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
      polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
-2a. **Do not give the other Claudes tasks.** (Owner rule, 2026-11-17: "stop giving claude 2 tasks".) The coordinator and its
-    agents do not assign, request or queue work for Claude 2 or Claude 3, and do not post task requests for them on issue #422.
-    Each Claude chooses and claims its own work in its lane (rule 2). If another Claude's branch or PR needs fixing, fix it
-    yourself (rules 8 and 25) and do not ask that Claude to.
+2a. **Hand work over on issue #422 when the owner asks.** (Owner rule, 2026-11-23: "communicate with other claude and give
+    him some of your tasks too do". This replaces 2026-11-17's "stop giving claude 2 tasks".) A session may post a list of
+    tasks it hands over on #422, each with what exists, the gap and what it waits on; the other Claude claims what it takes
+    with a normal `Claim:` (rule 26). Do not assign work silently or push to another Claude's branch; if a branch needs
+    fixing, fix it yourself (rules 8 and 25).
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something

@@ -601,6 +601,16 @@ int main() {
         CHECK(n == 1 && Has(out, "\"../far/x.png\""));
         out = RewriteReferences("scene \"S\"\ngameobject \"A\"\n  sprite texture \"http://x/a/x.png\"\n", td.at("s.okayscene"), td.at("s.okayscene"), m, td.assets(), &n);
         CHECK(n == 0);
+
+        WriteFile(td.at("tex/hero.mtl"), "newmtl x\n");
+        WriteFile(td.at("tex/new.mtl"), "newmtl y\n");
+        const std::string obj = "mtllib tex/hero.mtl\n";
+        PathMap mats{{td.at("tex/hero.mtl"), td.at("tex/new.mtl")}};
+        out = RewriteReferences(obj, td.at("models/hero.obj"), td.at("models/hero.obj"), mats, td.assets(), &n);
+        CHECK(n == 1 && Has(out, "tex/new.mtl"));
+        std::string fbx = std::string("Kaydara FBX Binary ") + '\0' + "mtllib tex/hero.mtl\n";
+        out = RewriteReferences(fbx, td.at("models/hero.fbx"), td.at("models/hero.fbx"), mats, td.assets(), &n);
+        CHECK(n == 0 && out == fbx);
     }
 
     RUN_SUITE("nothing outside the project");

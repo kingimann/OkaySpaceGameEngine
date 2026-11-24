@@ -299,7 +299,8 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
-    // Models stay out of UsedBy until rename uses this extractor. A binary .fbx must not be rewritten by a path splice.
+    // Text models use the same extractor the project panel rewrites with. Binary .fbx stays out.
+    RegisterExtractor("model", {"obj", "mtl", "dae"}, wrap(&ExtractModelRefs));
 }
 
 void AssetDatabase::RegisterExtractor(const std::string& name, const std::vector<std::string>& extensions, RefExtractor extractor) {

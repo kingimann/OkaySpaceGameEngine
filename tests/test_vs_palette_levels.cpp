@@ -69,7 +69,7 @@ int main() {
     std::printf("  nodes with a level and help: %d hand-written, %d script bindings\n", hand, api);
 
     // The logic-runtime branch's new nodes share this table, so they get a level too.
-    CHECK(VsSharedLevelCount() == 84);
+    CHECK(VsSharedLevelCount() == 86);   // 84 + On Damaged and On Button Clicked (#1166)
     for (int i = 0; i < VsSharedLevelCount(); ++i) {
         CHECK(kSharedLevels[i].type && kSharedLevels[i].type[0]);
         CHECK(VsLevelForNode(kSharedLevels[i].type) == kSharedLevels[i].level);

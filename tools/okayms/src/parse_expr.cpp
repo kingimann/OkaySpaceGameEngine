@@ -592,12 +592,22 @@ bool Parser::static_type(const Node& node, Type* out) const {
             Type ct;
             if (static_type(callee, &ct) && ct.func_id >= 0 && ct.func_id < static_cast<int>(func_types.size())) {
                 *out = func_types[static_cast<size_t>(ct.func_id)].ret;
+                if (out->is_ref) {  // the call gives the address (fp_reference_result reads through it)
+                    out->is_ref = false;
+                    out->rref = false;
+                    out->pointers += 1;
+                }
                 return true;
             }
         } else if (!node.kids.empty()) {
             Type ct;
             if (static_type(node.kids[0], &ct) && ct.func_id >= 0 && ct.func_id < static_cast<int>(func_types.size())) {
                 *out = func_types[static_cast<size_t>(ct.func_id)].ret;
+                if (out->is_ref) {
+                    out->is_ref = false;
+                    out->rref = false;
+                    out->pointers += 1;
+                }
                 return true;
             }
         }
@@ -742,12 +752,14 @@ bool Parser::parse_new(Node* out) {
     }
     std::string tctor;
     if (!ensure_ctor_template(ty.struct_id, args, &tctor)) return false;
-    const Method* m = find_ctor(ty.struct_id, args);
-    if (!tctor.empty()) m = find_ctor_instance(ty.struct_id, tctor);
-    if (m == nullptr) {
+    const Method* found_m = find_ctor(ty.struct_id, args);
+    if (!tctor.empty()) found_m = find_ctor_instance(ty.struct_id, tctor);
+    if (found_m == nullptr) {
         error = "no matching constructor in " + structs[static_cast<size_t>(ty.struct_id)].name;
         return false;
     }
+    const Method m_copy = *found_m;  // adjust_args can move the class's methods (constructor template instances)
+    const Method* m = &m_copy;
     if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
     if (!adjust_args(m->params, &args)) return false;
     Node call;
@@ -903,6 +915,10 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = 1;
         return true;
     }
+    if (is(TIdent) && cur().text == "typeid" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen)
+        return parse_typeid(out) && parse_postfix(out);
+    if (is(TIdent) && cur().text.compare(0, 5, "__is_") == 0 && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen)
+        return parse_type_trait(out);
     if (is(TSizeof)) {
         next();
         // sizeof unary-expression has no parentheses ([expr.sizeof]); sizeof ( type ) has them.
@@ -1027,6 +1043,12 @@ bool Parser::parse_unary(Node* out) {
             out->type.is_unsigned = cur().ity == 1 || cur().ity == 3;
             // A number is kept in the form its type gives: sign-extended int, zero-extended unsigned int.
             if (cur().ity == 0) out->number = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(out->number)));
+            if (cur().ity == 5 || cur().ity == 6) {
+                out->type.wide = false;
+                out->type.is_unsigned = false;
+                // ([lex.ccon], [lex.bool]): 'a' is a char and true a bool, so f(char) and f(bool) are chosen over f(int)
+                out->text = cur().ity == 5 ? "char" : "bool";
+            }
         }
         next();
     } else if (is(TString)) {
@@ -1238,6 +1260,24 @@ bool Parser::parse_unary(Node* out) {
                 if (!braced_temp(bsid, out)) return false;
                 return parse_postfix(out);
             }
+            if (btd != typedefs.end() && !named_function && btd->second.base != 3 && !btd->second.is_array()) {
+                // T{} and T{v} for a scalar or enumeration type: zero, or v converted ([expr.type.conv] 2, [dcl.init.list]).
+                const Type st = btd->second;
+                next();
+                Node value;
+                if (accept(TRBrace)) {
+                    value.kind = Node::IntLit;
+                    value.number = 0;
+                    value.type.base = 1;
+                } else {
+                    if (!parse_expr(1, &value)) return false;
+                    if (!expect(TRBrace, "'}'")) return false;
+                }
+                out->kind = Node::Unary;
+                out->type = st;
+                out->kids.push_back(std::move(value));
+                return parse_postfix(out);
+            }
         }
         if (is(TLParen) && colons == std::string::npos && !local_visible(name) && cur_locals != nullptr) {
             // C(args): a temporary object of a class built by a constructor ([expr.type.conv]). It is
@@ -1376,6 +1416,13 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::Call;
             out->text = name;
             if (!parse_call_args(&out->kids)) return false;
+            if (local_visible(name)) {
+                Type fpt;
+                if (static_type(node_name(name), &fpt)) {
+                    if (!adjust_fp_args(fpt, &out->kids, 0)) return false;
+                    fp_reference_result(fpt, out);
+                }
+            }
             if (!local_visible(name)) {
                 const std::string picked = pick_free(name, out->kids);
                 if (!picked.empty()) {
@@ -1400,12 +1447,38 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::IntLit;
             out->number = enum_values[name];
             out->type.base = 1;
+            out->type.enum_id = enum_id_of(name);
+        } else if (class_enumerator(name, &out->number)) {
+            // In::P1: an enumerator of an unscoped enumeration declared in class In ([class.member.lookup]); enumerators are
+            // kept in one table here.
+            out->kind = Node::IntLit;
+            out->type.base = 1;
+            out->type.enum_id = enum_id_of(name.substr(name.rfind("::") + 2));
         } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
                    !is(TMinusMinus) && global_const_node(name, out)) {
             // A const global with a constant initializer is a constant ([expr.const]).
         } else {
             out->kind = Node::Name;
             out->text = name;
+            if (!local_visible(name) && !names_function(name)) {
+                // std::hex used as a value: the namespace qualifier was dropped (namespaces are flat for names that
+                // are not called), so the function is found by its last name part when exactly one has it.
+                bool is_global = false;
+                for (const Global& g : globals)
+                    if (g.name == name) is_global = true;
+                if (!is_global) {
+                    std::string only;
+                    int count = 0;
+                    const std::string tail = "::" + name;
+                    for (const FuncDecl& f : funcs)
+                        if (f.name.size() > tail.size() && f.name.compare(f.name.size() - tail.size(), tail.size(), tail) == 0 &&
+                            f.name != only) {
+                            only = f.name;
+                            ++count;
+                        }
+                    if (count == 1) out->text = only;
+                }
+            }
         }
     } else if (is(TLParen)) {
         const Tok ahead = at + 1 < tokens.size() ? tokens[at + 1].kind : TEnd;
@@ -1414,7 +1487,19 @@ bool Parser::parse_unary(Node* out) {
                                 ahead == TUnion || ahead == TEnum ||
                                 (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
+        // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
+        // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
+        bool functional = false;
         if (type_ahead) {
+            size_t k = at + 1;
+            if (tokens[k].kind == TIdent) {
+                ++k;
+            } else {
+                k = after_type_keywords(k);
+            }
+            functional = k > at + 1 && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
+        }
+        if (type_ahead && !functional) {
             next();
             Type ty;
             bool imp = false;
@@ -1544,12 +1629,7 @@ bool Parser::parse_unary(Node* out) {
                 is(TLong)) &&
                [&]() {
                    // int(x), unsigned(x), float(x): a type name of keywords written like a call.
-                   size_t k = at;
-                   while (k < tokens.size() && (tokens[k].kind == TInt || tokens[k].kind == TFloat || tokens[k].kind == TDouble ||
-                                                tokens[k].kind == TChar || tokens[k].kind == TShort ||
-                                                tokens[k].kind == TUnsigned || tokens[k].kind == TSigned ||
-                                                tokens[k].kind == TLong))
-                       ++k;
+                   const size_t k = after_type_keywords(at);
                    return k < tokens.size() && tokens[k].kind == TLParen;
                }()) {
         Type ty;
@@ -1624,13 +1704,16 @@ bool Parser::parse_postfix(Node* out) {
             Node call;
             call.kind = Node::Call;
             call.kids.push_back(std::move(*out));
-            if (!accept(TRParen)) {
-                do {
-                    Node arg;
-                    if (!parse_expr(1, &arg)) return false;
-                    call.kids.push_back(std::move(arg));
-                } while (accept(TComma));
-                if (!expect(TRParen, "')'")) return false;
+            {
+                // A call through a function pointer: the arguments as for any call (a pack expands, fn(args...)).
+                std::vector<Node> pargs;
+                if (!parse_call_args(&pargs)) return false;
+                for (Node& a : pargs) call.kids.push_back(std::move(a));
+                Type fpt;
+                if (static_type(call.kids[0], &fpt)) {
+                    if (!adjust_fp_args(fpt, &call.kids, 1)) return false;
+                    fp_reference_result(fpt, &call);
+                }
             }
             *out = std::move(call);
             continue;
@@ -1860,6 +1943,206 @@ bool Parser::parse_expr(int min_prec, Node* out) {
     return true;
 }
 
+
+// typeid(type) and typeid(expression) ([expr.typeid]): an lvalue of std::type_info (from <typeinfo>). For an object of a
+// class with virtual functions (named, a member, an element or *p) the type is read at run time from the slot before
+// its virtual table; otherwise it is the static type, with references, top-level const and the array of a name kept
+// as written. Own model (see type_info_symbol).
+bool Parser::parse_typeid(Node* out) {
+    next();  // typeid
+    next();  // (
+    const int ti_sid = find_struct("type_info");
+    if (ti_sid < 0) {
+        error = "typeid needs #include <typeinfo>";
+        return false;
+    }
+    Type ti_ptr;
+    ti_ptr.base = 3;
+    ti_ptr.struct_id = ti_sid;
+    ti_ptr.pointers = 1;
+    Type ty;
+    Node inner;
+    bool dynamic = false;
+    const bool plain_struct = is(TIdent) && find_struct(cur().text) >= 0 && !local_visible(cur().text) &&
+                              at + 1 < tokens.size() &&
+                              (tokens[at + 1].kind == TRParen || tokens[at + 1].kind == TStar || tokens[at + 1].kind == TAmp);
+    if ((is_decl_start() || plain_struct) && !is(TStatic)) {
+        bool imp = false;
+        bool exp = false;
+        if (plain_struct) {
+            ty = Type{};
+            ty.base = 3;
+            ty.struct_id = find_struct(cur().text);
+            next();
+        } else if (!parse_type(&ty, &imp, &exp)) {
+            return false;
+        }
+        while (accept(TStar)) ++ty.pointers;
+        if (accept(TAmp)) ty.is_ref = true;
+        else if (accept(TAndAnd)) ty.is_ref = true;
+        if (!parse_brackets(&ty)) return false;
+    } else {
+        if (!parse_expr(1, &inner)) return false;
+        if (!static_type(inner, &ty)) {
+            error = "typeid of an expression whose type is not known";
+            return false;
+        }
+        const bool object = inner.kind == Node::Name || inner.kind == Node::Field || inner.kind == Node::Index ||
+                            (inner.kind == Node::Unary && inner.op == TStar);
+        dynamic = object && ty.base == 3 && ty.pointers == 0 && !ty.is_array() && ty.struct_id >= 0 &&
+                  structs[static_cast<size_t>(ty.struct_id)].poly;
+    }
+    if (!expect(TRParen, "')'")) return false;
+    Node ptr;
+    if (dynamic) {
+        // *((type_info **)obj.__vptr - 1)
+        Node vptr;
+        vptr.kind = Node::Field;
+        vptr.op = TDot;
+        vptr.text = "__vptr";
+        vptr.kids.push_back(std::move(inner));
+        Node as_pp;
+        as_pp.kind = Node::Unary;
+        as_pp.type = ti_ptr;
+        as_pp.type.pointers = 2;
+        as_pp.kids.push_back(std::move(vptr));
+        Node one;
+        one.kind = Node::IntLit;
+        one.number = 1;
+        one.type.base = 1;
+        Node back;
+        back.kind = Node::Binary;
+        back.op = TMinus;
+        back.kids.push_back(std::move(as_pp));
+        back.kids.push_back(std::move(one));
+        ptr.kind = Node::Unary;
+        ptr.op = TStar;
+        ptr.kids.push_back(std::move(back));
+    } else {
+        // [expr.typeid] 5: references and cv-qualifiers on the type are ignored.
+        ty.is_ref = false;
+        ty.rref = false;
+        ty.is_const = false;
+        ty.pconst = false;
+        const bool cls = ty.base == 3 && ty.pointers == 0 && !ty.is_array() && ty.struct_id >= 0;
+        const std::string sym = cls ? type_info_symbol(ty.struct_id, structs[static_cast<size_t>(ty.struct_id)].symname())
+                                    : type_info_symbol(-1, cxx_type(ty, &structs));
+        Node addr = node_addr(node_name(sym));
+        ptr.kind = Node::Unary;
+        ptr.type = ti_ptr;
+        ptr.kids.push_back(std::move(addr));
+    }
+    *out = Node{};
+    out->kind = Node::Unary;
+    out->op = TStar;
+    out->kids.push_back(std::move(ptr));
+    return true;
+}
+
+// The type-trait intrinsics <type_traits> is built on, written from the trait definitions of ISO/IEC 14882 [meta.unary.cat],
+// [meta.unary.prop] and [meta.rel] (the names follow the compiler intrinsics MSVC documents; the code is our own). Each is a
+// constant 1 or 0 of type bool. __is_final is 0 (okay-ms drops `final`).
+bool Parser::parse_type_trait(Node* out) {
+    const std::string which = cur().text;
+    next();
+    next();
+    std::vector<Type> types;
+    while (!is(TRParen) && !is(TEnd)) {
+        Type t;
+        bool imp = false;
+        bool exp = false;
+        if (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.count(cur().text) == 0) {
+            t = Type{};
+            t.base = 3;
+            t.struct_id = find_struct(cur().text);
+            next();
+        } else if (!parse_type(&t, &imp, &exp)) {
+            return false;
+        }
+        while (accept(TStar)) ++t.pointers;
+        if (accept(TAmp) || accept(TAndAnd)) t.is_ref = true;
+        if (!parse_brackets(&t)) return false;
+        types.push_back(t);
+        if (!accept(TComma)) break;
+    }
+    if (!expect(TRParen, "')'")) return false;
+    auto is_cls = [&](const Type& t) {
+        return t.base == 3 && t.pointers == 0 && !t.is_ref && !t.is_array() && t.struct_id >= 0;
+    };
+    bool v = false;
+    if (types.empty()) {
+        error = which + " needs a type";
+        return false;
+    }
+    const Type& a = types[0];
+    if (which == "__is_enum") v = a.is_enum() && a.pointers == 0 && !a.is_ref && !a.is_array();
+    else if (which == "__is_class") v = is_cls(a) && !structs[static_cast<size_t>(a.struct_id)].is_union;
+    else if (which == "__is_union") v = is_cls(a) && structs[static_cast<size_t>(a.struct_id)].is_union;
+    else if (which == "__is_polymorphic") v = is_cls(a) && structs[static_cast<size_t>(a.struct_id)].poly;
+    else if (which == "__is_abstract") {
+        if (is_cls(a))
+            for (const Method& m : structs[static_cast<size_t>(a.struct_id)].methods)
+                if (m.pure) v = true;
+    } else if (which == "__is_empty") {
+        v = is_cls(a) && !structs[static_cast<size_t>(a.struct_id)].poly;
+        if (v)
+            for (const Field& f : structs[static_cast<size_t>(a.struct_id)].fields)
+                if (f.name != "__vptr") v = false;
+    } else if (which == "__is_final") {
+        v = false;
+    } else if (which == "__is_trivially_destructible") {
+        v = !is_cls(a) || !class_needs_dtor(structs[static_cast<size_t>(a.struct_id)]);
+    } else if (which == "__has_virtual_destructor") {
+        if (is_cls(a))
+            for (const Method& m : structs[static_cast<size_t>(a.struct_id)].methods)
+                if (m.name == "<dtor>" && m.is_virtual) v = true;
+    } else if (which == "__is_trivially_copyable") {
+        v = !is_cls(a) || (!class_needs_dtor(structs[static_cast<size_t>(a.struct_id)]) &&
+                           !structs[static_cast<size_t>(a.struct_id)].poly && copy_ctor(a.struct_id) == nullptr);
+    } else if (which == "__is_constructible") {
+        // T(args) for the argument types given; for a class: a constructor of that arity, or none written (an
+        // aggregate or the implicit default constructor) when there are no arguments.
+        if (!is_cls(a)) {
+            v = types.size() <= 2;
+        } else {
+            const StructDef& d = structs[static_cast<size_t>(a.struct_id)];
+            bool any_ctor = false;
+            for (const Method& m : d.methods)
+                if (m.name == "<ctor>") {
+                    if (!m.implicit) any_ctor = true;
+                    if (m.params.size() >= types.size() - 1 &&
+                        required_args(m.defaults, m.params.size()) <= types.size() - 1)
+                        v = true;
+                }
+            if (!any_ctor && types.size() == 1) v = true;
+            if (has_ctor_template(a.struct_id)) v = true;
+        }
+    } else if (which == "__is_base_of") {
+        if (types.size() != 2) {
+            error = "__is_base_of needs two types";
+            return false;
+        }
+        const Type& b = types[1];
+        v = is_cls(a) && is_cls(b) && (a.struct_id == b.struct_id || derives_from(b.struct_id, a.struct_id));
+    } else if (which == "__is_convertible_to") {
+        if (types.size() != 2) {
+            error = "__is_convertible_to needs two types";
+            return false;
+        }
+        const Type& b = types[1];
+        if (is_cls(b)) v = (is_cls(a) && (a.struct_id == b.struct_id || derives_from(a.struct_id, b.struct_id))) ||
+                           (!is_cls(a) && converts_by_ctor(b.struct_id, Node{}, a));
+        else v = !is_cls(a) && a.pointers == b.pointers && (a.pointers == 0 || a.base == b.base || b.base == 0);
+    } else {
+        error = "unknown type trait " + which;
+        return false;
+    }
+    *out = Node{};
+    out->kind = Node::IntLit;
+    out->number = v ? 1 : 0;
+    out->type.base = 1;
+    return parse_postfix(out);
+}
 
 }  // namespace compiler
 }  // namespace okayms

@@ -754,9 +754,9 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 - `SceneHasTerrain` function, line 96: True when the scene has a heightmap Terrain (a ray can hit one, an overlap box cannot).
 - `AnySolidNear` function, line 115: Could a solid collider (alive, not a trigger, not part of 'self') reach into the world box [mn, mx]?
 - `GroundSense` struct, line 133: What a controller learns about the ground from the contacts the physics step reports. The contact normal
-- `IsPushableBody` function, line 167: The wall a body is pressed against (a horizontal contact normal), so that pushing into it asks for the slide
-- `WallSense` struct, line 173
-- `PlayerDebugState` struct, line 195: What a controller saw and did on its last step, for the on-screen player numbers (see PlayerDebug.hpp).
+- `IsPushableBody` function, line 176: The wall a body is pressed against (a horizontal contact normal), so that pushing into it asks for the slide
+- `WallSense` struct, line 182
+- `PlayerDebugState` struct, line 204: What a controller saw and did on its last step, for the on-screen player numbers (see PlayerDebug.hpp).
 
 ## `engine/include/okay/Components/PlayerView.hpp`
 

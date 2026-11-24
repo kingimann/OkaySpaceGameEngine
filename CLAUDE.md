@@ -261,8 +261,9 @@ then this file gets updated. Keep this file short and true.
     or other restricted Xbox code. Code lives in its own isolated folder behind a CMake option that is OFF by default,
     and existing Windows export must keep working. Say "unverified" for anything not built and packaged on Windows, and
     never claim console hardware support without a test on a real console. Rule 19a still holds for everything else.
-24c. **Exception: C# scripting through the Microsoft .NET runtime (owner 2026-11-19: "Yes go ahead with c#"; the owner also
-    decided to replace our own OkayScript languages with C# and Lua, and Visual Script stays the main way to script).**
+24c. **Exception: C# scripting through the Microsoft .NET runtime (owner 2026-11-19: "Yes go ahead with c#"; on 2026-11-24
+    the owner kept OkayScript: "no i still want c# and lua as alternatives". Visual Script stays the main way to script;
+    OkayScript is our own text language, and C# and Lua are alternatives next to it).**
     The .NET runtime (CoreCLR, MIT licence) may be loaded at run time through its documented hosting API (hostfxr) to run C#
     scripts, and the Roslyn compiler of a .NET SDK the developer installs may be run as a build tool, like MSVC (rule 24b).
     Nothing from the runtime, the SDK or NuGet is copied or linked into the repository; our hosting code and our managed API
@@ -270,8 +271,8 @@ then this file gets updated. Keep this file short and true.
     a game with no C# scripts ships no runtime. Exported C# games ship the runtime files with their MIT notice in
     `docs/status/THIRD_PARTY.md`. Windows only (rule 14). Say "unverified" for anything not built and run on Windows. This allows no
     other SDK or library, and rule 19a still holds for everything else. Lua is written by us from the Lua manual (no Lua
-    code). Our own OkayScript is deleted only after the replacements work and the owner confirms (plan:
-    `docs/scripting_migration.md`).
+    code). OkayScript is not deleted: it is being made a standalone language (`okayscript/`, its own `okayscript` command
+    line, then the engine on it; owner 2026-11-24), and C# and Lua stay as alternatives.
 24d. **Exception: Microsoft's public Windows SDK and Visual Studio build tools for Windows work (owner 2026-11-20: "Yes",
     after "I'm gonna have other guy start working on windows sdk"; widens rule 24b beyond Xbox).** They may be used as build,
     test and debugging tools on Windows machines and CI runners: building and testing Windows programs (including an MSVC

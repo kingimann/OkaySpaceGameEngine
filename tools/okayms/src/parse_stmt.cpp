@@ -75,6 +75,16 @@ bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<
         return true;
     }
     if (node.kind != Node::IntLit) {
+        if (dyn_leaves != nullptr && type.bits < 0 && !type.is_array() && !type.is_ref) {
+            // Not a constant: zero here, stored at run time ([basic.start.dynamic]).
+            ensure(at + std::max(1, size_of(type)));
+            DynLeaf leaf;
+            leaf.at = at;
+            leaf.type = type;
+            leaf.value = node;
+            dyn_leaves->push_back(std::move(leaf));
+            return true;
+        }
         error = "global initializer must be a constant";
         return false;
     }
@@ -107,6 +117,104 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
     }
     pop_scope();
     return expect(TRBrace, "'}'");
+}
+
+// The guard of a static local with a dynamic initializer ([stmt.dcl]): a hidden flag, and the block that runs the first
+// time control reaches the declaration. The block starts with what the initializer needs before it (hidden temporaries
+// made for reference arguments), so those are made only once too; they are destroyed at the end of the block.
+bool Parser::static_guard_block(const std::string& symbol, Node* then_block) {
+    Global guard;
+    guard.name = symbol + "_guard";
+    guard.type.base = 1;
+    guard.bss = true;
+    guard.is_static = true;
+    globals.push_back(guard);
+    then_block->kind = Node::Block;
+    for (Node& n : stmt_pre) then_block->kids.push_back(std::move(n));
+    stmt_pre.clear();
+    return true;
+}
+
+void Parser::finish_static_guard(Node* then_block, Node init_stmt, const std::string& symbol, Node* out) {
+    if (!(init_stmt.kind == Node::Block && init_stmt.kids.empty())) then_block->kids.push_back(std::move(init_stmt));
+    for (size_t i = stmt_temps.size(); i-- > 0;) {
+        Node call;
+        if (special_call(stmt_temps[i].sid, "<dtor>", node_addr(node_name(stmt_temps[i].name)), {}, &call))
+            then_block->kids.push_back(std::move(call));
+    }
+    stmt_temps.clear();
+    // The flag is set once the value is there ([stmt.dcl] 4).
+    Node set;
+    set.kind = Node::Assign;
+    set.op = TAssign;
+    set.kids.push_back(node_name(symbol + "_guard"));
+    Node one;
+    one.kind = Node::IntLit;
+    one.number = 1;
+    one.type.base = 1;
+    set.kids.push_back(std::move(one));
+    Node set_stmt;
+    set_stmt.kind = Node::ExprStmt;
+    set_stmt.kids.push_back(std::move(set));
+    then_block->kids.push_back(std::move(set_stmt));
+    Node not_g;
+    not_g.kind = Node::Unary;
+    not_g.op = TNot;
+    not_g.kids.push_back(node_name(symbol + "_guard"));
+    Node test;
+    test.kind = Node::If;
+    test.kids.push_back(std::move(not_g));
+    test.kids.push_back(std::move(*then_block));
+    out->kids.push_back(std::move(test));
+}
+
+// Steps over one statement without compiling it (the branch an if constexpr does not take).
+bool Parser::skip_stmt() {
+    auto skip_group = [&](Tok open, Tok close) {
+        int depth = 0;
+        do {
+            if (is(open)) ++depth;
+            else if (is(close)) --depth;
+            next();
+        } while (depth > 0 && !is(TEnd));
+    };
+    if (is(TLBrace)) {
+        skip_group(TLBrace, TRBrace);
+        return true;
+    }
+    if (is(TIf)) {
+        next();
+        if (is(TConst)) next();
+        if (!is(TLParen)) return expect(TLParen, "'('");
+        skip_group(TLParen, TRParen);
+        if (!skip_stmt()) return false;
+        if (accept(TElse)) return skip_stmt();
+        return true;
+    }
+    if (is(TFor) || is(TWhile) || is(TSwitch)) {
+        next();
+        if (!is(TLParen)) return expect(TLParen, "'('");
+        skip_group(TLParen, TRParen);
+        return skip_stmt();
+    }
+    if (is(TDo)) {
+        next();
+        if (!skip_stmt()) return false;
+        if (!accept(TWhile)) return expect(TWhile, "'while'");
+        skip_group(TLParen, TRParen);
+        return expect(TSemi, "';'");
+    }
+    int depth = 0;
+    while (!is(TEnd)) {
+        if (is(TLParen) || is(TLBrace) || is(TLBrack)) ++depth;
+        else if (is(TRParen) || is(TRBrace) || is(TRBrack)) --depth;
+        else if (is(TSemi) && depth == 0) {
+            next();
+            return true;
+        }
+        next();
+    }
+    return expect(TSemi, "';'");
 }
 
 // A statement, preceded by the assignments that give hidden locals their values for references
@@ -262,6 +370,37 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Node stmt;
         if (!parse_stmt(&stmt, locals)) return false;
         out->kids.push_back(std::move(stmt));
+        return true;
+    }
+    if (is(TIf) && at + 1 < tokens.size() && tokens[at + 1].kind == TConst) {
+        // if constexpr (cond) ([stmt.if] 2): the condition is a constant; only the branch it picks is compiled, the
+        // other one is stepped over as tokens (in a template it may not compile for these arguments).
+        next();
+        next();
+        if (!expect(TLParen, "'('")) return false;
+        Node cond;
+        if (!parse_expr(0, &cond)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        if (cond.kind != Node::IntLit) {
+            error = "the condition of if constexpr is not a constant here";
+            return false;
+        }
+        const bool taken = cond.number != 0;
+        out->kind = Node::Block;
+        Node chosen;
+        if (taken) {
+            if (!parse_stmt(&chosen, locals)) return false;
+        } else if (!skip_stmt()) {
+            return false;
+        }
+        if (accept(TElse)) {
+            if (!taken) {
+                if (!parse_stmt(&chosen, locals)) return false;
+            } else if (!skip_stmt()) {
+                return false;
+            }
+        }
+        out->kids.push_back(std::move(chosen));
         return true;
     }
     if (is(TIf)) {
@@ -756,6 +895,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         return false;
     }
     decl.type.is_const = is_const;
+    if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
+        structs[static_cast<size_t>(decl.type.struct_id)].incomplete) {
+        error = "variable " + decl.name + " has the incomplete type " + structs[static_cast<size_t>(decl.type.struct_id)].name;
+        return false;
+    }
     Local local;
     local.name = decl.name;
     local.type = decl.type;
@@ -772,7 +916,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             has_preset = false;
         } else if (have_paren_init) {
             init = std::move(paren_init);
-        } else if (is(TLBrace) && !is_static && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
+        } else if (is(TLBrace) && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
                    tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &list_type_local)) {
             // C x = {a, b}; for a class with an initializer-list constructor.
             Node list;
@@ -802,25 +946,33 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             // C x = value; with a value that is not an object of a class (std::string s = "abc"; V v = 5;): a converting
             // constructor makes x from it ([dcl.init], copy-initialisation, with the copy elided).
             Type from;
-            if (static_type(init, &from) && !(from.base == 3 && from.pointers == 0 && !from.is_array())) {
+            // An object of another class that a constructor takes (a lambda for std::function) is converted the same
+            // way ([over.match.copy]).
+            if (static_type(init, &from) &&
+                (!(from.base == 3 && from.pointers == 0 && !from.is_array()) ||
+                 (from.struct_id != decl.type.struct_id && !derives_from(from.struct_id, decl.type.struct_id) &&
+                  (converts_by_ctor(decl.type.struct_id, init, from) || has_ctor_template(decl.type.struct_id))))) {
                 ctor_args.push_back(std::move(init));
                 have_ctor_args = true;
                 has_init = false;
             }
         }
     }
+    bool static_dyn = false;
+    std::vector<DynLeaf> static_leaves;
     if (is_static) {
         Global global;
         global.name = current_fn + "_" + decl.name + "_" + std::to_string(globals.size());
         global.type = decl.type;
         global.is_static = true;
         global.bss = true;
-        if (has_init) {
+        if (has_init && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {
+            static_dyn = true;  // static C x = value; : a constructor under the guard below
+        } else if (has_init) {
             global.bss = false;
-            init_relocs = &global.addr_relocs;  // a static array of string pointers: the addresses are relocations
-            const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
-            init_relocs = nullptr;
-            if (!flat_ok) return false;
+            // A static array of string pointers: the addresses are relocations. A part that is not a constant
+            // (static T v = f();) is stored the first time control passes the declaration, under a guard ([stmt.dcl]).
+            if (!flatten_dyn(decl.type, init, &global, &static_leaves)) return false;
             has_init = false;
         }
         local.symbol = global.name;
@@ -828,6 +980,35 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     }
     place_local(locals, local);
     out->kind = Node::Block;
+    Node static_prvalue;  // static C x = f(); with f returning a C: f writes x itself ([dcl.init], [class.copy.elision])
+    if (static_dyn && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {
+        if (class_prvalue(decl.type, init)) {
+            static_prvalue.kind = Node::Assign;
+            static_prvalue.op = TAssign;
+            static_prvalue.number = 1;
+            static_prvalue.kids.push_back(node_name(decl.name));
+            static_prvalue.kids.push_back(std::move(init));
+        } else {
+            // static C x = value; : the constructor that takes the value, under the guard below.
+            ctor_args.push_back(std::move(init));
+            have_ctor_args = true;
+        }
+        has_init = false;
+    }
+    if (!static_leaves.empty()) {
+        if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
+            error = "a static local object with a destructor and an initializer that is not constant is not supported";
+            return false;
+        }
+        Node then_block;
+        if (!static_guard_block(local.symbol, &then_block)) return false;
+        Node stores;
+        stores.kind = Node::Block;
+        stores.line = stmt_line;
+        stores.kids = dyn_leaf_stmts(decl.name, decl.type, &static_leaves);
+        finish_static_guard(&then_block, std::move(stores), local.symbol, out);
+        return end_decl(more);
+    }
     if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
         structs[static_cast<size_t>(decl.type.struct_id)].poly) {
         // The table pointer is set where the object is declared (an array or static object gets
@@ -876,50 +1057,25 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
             if (has_init || decl.type.is_array()) {
-                error = "a static local object takes no initializer and is not an array";
+                error = "a static local object takes no braced initializer and is not an array";
                 return false;
             }
-            Global guard;
-            guard.name = local.symbol + "_guard";
-            guard.type.base = 1;
-            guard.bss = true;
-            guard.is_static = true;
-            globals.push_back(guard);
-            Node set;
-            set.kind = Node::Assign;
-            set.op = TAssign;
-            set.kids.push_back(node_name(guard.name));
-            Node one;
-            one.kind = Node::IntLit;
-            one.number = 1;
-            one.type.base = 1;
-            set.kids.push_back(std::move(one));
-            Node set_stmt;
-            set_stmt.kind = Node::ExprStmt;
-            set_stmt.kids.push_back(std::move(set));
             Node then_block;
-            then_block.kind = Node::Block;
-            then_block.kids.push_back(std::move(set_stmt));
-            if (obj_needs_ctor(decl.type)) {
-                Node call;
+            if (!static_guard_block(local.symbol, &then_block)) return false;
+            Node call;
+            if (static_prvalue.kind == Node::Assign) {
+                call.kind = Node::ExprStmt;
+                call.kids.push_back(std::move(static_prvalue));
+            } else if (obj_needs_ctor(decl.type)) {
                 if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), std::move(ctor_args), &call))
                     return false;
-                then_block.kids.push_back(std::move(call));
             }
-            Node not_g;
-            not_g.kind = Node::Unary;
-            not_g.op = TNot;
-            not_g.kids.push_back(node_name(guard.name));
-            Node test;
-            test.kind = Node::If;
-            test.kids.push_back(std::move(not_g));
-            test.kids.push_back(std::move(then_block));
-            out->kids.push_back(std::move(test));
+            finish_static_guard(&then_block, std::move(call), local.symbol, out);
             if (obj_needs_dtor(decl.type)) {
                 GlobalObj g;
                 g.name = local.symbol;
                 g.sid = sid;
-                g.guard = guard.name;
+                g.guard = local.symbol + "_guard";
                 static_objs.push_back(std::move(g));
             }
             return end_decl(more);

@@ -83,7 +83,7 @@
    "engine/src/UI/UIRenderer.cpp": 3,
    "launcher/main.cpp": 2,
    "okayui/screens/OkayUIEditorPanels.cpp": 2,
-   "okayui/src/OkayUI.cpp": 7,
+   "okayui/src/OkayUI.cpp": 5,
    "okayui/src/OkayUIDock.cpp": 2,
    "okayui/src/OkayUIDockNodes.cpp": 3,
    "okayui/tests/test_okayui_port_versions.cpp": 2,

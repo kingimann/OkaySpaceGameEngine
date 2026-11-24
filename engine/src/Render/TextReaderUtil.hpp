@@ -23,6 +23,15 @@ namespace detail {
 namespace txt {
 
 inline bool IsWs(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13)
+// Moves `pos` past white space and "//" comments (a comment runs to the end of its line), counting the newlines it passes in
+// `line`. Used by the token scanners of the id Tech text formats (MD5 mesh, anim and camera).
+inline void SkipSpaceAndLineComments(const std::string& s, std::size_t& pos, std::size_t& line) {
+    for (;;) {
+        while (pos < s.size() && IsWs(s[pos])) { if (s[pos] == '\n') ++line; ++pos; }
+        if (pos + 1 < s.size() && s[pos] == '/' && s[pos + 1] == '/') { while (pos < s.size() && s[pos] != '\n' && s[pos] != '\r') ++pos; continue; }
+        break;
+    }
+}
 
 inline std::string Lower(std::string s) {
     for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');

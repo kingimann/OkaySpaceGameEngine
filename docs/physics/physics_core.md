@@ -96,9 +96,11 @@ axis, because the point constraint's matrix had an empty row and no inverse; an 
 now left out (`PointInverse` in `Joint.cpp`, tested in `physcore_world` and by the 2D pin and hinge tests). The solver,
 the narrow phase and the locks are the ones 3D uses.
 
-What a 2D game can notice (measured in `physics2d_core` and the older 2D tests): stacks stand instead of sinking; resting
-things sit up to about 1 cm into each other (the core's slop and soft position correction) instead of exactly touching;
-bodies fall asleep in groups and wake when their support goes; a Pin joint is a weld (it also holds the turn, as in
+What a 2D game can notice (stacks, resting depth, waking and the carried crate were measured in `physics2d_core`; the
+rest follows from the code and was not measured): stacks stand instead of sinking; resting
+things sit 1 to 2 mm into each other, about 1 cm under a 50 kg crate (the core's slop and soft position correction), instead of exactly touching;
+bodies fall asleep in groups and wake when their support goes; a collider without a Rigidbody2D that game code moves now
+carries what stands on it sideways; a Pin joint is a weld (it also holds the turn, as in
 3D; the old 2D pin only held the position); a hinge pushes back on its partner body; Rolling Resistance (default 0.03)
 now slows a rolling ball; a collider's own friction and bounciness (>= 0) are used, before only the body's were; a body
 going up through a one-way platform raises no collision callbacks until it lands; two solid colliders that only touch

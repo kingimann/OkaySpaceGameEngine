@@ -1073,7 +1073,7 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 - `CleanBranch` function, line 103: A git branch (or tag) name as a label: letters, digits and . _ / + - only, at most 80 characters, no "..", no leading '/', '-' or '.', no
 - `CleanSha` function, line 112: A commit id: lowercase hex, 7 to 40 digits (upper case is folded). "" when it is not.
 - `ShortSha` function, line 123: The seven digits people say ("abc1234"); "" when 'sha' is not a commit id.
-- `DisplayBranch` function, line 129: The branch as people say it: the Claudes' "claude/", "claude2/" and "claude3/" folders are dropped ("claude/walk-vs-run" -> "walk-vs-run").
+- `DisplayBranch` function, line 129: The branch as people say it: the lane folders "claude/", "claude2/", "claude3/" and "grok/" are dropped ("claude/walk-vs-run" -> "walk-vs-run").
 - `Title` function, line 135: "Test build of walk-vs-run (abc1234)". Missing parts are left out: no commit gives "Test build of walk-vs-run", neither gives "Test build".
 - `Choice` struct, line 146: What the update check should install. 'version' is normalized; 'note' says in one plain sentence why there is nothing to do.
 - `Marker` struct, line 192

@@ -127,6 +127,7 @@ int main() {
         a.splashAccentOverride = true;
         a.splashAccent[0] = 1.0f; a.splashAccent[1] = 0.333333343f; a.splashAccent[2] = 0.0f;
         a.splashShowBar = false;
+        a.modules = "Core,Rendering,Physics3D";   // #1158; empty (every module) is the default and is not written
         // The tag list and layer names travel in the same file.
         CHECK(Tags::Add("Boss") && Tags::Add("Pickup Spot"));
         Tags::Strict() = true;
@@ -154,12 +155,13 @@ int main() {
         COVER(a, b, d, splashAccentOverride);
         COVER(a, b, d, splashAccent);
         COVER(a, b, d, splashShowBar);
-        g_values += 23;
+        COVER(a, b, d, modules);
+        g_values += 24;
         CHECK(haveHeader && g_covered == DeclaredFields(header, "ProjectSettings"));
         if (g_covered != DeclaredFields(header, "ProjectSettings")) {
             for (const auto& f : DeclaredFields(header, "ProjectSettings")) if (!g_covered.count(f)) std::cerr << "    ProjectSettings." << f << " has no line in this test\n";
         }
-        CHECK(sizeof(ProjectSettings) == 508);   // a new field changes this: add it to the writer, the reader and this test
+        CHECK(sizeof(ProjectSettings) == 544);   // 508 bytes of fixed fields, padded to 512, + std::string modules (32, libstdc++). A new field changes this: add it to the writer, the reader and this test
 
         // The lists came back too.
         CHECK(Tags::Custom().size() == tagsBefore && Tags::Contains("Boss") && Tags::Contains("Pickup Spot"));

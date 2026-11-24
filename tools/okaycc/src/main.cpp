@@ -134,11 +134,11 @@ int main(int argc, char** argv) {
             out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
         }
     } else if (asmm) {
-        std::cout << okaycc::compileToAssembly(src, diags, name);
+        std::cout << okaycc::compileToAssembly(src, diags, name, includes);
     } else if (ir) {
-        std::cout << okaycc::irText(src, diags, name);
+        std::cout << okaycc::irText(src, diags, name, includes);
     } else if (check) {
-        okaycc::checkSource(src, diags, name);
+        okaycc::checkSource(src, diags, name, includes);
     } else if (ast) {
         if (path.empty()) {
             okaycc::MemoryFiles mem;

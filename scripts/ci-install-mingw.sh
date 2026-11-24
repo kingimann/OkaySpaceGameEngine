@@ -16,12 +16,14 @@
 #   4. Otherwise refresh the package index (scripts/ci-apt-mirror.sh), download the missing .deb files several at a
 #      time with curl (resumable, slow transfers are dropped and retried, another mirror is tried), then let apt install.
 #      apt checks every file's hash and fetches anything still missing itself.
-#   5. Check the result: the compiler must exist and say "Thread model: win32" (rule 21a), or the script fails.
+#   5. Check the result: the compiler must exist and say "Thread model: win32" (rule 21a), and every extra package asked for
+#      must be installed, or the script fails.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 ARCHIVES="${OKAY_APT_ARCHIVES:-$HOME/apt-cache}"
 mkdir -p "$ARCHIVES/partial"
+EXTRA=("$@")
 PKGS=(gcc-mingw-w64-x86-64-win32 g++-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ccache "$@")
 command -v cmake >/dev/null 2>&1 || PKGS+=(cmake)
 command -v ninja >/dev/null 2>&1 || PKGS+=(ninja-build)
@@ -36,7 +38,8 @@ check() {
     command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 || return 1
     x86_64-w64-mingw32-g++ -v 2>&1 | grep -q '^Thread model: win32$' || return 1
     command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 || return 1
-    command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1 && command -v ccache >/dev/null 2>&1
+    command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1 && command -v ccache >/dev/null 2>&1 || return 1
+    local p; for p in "${EXTRA[@]}"; do dpkg -s "$p" 2>/dev/null | grep -q '^Status: install ok installed' || return 1; done   # every extra package asked for
 }
 
 done_ok() {

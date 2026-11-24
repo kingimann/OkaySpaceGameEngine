@@ -155,21 +155,27 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
             pos[i] = Vec3{v[0], v[1], v[2]};
         }
         if (imrp && imrp->len >= 8 && At(bytes, imrp->off + 4).U32() != 0) ++mirrored;
-        // faces: a count and that many vertex numbers
-        struct Face { std::size_t at; std::uint32_t n; };
+        // faces: a count and that many vertex numbers. Only faces of 3 or more corners are stored, each with its record number
+        // (the texture coordinates and the material runs count every record): a face with fewer corners builds nothing, and a
+        // FACS chunk of zeros is 50 million of them in 200 MB (a review of #1213 found that storing them used 2 GB).
+        struct Face { std::size_t at; std::uint32_t n; std::uint32_t rec; };
         std::vector<Face> faces;
+        std::size_t nRec = 0;   // face records in this shape, the short ones included
         {
-            std::size_t p = facs->off;
+            std::size_t p = facs->off, shortHere = 0;
             const std::size_t end = facs->off + facs->len;
             while (p < end) {
                 const std::uint32_t n = At(bytes, p).U32();
                 p += 4;
-                if (n > (end - p) / 4) { ++badShapes; faces.clear(); break; }
+                if (n > (end - p) / 4) { ++badShapes; faces.clear(); nRec = 0; shortHere = 0; break; }
                 corners += n;
                 if (corners > kMaxFaceCorners) return Fail(err, "more than " + std::to_string(kMaxFaceCorners) + " face corners (the budget)");
-                faces.push_back({p, n});
+                if (n >= 3) faces.push_back({p, n, (std::uint32_t)nRec});   // nRec < FACS bytes / 4 < 2^32 (the file is at most 256 MB)
+                else ++shortHere;
+                ++nRec;
                 p += (std::size_t)n * 4;
             }
+            shortFaces += shortHere;
         }
         // texture coordinates: per face an index word, a corner count, then that many (u, v) pairs; same order as the faces
         std::vector<std::size_t> uvAt(faces.size(), 0);
@@ -178,18 +184,18 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         if (ftvs) {
             std::size_t p = ftvs->off;
             const std::size_t end = ftvs->off + ftvs->len;
-            std::size_t f = 0;
+            std::size_t f = 0, k = 0;   // f: the record, k: the next stored face
             haveUv = true;
-            while (p < end && f < faces.size()) {
+            while (p < end && f < nRec) {
                 if (end - p < 8) { haveUv = false; break; }
                 const std::uint32_t n = At(bytes, p + 4).U32();
                 p += 8;
                 if (n > (end - p) / 8) { haveUv = false; break; }
-                uvAt[f] = p; uvN[f] = n;
+                if (k < faces.size() && faces[k].rec == f) { uvAt[k] = p; uvN[k] = n; ++k; }
                 p += (std::size_t)n * 8;
                 ++f;
             }
-            if (f != faces.size() || p != end) haveUv = haveUv && f == faces.size();   // tolerate trailing bytes, not a missing face
+            if (f != nRec || p != end) haveUv = haveUv && f == nRec;   // tolerate trailing bytes, not a missing face
         }
         if (!haveUv) ++noUv;
         // material runs: (first face, material) pairs
@@ -223,8 +229,11 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         std::vector<Vec3> poly;
         std::vector<std::array<int, 3>> tr;
         for (std::size_t fi = 0; fi < faces.size(); ++fi) {
-            const Face& f = faces[fi];
-            if (f.n < 3) { ++shortFaces; continue; }
+            const Face& f = faces[fi];   // 3 or more corners (the short ones were not stored)
+            // a face past the ear clipping size is fanned into exactly n - 2 triangles: checked against the budget before its
+            // corners, its outline or its triangles are built (a face of millions of corners would otherwise build them all first)
+            if (f.n > kMaxEarCorners && (std::uint64_t)f.n - 2 > kMaxBuiltTris - std::min<std::uint64_t>(tris, kMaxBuiltTris))
+                return Fail(err, "more than " + std::to_string(kMaxBuiltTris) + " triangles (the budget)");
             poly.clear();
             bool ok = true;
             std::vector<std::uint32_t> idx(f.n);
@@ -240,7 +249,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
             else { ++fanned; tr.clear(); for (std::uint32_t k = 1; k + 1 < f.n; ++k) tr.push_back({0, (int)k, (int)k + 1}); }
             tris += tr.size();
             if (tris > kMaxBuiltTris) return Fail(err, "more than " + std::to_string(kMaxBuiltTris) + " triangles (the budget)");
-            const std::size_t si = soupFor(materialOf(fi));
+            const std::size_t si = soupFor(materialOf(f.rec));
             detail::rc::Soup& s = soups[si];
             for (const auto& t : tr) for (int c : t) {
                 auto it = remaps[si].find(idx[(std::size_t)c]);

@@ -10,13 +10,13 @@ being landed first, in small branches made from main; everything after it waits 
 | 0 | 2 | `ModuleManifest`, `ModuleRegistry`/`ModuleContext`, generated `modules_enabled.cpp`, `check_modules.py` report with a shrink-only baseline | Done on the branch, with `OKAY_MODULES`, register hooks and about 740 baseline entries | `claude2/modular-s0-manifest`: parser, registry (only what stage 0 uses), generated list, check in CI report mode, about 800 baseline entries |
 | 0 | 3 | Per-module size report (`module_sizes.json`, Build report table) | `scripts/module_sizes.py` counts object sizes per module; no link map, no Build report table | `claude2/modular-s0-sizes`: every player build writes a link map and `module_sizes.txt`; Build Game's report has a Modules tab |
 | 1 | 4-6 | Scene records through `ComponentSerializerRegistry`, module by module | Started: `daynight`, `ragdoll`, `nav*`, `hitzones`, `interactable` records live in their modules | - |
-| 1 | 7 | Property tables per module | Started: DayNightCycle's table is registered by sky_weather | - |
+| 1 | 7 | Property tables per module | Started: DayNightCycle's table is registered by sky_weather (`engine/modules/sky_weather/register.cpp`). The other gameplay tables are still in `BuiltinPropertiesGameplay.cpp` | - |
 | 1 | 8 | `ScriptApiRegistry` | Started: `time_of_day`, `ragdoll`, `ragdoll_push`, `is_ragdoll` | - |
-| 1 | 9 | Visual-script node registry | Not started | - |
+| 1 | 9 | Visual-script node registry | Started: `VsNodeRegistry`. Swing, Fire, Reload, WeaponAmmo and SetWeapon register as the weapons module. `MakeNode` and the add-node list hide them when weapons is off. Every other node is still the hard-coded switch | - |
 | 1 | 10 | Validator, saver, localizable, tween, UI-blocker registries | Started: singleton rule registry (DayNightCycle) | - |
 | 1 | 11 | Render contributions | Not started | - |
 | 1 | 12 | `INetReplicated`; module list in the join handshake | Handshake carries the module list and refuses a mismatch; `INetReplicated` not started | - |
-| 1 | 13 | Templates and editor menus from registries | Not started. The branch's hand edits of 179 Add Component items were not carried over (section 11.1) | - |
+| 1 | 13 | Templates and editor menus from registries | Started for the node list only: the add-node palette skips a node whose module is off (`VsNodeSuppressed`). Add Component and the template lists are still hand-written. `editor/main.cpp` was not edited | - |
 | 1 | 14 | `check_modules.py` blocking | Blocking for new edges only (baseline ratchet) | - |
 | 2 | 15-21 | Move each module's files into `engine/modules/<name>/` | Not started (manifests point at today's paths) | - |
 | 2 | 22 | Core-only build, `OKAY_MODULES`, player with a module list | `OKAY_MODULES` works for the registry and the `compile=` files (model readers, Interactable, Ragdoll); core-only library about 10% smaller (measured 2026-11-17, -O0) | - |

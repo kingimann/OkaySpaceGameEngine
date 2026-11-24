@@ -9,6 +9,16 @@ endif()
 add_executable(test_modules test_modules.cpp)
 target_link_libraries(test_modules PRIVATE okay::engine)
 add_test(NAME modules COMMAND test_modules)
+
+# module:weapons — visual-script weapon nodes come from the node registry.
+add_executable(test_module_vs_weapons test_module_vs_weapons.cpp)
+target_link_libraries(test_module_vs_weapons PRIVATE okay::engine)
+add_test(NAME module_vs_weapons COMMAND test_module_vs_weapons)
+
+# module:sky_weather — DayNightCycle's property table is registered by that module.
+add_executable(test_module_props_sky test_module_props_sky.cpp)
+target_link_libraries(test_module_props_sky PRIVATE okay::engine)
+add_test(NAME module_props_sky COMMAND test_module_props_sky)
 # Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)

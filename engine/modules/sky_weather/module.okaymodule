@@ -12,4 +12,4 @@ serializers=daynight
 vs_group=
 editor=
 sources=include/okay/Components/DayNightCycle.hpp include/okay/Environment/* include/okay/Render/Atmosphere.hpp include/okay/Render/SkyStars.hpp
-tests=daynight wind*
+tests=daynight wind* module_props_sky

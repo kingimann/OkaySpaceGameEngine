@@ -58,6 +58,17 @@ struct RaycastHit3D {
     explicit operator bool() const { return hit; }
 };
 
+/// The closest point on a solid collider to a world point. `distance` is 0 when the point is inside the solid.
+/// Triggers are skipped. `hit` is false when nothing is within `maxDistance`.
+struct NearestSolid3D {
+    bool        hit = false;
+    Collider3D* collider = nullptr;
+    GameObject* gameObject = nullptr;
+    Vec3  point{0, 0, 0};
+    float distance = 0.0f;
+    explicit operator bool() const { return hit; }
+};
+
 /// The scene's 3D physics. Step() hands every Rigidbody3D, collider and Joint3D to our own physics engine core
 /// (okay::phys::World: tree broad phase, exact contact manifolds, a sequential-impulse solver, islands that sleep,
 /// speculative contacts so fast bodies do not tunnel, joints with limits, motors and drives; docs/physics/physics_core.md)
@@ -166,18 +177,33 @@ public:
     RaycastHit3D SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the sphere sweep touches, nearest first (a shot that should report the wall and
+    /// what is behind it). Same rules as SphereCast, including triggers only when `queryTriggers` is set.
+    std::vector<RaycastHit3D> SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
+                                            float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a box (center, half-extents, rotation) along `direction` and return
     /// the first collider it touches.
     RaycastHit3D BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                          const Vec3& direction, const Quat& rotation = Quat::Identity,
                          float maxDistance = 1e9f, GameObject* ignore = nullptr,
                          std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the box sweep touches, nearest first.
+    std::vector<RaycastHit3D> BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
+                                         const Vec3& direction, const Quat& rotation = Quat::Identity,
+                                         float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                         std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a capsule (segment a→b, radius) along `direction` and return the
     /// first collider it touches — "would my
     /// character fit through there?".
     RaycastHit3D CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                              const Vec3& direction, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                              std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the capsule sweep touches, nearest first.
+    std::vector<RaycastHit3D> CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
+                                             const Vec3& direction, float maxDistance = 1e9f,
+                                             GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                             bool queryTriggers = false);
 
     /// Push a sphere out of any SOLID colliders it overlaps (depenetration) and
     /// return the corrected centre — a lightweight "collide and slide" used to keep
@@ -185,6 +211,15 @@ public:
     /// `ignore` skips a GameObject (the mover itself); triggers never block.
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
+    /// Push a capsule (segment centre, unit `axis`, distance from the centre to a cap centre, radius) out of
+    /// solid colliders and return the corrected centre. A zero-length capsule is a sphere. Used so a
+    /// transform-moved character keeps its head and feet out of ceilings and floors, which one sphere
+    /// around the waist does not.
+    Vec3 ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfSegment, float radius,
+                        GameObject* ignore = nullptr, int iterations = 4);
+    /// The closest point on any solid collider to `point`, within `maxDistance`.
+    NearestSolid3D ClosestPoint(Scene& scene, const Vec3& point, float maxDistance = 1e9f,
+                                GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers);
 
     void Clear();   // forget the engine world (the scene is being cleared; Physics3DEngine.inl)
 

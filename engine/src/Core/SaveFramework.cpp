@@ -537,7 +537,6 @@ FileStatus ReadSlotFile(const std::string& path, const std::string& slot, std::s
     return FileStatus::Ok;
 }
 
-// One place that turns an older whole-scene save into the current document.
 bool LegacyToDocument(const std::string& path, const std::string& slot, SaveDocument& doc, SaveSlotInfo& info,
                       bool& usedBackup, std::string& err) {
     wholescene::State st;

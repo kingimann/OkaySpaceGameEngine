@@ -5184,6 +5184,7 @@ add_test(NAME thumb_data COMMAND test_thumb_data)
 
 add_executable(test_profiler_jobs test_profiler_jobs.cpp)
 target_link_libraries(test_profiler_jobs PRIVATE okay::engine)
+target_compile_definitions(test_profiler_jobs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME profiler_jobs COMMAND test_profiler_jobs)
 
 add_executable(test_engine_bus test_engine_bus.cpp)

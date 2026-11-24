@@ -234,7 +234,8 @@ public:
     /// stopped when the database is destroyed.
     bool StartWatch(std::string* error = nullptr);
     /// Project-relative paths that changed since the last poll (a file or a folder). Empty when
-    /// nothing changed or no watch is running.
+    /// nothing changed or no watch is running. When the operating system dropped events (its
+    /// queue overflowed) the list holds the scanned root itself: scan the whole folder.
     std::vector<std::string> PollWatch();
     void StopWatch();
 

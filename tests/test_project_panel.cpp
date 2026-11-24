@@ -446,6 +446,11 @@ int main() {
         fs::rename(fs::u8path(p.td.at("Art/other.png")), fs::u8path(p.td.at("Art/moved.png")));
         fs::rename(fs::u8path(p.td.at("Art/other.png.okaymeta")), fs::u8path(p.td.at("Art/moved.png.okaymeta")));
         CHECK(b.Poll(t + 4000000) && b.Db().PathToGuid("Art/moved.png") == g);
+        // With the folder watch running, a quiet folder is not rescanned before the 10 second
+        // safety net, and a change the watch heard is picked up at the usual 2 second gap.
+        CHECK(!b.Poll(t + 4003000));
+        WriteFile(p.td.at("Scenes/third.okayscene"), "scene \"C\"\ngameobject \"Y\"\n  sprite texture \"" + p.tex + "\"\n");
+        CHECK(b.Poll(t + 4006000) && b.UsersOf(p.tex) == 4);
     }
 
     RUN_SUITE("no meta files unless an asset needs one");

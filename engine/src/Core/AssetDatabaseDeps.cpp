@@ -118,7 +118,6 @@ bool HostilePath(const std::string& path) {
     if (path.size() > 260) return true;
     std::string s = path;
     for (char& c : s) if (c == '\\') c = '/';
-    // The same text screen model textures use (empty, wildcard, device, network, bad UTF-8).
     return texture_path_detail::Screen(s, nullptr) == texture_path_detail::Kind::Refused;
 }
 
@@ -278,8 +277,6 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text) {
 }
 
 std::vector<FoundRef> ExtractModelRefs(const std::string& text) {
-    // Only the structured mtllib / map_* lines. A byte scan of a binary .fbx invented paths,
-    // and splicing one of those into the file on rename broke its lengths.
     std::vector<FoundRef> out;
     ForEachLine(text, [&](std::size_t lb, std::size_t le) {
         TakeModelLine(text, lb, le, out);
@@ -302,8 +299,7 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
-    // Text models use the same extractor the project panel rewrites with. Binary .fbx is
-    // left out: a path of a different length spliced into it breaks the file.
+    // Text models use the same extractor the project panel rewrites with. Binary .fbx stays out.
     RegisterExtractor("model", {"obj", "mtl", "dae"}, wrap(&ExtractModelRefs));
 }
 

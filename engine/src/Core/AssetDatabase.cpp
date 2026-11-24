@@ -863,8 +863,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (pi == m_pathIndex.end() || present.count(pi->second)) continue;
             auto sl = m_slots.find(pi->second);
             if (sl == m_slots.end()) continue;
-            // Same path is not enough: a new file put where a deleted one was must not inherit
-            // that GUID. Only the same bytes (the meta was removed, the asset was not) keep it.
+            // Same path is not enough: a new file put where a deleted one was must not inherit that GUID.
             ensureHash(c);
             if (sl->second.rec.hash == 0 || c.hash == 0 || c.hash != sl->second.rec.hash) continue;
             c.guid = pi->second;
@@ -1421,14 +1420,14 @@ std::vector<std::string> AssetDatabase::PollWatch() {
     if (!w.pending || !w.ov.hEvent) return out;
     if (WaitForSingleObject(w.ov.hEvent, 0) != WAIT_OBJECT_0) return out;
     DWORD got = 0;
-    if (!GetOverlappedResult(w.handle, &w.ov, &got, FALSE) || got == 0) {
-        const DWORD err = GetLastError();
+    const BOOL read = GetOverlappedResult(w.handle, &w.ov, &got, FALSE);
+    if (!read || got == 0) {
+        const DWORD err = read ? ERROR_SUCCESS : GetLastError();
         CloseHandle(w.ov.hEvent);
         w.ov.hEvent = nullptr;
         Arm(w);
-        // The buffer was too small: the kernel dropped the names. Say so, and hand back the
-        // root so the caller scans the whole folder instead of missing the change.
-        if (err == ERROR_NOTIFY_ENUM_DIR) {
+        // got == 0 on success means the buffer overflowed: the kernel dropped the events.
+        if (err == ERROR_NOTIFY_ENUM_DIR || err == ERROR_SUCCESS || got == 0) {
             Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
             out.push_back(w.root);
         }
@@ -1461,6 +1460,11 @@ std::vector<std::string> AssetDatabase::PollWatch() {
         if (n <= 0) break;
         for (ssize_t i = 0; i < n; ) {
             const auto* ev = reinterpret_cast<const inotify_event*>(buf + i);
+            if (ev->mask & IN_Q_OVERFLOW) {
+                // The kernel dropped events: say so and ask for the whole folder.
+                Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
+                add(w.root);
+            }
             const std::string name = ev->len ? Slash(ev->name) : std::string();
             const auto dir = w.dirOf.find(ev->wd);
             const std::string folder = dir == w.dirOf.end() ? std::string() : dir->second;
@@ -1482,12 +1486,16 @@ void AssetDatabase::StopWatch() {
     auto it = Watches().find(this);
     if (it == Watches().end()) return;
 #if defined(_WIN32)
-    if (it->second.pending && it->second.handle != INVALID_HANDLE_VALUE)
-        CancelIoEx(it->second.handle, &it->second.ov);
-    if (it->second.ov.hEvent) {
-        WaitForSingleObject(it->second.ov.hEvent, 2000);
-        CloseHandle(it->second.ov.hEvent);
+    DirWatch& w = it->second;
+    if (w.pending && w.handle != INVALID_HANDLE_VALUE) {
+        // Cancel the read and wait until the kernel is finished with the OVERLAPPED and the
+        // buffer before either is freed. bWait=TRUE returns once the cancelled read completes.
+        CancelIoEx(w.handle, &w.ov);
+        DWORD got = 0;
+        (void)GetOverlappedResult(w.handle, &w.ov, &got, TRUE);
+        w.pending = false;
     }
+    if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
 #else
     if (it->second.fd >= 0) ::close(it->second.fd);

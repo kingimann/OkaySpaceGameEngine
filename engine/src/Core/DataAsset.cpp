@@ -114,13 +114,14 @@ bool DataAsset::Save(const std::string& path) const {
     std::string out = std::string(kHeader) + "\n";
     for (const auto& f : m_fields) out += EncodeField(f.first, true) + " = " + EncodeField(f.second, false) + "\n";
     if (!savefmt::AtomicWrite(path, out)) return false;
-    // This object is the cache entry: a later Set must survive the next Cached() call.
-    for (auto& kv : g_cache) {
-        if (&kv.second != this) continue;
+    // The cache entry for this same path now matches the file it wrote, so Cached() keeps the
+    // fields in memory (later unsaved Set()s too) instead of reading the file back. A copy saved
+    // under another name leaves its own entry alone.
+    auto it = g_cache.find(path);
+    if (it != g_cache.end() && &it->second == this) {
         DataAsset& self = const_cast<DataAsset&>(*this);
         self.m_loaded = true;
         self.RememberStamp(ReadablePath(path));
-        break;
     }
     return true;
 }
@@ -168,9 +169,7 @@ void DataAsset::RememberStamp(const std::string& openedPath) {
 
 DataAsset& DataAsset::Cached(const std::string& path) {
     DataAsset& a = g_cache[path];
-    if (a.m_loaded) return a;   // an unsaved Set on this entry stays until ReloadIfChanged
-    // A missing file is not opened. The next call looks again only when the file exists,
-    // so a script can Set into the empty entry without a disk read on every lookup.
+    if (a.m_loaded) return a;
     const FileStat st = StampOf(ReadablePath(path));
     if (!st.sizeOk || !st.timeOk) return a;
     if (a.Load(path)) {

@@ -3,8 +3,10 @@
 #include "okay/Render/ModelImportProblem.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/ModelData.hpp"
+#include "okay/Render/FbxReader.hpp"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -95,7 +97,32 @@ std::string DescribeModelImportProblem(const std::string& path) {
                 text = first.find(';') != std::string::npos || first.find("FBXHeader") != std::string::npos;
             }
             if (!binary && !text) return "it is not an FBX file: it does not start like a binary or a text FBX (another kind of file renamed to .fbx?)";
-            return "the FBX reader could not read it (damaged or cut off, or larger than the reader allows; the Console line above may say which)";
+            // The version the file says it is: bytes 23 to 26 of a binary file, the "; FBX 6.1.0" comment of a text one.
+            std::uint32_t version = 0;
+            {
+                std::ifstream again(p, std::ios::binary);
+                char h[64] = {0};
+                again.read(h, sizeof(h));
+                const std::size_t n = static_cast<std::size_t>(again.gcount());
+                if (binary && n >= 27)
+                    version = static_cast<unsigned char>(h[23]) | (static_cast<unsigned char>(h[24]) << 8) | (static_cast<unsigned char>(h[25]) << 16) |
+                              (static_cast<std::uint32_t>(static_cast<unsigned char>(h[26])) << 24);
+                else if (!binary && n > 8 && std::string(h, 6) == "; FBX ") {
+                    int a = -1, b = -1;
+                    std::string line(h + 6, n - 6);
+                    if (std::sscanf(line.c_str(), "%d.%d", &a, &b) == 2 && a >= 0 && a < 100 && b >= 0 && b < 10) version = static_cast<std::uint32_t>(a * 1000 + b * 100);
+                }
+            }
+            if (version && (version < 6000 || version > 9999)) return fbx::UnsupportedVersionMessage(version);
+            // Otherwise the reader itself says what is wrong.
+            fbx::Scene sc; std::string why;
+            if (!fbx::LoadFile(path, sc, &why))
+                return "the FBX reader could not read it: " + (why.empty() ? std::string("damaged or cut off, or larger than the reader allows") : why);
+            if (sc.nodes.empty()) return "the file was read but holds no objects (no models, meshes or bones)";
+            if (sc.meshes.empty()) return "the file was read but holds no meshes (only empty nodes, bones, cameras, lights or animation)";
+            std::string err;
+            if (!fbx::BuildParts(sc, &err) || !fbx::BuildClips(sc, &err)) return "the FBX reader could not read it: " + err;
+            return "the file was read but no object could be made from it";
         }
         if (size > (std::uintmax_t(2) << 30)) return "it is very large (" + Megabytes(size) + "); the readers stop at files this size";
 

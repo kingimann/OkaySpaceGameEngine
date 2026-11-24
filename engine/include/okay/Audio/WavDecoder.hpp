@@ -11,8 +11,9 @@
 //
 // What it reads: PCM 8/16/24/32 bit (also in WAVE_FORMAT_EXTENSIBLE), IEEE float 32 and 64 bit,
 // A-law, mu-law, Microsoft ADPCM (tag 0x0002) and IMA ADPCM (tag 0x0011), any channel count up to
-// Limits::maxChannels. It is an OPT-IN replacement for SDL_LoadWAV and the older, narrower
-// AudioClip::LoadWAV path: see OwnWavEnabled() and docs/audio/own_wav_decoder.md.
+// Limits::maxChannels. It is the only WAV reader: AudioClip::LoadWAV and the launcher (through
+// okay/Audio/WavPlayback.hpp) use it; SDL_LoadWAV and the OKAY_OWN_WAV switch were deleted
+// (docs/audio/own_wav_decoder.md).
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -49,13 +50,9 @@ struct WavAudio {
 bool DecodeWav(const unsigned char* data, std::size_t size, WavAudio& out,
                std::string* error = nullptr, const Limits* limits = nullptr);
 
-/// Interleaved signed 16-bit samples (what SDL_LoadWAV returns for a 16-bit result): rounds to the
+/// Interleaved signed 16-bit samples (the launcher's playback format): rounds to the
 /// nearest and clamps. Same channel count and rate as `a`.
 std::vector<std::int16_t> ToS16(const WavAudio& a);
-
-/// True when the own decoder is the one AudioClip::LoadWAV should use: the build default
-/// (CMake option OKAY_OWN_WAV, off) overridden by the environment variable OKAY_OWN_WAV=0 or 1.
-bool OwnWavEnabled();
 
 } // namespace wav
 } // namespace okay

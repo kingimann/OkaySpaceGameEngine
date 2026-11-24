@@ -42,20 +42,18 @@ static bool Has(const std::string& s, const char* part) { return s.find(part) !=
 
 static void TestText() {
     Info old;   // the stack of a default build
-    old.platform = "sdl2"; old.http = "curl"; old.ufbx = true; old.assimp = true; old.crypto = "libsodium"; old.ui = "imgui";
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx+assimp crypto=libsodium ui=imgui");
+    old.platform = "sdl2"; old.http = "curl"; old.ownReaders = {"fbx"}; old.assimp = true; old.crypto = "libsodium"; old.ui = "imgui";
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx)+assimp crypto=libsodium ui=imgui");
     old.assimp = false;
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui");
-    old.switches = "wav,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui switches=wav,http");
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui");
+    old.switches = "okayui,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui switches=okayui,http");
     old.switches.clear();
 
     Info mix;
     mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"}; mix.assimp = true;
     mix.crypto = "libsodium"; mix.ui = "imgui";
     CHECK(FormatLine(mix) == "[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui");
-    mix.ufbx = true;
-    CHECK(FormatLine(mix) == "[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+ufbx+assimp crypto=libsodium ui=imgui");
 
     Info all;
     all.platform = "own"; all.http = "own"; all.ownReaders = {"fbx"}; all.crypto = "own(test)"; all.ui = "okayui";
@@ -102,7 +100,8 @@ static void TestTables() {
         if (r.ext[0]) CHECK(okay::HasOwnReader(r.ext));
         CHECK(std::strncmp(r.var, "OKAY_OWN_", 9) == 0);
     }
-    CHECK(Readers().size() == 20);   // FBX + the 19 opt-in readers of ModelImport.cpp (slots 3 to 21)
+    CHECK(Readers().size() == 19);   // the 19 opt-in readers of ModelImport.cpp (slots 3 to 21); FBX has no switch (ours is the only one)
+    for (const ReaderSwitch& r : Readers()) CHECK(std::strcmp(r.var, "OKAY_OWN_FBX") != 0);
     // Cryptography is not among the settings, by name or by value.
     for (const Setting& s : RuntimeSettings()) {
         CHECK(!Has(s.var, "CRYPTO") && !Has(s.var, "SODIUM") && !Has(s.value, "crypto"));
@@ -134,8 +133,7 @@ static void TestBuildDefaults() {
     CHECK(Has(line, " http=") && Has(line, " readers=") && Has(line, " crypto=") && Has(line, " ui=imgui"));
 
 #if defined(OKAY_OWN_STACK_BUILD)   // -DOKAY_OWN_STACK=ON: every own backend that exists on this system is the default
-    CHECK(i.ownReaders.size() == Readers().size());
-    CHECK(!i.ufbx);
+    CHECK(i.ownReaders.size() == Readers().size() + 1);   // + fbx
 #  if defined(__linux__)
     CHECK(i.platform == "own");
 #  endif
@@ -152,18 +150,16 @@ static void TestBuildDefaults() {
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
 #  endif
 #elif defined(OKAY_EXPECT_OWN_READERS)   // a default build since 2026-11-17: our own model readers, the rest still the old stack
-    CHECK(i.ownReaders.size() == Readers().size());
-    CHECK(!i.ufbx);
+    CHECK(i.ownReaders.size() == Readers().size() + 1);   // + fbx
     CHECK(i.platform == "sdl2");
     CHECK(i.http == "curl" || i.http == "winhttp");
     CHECK(Has(line, "readers=own(fbx,dae,"));
 #else               // a build with the reader options switched OFF: exactly the old stack
-    CHECK(i.ownReaders.empty());
-    CHECK(i.ufbx);
+    CHECK(i.ownReaders.size() == 1 && i.ownReaders[0] == "fbx");   // FBX is always ours
     CHECK(i.platform == "sdl2");
     CHECK(i.http == "curl" || i.http == "winhttp");
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
-    CHECK(Has(line, "readers=ufbx"));
+    CHECK(Has(line, "readers=own(fbx)"));
 #endif
 #if !defined(OKAY_OWN_CRYPTO)
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
@@ -182,7 +178,7 @@ static void TestEnvironment() {
     CHECK(!Requested() && ApplyEnvironment() == 0);
     Set("OKAY_OWN_STACK", "yes");
     CHECK(!Requested() && ApplyEnvironment() == 0);   // only the exact value 1
-    CHECK(!std::getenv("OKAY_OWN_FBX"));
+    CHECK(!std::getenv("OKAY_OWN_3DS"));
 
     Set("OKAY_OWN_STACK", "1");
     Set("OKAY_OWN_3DS", "0");                          // a developer's own choice wins
@@ -192,21 +188,19 @@ static void TestEnvironment() {
     CHECK(n == (int)RuntimeSettings().size() - 2);     // every setting but the two already set
     CHECK(std::string(std::getenv("OKAY_OWN_3DS")) == "0");
     CHECK(std::string(std::getenv("OKAY_UI_BACKEND")) == "imgui");
-    CHECK(std::string(std::getenv("OKAY_OWN_FBX")) == "1" && std::string(std::getenv("OKAY_OWN_BVH")) == "1");
+    CHECK(!std::getenv("OKAY_OWN_FBX") && std::string(std::getenv("OKAY_OWN_BVH")) == "1");   // FBX has no switch to set
     CHECK(ApplyEnvironment() == 0);                    // idempotent
     CHECK(!std::getenv("OKAY_OWN_CRYPTO") && !std::getenv("OKAY_OWN_STACK_CRYPTO_TEST"));
 
     // The settings reach the real selectors: every reader but the one switched off is now ours.
     for (const ReaderSwitch& r : Readers()) {
-        const bool fbx = r.ext[0] == '\0';
-        const bool own = fbx ? okay::fbx::OwnReaderEnabled() : okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
+        const bool own = okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
         if (!std::strcmp(r.var, "OKAY_OWN_3DS")) CHECK(!own);
         else CHECK(own);
     }
     const Info i = Gather("imgui");
-    CHECK(i.ownReaders.size() == Readers().size() - 1);
+    CHECK(i.ownReaders.size() == Readers().size());   // fbx + every reader but 3ds
     CHECK(!Has(FormatLine(i), "3ds"));
-    CHECK(i.ufbx == false);
 #if defined(__linux__)
     CHECK(i.platform == "own");
 #endif
@@ -220,7 +214,7 @@ static void TestEnvironment() {
     CHECK(Gather("imgui").crypto == i.crypto);
 }
 
-// OKAY_THIRD_PARTY=1 at run time (okay/Core/ThirdParty.hpp): every model reader back to Assimp / ufbx, whatever the build default
+// OKAY_THIRD_PARTY=1 at run time (okay/Core/ThirdParty.hpp): every model reader back to Assimp, whatever the build default
 // and whatever OKAY_OWN_<FMT> says. Its own ctest entry: the FBX choice is decided on first use and then kept.
 static void TestThirdParty() {
     ClearStackEnvironment();
@@ -229,13 +223,13 @@ static void TestThirdParty() {
     CHECK(okay::ThirdPartyForced());
     const Info i = Gather("imgui");
     std::printf("%s\n", FormatLine(i).c_str());
-    CHECK(i.ufbx && !okay::fbx::OwnReaderEnabled());
+    CHECK(!i.ownReaders.empty() && i.ownReaders[0] == "fbx");   // FBX has no third-party reader left: always ours
 #ifdef OKAY_HAVE_ASSIMP
-    CHECK(i.ownReaders.empty());
-    CHECK(Has(FormatLine(i), "readers=ufbx+assimp"));
+    CHECK(i.ownReaders.size() == 1);
+    CHECK(Has(FormatLine(i), "readers=own(fbx)+assimp"));
 #else
-    // no Assimp compiled in: ours still read those formats (nothing else could), only FBX goes back (to ufbx)
-    CHECK(i.ownReaders.size() + 1 >= Readers().size() || i.ownReaders.empty());
+    // no Assimp compiled in: ours still read those formats (nothing else could)
+    CHECK(i.ownReaders.size() >= Readers().size() || i.ownReaders.size() == 1);
 #endif
     Set("OKAY_THIRD_PARTY", "0");
     CHECK(!okay::ThirdPartyForced());

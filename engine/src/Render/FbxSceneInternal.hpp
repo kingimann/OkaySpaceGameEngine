@@ -743,7 +743,7 @@ struct Builder {
 
     bool Index() {
         const Elem* o = doc.root.Find("Objects");
-        if (!o) return Fail("no Objects section (FBX 6.x files are not supported)");
+        if (!o) return Fail("no Objects section (the file holds no scene)");
         {
             std::size_t count = 0;
             for (const Elem& e : o->children) { (void)e; ++count; }

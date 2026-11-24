@@ -450,15 +450,8 @@ add_library(okay_engine
     src/Render/FbxReader.cpp
     src/Render/FbxScene.cpp
     src/Render/FbxSceneClips.cpp
-    third_party/ufbx/ufbx.c
 )
-
-# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
-# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
-# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
-if(OKAY_OWN_FBX)
-    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
-endif()
+# FBX is read only by our own reader (okay::fbx, the three Fbx*.cpp files above); the vendored ufbx was deleted on 2026-11-23.
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 # The UI library's data files (assets/ui/*.okaydata: screens, styles, themes, icons, components) are embedded into the engine, so every
@@ -481,23 +474,11 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
-# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
-target_include_directories(okay_engine PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
-)
-# ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
-# even in debug builds (parsing big FBX files unoptimised is painfully slow).
-if(MSVC)
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-else()
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-endif()
-# Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
-# is required in addition to `-w`: vendored tables (stb) may initialise `char`
-# arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
-# that `-w` does not downgrade, even though GCC/MinGW accept it.
+# (No vendored single-header libraries are left: image decoding, fonts and audio are our own, and the
+# engine/third_party/stb folder is gone, so there is no include path for it.)
+# Image.cpp keeps the warning settings it had while it compiled the vendored stb tables (`-Wno-narrowing`:
+# Clang for Emscripten/WASM treats a `char` table initialised with 0xFF as a narrowing ERROR that `-w` does
+# not downgrade). Not checked yet whether our own code there still needs them.
 set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
@@ -779,12 +760,6 @@ endif()
 if(OKAY_OWN_BVH)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
-endif()
-# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
-# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
-if(OKAY_OWN_WAV)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
-    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
 endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)

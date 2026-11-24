@@ -93,50 +93,50 @@ Back to the [code index](../code_index.md). 48 headers, 466 names.
 
 ## `engine/include/okay/Render/FbxReader.hpp`
 
-- `Limits` struct, line 39: Hard limits that keep hostile files cheap. Parsing fails (never crashes)
-- `Array` struct, line 68: A numeric array as the file stores it: little-endian elements of one type, read on demand (no conversion to
-- `Prop` struct, line 88
-- `PropList` struct, line 117: The properties of one element (a range of Document::props).
-- `ElemList` struct, line 127: The children of one element, linked first child -> next sibling.
-- `Elem` struct, line 142
-- `UninitAllocator` struct, line 157: The allocator of ByteBuffer: new elements are left unset on resize (default-initialised: for bytes, no zero fill).
-- `Document` struct, line 170
-- `ParseBinary` function, line 187
-- `ParseAscii` function, line 188
-- `Parse` function, line 190: Picks binary or ASCII from the "Kaydara FBX Binary" magic.
-- `Inflate` function, line 193: zlib stream (RFC 1950/1951) decoder, our own. Fails if the output would pass 'maxOut'.
-- `Mat` struct, line 198: 4x4 matrix, row-major, column-vector convention: p' = M p, translation in m[3], m[7], m[11].
-- `Texture` struct, line 200
-- `Material` struct, line 205
-- `Corner` struct, line 221: One corner of one triangle, in the mesh's geometry space (axes/unit converted).
-- `KeptArray` struct, line 234: A numeric array the scene keeps after the Document is gone: 'a' reads it, 'keep' owns the bytes 'a.data' points into
-- `LayerMapping` enum, line 244: How a layer's values belong to polygon corners (the file's MappingInformationType).
-- `MeshLayer` struct, line 247: One layer element of a mesh (normals, UVs, colours or material ids) as the file stores it.
-- `Polygons` struct, line 257: A mesh's polygons as the file stores them: what the reader produces. BuildParts() turns them into Mesh::parts
-- `Part` struct, line 272: The triangles of one material slot, indexed: corner i of the triangle list is vertices[indices[i]]. Corners that
-- `Influence` struct, line 290
-- `Cluster` struct, line 292
-- `BlendChannel` struct, line 297
-- `Mesh` struct, line 305
-- `SceneNode` struct, line 326
-- `Key3` struct, line 337
-- `Key4` struct, line 338
-- `NodeAnim` struct, line 340
-- `BlendAnim` struct, line 345
-- `Clip` struct, line 349
-- `ClipSource` struct, line 358: What the clips' keys are made from, kept by the reader until BuildClips (an internal type of FbxScene.cpp).
-- `Settings` struct, line 360
-- `Scene` struct, line 366
-- `KeyTolerance` struct, line 383: How close the clip's linear playback must stay to the file's curves when animation keys are made from the file's
-- `FileKeysDefault` function, line 399: Whether BuildOptions::fileKeys is on by default: yes, unless the environment variable OKAY_FBX_BAKE30 is "1"
-- `BuildOptions` struct, line 401
-- `Build` function, line 412
-- `BuildParts` function, line 417: The import step that turns a mesh's polygons into 'parts': polygons triangulated (ear clipping; missing normals made
-- `BuildClips` function, line 424: The import step that makes the clips' keys (Clip::nodes and Clip::blends) from the curves the reader kept: keys at
-- `LoadMemory` function, line 427: Parse + Build. The meshes come back as polygons (Mesh::polygons): call BuildParts for triangles; the clips come back
-- `LoadFile` function, line 428
-- `OwnReaderEnabled` function, line 432: Whether ModelImport should use this reader. Default: the OKAY_OWN_FBX CMake option, overridden
-- `SetOwnReaderEnabled` function, line 433
+- `Limits` struct, line 38: Hard limits that keep hostile files cheap. Parsing fails (never crashes)
+- `Array` struct, line 67: A numeric array as the file stores it: little-endian elements of one type, read on demand (no conversion to
+- `Prop` struct, line 87
+- `PropList` struct, line 116: The properties of one element (a range of Document::props).
+- `ElemList` struct, line 126: The children of one element, linked first child -> next sibling.
+- `Elem` struct, line 141
+- `UninitAllocator` struct, line 156: The allocator of ByteBuffer: new elements are left unset on resize (default-initialised: for bytes, no zero fill).
+- `Document` struct, line 169
+- `ParseBinary` function, line 186
+- `ParseAscii` function, line 187
+- `Parse` function, line 189: Picks binary or ASCII from the "Kaydara FBX Binary" magic.
+- `LinkTree` function, line 193: Internal (the parsers and the FBX 6.x rewrite): turns the index links recorded in Elem::links_ and PropList::begin_
+- `UnsupportedVersionMessage` function, line 197: What the readers say about a file of a version they do not read ('version' as 7400 is FBX 7.4): which version it is
+- `Inflate` function, line 200: zlib stream (RFC 1950/1951) decoder, our own. Fails if the output would pass 'maxOut'.
+- `Mat` struct, line 205: 4x4 matrix, row-major, column-vector convention: p' = M p, translation in m[3], m[7], m[11].
+- `Texture` struct, line 207
+- `Material` struct, line 212
+- `Corner` struct, line 228: One corner of one triangle, in the mesh's geometry space (axes/unit converted).
+- `KeptArray` struct, line 241: A numeric array the scene keeps after the Document is gone: 'a' reads it, 'keep' owns the bytes 'a.data' points into
+- `LayerMapping` enum, line 251: How a layer's values belong to polygon corners (the file's MappingInformationType).
+- `MeshLayer` struct, line 254: One layer element of a mesh (normals, UVs, colours or material ids) as the file stores it.
+- `Polygons` struct, line 264: A mesh's polygons as the file stores them: what the reader produces. BuildParts() turns them into Mesh::parts
+- `Part` struct, line 279: The triangles of one material slot, indexed: corner i of the triangle list is vertices[indices[i]]. Corners that
+- `Influence` struct, line 297
+- `Cluster` struct, line 299
+- `BlendChannel` struct, line 304
+- `Mesh` struct, line 312
+- `SceneNode` struct, line 333
+- `Key3` struct, line 344
+- `Key4` struct, line 345
+- `NodeAnim` struct, line 347
+- `BlendAnim` struct, line 352
+- `Clip` struct, line 356
+- `ClipSource` struct, line 365: What the clips' keys are made from, kept by the reader until BuildClips (an internal type of FbxScene.cpp).
+- `Settings` struct, line 367
+- `Scene` struct, line 373
+- `KeyTolerance` struct, line 390: How close the clip's linear playback must stay to the file's curves when animation keys are made from the file's
+- `FileKeysDefault` function, line 406: Whether BuildOptions::fileKeys is on by default: yes, unless the environment variable OKAY_FBX_BAKE30 is "1"
+- `BuildOptions` struct, line 408
+- `Build` function, line 419
+- `BuildParts` function, line 424: The import step that turns a mesh's polygons into 'parts': polygons triangulated (ear clipping; missing normals made
+- `BuildClips` function, line 431: The import step that makes the clips' keys (Clip::nodes and Clip::blends) from the curves the reader kept: keys at
+- `LoadMemory` function, line 434: Parse + Build. The meshes come back as polygons (Mesh::polygons): call BuildParts for triangles; the clips come back
+- `LoadFile` function, line 435
 
 ## `engine/include/okay/Render/GLRenderer.hpp`
 

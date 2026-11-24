@@ -35,6 +35,19 @@ inline std::size_t SafeSize(double v) {
     return static_cast<std::size_t>(v);
 }
 
+/// The longest text a script may build (64 Mi characters): `s + s` in a loop or PadLeft(1e9) is a runtime error
+/// instead of using up all memory.
+constexpr std::size_t kMaxTextLength = std::size_t(1) << 26;
+inline void CheckTextLength(std::size_t n) {
+    if (n > kMaxTextLength)
+        throw RuntimeError("text too long (more than " + std::to_string(kMaxTextLength) + " characters)", 0);
+}
+/// a + b as text, refusing a result over kMaxTextLength.
+inline std::string JoinText(const std::string& a, const std::string& b) {
+    CheckTextLength(a.size() + b.size());
+    return a + b;
+}
+
 /// The vector type of a value type (what AsVec3 returns).
 template <class V> using VecOf = decltype(std::declval<const V&>().AsVec3());
 /// Calls a lambda value with arguments.

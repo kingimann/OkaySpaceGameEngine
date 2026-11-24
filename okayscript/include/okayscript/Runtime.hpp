@@ -28,9 +28,6 @@ template <class V> struct BasicEnvironment {
     std::unordered_map<std::string, unsigned char> kinds;   ///< typed / const variables only
 };
 
-/// `return` carries its value as this (not a std::exception, so try/catch in scripts does not catch it).
-template <class V> struct ReturnSignal { V value; };
-
 /// What the program running the interpreter adds to the language. Every hook is optional (return false = "not mine").
 /// The engine answers its scene names, object references and components here.
 template <class V> class BasicHost {
@@ -175,6 +172,11 @@ public:
     void Assign(const std::string& n, const V& v);
     V Get(const std::string& n) const;
     bool Has(const std::string& n) const;
+    /// The variable `n` in the scopes or the statics (one search), or nullptr. Not a class field.
+    const V* Lookup(const std::string& n) const;
+    /// Names that can be locals (Program::localNames of every loaded source, plus any defined in a call's scope at
+    /// run time). Lookup only walks the call stack for these; any other name is a global or a static.
+    std::unordered_set<std::string> localNames;
 
     /// Call a native, a script function, `var.Method(...)`, or a variable holding a lambda, by name.
     V Call(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names = nullptr, int line = 0);
@@ -190,11 +192,17 @@ public:
     /// Count one loop iteration against Limits::maxLoopIterations (`what` names the loop in the error).
     void CountIteration(long long& n, const char* what) const;
 
-    /// Work out an expression / run a statement (Run also gives an error raised inside it the statement's line).
+    /// Work out an expression / run a statement. Run also records the statement's line in curLine, which a runtime
+    /// error without a line of its own gets where it is caught (Stamp).
     V Eval(const Expr& e);
-    void Exec(const Stmt& s);
-    void Run(const Stmt& s);
-    void RunList(const StmtList& list);
+    Flow Exec(const Stmt& s);
+    Flow Run(const Stmt& s) { curLine = s.line; return Exec(s); }
+    Flow RunList(const StmtList& list);
+    /// The line of the statement running now, and the value a `return` is carrying.
+    int curLine = 0;
+    V retVal;
+    /// Give `e` the line of the statement that was running when it was raised, when it has none (and lines are on).
+    void Stamp(ScriptError& e) const { if (e.line == 0) e.line = Ln(curLine); }
 
 private:
     V Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names);

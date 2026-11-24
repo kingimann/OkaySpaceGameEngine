@@ -151,7 +151,7 @@ int main() {
     CHECK_EQ(Run("var m = new Dictionary<string, int> { {\"a\", 1} }\nm[\"b\"] = 2\nm.c = 3\nprint(m, m.Count, m.ContainsKey(\"b\"), m.b)"),
              std::string("{a: 1, b: 2, c: 3} 3 true 2\n"));
     CHECK_EQ(Run("var m = new Dictionary<string, int>()\nm[\"k\"] += 5\nm[\"k\"] += 5\nprint(m[\"k\"], m[\"missing\"])"), std::string("10 0\n"));
-    CHECK_EQ(Run("var xs = new int[3]\nprint(xs, len(xs))"), std::string("[0, 0, 0] 3\n"));
+    CHECK_EQ(Run("var xs = new int[3]\nprint(xs, xs.Count)"), std::string("[0, 0, 0] 3\n"));
     CHECK_EQ(Run("var n = 3.14159\nprint(n.ToString(\"F2\"))"), std::string("3.14\n"));
     CHECK_EQ(Run("var name = \"Ada\"\nvar n = 2\nprint($\"{name} has {n * 2} items, {{braces}}\")"), std::string("Ada has 4 items, {braces}\n"));
 
@@ -160,6 +160,11 @@ int main() {
              std::string("1\ncaught: bad\n3\n"));
     CHECK_EQ(Run("try { nope() } catch (e) { print(e) }"), std::string("call to undefined function 'nope'\n"));
     CHECK_EQ(Run("function f() { try { return 5 } catch (e) { return 6 } }\nprint(f())"), std::string("5\n"));   // return passes through try
+
+    TEST("text has a size limit (no out-of-memory abort)");
+    CHECK_EQ(Run("var s = \"ab\"\nwhile (true) s = s + s"), std::string("ERROR runtime 2: text too long (more than 67108864 characters)"));
+    CHECK_EQ(Run("var p = \"x\".PadLeft(1000000000)"), std::string("ERROR runtime 1: text too long (more than 67108864 characters)"));
+    CHECK_EQ(Run("var s = \"x\"\nfor (var i = 0; i < 40; i++) s += s"), std::string("ERROR runtime 2: text too long (more than 67108864 characters)"));
 
     TEST("top-level return ends the program; main is not called by Run");
     CHECK_EQ(Run("print(1)\nreturn;\nprint(2)"), std::string("1\n"));

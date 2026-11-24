@@ -88,7 +88,10 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
         }
         if (m == "Replace") {
             std::string from = arg(0).AsString(), to = arg(1).AsString(), r = str;
-            if (!from.empty()) for (std::size_t p = 0; (p = r.find(from, p)) != std::string::npos; p += to.size()) r.replace(p, from.size(), to);
+            if (!from.empty()) for (std::size_t p = 0; (p = r.find(from, p)) != std::string::npos; p += to.size()) {
+                r.replace(p, from.size(), to);
+                CheckTextLength(r.size());
+            }
             out = V{r}; return true;
         }
         if (m == "Trim" || m == "TrimStart" || m == "TrimEnd") {
@@ -107,6 +110,7 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
         }
         if (m == "PadLeft" || m == "PadRight") {
             int w = SafeInt(arg(0).AsFloat()); char c = a.size() > 1 && !a[1].AsString().empty() ? a[1].AsString()[0] : ' ';
+            if (w > 0) CheckTextLength((std::size_t)w);
             std::string r = str;
             if ((int)r.size() < w) r = m == "PadLeft" ? std::string(w - r.size(), c) + r : r + std::string(w - r.size(), c);
             out = V{r}; return true;

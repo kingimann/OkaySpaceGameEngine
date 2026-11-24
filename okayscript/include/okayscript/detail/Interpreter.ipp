@@ -44,6 +44,7 @@ template <class V> const Program& BasicInterpreter<V>::Parse(const std::string& 
     ParseSource(source, *prog);   // SyntaxError on failure: nothing is added
     for (auto& kv : prog->functions) m_rt.functions[kv.first] = &kv.second;
     for (auto& kv : prog->classes) m_rt.classes[kv.first] = &kv.second;
+    m_rt.localNames.insert(prog->localNames.begin(), prog->localNames.end());
     m_rt.statics = BasicRuntime<V>::SharedStatics(source);   // `static` variables are shared by every run of this source
     m_programs.push_back(std::move(prog));
     return *m_programs.back();
@@ -54,14 +55,14 @@ template <class V> void BasicInterpreter<V>::Load(const std::string& source, con
 template <class V> void BasicInterpreter<V>::Run(const std::string& source, const std::string&) {
     const Program& prog = Parse(source);
     try {
-        for (auto& s : prog.top) m_rt.Run(*s);
-    } catch (ReturnSignal<V>&) {   // `return` at the top level ends the program
-    } catch (BreakSignal&) {
-    } catch (ContinueSignal&) {
-    } catch (const RuntimeError&) {
+        for (auto& s : prog.top)
+            if (m_rt.Run(*s) != Flow::Normal) break;   // `return` (or a stray break) at the top level ends the program
+    } catch (RuntimeError& e) {
+        m_rt.Stamp(e);
         m_rt.scopes.resize(1);
         throw;
-    } catch (const ScriptError& e) {
+    } catch (ScriptError& e) {
+        m_rt.Stamp(e);
         m_rt.scopes.resize(1);
         throw RuntimeError(e);
     }
@@ -76,10 +77,12 @@ template <class V> std::vector<std::string> BasicInterpreter<V>::FunctionParams(
 template <class V> V BasicInterpreter<V>::Call(const std::string& name, std::vector<V> args) {
     try {
         return m_rt.Call(name, args);
-    } catch (const RuntimeError&) {
+    } catch (RuntimeError& e) {
+        m_rt.Stamp(e);
         m_rt.scopes.resize(1);
         throw;
-    } catch (const ScriptError& e) {
+    } catch (ScriptError& e) {
+        m_rt.Stamp(e);
         m_rt.scopes.resize(1);
         throw RuntimeError(e);
     }

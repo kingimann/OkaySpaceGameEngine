@@ -171,13 +171,13 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.8.3 Interpreter core - `okayscript/include/okayscript/Runtime.hpp`, `detail/*.ipp` - scopes, calls, classes, statics, events, lambdas, vector maths; call-depth and loop limits; `BasicHost` hooks for the embedder's names, objects and coroutines
   - 13.8.4 Values - `okayscript/include/okayscript/Value.hpp` - the standalone value: 32-bit numbers (the engine's), text, vectors, colours, handles, lists, maps
   - 13.8.5 Native functions - `okayscript/include/okayscript/Native.hpp`, `Interpreter.hpp` - `Define(name, fn, Arity)` with arity and argument-type errors on the calling line; raw `builtins` for the engine's commands
-  - 13.8.6 Standard natives - `okayscript/include/okayscript/Stdlib.hpp` - print, println, write, input, len, str, num, type, math, exit, PI
-  - 13.8.7 Command-line runner - `okayscript/cli/main.cpp` - `okayscript file.okay [args]`, `okayscript -e "code"`; runs the top level then `main()`; exit 0 / 1 runtime error / 2 syntax error / 3 usage; errors as `file:line: message`
+  - 13.8.6 Shared builtins and standard library - `okayscript/include/okayscript/CoreBuiltins.hpp`, `Stdlib.hpp` - the maths and conversion builtins the engine and the CLI both register (same rules: missing arguments read 0, never an error); the CLI adds print, println, write, input, exit
+  - 13.8.7 Command-line runner - `okayscript/cli/main.cpp` - `okayscript file.okay [args]`, `okayscript -e "code"`; runs the top level then `main()`; `--` before a file name; exit 0 / 1 runtime error or out of memory / 2 syntax error / 64 usage / 66 unreadable file, `exit(n)` clamped to 0..255; errors as `file:line: message`
 - **Code:** `okayscript/`
 - **API:** `okayscript::Interpreter` (`Define`, `Run`, `Call`, `SetGlobal`, `GetGlobal`, `SetHost`, `GetLimits`), `okayscript::BasicInterpreter<V>`, `BasicRuntime<V>`, `BasicHost<V>`, `Args`, `Arity`, `InstallStandardLibrary`, `ParseSource`, `ValidateSource`
 - **Editor:** none (the Script Editor reaches it through OkayScriptVM)
 - **Docs:** `docs/scripting/scripting.md` ("Standalone OkayScript")
-- **Tests:** `okayscript_lang_lexer`, `okayscript_lang_parser`, `okayscript_lang_interpreter`, `okayscript_lang_native`, `okayscript_lang_errors`, `okayscript_lang_classes`, `okayscript_engine_value`, `okayscript_cli_*` (cases in `tests/okayscript_cli/`), `okayscript_no_engine`, and every engine script test (the engine runs this core)
+- **Tests:** `okayscript_lang_lexer`, `okayscript_lang_parser`, `okayscript_lang_interpreter`, `okayscript_lang_native`, `okayscript_lang_errors`, `okayscript_lang_classes`, `okayscript_engine_value`, `okayscript_bench` (callgrind instruction counts of hot loops against `tests/okayscript_bench_baseline.txt`, fails at +10%; skips without valgrind), `okayscript_cli_*` (cases in `tests/okayscript_cli/`), `okayscript_no_engine`, and every engine script test (the engine runs this core)
 - **Status:** Partial - works and is tested on Linux; Windows build unverified (MinGW syntax check and link only)
 - **Open:** the standalone value repeats the engine `vs::VsValue` conversion rules (one value type for both is not done); the engine keeps runtime errors without a line (`Limits::runtimeErrorLines` off) to keep its messages as they were
 - **Related:** 13.1, 13.7

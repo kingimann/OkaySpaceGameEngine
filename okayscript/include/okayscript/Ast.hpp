@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okayscript {
@@ -79,9 +80,9 @@ using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
 using StmtList = std::vector<StmtPtr>;
 
-/// Control flow without a value travels as these (not std::exceptions, so try/catch in scripts does not catch them).
-struct BreakSignal {};
-struct ContinueSignal {};
+/// How a statement ended: normally, or by return / break / continue. Control flow is a returned status, not an
+/// exception, so it costs nothing on the hot path (a `return` value waits in BasicRuntime::retVal).
+enum class Flow : unsigned char { Normal, Return, Break, Continue };
 
 struct FunctionDecl {
     std::string name;
@@ -118,7 +119,13 @@ struct Program {
     StmtList top;
     std::unordered_map<std::string, FunctionDecl> functions;
     std::unordered_map<std::string, UserClass> classes;
+    /// Every name that can be a local variable somewhere in this program: parameters, and names declared (var, a
+    /// typed declaration, foreach, catch) inside a function, method, constructor or lambda. A name that is not here
+    /// can only be a global, a static or a field, so reading it skips the walk over the call stack's scopes.
+    std::unordered_set<std::string> localNames;
 };
+/// Fill prog.localNames (ParseSource does this).
+void CollectLocalNames(Program& prog);
 
 // ---- Expressions -------------------------------------------------------------------------------------------------
 struct NumberExpr : ExprOf<ExprKind::Number> { double v; explicit NumberExpr(double x) : v(x) {} std::string Dump() const override; };
@@ -133,10 +140,22 @@ struct InterpStringExpr : ExprOf<ExprKind::InterpString> {
     std::string Dump() const override;
 };
 /// A name; dotted names (`list.Count`, `Math.PI`) are one token and read a property of a variable, or a global.
-struct VarExpr : ExprOf<ExprKind::Var> { std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {} std::string Dump() const override; };
+struct VarExpr : ExprOf<ExprKind::Var> {
+    std::string n;
+    bool dotted = false;      ///< has a '.' (worked out once here, not on every read)
+    bool thisPrefix = false;  ///< starts with "this."
+    explicit VarExpr(std::string s) : n(std::move(s)) {
+        dotted = n.find('.') != std::string::npos;
+        thisPrefix = n.rfind("this.", 0) == 0;
+    }
+    std::string Dump() const override;
+};
 struct AssignExpr : ExprOf<ExprKind::Assign> {
     std::string n; ExprPtr value;
-    AssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
+    bool plain = true;   ///< no '.' and no "this." prefix (worked out once here, not on every assignment)
+    AssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {
+        plain = n.find('.') == std::string::npos;
+    }
     std::string Dump() const override;
 };
 struct UnaryExpr : ExprOf<ExprKind::Unary> {

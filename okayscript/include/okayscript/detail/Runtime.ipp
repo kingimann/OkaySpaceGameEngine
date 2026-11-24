@@ -8,10 +8,11 @@
 namespace okayscript {
 
 namespace detail {
+// The error names the function only when it is raised: building that text on every call cost a heap allocation.
 struct CallDepthGuard {
     int& depth;
-    CallDepthGuard(int& d, int max, const std::string& what) : depth(d) {
-        if (depth >= max) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", 0);
+    template <class MakeWhat> CallDepthGuard(int& d, int max, MakeWhat what) : depth(d) {
+        if (depth >= max) throw RuntimeError(std::string(what()) + " calls itself too deeply (endless recursion?)", 0);
         ++depth;
     }
     ~CallDepthGuard() { --depth; }
@@ -55,11 +56,13 @@ template <class V> struct PopScope {
 
 // ---- Scopes ------------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v) {
+    if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);   // keeps Lookup's shortcut true
     Env& e = scopes.back();
     e.vars[n] = v;
     if (!e.kinds.empty()) e.kinds.erase(n);
 }
 template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const V& v, unsigned char kind) {
+    if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);
     Env& e = scopes.back();
     e.vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
     if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
@@ -89,13 +92,25 @@ template <class V> void BasicRuntime<V>::Assign(const std::string& n, const V& v
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
     Global().vars[n] = v;   // a new name becomes a global
 }
-template <class V> V BasicRuntime<V>::Get(const std::string& n) const {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        auto f = it->vars.find(n);
-        if (f != it->vars.end()) return f->second;
+template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n) const {
+    if (scopes.size() > 1 && !localNames.count(n)) {
+        // Not a local anywhere: only the globals (scopes[0]) and the statics can hold it.
+        auto f = scopes.front().vars.find(n);
+        if (f != scopes.front().vars.end()) return &f->second;
+        if (statics && !statics->vars.empty()) { auto g = statics->vars.find(n); if (g != statics->vars.end()) return &g->second; }
+        return nullptr;
     }
-    if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
-    if (const_cast<BasicRuntime*>(this)->SelfField(n)) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->vars.empty()) continue;
+        auto f = it->vars.find(n);
+        if (f != it->vars.end()) return &f->second;
+    }
+    if (statics && !statics->vars.empty()) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return &f->second; }
+    return nullptr;
+}
+template <class V> V BasicRuntime<V>::Get(const std::string& n) const {
+    if (const V* p = Lookup(n)) return *p;
+    if (!selfClass.empty() && const_cast<BasicRuntime*>(this)->SelfField(n)) {
         auto mp = self.AsMap();
         if (!mp) return V{};
         auto it = mp->find(n);
@@ -104,10 +119,8 @@ template <class V> V BasicRuntime<V>::Get(const std::string& n) const {
     return V{};   // never set: 0
 }
 template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
-        if (it->vars.count(n)) return true;
-    if (statics && statics->vars.count(n)) return true;
-    return const_cast<BasicRuntime*>(this)->SelfField(n) != nullptr;
+    if (Lookup(n)) return true;
+    return !selfClass.empty() && const_cast<BasicRuntime*>(this)->SelfField(n) != nullptr;
 }
 
 // ---- Statics -----------------------------------------------------------------------------------------------------
@@ -212,7 +225,7 @@ template <class V> V BasicRuntime<V>::CallMethod(const V& inst, const std::strin
     return Invoke(decl, args, nullptr);
 }
 template <class V> V BasicRuntime<V>::MakeInstance(const std::string& type, std::vector<V>& args) {
-    detail::CallDepthGuard guard(CallDepth(), limits.maxCallDepth, "new " + type);
+    detail::CallDepthGuard guard(CallDepth(), limits.maxCallDepth, [&] { return "new " + type; });
     auto cit = classes.find(type);
     if (cit == classes.end()) throw RuntimeError("no class named '" + type + "'", 0);
     UserClass& c = *const_cast<UserClass*>(cit->second);
@@ -344,40 +357,51 @@ template <class V> bool BasicRuntime<V>::IsLambda(const V& v) { return detail::I
 
 template <class V>
 V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names) {
-    const std::string what = fn.name + "()";
+    auto what = [&fn] { return fn.name + "()"; };
     detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, what);
-    std::vector<char> present;
-    std::vector<V> slot;
-    detail::PlaceArgs<V>(fn.params, args, names, present, slot, what);
+    const int callerLine = curLine;
     scopes.push_back(Env{});
     detail::PopScope<V> pop{scopes};
-    for (std::size_t i = 0; i < fn.params.size(); ++i) {
-        const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
-        V v;
-        if (present[i]) v = slot[i];
-        else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
-        else v = k ? DefaultForKind<V>(k) : V{};
-        if (!k) Define(fn.params[i], v);
-        else DefineTyped(fn.params[i], v, k);
+    const std::size_t np = fn.params.size();
+    if (!names) {
+        // Positional arguments (nearly every call): bind them straight, no slot lists.
+        for (std::size_t i = 0; i < np; ++i) {
+            const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+            V v;
+            if (i < args.size()) v = args[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
+            else if (k) v = DefaultForKind<V>(k);
+            if (!k) scopes.back().vars[fn.params[i]] = std::move(v);   // parameters are in localNames (CollectLocalNames)
+            else DefineTyped(fn.params[i], v, k);
+        }
+    } else {
+        std::vector<char> present;
+        std::vector<V> slot;
+        detail::PlaceArgs<V>(fn.params, args, names, present, slot, what());
+        for (std::size_t i = 0; i < np; ++i) {
+            const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+            V v;
+            if (present[i]) v = slot[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
+            else v = k ? DefaultForKind<V>(k) : V{};
+            if (!k) Define(fn.params[i], v);
+            else DefineTyped(fn.params[i], v, k);
+        }
     }
     V ret;
-    try {
-        for (auto& s : fn.body) Run(*s);
-    } catch (ReturnSignal<V>& rs) {
-        ret = rs.value;
-    } catch (BreakSignal&) {       // a stray break/continue (no loop around it) ends the function
-    } catch (ContinueSignal&) {
-    }
-    if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what);
+    // A stray break/continue (no loop around it) ends the function, like return.
+    if (RunList(fn.body) == Flow::Return) ret = std::move(retVal);
+    curLine = callerLine;
+    if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what());
     return ret;
 }
 
 template <class V>
 V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names, int line) {
     line = Ln(line);
-    try {
+    {
         auto bi = builtins.find(name);
-        if (bi != builtins.end() && !natives.count(name)) {
+        if (bi != builtins.end() && (natives.empty() || !natives.count(name))) {
             if (detail::AnyNamed(names) && !namedArgBuiltins.count(name))
                 throw RuntimeError("'" + name + "' doesn't take named arguments", line);
             const std::vector<std::string>* prev = activeArgNames;
@@ -385,7 +409,7 @@ V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std
             struct Restore { const std::vector<std::string>*& p; const std::vector<std::string>* v; ~Restore() { p = v; } } restore{activeArgNames, prev};
             return bi->second(args);
         }
-        auto nat = natives.find(name);
+        auto nat = natives.empty() ? natives.end() : natives.find(name);
         if (nat != natives.end()) {
             if (detail::AnyNamed(names)) throw RuntimeError("'" + name + "' doesn't take named arguments", line);
             const BasicNative<V>& n = nat->second;
@@ -429,9 +453,6 @@ V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std
         V out;
         if (hooks && hooks->CallUnknown(*this, name, args, out)) return out;
         throw RuntimeError("call to undefined function '" + name + "'", line);
-    } catch (ScriptError& e) {
-        if (e.line == 0) e.line = line;
-        throw;
     }
 }
 
@@ -442,7 +463,8 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
     if (it == m->end()) throw RuntimeError("not a function", 0);
     auto lb = lambdas.find(detail::SafeInt(it->second.AsFloat()));
     if (lb == lambdas.end()) throw RuntimeError("lambda is no longer available", 0);
-    detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, "a lambda");
+    detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, [] { return std::string("a lambda"); });
+    const int callerLine = curLine;
     const auto& ps = *lb->second.params;
     const std::vector<ExprPtr>* defs = lb->second.defaults;
     std::vector<char> present;
@@ -457,8 +479,8 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
         Define(ps[i], v);
     }
     V ret;
-    try { for (auto& st : *lb->second.body) Run(*st); }
-    catch (ReturnSignal<V>& rs) { ret = rs.value; }
+    if (RunList(*lb->second.body) == Flow::Return) ret = std::move(retVal);
+    curLine = callerLine;
     return ret;
 }
 

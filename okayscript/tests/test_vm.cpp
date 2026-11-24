@@ -290,8 +290,12 @@ std::vector<Case> Programs() {
                             "print(map_keys(m), map_get(m, \"c\"), map_has(m, \"c\"), count([1, 2]), first([4, 5]), last([4, 5]), sum([1, 2, 3]), min_of([4, 2]), max_of([4, 2]))\n"
                             "function dbl(x) { return x * 2; }\nprint(map_fn([1, 2], \"dbl\"), map_fn([1, 2], x => x + 1), filter_fn([1, 2, 3], x => x > 1), reduce_fn([1, 2, 3], (a, b) => a + b, 0))"},
         {"lib_json", "var m = from_json(\"{\\\"a\\\": 1, \\\"b\\\": [true, null, \\\"x\\\\u00e9\\\\n\\\"], \\\"big\\\": 9007199254740993, \\\"f\\\": 1.5, \\\"e\\\": {}}\")\n"
-                     "print(m.a, m.b, m.big, m.f, typeof(m.big), m.keys())\nprint(to_json(m))\nprint(to_json({list: [1, {k: \"v\"}], s: \"q\\\"t\"}, 2))\n"
-                     "print(json_parse(json_stringify([1, \"two\", [3]])), to_json(\"tab\\tnew\\n\"), from_json(\"[1, 2\"), to_json(5L), to_json(1.25))"},
+                     "print(m.a, m.b, m.big, m.f, typeof(m.big), m.keys())\nprint(to_json(m))\nprint(to_json({list: [1, {k: \"v\"}], s: \"q\\\"t\"}, {indent: 2}))\n"
+                     "print(json_parse(json_stringify([1, \"two\", [3]])), to_json(\"tab\\tnew\\n\"), from_json(\"[1, 2\"), to_json(5L), to_json(1.25))\n"
+                     // A plain second argument was ignored before indenting came in and still is; a whole number past
+                     // 64 bits becomes the nearest float, not the largest int; a bad value ends the list, as before.
+                     "var huge = from_json(\"123456789012345678901234\")\n"
+                     "print(to_json([1, 2], 2), typeof(huge), huge > 1e23, huge < 2e23, from_json(\"-99999999999999999999\") < -9e19, from_json(\"[b, a]\"), from_json(\"[1, x, 3]\"))"},
         {"lib_text", "print(ord(\"A\"), chr(65), chr(9731), ord(chr(128512)), utf8_len(\"héllo\"), str_len(\"héllo\"), utf8_chars(\"aé\"), ord(\"\"))\n"
                      "print(base64_encode(\"Hello, World!\"), base64_decode(\"SGVsbG8sIFdvcmxkIQ==\"), base64_encode(\"\"), base64_encode(\"a\"), base64_encode(\"ab\"), base64_decode(\"!!\"))\n"
                      "print(hex_encode(\"hi\"), hex_decode(\"6869\"), hex_decode(\"zz\"), url_encode(\"a b&c=d/é\"), url_decode(\"a%20b%26c+d%zz\"))\n"

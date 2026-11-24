@@ -239,12 +239,109 @@ template <class V> V BasicRuntime<V>::MakeLambda(const LambdaExpr& e) {
     if (env.IsMap()) {
         if (closures.size() >= closureSweepAt) {   // forget the boxes of lambdas that are gone
             for (auto it = closures.begin(); it != closures.end();) it = it->second.fn.expired() ? closures.erase(it) : std::next(it);
+            CollectCycles();
             closureSweepAt = closures.size() * 2 > 64 ? closures.size() * 2 : 64;
         }
         auto m = v.AsMap();
         closures[m.get()] = ClosureRef{std::weak_ptr<const void>(std::shared_ptr<const void>(m)), env};
     }
     return v;
+}
+
+// ---- Cycles through the closure and generator tables ------------------------------------------------------------
+// The tables hold a lambda's box (and a generator's frame) strongly and the lambda (the generator) weakly, so the
+// entry goes when the lambda does. When the box holds the lambda itself, directly or through lists and maps, the
+// lambda never goes: a leak of the box and everything in it. This finds them by counting references (trial
+// deletion): walk every list and map the tables' entries reach, and count how many references to each come from
+// inside that walk. One with more references (shared_ptr use count) than that is held from outside: a variable,
+// the stack, a host. What it reaches is in use, and so is the box of a lambda in use, and so on. An entry whose lambda
+// is not in use is dropped, which frees the box and the lambda with it. Values only reached through a raw pointer
+// would be missed, so nothing here runs while script code holds one: it runs only from MakeLambda / MakeGenerator.
+template <class V> std::size_t BasicRuntime<V>::CollectCycles() {
+    if (closures.empty() && generators.empty()) return 0;
+    using MapT = typename V::Map;
+    using ArrT = typename V::Array;
+    struct Node { long ext = 0, in = 0; bool map = false, live = false; };
+    std::unordered_map<const void*, Node> nodes;
+    std::vector<const void*> work;
+    auto edge = [&](const V& v) {   // a reference to v from inside the walk
+        const void* p = nullptr;
+        long uses = 0;
+        bool isMap = false;
+        if (auto m = v.AsMap()) { p = m.get(); uses = m.use_count() - 1; isMap = true; }   // - 1: this copy
+        else if (auto a = v.AsArray()) { p = a.get(); uses = a.use_count() - 1; }
+        if (!p) return;
+        auto ins = nodes.try_emplace(p);
+        Node& n = ins.first->second;
+        if (ins.second) { n.ext = uses; n.map = isMap; work.push_back(p); }
+        ++n.in;
+    };
+    auto genRoots = [](const Generator<V>& g, auto&& f) {   // what a generator's entry holds
+        f(g.env);
+        f(g.self);
+        for (const V& x : g.slots) f(x);
+        for (const V& x : g.run.stack) f(x);
+        f(g.run.value);
+        for (const auto& it : g.run.iters) f(it.coll);
+    };
+    for (auto& kv : closures) if (!kv.second.fn.expired()) edge(kv.second.env);
+    for (auto& kv : generators) if (kv.second.gen && !kv.second.owner.expired()) genRoots(*kv.second.gen, edge);
+    while (!work.empty()) {   // every list and map those reach, and the references between them
+        const void* p = work.back();
+        work.pop_back();
+        if (nodes[p].map) { for (const auto& kv : *static_cast<const MapT*>(p)) edge(kv.second); }
+        else for (const V& x : *static_cast<const ArrT*>(p)) edge(x);
+    }
+    auto live = [&](const V& v) {
+        const void* p = nullptr;
+        if (auto m = v.AsMap()) p = m.get();
+        else if (auto a = v.AsArray()) p = a.get();
+        if (!p) return;
+        auto it = nodes.find(p);
+        if (it != nodes.end() && !it->second.live) { it->second.live = true; work.push_back(p); }
+    };
+    auto keepEntry = [&](const void* key) {   // the lambda or generator `key` is in use: so is what its entry holds
+        auto c = closures.find(key);
+        if (c != closures.end()) live(c->second.env);
+        auto g = generators.find(key);
+        if (g != generators.end() && g->second.gen) genRoots(*g->second.gen, live);
+    };
+    for (auto& kv : nodes)
+        if (kv.second.ext > kv.second.in) { kv.second.live = true; work.push_back(kv.first); }
+    // A lambda or generator nothing in the walk refers to is held from outside (its entry's weak reference is alive).
+    for (auto& kv : closures) if (!kv.second.fn.expired() && !nodes.count(kv.first)) keepEntry(kv.first);
+    for (auto& kv : generators)
+        if (kv.second.gen && !kv.second.owner.expired() && (!nodes.count(kv.first) || kv.second.gen->running)) {
+            auto n = nodes.find(kv.first);
+            if (n != nodes.end() && !n->second.live) { n->second.live = true; work.push_back(kv.first); }
+            keepEntry(kv.first);
+        }
+    while (!work.empty()) {
+        const void* p = work.back();
+        work.pop_back();
+        const Node& n = nodes[p];
+        if (n.map) { for (const auto& kv : *static_cast<const MapT*>(p)) live(kv.second); }
+        else for (const V& x : *static_cast<const ArrT*>(p)) live(x);
+        keepEntry(p);
+    }
+    std::vector<const void*> deadClosures, deadGens;
+    for (auto& kv : closures) {
+        auto n = nodes.find(kv.first);
+        if (n != nodes.end() && !n->second.live) deadClosures.push_back(kv.first);
+    }
+    for (auto& kv : generators) {
+        auto n = nodes.find(kv.first);
+        if (n != nodes.end() && !n->second.live) deadGens.push_back(kv.first);
+    }
+    // Move the entries out first and free them after: freeing one box can free another entry's lambda.
+    std::vector<ClosureRef> freedC;
+    std::vector<GenEntry> freedG;
+    freedC.reserve(deadClosures.size());
+    freedG.reserve(deadGens.size());
+    for (const void* k : deadClosures) { auto it = closures.find(k); freedC.push_back(std::move(it->second)); closures.erase(it); }
+    for (const void* k : deadGens) { auto it = generators.find(k); freedG.push_back(std::move(it->second)); generators.erase(it); }
+    nodes.clear();
+    return deadClosures.size() + deadGens.size();
 }
 
 // ---- Generators ----------------------------------------------------------------------------------------------------
@@ -262,22 +359,26 @@ V BasicRuntime<V>::MakeGenerator(ChunkPtr code, V* slots, unsigned char* state, 
     g->methodClass = methodClass;
     if (generators.size() >= genSweepAt) {   // drop the state of generators no value refers to any more
         for (auto it = generators.begin(); it != generators.end();) it = it->second.owner.expired() ? generators.erase(it) : std::next(it);
+        CollectCycles();
         genSweepAt = generators.size() * 2 > 64 ? generators.size() * 2 : 64;
     }
-    const long long id = nextGenerator++;
+    // Found by the value's own map, not by a number in it: a float id stopped being unique after 2^24 generators,
+    // and two generators could share one. "__gen" only marks the map now; its number is not used to find it.
     V v = V::MakeMap();
-    (*v.AsMap())["__gen"] = V{(float)id};
-    generators[id] = GenEntry{std::weak_ptr<const void>(std::shared_ptr<const void>(v.AsMap())), std::move(g)};
+    auto m = v.AsMap();
+    (*m)["__gen"] = V{(float)nextGenerator++};
+    generators[m.get()] = GenEntry{std::weak_ptr<const void>(std::shared_ptr<const void>(m)), std::move(g)};
     return v;
 }
 template <class V> Generator<V>* BasicRuntime<V>::GeneratorOf(const V& v) {
     if (generators.empty()) return nullptr;
     auto m = v.AsMap();
     if (!m) return nullptr;
-    auto it = m->find("__gen");
-    if (it == m->end()) return nullptr;
-    auto g = generators.find((long long)it->second.AsFloat());
-    return g == generators.end() ? nullptr : g->second.gen.get();
+    if (!m->count("__gen")) return nullptr;
+    auto g = generators.find(m.get());
+    // A gone generator's entry stays until the next sweep: a new map at the same address is not that generator.
+    if (g == generators.end() || g->second.owner.expired()) return nullptr;
+    return g->second.gen.get();
 }
 template <class V> bool BasicRuntime<V>::Resume(Generator<V>& g, V& out) {
     if (g.done) return false;

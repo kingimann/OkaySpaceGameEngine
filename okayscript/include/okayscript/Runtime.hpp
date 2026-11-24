@@ -225,9 +225,9 @@ public:
     /// (the engine registers its several hundred commands this way). Named arguments are refused unless the name is
     /// in namedArgBuiltins; while one runs, activeArgNames holds the names it was given.
     std::unordered_map<std::string, std::function<V(std::vector<V>&)>> builtins;
-    /// A call by name finds the script's own functions before the builtins (the standalone interpreter, so a
-    /// program's own `sum` or `map` is not hidden by the library's); natives, the embedder's, still come first. Off in
-    /// the engine: its builtins come first, as they always did.
+    /// A call by name finds the script's own functions (and, in a method, its class's methods) before the builtins,
+    /// so a program's own `sum` or `sort` is not hidden by the library's; natives, the embedder's, still come first.
+    /// On in the standalone interpreter and in the engine (InitEngineRuntime); off only for a bare runtime.
     bool scriptFunctionsFirst = false;
     std::unordered_set<std::string> namedArgBuiltins;
     const std::vector<std::string>* activeArgNames = nullptr;
@@ -350,10 +350,14 @@ public:
     std::size_t closureSweepAt = 64;
     /// The box the lambda f keeps, or 0 when it keeps none.
     V ClosureOf(const V& f) const;
+    /// Free the closures and generators that only keep each other alive. This table holds a lambda's box, and the
+    /// box can hold the lambda (`var f = null; f = () => f`), so neither ever goes. Run at each sweep (detail/Eval.ipp);
+    /// returns how many entries it dropped.
+    std::size_t CollectCycles();
 
-    // ---- Generators: a call of a function with a `yield value` returns {"__gen": id} ----
+    // ---- Generators: a call of a function with a `yield value` returns a map marked "__gen" ----
     struct GenEntry { std::weak_ptr<const void> owner; std::unique_ptr<Generator<V>> gen; };
-    std::unordered_map<long long, GenEntry> generators;
+    std::unordered_map<const void*, GenEntry> generators;   ///< by the generator value's map
     long long nextGenerator = 1;
     std::size_t genSweepAt = 64;
     /// Make a generator for a body whose frame is ready (its arguments bound).

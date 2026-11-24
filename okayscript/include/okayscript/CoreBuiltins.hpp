@@ -19,13 +19,14 @@
 //                              map_has map_remove map_keys map_values map_count map_clear map_merge set_of set_add
 //                              set_has set_remove set_union set_intersect set_diff, and with a callback (a lambda or a
 //                              function's name): map_fn filter_fn reduce_fn for_each find_fn any_fn all_fn count_fn
-//   InstallJsonBuiltins        to_json/json_stringify (optional indent) from_json/json_parse
+//   InstallJsonBuiltins        to_json/json_stringify (indent: to_json(v, {indent: 2})) from_json/json_parse
 //   InstallRandomBuiltins      rand randi chance choose shuffle rand_seed (the random source is the embedder's)
 //   InstallTimeBuiltins        now now_ms clock date_text (sleep is the CLI's only: Stdlib.cpp)
 // Written for this project; the new ones from their usual definitions (see each), with no other library's code.
 #include "okayscript/detail/Support.hpp"
 #include "okayscript/detail/Text.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -943,11 +944,14 @@ template <class V> struct JsonReader {
         if constexpr (HasInt<V>::value) {   // a whole number too big for a float stays exact
             if (whole && t.size() > 7) {
                 char* end = nullptr;
+                errno = 0;
                 const long long n = std::strtoll(t.c_str(), &end, 10);
-                if (end && *end == 0) return MakeInt<V>((std::int64_t)n);
+                // Past the 64-bit range (errno ERANGE) it is not clamped to the largest whole number: it falls
+                // through to a float, the nearest one, as every number did before whole numbers were kept exact.
+                if (end && *end == 0 && errno == 0) return MakeInt<V>((std::int64_t)n);
             }
         }
-        if (i == start) { ++i; return V{}; }   // not a value: skip the character
+        if (i == start) return V{};   // not a value: null, and the list or map stops here (best-effort, as before)
         return V{(float)std::atof(t.c_str())};
     }
     V Arr() {
@@ -977,11 +981,20 @@ template <class V> struct JsonReader {
 };
 } // namespace detail
 
-/// to_json(v [, indent]) / json_stringify and from_json(text) / json_parse.
+/// to_json(v [, {indent: n}]) / json_stringify and from_json(text) / json_parse.
 template <class V, class Table> void InstallJsonBuiltins(Table& b) {
+    // The indent is asked for with an options map, to_json(v, {indent: 2}): a plain second argument was ignored
+    // before indenting came in, so old scripts that pass one keep getting the compact text.
     b["to_json"] = [](std::vector<V>& a) {
         std::string out;
-        if (!a.empty()) detail::ToJson(a[0], out, a.size() > 1 ? detail::SafeInt(a[1].AsFloat()) : 0);
+        int indent = 0;
+        if (a.size() > 1) {
+            if (auto opts = a[1].AsMap()) {
+                auto it = opts->find("indent");
+                if (it != opts->end()) indent = detail::SafeInt(it->second.AsFloat());
+            }
+        }
+        if (!a.empty()) detail::ToJson(a[0], out, indent);
         else out = "null";
         return V{out};
     };

@@ -431,6 +431,9 @@ void InitEngineRuntime(Runtime& rt) {
     rt.hooks = &g_engineHooks;
     rt.limits.runtimeErrorLines = true;           // runtime errors carry their line ("line 12: ..."), see ErrorText
     rt.namedArgBuiltins.insert("StartCoroutine"); // StartCoroutine(Blink(delay: 0.2)) passes the names on
+    // A game script's own function (or its class's method) wins over a builtin with the same name, as in the
+    // okayscript CLI: each new builtin would otherwise silently take over a script's `sort` or `clock`.
+    rt.scriptFunctionsFirst = true;
     rt.canonEvent = CanonEvent;
 }
 

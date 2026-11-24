@@ -1,5 +1,6 @@
 #pragma once
-// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/ui/own_ui_toolkit.md sections 6, 9, 10 and 11): the Crash
+// Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11 and 24; the Crash Log, the Audio Mixer and History are
+// drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet): the Crash
 // Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, Project Settings' Tags and Layers, Physics, Player and Rendering
 // sections, the Project panel's import settings and the Lighting window's Post-processing section. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
 // okayui/screens/OkayUIPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI).
@@ -17,21 +18,24 @@ struct CrashLogActions {
     std::function<void()> refresh, openFolder, clear;   // the host reloads, reveals the folder, deletes the files
 };
 
-/// Draw the Crash Log window with OkayUI. Returns false, drawing nothing, when an ImGui popup covers the window this frame (OkayUI
-/// draws over every ImGui window, so the caller draws the Dear ImGui version then). `revision` goes up whenever `text` changed.
+/// Draw the Crash Log window with OkayUI. The Crash Log, the Audio Mixer and History have no Dear ImGui version any more: their
+/// OkayUI body is drawn in Dear ImGui's order (okayuihost::HostPanelWindow), so ImGui popups and windows in front cover it. Returns
+/// true when the body was drawn this frame (false: closed, collapsed, a tab behind another). `revision` goes up whenever `text` changed.
 bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions);
 
-/// Draw the Audio Mixer window with OkayUI, editing okay::AudioMixer in place. Same return value as above.
+/// Draw the Audio Mixer window with OkayUI, editing okay::AudioMixer in place. Same return value as the Crash Log.
 bool DrawAudioMixerOkayUI(bool* open);
 
 /// The Problems, Stats and History panels with OkayUI (okayui/screens/OkayUIEditorPanels): the same models the Dear ImGui bodies in
-/// EditorPanelViews draw, the same intents back. Same return value as above (false: draw the Dear ImGui version this frame). `title`
-/// is the ImGui window name (Problems carries its error count in it).
+/// EditorPanelViews draw (Problems and Stats; not wired into the editor yet), the same intents back. Same return value as the Crash
+/// Log. `title` is the ImGui window name (Problems carries its error count in it).
 bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
                         okaypanels::ProblemsIntent& intent);
 /// Stats fills its model only while the window is visible, through `fill`; "Copy stats" goes to the clipboard here.
 bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill);
-bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypanels::HistoryIntent& intent);
+/// History (the editor's only History panel): `fill` builds the model only while the window shows (the editor commits its pending
+/// undo step there, as it did before); "Copy name" goes to the clipboard here, Undo, Redo and jumps come back in `intent`.
+bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent);
 
 /// Project Settings' Tags and Layers and Physics sections with OkayUI, drawn inside the current ImGui window (under their collapsing
 /// header) in a placeholder as tall as the section was on the last frame; only the part of it the window shows is drawn and takes

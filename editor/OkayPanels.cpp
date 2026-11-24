@@ -1,15 +1,47 @@
 #include "OkayPanels.hpp"
 #include "MainShared.hpp"
 
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
+// What the Crash Log, Audio Mixer and History windows show, for both hosts below (the editor on Dear ImGui, and the editor compiled
+// against OkayUI's Dear ImGui layer, okay-editor-okayui). These three windows are drawn by OkayUI only.
+#include "imgui.h"
+#include "OkayUIPanels.hpp"
+#include "OkayUIEditorPanels.hpp"
+#include "AudioMixerModel.hpp"   // FillAudioMixerModel
+
+#include <algorithm>
+#include <functional>
+#include <vector>
+
+namespace oked {
+
+namespace {
+okayuiscreens::CrashLogHost CrashLogHostOf(const CrashLogActions& actions) {
+    okayuiscreens::CrashLogHost host;
+    host.refresh = actions.refresh;
+    host.openFolder = actions.openFolder;
+    host.clear = actions.clear;
+    host.copyAll = [](const std::string& s) { ImGui::SetClipboardText(s.c_str()); };
+    return host;
+}
+// "Copy name" in a History row's menu: the row's label to the clipboard.
+void CopyHistoryRow(const okaypanels::HistoryModel& model, const okaypanels::HistoryIntent& intent) {
+    if (intent.copy < 0) return;
+    const std::vector<okaypanels::HistoryRow> rows = okaypanels::HistoryRows(model);
+    if ((std::size_t)intent.copy < rows.size()) ImGui::SetClipboardText(rows[(std::size_t)intent.copy].label.c_str());
+}
+} // namespace
+
+} // namespace oked
+#endif
+
 #ifdef OKAY_HAVE_OKAYUI
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"
-#include "OkayUIPanels.hpp"
-#include "OkayUIEditorPanels.hpp"
+#include "OkayUIImGuiEmbed.hpp"   // HostPanelWindow: a panel drawn by OkayUI only, in Dear ImGui's draw order
 #include "EditorPanelViews.hpp"
-#include "okay/Audio/AudioMixer.hpp"
 #include "InspectorModel.hpp"   // AssetKindAccepts: which rows take a file dragged from the Project panel
 
 #include <algorithm>
@@ -41,45 +73,28 @@ struct MetricsFromImGui {
     MetricsFromImGui& operator=(const MetricsFromImGui&) = delete;
 };
 
-// The ImGui window stays: it is the dock tab and the close box, and hands its free area to OkayUI as one rectangle (the same
-// arrangement as the Console panel). Returns false when an ImGui popup or another ImGui window in front covers the window (OkayUI
-// is drawn after ImGui and would paint over it), and the caller then draws the Dear ImGui version, which ImGui layers correctly.
+// A panel whose body is OkayUI only (okayuihost::HostPanelWindow, shared/OkayUIImGuiEmbed.hpp): the ImGui window is the dock tab and
+// the close box, the body is drawn into the window's draw list, so Dear ImGui's popups and the windows in front cover it as they
+// cover any ImGui panel. There is no Dear ImGui version to fall back to. A new window with no saved place opens at 440 x 340 (times
+// the UI scale).
 //
-// The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to an OkayUI body. `fitBody`, when
-// given, is the panel's Dear ImGui body: a window that does not exist yet and has no saved place is fitted by Dear ImGui to what its
-// first frame holds, and that frame is never shown, so the first frame draws the Dear ImGui body and the window opens exactly as big
-// as the Dear ImGui version does; OkayUI draws from the next frame on. Without `fitBody` a new window gets a fixed first size.
+// `fitBody` (the Profiler only, not wired yet): the panel's Dear ImGui body for the hidden first frame of a window with no saved place,
+// so Dear ImGui fits the window to it; OkayUI draws from the next frame on.
 template <class Draw>
 bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, const std::function<void()>& fitBody = {}) {
-    const ImGuiWindow* cw = ImGui::FindWindowByName(title);
-    if (cw && okayuihost::CoveredInImGui(cw, cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;   // a popup or window in front
-    if (okayuihost::OutsideMainWindow(cw)) return false;
-    if (fitBody && !cw && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
+    if (fitBody && !ImGui::FindWindowByName(title) && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
         if (ImGui::Begin(title, open)) fitBody();   // the hidden first frame: Dear ImGui measures it, nobody sees it
         ImGui::End();
         return true;
     }
-    if (!fitBody) ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
-        ImVec2 a = ImGui::GetContentRegionAvail();
-        a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
-        ImGui::InvisibleButton(itemId, a);               // an ImGui item, so ImGui does not move or scroll the window under it
-        if (okayuihost::HiddenInImGui(ImGui::GetCurrentWindow())) { ImGui::End(); return true; }   // a frame ImGui keeps hidden: nothing shows
-        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);    // the wheel scrolls the OkayUI body, not the ImGui window
-        OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+    static OkayUI::CapturedGeometry cap;            // scratch: the panels are drawn one after another
+    return okayuihost::HostPanelWindow(title, open, itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap,
+                                       ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), [&](ImVec2 p, ImVec2 a) {
         OkayUI::PushTextScale(g_uiScale);
         MetricsFromImGui metrics_;
-        const int overlays = OkayUI::GetOverlayCount();
         draw(p, a);
         OkayUI::PopTextScale();
-        for (int i = overlays; i < OkayUI::GetOverlayCount(); ++i) {   // a menu or a list the body opened hangs out of the window: it takes the mouse
-            const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
-            if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true, true);
-        }
-    }
-    ImGui::End();
-    return true;
+    });
 }
 
 // An OkayUI body inside part of an ImGui window (a section of Project Settings): a placeholder item as tall as the body drew on the
@@ -155,29 +170,15 @@ bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& 
     static okayuiscreens::CrashLogState state;
     okayuiscreens::CrashLogModel model;
     model.text = text; model.path = path; model.revision = revision;   // (a copy per frame: crash logs are small)
-    okayuiscreens::CrashLogHost host;
-    host.refresh = actions.refresh;
-    host.openFolder = actions.openFolder;
-    host.clear = actions.clear;
-    host.copyAll = [](const std::string& s) { ImGui::SetClipboardText(s.c_str()); };
+    const okayuiscreens::CrashLogHost host = CrashLogHostOf(actions);
     return HostWindow("Crash Log", open, "##okayui_crashlog", [&](ImVec2 p, ImVec2 a) {
         okayuiscreens::DrawCrashLog(model, state, host, p.x, p.y, a.x, a.y);
     });
 }
 
 bool DrawAudioMixerOkayUI(bool* open) {
-    using okay::AudioMixer;
-    using okay::AudioGroup;
     okayuiscreens::AudioMixerModel m;
-    m.peakLeft = AudioMixer::peak[0]; m.peakRight = AudioMixer::peak[1];
-    m.masterVolume = &AudioMixer::masterVolume; m.masterMuted = &AudioMixer::muted;
-    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
-        m.groupNames.push_back(AudioMixer::GroupName((AudioGroup)i));
-        m.groupVolume.push_back(&AudioMixer::groupVolume[i]);
-        m.groupMuted.push_back(&AudioMixer::groupMuted[i]);
-    }
-    m.duckMusic = &AudioMixer::duckMusicUnderVoice; m.duckLevel = &AudioMixer::duckLevel;
-    m.duckAttack = &AudioMixer::duckAttack; m.duckRelease = &AudioMixer::duckRelease; m.duckGain = AudioMixer::duckGain;
+    FillAudioMixerModel(m);
     return HostWindow("Audio Mixer", open, "##okayui_audiomixer", [&](ImVec2 p, ImVec2 a) {
         okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y);
     });
@@ -204,12 +205,16 @@ bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel
     });
 }
 
-bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypanels::HistoryIntent& intent) {
+bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent) {
+    intent = okaypanels::HistoryIntent();
     return HostWindow("History", open, "##okayui_history", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::HistoryModel model;
+        fill(model);
         OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
         intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
-    }, [&] { DrawHistoryBodyImGui(model, PanelViewHooks()); });
+        CopyHistoryRow(model, intent);
+    });
 }
 
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
@@ -416,11 +421,54 @@ bool OkayUIHasKeyboard() { return OkayUI::WantsTextInput(); }
 
 #else
 namespace oked {
+#ifdef OKAY_ON_OKAYUI
+// The editor compiled against OkayUI's Dear ImGui layer (okay-editor-okayui, docs/ui/own_ui_toolkit.md 6.26): its ImGui windows are
+// OkayUI windows already, so the body is drawn straight into the window.
+namespace {
+template <class Draw>
+bool PlainWindow(const char* title, bool* open, Draw draw) {
+    if (open && !*open) return false;
+    ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
+    const bool shown = ImGui::Begin(title, open);
+    if (shown) {
+        const ImVec2 p = ImGui::GetCursorScreenPos(), a = ImGui::GetContentRegionAvail();
+        draw(p, ImVec2(std::max(a.x, 8.0f), std::max(a.y, 8.0f)));
+    }
+    ImGui::End();
+    return shown;
+}
+} // namespace
+bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions) {
+    static okayuiscreens::CrashLogState state;
+    okayuiscreens::CrashLogModel model;
+    model.text = text; model.path = path; model.revision = revision;
+    const okayuiscreens::CrashLogHost host = CrashLogHostOf(actions);
+    return PlainWindow("Crash Log", open, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawCrashLog(model, state, host, p.x, p.y, a.x, a.y); });
+}
+bool DrawAudioMixerOkayUI(bool* open) {
+    okayuiscreens::AudioMixerModel m;
+    FillAudioMixerModel(m);
+    return PlainWindow("Audio Mixer", open, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y); });
+}
+bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent) {
+    intent = okaypanels::HistoryIntent();
+    return PlainWindow("History", open, [&](ImVec2 p, ImVec2 a) {
+        okaypanels::HistoryModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        CopyHistoryRow(model, intent);
+    });
+}
+#else
+// A build without OkayUI (no okay_ui library): these windows do not exist there.
 bool DrawCrashLogOkayUI(bool*, const std::string&, const std::string&, std::uint64_t, const CrashLogActions&) { return false; }
 bool DrawAudioMixerOkayUI(bool*) { return false; }
+bool DrawHistoryOkayUI(bool*, const std::function<void(okaypanels::HistoryModel&)>&, okaypanels::HistoryIntent&) { return false; }
+#endif
 bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&) { return false; }
 bool DrawStatsOkayUI(bool*, const std::function<void(okaypanels::StatsModel&)>&) { return false; }
-bool DrawHistoryOkayUI(bool*, const okaypanels::HistoryModel&, okaypanels::HistoryIntent&) { return false; }
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
 bool DrawProfilerOkayUI(bool*, const std::function<void(okaypanels::ProfilerModel&)>&, okaypanels::ProfilerIntent&) { return false; }

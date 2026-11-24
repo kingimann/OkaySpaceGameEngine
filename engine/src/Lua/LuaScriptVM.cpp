@@ -75,6 +75,15 @@ int LuaFind(const std::string& name) {
     int idx = Api().Find(name);
     return idx >= 0 && LuaHidden(Api().types[(std::size_t)idx]) ? -1 : idx;
 }
+// A typed-table method the generated layer's DENY_* rules leave out (a file, network, platform or clipboard call):
+// Lua does not reach it here either, so EngineApi is no way around those rules.
+bool LuaDenied(const sc::ApiType& t, const sc::ApiMethod& m) {
+    std::vector<scriptbind::DenyParam> ps;
+    for (std::size_t i = 0; i < m.params.size(); ++i)
+        ps.push_back({m.params[i].kind == sc::TK::String, i < m.paramNames.size() ? m.paramNames[i] : std::string()});
+    return scriptbind::IsDeniedMethod(t.name, m.name, ps);
+}
+
 LV Str(State& L, const std::string& s) { return LV::Obj(L.NewString(s)); }
 
 int CallerLine(State& L) {
@@ -312,15 +321,6 @@ LV BoundMethod(State& L, int typeIdx, bool isStatic, const std::string& name) {
     }
     L.Pop();
     return f;
-}
-
-// A typed-table method the generated layer's DENY_* rules leave out (a file, network, platform or clipboard call):
-// Lua does not reach it here either, so EngineApi is no way around those rules.
-bool LuaDenied(const sc::ApiType& t, const sc::ApiMethod& m) {
-    std::vector<scriptbind::DenyParam> ps;
-    for (std::size_t i = 0; i < m.params.size(); ++i)
-        ps.push_back({m.params[i].kind == sc::TK::String, i < m.paramNames.size() ? m.paramNames[i] : std::string()});
-    return scriptbind::IsDeniedMethod(t.name, m.name, ps);
 }
 
 bool HasMethod(const sc::ApiType& t, const std::vector<sc::ApiMethod>& list, const std::string& name) {

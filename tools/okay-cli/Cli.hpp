@@ -6,6 +6,7 @@
 //   okay open   the editor's --open        okay play    the player        okay build   the editor's --build-game
 //   okay run    scripts/okay_run.py and the okay_run tool (docs/process/okay_run.md)
 //   okay test   every scene and prefab loads (SceneSerializer), or ctest for an engine build folder
+//   okay engine build  the editor, launcher and player from an engine checkout (scripts/build-local.ps1's recipe)
 //   okay vc     git, with SceneMerge / SceneDiff as git's merge and diff drivers for .okayscene and .okayprefab
 // Programs are started only through Process.hpp; git only through Git.cpp. Messages are short plain sentences.
 #include <string>

@@ -27,6 +27,7 @@
 #include <unistd.h>
 #endif
 
+#include "Engine.hpp"
 #include "Git.hpp"
 #include "Process.hpp"
 #include "ProjectState.hpp"     // editor/: ProjectSettings and the text of project.okayproj
@@ -153,6 +154,11 @@ const std::vector<CommandHelp>& Commands() {
          "--engine runs the engine's own tests (ctest) in a build folder instead; -R picks tests by name."},
         {"info", "okay info", "Show the engine version, the project and its version control.", ""},
         {"doctor", "okay doctor", "Check that everything a project needs is in place, and say how to fix what is not.", ""},
+        {"engine", "okay engine <build|doctor> ...", "Build the engine's own editor, launcher and player from an engine checkout.",
+         "okay engine build [editor|launcher|player|all] [--debug] [--jobs N] [--clean] [--run] [--dir BUILD]\n"
+         "  builds OkayEngine.exe, OkaySpace.exe and OkaySpacePlayer.exe with CMake (as scripts/build-local.ps1 does).\n"
+         "okay engine doctor  says what is missing (CMake, a compiler, Ninja, SDL2) and where to get it.\n"
+         "okay help engine build tells you more."},
         {"vc", "okay vc <init|clone|status|save|resolve|history|undo|branch|switch|sync|remote|who> ...",
          "Version control (Git underneath).", ""},
         {"help", "okay help [command]", "Show help for a command.", ""},
@@ -204,6 +210,8 @@ std::string HelpText(const std::string& command) {
              "okay help <command> tells you more.\n";
         return t;
     }
+    if (command == "engine build") return engine::BuildUsage();
+    if (command == "engine doctor") return engine::DoctorUsage();
     std::string cmd = command, sub;
     if (cmd.rfind("vc ", 0) == 0) { sub = cmd.substr(3); cmd = "vc"; }
     if (cmd == "vc" && !sub.empty()) {
@@ -737,6 +745,7 @@ int Main(const std::vector<std::string>& argsIn, const Io& io) {
     if (cmd == "info") return CmdInfo(rest, project, io);
     if (cmd == "doctor") return CmdDoctor(rest, project, io);
     if (cmd == "vc") return detail::VcMain(rest, project, io);
+    if (cmd == "engine") return engine::EngineMain(rest, io);
     io.Warn("There is no command called \"" + cmd + "\".\n" + HelpText(""));
     return 2;
 }

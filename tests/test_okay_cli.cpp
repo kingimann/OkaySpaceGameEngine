@@ -10,6 +10,7 @@
 #include "test_framework.hpp"
 
 #include "Cli.hpp"
+#include "Engine.hpp"
 #include "Git.hpp"
 #include "Process.hpp"
 
@@ -546,6 +547,259 @@ void TestGit(const fs::path& tmp) {
     CHECK(Cli({"--project", P, "info"}, s) == 0 && Has(s.out, "Version line: main") && Has(s.out, "Online copy: " + bare.string()));
 }
 
+// ---- okay engine build / doctor ----------------------------------------------------------------------------------
+
+void UnsetEnv(const char* k) {
+#if defined(_WIN32)
+    _putenv_s(k, "");
+#else
+    unsetenv(k);
+#endif
+}
+
+void TestEngineArgs() {
+    RUN_SUITE("okay engine: build arguments");
+    using okaycli::engine::BuildOptions;
+    using okaycli::engine::ParseBuildArgs;
+    BuildOptions o;
+    std::string e;
+    CHECK(ParseBuildArgs({}, o, e) && o.what == "all" && !o.debug && o.jobs == 0 && !o.clean && !o.run && o.dir == "build-local");
+    o = BuildOptions{};
+    CHECK(ParseBuildArgs({"Editor", "--debug", "-j", "4", "--clean", "--run", "--dir", "out", "--source", "src", "--sdl2", "sd"}, o, e));
+    CHECK(o.what == "editor" && o.debug && o.jobs == 4 && o.clean && o.run && o.dir == "out" && o.source == "src" && o.sdl2 == "sd");
+    o = BuildOptions{};
+    CHECK(ParseBuildArgs({"launcher", "--jobs", "12"}, o, e) && o.what == "launcher" && o.jobs == 12);
+    CHECK(!ParseBuildArgs({"sandbox"}, o, e) && Has(e, "editor, launcher, player or all"));
+    CHECK(!ParseBuildArgs({"editor", "player"}, o, e));
+    CHECK(!ParseBuildArgs({"--jobs", "0"}, o, e) && Has(e, "--jobs"));
+    CHECK(!ParseBuildArgs({"--jobs", "x"}, o, e));
+    CHECK(!ParseBuildArgs({"--bogus"}, o, e));
+
+    Said s;
+    CHECK(Cli({"engine"}, s) == 0 && Has(s.out, "engine build") && Has(s.out, "engine doctor"));
+    CHECK(Cli({"help", "engine"}, s) == 0 && Has(s.out, "engine build"));
+    CHECK(Cli({"help", "engine", "build"}, s) == 0 && Has(s.out, "--sdl2"));
+    CHECK(Cli({"help"}, s) == 0 && Has(s.out, "engine"));
+    CHECK(Cli({"engine", "nosuch"}, s) == 2 && Has(s.err, "no okay engine command"));
+    CHECK(Cli({"engine", "build", "--jobs", "0"}, s) == 2);
+    CHECK(Cli({"engine", "build", "--help"}, s) == 0 && Has(s.out, "OkaySpacePlayer.exe"));
+}
+
+void TestEngineDetect(const fs::path& tmp) {
+    RUN_SUITE("okay engine: finding the checkout, the tools and SDL2");
+    using namespace okaycli::engine;
+    // The checkout: a CMakeLists.txt with project(OkaySpace.
+    const fs::path src = tmp / "engine-src";
+    Write(src / "CMakeLists.txt", "cmake_minimum_required(VERSION 3.20)\nproject( OkaySpace VERSION 1.2.3 LANGUAGES C CXX)\n");
+    Write(src / "editor" / "deep" / "x.txt", "x");
+    Write(tmp / "other" / "CMakeLists.txt", "project(OkaySpaceTools)\n");
+    Write(tmp / "other2" / "CMakeLists.txt", "subproject(OkaySpace)\nproject(Other)\n");
+    Write(tmp / "nocmake" / "a.txt", "a");
+    CHECK(IsEngineSource(src.string()));
+    CHECK(!IsEngineSource((tmp / "other").string()) && !IsEngineSource((tmp / "other2").string()));
+    CHECK(!IsEngineSource((tmp / "nocmake").string()));
+    CHECK(fs::path(FindEngineSource("", (src / "editor" / "deep").string())) == src);
+    CHECK(fs::path(FindEngineSource(src.string(), "/")) == src);
+    CHECK(FindEngineSource((tmp / "nocmake").string(), src.string()).empty());   // --source wins, and must be real
+    // The real repository is one.
+    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    CHECK(IsEngineSource(repo.string()));
+
+    // SDL2: the MinGW download (one prefix per CPU), the Visual Studio download (cmake/ at the top), SDL2_DIR naming
+    // the config folder itself.
+    const fs::path mg = tmp / "sdl" / "SDL2-2.30.9";
+    Write(mg / "x86_64-w64-mingw32" / "lib" / "cmake" / "SDL2" / "sdl2-config.cmake", "#");
+    Write(mg / "i686-w64-mingw32" / "lib" / "cmake" / "SDL2" / "sdl2-config.cmake", "#");
+    CHECK(fs::path(Sdl2PrefixIn(mg.string(), true)) == mg / "x86_64-w64-mingw32");
+    const fs::path vc = tmp / "sdlvc" / "SDL2-2.30.9";
+    Write(vc / "cmake" / "SDL2Config.cmake", "#");
+    CHECK(fs::path(Sdl2PrefixIn(vc.string(), false)) == vc);
+    CHECK(fs::path(Sdl2PrefixIn((vc / "cmake").string(), false)) == vc);
+    CHECK(fs::path(Sdl2PrefixIn((mg / "x86_64-w64-mingw32" / "lib" / "cmake" / "SDL2").string(), true)) == mg / "x86_64-w64-mingw32");
+    CHECK(Sdl2PrefixIn((tmp / "nocmake").string(), true).empty());
+    for (const char* k : {"SDL2_DIR", "SDL2_ROOT", "SDL2DIR"}) UnsetEnv(k);
+#if !defined(_WIN32)
+    CHECK(FindSdl2("", src.string(), true).empty());   // nothing yet (C:\\SDL2 and the like are only looked at on Windows)
+#endif
+    // In the checkout's third_party, the newest version first.
+    Write(src / "third_party" / "SDL2-2.28.0" / "x86_64-w64-mingw32" / "lib" / "cmake" / "SDL2" / "sdl2-config.cmake", "#");
+    Write(src / "third_party" / "SDL2-2.30.9" / "x86_64-w64-mingw32" / "lib" / "cmake" / "SDL2" / "sdl2-config.cmake", "#");
+    CHECK(fs::path(FindSdl2("", src.string(), true)) == src / "third_party" / "SDL2-2.30.9" / "x86_64-w64-mingw32");
+    CHECK(fs::path(FindSdl2("", (tmp / "nocmake").string(), false, {(tmp / "sdlvc").string()})) == vc);
+    CHECK(fs::path(FindSdl2(mg.string(), src.string(), true)) == mg / "x86_64-w64-mingw32");   // --sdl2 wins
+    CHECK(FindSdl2((tmp / "nocmake").string(), src.string(), true).empty());                  // and must hold SDL2
+    SetEnv("SDL2_DIR", (vc / "cmake").string());
+    CHECK(fs::path(FindSdl2("", (tmp / "nocmake").string(), false)) == vc);
+    UnsetEnv("SDL2_DIR");
+
+#if !defined(_WIN32)
+    // The tools: full paths from absolute PATH folders only; vswhere's answer is read.
+    const fs::path bin = tmp / "fakebin";
+    for (const char* n : {"cmake", "ninja", "g++", "gcc"}) {
+        Write(bin / n, "#!/bin/sh\nexit 0\n");
+        fs::permissions(bin / n, fs::perms::owner_all);
+    }
+    const fs::path vsDir = tmp / "VS 2022" / "BuildTools";
+    fs::create_directories(vsDir);
+    Write(bin / "vswhere", "#!/bin/sh\necho '" + vsDir.string() + "'\n");
+    fs::permissions(bin / "vswhere", fs::perms::owner_all);
+    const char* old = std::getenv("PATH");
+    const std::string saved = old ? old : "";
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);
+    fs::current_path(tmp, ec);
+    SetEnv("PATH", "fakebin:" + bin.string());
+    const Tools t = FindTools((bin / "vswhere").string());
+    CHECK(fs::path(t.cmake) == bin / "cmake" && fs::path(t.ninja) == bin / "ninja" && fs::path(t.gxx) == bin / "g++" && fs::path(t.gcc) == bin / "gcc");
+    CHECK(fs::path(t.visualStudio) == vsDir);
+    SetEnv("PATH", "fakebin");   // a relative PATH entry is never searched
+    CHECK(FindTools((tmp / "no-vswhere").string()).cmake.empty());
+    SetEnv("PATH", saved);
+    fs::current_path(cwd, ec);
+#endif
+}
+
+void TestEnginePlan(const fs::path& tmp) {
+    RUN_SUITE("okay engine: the plan and the cmake command lines (as build-local.ps1 builds them)");
+    using namespace okaycli::engine;
+    const std::string src = (tmp / "engine-src").string();
+    const std::string sdl = (tmp / "sdl" / "SDL2-2.30.9" / "x86_64-w64-mingw32").string();
+    Tools win;
+    win.windows = true;
+    win.cmake = "C:/CMake/bin/cmake.exe";
+    win.ninja = "C:/tools/ninja.exe";
+    win.gxx = "C:/mingw64/bin/g++.exe";
+    win.gcc = "C:/mingw64/bin/gcc.exe";
+    BuildOptions o;
+    std::string e;
+    CHECK(ParseBuildArgs({"editor", "-j", "4"}, o, e));
+    Plan p;
+    CHECK(MakePlan(o, win, src, sdl, p, e));
+    const std::string build = (fs::path(src) / "build-local").string();
+    // build-local.ps1 -Target Editor -Config Release -Sdl2Dir <sdl> -Jobs 4, with ninja on PATH, passes exactly these
+    // (in this order), and okay adds the tools by full path at the end.
+    const Strs ps1Configure = {"-S", src, "-B", build, "-DOKAY_BUILD_EDITOR=ON", "-DOKAY_BUILD_LAUNCHER=OFF",
+                               "-DOKAY_BUILD_PLAYER=OFF", "-DOKAY_BUILD_SANDBOX=OFF", "-DOKAY_BUILD_TESTS=OFF",
+                               "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_PREFIX_PATH=" + sdl};
+    Strs want = ps1Configure;
+    for (const char* x : {"-DCMAKE_MAKE_PROGRAM=C:/tools/ninja.exe", "-DCMAKE_C_COMPILER=C:/mingw64/bin/gcc.exe",
+                          "-DCMAKE_CXX_COMPILER=C:/mingw64/bin/g++.exe"})
+        want.push_back(x);
+    CHECK(ConfigureArgs(p) == want);
+    CHECK(BuildArgs(p) == (Strs{"--build", build, "--config", "Release", "--parallel", "4", "--target", "okay-editor"}));
+    CHECK(p.mingw && !p.multiConfig);
+
+    // All (build-local.ps1's default) also builds the sandbox; Debug.
+    o = BuildOptions{};
+    CHECK(ParseBuildArgs({"--debug", "-j", "2", "--dir", "b2"}, o, e) && MakePlan(o, win, src, sdl, p, e));
+    const Strs cfg = ConfigureArgs(p);
+    CHECK(cfg[4] == "-DOKAY_BUILD_EDITOR=ON" && cfg[5] == "-DOKAY_BUILD_LAUNCHER=ON" && cfg[6] == "-DOKAY_BUILD_PLAYER=ON" &&
+          cfg[7] == "-DOKAY_BUILD_SANDBOX=ON" && cfg[11] == "-DCMAKE_BUILD_TYPE=Debug");
+    CHECK(BuildArgs(p) == (Strs{"--build", (fs::path(src) / "b2").string(), "--config", "Debug", "--parallel", "2", "--target",
+                                "okay-editor", "okayspace-launcher", "okay-player", "sandbox"}));
+
+    // Visual Studio only (no Ninja, no MinGW): no -G and no CMAKE_BUILD_TYPE (as build-local.ps1), the config at build time.
+    Tools vs;
+    vs.windows = true;
+    vs.cmake = win.cmake;
+    vs.visualStudio = "C:/Program Files/Microsoft Visual Studio/2022/BuildTools";
+    o = BuildOptions{};
+    CHECK(ParseBuildArgs({"launcher", "-j", "3"}, o, e) && MakePlan(o, vs, src, sdl, p, e));
+    CHECK(ConfigureArgs(p) == (Strs{"-S", src, "-B", build, "-DOKAY_BUILD_EDITOR=OFF", "-DOKAY_BUILD_LAUNCHER=ON", "-DOKAY_BUILD_PLAYER=OFF",
+                                    "-DOKAY_BUILD_SANDBOX=OFF", "-DOKAY_BUILD_TESTS=OFF", "-DCMAKE_PREFIX_PATH=" + sdl}));
+    CHECK(p.multiConfig && !p.mingw);
+    fs::create_directories(fs::path(build) / "bin" / "Release");
+    CHECK(fs::path(BinDir(p)) == fs::path(build) / "bin" / "Release");
+
+    // What is missing is said with where to get it.
+    Tools none;
+    none.windows = true;
+    CHECK(!MakePlan(o, none, src, sdl, p, e) && Has(e, "cmake.org"));
+    none.cmake = win.cmake;
+    CHECK(!MakePlan(o, none, src, sdl, p, e) && Has(e, "visualstudio.microsoft.com") && Has(e, "winlibs.com"));
+    Tools noNinja = win;
+    noNinja.ninja.clear();
+    CHECK(!MakePlan(o, noNinja, src, sdl, p, e) && Has(e, "ninja-build"));
+    noNinja.mingwMake = "C:/mingw64/bin/mingw32-make.exe";
+    CHECK(MakePlan(o, noNinja, src, sdl, p, e) && p.generator == "MinGW Makefiles" && p.makeProgram == noNinja.mingwMake);
+    CHECK(!MakePlan(o, win, src, "", p, e) && Has(e, "SDL2-devel-2.30.9-mingw.zip") && Has(e, "github.com/libsdl-org/SDL/releases"));
+    CHECK(!MakePlan(o, vs, src, "", p, e) && Has(e, "SDL2-devel-2.30.9-VC.zip"));
+    CHECK(!MakePlan(o, win, "", sdl, p, e) && Has(e, "--source"));
+    o.dir = ".";
+    CHECK(!MakePlan(o, win, src, sdl, p, e) && Has(e, "checkout itself"));
+    o.dir = "..";
+    CHECK(!MakePlan(o, win, src, sdl, p, e));
+    // Off Windows SDL2 may come from the system, and the system compiler is CMake's to find.
+    Tools lin;
+    lin.windows = false;
+    lin.cmake = "/usr/bin/cmake";
+    o = BuildOptions{};
+    CHECK(MakePlan(o, lin, src, "", p, e) && p.generator.empty() && !p.multiConfig);
+    CHECK(ConfigureArgs(p).back() == "-DCMAKE_BUILD_TYPE=Release");
+
+    int problems = 0;
+    const std::string d = DoctorText(none, "", "", &problems);
+    CHECK(problems >= 3 && Has(d, "MISSING") && Has(d, "SDL2") && Has(d, "--source"));
+    const std::string ok = DoctorText(win, src, sdl, &problems);
+    CHECK(problems == 0 && Has(ok, "Everything needed") && Has(ok, win.cmake));
+
+    // build-local.ps1 still builds the same recipe: its CMake options, targets and defaults are the ones above.
+    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    const std::string ps1 = Read(repo / "scripts" / "build-local.ps1");
+    std::size_t last = 0;
+    bool inOrder = true;
+    for (const char* opt : {"-DOKAY_BUILD_EDITOR=", "-DOKAY_BUILD_LAUNCHER=", "-DOKAY_BUILD_PLAYER=", "-DOKAY_BUILD_SANDBOX=",
+                            "-DOKAY_BUILD_TESTS=", "'-G', 'Ninja'", "-DCMAKE_BUILD_TYPE=", "-DCMAKE_PREFIX_PATH=",
+                            "'--build'", "'--config'", "'--parallel'", "'okay-editor'", "'okayspace-launcher'", "'okay-player'", "'sandbox'"}) {
+        const std::size_t at = ps1.find(opt, last);
+        if (at == std::string::npos) { inOrder = false; std::cout << "    build-local.ps1 lacks (in order): " << opt << "\n"; continue; }
+        last = at;
+    }
+    CHECK(inOrder);
+    CHECK(Has(ps1, "[Math]::Max(2, [int]([Environment]::ProcessorCount / 2))"));   // the same default job count
+    CHECK(Has(ps1, "$BuildDir = 'build-local'") && Has(ps1, "$Config = 'Release'"));
+    CHECK(Has(ps1, "okay engine build"));   // and it points at the C++ copy
+}
+
+#if !defined(_WIN32)
+/// The whole of okay engine build against a fake cmake that writes down what it was given.
+void TestEngineBuildRun(const fs::path& tmp) {
+    RUN_SUITE("okay engine: build runs cmake twice and says where the programs are");
+    const fs::path src = tmp / "engine-src";
+    const fs::path bin = tmp / "fakebin2";
+    const fs::path log = tmp / "cmake-log.txt";
+    Write(bin / "cmake", "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> '" + log.string() + "'\necho '--' >> '" + log.string() +
+                         "'\nif [ \"$1\" = \"--build\" ]; then /bin/mkdir -p \"$2/bin\"; : > \"$2/bin/OkayEngine\"; : > \"$2/CMakeCache.txt\"; fi\nexit 0\n");
+    fs::permissions(bin / "cmake", fs::perms::owner_all);
+    Write(bin / "ninja", "#!/bin/sh\nexit 0\n");
+    fs::permissions(bin / "ninja", fs::perms::owner_all);
+    const char* old = std::getenv("PATH");
+    const std::string saved = old ? old : "";
+    SetEnv("PATH", bin.string());
+    Said s;
+    const int rc = Cli({"engine", "build", "editor", "--source", src.string(), "-j", "3"}, s);
+    SetEnv("PATH", saved);
+    CHECK(rc == 0);
+    const std::string l = Read(log);
+    const fs::path build = src / "build-local";
+    CHECK(Has(l, "-S\n" + src.string() + "\n-B\n" + build.string() + "\n-DOKAY_BUILD_EDITOR=ON\n"));
+    CHECK(Has(l, "-G\nNinja\n") && Has(l, "-DCMAKE_MAKE_PROGRAM=" + (bin / "ninja").string()));
+    CHECK(Has(l, "-DCMAKE_PREFIX_PATH=" + (src / "third_party" / "SDL2-2.30.9" / "x86_64-w64-mingw32").string()) ||
+          Has(l, "-DCMAKE_PREFIX_PATH=" + (src / "third_party" / "SDL2-2.30.9").string()));
+    CHECK(Has(l, "--build\n" + build.string() + "\n--config\nRelease\n--parallel\n3\n--target\nokay-editor\n--"));
+    CHECK(Has(s.out, "the editor: " + (build / "bin" / "OkayEngine").string()));
+    // --clean deletes only a CMake build folder.
+    fs::create_directories(src / "notabuild");
+    Write(src / "notabuild" / "keep.txt", "mine");
+    SetEnv("PATH", bin.string());
+    CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--dir", "notabuild", "--clean"}, s) == 1 && Has(s.err, "not a CMake build folder"));
+    CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--clean"}, s) == 0 && Has(s.out, "Removing"));
+    CHECK(Cli({"engine", "build", "--source", (tmp / "nocmake").string()}, s) == 1 && Has(s.err, "not an engine checkout"));
+    SetEnv("PATH", saved);
+    CHECK(fs::exists(src / "notabuild" / "keep.txt"));
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -569,6 +823,12 @@ int main(int argc, char** argv) {
     TestPathLookup(tmp);
 #endif
     TestMergeDriverDirect(tmp);
+    TestEngineArgs();
+    TestEngineDetect(tmp);
+    TestEnginePlan(tmp);
+#if !defined(_WIN32)
+    TestEngineBuildRun(tmp);
+#endif
     const bool git = okaycli::vc::Git::Available();
     if (git) TestGit(tmp);
     else std::cout << "  SKIP: git is not installed, so the version control checks did not run\n";

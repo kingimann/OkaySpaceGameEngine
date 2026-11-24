@@ -60,6 +60,29 @@ int main() {
         CHECK_EQ(line, 3);
         CHECK_EQ(msg, std::string("too big"));
     }
+    TEST("deep nesting is a parse error, not a stack overflow (the editor parses on every key press)");
+    {
+        auto nested = [](const std::string& open, const std::string& close, int n) {
+            std::string src;
+            for (int i = 0; i < n; ++i) src += open;
+            src += "x = 1";
+            for (int i = 0; i < n; ++i) src += close;
+            return src;
+        };
+        const std::string msg = "parse error: blocks nested too deeply (more than 200 levels)";
+        auto err = oktest::Run(nested("{ ", " }", 4000));   // a bare { } reads as a list initializer: the expression cap
+        CHECK(err.find("parse error: expression nested too deeply") != std::string::npos);
+        err = oktest::Run(nested("if (true) { ", " }", 4000));
+        CHECK(err.find(msg) != std::string::npos);
+        err = oktest::Run("var f = " + nested("() => { return ", "; }", 4000));
+        CHECK(err.find(msg) != std::string::npos);
+        err = oktest::Run("var f = " + nested("a => ", "", 4000));
+        CHECK(err.find(msg) != std::string::npos);
+        err = oktest::Run(nested("namespace N { ", " }", 4000));
+        CHECK(err.find(msg) != std::string::npos);
+        CHECK_EQ(oktest::Run(nested("if (true) { ", " }", 150) + "\nprint(x)"), std::string("1\n"));   // 150 levels still run
+    }
+
     TEST("FormatError: file:line: message");
     CHECK_EQ(okayscript::FormatError("game.okay", okayscript::RuntimeError("boom", 7)), std::string("game.okay:7: boom"));
     CHECK_EQ(okayscript::FormatError("game.okay", okayscript::RuntimeError("boom", 0)), std::string("game.okay: boom"));

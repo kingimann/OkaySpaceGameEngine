@@ -161,6 +161,7 @@
 #include "okayscript/Parser.hpp"     // the OkayScript parser and syntax tree
 #include "okayscript/Runtime.hpp"    // the interpreter core (a template over the value type)
 #include "okayscript/detail/Support.hpp"
+#include "okayscript/CoreBuiltins.hpp"    // the builtins the engine and the okayscript CLI share
 
 #include <algorithm>
 #include <cctype>
@@ -406,9 +407,6 @@ using okayscript::Lexer;
 // The parser, syntax tree and interpreter are the engine-independent OkayScript core (okayscript/: Parser.hpp,
 // Runtime.hpp), instantiated in OkayScriptVM.cpp for the engine's value (vs::VsValue). The engine adds its scene
 // names, object references and components through its okayscript::BasicHost (EngineHooks in OkayScriptVM.cpp).
-using ReturnSignal = okayscript::ReturnSignal<Value>;
-using okayscript::BreakSignal;
-using okayscript::ContinueSignal;
 using Environment = okayscript::BasicEnvironment<Value>;
 using okayscript::IsNullish;
 using okayscript::detail::IsClassInstance;

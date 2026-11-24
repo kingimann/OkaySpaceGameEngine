@@ -1769,9 +1769,18 @@ function on_trigger()   { /* entered a trigger volume */ }
   functions (engine order). `okayscript::Host` (`ReadName`, `WriteName`, `CallUnknown`) is the seam for an embedder's
   own names; the engine is meant to fill it in when it moves onto the library.
 - **CLI:** `okayscript file.okay [args]` runs the top level, then `main()` (given the argument list when it has a
-  parameter; the list is also the global `args`); `okayscript -e "code"`. Exit 0, 1 runtime error, 2 syntax error,
-  3 usage or unreadable file, or the code given to `exit(n)`. Errors on stderr as `file:line: message`. The CLI turns
-  the loop limit off; the recursion limit (200 calls deep) stays.
+  parameter; the list is also the global `args`); `okayscript -e "code"`; `okayscript -- file` for a name starting with
+  `-`. Exit 0, 1 runtime error (or out of memory), 2 syntax error, 64 usage error, 66 unreadable file, or `exit(n)`
+  clamped to 0..255. Errors on stderr as `file:line: message`. The CLI turns the loop limit off; the recursion limit
+  (200 calls deep) stays. Text is capped at 64 Mi characters (`s + s` in a loop is a runtime error, not a crash), and
+  blocks, lambdas and namespaces nest at most 200 deep (a parse error).
+- **Builtins:** the maths and conversion builtins (`CoreBuiltins.hpp`) are one set the engine and the CLI both
+  register, with the engine's rules (`len(x, y)` is a 2D vector's length; `sqrt(-4)` is nan; `num("12abc")` is 12).
+  The CLI adds only input and output: print, println, write, input, exit.
+- **Speed:** `return`, `break` and `continue` are a status the statements hand back, not C++ exceptions; a read of a
+  name that is never a local skips the call stack's scopes (`Program::localNames`). Callgrind counts for
+  `tests/bench_okayscript.cpp` (main before the core / this core): arith 236.2M / 218.4M, calls 1111.3M / 196.4M,
+  deep reads 173.3M / 100.6M; `okayscript_bench` guards them.
 - **Tests:** `okayscript_lang_lexer`, `_parser`, `_interpreter`, `_native`, `_errors` (link only the library);
   `okayscript_cli_<case>` from `tests/okayscript_cli/` (`.okay`, `.args`, `.in`, `.out`, `.err`, `.code`);
   `okayscript_no_engine` (no engine include under `okayscript/`, the CLI links no engine library; CMake also refuses to

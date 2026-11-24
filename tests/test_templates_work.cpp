@@ -40,10 +40,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Testing/ObjectPath.hpp"
 
-#if defined(OKAY_PLATFORM_HAVE_SDL2) && __has_include(<SDL.h>)
-#include "EditorPlayInput.hpp"   // SDL scancodes -> the keys scripts read: the same mapping the editor's Play uses
-#define OKAY_TW_SDL 1
-#endif
+#include "okay/Input/PlatformKeys.hpp"   // held keys -> the keys scripts read: the same mapping the editor's Play uses
 
 #include <algorithm>
 #include <cctype>
@@ -118,27 +115,25 @@ using okaytest::SomethingVisible;
 
 // ---- simulated input ----------------------------------------------------------------------------------------------
 
-// Hold `keys` for one frame. With SDL's headers the keys go through the editor's own mapping (scancodes -> letters),
-// so a break in that mapping shows here; without them the letters are fed directly.
+// Hold `keys` for one frame. The keys go through the editor's own Play mapping (okay::AppendHeldMainKeys: held
+// platform keys -> letters), so a break in that mapping shows here. Letters sit at their US places.
 void FeedHeld(const std::vector<char>& keys) {
-#ifdef OKAY_TW_SDL
-    Uint8 ks[SDL_NUM_SCANCODES] = {};
+    using PKey = okay::platform::Key;
+    bool ks[okay::platform::kKeyCount] = {};
     for (char c : keys) {
-        if (c >= 'a' && c <= 'z') ks[SDL_SCANCODE_A + (c - 'a')] = 1;
-        else if (c == ' ') ks[SDL_SCANCODE_SPACE] = 1;
-        else if (c == Input::KeyShift) ks[SDL_SCANCODE_LSHIFT] = 1;
-        else if (c == Input::KeyCtrl) ks[SDL_SCANCODE_LCTRL] = 1;
-        else if (c == Input::KeyUp) ks[SDL_SCANCODE_UP] = 1;
-        else if (c == Input::KeyDown) ks[SDL_SCANCODE_DOWN] = 1;
-        else if (c == Input::KeyLeft) ks[SDL_SCANCODE_LEFT] = 1;
-        else if (c == Input::KeyRight) ks[SDL_SCANCODE_RIGHT] = 1;
+        if (c >= 'a' && c <= 'z') ks[(int)PKey::A + (c - 'a')] = true;
+        else if (c == ' ') ks[(int)PKey::Space] = true;
+        else if (c == Input::KeyShift) ks[(int)PKey::LShift] = true;
+        else if (c == Input::KeyCtrl) ks[(int)PKey::LCtrl] = true;
+        else if (c == Input::KeyUp) ks[(int)PKey::Up] = true;
+        else if (c == Input::KeyDown) ks[(int)PKey::Down] = true;
+        else if (c == Input::KeyLeft) ks[(int)PKey::Left] = true;
+        else if (c == Input::KeyRight) ks[(int)PKey::Right] = true;
     }
     std::vector<char> down;
-    okay::editor::CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+    okay::AppendHeldMainKeys([&](PKey k) { return (int)k >= 0 && (int)k < okay::platform::kKeyCount && ks[(int)k]; },
+                             [](char c) { return okay::KeyForLetter(PKey::Unknown, c); }, false, down);
     Input::FeedKeys(down);
-#else
-    Input::FeedKeys(keys);
-#endif
 }
 
 // ---- one Play session ---------------------------------------------------------------------------------------------

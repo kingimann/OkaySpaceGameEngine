@@ -386,6 +386,7 @@ add_library(okay_engine
     src/Render/IqmReader.cpp
     src/Render/CobReader.cpp
     src/Render/NdoReader.cpp
+    src/Render/SibReader.cpp
     src/Render/TerragenReader.cpp
     src/Render/MdcReader.cpp
     src/Render/HmpReader.cpp
@@ -843,7 +844,7 @@ foreach(_line IN LISTS _okay_own_opts)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO GLTF1 OPENGEX MDL Q3BSP)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO GLTF1 OPENGEX MDL Q3BSP SIB)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

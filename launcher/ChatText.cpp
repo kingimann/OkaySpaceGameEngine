@@ -4,7 +4,7 @@
 #include "ChatText.hpp"
 #include "NetGuard.hpp"                 // okay::netguard: size and host checks for link previews
 #include "okay/Core/ImageDecode.hpp"   // LoadRgbaFile
-#include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for link previews (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client first, curl only as its last fallback
 
 namespace okl {
 
@@ -548,35 +548,14 @@ static int LinkPreviewWorker(void*) {
         // loopback or link-local address (chat links come from other people).
         if (ShellSafeUrl(url) &&
             okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
-            std::error_code ec;
-            const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
-            fs::remove(tmp, ec);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-            bool ownDone = false;   // own client first (opt-in); an unclear answer falls through to curl below
-            if (okay::http::NativeAvailable()) {
-                std::string ownHtml;
-                const okay::http::OwnOutcome o = okay::http::OwnFetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, ownHtml);
-                if (o == okay::http::OwnOutcome::Ok) { if (ownHtml.size() > 262144) ownHtml.resize(262144); lp = ParseLinkPreview(url, ownHtml); }
-                ownDone = o != okay::http::OwnOutcome::NotHandled;   // a clear refusal (404, too big) means no preview, as with curl -f
-            }
-            if (!ownDone) {
-#endif
-            std::string cmd = "curl -L -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
-                              "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -o \"" + tmp.string() + "\" \"" + url + "\"";
-#if !defined(_WIN32)
-            cmd += " 2>/dev/null";
-#endif
-            RunCmd(cmd, true);
-            std::ifstream f(tmp, std::ios::binary);
-            if (f) {
-                std::string html((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            // The HTTP seam: WinHTTP / our own client first, curl only as its last fallback. A clear refusal
+            // (404, too big) means no preview, as with curl -f.
+            std::string html;
+            if (okay::http::FetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, html) ==
+                okay::http::OwnOutcome::Ok) {
                 if (html.size() > 262144) html.resize(262144);
                 lp = ParseLinkPreview(url, html);
             }
-            f.close(); fs::remove(tmp, ec);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-            }
-#endif
         }
         okay::thr::LockMutex(g_lpMutex); g_linkPrev[url] = lp; okay::thr::UnlockMutex(g_lpMutex);
     }

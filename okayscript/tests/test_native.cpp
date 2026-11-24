@@ -136,22 +136,22 @@ int main() {
         CHECK_EQ(host.unknown.size(), (std::size_t)1);
         CHECK_EQ(Run("not_host()", &in), std::string("ERROR runtime 1: call to undefined function 'not_host'"));
     }
-    TEST("the standard natives");
-    CHECK_EQ(Run("print(len(\"abc\"), len([1, 2]), str(5) + \"!\", num(\"2.5\") * 2, type(1), type(\"\"), type([]), type(x => x))"),
-             std::string("3 2 5! 5 number string list function\n"));
-    CHECK_EQ(Run("print(abs(-3), sqrt(16), pow(2, 10), floor(2.7), ceil(2.1), round(2.5), min(3, 1, 2), max([4, 9, 2]), clamp(15, 0, 10))"),
+    TEST("the shared core builtins answer as the engine does (never an error)");
+    CHECK_EQ(Run("print(abs(-3), sqrt(16), pow(2, 10), floor(2.7), ceil(2.1), round(2.5), min(3, 1), max(4, 9), clamp(15, 0, 10))"),
              std::string("3 4 1024 2 3 3 1 9 10\n"));
-    CHECK_EQ(Run("print(round(sin(PI / 2) * 1000), cos(0), tan(0))"), std::string("1000 1 0\n"));
+    CHECK_EQ(Run("print(round(sin(1.5707964) * 1000), cos(0), tan(0), sign(-2), lerp(0, 10, 0.5), wrap(370, 0, 360))"),
+             std::string("1000 1 0 -1 5 10\n"));
+    CHECK_EQ(Run("print(len(3, 4), hypot(3, 4), len(5), sqrt(-4), abs(\"x\"), num(\"12abc\"), num(\"abc\"), str(5) + \"!\")"),
+             std::string("5 5 5 nan 0 12 0 5!\n"));   // len(x, y) is a 2D vector's length, as in the engine
+    CHECK_EQ(Run("print(min(), max(1), clamp(), to_num(\"2.5\") * 2, to_str(7))"), std::string("0 1 0 5 7\n"));
     CHECK_EQ(Run("write(\"a\")\nwrite(\"b\", \"c\")\nprintln(\"!\")"), std::string("ab c!\n"));
-    CHECK_EQ(Run("num(\"abc\")"), std::string("ERROR runtime 1: num(): 'abc' is not a number"));
-    CHECK_EQ(Run("len(5)"), std::string("ERROR runtime 1: len(): needs text, a list or a map, got number"));
-    CHECK_EQ(Run("sqrt(-1)"), std::string("ERROR runtime 1: sqrt(): can't take the square root of a negative number"));
+    CHECK_EQ(Run("type(1)"), std::string("ERROR runtime 1: call to undefined function 'type'"));   // not in the engine, so not here
     {
         Interpreter in;
         InstallStandardLibrary(in);
         std::istringstream input("first line\nsecond\n");
         in.SetInput(&input);
-        CHECK_EQ(Run("var a = input()\nvar b = input(\"> \")\nvar c = input()\nprint(a, \"|\", b, \"|\", len(c))", &in),
+        CHECK_EQ(Run("var a = input()\nvar b = input(\"> \")\nvar c = input()\nprint(a, \"|\", b, \"|\", c.Length)", &in),
                  std::string("> first line | second | 0\n"));
     }
     {
@@ -160,6 +160,16 @@ int main() {
         int code = -1;
         try { in.Run("exit(4)"); } catch (const ExitRequest& e) { code = e.code; }
         CHECK_EQ(code, 4);
+        auto exitCode = [&](const std::string& src) {
+            int c = -1;
+            try { in.Run(src); } catch (const ExitRequest& e) { c = e.code; }
+            return c;
+        };
+        CHECK_EQ(exitCode("exit(300)"), 255);   // a process exit code is 0..255
+        CHECK_EQ(exitCode("exit(-5)"), 0);
+        CHECK_EQ(exitCode("exit(99999999)"), 255);
+        CHECK_EQ(exitCode("exit(2.9)"), 2);
+        CHECK_EQ(exitCode("exit(\"x\")"), 0);
     }
     TEST_RESULT();
 }

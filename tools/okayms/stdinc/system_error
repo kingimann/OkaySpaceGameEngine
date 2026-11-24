@@ -1,0 +1,34 @@
+// okay-ms own standard header: std::error_code, written from ISO/IEC 14882 [syserr.errcode]. Own minimal version: the
+// code is an int with no category object (category() is not here); message() gives the number as text. Enough for the `std::error_code ec;` out-parameters of <filesystem>.
+#pragma once
+#include <string>
+namespace std {
+// The error conditions <charconv> and <filesystem> report ([syserr]); the values are the POSIX errno numbers.
+enum class errc {
+    invalid_argument = 22,
+    result_out_of_range = 34,
+    no_such_file_or_directory = 2,
+    file_exists = 17,
+    permission_denied = 13,
+    value_too_large = 132
+};
+class error_code {
+    int value_;
+
+public:
+    error_code() : value_(0) {}
+    explicit error_code(int v) : value_(v) {}
+    int value() const { return value_; }
+    void clear() { value_ = 0; }
+    void assign(int v) { value_ = v; }
+    explicit operator bool() const { return value_ != 0; }
+    string message() const {
+        if (value_ == 0) return string("ok");
+        string out("error ");
+        out += to_string(value_);
+        return out;
+    }
+    bool operator==(const error_code& o) const { return value_ == o.value_; }
+    bool operator!=(const error_code& o) const { return value_ != o.value_; }
+};
+}

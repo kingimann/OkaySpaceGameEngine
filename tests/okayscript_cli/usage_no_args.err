@@ -1,0 +1,6 @@
+usage: okayscript <file.okay> [args...]
+       okayscript -e "code" [args...]
+       okayscript --version
+Runs the program's top level, then main() if it is defined.
+Exit codes: 0 ok, 1 runtime error, 2 syntax error, 64 usage error, 66 unreadable file;
+exit(n) in a script ends with n.

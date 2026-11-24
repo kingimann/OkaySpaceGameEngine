@@ -10,8 +10,10 @@ namespace okayscript {
 
 namespace detail {
 // `this.hp` with no class object in play is the global `hp` (a script's fields are its globals).
-template <class V> std::string StripThis(const std::string& n, const V& self) {
-    return (n.rfind("this.", 0) == 0 && !IsClassInstance(self)) ? n.substr(5) : n;
+// Returns `n` itself (no copy) unless it is stripped into `buf`.
+template <class V> const std::string& StripThis(const std::string& n, const V& self, std::string& buf) {
+    if (n.size() > 5 && n.compare(0, 5, "this.") == 0 && !IsClassInstance(self)) { buf = n.substr(5); return buf; }
+    return n;
 }
 
 template <class V> V Arith(Tok op, const V& a, const V& b) {
@@ -39,7 +41,7 @@ template <class V> V Arith(Tok op, const V& a, const V& b) {
     }
     switch (op) {
         case Tok::Plus:
-            if (a.IsString() || b.IsString()) return V{a.AsString() + b.AsString()};
+            if (a.IsString() || b.IsString()) return V{JoinText(a.AsString(), b.AsString())};
             return V{a.AsFloat() + b.AsFloat()};
         case Tok::Minus:   return V{a.AsFloat() - b.AsFloat()};
         case Tok::Star:    return V{a.AsFloat() * b.AsFloat()};
@@ -59,16 +61,12 @@ template <class V> V Arith(Tok op, const V& a, const V& b) {
 }
 } // namespace detail
 
-template <class V> void BasicRuntime<V>::Run(const Stmt& s) {
-    try {
-        Exec(s);
-    } catch (ScriptError& e) {
-        if (e.line == 0) e.line = Ln(s.line);
-        throw;
+template <class V> Flow BasicRuntime<V>::RunList(const StmtList& list) {
+    for (auto& s : list) {
+        const Flow f = Run(*s);
+        if (f != Flow::Normal) return f;
     }
-}
-template <class V> void BasicRuntime<V>::RunList(const StmtList& list) {
-    for (auto& s : list) Run(*s);
+    return Flow::Normal;
 }
 
 template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
@@ -81,27 +79,40 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
         case ExprKind::InterpString: {
             auto& e = static_cast<const InterpStringExpr&>(ex);
             std::string out;
-            for (auto& s : e.segs) out += s.isExpr ? Eval(*s.expr).AsString() : s.lit;
+            for (auto& s : e.segs) {
+                out += s.isExpr ? Eval(*s.expr).AsString() : s.lit;
+                detail::CheckTextLength(out.size());
+            }
             return V{out};
         }
         case ExprKind::Var: {
             auto& e = static_cast<const VarExpr&>(ex);
-            if (e.n == "this" && detail::IsClassInstance(self)) return self;
-            const std::string key = detail::StripThis(e.n, self);
+            if (!e.dotted && !e.thisPrefix) {
+                // The hot path: a plain name, one search of the scopes.
+                if (const V* p = Lookup(e.n)) return *p;
+                if (!selfClass.empty()) {
+                    if (e.n == "this" && detail::IsClassInstance(self)) return self;
+                    return Get(e.n);   // a field of the object a method runs on
+                }
+                V v;
+                if (hooks && hooks->ReadName(*this, e.n, v)) return v;   // a bare host name, such as `gameObject`
+                return V{};   // never set: 0
+            }
+            std::string buf;
+            const std::string& key = detail::StripThis(e.n, self, buf);
             if (key.find('.') != std::string::npos) {
                 bool ok = false;
                 V v = GetDotted(key, ok);
                 if (ok) return v;
-            } else if (hooks && selfClass.empty() && !Has(key)) {
-                V v;
-                if (hooks->ReadName(*this, key, v)) return v;   // a bare host name, such as the engine's `gameObject`
             }
             return Get(key);
         }
         case ExprKind::Assign: {
             auto& e = static_cast<const AssignExpr&>(ex);
             V v = Eval(*e.value);
-            const std::string key = detail::StripThis(e.n, self);
+            if (e.plain) { Assign(e.n, v); return v; }   // the hot path: a plain name
+            std::string buf;
+            const std::string& key = detail::StripThis(e.n, self, buf);
             if (key.find('.') != std::string::npos && SetDotted(key, v)) return v;
             Assign(key, v);
             return v;
@@ -243,7 +254,7 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
             V rhs = Eval(*e.value);
             auto apply = [&](const V& cur) -> V {
                 switch (e.op) {
-                    case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return V{cur.AsString() + rhs.AsString()};
+                    case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return V{detail::JoinText(cur.AsString(), rhs.AsString())};
                                      return V{cur.AsFloat() + rhs.AsFloat()};
                     case Tok::Minus: return V{cur.AsFloat() - rhs.AsFloat()};
                     case Tok::Star:  return V{cur.AsFloat() * rhs.AsFloat()};
@@ -301,7 +312,8 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
                 return take(Eval(*e.rhs));
             }
             // name = name <bin> rhs, the plain compound assignment (dotted names and this. included)
-            const std::string key = detail::StripThis(e.name, self);
+            std::string buf;
+            const std::string& key = detail::StripThis(e.name, self, buf);
             V cur;
             bool ok = false;
             if (key.find('.') != std::string::npos) cur = GetDotted(key, ok);
@@ -315,26 +327,27 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
     return V{};
 }
 
-template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
+template <class V> Flow BasicRuntime<V>::Exec(const Stmt& st) {
     switch (st.kind) {
-        case StmtKind::Expr: Eval(*static_cast<const ExprStmt&>(st).e); return;
+        case StmtKind::Expr: Eval(*static_cast<const ExprStmt&>(st).e); return Flow::Normal;
         case StmtKind::VarDecl: {
             auto& s = static_cast<const VarDeclStmt&>(st);
             if (s.kind & KStatic) {
-                if (statics && statics->vars.count(s.n)) return;   // already set by another run
+                if (statics && statics->vars.count(s.n)) return Flow::Normal;   // already set by another run
                 DefineStatic(s.n, s.init ? Eval(*s.init) : DefaultForKind<V>(s.kind), (unsigned char)(s.kind & ~KStatic));
-                return;
+                return Flow::Normal;
             }
-            if (!s.kind) { Define(s.n, s.init ? Eval(*s.init) : V{}); return; }
+            if (!s.kind) { Define(s.n, s.init ? Eval(*s.init) : V{}); return Flow::Normal; }
             DefineTyped(s.n, s.init ? Eval(*s.init) : DefaultForKind<V>(s.kind), s.kind);
-            return;
+            return Flow::Normal;
         }
         case StmtKind::Return: {
             auto& s = static_cast<const ReturnStmt&>(st);
-            throw ReturnSignal<V>{s.e ? Eval(*s.e) : V{}};
+            retVal = s.e ? Eval(*s.e) : V{};
+            return Flow::Return;
         }
-        case StmtKind::Break: throw BreakSignal{};
-        case StmtKind::Continue: throw ContinueSignal{};
+        case StmtKind::Break: return Flow::Break;
+        case StmtKind::Continue: return Flow::Continue;
         case StmtKind::Throw: {
             auto& s = static_cast<const ThrowStmt&>(st);
             throw RuntimeError(s.e ? Eval(*s.e).AsString() : std::string("error"), Ln(s.line));
@@ -342,42 +355,39 @@ template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
         case StmtKind::Try: {
             auto& s = static_cast<const TryStmt&>(st);
             try {
-                RunList(s.body);
+                return RunList(s.body);
             } catch (const std::exception& ex) {
-                if (!s.hasCatch) return;   // try without catch: the error is dropped (engine rule)
+                if (!s.hasCatch) return Flow::Normal;   // try without catch: the error is dropped (engine rule)
                 if (!s.catchVar.empty()) Define(s.catchVar, V{std::string(ex.what())});
-                RunList(s.catchB);
+                return RunList(s.catchB);
             }
-            return;
         }
-        case StmtKind::Block: RunList(static_cast<const BlockStmt&>(st).body); return;
+        case StmtKind::Block: return RunList(static_cast<const BlockStmt&>(st).body);
         case StmtKind::If: {
             auto& s = static_cast<const IfStmt&>(st);
-            if (Eval(*s.cond).AsBool()) RunList(s.thenB);
-            else RunList(s.elseB);
-            return;
+            return Eval(*s.cond).AsBool() ? RunList(s.thenB) : RunList(s.elseB);
         }
         case StmtKind::While: {
             auto& s = static_cast<const WhileStmt&>(st);
             long long n = 0;
             while (Eval(*s.cond).AsBool()) {
-                try { RunList(s.body); }
-                catch (ContinueSignal&) {}
-                catch (BreakSignal&) { break; }
+                const Flow f = RunList(s.body);
+                if (f == Flow::Break) break;
+                if (f == Flow::Return) return f;
                 CountIteration(n, "while loop");
             }
-            return;
+            return Flow::Normal;
         }
         case StmtKind::DoWhile: {
             auto& s = static_cast<const DoWhileStmt&>(st);
             long long n = 0;
             do {
-                try { RunList(s.body); }
-                catch (ContinueSignal&) {}
-                catch (BreakSignal&) { break; }
+                const Flow f = RunList(s.body);
+                if (f == Flow::Break) break;
+                if (f == Flow::Return) return f;
                 CountIteration(n, "do-while loop");
             } while (Eval(*s.cond).AsBool());
-            return;
+            return Flow::Normal;
         }
         case StmtKind::Switch: {
             auto& s = static_cast<const SwitchStmt&>(st);
@@ -391,24 +401,26 @@ template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
             if (start < 0)
                 for (std::size_t i = 0; i < s.cases.size(); ++i)
                     if (s.cases[i].isDefault) { start = (int)i; break; }
-            if (start < 0) return;
-            try {
-                for (std::size_t i = (std::size_t)start; i < s.cases.size(); ++i) RunList(s.cases[i].body);   // falls through
-            } catch (BreakSignal&) {}
-            return;
+            if (start < 0) return Flow::Normal;
+            for (std::size_t i = (std::size_t)start; i < s.cases.size(); ++i) {   // falls through until a break
+                const Flow f = RunList(s.cases[i].body);
+                if (f == Flow::Break) return Flow::Normal;
+                if (f != Flow::Normal) return f;   // return, or continue for the loop around the switch
+            }
+            return Flow::Normal;
         }
         case StmtKind::For: {
             auto& s = static_cast<const ForStmt&>(st);
             if (s.init) Run(*s.init);
             long long n = 0;
             while (!s.cond || Eval(*s.cond).AsBool()) {
-                try { RunList(s.body); }
-                catch (ContinueSignal&) {}
-                catch (BreakSignal&) { break; }
+                const Flow f = RunList(s.body);
+                if (f == Flow::Break) break;
+                if (f == Flow::Return) return f;
                 if (s.step) Eval(*s.step);
                 CountIteration(n, "for loop");
             }
-            return;
+            return Flow::Normal;
         }
         case StmtKind::ForEach: {
             auto& s = static_cast<const ForEachStmt&>(st);
@@ -418,9 +430,9 @@ template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
                 const std::size_t n = arr->size();   // items added while looping are not visited
                 for (std::size_t i = 0; i < n && i < arr->size(); ++i) {
                     Assign(s.var, (*arr)[i]);
-                    try { RunList(s.body); }
-                    catch (ContinueSignal&) {}
-                    catch (BreakSignal&) { break; }
+                    const Flow f = RunList(s.body);
+                    if (f == Flow::Break) break;
+                    if (f == Flow::Return) return f;
                 }
             } else if (auto m = coll.AsMap()) {
                 std::vector<std::string> keys;
@@ -436,22 +448,23 @@ template <class V> void BasicRuntime<V>::Exec(const Stmt& st) {
                     } else {
                         Assign(s.var, V{k});
                     }
-                    try { RunList(s.body); }
-                    catch (ContinueSignal&) {}
-                    catch (BreakSignal&) { break; }
+                    const Flow f = RunList(s.body);
+                    if (f == Flow::Break) break;
+                    if (f == Flow::Return) return f;
                 }
             }
-            return;
+            return Flow::Normal;
         }
-        case StmtKind::Multi: RunList(static_cast<const MultiStmt&>(st).list); return;
+        case StmtKind::Multi: return RunList(static_cast<const MultiStmt&>(st).list);
         case StmtKind::Yield: {
             auto& s = static_cast<const YieldStmt&>(st);
             V v = s.e ? Eval(*s.e) : V{};
             if (!hooks || !hooks->YieldValue(*this, v))
                 throw RuntimeError("'yield return' only works in a coroutine the host runs", Ln(s.line));
-            return;
+            return Flow::Normal;
         }
     }
+    return Flow::Normal;
 }
 
 } // namespace okayscript

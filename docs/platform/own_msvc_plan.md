@@ -4,11 +4,11 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-23 (Round 23 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-24 (Round 24 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Status, 2026-11-23 (Round 23, newest):** 24 of the 438 `engine/src/*.cpp` files compile to an object (17 before this round, same command and headers). The first blockers left are missing standard headers: `<filesystem>` (104 files), `<typeinfo>`/`<typeindex>` and `typeid` (112), `<charconv>` (40), `<fstream>` (29), `<variant>` (25), and `std::function` (about 12 files that get past the headers). Still no PDB, no multiple inheritance, no reference members. Linux with Wine only; nothing was run on Windows. Details: Round 23 at the end.
+**Status, 2026-11-24 (Round 24, newest):** 31 of the 459 `engine/src/*.cpp` files compile to an object (24 before this round, same command, each with its own compiler and headers). The first blockers left: `<variant>` (97 files), `<tuple>` (94), `<clocale>` (41), `<iterator>` (31), `<random>` (16), `<exception>` (12), then language gaps (`thread_local`, reference members, `std::shared_ptr`). Still no PDB, no multiple inheritance, no virtual bases, no reference members, no `.CRT$XCU` startup list. Linux with Wine only; nothing was run on Windows. Details: Round 24 at the end.
 
 This tree stays off by default: not in CMake, CI, the engine, or a release. It is not a replacement for MSVC. This is years of work. The host tool is POSIX; a Windows run was not run on Windows. Wine is used when it is installed, and a Wine run is written down with the command. Where MinGW gcc is installed, sixteen small programs are compiled with okay-cl and with `x86_64-w64-mingw32-gcc`, run under Wine, and compared. If MinGW is absent that comparison is skipped.
 
@@ -632,3 +632,31 @@ Not done / unverified / found and not fixed (Round 23):
 - `<map>`: the element is `pair<K, V>`, not `pair<const K, V>`; no comparator; linear insert and erase; `at()` of a missing key returns a default value (there are no exceptions). `<unordered_map>` is the same map. `<ctime>` functions are declared only; the runtime does not define them.
 - `vector::emplace_back` passes its arguments as lvalues (no `std::forward` of each), and an argument that refers into the vector must not be used when it has to grow.
 - `Class::Name` for a type or an enumerator drops the class: names of types and enumerators are kept in one table here, so two classes with an enumerator of the same name collide.
+
+### Round 24: our own `<filesystem>` `<typeinfo>` `<functional>` `<charconv>` `<type_traits>` and streams; `typeid`, alias templates, `if constexpr`, `decltype`
+
+Tried on Linux with Wine 9.0 on branch `claude/third-party-okayms-2`, 2026-11-24. Not run on Windows.
+
+Measurement (the same command as Round 23: `okay-cl /c <file> /I engine/include /I engine/src /I shared /I tools/okayms/stdinc` for every `engine/src/**/*.cpp`, now 459 files; a file counts only when okay-cl exits 0 and writes the object, with a 300-second limit). With the compiler and headers of `origin/main`: **24**. After this round: **31** (new: WavPlayback, SpriteRenderer, PlayerInput, ModuleManifest, SessionTicket, Dds, UIImageScale; none lost). Files that stop at a missing header: 375 before, 321 after. Found while measuring: the preprocessor looped forever on a variadic macro (`#define X(...)`), so `Log.hpp` hung every file that reached it; fixed (`__VA_ARGS__` is now read). Note: the Round 23 count (24 of 438) used a script that also counted a run killed by its time limit as compiling; the strict count is used from now on. Next blockers: `<variant>` 97, `<tuple>` 94, `<clocale>` 41, `<iterator>` 31, `<random>` 16, `<exception>` 12.
+
+New test `tests/test_round24.cpp`: 7 programs (98 checks), each built by okay-cl at `/O0`, `/O1` and `/O2`, run under Wine, and built by MinGW g++ and run (the typeid one with run-time type information); `tests 7, checks passed 98, failed 0`. Built against the compiler of `origin/main` (with this round's headers), every program fails: `tests 7, checks passed 23, failed 21`. `tests/test_class.cpp` now counts 9 ADDR64 relocations in `.rdata` (one more per virtual table, see typeid).
+
+Done:
+
+- **Headers, our own:** `<filesystem>` (`path` with decomposition, `/`, `lexically_normal`, `lexically_relative`, written for the Windows rules; the operations that ask the OS are declared only), `<system_error>` (`error_code`, `errc`), `<typeinfo>`, `<typeindex>`, `std::function` in `<functional>`, `<charconv>` (integers exact, floating values by our own digit loop), `<type_traits>` (partial specializations plus intrinsics), `<sstream>` `<iostream>` `<fstream>` `<iomanip>` `<ios>` `<iosfwd>` `<ostream>` `<istream>` (one shared body, `okay_iostream`; string streams complete, file and console streams declared only), `intmax_t`/`uintmax_t`.
+- **`typeid`** ([expr.typeid]): one type information object per type and file holding the decorated name; a class with virtual functions has the address of its object in the slot before its virtual table, so `typeid(*p)` gives the dynamic type. Own model, not MSVC's RTTI records.
+- **Type-trait intrinsics** `__is_base_of`, `__is_enum`, `__is_class`, `__is_union`, `__is_polymorphic`, `__is_abstract`, `__is_empty`, `__is_trivially_destructible`, `__is_trivially_copyable`, `__has_virtual_destructor`, `__is_constructible`, `__is_convertible_to`, `__is_final` (always 0). An enumeration is now a type of its own for templates (decorated `W4Name@@`), and an enumerator has its enumeration's type.
+- **Language:** alias templates (`template <class T> using X = ...;`), `if constexpr` (the other branch is not compiled), `decltype(expr)`, `namespace fs = std::filesystem;`, unnamed template parameters and default template arguments in deduction (no SFINAE), `template <...> static` functions, `T{}` for a scalar or enumeration, function types as template arguments (`function<int(int)>` maps to `function__fn<int, int>`), member types of a base class seen in the derived class, a typedef of a function pointer inside a class, `R& (*f)(A)` declarators, a user-defined conversion by a converting constructor in overload choice (`[over.ics.user]`), `int&` no longer binds to a double, `'a'` and `true` choose `f(char)` and `f(bool)`, a member of a class template instance whose body does not compile is an error only when used ([temp.inst]).
+- **Bugs found and fixed (all older than this round):** the preprocessor looped forever on `#define X(...)` (variadic macros now work, with `__VA_ARGS__`); passing a struct returned by a call by value (`use(mk(3))`, "not an address"); a virtual call with a reference argument; a call through a function pointer did not bind reference parameters; a class whose only constructor is a template was treated as an aggregate (the template never ran); a constructor with default arguments was not found for fewer arguments; a nested class's destructor in a class template instance; method pointers kept across a constructor template instance (a crash); a double literal above about 1e38 overflowed in the lexer (1e300 compared greater than 1.79e308).
+
+Written from ISO/IEC 14882 ([filesystems], [syserr], [expr.typeid], [type.info], [type.index], [func.wrap.func], [charconv], [meta], [temp.alias], [stmt.if], [dcl.type.decltype], [namespace.alias], [temp.deduct], [temp.inst], [over.ics.user], [dcl.init.ref], [lex.ccon], [lex.bool], [input.output]), IEEE 754 for the floating formats, and the public MSVC decoration rules. No code from other compilers or libraries.
+
+Not done / unverified (Round 24):
+
+- Not run on Windows. The new compiling engine files were not linked or run.
+- `.CRT$XCU` startup entries and a linker that orders grouped `$` sections: not started. An engine `.cpp` still never runs its dynamic initializers.
+- `<variant>`, `<clocale>`/`<locale>`, `<iterator>`, `<queue>`, `<exception>`, `<string_view>`, `<random>`, `<list>`: not written (the next blockers by count).
+- Streams: no `wchar_t`, no locales, no `istreambuf_iterator`, `unget()` fails; `ostream`, `istream` and `iostream` are one class (no multiple inheritance here). File and console streams link only against a library that defines `__okay_file_*` and `__okay_console_write`; the runtime does not. Floating output is not correctly rounded in the last digit.
+- `std::function`: no construction from `nullptr` (okay-ms reads `nullptr` as 0); no `target()`.
+- `<type_traits>`: no `_v` variable templates, no `is_invocable`, `invoke_result`, `common_type`; `is_final` is always false; `__is_constructible` only counts arguments. `decltype` never adds a reference.
+- `typeid(...).name()` is the decorated name, not "class C". Unused inline functions in headers are still compiled into every object (so a header's functions that call undefined OS functions need those at link time).

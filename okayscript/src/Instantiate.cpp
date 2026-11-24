@@ -27,7 +27,7 @@ std::string Arity::Describe() const {
     auto args = [](int n) { return std::to_string(n) + (n == 1 ? " argument" : " arguments"); };
     if (max < 0) return min == 0 ? std::string("any number of arguments") : "at least " + args(min);
     if (min == max) return args(min);
-    return std::to_string(min) + " to " + args(max);
+    return std::to_string(min) + " to " + std::to_string(max) + " arguments";
 }
 
 } // namespace okayscript

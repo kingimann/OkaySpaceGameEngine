@@ -19,7 +19,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
-| engine-Input | 22 | 112 | [code_index/engine-Input.md](code_index/engine-Input.md) |
+| engine-Input | 22 | 113 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
 | engine-Math | 22 | 80 | [code_index/engine-Math.md](code_index/engine-Math.md) |
 | engine-Modeling | 21 | 196 | [code_index/engine-Modeling.md](code_index/engine-Modeling.md) |
@@ -27,8 +27,8 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Net | 31 | 150 | [code_index/engine-Net.md](code_index/engine-Net.md) |
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |
 | engine-Physics | 30 | 149 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
-| engine-Platform | 28 | 221 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
-| engine-Render | 48 | 464 | [code_index/engine-Render.md](code_index/engine-Render.md) |
+| engine-Platform | 29 | 231 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
+| engine-Render | 48 | 466 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 124 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
 | engine-Scripting | 6 | 29 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
@@ -36,5 +36,5 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 16 | 77 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 31 | 602 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
-| okayui | 12 | 638 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 67 | 965 | [code_index/shared.md](code_index/shared.md) |
+| okayui | 12 | 641 | [code_index/okayui.md](code_index/okayui.md) |
+| shared | 67 | 967 | [code_index/shared.md](code_index/shared.md) |

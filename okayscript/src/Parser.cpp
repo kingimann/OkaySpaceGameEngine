@@ -174,6 +174,7 @@ public:
     // a `[public] class Name : OkaySource { ... }` wrapper (its methods/fields
     // are hoisted out, so pasted C# scripts work), or a statement.
     void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
+        StmtNestGuard guard(m_stmtNesting, *this);
         SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...
         // C# `using X;` lines — nothing to import.
         if (Check(Tok::Ident) && Peek().text == "using" && m_toks[m_pos + 1].type == Tok::Ident) {
@@ -506,6 +507,7 @@ private:
     // `class Item { fields, constructors, methods }`. No base type: this is data,
     // not the component. `static` and `const` aren't supported on these yet.
     void ParseUserClass() {
+        StmtNestGuard guard(m_stmtNesting, *this);
         while (Check(Tok::Ident) && Peek().text != "class" && Peek().text != "struct") ++m_pos;
         Expect(Tok::Ident, "'class'");
         const int line = Peek().line;
@@ -593,7 +595,21 @@ private:
         m_classes.emplace(name, std::move(cls));
     }
 
+    // Blocks, statements and lambdas nest by recursion: cap it so thousands of them are a parse error, not a stack
+    // overflow (the editor parses on every key press).
+    static constexpr int kMaxStatementNesting = 200;
+    struct StmtNestGuard {
+        int& n;
+        StmtNestGuard(int& d, const ParserImpl& p) : n(d) {
+            if (n >= kMaxStatementNesting)
+                throw ScriptError("parse error: blocks nested too deeply (more than " + std::to_string(kMaxStatementNesting) +
+                                  " levels)", p.Peek().line, p.Peek().column);
+            ++n;
+        }
+        ~StmtNestGuard() { --n; }
+    };
     StmtPtr ParseStatement() {
+        StmtNestGuard guard(m_stmtNesting, *this);
         const int line = Peek().line;
         StmtPtr s = ParseStatementInner();
         if (s && s->line == 0) s->line = line;
@@ -835,6 +851,7 @@ private:
         return false;
     }
     ExprPtr ParseLambda() {
+        StmtNestGuard guard(m_stmtNesting, *this);
         auto lam = std::make_unique<LambdaExpr>();
         lam->id = g_nextLambda++;
         if (Check(Tok::Ident)) lam->params.push_back(m_toks[m_pos++].text);
@@ -1246,6 +1263,7 @@ private:
     std::vector<Token> m_toks;
     std::size_t m_pos = 0;
     int m_nesting = 0;                                      // ParseUnary recursion depth
+    int m_stmtNesting = 0;                                  // statement / block / lambda recursion depth
     int m_operators = 0;                                    // binary operators in this expression
     std::set<std::string> m_enums;                          // enum type names
     std::set<std::string> m_userClasses;                    // plain classes (no base), from the prepass
@@ -1263,6 +1281,7 @@ void Parser::ParseProgram(Program& out) {
     std::vector<StmtPtr> top = m_impl->ParseProgram(out.functions);
     for (auto& s : top) out.top.push_back(std::move(s));
     for (auto& kv : m_impl->TakeClasses()) out.classes[kv.first] = std::move(kv.second);
+    CollectLocalNames(out);
 }
 std::vector<Diagnostic> Parser::ParseProgramRecovering() { return m_impl->ParseProgramRecovering(); }
 ExprPtr Parser::ParseExpression() { return m_impl->ParseExpression(); }

@@ -1136,7 +1136,7 @@ int main() {
     }
 
 #if !defined(_WIN32)
-    // ---- the real download: a cancellable curl child (a stub curl on PATH: no network) ----------------------------------------------------
+    // ---- the real download: the HTTP seam's curl fallback (no native client here; a stub curl on PATH: no network) ----------------------------------------------------
     {
         using namespace okayversions::net;
         TempDir t;
@@ -1160,7 +1160,9 @@ int main() {
         stub("echo \"$@\" > \"" + (t.path / "args.txt").string() + "\"\n" + prelude + "printf x > \"$dest\"\n");
         r = DownloadFile("https://example.test/a.exe", dest, 1000, onBytes, [] { return false; });
         std::string args = Get(t.path / "args.txt");
-        CHECK(r.status == DownloadStatus::Ok && Has(args, "-L") && Has(args, "-f") && Has(args, "--proto-redir =https") && Has(args, "-o " + dest.string() + " https://example.test/a.exe"));
+        // (the seam's curl fallback writes to "<dest>.okdl-<random>.part" and renames it to dest once complete)
+        CHECK(r.status == DownloadStatus::Ok && Has(args, "-L") && Has(args, "-f") && Has(args, "--proto-redir =https") && Has(args, "-o " + dest.string() + ".okdl-") &&
+              Has(args, ".part https://example.test/a.exe") && Get(dest) == "x");
         r = DownloadFile("http://127.0.0.1:8080/a.exe", dest, 1000, onBytes, [] { return false; });
         args = Get(t.path / "args.txt");
         CHECK(r.status == DownloadStatus::Ok && !Has(args, "--proto-redir") && Has(args, "http://127.0.0.1:8080/a.exe"));

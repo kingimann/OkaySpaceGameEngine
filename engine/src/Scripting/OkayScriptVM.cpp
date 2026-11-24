@@ -520,6 +520,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         okayscript::ParseSource(source, *m_impl->program);   // as before, a syntax error leaves nothing loaded
         for (auto& kv : m_impl->program->functions) m_impl->rt.functions[kv.first] = &kv.second;
         for (auto& kv : m_impl->program->classes) m_impl->rt.classes[kv.first] = &kv.second;
+        m_impl->rt.localNames = m_impl->program->localNames;
         const okayscript::StmtList& topLevel = m_impl->program->top;
         // Bare mode: no functions defined -> the top-level statements ARE the update
         // loop (run every frame), so a whole script can be a single line. Otherwise run
@@ -529,16 +530,15 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         // Load (the contract every caller relies on). In bare mode the top-level
         // is also the per-frame loop, so this first run is the first tick — the
         // first Update skips re-running it to keep the overall tick count intact.
-        for (auto& s : topLevel) m_impl->rt.Run(*s);
+        for (auto& s : topLevel) {
+            const okayscript::Flow f = m_impl->rt.Run(*s);
+            if (f == okayscript::Flow::Return) return true;   // a bare top-level return is harmless (as before, the
+                                                                // script then counts as not loaded)
+            if (f != okayscript::Flow::Normal) { m_impl->loaded = true; return true; }   // stray break/continue
+        }
         m_impl->bareSkipFirstUpdate = m_impl->bareMode;
         m_impl->loaded = true;
         return true;
-    } catch (const ReturnSignal&) {
-        return true; // a bare top-level return is harmless
-    } catch (const BreakSignal&) {
-        m_impl->loaded = true; return true; // stray break/continue: harmless
-    } catch (const ContinueSignal&) {
-        m_impl->loaded = true; return true;
     } catch (const ScriptError& e) {
         // Prefix the source line when known, so editors can show a diagnostic.
         std::string msg = e.what();
@@ -663,10 +663,12 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
         if (m_impl->bareSkipFirstUpdate) {
             m_impl->bareSkipFirstUpdate = false;
         } else {
-            try { if (m_impl->program) for (auto& s : m_impl->program->top) m_impl->rt.Run(*s); }
-            catch (const ReturnSignal&) {}     // a stray top-level return/break/continue
-            catch (const BreakSignal&) {}      // ends this frame's run, like it does in Load
-            catch (const ContinueSignal&) {}
+            // A stray top-level return/break/continue ends this frame's run, like it does in Load.
+            try {
+                if (m_impl->program)
+                    for (auto& s : m_impl->program->top)
+                        if (m_impl->rt.Run(*s) != okayscript::Flow::Normal) break;
+            }
             catch (const std::exception& e) { Log::Error("OkayScript (bare): ", ErrorText(e)); }
         }
     }

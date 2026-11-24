@@ -1172,6 +1172,26 @@ std::vector<Collider2D*> OverlapOf(Scene& scene, const Query2& q, std::uint32_t 
     return out;
 }
 
+// Where a sweep's bounds can meet this collider, clamped to [0, maxDist].
+bool SweepSpan(Collider2D* col, const Vec2& o, const Vec2& dir, const Vec2& ext, float maxDist, float& t0, float& t1) {
+    Vec2 mn, mx; col->WorldAABB(mn, mx);
+    if (!(std::isfinite(mn.x + mn.y + mx.x + mx.y))) return false;
+    mn = mn - ext; mx = mx + ext;
+    t0 = -1e30f; t1 = 1e30f; bool miss = false;
+    for (int a = 0; a < 2 && !miss; ++a) {
+        float od = a == 0 ? dir.x : dir.y, oo = a == 0 ? o.x : o.y;
+        float l = a == 0 ? mn.x : mn.y, h = a == 0 ? mx.x : mx.y;
+        if (Mathf::Abs(od) < 1e-8f) { if (oo < l || oo > h) miss = true; continue; }
+        float s0 = (l - oo) / od, s1 = (h - oo) / od;
+        if (s0 > s1) std::swap(s0, s1);
+        t0 = Mathf::Max(t0, s0); t1 = Mathf::Min(t1, s1);
+        if (t0 > t1) miss = true;
+    }
+    if (miss || t1 < 0.0f || t0 > maxDist) return false;
+    t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
+    return t1 >= t0;
+}
+
 // Sweep `q` along unit `dir` up to maxDist. Same march as the circle cast: only
 // the stretch near a collider is sampled, then the first touch is bisected.
 RaycastHit2D SweepQuery(Scene& scene, const Query2& q, const Vec2& dir, float maxDist,
@@ -1183,21 +1203,8 @@ RaycastHit2D SweepQuery(Scene& scene, const Query2& q, const Vec2& dir, float ma
     float lo = 1e30f, hi = -1e30f;
     for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(col, ignore, mask, queryTriggers)) continue;
-        Vec2 mn, mx; col->WorldAABB(mn, mx);
-        if (!(std::isfinite(mn.x + mn.y + mx.x + mx.y))) continue;
-        mn = mn - ext; mx = mx + ext;
-        float t0 = -1e30f, t1 = 1e30f; bool miss = false;
-        for (int a = 0; a < 2 && !miss; ++a) {
-            float od = a == 0 ? dir.x : dir.y, oo = a == 0 ? o.x : o.y;
-            float l = a == 0 ? mn.x : mn.y, h = a == 0 ? mx.x : mx.y;
-            if (Mathf::Abs(od) < 1e-8f) { if (oo < l || oo > h) miss = true; continue; }
-            float s0 = (l - oo) / od, s1 = (h - oo) / od;
-            if (s0 > s1) std::swap(s0, s1);
-            t0 = Mathf::Max(t0, s0); t1 = Mathf::Min(t1, s1);
-            if (t0 > t1) miss = true;
-        }
-        if (miss || t1 < 0.0f || t0 > maxDist) continue;
-        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
+        float t0, t1;
+        if (!SweepSpan(col, o, dir, ext, maxDist, t0, t1)) continue;
         cands.push_back({col, t0, t1});
         lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
     }
@@ -1235,6 +1242,60 @@ RaycastHit2D SweepQuery(Scene& scene, const Query2& q, const Vec2& dir, float ma
         prev = t;
     }
     return best;
+}
+
+// Every collider the sweep touches, nearest first. Each candidate is marched on its own.
+std::vector<RaycastHit2D> SweepQueryAll(Scene& scene, const Query2& q, const Vec2& dir, float maxDist,
+                                       GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    std::vector<RaycastHit2D> hits;
+    if (dir.SqrMagnitude() < 1e-12f || !(maxDist > 0.0f) || !std::isfinite(maxDist)) return hits;
+    const Vec2 o = q.Center(), ext = q.Extent();
+    struct Cand { Collider2D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(col, ignore, mask, queryTriggers)) continue;
+        float t0, t1;
+        if (!SweepSpan(col, o, dir, ext, maxDist, t0, t1)) continue;
+        cands.push_back({col, t0, t1});
+    }
+    float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    if (!std::isfinite(step) || step <= 0.0f) return hits;
+    for (const Cand& cd : cands) {
+        Vec2 n, p;
+        auto touchAt = [&](float t) { return QueryTouch(cd.c, q.Moved(dir * t), n, p); };
+        float hitT = cd.t0;
+        bool found = touchAt(cd.t0);
+        if (!found) {
+            float prev = cd.t0;
+            float span = cd.t1 - cd.t0;
+            float st = (span / step > 20000.0f) ? span / 20000.0f : step;
+            int samples = 0;
+            for (float t = cd.t0 + st; ; t += st) {
+                bool last = t >= cd.t1 || ++samples > 20002;
+                if (last) t = cd.t1;
+                if (touchAt(t)) {
+                    float a = prev, b = t;
+                    for (int it = 0; it < 12 && b > a; ++it) {
+                        float m = (a + b) * 0.5f;
+                        if (touchAt(m)) b = m; else a = m;
+                    }
+                    hitT = b;
+                    touchAt(b);
+                    found = true;
+                    break;
+                }
+                if (last) break;
+                prev = t;
+            }
+        }
+        if (!found) continue;
+        RaycastHit2D h;
+        h.hit = true; h.collider = cd.c; h.gameObject = cd.c->gameObject;
+        h.distance = hitT; h.point = p; h.normal = n;
+        hits.push_back(h);
+    }
+    std::sort(hits.begin(), hits.end(), [](const RaycastHit2D& a, const RaycastHit2D& b) { return a.distance < b.distance; });
+    return hits;
 }
 
 Query2 BoxQuery(const Vec2& c, const Vec2& half, float angle) {
@@ -1384,6 +1445,14 @@ RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2&
     return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers, false);
 }
 
+std::vector<RaycastHit2D> Physics2D::CircleCastAll(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                                  float radius, float maxDistance, GameObject* ignore,
+                                                  std::uint32_t layerMask, bool queryTriggers) {
+    Vec2 dir = direction.Normalized();
+    if (radius <= 0.0f) return RaycastAll(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepQueryAll(scene, CapsuleQuery(origin, origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
 std::vector<Collider2D*> Physics2D::OverlapCapsule(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                                                    std::uint32_t layerMask, bool queryTriggers,
                                                    GameObject* ignore) {
@@ -1401,6 +1470,16 @@ RaycastHit2D Physics2D::BoxCast(Scene& scene, const Vec2& center, const Vec2& ha
     return SweepQuery(scene, BoxQuery(center, h, angle), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
+std::vector<RaycastHit2D> Physics2D::BoxCastAll(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+                                               const Vec2& direction, float angle, float maxDistance,
+                                               GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    Vec2 dir = direction.Normalized();
+    Vec2 h{Mathf::Abs(halfExtents.x), Mathf::Abs(halfExtents.y)};
+    if (h.x <= 1e-6f && h.y <= 1e-6f)
+        return RaycastAll(scene, center, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepQueryAll(scene, BoxQuery(center, h, angle), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
 RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                                     const Vec2& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
@@ -1410,6 +1489,16 @@ RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, 
         return Raycast(scene, a, dir, maxDistance, ignore, layerMask, queryTriggers);
     if (!std::isfinite(maxDistance) || maxDistance < 0.0f) return RaycastHit2D{};
     return SweepQuery(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
+std::vector<RaycastHit2D> Physics2D::CapsuleCastAll(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                                   const Vec2& direction, float maxDistance, GameObject* ignore,
+                                                   std::uint32_t layerMask, bool queryTriggers) {
+    Vec2 dir = direction.Normalized();
+    float r = Mathf::Max(radius, 0.0f);
+    if (r <= 1e-6f && (a - b).SqrMagnitude() <= 1e-12f)
+        return RaycastAll(scene, a, dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepQueryAll(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
 void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {

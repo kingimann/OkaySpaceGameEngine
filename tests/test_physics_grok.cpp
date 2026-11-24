@@ -118,5 +118,25 @@ int main() {
         CHECK(!skip.hit);   // the trigger is ignored and the box face is 2 units away
     }
 
+    // A 2D circle cast through two boxes reports both, the nearer one first.
+    RUN_SUITE("2d shape cast all hits");
+    {
+        Scene s("cast2d");
+        auto* near = s.CreateGameObject("Near");
+        near->transform->localPosition = {2, 0, 0};
+        near->AddComponent<BoxCollider2D>()->size = {1, 1};
+        auto* far = s.CreateGameObject("Far");
+        far->transform->localPosition = {6, 0, 0};
+        far->AddComponent<BoxCollider2D>()->size = {1, 1};
+        std::vector<RaycastHit2D> hits = s.physics().CircleCastAll(s, {0, 0}, {1, 0}, 0.2f, 20.0f);
+        CHECK(hits.size() == 2);
+        CHECK(hits[0].gameObject == near && hits[1].gameObject == far);
+        CHECK(hits[0].distance < hits[1].distance);
+        RaycastHit2D only = s.physics().CircleCast(s, {0, 0}, {1, 0}, 0.2f, 20.0f);
+        CHECK(only.gameObject == near);
+        std::vector<RaycastHit2D> boxes = s.physics().BoxCastAll(s, {0, 0}, {0.2f, 0.2f}, {1, 0});
+        CHECK(boxes.size() == 2 && boxes[0].gameObject == near);
+    }
+
     TEST_MAIN_RESULT();
 }

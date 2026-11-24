@@ -136,6 +136,10 @@ public:
     RaycastHit2D CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Every collider the circle sweep touches, nearest first.
+    std::vector<RaycastHit2D> CircleCastAll(Scene& scene, const Vec2& origin, const Vec2& direction,
+                                            float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
+                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
     /// Sweep a box (center, half-extents, `angle` radians about Z) along `direction`
     /// and return the first collider it touches. The hit point is on the struck
     /// surface; the normal points back toward the box. Skips triggers unless asked.
@@ -143,12 +147,20 @@ public:
                          const Vec2& direction, float angle = 0.0f, float maxDistance = 1e9f,
                          GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                          bool queryTriggers = false);
+    std::vector<RaycastHit2D> BoxCastAll(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+                                         const Vec2& direction, float angle = 0.0f, float maxDistance = 1e9f,
+                                         GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                         bool queryTriggers = false);
     /// Sweep a capsule (segment a→b thickened by `radius`) along `direction` and
     /// return the first collider it touches — "would this body fit through there?".
     RaycastHit2D CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                              const Vec2& direction, float maxDistance = 1e9f,
                              GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                              bool queryTriggers = false);
+    std::vector<RaycastHit2D> CapsuleCastAll(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                             const Vec2& direction, float maxDistance = 1e9f,
+                                             GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                                             bool queryTriggers = false);
 
     void Clear() { m_contacts.clear(); }
 

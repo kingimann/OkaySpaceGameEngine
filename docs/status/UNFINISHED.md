@@ -161,7 +161,7 @@ Scope: a script node is for what nodes are bad at. That is algorithms and loops,
 Order, one step at a time, each shipped only when finished and tested in both directions (node to script and script to node):
 
 1. A "Run OkayScript" and expression node: typed pins, exec in and out, errors with line numbers.
-2. Lua-style syntax compiled to the same VM.
+2. A Lua node. Lua itself now runs as a full language on our own interpreter (okay::lua, feature 13.3, `.lua` scripts); the node that runs a Lua snippet inside a graph is not started.
 3. A JavaScript-style subset, then a Python-style subset.
 
 These are "-style" subsets, not the real languages: code written for the real Lua, JavaScript or Python will often not run unchanged, and the standard libraries are not included. Differences (for example 1-based arrays in Lua) will be documented per language.

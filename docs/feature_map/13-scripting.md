@@ -1,8 +1,8 @@
 # 13. Scripting
 
 Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, the Script component that runs them, and the Script Editor.
-Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
-Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet.
+Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `engine/src/Lua/*` and `engine/include/okay/Lua/*` (our own Lua interpreter, about 6.9k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
+Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet. Lua (`lua`, 13.3) runs on our own interpreter and binds to the same engine API table as the typed language.
 
 ## 13. Scripting
 
@@ -26,7 +26,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Status:** Works - default language, used by every sample and by editor plugins; broad test coverage across syntax and builtins
 - **Open:** possible doc conflict: `docs/scripting/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; one 10.5k-line file (splitting is listed in 19.4); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
 - **Related:** 13.2, 13.4, 13.5, 13.7, 19.4
-- **Words:** OkayScript, okayscript, script language, start update, function, variable, coroutine, yield, lambda, LINQ, C# style, event handler, lifecycle, VM, Lua-like
+- **Words:** OkayScript, okayscript, script language, start update, function, variable, coroutine, yield, lambda, LINQ, C# style, event handler, lifecycle, VM
 - **Seen as:** a script does nothing or errors at runtime; "unknown function"; a field does not show in the Inspector; Start or Update never runs; a pasted C# script is accepted but has no effect; a coroutine stops early
 - **Ask me like:** "work on 13.1.3, coroutine bugs"; "script says unknown function, which part is that"
 
@@ -53,22 +53,27 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
-### 13.3 Removed Lua and C# (Mono) backends
-- **System:** OkayScript
-- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
+### 13.3 Lua scripts (our own interpreter) and the removed C# (Mono) backend
+- **System:** Lua scripting - Lua 5.4 scripts on game objects, run by our own interpreter okay::lua Home: `engine/src/Lua/`, `engine/include/okay/Lua/` Entry: `engine/include/okay/Lua/Lua.hpp` Doc: `docs/scripting/lua.md` Also called: okay::lua, LuaScriptVM, .lua
+- **What:** `.lua` scripts (language `lua`) run on okay::lua, our own Lua 5.4 interpreter written from the Lua 5.4 Reference Manual (no Lua C source, no port). A script returns a table: its fields are Inspector settings and `Start`, `Update(dt)`, `OnTriggerEnter(other)` and the other lifecycle names run by name (old `function update(dt)` scripts work too). The engine API is the typed-language binding table (13.6), the same one the C#-style language and the visual-script Engine API nodes use. The third-party Lua and Mono backends stay removed; a scene naming `csharp` or `cs` still loads and says "no longer supported".
 - **Parts:**
-  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
-- **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
-- **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
-- **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
-- **Docs:** `docs/scripting/scripting.md`
-- **Tests:** `script_removed_langs`
-- **Status:** Works
-- **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
-- **Related:** 13.4, 13.5
-- **Words:** Lua, C#, Mono, mcs, csharp, lua backend, removed language, language not supported, old project, script language dropdown
-- **Seen as:** a Lua or C# script does nothing; the Console says the script language is no longer supported; an old scene loads but its script is silent
-- **Ask me like:** "why does my old Lua script not run"
+  - 13.3.1 Compiler - `engine/src/Lua/LuaCompiler.cpp` - lexer, one-pass parser and code generator to our own stack bytecode (manual sections 3 and 9): locals, `<const>` and `<close>`, multiple assignment and results, varargs, closures and upvalues, numeric and generic for, goto and labels, integer and float literals, string escapes, long strings and comments; syntax errors with line and column, several per check
+  - 13.3.2 Runtime - `engine/src/Lua/LuaState.cpp`, `engine/include/okay/Lua/Lua.hpp`, `engine/src/Lua/LuaCode.hpp` - values, tables (array part + hash part), metatables and metamethods, weak tables, integer/float arithmetic rules, mark and sweep collector, coroutines without threads (an explicit frame stack), errors with chunk:line, instruction budget and memory limit (endless loops stop; pcall can not catch the stop)
+  - 13.3.3 Libraries - `engine/src/Lua/LuaLibBase.cpp`, `LuaLibString.cpp`, `LuaLibTable.cpp`, `LuaLibUtf8.cpp` - sandboxed base, coroutine, string (with patterns, format), table, utf8, math (xoshiro256** random) and a safe os (clock, time, date, difftime); no io, os.execute, require, loadlib or debug
+  - 13.3.4 Engine glue - `engine/src/Lua/LuaScriptVM.cpp`, `engine/include/okay/Lua/LuaScriptVM.hpp` - `IScriptVM` for `lua`: engine objects as userdata (an object id, so a destroyed object is an error, not a crash), Vector3 with operators, static types as global tables (Input, Time, Debug, Mathf, GameObject, Vector3, ...), `GetComponent("Rigidbody")`, `Destroy(obj)`, events get the other GameObject, Inspector settings from the returned table, per-callback budget
+  - 13.3.5 Script Editor support - `editor/main.cpp` (`LuaLangDef`, `ScriptFieldsFor`) - Lua colours, New Script / language picker gives the Lua template (`StarterScriptSource("lua")`), errors with line and column, warnings for engine names that do not exist and misspelled handlers (`LuaScriptVM::Lint`), autocomplete of Lua words and the bound API including `obj:` members, hover docs with the bound signatures, Format Document by Lua blocks, Inspector settings from the returned table; dev screenshot hook `OKAY_UI_SCRIPT=open|lua|luaerr`
+  - 13.3.6 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `csharp` and `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+- **Code:** `engine/src/Lua/*`, `engine/include/okay/Lua/*`, `Scripting/ScriptVM`, `Components/ScriptComponent`
+- **API:** `CreateScriptVM("lua")`, `LuaScriptVM` (`kLanguage`, `SetBudget`, `CompletionNames`, `CompletionMembers`, `CompletionDoc`, `Lint`, `Settings`, `Format`), `okay::lua::State` (Load, PCallHost, DoString, CheckSyntax, SetBudget, memoryLimit), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()` (`okayscript`, `lua`)
+- **Editor:** Script Editor language picker and New Script offer Lua; `.lua` files open in the Script Editor with Lua colours; Inspector shows the script table's fields; example scene `examples/lua/lua_scripts.okayscene`
+- **Docs:** `docs/scripting/lua.md` (supported language and library, binding rules, what each file was written from), `docs/scripting/scripting.md`
+- **Tests:** `lua_core` (standalone: conformance script `tests/lua/conformance.lua` written from the manual, syntax errors, budget, memory limit, host API, mutation fuzz; clean under ASan and UBSan), `lua_script` (game scripts driving GameObjects), `script_removed_langs`, `starter_script`, `examples_work`
+- **Status:** Partial - language, coroutines and libraries work and are tested; not in Lua: `__gc` finalizers, full ephemeron weak keys, yielding across xpcall or a metamethod (a clear error; inside pcall it works), string.pack/unpack, binary chunks; the Script Editor has no Lua debugger
+- **Open:** the Lua parts above; a Lua visual-script node (UNFINISHED "text-script nodes"); nothing converts old C# scripts; editor build and screenshots unverified on Windows
+- **Related:** 13.4, 13.5, 13.6, 14.7
+- **Words:** Lua, lua script, .lua, okay::lua, Lua 5.4, coroutine, metatable, pcall, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown
+- **Seen as:** a Lua script errors with "script:12: ..."; a Lua script stops with "instruction budget exceeded"; a Lua setting is missing in the Inspector; an old C# script does nothing and the Console says the language is no longer supported
+- **Ask me like:** "work on 13.3.2, add weak tables to Lua"; "why does my Lua script say yield across a C-call boundary"
 
 ### 13.4 Script components and script UI
 - **System:** OkayScript

@@ -88,11 +88,20 @@ struct JobStats {
     std::uint32_t running = 0;           // job bodies executing right now
     std::uint32_t mainQueueDepth = 0;    // main-thread jobs not yet pumped
     double busyMs = 0.0;                 // time spent inside job bodies, summed over all threads
+    std::uint64_t stolen = 0;            // jobs a worker took from another worker's queue
     std::string lastError;               // the last failure's job name and message
 };
 
 /// Text for a debug overlay, e.g. "jobs: 3 workers, 120 run (12 helped), queue 0/9, busy 41.2 ms".
 std::string FormatJobStats(const JobStats& s);
+
+/// What the profiler can record without starting a job system that is not already running.
+struct JobFrameNote {
+    bool live = false;                 ///< a job system is already in use (Global or SetEngineJobs)
+    double busyMs = 0.0;
+    std::uint64_t completed = 0;
+};
+JobFrameNote NoteRunningJobs();
 
 class JobSystem {
 public:

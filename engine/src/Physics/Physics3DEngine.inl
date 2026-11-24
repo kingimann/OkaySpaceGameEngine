@@ -1034,6 +1034,32 @@ NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float ma
     MeshCache cache;
     for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
         if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
+        {   // a collider that cannot be nearer than what is found (or within reach) is skipped before any shape is built
+            Vec3 mn, mx;
+            col->WorldAABB(mn, mx);
+            if (std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) {
+                const float dx = std::max(std::max(mn.x - point.x, point.x - mx.x), 0.0f);
+                const float dy = std::max(std::max(mn.y - point.y, point.y - mx.y), 0.0f);
+                const float dz = std::max(std::max(mn.z - point.z, point.z - mx.z), 0.0f);
+                const float lowest = std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-3f;
+                if (lowest > maxDistance || (any && lowest >= best.distance)) continue;
+            }
+        }
+        if (col->shape() == Collider3D::Shape::Mesh) {   // the mesh's own triangle tree (built once, kept by the collider)
+            auto* mc = static_cast<MeshCollider3D*>(col);
+            if (mc->HasTriangles()) {
+                const trimesh::WorldView view(mc->Tris(), mc->WorldMatrix());
+                const bool closed = mc->Tris().ClosedWinding() != 0;   // inside a closed mesh is 0 away, however far the skin is
+                Vec3 cp = point;
+                float d = 0.0f;
+                bool inside = false;
+                if (view.Nearest(point, closed ? 1e30f : maxDistance, cp, d, inside)) {
+                    if (inside) { cp = point; d = 0.0f; }
+                    ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+                }
+                continue;
+            }
+        }
         std::vector<EnginePiece> pieces;
         if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
         for (const EnginePiece& piece : pieces) {

@@ -1,0 +1,174 @@
+// The C# side of the engine's component API, generated from the binding table (ScriptBindings.hpp: the classes
+// and methods scripts/gen_script_bindings.py found in our headers, and the PropertyRegistry's properties). The same
+// table drives OkayScript and Visual Script, so C# gets every component without a second hand-written binding.
+// The text is made when OkayScripting.dll is built (CSharpCompiler.cpp, EnsureApiAssembly) and compiled with the
+// hand-written managed/OkayScripting sources; every member calls the native table's GetMember / SetMember /
+// CallMethod (CSharpScriptVM.cpp), which run the binding layer's own checks.
+#include "okay/Scripting/CSharpBridge.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"
+#include <cctype>
+#include <set>
+#include <sstream>
+
+namespace okay::csharp {
+namespace sb = okay::scriptbind;
+
+namespace {
+ApiGenStats g_stats;
+
+bool IsKeyword(const std::string& s) {
+    static const std::set<std::string> k = {
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const",
+        "continue", "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern",
+        "false", "finally", "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in", "int", "interface",
+        "internal", "is", "lock", "long", "namespace", "new", "null", "object", "operator", "out", "override",
+        "params", "private", "protected", "public", "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof",
+        "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typeof", "uint",
+        "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while"};
+    return k.count(s) != 0;
+}
+
+/// A C# identifier for `name`, or "" when none can be made.
+std::string Ident(const std::string& name) {
+    std::string o;
+    for (char c : name) o += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (o.empty()) return o;
+    if (std::isdigit((unsigned char)o[0])) o = "_" + o;
+    return IsKeyword(o) ? "@" + o : o;
+}
+
+/// C# text for a string literal.
+std::string Lit(const std::string& s) {
+    std::string o = "\"";
+    for (char c : s) {
+        if (c == '"' || c == '\\') { o += '\\'; o += c; }
+        else if ((unsigned char)c < 0x20) o += ' ';
+        else o += c;
+    }
+    return o + "\"";
+}
+
+const char* ArgType(sb::ArgKind k) {
+    switch (k) {
+        case sb::ArgKind::Void: return "void";
+        case sb::ArgKind::Bool: return "bool";
+        case sb::ArgKind::Int: return "int";
+        case sb::ArgKind::Enum: return "int";
+        case sb::ArgKind::Float: return "float";
+        case sb::ArgKind::String: return "string";
+        case sb::ArgKind::Vec2: return "Vector2";
+        case sb::ArgKind::Vec3: return "Vector3";
+        case sb::ArgKind::Vec4: return "Vector4";
+        case sb::ArgKind::Quat: return "Quaternion";
+        case sb::ArgKind::Color: return "Color";
+        case sb::ArgKind::Object: return "GameObject";
+        case sb::ArgKind::Component: return "Component";
+    }
+    return nullptr;
+}
+
+const char* PropType(PropertyType t) {
+    switch (t) {
+        case PropertyType::Bool: return "bool";
+        case PropertyType::Int: return "int";
+        case PropertyType::Float: return "float";
+        case PropertyType::String: case PropertyType::Enum: case PropertyType::AssetPath: case PropertyType::ObjectRef:
+            return "string";   // an Enum reads as its option name and takes the name or the number
+        case PropertyType::Vec2: return "Vector2";
+        case PropertyType::Vec3: return "Vector3";
+        case PropertyType::Vec4: return "Vector4";
+        case PropertyType::Quat: return "Quaternion";
+        case PropertyType::Color: return "Color";
+        default: return nullptr;
+    }
+}
+
+/// Names a generated member may not take: the Component base class's own members and object's.
+const std::set<std::string>& ReservedMembers() {
+    static const std::set<std::string> r = {
+        "gameObject", "transform", "typeName", "enabled", "alive", "Get", "Set", "Call", "CallVoid", "GetString",
+        "GetFloat", "GetBool", "SetString", "SetFloat", "SetBool", "GetComponent", "Equals", "GetHashCode", "ToString",
+        "GetType", "MemberwiseClone", "Finalize", "ReferenceEquals"};
+    return r;
+}
+
+/// Type names written by hand in managed/OkayScripting (a bound class of the same name is left out).
+const std::set<std::string>& HandWrittenTypes() {
+    static const std::set<std::string> r = {
+        "Behaviour", "Component", "GameObject", "Transform", "Debug", "Time", "Input", "Physics", "RaycastHit",
+        "Objects", "Vector2", "Vector3", "Vector4", "Quaternion", "Color", "Mathf", "SerializeField",
+        "HideInInspector", "ComponentTypes", "Object", "Math", "String", "Type"};
+    return r;
+}
+}  // namespace
+
+ApiGenStats LastApiGenStats() { return g_stats; }
+
+std::string GenerateApiSource() {
+    ApiGenStats st;
+    std::ostringstream o;
+    o << "// GENERATED by the engine from its binding table (engine/src/Scripting/CSharpApiGen.cpp). Do not edit:\n"
+         "// it is rebuilt with OkayScripting.dll whenever the table changes.\n"
+         "using System;\nusing System.Collections.Generic;\n\nnamespace OkayScripting\n{\n";
+    std::vector<std::string> made;
+    std::set<std::string> typeNames;
+    for (const sb::ClassBinding& cls : sb::AllClasses()) {
+        std::string cn = Ident(cls.name);
+        if (cn.empty() || cn[0] == '@' || HandWrittenTypes().count(cn) || !typeNames.insert(cn).second) { ++st.skipped; continue; }
+        made.push_back(cls.name);
+        ++st.classes;
+        o << "    /// <summary>The engine's " << cls.name << " component (from the binding table).</summary>\n"
+          << "    public partial class " << cn << " : Component\n    {\n";
+        std::set<std::string> used = ReservedMembers();
+        used.insert(cn);   // a member may not share its class's name
+        // properties first: they keep their names when a method has the same one
+        if (auto info = PropertyRegistry::FindByType(cls.type)) {
+            for (const PropertyDesc& p : info->properties) {
+                const char* t = PropType(p.type);
+                std::string id = Ident(p.name);
+                if (!t || id.empty() || used.count(id)) { ++st.skipped; continue; }
+                used.insert(id);
+                ++st.properties;
+                o << "        public " << t << " " << id << " { get => Get<" << t << ">(" << Lit(p.name) << "); set => Set("
+                  << Lit(p.name) << ", value); }\n";
+            }
+        }
+        std::set<std::string> sigs;     // name(param types): one C# method per signature
+        std::set<std::string> methodNames;
+        for (const sb::MethodBinding& m : cls.methods) {
+            std::string id = m.name ? Ident(m.name) : std::string();
+            const char* ret = ArgType(m.ret);
+            if (id.empty() || !ret || (used.count(id) && !methodNames.count(id))) { ++st.skipped; continue; }
+            bool ok = true;
+            for (sb::ArgKind a : m.params) if (!ArgType(a) || a == sb::ArgKind::Void) ok = false;
+            if (!ok) { ++st.skipped; continue; }
+            // one overload per argument count from `required` to all (the C++ defaults fill the rest)
+            int lo = m.required < 0 ? 0 : m.required, hi = (int)m.params.size();
+            if (lo > hi) lo = hi;
+            for (int n = lo; n <= hi; ++n) {
+                std::string sig = id + "(";
+                for (int i = 0; i < n; ++i) sig += std::string(ArgType(m.params[(std::size_t)i])) + ",";
+                if (!sigs.insert(sig).second) continue;
+                methodNames.insert(id);
+                used.insert(id);
+                ++st.methods;
+                o << "        public " << ret << " " << id << "(";
+                for (int i = 0; i < n; ++i) o << (i ? ", " : "") << ArgType(m.params[(std::size_t)i]) << " a" << i;
+                o << ") => ";
+                if (m.ret == sb::ArgKind::Void) o << "CallVoid(" << Lit(m.name);
+                else o << "Call<" << ret << ">(" << Lit(m.name);
+                for (int i = 0; i < n; ++i) o << ", a" << i;
+                o << ");\n";
+            }
+        }
+        o << "    }\n\n";
+    }
+    o << "    static partial class ComponentTypes\n    {\n        static partial void AddGenerated(Dictionary<string, Func<Component>> m)\n        {\n";
+    for (const std::string& n : made) o << "            m[" << Lit(n) << "] = () => new " << Ident(n) << "();\n";
+    o << "        }\n    }\n}\n";
+    g_stats = st;
+    return o.str();
+}
+
+}  // namespace okay::csharp

@@ -185,6 +185,11 @@ add_library(okay_engine
     src/Scripting/ScriptApiCore.cpp
     src/Scripting/ScriptBindings.cpp
     src/Scripting/ScriptBindingsGenerated.cpp
+    src/Scripting/CSharpHost.cpp
+    src/Scripting/CSharpCompiler.cpp
+    src/Scripting/CSharpScriptVM.cpp
+    src/Scripting/CSharpHostfxr.cpp
+    src/Scripting/CSharpApiGen.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
@@ -523,6 +528,16 @@ if(WIN32)
     # D3D12 runtime, DXGI and the COM IIDs (dxguid). Off Windows the file is empty.
     target_link_libraries(okay_engine PUBLIC d3d12 dxgi dxguid)
 endif()
+
+# ---- Optional C# scripting (hosted .NET runtime, CLAUDE.md rule 24c) ----
+# OFF (default): the CSharp* files compile into stubs whose Load() says "C# is not enabled in this build".
+# ON: hostfxr is loaded at run time with dlopen / LoadLibrary; nothing from .NET is linked.
+if(OKAY_WITH_CSHARP)
+    target_compile_definitions(okay_engine PUBLIC OKAY_WITH_CSHARP=1)
+    target_link_libraries(okay_engine PRIVATE ${CMAKE_DL_LIBS})
+endif()
+# Where the managed API sources live (managed/OkayScripting), for building OkayScripting.dll from a source tree.
+target_compile_definitions(okay_engine PRIVATE OKAY_MANAGED_SOURCE_DIR="${PROJECT_SOURCE_DIR}/managed/OkayScripting")
 
 # ---- Optional Photon Realtime transport (closed-source SDK) ----------
 # Photon's C++ SDK is a per-platform download from dashboard.photonengine.com

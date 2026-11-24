@@ -105,16 +105,27 @@ public:
     /// The names of the script's own variables (globals, or a component class's
     /// instance fields), for save games. Empty when the backend can't list them.
     virtual std::vector<std::string> GlobalNames() const { return {}; }
+
+    /// Hot reload: replace the running script with `source`, keeping the values of its public fields.
+    /// On an error the old script keeps running and false is returned. Default: not supported (the
+    /// caller then loads the file afresh).
+    virtual bool HotReload(const std::string& /*source*/, std::string* error) {
+        if (error) *error = "this script language does not support hot reload";
+        return false;
+    }
+    /// True when HotReload really swaps the code and keeps the fields (C#).
+    virtual bool SupportsHotReload() const { return false; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM).
+/// Names of the script backends in this build: "okayscript" (our own VM), plus "csharp" when the
+/// build hosts the .NET runtime (OKAY_WITH_CSHARP, Scripting/CSharpScriptVM.hpp).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 
-/// Old scenes and projects may still name the removed third-party backends
-/// ("lua", "csharp"/"cs"). Returns a clear "no longer supported" message for those
+/// Old scenes and projects may still name a removed third-party backend ("lua").
+/// ("csharp"/"cs" is a language again: the hosted .NET runtime.) Returns a clear "no longer supported" message for those
 /// language names, or an empty string for any other name. Loading such a script
 /// fails with this message instead of failing silently.
 std::string RemovedScriptLanguageMessage(const std::string& language);

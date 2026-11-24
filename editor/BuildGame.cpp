@@ -12,6 +12,7 @@
 #include "LocalizationWindow.hpp"    // CopyLocalizationFiles: strings.okayloc and its fonts go into the build
 #include "ModulesModel.hpp"          // okaymod::Selection / UsedButOff / UsageInScene: Build warns about modules in use but off
 #include "okay/Core/BuildPipeline.hpp"
+#include "okay/Scripting/CSharpCompiler.hpp"   // C# export: the runtime ships only with C# scripts
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
@@ -488,6 +489,25 @@ std::string Build(EditorState& ed, const std::string& outDir,
                 fs::path src = r2 / lib;
                 if (fs::exists(src, fe)) { std::error_code ce; putRuntime(src, lib, "runtime library the player needs", ce); break; }
             }
+        }
+    }
+
+    // C# scripts: only a game that has some ships the .NET runtime, its MIT notice, OkayScripting.dll and the
+    // compiled scripts (csharp::ExportCSharp, rule 24c). A game with none gets nothing added. Unverified on Windows.
+    {
+        std::vector<std::string> csSources;
+        for (const SceneEntry& se : built) {
+            const Scene* sc = se.isOpen ? &ed.scene() : se.loaded.get();
+            if (sc) for (std::string& s : okay::csharp::CollectCSharpSources(*sc)) csSources.push_back(std::move(s));
+        }
+        if (!csSources.empty()) {
+            okay::csharp::DotnetEnv cenv = okay::csharp::CurrentDotnetEnv();
+            std::string apiErr;
+            const std::string capi = okay::csharp::EnsureApiAssembly(okay::csharp::ApiSourceDir(), okay::csharp::DefaultCacheDir(), cenv, &apiErr);
+            if (capi.empty()) R.r.Warn("C# scripts: " + apiErr);
+            const okay::csharp::ExportReport cr = okay::csharp::ExportCSharp(csSources, root.u8string(), cenv, okay::csharp::DefaultCacheDir(), capi);
+            for (const std::string& f : cr.files) why[f] = "C# scripting (the .NET runtime and its licence, OkayScripting.dll or a compiled script)";
+            for (const std::string& pr : cr.problems) R.r.Warn("C# scripts: " + pr);
         }
     }
 

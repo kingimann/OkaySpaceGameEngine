@@ -784,6 +784,7 @@ int main(int argc, char** argv) {
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
+#include "okay/Scripting/CSharpCompiler.hpp"   // C# compile on save, New Script in C# (OKAY_WITH_CSHARP)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -2826,7 +2827,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "cs" : "okayscript";
+    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "csharp" : "okayscript";
     auto sc = std::make_unique<okay::ScriptComponent>(lang);
     std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
     okay::ScriptComponent* raw = sc.get();
@@ -4128,10 +4129,10 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay") {
+    if (ext == ".okay" || ext == ".cs") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
-        auto* nsc = go->AddComponent<okay::ScriptComponent>("okayscript");
+        auto* nsc = go->AddComponent<okay::ScriptComponent>(ext == ".cs" ? "csharp" : "okayscript");
         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
         if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
         SetCodeBuffer(nsc, nsc->Source());
@@ -4211,7 +4212,7 @@ void OpenExternal(const std::string& path) {
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+    return lang == "lua" ? "lua" : (lang == "csharp" || lang == "cs") ? "cs" : "okay";
 }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
@@ -11606,6 +11607,7 @@ static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_s
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
     static bool attach = false;
+    static int langIdx = 0;   // 0 = OkayScript (.okay), 1 = C# (.cs, only when this build hosts .NET)
     if (g_seNewReq) { g_seNewReq = false; std::snprintf(name, sizeof(name), "NewScript"); attach = false; ImGui::OpenPopup("New Script##se"); }
     if (!ImGui::BeginPopupModal("New Script##se", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     namespace fs = std::filesystem;
@@ -11615,13 +11617,21 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    fs::path p = dir / (stem + ".okay");
+    if (!okay::csharp::DotnetRuntime::CompiledIn()) langIdx = 0;
+    const char* scriptExt = langIdx == 1 ? ".cs" : ".okay";
+    fs::path p = dir / (stem + scriptExt);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
+    if (okay::csharp::DotnetRuntime::CompiledIn()) {   // C# is offered only when this build hosts .NET (OKAY_WITH_CSHARP)
+        static const char* const kLangNames[] = {"OkayScript (.okay)", "C# (.cs)"};
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("Language", &langIdx, kLangNames, 2);
+        if (langIdx == 1) ImGui::TextDisabled("Real C#: needs the .NET 8 SDK installed (%s).", okay::csharp::kDotnetDownloadUrl);
+    }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::TextDisabled("Assets/Scripts/%s.okay", stem.c_str());
+    ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), scriptExt);
     std::error_code ec;
     const bool exists = fs::exists(p, ec);
     if (exists) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists - it will be opened.");
@@ -11633,7 +11643,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     if (create) {
         fs::create_directories(dir, ec);
-        if (!exists) std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        if (!exists) std::ofstream(p) << extide::StarterScriptNamed(langIdx == 1 ? "csharp" : "okayscript", stem);
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());
@@ -12002,6 +12012,11 @@ void DrawScriptEditor(EditorState& ed) {
                 sc->SetPath(p);
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
+                if (sc->Language() == "csharp" || sc->Language() == "cs") {   // compile on save: errors go to the Console with file and line
+                    std::vector<std::string> cl;
+                    if (okay::csharp::CompileForEditor(buf.data(), p, &cl)) ConsoleLog("C# compiled OK: " + p);
+                    else for (auto& l : cl) ConsoleLog(l, 2);
+                }
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
                 std::error_code mec;               // remember our own write so live-sync
                 s_extMtime[sc] = std::filesystem::last_write_time(p, mec);  // won't self-trigger

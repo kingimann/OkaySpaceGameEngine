@@ -80,7 +80,20 @@ bool ScriptComponent::LoadSource(const std::string& source, std::string* error) 
         OKAY_ERROR(e);
         return false;
     }
-    bool ok = m_vm->Load(source, error);
+    std::string loadErr;
+    bool ok = m_vm->Load(source, &loadErr);
+    if (!ok && (m_language == "csharp" || m_language == "cs")) {
+        // C# problems (not enabled, no runtime or SDK, compile errors) must reach the Console, and each
+        // line names the script: "Scripts/Pickup.cs: line 12: ; expected (CS1002)".
+        std::string where = !m_path.empty() ? m_path
+                          : gameObject ? "C# script on '" + gameObject->name + "'" : std::string("C# script");
+        std::string named, line;
+        std::stringstream ls(loadErr);
+        while (std::getline(ls, line)) named += (named.empty() ? "" : "\n") + where + ": " + line;
+        loadErr = named.empty() ? where + ": the script did not load" : named;
+        OKAY_ERROR(loadErr);
+    }
+    if (error) *error = loadErr;
     if (ok) ApplyFieldOverrides();   // override the script's defaults with inspector values
     return ok;
 }
@@ -92,6 +105,20 @@ bool ScriptComponent::LoadFile(const std::string& path, std::string* error) {
     ss << f.rdbuf();
     m_path = path;
     return LoadSource(ss.str(), error);
+}
+
+bool ScriptComponent::Reload(std::string* error) {
+    if (m_path.empty()) return false;
+    if (m_vm && m_vm->SupportsHotReload()) {
+        std::ifstream f(m_path);
+        if (!f) { if (error) *error = "cannot open " + m_path; return false; }
+        std::stringstream ss;
+        ss << f.rdbuf();
+        if (!m_vm->HotReload(ss.str(), error)) return false;   // the old script keeps running
+        m_source = ss.str();
+        return true;
+    }
+    return LoadFile(m_path, error);
 }
 
 void ScriptComponent::Start() {
@@ -160,8 +187,9 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     // OkayScript gets a reference that carries the object's instance id (it still
     // prints and compares as the name), so a bullet that hits the third "Enemy"
     // acts on that copy, not the first one with the name (#888 Finding 108).
+    // C# gets the same reference (its handler's GameObject parameter is that exact object).
     // Other languages keep receiving the name.
-    const bool okay = std::strcmp(m_vm->Language(), "okayscript") == 0;
+    const bool okay = std::strcmp(m_vm->Language(), "okayscript") == 0 || std::strcmp(m_vm->Language(), "csharp") == 0;
     vs::VsValue name = (okay && other) ? vs::VsValue::Object(other->InstanceId())
                                        : vs::VsValue(other ? other->name : std::string());
     m_vm->SetGlobal("other", name);

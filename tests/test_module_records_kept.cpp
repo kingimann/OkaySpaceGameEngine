@@ -20,7 +20,7 @@ using namespace okay;
 namespace {
 
 // The whole "  <record> ..." line of `text` (without its line break), or "" when there is none.
-std::string RecordLine(const std::string& text, const std::string& record) {
+std::string SavedRecordText(const std::string& text, const std::string& record) {
     const auto at = text.find("\n  " + record + " ");
     if (at == std::string::npos) return "";
     const auto end = text.find('\n', at + 1);
@@ -102,7 +102,7 @@ int main() {
         CHECK(!g.present(off));
         const std::string saved = SceneSerializer::Serialize(off);
         for (const std::string& rec : g.records) {
-            const std::string line = RecordLine(first, rec);
+            const std::string line = SavedRecordText(first, rec);
             CHECK(!line.empty());
             const bool kept = HasWholeLine(saved, line);
             CHECK(kept);
@@ -135,7 +135,7 @@ int main() {
         CHECK(hud && hud->unknownRecords.size() == 3);   // crosshair, futurething, compoff: not one per number
         CHECK(HasVehicles(s) && HasSurvival(s));         // the rest of the file is read as usual
         const std::string saved = SceneSerializer::Serialize(s);
-        const bool kept = HasWholeLine(saved, RecordLine(first, "crosshair"));
+        const bool kept = HasWholeLine(saved, SavedRecordText(first, "crosshair"));
         CHECK(kept);
         std::cout << "weapons on, no crosshair reader: record " << (kept ? "kept" : "LOST") << ", "
                   << (hud ? hud->unknownRecords.size() : 0) << " kept lines on Hud\n";

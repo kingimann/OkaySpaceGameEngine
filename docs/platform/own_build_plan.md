@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-23 (round 12 below re-measured against CMake; the older rounds were not re-checked).
+> **Last checked:** 2026-11-24 (rounds 12 and 13 below measured against CMake; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -475,4 +475,35 @@ Written from the documented behaviour of each CMake command; no CMake, Ninja or 
   - `math(EXPR)` wraps `+ - * -x` around. A shift outside 0..63 and `INT64_MIN / -1` are errors.
   - Test: `testGeneratedFileSafety` (22 checks; 19 failed on the tool before the fix, and the old tool wrote `build/ctestx.txt` and `build/x.txt` from bad manifests). The real tree still gives 1,559 of 1,559 identical compile commands, and a real build writes the two engine sources byte-identical to CMake's.
 - **Not done / unverified:** Windows (nothing run; the `buildfile` command runs through `sh`), `string(MD5)`, CMake's own regular-expression dialect (the C++ library's is used), install, custom commands, Release builds and `-g` objects not compared. Next: compare the linked editor, player and launcher with CMake's; `ctest` over the whole tree; a Windows run.
+
+## Round 13 on claude/third-party-okaybuild-2: linking the editor, launcher and player (2026-11-24)
+Written from the documented behaviour of each CMake command and from RFC 1321 (MD5); no CMake, Ninja or other tool's code was read or used (rule 19a).
+- **Gaps found by comparing link lines** (`tools/okaybuild/examples/compare_link_commands.py`, new: it maps each object back to its source through both compile databases, and opens an OBJECT library that okay-build links whole):
+  - `$<TARGET_OBJECTS:okay_editor_wm_panels>` expanded to nothing, so the editor lacked 3 objects (`OkayUIHostMenu/Objects/Panels.cpp`).
+  - The player's `LINKER:-Map={bin}/maps/okay-player.map` was passed through as written: no `-Wl,` and no build-folder path.
+  - The folder for the map (`file(MAKE_DIRECTORY)`) was never made.
+- **What changed.**
+  - `$<TARGET_OBJECTS:lib>` in a source list makes the program link that OBJECT library whole.
+  - `LINKER:` becomes `-Wl,`, and `SHELL:` is split into words.
+  - `{bin}` is resolved in compile and link flags.
+  - New manifest line `folder {bin}/<path>` (from `file(MAKE_DIRECTORY)`, only inside `{bin}`); a real build makes it.
+  - `string(MD5)` follows RFC 1321. The 5 anticheat key tests are named by an MD5 and had all been called `..._0`, so 4 were set aside; now all 1,055 tests are written.
+  - `set_property(CACHE)` is accepted (editor hints only). `get_property(DIRECTORY PROPERTY TESTS)` and `set_property(TEST)` work, so the module labels reach 993 tests.
+  - "Not understood" is now 0, both with default options and with the editor and player on.
+- **Link lines against CMake/Ninja** (same tree, `-DCMAKE_BUILD_TYPE=None`):
+  - Editor `OkayEngine`: 63 of 63 objects, the same set; the order differs, because the 3 panel objects come in through the whole-linked archive.
+  - Launcher `OkaySpace`: 20 of 20 objects, same order.
+  - Player `okay-player`: 2 of 2, same order; the map flag is the same apart from the build folder.
+  - For all three, our libraries are the same set but in a different order: ours is a dependency order, CMake's is the listed order with repeats.
+  - System libraries: CMake `-ldl -lSDL2`, okay-build the same plus `-lpthread` (CMake's Threads target adds nothing on this glibc).
+  - The player's POST_BUILD `module_sizes.py` step (a size report, not needed to run it) is not run.
+- **Built and linked with okay-build only** (no CMake, no Ninja; Linux, g++ 13.3, `-j2`, no optimisation):
+  - `okay-build -f build.cmake.okay -j2 okay-editor okayspace-launcher okay-player` ran 572 steps plus the 31 the first, stopped run had already done (603 in all), in 41 minutes, with no errors.
+  - The results: `OkayEngine` 148 MB, `OkaySpace` 119 MB and `okay-player` 113 MB, with the player's linker map in `{bin}/maps`.
+  - A second build ran 0 of 603 steps.
+- **Do they start?**
+  - `OkayEngine --selftest` printed `editor selftest: OK` (rc 0). `okay-build ctest '^editor$'` gave `PASS editor`.
+  - `okay-player --help` printed its usage (rc 0); `--build-info` said `build.json is missing` (rc 1, expected outside an exported game).
+  - The launcher has no headless mode. With `SDL_VIDEODRIVER=dummy` it started its UI and kept running, but did not stop on SIGTERM and had to be killed. Whether CMake's launcher behaves the same was not checked.
+- **Not compared:** the linked files byte for byte (CMake did not build them here), Release and `-g` builds, and Windows.
 

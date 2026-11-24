@@ -31,6 +31,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Net/NetBuildSync.hpp"
 #include "okay/Net/NetQuestSync.hpp"
+#include "okay/Net/Rollback.hpp"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -440,9 +441,11 @@ void NetworkManager::Update(float dt) {
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     else if (m_reconnecting) ReconnectTick(dt);
+    MigrationTick(dt);
     InterpolateRemotes(dt);
     SyncTick(dt);
     PlayersTick(dt);
+    m_rollback->Tick(dt);
     ErrorsTick();
 }
 
@@ -582,6 +585,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     if (channel == "__own") { OnOwnerWire(from, data); return; }
     if (channel == "__ownreq") { OnOwnerRequest(from, data); return; }
     if (channel == "__time") { if (m_mode == Mode::Client && from == 0) OnHostTime(data); return; }
+    if (channel == "__mig") { OnMigWire(from, data); return; }                          // host migration: the player list
+    if (channel == "__bye") { if (m_mode == Mode::Client && from == 0) m_migrateNow = true; return; }   // the host is leaving
+    if (channel == "__rb") { m_rollback->OnMessage(from, data); return; }                // rollback inputs
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
@@ -959,10 +965,36 @@ bool NetworkManager::Encrypted() const {
 
 void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* data, std::size_t size,
                                   bool allowEncrypt) {
+    // Per-piece resend: a reliable message (resent until acked) that went in pieces is
+    // remembered; when the same bytes are sent again, only the pieces the far side has
+    // not acknowledged go out (the same sealed pieces, same id). Once every piece was
+    // acknowledged, or after kMaxPieceResends partial resends, it goes out fresh.
+    const bool resendable = size > 0 && (data[0] == ReliableMsg || data[0] == net::kChanRel);
+    if (resendable && size + 64 > net::kFragmentThreshold) {
+        auto oit = m_fragOut.find(to);
+        if (oit != m_fragOut.end()) {
+            auto& outs = oit->second;
+            for (auto f = outs.begin(); f != outs.end(); ++f) {
+                if (f->allowEncrypt != allowEncrypt || f->plain.size() != size ||
+                    std::memcmp(f->plain.data(), data, size) != 0) continue;
+                const bool allAcked = std::all_of(f->acked.begin(), f->acked.end(), [](bool b) { return b; });
+                if (!allAcked && f->resends < kMaxPieceResends) {
+                    ++f->resends; f->age = 0.0f; ++m_pieceResends;
+                    for (std::size_t i = 0; i < f->pieces.size(); ++i)
+                        if (!f->acked[i]) { Transmit(to, f->pieces[i].data(), f->pieces[i].size()); ++m_piecesResent; }
+                    return;
+                }
+                outs.erase(f);   // all there (the message's own ack was lost) or stuck: a fresh copy
+                break;
+            }
+        }
+    }
     // Encrypt once the session for this peer is established. The sealed blob is
     // tagged with kEncEnvelope, then handed to the fragmentation step below — so
     // encryption sits above fragmentation (the receiver reassembles, then decrypts).
     std::vector<std::uint8_t> enc;
+    const std::uint8_t* plain = data;
+    const std::size_t plainSize = size;
     if (allowEncrypt && encryption) {
         if (net::SecureChannel* s = SessionFor(to)) {
             if (s->Ready() && s->Seal(data, size, enc)) {
@@ -976,6 +1008,8 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
     const std::size_t chunkMax = net::kFragmentThreshold - header;
     std::uint32_t count = static_cast<std::uint32_t>((size + chunkMax - 1) / chunkMax);
     std::uint32_t id = m_fragNextId++;
+    FragOut keep;
+    const bool remember = resendable && plainSize <= kMaxFragOutBytes;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::size_t off = static_cast<std::size_t>(i) * chunkMax;
         std::size_t len = std::min(chunkMax, size - off);
@@ -983,6 +1017,42 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
         std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
         dg.insert(dg.end(), data + off, data + off + len);
         Transmit(to, dg.data(), dg.size());
+        if (remember) keep.pieces.push_back(std::move(dg));
+    }
+    if (remember) {
+        keep.plain.assign(plain, plain + plainSize);
+        keep.acked.assign(count, false);
+        keep.id = id;
+        keep.allowEncrypt = allowEncrypt;
+        auto& outs = m_fragOut[to];
+        if (outs.size() >= kMaxFragOutPerPeer) outs.erase(outs.begin());   // the oldest goes back to whole resends
+        outs.push_back(std::move(keep));
+    }
+}
+
+// The far side's receipt for one message's pieces: [u32 id][u32 count][bitmask, piece i = bit i].
+void NetworkManager::SendFragAck(const net::Endpoint& to, std::uint32_t id, std::uint32_t count, const FragAsm* a) {
+    if (!m_socket.IsOpen() || count == 0 || count > kMaxFragments) return;
+    net::Packet h(FragAck); h.Write(id); h.Write(count);
+    std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
+    std::vector<std::uint8_t> bits((count + 7) / 8, a ? 0 : 0xFF);   // no assembly: every piece (done already)
+    if (a) for (std::uint32_t i = 0; i < count && i < a->chunks.size(); ++i) if (!a->chunks[i].empty()) bits[i / 8] |= (std::uint8_t)(1u << (i % 8));
+    dg.insert(dg.end(), bits.begin(), bits.end());
+    Transmit(to, dg.data(), dg.size());
+}
+
+void NetworkManager::OnFragAck(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) {
+    auto oit = m_fragOut.find(from);
+    if (oit == m_fragOut.end() || size < 9) return;
+    net::Packet p(data, size);
+    p.ReadU8();
+    const std::uint32_t id = p.ReadU32(), count = p.ReadU32();
+    if (!p.Ok() || size < 9 + (count + 7) / 8) return;
+    const std::uint8_t* bits = data + 9;
+    for (FragOut& f : oit->second) {
+        if (f.id != id || f.acked.size() != count) continue;
+        for (std::uint32_t i = 0; i < count; ++i) if (bits[i / 8] & (1u << (i % 8))) f.acked[i] = true;
+        return;
     }
 }
 
@@ -1139,6 +1209,12 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
     const bool known = Handshaken(from);
     const std::uint32_t maxCount = known ? kMaxFragments : kStrangerMaxFragments;
     if (!p.Ok() || count == 0 || count > maxCount || index >= count) return false;
+    if (known) {   // a piece of a message already put together (its receipt was lost): say so again
+        auto d = m_fragDone.find(from);
+        if (d != m_fragDone.end())
+            for (const auto& done : d->second)
+                if (done.first == id && done.second == count) { SendFragAck(from, id, count, nullptr); return false; }
+    }
     auto epIt = m_fragIn.find(from);
     if (epIt == m_fragIn.end()) {
         if (!known) {                             // only so many strangers mid-message at once
@@ -1176,11 +1252,17 @@ bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t*
         asm_.got++;
     }
     asm_.age = 0.0f;
+    if (known) SendFragAck(from, id, count, &asm_);   // which pieces are here: a resend sends only the rest
     if (asm_.got < asm_.count) return false;
     out.clear();
     for (auto& c : asm_.chunks) out.insert(out.end(), c.begin(), c.end());
     msgs.erase(mIt);
     if (msgs.empty()) m_fragIn.erase(epIt);
+    if (known) {
+        auto& done = m_fragDone[from];
+        if (done.size() >= kFragDoneKept) done.erase(done.begin());
+        done.emplace_back(id, count);
+    }
     return true;
 }
 
@@ -1195,6 +1277,12 @@ void NetworkManager::PruneFragments(float dt) {
         }
         if (epIt->second.empty()) epIt = m_fragIn.erase(epIt);
         else ++epIt;
+    }
+    for (auto oIt = m_fragOut.begin(); oIt != m_fragOut.end(); ) {   // sent messages nobody resends any more
+        auto& outs = oIt->second;
+        for (auto f = outs.begin(); f != outs.end(); )
+            f = (f->age += dt) > kFragmentTtl ? outs.erase(f) : std::next(f);
+        oIt = outs.empty() ? m_fragOut.erase(oIt) : std::next(oIt);
     }
 }
 
@@ -1253,6 +1341,7 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
     if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     if (channel == "__ownreq") return data.size() <= kMaxVarKey;   // asking the host for an object
+    if (channel == "__rb") return data.size() <= 8192;              // rollback inputs (net::Rollback), relayed to the room
     if (channel == "__ev")   // a named event (checked again when it is opened): bounded
         return data.size() <= kMaxEventData + kMaxEventName + 16;
     return false;   // __match_start and any other reserved channel: host only

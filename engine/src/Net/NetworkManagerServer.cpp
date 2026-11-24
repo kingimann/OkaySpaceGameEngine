@@ -80,6 +80,7 @@ void NetworkManager::ServerTick(float dt) {
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;   // holds the message if this was a fragment
+        if (len >= 1 && data[0] == FragAck) { OnFragAck(from, data, len); continue; }   // which pieces a client has
         if (len >= 1 && data[0] == Fragment) {
             if (!TakeFragment(from, data, len, assembled)) continue;  // wait for the rest
             data = assembled.data(); len = assembled.size();
@@ -359,9 +360,12 @@ void NetworkManager::ServerTick(float dt) {
             }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
+            bool migratedBack = false;
             if (isNew) {
                 c.endpoint = from;
-                c.id = haveResumed ? resumed.id : m_nextId++;
+                std::uint32_t returning = 0;   // host migration: a player of the old host, back with its id
+                migratedBack = !haveResumed && TakeExpectedId(from, returning);
+                c.id = haveResumed ? resumed.id : (migratedBack ? returning : m_nextId++);
                 c.state = {c.id, 0, 0, 0, '@'};
                 if (haveResumed) {
                     c.state = {c.id, resumed.pos.x, resumed.pos.y, resumed.pos.z, resumed.glyph};
@@ -435,6 +439,11 @@ void NetworkManager::ServerTick(float dt) {
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
+                m_rosterBurst = 3;   // everyone (the newcomer too) hears the new player list now, not in a second
+                // Who holds what, for a player coming back after a host migration (PlayersTick
+                // sends the table to new players; this one is not new to the game).
+                if (migratedBack)
+                    for (const auto& [netId, owner] : m_netOwners) SendOrderedTo(c.id, "__own", std::to_string(owner) + "|" + netId);
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
                 if (haveResumed && m_peerResumed) {
                     ResumedPeer rp; rp.id = c.id; rp.position = resumed.pos; rp.hasPosition = resumed.hasState;
@@ -590,6 +599,17 @@ void NetworkManager::ServerTick(float dt) {
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
             SendDatagram(from, pong.Data(), pong.Size());
+        } else if (type == Pong) {
+            // A client's answer to the host's own ping (loss and round trip measured here too).
+            auto it = m_clients.find(from);
+            const float stamp = p.ReadF32();
+            if (it == m_clients.end() || !p.Ok()) continue;
+            for (auto& m : it->second.linkMarks)
+                if (m.stamp == stamp && !m.answered) {
+                    m.answered = true;
+                    it->second.linkRtt = std::max(0.0f, (m_serverTime - stamp) * 1000.0f);
+                    break;
+                }
         } else if (type == Ready) {
             std::uint8_t r = p.ReadU8();
             auto it = m_clients.find(from);
@@ -744,6 +764,17 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
+        {   // the host's own ping, once a second: loss and round trip measured on this side too (Stats, PeerLink)
+            Client& lc = it->second;
+            for (auto& m : lc.linkMarks) m.age += dt;
+            if ((lc.linkTimer -= dt) <= 0.0f) {
+                lc.linkTimer = 1.0f;
+                net::Packet pg(Ping); pg.Write(m_serverTime);
+                SendDatagram(lc.endpoint, pg.Data(), pg.Size());
+                if (lc.linkMarks.size() >= 16) lc.linkMarks.erase(lc.linkMarks.begin());
+                lc.linkMarks.push_back(Client::Mark{m_serverTime, 0.0f, false});
+            }
+        }
         if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; it->second.pktCount = 0; it->second.pktReported = false; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
@@ -796,10 +827,13 @@ void NetworkManager::ServerTick(float dt) {
 
     // Once a second, tell each client who's in its room (names, scores, time).
     m_rosterTimer += dt;
-    if (m_rosterTimer >= 1.0f && !m_clients.empty()) {
+    if ((m_rosterTimer >= 1.0f || m_rosterBurst > 0) && !m_clients.empty()) {
         m_rosterTimer = 0.0f;
+        if (m_rosterBurst > 0) --m_rosterBurst;
         std::unordered_map<std::string, std::vector<RosterEntry>> byRoom;
         if (!dedicated) byRoom[m_localRoom].push_back({0, m_localName, std::string(), m_hostScore, m_serverTime});
+        for (const MigPeer& w : m_migExpect)   // after a host migration: players still on their way back
+            byRoom[m_localRoom].push_back({w.id, w.name, std::string(), 0, 0.0f});
         for (auto& [ep, c] : m_clients) byRoom[c.room].push_back({c.id, c.name, c.userId, c.score, m_serverTime - c.joinedAt});
         for (auto& [ep, c] : m_clients) {
             const auto& list = byRoom[c.room];

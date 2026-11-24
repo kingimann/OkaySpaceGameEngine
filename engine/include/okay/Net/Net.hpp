@@ -46,7 +46,7 @@ public:
     static bool Join(const std::string& address);
     /// Host if the port is free on this computer, else join the game hosted on it.
     static bool HostOrJoin(std::uint16_t port = NetworkManager::kDefaultPort);
-    /// Leave the game (the host leaving ends it for everyone).
+    /// Leave the game. The host leaving hands the game to another player (host migration), or ends it.
     static void Leave();
 
     static bool IsHost();
@@ -65,6 +65,9 @@ public:
     static int On(const std::string& event, std::function<void(std::uint32_t from, const std::string& data)> f);
     static int OnPlayerJoined(std::function<void(std::uint32_t id, const std::string& name)> f);
     static int OnPlayerLeft(std::function<void(std::uint32_t id)> f);
+    /// The host left and another player took over (host migration, on by default on a LAN):
+    /// `previousId` is the id the new host had; it is player 0 now.
+    static int OnHostMigrated(std::function<void(std::uint32_t previousId)> f);
     static void Off(int listener);
 
     /// Spawn a prefab on every peer, owned by this player (its transform follows this player's copy).
@@ -79,6 +82,8 @@ public:
     static bool IsMine(const std::string& netId);
     /// Ping, loss and bandwidth of this player's connection.
     static NetworkManager::NetStats Stats();
+    /// The on-screen network stats (ping, loss, bandwidth, players) on or off.
+    static void ShowStats(bool on = true);
     /// Network time in seconds: the same on every peer (the host's clock).
     static double Time();
     /// Round trip to the host in milliseconds (0 on the host).

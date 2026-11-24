@@ -1,5 +1,6 @@
 #include "OkayScriptVMInternal.hpp"
 #include "okay/Net/ServerQuery.hpp"
+#include "okay/Net/Rollback.hpp"
 
 namespace okay {
 
@@ -162,7 +163,7 @@ void OkayScriptVM::Impl::RegisterNetworkBuiltins(BuiltinCtx& c) {
         // net.on(event, fn): fn is a function's name ("on_hit") or a lambda. "player_joined" and
         // "player_left" are the join / leave events; any other name is a network event.
         auto netEventKey = [](const std::string& ev) {
-            if (ev == "player_joined" || ev == "player_left") return "on_" + ev;
+            if (ev == "player_joined" || ev == "player_left" || ev == "host_migrated") return "on_" + ev;
             return "net_event:" + ev;
         };
         auto netHandler = [](const Value& f) {
@@ -222,6 +223,76 @@ void OkayScriptVM::Impl::RegisterNetworkBuiltins(BuiltinCtx& c) {
         b["net.loss"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().lossPercent : 0.0f}; };
         b["net.bytes_in"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesInPerSec : 0.0f}; };
         b["net.bytes_out"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesOutPerSec : 0.0f}; };
+        // The in-game stats overlay: net.show_stats() / net.show_stats(false); net.stats_text() is its text.
+        b["net.show_stats"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (n) n->showStatsOverlay = a.empty() || a[0].AsBool();
+            return Value{n && n->showStatsOverlay};
+        };
+        b["net.stats_text"] = [this](std::vector<Value>&) {
+            std::string t;
+            if (NetworkManager* n = Net()) for (const std::string& l : n->StatsLines()) t += l + "\n";
+            return Value{t};
+        };
+        // Host migration: net.migration("off" | "lan" | "always") sets it; with no value it says which.
+        // on_host_migrated(previous_id), or net.on("host_migrated", fn), runs once there is a new host.
+        b["net.migration"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n) return Value{std::string()};
+            if (!a.empty()) {
+                const std::string m = a[0].IsString() ? a[0].AsString() : (a[0].AsBool() ? "lan" : "off");
+                if (m == "off") n->hostMigration = NetworkManager::HostMigration::Off;
+                else if (m == "lan") n->hostMigration = NetworkManager::HostMigration::Lan;
+                else if (m == "always") n->hostMigration = NetworkManager::HostMigration::Always;
+                else throw ScriptError("net.migration(\"" + m + "\"): use \"off\", \"lan\" or \"always\"");
+            }
+            const auto h = n->hostMigration;
+            return Value{std::string(h == NetworkManager::HostMigration::Off ? "off" : h == NetworkManager::HostMigration::Lan ? "lan" : "always")};
+        };
+        b["net.migrations"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->HostMigrations() : 0.0f}; };
+        b["net.migrating"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Migrating()}; };
+        // Rollback (deterministic games): net.rollback_start([input delay [, tick rate [, max predicted frames]]]).
+        // The script defines rollback_save() -> text, rollback_load(text), rollback_input() -> text and
+        // rollback_step(frame, inputs), where inputs is an array of every player's input in
+        // net.rollback_players() order. Every player calls it (after net.players() lists everyone).
+        b["net.rollback_start"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n) { Log::Warning("OkayScript net.rollback_start: not in a network game yet (net.host or net.join first)"); return Value{false}; }
+            for (const char* fn : {"rollback_save", "rollback_load", "rollback_input", "rollback_step"})
+                if (!rt.functions.count(fn))
+                    throw ScriptError(std::string("net.rollback_start needs a function ") + fn + " in this script");
+            net::Rollback::Settings st;
+            if (a.size() > 0) st.inputDelay = SafeInt(a[0].AsFloat());
+            if (a.size() > 1) st.tickRate = a[1].AsFloat();
+            if (a.size() > 2) st.maxPrediction = SafeInt(a[2].AsFloat());
+            std::weak_ptr<int> life = this->life;   // the callbacks do nothing once this script is gone
+            auto call = [this, life](const char* fn, std::vector<Value> args) -> Value {
+                if (life.expired()) return Value{};
+                try { return rt.Call(fn, args); }
+                catch (const std::exception& e) { Log::Error("OkayScript ", fn, "(): ", e.what()); return Value{}; }
+            };
+            const bool ok = n->Rollback().Start(st,
+                [call] { return call("rollback_save", {}).AsString(); },
+                [call](const std::string& state) { call("rollback_load", {Value{state}}); },
+                [call] { return call("rollback_input", {}).AsString(); },
+                [call](std::uint32_t frame, const std::vector<net::Rollback::FrameInput>& in) {
+                    Value arr = Value::MakeArray();
+                    for (const auto& i : in) arr.AsArray()->push_back(Value{i.input});
+                    call("rollback_step", {Value{(float)frame}, arr});
+                });
+            if (!ok) Log::Warning("OkayScript net.rollback_start: ", n->Rollback().LastError());
+            return Value{ok};
+        };
+        b["net.rollback_stop"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->Rollback().Stop(); return Value{}; };
+        b["net.rollback_frame"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->Rollback().Frame() : 0.0f}; };
+        b["net.rollback_confirmed"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->Rollback().ConfirmedFrame() : 0.0f}; };
+        b["net.rollback_resimulating"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Rollback().Resimulating()}; };
+        b["net.rollback_players"] = [this](std::vector<Value>&) {
+            Value out = Value::MakeArray();
+            if (NetworkManager* n = Net()) for (std::uint32_t id : n->Rollback().Players()) out.AsArray()->push_back(Value{(float)id});
+            return out;
+        };
+        b["net.rollback_running"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Rollback().Running()}; };
 }
 
 void OkayScriptVM::Impl::RegisterMatchmakingQueueBuiltins(BuiltinCtx& c) {

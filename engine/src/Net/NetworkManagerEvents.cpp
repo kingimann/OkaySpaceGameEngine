@@ -21,6 +21,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Net/Rollback.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -292,6 +293,7 @@ void NetworkManager::PlayersTick(float dt) {
     for (auto& m : m_pingMarks) m.age += dt;
     const bool live = m_mode == Mode::Server || (m_mode == Mode::Client && m_joined);
     if (!live) {
+        if (m_migrating) return;   // moving to a new host: who is here and who holds what carry over
         // A session that ended: the next one announces everybody again. (No leave
         // events for our own Leave: the game asked for it.)
         m_knownPlayers.clear();
@@ -345,6 +347,18 @@ void NetworkManager::PlayersTick(float dt) {
         RaisePlayerEvent(false, id, name);
     }
     m_playersAnnounced = true;
+}
+
+void NetworkManager::RaiseHostMigrated(std::uint32_t previousId) {
+    const std::vector<Listener> snap = m_listeners;
+    for (const Listener& l : snap) if (l.migrated) l.migrated(previousId);
+    std::vector<VisualScriptComponent*> graphs;
+    std::vector<ScriptComponent*> scripts;
+    SceneListeners(GetScene(), graphs, scripts);
+    for (auto* g : graphs) g->RaiseEvent("OnHostMigrated", nullptr, std::string(), vs::VsValue((float)previousId));
+    const std::vector<vs::VsValue> args{vs::VsValue((float)previousId)};
+    for (auto* s : scripts)
+        if (s->VM()) s->VM()->CallEventArgs("on_host_migrated", args);   // also net.on("host_migrated", fn)
 }
 
 // ---- ownership handoff -----------------------------------------------------------------------------------------
@@ -454,18 +468,87 @@ void NetworkManager::NotePong(float stamp) {
     for (auto& m : m_pingMarks) if (m.stamp == stamp) { m.answered = true; break; }
 }
 
+namespace {
+// Loss over a list of pings: those answered, or older than 2 s (still waiting: not counted yet).
+template <class Marks> float LossOf(const Marks& marks, bool& any) {
+    int decided = 0, lost = 0;
+    for (const auto& m : marks)
+        if (m.answered || m.age > 2.0f) { ++decided; if (!m.answered) ++lost; }
+    any = decided > 0;
+    return any ? 100.0f * (float)lost / (float)decided : 0.0f;
+}
+} // namespace
+
+bool NetworkManager::PeerLink(std::uint32_t player, float& rttMs, float& lossPercent) const {
+    for (const auto& [ep, c] : m_clients) {
+        if (c.id != player) continue;
+        bool any = false;
+        lossPercent = LossOf(c.linkMarks, any);
+        rttMs = c.linkRtt;
+        return true;
+    }
+    return false;
+}
+
 NetworkManager::NetStats NetworkManager::Stats() const {
     NetStats st;
-    st.rttMs = m_mode == Mode::Client ? m_rtt : 0.0f;
-    int decided = 0, lost = 0;
-    for (const auto& m : m_pingMarks)
-        if (m.answered || m.age > 2.0f) { ++decided; if (!m.answered) ++lost; }   // still waiting: not counted yet
-    st.lossPercent = decided > 0 ? 100.0f * (float)lost / (float)decided : 0.0f;
+    bool any = false;
+    if (m_mode == Mode::Server) {   // the host: the average of its links to its clients (its own pings)
+        float rtt = 0.0f, loss = 0.0f; int n = 0, nl = 0;
+        for (const auto& [ep, c] : m_clients) {
+            bool decided = false;
+            const float l = LossOf(c.linkMarks, decided);
+            if (decided) { loss += l; ++nl; }
+            if (c.linkRtt > 0.0f) { rtt += c.linkRtt; ++n; }
+        }
+        st.rttMs = n ? rtt / (float)n : 0.0f;
+        st.lossPercent = nl ? loss / (float)nl : 0.0f;
+    } else {
+        st.rttMs = m_mode == Mode::Client ? m_rtt : 0.0f;
+        st.lossPercent = LossOf(m_pingMarks, any);
+    }
     st.bytesInPerSec = m_bytesInRate;
     st.bytesOutPerSec = m_bytesOutRate;
     st.players = (int)Players().size();
     st.networkTime = NetworkTime();
     return st;
+}
+
+std::vector<std::string> NetworkManager::StatsLines() const {
+    std::vector<std::string> out;
+    if (m_mode == Mode::Offline && !m_migrating) return out;
+    const NetStats st = Stats();
+    char b[160];
+    const char* role = m_migrating ? "moving to a new host" : m_mode == Mode::Server ? "host" : (m_joined ? "client" : "joining");
+    std::snprintf(b, sizeof b, "Network: %s, player %u, %d player%s", role, m_localId, st.players, st.players == 1 ? "" : "s");
+    out.emplace_back(b);
+    std::snprintf(b, sizeof b, "Ping %.0f ms   Loss %.1f %%", st.rttMs, st.lossPercent);
+    out.emplace_back(b);
+    std::snprintf(b, sizeof b, "In %.1f KB/s   Out %.1f KB/s", st.bytesInPerSec / 1024.0f, st.bytesOutPerSec / 1024.0f);
+    out.emplace_back(b);
+    if (m_mode == Mode::Server)
+        for (const auto& [ep, c] : m_clients) {
+            float rtt = 0.0f, loss = 0.0f;
+            PeerLink(c.id, rtt, loss);
+            std::snprintf(b, sizeof b, "  %u %s: %.0f ms, %.1f %% loss", c.id, c.name.substr(0, 24).c_str(), rtt, loss);
+            out.emplace_back(b);
+        }
+    if (m_rollback->Running()) {
+        std::snprintf(b, sizeof b, "Rollback: frame %u (final %u), %u rollbacks, %u stalls%s", m_rollback->Frame(),
+                      m_rollback->ConfirmedFrame(), m_rollback->Rollbacks(), m_rollback->Stalls(),
+                      m_rollback->Desyncs() ? ", OUT OF SYNC" : "");
+        out.emplace_back(b);
+    }
+    if (m_migrations > 0) {
+        std::snprintf(b, sizeof b, "Host migrations: %d", m_migrations);
+        out.emplace_back(b);
+    }
+    return out;
+}
+
+NetworkManager* NetworkManager::OverlayManager() {
+    NetworkManager* n = Current();
+    return n && n->showStatsOverlay ? n : nullptr;
 }
 
 // ---- bad-network testing -----------------------------------------------------------------------------------------

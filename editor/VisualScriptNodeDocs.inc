@@ -15545,6 +15545,53 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "NetShowStats";
+        d.title = "Show Network Stats";
+        d.description = "Shows (Show on) or hides the network stats overlay while playing: ping, loss, bandwidth and how many players.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Show Network Stats after an event such as On Start or On Key, and wire a value into Show.";
+        d.related = "";
+        d.keywords = "show network stats overlay ping loss";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Show Network Stats runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Show Network Stats finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Show", "Bool", "The Show input of Show Network Stats. It is a Bool. Unwired, this is false.", "false"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnHostMigrated";
+        d.title = "On Host Migrated";
+        d.description = "Runs on every player when the host left and another player took over as host (host migration). Event Value is the id the new host had before; it is player 0 now.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Drop On Host Migrated into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on host migrated migration new host";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Host Migrated finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetMigrating";
+        d.title = "Is Migrating";
+        d.description = "True between the host leaving and the new host taking over.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Is Migrating's Bool output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is migrating host migration";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Bool", "Bool", "True or false. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "SteamName";
         d.title = "Steam Name";
         d.description = "The player's Steam name.";

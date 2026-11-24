@@ -67,6 +67,9 @@ int Net::OnPlayerJoined(std::function<void(std::uint32_t, const std::string&)> f
 int Net::OnPlayerLeft(std::function<void(std::uint32_t)> f) {
     auto* n = Need("OnPlayerLeft"); return n ? n->OnPlayerLeft(std::move(f)) : 0;
 }
+int Net::OnHostMigrated(std::function<void(std::uint32_t)> f) {
+    auto* n = Need("OnHostMigrated"); return n ? n->OnHostMigrated(std::move(f)) : 0;
+}
 void Net::Off(int listener) { if (auto* n = Manager()) n->RemoveListener(listener); }
 
 GameObject* Net::Spawn(const std::string& prefab, const Vec3& position) {
@@ -83,6 +86,7 @@ bool Net::Give(const std::string& netId, std::uint32_t player) {
 }
 bool Net::IsMine(const std::string& netId) { auto* n = Manager(); return !n || n->IsMine(netId); }
 NetworkManager::NetStats Net::Stats() { auto* n = Manager(); return n ? n->Stats() : NetworkManager::NetStats{}; }
+void Net::ShowStats(bool on) { if (auto* n = Manager()) n->showStatsOverlay = on; }
 
 double Net::Time() { auto* n = Manager(); return n ? n->NetworkTime() : 0.0; }
 float Net::Ping() { auto* n = Manager(); return n ? n->RttMs() : 0.0f; }

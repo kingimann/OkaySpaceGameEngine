@@ -729,6 +729,10 @@ target_link_libraries(test_net_easy PRIVATE okay::engine)
 target_compile_definitions(test_net_easy PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME net_easy COMMAND test_net_easy)
 
+add_executable(test_net_session test_net_session.cpp)
+target_link_libraries(test_net_session PRIVATE okay::engine)
+add_test(NAME net_session COMMAND test_net_session)
+
 add_executable(test_net_sync test_net_sync.cpp)
 target_link_libraries(test_net_sync PRIVATE okay::engine)
 add_test(NAME net_sync COMMAND test_net_sync)

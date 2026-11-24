@@ -992,6 +992,19 @@ struct NetStatsNode : VsNode {
     }
 };
 
+// Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
+struct NetShowStatsNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true)) n->showStatsOverlay = In(0, g, ctx).AsBool();
+        return 0;
+    }
+};
+// Is Migrating: between the host leaving and the new host taking over (host migration).
+struct NetMigratingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->Migrating(); }
+};
+
 // ---- Steam ------------------------------------------------------------
 struct SteamNameNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return okay::Steam::Get().UserName(); }

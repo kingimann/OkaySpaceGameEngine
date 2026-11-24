@@ -28,6 +28,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Net/NetBuildSync.hpp"
 #include "okay/Net/NetQuestSync.hpp"
+#include "okay/Net/Rollback.hpp"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -42,7 +43,8 @@ std::mutex g_liveMutex;
 std::unordered_set<const NetworkManager*>& LiveManagers() { static std::unordered_set<const NetworkManager*> s; return s; }
 } // namespace
 
-NetworkManager::NetworkManager() : m_buildSync(std::make_unique<net::BuildSync>(*this)), m_questSync(std::make_unique<net::QuestSync>(*this)) {
+NetworkManager::NetworkManager() : m_buildSync(std::make_unique<net::BuildSync>(*this)), m_questSync(std::make_unique<net::QuestSync>(*this)),
+                                   m_rollback(std::make_unique<net::Rollback>(*this)) {
     std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this);
 }
 NetworkManager::~NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().erase(this); }
@@ -256,6 +258,14 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     if (!net::Startup()) { SetError("Could not join: the computer's network could not be started."); return false; }
     m_netStarted = true;
     if (!m_socket.Open()) { SetError("Could not join: no network socket could be opened."); Stop(); return false; }
+    if (m_bindPort) {   // a player moving to a new host keeps the address the old host knew it by
+        if (!m_socket.Bind(m_bindPort)) {
+            OKAY_WARN("net: could not keep local port ", m_bindPort, " for the new host; joining as a new player");
+            m_socket.Close();
+            if (!m_socket.Open()) { SetError("Could not join: no network socket could be opened."); Stop(); return false; }
+        }
+        m_bindPort = 0;
+    }
     if (!net::UdpSocket::Resolve(host, port, m_serverEp)) {
         SetError("Could not find host \"" + host + "\": the name or address does not resolve (check the spelling, or use its IP address).");
         Stop();
@@ -381,6 +391,7 @@ void NetworkManager::Stop() {
         if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
+    if (m_mode == Mode::Server && m_socket.IsOpen()) SendHostBye();   // clients move to a new host at once (host migration)
     if (m_relay && m_socket.IsOpen()) {            // free our slot on the relay
         net::Packet bye(net::RelayBye);
         m_socket.SendTo(m_relayEp, bye.Data(), bye.Size());
@@ -398,6 +409,14 @@ void NetworkManager::Stop() {
     m_clients.clear();
     m_remotes.clear();
     m_remoteTarget.clear();
+    m_fragOut.clear();
+    m_fragDone.clear();
+    m_migPeers.clear();
+    m_migSent.clear();
+    m_migResend = 0.0f;
+    m_migrateNow = false;
+    m_rosterBurst = 0;
+    if (!m_migrating) { m_migExpect.clear(); m_migGrace = 0.0f; }
     m_remoteMissing.clear();
     m_inbox.clear();
     m_rpcObserver = nullptr;
@@ -1155,6 +1174,7 @@ std::vector<NetworkManager::RosterEntry> NetworkManager::Roster() const {
     if (m_mode != Mode::Server) return out;
     if (!dedicated) out.push_back({0, m_localName, std::string(), m_hostScore, m_serverTime});
     for (auto& [ep, c] : m_clients) out.push_back({c.id, c.name, c.userId, c.score, m_serverTime - c.joinedAt});
+    for (const MigPeer& w : m_migExpect) out.push_back({w.id, w.name, std::string(), 0, 0.0f});   // on their way back (host migration)
     std::sort(out.begin(), out.end(), [](const RosterEntry& a, const RosterEntry& b) { return a.id < b.id; });
     return out;
 }

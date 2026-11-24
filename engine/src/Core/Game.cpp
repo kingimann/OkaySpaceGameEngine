@@ -112,20 +112,6 @@ void Game::NotifyFocus(bool focused) {
 
 // ---- quit ----------------------------------------------------------------------
 
-namespace {
-void PublishQuitEvent(const GameQuit& ev) {
-    auto send = [ev]() {
-        try { EngineBus().Publish(ev); }
-        catch (const std::exception& e) { Log::Warning("Game quit event threw: ", e.what()); }
-        catch (...) { Log::Warning("Game quit event threw"); }
-    };
-    if (JobSystem* js = RunningEngineJobs()) {
-        if (!js->IsMainThread()) { js->RunOnMainThread(send); return; }
-    }
-    send();
-}
-} // namespace
-
 void Game::ForceQuit(const std::string& reason, int exitCode) {
     std::lock_guard<std::mutex> lock(g_quitMutex);
     if (!s_quit.load(std::memory_order_relaxed)) {

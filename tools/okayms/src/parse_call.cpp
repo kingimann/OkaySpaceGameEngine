@@ -321,11 +321,15 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
             if (!instantiate_member(sid, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
-    const Method* m = find_method(method_owner, method_name, args.size(), &args, ot.is_const || ot.pconst ? 1 : 0);
-    if (m == nullptr) {
+    const Method* found_m = find_method(method_owner, method_name, args.size(), &args, ot.is_const || ot.pconst ? 1 : 0);
+    if (found_m == nullptr) {
         error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
         return false;
     }
+    // A copy: converting an argument can make a constructor template instance, which adds to a class's methods and
+    // moves them (the pointer would dangle).
+    const Method m_copy = *found_m;
+    const Method* m = &m_copy;
     if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
     if (!adjust_args(m->params, &args)) return false;
     const bool dynamic = m->is_virtual && (arrow || ot.is_ref || (object.kind == Node::Unary && object.op == TStar));
@@ -355,7 +359,16 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         self_ptr.struct_id = m->owner;
         self_ptr.pointers = 1;
         ft.params.push_back(self_ptr);
-        for (const Type& param : m->params) ft.params.push_back(param);
+        // A reference parameter is passed as its address (adjust_args took it), as for a direct call: the pointer
+        // call's signature says so, or a class parameter would be read as a by-value copy of that address.
+        for (Type param : m->params) {
+            if (param.is_ref) {
+                param.is_ref = false;
+                param.rref = false;
+                param.pointers += 1;
+            }
+            ft.params.push_back(param);
+        }
         Type fp;
         fp.base = 1;
         fp.pointers = 1;

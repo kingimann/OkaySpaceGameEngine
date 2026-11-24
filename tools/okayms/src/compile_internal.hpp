@@ -46,6 +46,12 @@ struct Token {
     bool inl = false;
 };
 
+// The names of the enumerations read so far (Type::enum_id indexes it).
+inline std::vector<std::string>& enum_names() {
+    static std::vector<std::string> names;
+    return names;
+}
+
 struct Type {
     int pointers = 0;
     // 0 void, 1 int, 2 char, 3 struct or union, 4 short
@@ -73,6 +79,10 @@ struct Type {
     bool is_bool = false;
     // long long, unsigned long long, __int64: a base 1 integer that is 8 bytes wide and lives in rax.
     bool wide = false;
+    // An enumeration (its values are int here): its index in enum_names(), or -1. The decorated name of the type is
+    // W4 name @@ (the public MSVC rule), so a template instance for an enumeration is not the one for int.
+    int enum_id = -1;
+    bool is_enum() const { return enum_id >= 0; }
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
     bool pointer() const { return pointers > 0; }
@@ -218,6 +228,9 @@ struct Global {
     // Some of its value is stored at startup (__okay_init) or on first use (a static local): its bytes are not its
     // value, so even a const one is never read as a compile-time constant.
     bool dynamic = false;
+    // A virtual table: the type information object of its class, whose address is in the slot just before the first
+    // function (the table pointer of an object points at the first function). Empty for none.
+    std::string rtti;
 };
 
 inline Type peel_array(const Type& type) {

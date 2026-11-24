@@ -484,6 +484,13 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        // SQRTSD xmm0, xmm1 (F2 0F 51 /r) or SQRTSS (F3 0F 51 /r), Intel SDM vol. 2.
+        loadXmm(im, in.a, 1, in.extra);
+        fpBin(im, in.extra, 0x51);
+        storeXmm(im, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(im, in.a, 0, in.extra);
         loadXmm(im, in.b, 1, in.extra);
@@ -552,16 +559,21 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
     case Inst::Op::Shr:
         loadRax(im, in.a);
         loadRcx(im, in.b);
-        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : 5);
+        shiftCl(im, Rax, in.op == Inst::Op::Shl ? 4 : (in.arith ? 7 : 5));  // SHL /4, SHR /5, SAR /7
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         loadRax(im, in.a);
-        u8(im, 0x48);
-        u8(im, 0x99);
+        if (in.uns) {
+            u8(im, 0x31);  // xor edx, edx: the high half of an unsigned dividend
+            u8(im, modrm(3, 2, 2));
+        } else {
+            u8(im, 0x48);  // cqo
+            u8(im, 0x99);
+        }
         loadRcx(im, in.b);
-        unaryF7(im, Rcx, 7);
+        unaryF7(im, Rcx, in.uns ? 6 : 7);  // DIV /6, IDIV /7
         if (in.op == Inst::Op::Div) movSlotRax(im, in.dst);
         else {
             movReg(im, Rax, Rdx);

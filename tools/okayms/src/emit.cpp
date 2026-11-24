@@ -437,6 +437,11 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             // Read-only: one 8-byte slot per virtual function, filled by an
             // ADDR64 relocation. A pure virtual slot stays zero.
             while (gen.rdata.size() % 8 != 0) gen.rdata.push_back(0);
+            if (!global.rtti.empty()) {
+                // The slot before the table: the address of the class's type information (typeid of an object).
+                gen.relocs.push_back({1, static_cast<uint32_t>(gen.rdata.size()), global.rtti, kRelAmd64Addr64});
+                for (int k = 0; k < 8; ++k) gen.rdata.push_back(0);
+            }
             const uint32_t at = static_cast<uint32_t>(gen.rdata.size());
             for (size_t i = 0; i < global.slots.size(); ++i) {
                 if (!global.slots[i].empty())

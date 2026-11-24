@@ -298,8 +298,19 @@ public:
         if (pick < 0) { ++m_overflow; return; }                                                    // more than kMax in one frame: ignored, counted
         m_r[pick] = Rect{x, y, w, h, hovered, true, 0, overlay};
     }
+    /// A panel drawn by OkayUI only (okayuihost::HostPanelWindow) is hovered or its window has the keyboard focus this frame: the host
+    /// gives OkayUI its keys, text and mouse then, whatever the "OkayUI screens" switch says. Kept for one more frame, like the rectangles.
+    void NoteActive() { m_activeAge = 0; }
+    /// A hosted panel was hovered or focused in the last frame.
+    bool Active() const { return m_activeAge <= 1; }
+    /// Some rectangle offered last frame was hovered (ImGui's answer when it was offered).
+    bool AnyHovered() const { for (const Rect& r : m_r) if (r.valid && r.hovered) return true; return false; }
     /// Start of the next frame: a rectangle that was not offered last frame (panel closed, another page showing) is dropped.
-    void NextFrame() { for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false; m_lastOverflow = m_overflow; m_overflow = 0; }
+    void NextFrame() {
+        for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false;
+        m_lastOverflow = m_overflow; m_overflow = 0;
+        if (m_activeAge <= 1) ++m_activeAge;
+    }
     /// How many offers the frame before this one had to ignore (0 = every rectangle was kept).
     int Overflowed() const { return m_lastOverflow; }
     /// True when the mouse (x, y) is over a rectangle whose panel was visible and not covered last frame.
@@ -321,7 +332,14 @@ private:
     struct Rect { float x = 0, y = 0, w = 0, h = 0; bool hovered = false, valid = false; int age = 0; bool overlay = false; };
     Rect m_r[kMax];
     int m_overflow = 0, m_lastOverflow = 0;
+    int m_activeAge = 2;   // frames since NoteActive (2 and more: not active)
 };
+
+/// Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+/// Yes while a panel drawn by OkayUI only was hovered or focused (Region::Active), a hosted rectangle was hovered (a code editor's, a
+/// section's), or an OkayUI code field has the keyboard (`codeFieldFocused`, the script editor's CodeEdit). Otherwise no: a game's own
+/// `ui_*` widgets in the Game view get only what they got before (text and Backspace).
+inline bool HostedInputWanted(const Region& r, bool codeFieldFocused) { return r.Active() || r.AnyHovered() || codeFieldFocused; }
 
 /// Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
 inline bool WantsKeyboard() { return OkayUI::WantsTextInput(); }

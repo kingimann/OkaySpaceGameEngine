@@ -1410,6 +1410,70 @@ void LineCommandKeyTests() {
     CHECK(r.ce.GetText() == "a\n// b\nc");
 }
 
+// What the script editor still took from ImGuiColorTextEdit before it was deleted: the gap between the line numbers and the
+// text (its SetLeftMargin) and a hover tooltip on known words (its identifier declarations: a built-in's signature and doc).
+// (The error's message after the line is the script editor's own overlay in main.cpp; the widget draws none, see DrawTests.)
+int DiffPixels(const Bitmap& a, const Bitmap& b, int x0, int y0, int x1, int y1) {
+    int n = 0;
+    for (int y = y0; y < y1; ++y) for (int x = x0; x < x1; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) ++n;
+    return n;
+}
+void ScriptEditorGapTests() {
+    {   // the text margin: where the text starts right of the gutter; a click in the margin is column 0
+        Rig r;
+        r.ce.SetText("abc\ndef");
+        r.Frame();
+        CHECK(r.ce.TextMargin() == 4.0f);
+        CHECK(std::abs(r.X(P(0, 0)) - r.ce.ViewRect().x - 4.0f) < 0.01f);
+        r.ce.SetTextMargin(24.0f);
+        r.Frame();
+        CHECK(std::abs(r.X(P(0, 0)) - r.ce.ViewRect().x - 24.0f) < 0.01f);
+        CHECK(std::abs(r.X(P(0, 2)) - r.X(P(0, 0)) - 2.0f * r.ce.CharWidth()) < 0.01f);
+        CHECK(r.ce.ScreenToPos(r.ce.ViewRect().x + 2.0f, r.Y(P(1, 0))) == P(1, 0));
+        r.ce.SetCaret(P(0, 3));
+        ClickAt(r, r.ce.ViewRect().x + 3.0f, r.Y(P(1, 0)));
+        CHECK(At(r.ce, 1, 0));
+        r.ce.SetTextMargin(-5.0f); CHECK(r.ce.TextMargin() == 0.0f);      // clamped
+        r.ce.SetTextMargin(5000.0f); CHECK(r.ce.TextMargin() == 200.0f);
+    }
+    {   // hover text: a documented word under the pointer, nothing over punctuation, blanks, past the line end or in the gutter
+        Rig r;
+        r.ce.SetText("print(x) foo\n  bar.baz\n\n");
+        r.ce.SetHoverInfo([](const std::string& w) -> std::string { return w == "print" ? "print(value)" : w == "bar" ? "bar doc" : w == "baz" ? "member" : ""; });
+        r.Frame();
+        const float cw = r.ce.CharWidth();
+        CHECK(r.ce.HoverText(r.X(P(0, 0)) + 1.0f, r.Y(P(0, 0))) == "print(value)");
+        CHECK(r.ce.HoverText(r.X(P(0, 4)) + cw * 0.8f, r.Y(P(0, 0))) == "print(value)");   // the right half of the last letter
+        CHECK(r.ce.HoverText(r.X(P(0, 5)) + 1.0f, r.Y(P(0, 0))).empty());                  // '('
+        CHECK(r.ce.HoverText(r.X(P(0, 6)) + 1.0f, r.Y(P(0, 0))).empty());                  // x: no info
+        CHECK(r.ce.HoverText(r.X(P(0, 8)) + 1.0f, r.Y(P(0, 0))).empty());                  // the blank
+        CHECK(r.ce.HoverText(r.X(P(0, 12)) + 3.0f * cw, r.Y(P(0, 0))).empty());            // past the end of the line ("foo" is last)
+        CHECK(r.ce.HoverText(r.X(P(1, 0)) + 1.0f, r.Y(P(1, 0))).empty());                  // the indent
+        CHECK(r.ce.HoverText(r.X(P(1, 2)) + 1.0f, r.Y(P(1, 0))) == "bar doc");
+        CHECK(r.ce.HoverText(r.X(P(1, 6)) + 1.0f, r.Y(P(1, 0))) == "member");
+        CHECK(r.ce.HoverText(r.X(P(2, 0)) + 1.0f, r.Y(P(2, 0))).empty());                  // an empty line
+        CHECK(r.ce.HoverText(r.ce.ItemRect().x + 2.0f, r.Y(P(0, 0))).empty());             // the gutter
+        CHECK(r.ce.HoverText(r.X(P(0, 0)) + 1.0f, r.ce.ItemRect().y + r.ce.ItemRect().h + 40.0f).empty());   // below the widget
+        // an error's message wins on its line (the gutter too); other lines keep their word tips
+        UI::CodeMarker m; m.line = 0; m.message = "Error at line 1: bad";
+        r.ce.SetMarkers({m});
+        CHECK(r.ce.HoverText(r.X(P(0, 0)) + 1.0f, r.Y(P(0, 0))) == "Error at line 1: bad");
+        CHECK(r.ce.HoverText(r.ce.ItemRect().x + 2.0f, r.Y(P(0, 0))) == "Error at line 1: bad");
+        CHECK(r.ce.HoverText(r.X(P(1, 2)) + 1.0f, r.Y(P(1, 0))) == "bar doc");
+        r.ce.SetHoverInfo(nullptr);
+        r.ce.ClearMarkers();
+        CHECK(r.ce.HoverText(r.X(P(0, 0)) + 1.0f, r.Y(P(0, 0))).empty());
+        // Draw shows it: a tooltip appears near the pointer over "print" and not over "x"
+        r.ce.SetHoverInfo([](const std::string& w) -> std::string { return w == "print" ? "print(value) writes a line to the console" : ""; });
+        r.sim.Move(r.X(P(0, 6)) + 1.0f, r.Y(P(0, 0))); r.Frames(3);
+        const Bitmap none = r.sim.Draw();
+        r.sim.Move(r.X(P(0, 0)) + 1.0f, r.Y(P(0, 0))); r.Frames(3);
+        const Bitmap tip = r.sim.Draw();
+        const int my = (int)r.Y(P(0, 0));
+        CHECK(DiffPixels(none, tip, 0, my + 4, (int)r.sim.W, std::min((int)r.sim.H, my + 80)) > 200);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1434,6 +1498,7 @@ int main() {
     DrawTests();
     ScriptLookTests();
     HostClipboardTests();
+    ScriptEditorGapTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

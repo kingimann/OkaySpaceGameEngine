@@ -13,6 +13,7 @@
 #include "Engine.hpp"
 #include "Git.hpp"
 #include "Process.hpp"
+#include "ProjectVersion.hpp"   // shared/: the engine_version stamp
 
 #include <Okay.hpp>
 #include "okay/Core/StringUtil.hpp"
@@ -26,6 +27,7 @@
 namespace fs = std::filesystem;
 using okaycli::Io;
 using Strs = std::vector<std::string>;
+using okay::str::Trim;
 
 namespace {
 
@@ -86,7 +88,7 @@ bool PositionOf(const std::string& text, const std::string& name, okay::Vec3& ou
 void TestArguments() {
     RUN_SUITE("okay cli: commands, help, arguments");
     Said s;
-    CHECK(Cli({}, s) == 0 && Has(s.out, "Commands:") && Has(s.out, "vc save"));
+    CHECK(Cli({}, s) == 0 && Has(s.out, "Projects:") && Has(s.out, "vc save"));
     CHECK(Cli({"help"}, s) == 0 && Has(s.out, "Make a new project.") && Has(s.out, "okay help <command>"));
     CHECK(Cli({"help", "vc", "save"}, s) == 0 && Has(s.out, "Usage: okay vc save"));
     CHECK(Cli({"help", "vc"}, s) == 0 && Has(s.out, "history"));
@@ -327,6 +329,8 @@ void TestGit(const fs::path& tmp) {
     CHECK(Cli({"--project", P, "vc", "init"}, s) == 0 && Has(s.out, "already had everything"));   // safe to run again
 
     CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Scenes and prefabs (1)") && Has(s.out, "Nothing has been saved yet"));
+    CHECK(Cli({"--project", P, "vc", "status", "--json"}, s) == 0 && Has(s.out, "\"saved\":false") && Has(s.out, "\"state\":\"new\"") &&
+          Has(s.out, "\"group\":\"Scenes and prefabs\"") && Has(s.out, "\"clashes\":[]"));
     // Saving needs a name first; vc who stores it in this project's own git config (not for every project).
     CHECK(Cli({"--project", P, "vc", "who", "Test Person", "test@example.invalid"}, s) == 0 && Has(s.out, "in this project"));
     CHECK(Cli({"--project", P, "vc", "who"}, s) == 0 && Has(s.out, "Test Person"));
@@ -857,6 +861,216 @@ void TestEngineBuildRun(const fs::path& tmp) {
 }
 #endif
 
+// ---- okay project / scene / script / vs / asset, help, completion and --json -------------------------------------
+
+void TestHelpAndCompletion() {
+    RUN_SUITE("okay cli: grouped help, Tab completion, build --list-targets, export");
+    Said s;
+    CHECK(Cli({"help"}, s) == 0);
+    for (const char* line : {"Projects:", "Scenes, scripts and assets:", "Version control:", "The engine itself:", "This program:",
+                             "scene check", "script run", "asset import", "asset used-by", "project settings", "vs check", "vc save",
+                             "engine build", "completion bash", "export", "--json"})
+        CHECK(Has(s.out, line));
+    CHECK(Cli({"help", "scene", "check"}, s) == 0 && Has(s.out, "Usage: okay scene check"));
+    CHECK(Cli({"help", "project"}, s) == 0 && Has(s.out, "upgrade") && Has(s.out, "settings"));
+    CHECK(Cli({"help", "scene", "nosuch"}, s) == 2);
+    CHECK(Cli({"scene", "nosuch"}, s) == 2 || Has(s.err, "There is no OkaySpace project"));
+
+    CHECK(Cli({"completion", "bash"}, s) == 0 && Has(s.out, "complete -o default -F _okay_complete okay okay.exe") &&
+          Has(s.out, "scene) COMPREPLY=( $(compgen -W \"list new check diff info\"") && Has(s.out, "vc) COMPREPLY") &&
+          Has(s.out, "project"));
+    CHECK(Cli({"completion", "powershell"}, s) == 0 && Has(s.out, "Register-ArgumentCompleter -Native -CommandName okay, okay.exe") &&
+          Has(s.out, "'asset' = @('list', 'find', 'used-by', 'uses', 'import')"));
+    CHECK(Cli({"completion", "fish"}, s) == 2);
+    CHECK(Cli({"completion"}, s) == 2);
+    // Every command in the help completes, and every command that has sub-commands lists them.
+    const std::string bash = okaycli::CompletionScript("bash");
+    for (const std::string& c : okaycli::CommandNames()) CHECK(Has(bash, " " + c + " ") || Has(bash, "\"" + c + " "));
+    CHECK(okaycli::SubCommandNames("asset").size() == 5 && okaycli::SubCommandNames("build").empty());
+#if !defined(_WIN32)
+    // The bash script, in a real bash when there is one: Tab after "okay sc" and after "okay --project G asset u".
+    if (!okaycli::FindOnPath("bash").empty()) {
+        const okaycli::RunResult r = okaycli::Run({"bash", "-c", bash + "\nCOMP_WORDS=(okay sc); COMP_CWORD=1; _okay_complete; echo \"1:${COMPREPLY[*]}\"\n"
+                                                 "COMP_WORDS=(okay --project G asset u); COMP_CWORD=4; _okay_complete; echo \"2:${COMPREPLY[*]}\"\n"}, "", true);
+        CHECK(r.started && r.exitCode == 0 && Has(r.out, "1:scene script") && Has(r.out, "2:used-by uses"));
+    }
+#endif
+
+    CHECK(Cli({"build", "--list-targets"}, s) == 0 && Has(s.out, "Desktop") && Has(s.out, "Android") && Has(s.out, "Xbox") &&
+          Has(s.out, "okay build makes this one"));
+    CHECK(Cli({"build", "--list-targets", "--json"}, s) == 0 && Has(s.out, "{\"targets\":[{\"name\":\"Desktop\",\"okayBuild\":true}"));
+    CHECK(Cli({"export", "--help"}, s) == 0 && Has(s.out, "Usage: okay export"));
+    CHECK(Cli({"export", "--list-targets"}, s) == 0 && Has(s.out, "Desktop"));
+    CHECK(Cli({"info", "--json"}, s) == 0 && s.out.rfind("{\"engine\":", 0) == 0 && Has(s.out, "\"versionControl\":"));
+}
+
+void TestScriptCommands(const fs::path& tmp) {
+    RUN_SUITE("okay script: new, check, run");
+    const fs::path proj = tmp / "ScriptGame";
+    std::string err;
+    CHECK(okaycli::CreateEmptyProject(proj.string(), "ScriptGame", "", err));
+    const std::string P = proj.string();
+    Said s;
+    CHECK(Cli({"--project", P, "script", "new", "Player"}, s) == 0 && Has(s.out, "Assets/Scripts/Player.okay"));
+    CHECK(Has(Read(proj / "Assets" / "Scripts" / "Player.okay"), "void Start()"));
+    CHECK(Cli({"--project", P, "script", "new", "Player"}, s) == 1 && Has(s.err, "already exists"));
+    CHECK(Cli({"--project", P, "script", "new", "../evil"}, s) == 2);
+    CHECK(Cli({"--project", P, "script", "check", "Assets/Scripts/Player.okay"}, s) == 0 && Has(s.out, "fine"));
+    Write(proj / "Assets" / "Scripts" / "Bad.okay", "void Start()\n{\n    let x = ;\n}\n");
+    CHECK(Cli({"--project", P, "script", "check", "Assets/Scripts/Bad.okay"}, s) == 1 && Has(s.err, "Assets/Scripts/Bad.okay:") &&
+          Has(s.err, "error"));
+    CHECK(Cli({"--project", P, "script", "check", "--json"}, s) == 1 && Has(s.out, "\"file\":\"Assets/Scripts/Bad.okay\"") &&
+          Has(s.out, "\"severity\":\"error\"") && Has(s.out, "\"file\":\"Assets/Scripts/Player.okay\",\"problems\":[]"));
+    Write(proj / "Hello.okay", "void Start()\n{\n    print(\"hello from start\");\n}\nvoid Main()\n{\n    print(\"main ran\");\n}\n"
+                               "void Update()\n{\n    print(\"tick\");\n}\n");
+    CHECK(Cli({"--project", P, "script", "run", (proj / "Hello.okay").string(), "--frames", "2", "a", "b"}, s) == 0);
+    CHECK(Has(s.out, "hello from start") && Has(s.out, "main ran"));
+    const std::size_t first = s.out.find("tick");
+    CHECK(first != std::string::npos && s.out.find("tick", first + 1) != std::string::npos);
+    CHECK(Cli({"script", "run", (proj / "Assets" / "Scripts" / "Bad.okay").string()}, s) == 1 && Has(s.err, "does not compile"));
+    CHECK(Cli({"script", "run", (proj / "nosuch.okay").string()}, s) == 1);
+    CHECK(Cli({"script", "nosuch"}, s) == 2);
+}
+
+void TestSceneCommands(const fs::path& tmp) {
+    RUN_SUITE("okay scene: list, new, check, diff, info");
+    const fs::path proj = tmp / "SceneGame";
+    std::string err;
+    CHECK(okaycli::CreateEmptyProject(proj.string(), "SceneGame", "", err));
+    const std::string P = proj.string();
+    Said s;
+    CHECK(Cli({"--project", P, "scene", "new", "Level2"}, s) == 0 && fs::exists(proj / "Assets" / "Scenes" / "Level2.okayscene"));
+    CHECK(Cli({"--project", P, "scene", "new", "Level2"}, s) == 1);
+    CHECK(Cli({"--project", P, "scene", "new", "a/b"}, s) == 2);
+    CHECK(Cli({"--project", P, "scene", "list"}, s) == 0 && Has(s.out, "Assets/SceneGame.okayscene   (the start scene)") &&
+          Has(s.out, "Assets/Scenes/Level2.okayscene") && Has(s.out, "2 scenes"));
+    CHECK(Cli({"--project", P, "scene", "list", "--json"}, s) == 0 && Has(s.out, "{\"path\":\"Assets/SceneGame.okayscene\",\"start\":true}") &&
+          Has(s.out, "\"count\":2"));
+    // A scene with a script that points at a file that is not there, and one at a file that is.
+    {
+        okay::Scene sc("Broken");
+        okay::GameObject* hero = sc.CreateGameObject("Hero");
+        hero->AddComponent<okay::ScriptComponent>()->SetPath("Assets/Scripts/Missing.okay");
+        okay::GameObject* cam = sc.CreateGameObject("Cam");
+        cam->AddComponent<okay::ScriptComponent>()->SetPath("Assets/Scripts/Real.okay");
+        Write(proj / "Assets" / "Scripts" / "Real.okay", "void Start()\n{\n}\n");
+        Write(proj / "Assets" / "Scenes" / "Broken.okayscene", okay::SceneSerializer::Serialize(sc));
+    }
+    CHECK(Cli({"--project", P, "scene", "check", "Assets/Scenes/Broken.okayscene"}, s) == 1 && Has(s.err, "Missing.okay") && Has(s.err, "error"));
+    CHECK(Cli({"--project", P, "scene", "check", "Assets/Scenes/Broken.okayscene", "--json"}, s) == 1 && Has(s.out, "script.missing_file") &&
+          Has(s.out, "\"errors\":1"));
+    CHECK(Cli({"--project", P, "scene", "check", "Assets/Scenes/Level2.okayscene"}, s) == 0);
+    CHECK(Cli({"--project", P, "scene", "info", "Assets/Scenes/Broken.okayscene"}, s) == 0 && Has(s.out, "2 objects") &&
+          Has(s.out, "Components:") && Has(s.out, "Missing.okay") && Has(s.out, "MISSING"));
+    CHECK(Cli({"--project", P, "scene", "info", "Assets/Scenes/Broken.okayscene", "--json"}, s) == 0 && Has(s.out, "\"objects\":2") &&
+          Has(s.out, "\"exists\":false") && Has(s.out, "\"exists\":true"));
+    CHECK(Cli({"--project", P, "scene", "diff", "Assets/Scenes/Level2.okayscene", "Assets/Scenes/Broken.okayscene"}, s) == 0 && Has(s.out, "Hero"));
+    CHECK(Cli({"--project", P, "scene", "diff", "Assets/Scenes/Level2.okayscene", "Assets/Scenes/Level2.okayscene"}, s) == 0 && Has(s.out, "the same"));
+    CHECK(Cli({"--project", P, "scene", "diff", "Assets/Scenes/Level2.okayscene"}, s) == 2);
+    CHECK(Cli({"--project", (tmp / "nowhere").string(), "scene", "list"}, s) == 1 && Has(s.err, "no OkaySpace project"));
+}
+
+void TestAssetCommands(const fs::path& tmp) {
+    RUN_SUITE("okay asset: list, find, used-by, uses, import");
+    const fs::path proj = tmp / "AssetGame";
+    std::string err;
+    CHECK(okaycli::CreateEmptyProject(proj.string(), "AssetGame", "", err));
+    const std::string P = proj.string();
+    Write(proj / "Assets" / "Textures" / "grass.png", "not really a png");
+    Write(proj / "Assets" / "Scripts" / "Mover.okay", "void Start()\n{\n}\n");
+    {
+        okay::Scene sc("Field");
+        sc.CreateGameObject("Walker")->AddComponent<okay::ScriptComponent>()->SetPath("Scripts/Mover.okay");
+        Write(proj / "Assets" / "Field.okayscene", okay::SceneSerializer::Serialize(sc));
+    }
+    Said s;
+    CHECK(Cli({"--project", P, "asset", "list"}, s) == 0 && Has(s.out, "Assets/Textures/grass.png") && Has(s.out, "Assets/Field.okayscene"));
+    CHECK(Cli({"--project", P, "asset", "list", "--type", "texture"}, s) == 0 && Has(s.out, "grass.png") && !Has(s.out, "Field.okayscene"));
+    CHECK(Cli({"--project", P, "asset", "list", "--type", "bogus"}, s) == 2);
+    CHECK(Cli({"--project", P, "asset", "list", "--type", "texture", "--json"}, s) == 0 && Has(s.out, "\"path\":\"Assets/Textures/grass.png\"") &&
+          Has(s.out, "\"count\":1"));
+    CHECK(Cli({"--project", P, "asset", "find", "gra"}, s) == 0 && Has(s.out, "grass.png"));
+    CHECK(Cli({"--project", P, "asset", "find", "zzz"}, s) == 0 && Has(s.out, "Nothing is called"));
+    // The dependency graph (a material names the texture; .okay scripts are not in the graph yet, so a scene's script
+    // line is not a dependency there).
+    Write(proj / "Assets" / "Grass.okaymat", "okaymat 1\ntexture Textures/grass.png\n");
+    CHECK(Cli({"--project", P, "asset", "used-by", "Assets/Textures/grass.png"}, s) == 0 && Has(s.out, "Assets/Grass.okaymat") && Has(s.out, "1 file."));
+    CHECK(Cli({"--project", P, "asset", "used-by", "Textures/grass.png", "--json"}, s) == 0 && Has(s.out, "\"path\":\"Assets/Grass.okaymat\",\"type\":\"material\""));
+    CHECK(Cli({"--project", P, "asset", "uses", "Assets/Grass.okaymat"}, s) == 0 && Has(s.out, "Assets/Textures/grass.png"));
+    CHECK(Cli({"--project", P, "asset", "uses", "Assets/Textures/grass.png"}, s) == 0 && Has(s.out, "uses no other asset"));
+    CHECK(Cli({"--project", P, "asset", "used-by", "Assets/none.png"}, s) == 1);
+    // Import: copied in under a free name, with its .okaymeta; the original is untouched.
+    Write(tmp / "outside" / "tree.png", "tree bytes");
+    CHECK(Cli({"--project", P, "asset", "import", (tmp / "outside" / "tree.png").string(), "--to", "Textures"}, s) == 0 &&
+          Has(s.out, "Assets/Textures/tree.png") && Has(s.out, ".okaymeta"));
+    CHECK(Read(proj / "Assets" / "Textures" / "tree.png") == "tree bytes");
+    CHECK(fs::exists(proj / "Assets" / "Textures" / "tree.png.okaymeta") && Has(Read(proj / "Assets" / "Textures" / "tree.png.okaymeta"), "okaymeta"));
+    CHECK(fs::exists(tmp / "outside" / "tree.png"));
+    CHECK(Cli({"--project", P, "asset", "import", (tmp / "outside" / "tree.png").string(), "--to", "Textures"}, s) == 0 &&
+          !Has(s.out, "Assets/Textures/tree.png as"));   // a second copy gets a free name, the first is kept
+    CHECK(Read(proj / "Assets" / "Textures" / "tree.png") == "tree bytes");
+    CHECK(Cli({"--project", P, "asset", "import", (tmp / "outside" / "nosuch.png").string()}, s) == 1);
+}
+
+void TestProjectAndVsCommands(const fs::path& tmp) {
+    RUN_SUITE("okay project: info, settings, upgrade; okay vs: list, check");
+    const fs::path proj = tmp / "ProjGame";
+    std::string err;
+    CHECK(okaycli::CreateEmptyProject(proj.string(), "ProjGame", "", err));
+    const std::string P = proj.string();
+    Said s;
+    CHECK(Cli({"--project", P, "project", "info"}, s) == 0 && Has(s.out, "Project ProjGame") && Has(s.out, "start scene: Assets/ProjGame.okayscene"));
+    CHECK(Cli({"--project", P, "project", "info", "--json"}, s) == 0 && Has(s.out, "\"name\":\"ProjGame\"") && Has(s.out, "\"scenes\":1"));
+    CHECK(Cli({"--project", P, "project", "settings", "get", "width"}, s) == 0 && Trim(s.out) == "1280");
+    const std::string fileBefore = Read(proj / "project.okayproj");
+    Write(proj / "project.okayproj", fileBefore + "some_future_key=keep me\n");
+    CHECK(Cli({"--project", P, "project", "settings", "set", "width", "1920"}, s) == 0 && Has(s.out, "width is 1920"));
+    CHECK(Cli({"--project", P, "project", "settings", "get", "width"}, s) == 0 && Trim(s.out) == "1920");
+    CHECK(Cli({"--project", P, "project", "settings", "set", "company", "Okay", "Games"}, s) == 0);
+    CHECK(Cli({"--project", P, "project", "settings", "get", "company"}, s) == 0 && Trim(s.out) == "Okay Games");
+    const std::string after = Read(proj / "project.okayproj");
+    CHECK(Has(after, "some_future_key=keep me"));   // a line okay does not own is kept
+    const okayver::Stamp stamp = okayver::ReadProjectStamp(P);
+    CHECK(Cli({"--project", P, "project", "settings", "set", "nosuch", "1"}, s) == 1 && Has(s.err, "no project setting"));
+    CHECK(Cli({"--project", P, "project", "settings", "get", "nosuch"}, s) == 1);
+    CHECK(Cli({"--project", P, "project", "settings"}, s) == 0 && Has(s.out, "width=1920"));
+    // Upgrade: nothing to do on this version; an older stamp is upgraded with a backup beside the project.
+    CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 0);
+    if (!stamp.version.empty()) {
+        CHECK(Has(s.out, "already on this engine"));
+        Write(proj / "project.okayproj", okayver::SetStampInText(Read(proj / "project.okayproj"), "2.0.0"));
+        CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 0 && Has(s.out, "Upgraded the project"));
+        CHECK(okayver::ReadProjectStamp(P).version == stamp.version);
+        bool backup = false;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(tmp, ec)) if (Has(e.path().filename().string(), "ProjGame (backup")) backup = true;
+        CHECK(backup);
+        Write(proj / "project.okayproj", okayver::SetStampInText(Read(proj / "project.okayproj"), "999.0.0"));
+        CHECK(Cli({"--project", P, "project", "upgrade"}, s) == 1 && Has(s.err, "newer engine"));
+    }
+
+    // Visual Script graphs: the repository's example graph is fine; a damaged one is an error.
+    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    fs::create_directories(proj / "Assets" / "Graphs");
+    std::error_code ec;
+    fs::copy_file(repo / "examples" / "visual_script" / "patrol.okayvs", proj / "Assets" / "Graphs" / "patrol.okayvs", ec);
+    CHECK(!ec);
+    CHECK(Cli({"--project", P, "vs", "list"}, s) == 0 && Has(s.out, "Assets/Graphs/patrol.okayvs"));
+    CHECK(Cli({"--project", P, "vs", "list", "--json"}, s) == 0 && Has(s.out, "{\"graphs\":[\"Assets/Graphs/patrol.okayvs\"],\"count\":1}"));
+    const int good = Cli({"--project", P, "vs", "check", "Assets/Graphs/patrol.okayvs"}, s);
+    CHECK(good == 0);
+    if (good != 0) std::cout << "    " << s.all() << "\n";
+    // A damaged graph: the checker skips lines it can't read and says so; okay reports that as a warning on the file.
+    Write(proj / "Assets" / "Graphs" / "broken.okayvs", "this is not a graph {{{\n");
+    CHECK(Cli({"--project", P, "vs", "check", "Assets/Graphs/broken.okayvs"}, s) == 0 && Has(s.out, "warning") && Has(s.out, "unknown line"));
+    CHECK(Cli({"--project", P, "vs", "check", "--json"}, s) == 0 && Has(s.out, "\"file\":\"Assets/Graphs/broken.okayvs\"") &&
+          Has(s.out, "\"severity\":\"warning\"") && Has(s.out, "\"file\":\"Assets/Graphs/patrol.okayvs\",\"problems\":[]"));
+    // A graph with a real error: a wire between pins that do not fit, or a variable read and never set, comes from the
+    // checker itself (the editor's Problems list); the example graphs have none, so this checks the error path through
+    // a missing file instead.
+    CHECK(Cli({"--project", P, "vs", "check", "Assets/Graphs/nosuch.okayvs"}, s) == 1 && Has(s.err, "can't be read"));
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -880,6 +1094,11 @@ int main(int argc, char** argv) {
     TestPathLookup(tmp);
 #endif
     TestMergeDriverDirect(tmp);
+    TestHelpAndCompletion();
+    TestScriptCommands(tmp);
+    TestSceneCommands(tmp);
+    TestAssetCommands(tmp);
+    TestProjectAndVsCommands(tmp);
     TestEngineArgs();
     TestEngineDetect(tmp);
     TestEnginePlan(tmp);

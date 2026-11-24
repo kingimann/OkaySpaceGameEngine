@@ -333,8 +333,7 @@ void SetBuildLog(const std::string& status, const std::vector<std::string>& warn
 void RecordBuildInHistory(const BuildWindowCtx& c, int buildNumber, std::uintmax_t bytes, bool ok) {
     HistoryEntry e;
     e.time = NowText(); e.version = c.settings->version; e.buildNumber = buildNumber;
-    static const char* plat[] = {"Desktop", "Web", "Android", "Server", "Xbox"};
-    e.platform = plat[std::max(0, std::min(4, c.platform))]; e.bytes = bytes; e.output = c.dir ? c.dir : ""; e.ok = ok;
+    e.platform = bsm::PlatformName(c.platform); e.bytes = bytes; e.output = c.dir ? c.dir : ""; e.ok = ok;
     std::string err;
     if (!RecordBuild(c.projectDir, e, &err) && !c.projectDir.empty()) ConsoleLog("Could not save the build history: " + err, 1);
     s_histLoaded = false;

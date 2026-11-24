@@ -52,6 +52,12 @@ inline const char* PageTip(int p) {
     return p >= 0 && p < kPageCount ? t[p] : "";
 }
 /// platform: 0 Desktop, 1 Web, 2 Android, 3 Server, 4 Xbox. The order is the order of the left list.
+constexpr int kPlatformCount = 5;
+/// The platform's name as Build Settings and the build history show it (an index out of range is clamped).
+inline const char* PlatformName(int platform) {
+    static const char* n[kPlatformCount] = {"Desktop", "Web", "Android", "Server", "Xbox"};
+    return n[platform < 0 ? 0 : platform >= kPlatformCount ? kPlatformCount - 1 : platform];
+}
 inline std::vector<int> PagesFor(int platform) {
     switch (platform) {
         case 3: return {kScenes, kServer, kOutput};

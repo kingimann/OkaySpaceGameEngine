@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <tuple>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -27,6 +28,8 @@
 #include <unistd.h>
 #endif
 
+#include "BuildSettingsModel.hpp"   // editor/: the platform names Build Settings shows
+#include "CrashUpload.hpp"         // shared/: JsonEscape
 #include "Engine.hpp"
 #include "Git.hpp"
 #include "Process.hpp"
@@ -103,6 +106,8 @@ bool HasClashMarks(const std::string& text) {
     return false;
 }
 
+std::string JsonText(const std::string& s) { return "\"" + okaycrash::upload::JsonEscape(s) + "\""; }
+
 std::string StableOkayPath() {
     // okay on PATH is where a person (and the installer) puts it; it does not move when a version is removed.
     const std::string onPath = FindOnPath("okay");
@@ -144,24 +149,98 @@ const std::vector<CommandHelp>& Commands() {
          "Play a scene with no window, with scripted input, and check what happened.",
          "The same as scripts/okay_run.py (docs/process/okay_run.md). It needs Python and the okay_run tool,\n"
          "which come with the engine's source folder. Exit code 0 means every check passed."},
-        {"build", "okay build [--target windows] [--scene S] [--out FOLDER] [--name GAME] [--zip] [--dry-run] [--dev]",
+        {"build", "okay build [--target windows] [--scene S] [--out FOLDER] [--name GAME] [--zip] [--dry-run] [--dev] [--list-targets]",
          "Build the game so others can play it.",
          "Uses the editor's Build (the project's Build Settings) without opening a window. The game goes to\n"
-         "<project>/build unless you say --out. Builds are for the computer you are on; Windows is the main target."},
+         "<project>/build unless you say --out. Builds are for the computer you are on; Windows is the main target.\n"
+         "--list-targets lists the platforms Build Settings knows and which ones okay build can make here."},
+        {"export", "okay export [the same options as okay build]", "Build the game and package it as a .zip to hand out.",
+         "The same as okay build --zip: the editor's build, then its zip step beside the game folder."},
         {"test", "okay test [--engine [BUILD_FOLDER]] [-R NAME]",
          "Check the project.",
          "Checks that every scene and prefab in the project loads and has no merge clash marks.\n"
          "--engine runs the engine's own tests (ctest) in a build folder instead; -R picks tests by name."},
-        {"info", "okay info", "Show the engine version, the project and its version control.", ""},
+        {"info", "okay info [--json]", "Show the engine version, the project and its version control.", ""},
         {"doctor", "okay doctor", "Check that everything a project needs is in place, and say how to fix what is not.", ""},
+        {"project", "okay project <info|upgrade|settings> ...", "The project's settings and engine version.", ""},
+        {"scene", "okay scene <list|new|check|diff|info> ...", "List, make, check and compare scenes.", ""},
+        {"script", "okay script <run|check|new> ...", "Run, check and make OkayScript scripts.", ""},
+        {"vs", "okay vs <list|check> ...", "List and check Visual Script graphs.", ""},
+        {"asset", "okay asset <list|find|used-by|uses|import> ...", "Find assets, see what uses what, and bring files in.", ""},
+        {"vc", "okay vc <init|clone|status|save|resolve|history|undo|branch|switch|sync|remote|who> ...",
+         "Version control (Git underneath).", ""},
         {"engine", "okay engine <build|doctor> ...", "Build the engine's own editor, launcher and player from an engine checkout.",
          "okay engine build [editor|launcher|player|all] [--debug] [--jobs N] [--clean] [--run] [--dir BUILD]\n"
          "  builds OkayEngine.exe, OkaySpace.exe and OkaySpacePlayer.exe with CMake (as scripts/build-local.ps1 does).\n"
-         "okay engine doctor  says what is missing (CMake, a compiler, Ninja, SDL2) and where to get it.\n"
-         "okay help engine build tells you more."},
-        {"vc", "okay vc <init|clone|status|save|resolve|history|undo|branch|switch|sync|remote|who> ...",
-         "Version control (Git underneath).", ""},
+         "okay engine doctor  says what is missing (CMake, a compiler, Ninja, SDL2) and where to get it."},
+        {"completion", "okay completion <bash|powershell>", "Print a script that completes okay's commands when you press Tab.",
+         "bash:        okay completion bash > ~/.okay-completion.sh, then add  source ~/.okay-completion.sh  to ~/.bashrc\n"
+         "PowerShell:  okay completion powershell | Out-String | Invoke-Expression  (add that line to your $PROFILE)"},
         {"help", "okay help [command]", "Show help for a command.", ""},
+    };
+    return c;
+}
+
+const std::vector<CommandHelp>& ProjectCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"info", "okay project info [--json]", "The project's name, folder, engine version, game version and scenes.", ""},
+        {"upgrade", "okay project upgrade", "Upgrade an older project to this engine version (a backup is made first).",
+         "The editor's own upgrade: the whole project is copied beside it first, every scene and prefab is checked,\n"
+         "then rewritten; if anything fails the files are put back."},
+        {"settings", "okay project settings [get <key> | set <key> <value>]", "Show, read or change a project setting.",
+         "Without get or set it lists every setting (project.okayproj). Lines okay does not know are kept."},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& SceneCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"list", "okay scene list [--json]", "The project's scenes (the start scene is marked).", ""},
+        {"new", "okay scene new <name>", "Make an empty scene in Assets/Scenes.", ""},
+        {"check", "okay scene check [scene ...] [--json]", "Check scenes for problems (missing files, no camera, broken scripts ...).",
+         "Without a scene every scene of the project is checked. Exit code 1 when a scene has an error."},
+        {"diff", "okay scene diff <a> <b>", "What changed between two scenes, object by object.", ""},
+        {"info", "okay scene info [scene] [--json]", "Objects, components and the files a scene uses.", ""},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& ScriptCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"run", "okay script run <file.okay> [--frames N] [args ...]", "Run a script: Start, then Main if it has one, then N updates.",
+         "The script runs on one object in an empty scene. What it prints is shown here; `args` holds the words after the file."},
+        {"check", "okay script check [file ...] [--json]", "Check scripts for errors, with line numbers (all the project's when none is named).", ""},
+        {"new", "okay script new <name>", "Make Assets/Scripts/<name>.okay from the starter script.", ""},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& VsGraphCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"list", "okay vs list [--json]", "The project's Visual Script graphs (.okayvs).", ""},
+        {"check", "okay vs check [graph ...] [--json]", "Check graphs as the editor's Problems button does.", ""},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& AssetCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"list", "okay asset list [--type T] [--json]", "Every asset, or only one type (texture, model, audio, scene, prefab ...).", ""},
+        {"find", "okay asset find <name> [--json]", "Assets whose file name has these words in it.", ""},
+        {"used-by", "okay asset used-by <file> [--json]", "Which assets use this file.", ""},
+        {"uses", "okay asset uses <file> [--json]", "Which files this asset uses.", ""},
+        {"import", "okay asset import <file> [--to FOLDER]", "Copy a file into Assets (under a free name) with its .okaymeta.",
+         "The same import as the editor's Project panel; --to is a folder inside Assets."},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& EngineCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"build", "okay engine build [editor|launcher|player|all] ...", "Build OkayEngine.exe, OkaySpace.exe and OkaySpacePlayer.exe with CMake.", ""},
+        {"doctor", "okay engine doctor", "What building the engine needs on this computer, and where to get what is missing.", ""},
+    };
+    return c;
+}
+const std::vector<CommandHelp>& CompletionCommands() {
+    static const std::vector<CommandHelp> c = {
+        {"bash", "okay completion bash", "The bash script.", ""},
+        {"powershell", "okay completion powershell", "The PowerShell script.", ""},
     };
     return c;
 }
@@ -174,7 +253,7 @@ const std::vector<CommandHelp>& VcCommands() {
          "tells Git to merge and compare .okayscene and .okayprefab files with the engine. Safe to run again.\n"
          "A project inside another Git folder needs --separate (its own) or --outer (set up the outer one)."},
         {"clone", "okay vc clone <url or folder> [folder]", "Get a copy of an existing project and set it up.", ""},
-        {"status", "okay vc status", "What changed since the last save, grouped into scenes, scripts and assets.", ""},
+        {"status", "okay vc status [--json]", "What changed since the last save, grouped into scenes, scripts and assets.", ""},
         {"save", "okay vc save \"message\"", "Save a version of every change, with a message saying what you did.",
          "It refuses while a clash from a merge or sync is not settled (see okay vc resolve)."},
         {"resolve", "okay vc resolve <file> --mine | --theirs | --as-is", "Settle a clash after a merge or sync.",
@@ -198,35 +277,149 @@ const std::vector<CommandHelp>& VcCommands() {
 }
 
 
+/// The sub-commands of a command ("" none).
+const std::vector<CommandHelp>* SubCommands(const std::string& cmd) {
+    if (cmd == "vc") return &VcCommands();
+    if (cmd == "project") return &ProjectCommands();
+    if (cmd == "scene") return &SceneCommands();
+    if (cmd == "script") return &ScriptCommands();
+    if (cmd == "vs") return &VsGraphCommands();
+    if (cmd == "asset") return &AssetCommands();
+    if (cmd == "engine") return &EngineCommands();
+    if (cmd == "completion") return &CompletionCommands();
+    return nullptr;
+}
+
+struct HelpGroup { const char* title; std::vector<const char*> commands; };
+const std::vector<HelpGroup>& Groups() {
+    static const std::vector<HelpGroup> g = {
+        {"Projects", {"new", "open", "play", "run", "build", "export", "test", "info", "doctor", "project"}},
+        {"Scenes, scripts and assets", {"scene", "script", "vs", "asset"}},
+        {"Version control", {"vc"}},
+        {"The engine itself", {"engine"}},
+        {"This program", {"completion", "help"}},
+    };
+    return g;
+}
+
+const CommandHelp* FindCommand(const std::string& name) {
+    for (const CommandHelp& c : Commands()) if (name == c.name) return &c;
+    return nullptr;
+}
+
+std::string Usage(const CommandHelp& c) {
+    return std::string("Usage: ") + c.usage + "\n\n" + c.summary + "\n" + (c.details[0] ? std::string(c.details) + "\n" : "");
+}
+
 } // namespace
 
 std::string HelpText(const std::string& command) {
     if (command.empty()) {
-        std::string t = std::string("okay ") + EngineVersion() + ": the OkaySpace engine from the command line.\n\nCommands:\n";
-        for (const CommandHelp& c : Commands()) t += "  " + Pad(c.name, 8) + c.summary + "\n";
-        t += "\nVersion control:\n";
-        for (const CommandHelp& c : VcCommands()) t += "  vc " + Pad(c.name, 9) + c.summary + "\n";
+        std::string t = std::string("okay ") + EngineVersion() + ": the OkaySpace engine from the command line.\n";
+        for (const HelpGroup& g : Groups()) {
+            t += std::string("\n") + g.title + ":\n";
+            for (const char* name : g.commands) {
+                const CommandHelp* c = FindCommand(name);
+                if (!c) continue;
+                const std::vector<CommandHelp>* subs = SubCommands(name);
+                if (!subs) { t += "  " + Pad(name, 20) + c->summary + "\n"; continue; }
+                for (const CommandHelp& s : *subs) t += "  " + Pad(std::string(name) + " " + s.name, 20) + s.summary + "\n";
+            }
+        }
         t += "\nPut --project FOLDER before the command to work on another project (default: the one this folder is in).\n"
+             "--json after info, list, check and status prints the result for other programs to read.\n"
              "okay help <command> tells you more.\n";
         return t;
     }
     if (command == "engine build") return engine::BuildUsage();
     if (command == "engine doctor") return engine::DoctorUsage();
-    std::string cmd = command, sub;
-    if (cmd.rfind("vc ", 0) == 0) { sub = cmd.substr(3); cmd = "vc"; }
-    if (cmd == "vc" && !sub.empty()) {
-        for (const CommandHelp& c : VcCommands())
-            if (sub == c.name) return std::string("Usage: ") + c.usage + "\n\n" + c.summary + "\n" + (c.details[0] ? std::string(c.details) + "\n" : "");
+    const std::size_t sp = command.find(' ');
+    const std::string cmd = command.substr(0, sp), sub = sp == std::string::npos ? std::string() : Trim(command.substr(sp + 1));
+    const CommandHelp* c = FindCommand(cmd);
+    if (!c) return "";
+    const std::vector<CommandHelp>* subs = SubCommands(cmd);
+    if (!sub.empty()) {
+        if (!subs) return "";
+        for (const CommandHelp& s : *subs) if (sub == s.name) return Usage(s);
         return "";
     }
-    for (const CommandHelp& c : Commands()) {
-        if (cmd != c.name) continue;
-        std::string t = std::string("Usage: ") + c.usage + "\n\n" + c.summary + "\n" + (c.details[0] ? std::string(c.details) + "\n" : "");
-        if (cmd == "vc") {
-            t += "\n";
-            for (const CommandHelp& v : VcCommands()) t += "  " + Pad(v.name, 9) + v.summary + "\n";
-            t += "\nokay help vc <command> tells you more.\n";
+    std::string t = Usage(*c);
+    if (subs) {
+        t += "\n";
+        for (const CommandHelp& s : *subs) t += "  " + Pad(s.name, 11) + s.summary + "\n";
+        t += "\nokay help " + cmd + " <command> tells you more.\n";
+    }
+    return t;
+}
+
+std::vector<std::string> CommandNames() {
+    std::vector<std::string> v;
+    for (const CommandHelp& c : Commands()) v.push_back(c.name);
+    return v;
+}
+std::vector<std::string> SubCommandNames(const std::string& command) {
+    std::vector<std::string> v;
+    if (const std::vector<CommandHelp>* subs = SubCommands(command))
+        for (const CommandHelp& s : *subs) v.push_back(s.name);
+    return v;
+}
+
+std::string CompletionScript(const std::string& shell) {
+    // Made from the same command tables as the help, so a new command completes as soon as it is listed.
+    auto joined = [](const std::vector<std::string>& v) {
+        std::string t;
+        for (const std::string& w : v) t += (t.empty() ? "" : " ") + w;
+        return t;
+    };
+    if (shell == "bash") {
+        std::string t = "# okay command completion for bash (made by okay completion bash)\n"
+                        "_okay_complete() {\n"
+                        "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" i=1\n"
+                        "    while [ $i -lt $COMP_CWORD ] && { [ \"${COMP_WORDS[$i]}\" = --project ] || [ \"${COMP_WORDS[$i]}\" = -C ]; }; do i=$((i+2)); done\n"
+                        "    if [ $COMP_CWORD -eq $i ]; then\n"
+                        "        COMPREPLY=( $(compgen -W \"" + joined(CommandNames()) + " --project --version\" -- \"$cur\") ); return\n"
+                        "    fi\n"
+                        "    if [ $COMP_CWORD -eq $((i+1)) ]; then\n"
+                        "        case \"${COMP_WORDS[$i]}\" in\n";
+        for (const std::string& c : CommandNames()) {
+            const std::vector<std::string> subs = c == "help" ? CommandNames() : SubCommandNames(c);
+            if (!subs.empty()) t += "            " + c + ") COMPREPLY=( $(compgen -W \"" + joined(subs) + "\" -- \"$cur\") ); return;;\n";
         }
+        t += "        esac\n"
+             "    fi\n"
+             "    COMPREPLY=( $(compgen -f -- \"$cur\") )\n"
+             "}\n"
+             "complete -o default -F _okay_complete okay okay.exe\n";
+        return t;
+    }
+    if (shell == "powershell" || shell == "pwsh") {
+        auto list = [](const std::vector<std::string>& v) {
+            std::string t;
+            for (const std::string& w : v) t += (t.empty() ? "" : ", ") + std::string("'") + w + "'";
+            return "@(" + t + ")";
+        };
+        std::string t = "# okay command completion for PowerShell (made by okay completion powershell)\n"
+                        "Register-ArgumentCompleter -Native -CommandName okay, okay.exe -ScriptBlock {\n"
+                        "    param($wordToComplete, $commandAst, $cursorPosition)\n"
+                        "    $commands = " + list(CommandNames()) + "\n"
+                        "    $subs = @{\n";
+        for (const std::string& c : CommandNames()) {
+            const std::vector<std::string> subs = c == "help" ? CommandNames() : SubCommandNames(c);
+            if (!subs.empty()) t += "        '" + c + "' = " + list(subs) + "\n";
+        }
+        t += "    }\n"
+             "    $words = @($commandAst.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.ToString() })\n"
+             "    $i = 0\n"
+             "    while ($i -lt $words.Count -and ($words[$i] -eq '--project' -or $words[$i] -eq '-C')) { $i += 2 }\n"
+             "    $done = $words.Count - $i\n"
+             "    if ($wordToComplete -ne '') { $done -= 1 }\n"
+             "    $choices = @()\n"
+             "    if ($done -le 0) { $choices = $commands }\n"
+             "    elseif ($done -eq 1 -and $subs.ContainsKey($words[$i])) { $choices = $subs[$words[$i]] }\n"
+             "    $choices | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object {\n"
+             "        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)\n"
+             "    }\n"
+             "}\n";
         return t;
     }
     return "";
@@ -502,7 +695,7 @@ int CmdRun(const std::vector<std::string>& args, const std::string&, const Io& i
 int CmdBuild(const std::vector<std::string>& args, const std::string& project, const Io& io) {
     okay::CommandLine cl;
     cl.Value("target", "PLATFORM").Value("scene", "S").Value("out", "FOLDER").Value("name", "GAME").Value("layout", "L")
-      .Value("version", "V").Value("report", "FILE").Flag("zip").Flag("dry-run").Flag("dev");
+      .Value("version", "V").Value("report", "FILE").Flag("zip").Flag("dry-run").Flag("dev").Flag("list-targets").Flag("json");
     if (!ParseArgs(cl, args, "build", io)) return 2;
     if (cl.Has("help")) { io.Say(HelpText("build")); return 0; }
 #if defined(_WIN32)
@@ -512,6 +705,20 @@ int CmdBuild(const std::vector<std::string>& args, const std::string& project, c
 #else
     const std::string here = "linux";
 #endif
+    if (cl.Has("list-targets")) {
+        // Build Settings' platforms (editor/BuildSettingsModel.hpp). okay build makes the Desktop game for this computer
+        // through the editor's --build-game; the others are made from Build Settings in the editor.
+        std::string t = "Build Settings can make:\n", j = "{\"targets\":[";
+        for (int p = 0; p < oked::bsm::kPlatformCount; ++p) {
+            const std::string name = oked::bsm::PlatformName(p);
+            const bool ours = p == 0;
+            t += "  " + Pad(name, 9) + (ours ? "okay build makes this one (a game for this computer)" : "made from Build Settings in the editor") + "\n";
+            j += std::string(p ? "," : "") + "{\"name\":" + JsonText(name) + ",\"okayBuild\":" + (ours ? "true" : "false") + "}";
+        }
+        if (cl.Has("json")) { io.Say(j + "],\"thisComputer\":" + JsonText(here) + "}"); return 0; }
+        io.Say(t + "This computer makes " + here + " games.");
+        return 0;
+    }
     const std::string target = okay::str::LowerAscii(cl.Get("target", here));
     if (target != here) {
         io.Warn("This computer builds " + here + " games. A " + target + " build has to be made on " + target +
@@ -619,36 +826,72 @@ std::string StampWords(const std::string& projectStamp) {
 
 int CmdInfo(const std::vector<std::string>& args, const std::string& project, const Io& io) {
     okay::CommandLine cl;
+    cl.Flag("json");
     if (!ParseArgs(cl, args, "info", io)) return 2;
     if (cl.Has("help")) { io.Say(HelpText("info")); return 0; }
-    std::string t = std::string("Engine: OkaySpace ") + EngineVersion() + "\n";
-    const std::string self = SelfPath();
-    t += "This program: " + (self.empty() ? std::string("(unknown)") : self) + "\n";
-    const std::string editor = EditorProgram(), player = PlayerProgram();
-    t += "Editor: " + (editor.empty() ? std::string("not found") : editor) + "\n";
-    t += "Player: " + (player.empty() ? std::string("not found") : player) + "\n";
+    // Each fact once, as (json key, words, value); the text and the --json output are made from the same list.
+    std::vector<std::tuple<std::string, std::string, std::string>> f;
+    auto add = [&](const std::string& key, const std::string& words, const std::string& value) { f.emplace_back(key, words, value); };
+    const std::string self = SelfPath(), editor = EditorProgram(), player = PlayerProgram();
+    add("engine", "Engine", EngineVersion());
+    add("program", "This program", self);
+    add("editor", "Editor", editor);
+    add("player", "Player", player);
     const std::string root = FindProjectRoot(project.empty() ? "." : project);
-    if (root.empty()) t += "Project: none here (go to a project folder, or add --project FOLDER)\n";
-    else {
+    std::string projectStamp;
+    if (!root.empty()) {
         const std::string settings = ReadFile(okayproj::SettingsPath(root));
-        const okayver::Stamp st = okayver::ReadProjectStamp(root);
-        t += "Project: " + fs::path(root).filename().string() + " at " + root + "\n";
-        const std::string gameVersion = ReadSetting(settings, "version");
-        t += "Game version: " + (gameVersion.empty() ? std::string("not set") : gameVersion) + "\n";
-        t += "Made with engine: " + (st.version.empty() ? std::string("not recorded") : st.version) + " (" + StampWords(st.version) + ")\n";
+        projectStamp = okayver::ReadProjectStamp(root).version;
         const std::string scene = MainScene(root);
-        t += "Start scene: " + (scene.empty() ? std::string("none yet") : RelTo(scene, root)) + "\n";
+        add("project", "Project", fs::path(root).filename().string());
+        add("projectFolder", "Project folder", root);
+        add("gameVersion", "Game version", ReadSetting(settings, "version"));
+        add("projectEngine", "Made with engine", projectStamp);
+        add("startScene", "Start scene", scene.empty() ? std::string() : RelTo(scene, root));
     }
     const std::string gv = vc::Git::Version();
-    t += "Git: " + (gv.empty() ? std::string("not installed") : gv) + "\n";
+    add("git", "Git", gv);
+    bool repo = false;
+    std::size_t changes = 0;
     if (!root.empty() && !gv.empty()) {
         vc::Git git(root);
-        if (!git.IsRepo()) t += "Version control: not started (okay vc init)\n";
+        repo = git.IsRepo();
+        if (repo) {
+            changes = git.Status().size();
+            add("branch", "Version line", git.Branch());
+            add("remote", "Online copy", git.Remote());
+        }
+    }
+    if (cl.Has("json")) {
+        std::string j = "{";
+        for (const auto& [key, words, value] : f) j += (j.size() > 1 ? "," : "") + JsonText(key) + ":" + JsonText(value);
+        j += std::string(",\"versionControl\":") + (repo ? "true" : "false");
+        if (repo) j += ",\"unsavedChanges\":" + std::to_string(changes);
+        io.Say(j + "}");
+        return 0;
+    }
+    auto get = [&](const std::string& key) {
+        for (const auto& [k, words, value] : f) if (k == key) return value;
+        return std::string();
+    };
+    auto orWords = [](const std::string& v, const char* none) { return v.empty() ? std::string(none) : v; };
+    std::string t = std::string("Engine: OkaySpace ") + EngineVersion() + "\n";
+    t += "This program: " + orWords(self, "(unknown)") + "\n";
+    t += "Editor: " + orWords(editor, "not found") + "\n";
+    t += "Player: " + orWords(player, "not found") + "\n";
+    if (root.empty()) t += "Project: none here (go to a project folder, or add --project FOLDER)\n";
+    else {
+        t += "Project: " + get("project") + " at " + root + "\n";
+        t += "Game version: " + orWords(get("gameVersion"), "not set") + "\n";
+        t += "Made with engine: " + orWords(projectStamp, "not recorded") + " (" + StampWords(projectStamp) + ")\n";
+        t += "Start scene: " + orWords(get("startScene"), "none yet") + "\n";
+    }
+    t += "Git: " + orWords(gv, "not installed") + "\n";
+    if (!root.empty() && !gv.empty()) {
+        if (!repo) t += "Version control: not started (okay vc init)\n";
         else {
-            const std::string branch = git.Branch(), remote = git.Remote();
-            const auto changes = git.Status();
-            t += "Version line: " + (branch.empty() ? std::string("(none)") : branch) + ", " + std::to_string(changes.size()) + " unsaved change(s)\n";
-            t += "Online copy: " + (remote.empty() ? std::string("none (okay vc remote <url>)") : remote) + "\n";
+            t += "Version line: " + orWords(get("branch"), "(none)") + ", " + std::to_string(changes) + " unsaved change(s)\n";
+            t += "Online copy: " + orWords(get("remote"), "none (okay vc remote <url>)") + "\n";
         }
     }
     io.Say(t);
@@ -746,6 +989,27 @@ int Main(const std::vector<std::string>& argsIn, const Io& io) {
     if (cmd == "doctor") return CmdDoctor(rest, project, io);
     if (cmd == "vc") return detail::VcMain(rest, project, io);
     if (cmd == "engine") return engine::EngineMain(rest, io);
+    if (cmd == "export") {   // okay build plus the build pipeline's zip step
+        std::vector<std::string> a = rest;
+        if (std::find(a.begin(), a.end(), "--zip") == a.end() && std::find(a.begin(), a.end(), "--list-targets") == a.end() &&
+            std::find(a.begin(), a.end(), "--help") == a.end() && std::find(a.begin(), a.end(), "-h") == a.end())
+            a.push_back("--zip");
+        for (const std::string& x : a) if (x == "--help" || x == "-h") { io.Say(HelpText("export")); return 0; }
+        return CmdBuild(a, project, io);
+    }
+    if (cmd == "project") return detail::ProjectMain(rest, project, io);
+    if (cmd == "scene") return detail::SceneMain(rest, project, io);
+    if (cmd == "script") return detail::ScriptMain(rest, project, io);
+    if (cmd == "vs") return detail::VsMain(rest, project, io);
+    if (cmd == "asset") return detail::AssetMain(rest, project, io);
+    if (cmd == "completion") {
+        const std::string shell = okay::str::LowerAscii(JoinWords(rest));
+        const std::string script = CompletionScript(shell);
+        if (shell.empty() || shell == "--help" || shell == "-h") { io.Say(HelpText("completion")); return shell.empty() ? 2 : 0; }
+        if (script.empty()) { io.Warn("okay can complete commands in bash and powershell. Use: okay completion bash"); return 2; }
+        io.Say(script);
+        return 0;
+    }
     io.Warn("There is no command called \"" + cmd + "\".\n" + HelpText(""));
     return 2;
 }

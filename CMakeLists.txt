@@ -338,13 +338,16 @@ if(OKAY_BUILD_CONTENT_TOOL AND NOT EMSCRIPTEN)
 endif()
 
 # ---- okay: the engine's command line (tools/okay-cli) -------------------------
-# new / open / play / run / build / test / info / doctor, okay engine build (the editor, launcher and player from an
+# new / open / play / run / build / export / test / info / doctor, project / scene / script / vs / asset (wrapping the
+# engine's and editor's own code: Content.cpp), completion, okay engine build (the editor, launcher and player from an
 # engine checkout), and version control with the person's own git underneath
 # (okay vc ...; scenes and prefabs merge and diff through SceneMerge / SceneDiff as git's drivers). Built by default.
 # okay_cli_lib holds everything but main() so tests/test_okay_cli.cpp checks the same code.
 option(OKAY_BUILD_CLI "Build the okay command-line program" ON)
 if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
-    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp)
+    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
+                tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp
+                editor/ProjectBrowser.cpp editor/ProjectUpgrade.cpp)   # the editor's own import and project upgrade, no copy
     target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli
                                PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
     target_link_libraries(okay_cli_lib PUBLIC okay::engine)

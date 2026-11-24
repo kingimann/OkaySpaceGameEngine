@@ -175,7 +175,8 @@ private:
     std::vector<std::string> m_exts;
     std::function<Image(const std::string&)> m_fn;
 };
-// A picture of a .okaydata file: one bar per field line, so two files do not share a tile.
+// A picture of a .okaydata file: one bar per field line, drawn to fill the preview size
+// the cache asked for, so a small tile and a large tile are the same layout at two scales.
 class DataThumbnailGenerator final : public ThumbnailGenerator {
 public:
     bool Handles(const std::string& e) const override { return e == "okaydata"; }
@@ -190,16 +191,31 @@ public:
             lens.push_back(static_cast<int>(line.size()));
         }
         if (lens.empty()) { if (error) *error = "the data file has no fields"; return Image(); }
-        Image img(128, 128);
+        const int side = PreviewSize();
+        Image img(side, side);
         img.Fill(Color(0.10f, 0.14f, 0.20f, 1.0f));
-        int row = 0;
-        for (int n : lens) {
-            const int w = std::min(112, 12 + n);
-            const int y = 8 + row * 10;
-            const Color bar(0.35f, 0.78f, 0.95f, 1.0f);
-            for (int x = 8; x < 8 + w; ++x)
-                for (int dy = 0; dy < 6; ++dy) img.SetPixel(x, y + dy, bar);
-            ++row;
+        const int count = static_cast<int>(lens.size());
+        int margin = side / 12;
+        if (margin < 1) margin = 1;
+        if (margin * 2 >= side) margin = 0;
+        const int inner = side - margin * 2;
+        int maxLen = 1;
+        for (int n : lens) if (n > maxLen) maxLen = n;
+        int gap = count > 1 ? std::max(1, side / 48) : 0;
+        int barH = (inner - gap * (count - 1)) / count;
+        if (barH < 1) { gap = 0; barH = std::max(1, inner / count); }
+        const Color bar(0.35f, 0.78f, 0.95f, 1.0f);
+        int y = margin;
+        for (int i = 0; i < count; ++i) {
+            int w = static_cast<int>(static_cast<long long>(inner) * lens[static_cast<std::size_t>(i)] / maxLen);
+            if (w < 1) w = 1;
+            int h = (i == count - 1) ? (side - margin - y) : barH;
+            if (h < 1) h = 1;
+            const int x1 = std::min(side, margin + w);
+            const int y1 = std::min(side, y + h);
+            for (int yy = y; yy < y1; ++yy)
+                for (int x = margin; x < x1; ++x) img.SetPixel(x, yy, bar);
+            y += h + gap;
         }
         return img;
     }
@@ -335,7 +351,10 @@ ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, 
         if (!(*it)->Handles(ext)) continue;
         Image img;
         std::string err;
-        try { img = (*it)->Render(path, &err); } catch (...) { img = Image(); }
+        try {
+            (*it)->SetPreviewSize(m_opt.size);
+            img = (*it)->Render(path, &err);
+        } catch (...) { img = Image(); }
         if (!img.Valid()) {
             ++m_stats.failures;
             return Insert(key, Placeholder(kind, ext, true), true, true, Source::Placeholder);

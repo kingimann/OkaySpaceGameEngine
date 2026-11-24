@@ -27,12 +27,22 @@ Image BoxDownscale(const Image& src, int maxSide);
 Image MakePlaceholderThumbnail(AssetType kind, const std::string& label, int size, bool error = false);
 
 /// Turns an asset file into a picture. `Render` returns an invalid (empty) Image when it
-/// can not; it may return any size, the cache scales it down.
+/// can not; it may return any size, the cache scales it down. `SetPreviewSize` is the
+/// tile the cache is about to store, so a generator can draw to that size.
 class ThumbnailGenerator {
 public:
     virtual ~ThumbnailGenerator() = default;
     virtual bool Handles(const std::string& extension) const = 0;   // lower case, no dot
     virtual Image Render(const std::string& absolutePath, std::string* error) = 0;
+    void SetPreviewSize(int size) {
+        if (size < 8) size = 8;
+        if (size > 1024) size = 1024;
+        m_preview = size;
+    }
+    int PreviewSize() const { return m_preview; }
+
+private:
+    int m_preview = 128;
 };
 
 /// png jpg jpeg bmp tga gif psd hdr, through okay::Image::Load.

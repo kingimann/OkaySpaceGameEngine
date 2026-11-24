@@ -1,0 +1,8 @@
+true true false
+[one, two, ] 8 true
+[a, x.txt] [b, c.json] [1, 2]
+true false false
+4 false
+file_read(): can't read '<base>/gone.txt'
+default true
+true int 0

@@ -18,6 +18,7 @@ namespace okayscript {
 enum class Op : unsigned char {
     Line,          ///< curLine = a (the start of a statement)
     PushNum,       ///< push the number f
+    PushInt,       ///< push the whole number *(const std::int64_t*)p (a 123L literal; a float where V has no Int)
     PushBool,      ///< push a != 0
     PushStr,       ///< push the text *(const std::string*)p
     PushNull,      ///< push 0 (an unset value)
@@ -63,6 +64,7 @@ enum class Op : unsigned char {
     Call,          ///< call (const CallExpr*)p with the top a values as its positional arguments (call cache b)
     CallNamed,     ///< call (const CallExpr*)p with the top a values, some of them named
     MakeList,      ///< pop a values into a new list
+    MakeMap,       ///< pop a values into a new map, under the keys *(const std::vector<std::string>*)p
     MakeLambda,    ///< push the lambda (const LambdaExpr*)p
     New,           ///< `new` (const NewExpr*)p with the top a values
     AppendLit,     ///< append the text *(const std::string*)p to the text on top
@@ -73,11 +75,17 @@ enum class Op : unsigned char {
     CompoundCur,   ///< push the current value of the name `name op= rhs` changes ((const EventOrCompoundExpr*)p)
     CompoundStore, ///< store the top value back into that name, keep it
     SwitchCase,    ///< pop a case value; when it matches the subject under it, pop the subject too and go to a
-    Throw,         ///< throw the top value's text as an error on line a (b == 0: "error", nothing on the stack)
-    TryBegin,      ///< an error until the matching TryEnd goes to a (b == 1: its message pushed first)
+    Throw,         ///< throw the top value as an error on line a (b == 0: "error", nothing on the stack)
+    TryBegin,      ///< an error until the matching TryEnd goes to a, first pushing (b) 0: nothing, 1: the thrown value
+                   ///< (its message for text and runtime errors), 2: an error object {message, line, value}, 3: nothing,
+                   ///< the error is kept for the Rethrow at the end of the finally code
+    Rethrow,       ///< throw the error the last b == 3 handler kept (the end of a finally run by an error)
     TryEnd,        ///< the try body ended normally: forget its handler
     TryPop,        ///< leave a try bodies (a break or continue out of them)
     Yield,         ///< pop the value and hand it to the host's coroutine (line a)
+    GenYield,      ///< a generator's `yield value`: pop the value, keep the frame and end with Flow::Yield (line a)
+    Unpack,        ///< push item a of the value on top (a list), or its key *(const std::string*)p when p is set
+    Import,        ///< push the module (const ImportStmt*)p, loading it the first time
     Return,        ///< pop into retVal and end the body with Flow::Return
     ReturnNone,    ///< retVal = 0 and end with Flow::Return
     EndFlow,       ///< end the body with Flow a (a stray break or continue: no loop around it here)
@@ -124,6 +132,10 @@ struct Chunk {
     std::vector<int> paramSlot;   ///< parameter i lives in slot paramSlot[i]
     int loops = 0;       ///< loop counters it needs
     int iterators = 0;   ///< foreach iterators it needs
+    /// Locals a lambda inside the body uses (CollectCapturedNames): they have no slot but live by name in the frame's
+    /// shared box (BasicEnvironment::env), so a lambda made here keeps them after the body returns.
+    std::vector<std::string> boxNames;
+    bool generator = false;   ///< a `yield value` in the body: calling it makes a generator
     mutable std::vector<NameCache> caches;
     mutable std::vector<CallCache> calls;
 };

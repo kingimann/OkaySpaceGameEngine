@@ -3,6 +3,7 @@
 // for any value type with the script-value interface. Moved from the engine's OkayScriptVM.cpp (ValueProperty /
 // CallValueMethod), written for this project; only Value became the template parameter V.
 #include "okayscript/detail/Support.hpp"
+#include "okayscript/detail/Text.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -48,7 +49,8 @@ bool ValueProperty(const V& v, const std::string& prop, V& out) {
     return false;
 }
 // s.ToUpper(), xs.Add(3), d.ContainsKey("a"), n.ToString("F2") ... Arrays and
-// maps are shared references, so Add/Remove/Clear change the variable's value.
+// maps are shared references, so Add/Remove/Clear change the variable's value. The lower-case ones (s.split(","),
+// xs.map(f), m.keys()) are the library's names for the same jobs (written for this project, docs/scripting/okayscript_vm.md).
 template <class V>
 bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out,
                      const LambdaInvoker<V>* invoke) {
@@ -116,6 +118,39 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
             out = V{r}; return true;
         }
         if (m == "Insert") { std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str; r.insert(std::min(p, r.size()), arg(1).AsString()); out = V{r}; return true; }
+        // ---- the library's lower-case names ----
+        if (m == "upper" || m == "lower") { out = V{up(str, m == "upper")}; return true; }
+        if (m == "trim" || m == "trim_start" || m == "trim_end") {
+            std::size_t b = 0, e = str.size();
+            if (m != "trim_end")   while (b < e && ws(str[b])) ++b;
+            if (m != "trim_start") while (e > b && ws(str[e - 1])) --e;
+            out = V{str.substr(b, e - b)}; return true;
+        }
+        if (m == "find")        { auto p = str.find(arg(0).AsString()); out = V{p == std::string::npos ? -1.0f : (float)p}; return true; }
+        if (m == "contains")    { out = V{str.find(arg(0).AsString()) != std::string::npos}; return true; }
+        if (m == "starts_with") { out = V{str.rfind(arg(0).AsString(), 0) == 0}; return true; }
+        if (m == "ends_with")   { std::string e = arg(0).AsString(); out = V{str.size() >= e.size() && str.compare(str.size() - e.size(), e.size(), e) == 0}; return true; }
+        if (m == "split" || m == "replace") return CallValueMethod<V>(v, m == "split" ? "Split" : "Replace", a, out, invoke);
+        if (m == "format") { out = V{FormatTemplate<V>(str, a.data(), a.size())}; return true; }
+        if (m == "join") {   // ", ".join(xs)
+            std::string r;
+            if (auto xs = arg(0).AsArray())
+                for (std::size_t i = 0; i < xs->size(); ++i) { if (i) r += str; r += (*xs)[i].AsString(); CheckTextLength(r.size()); }
+            out = V{r}; return true;
+        }
+        if (m == "repeat") {
+            const std::size_t n = SafeSize(arg(0).AsFloat());
+            if (!str.empty() && n > 0) CheckTextLength(str.size() * (n > kMaxTextLength ? kMaxTextLength : n));
+            std::string r;
+            for (std::size_t i = 0; i < n && !str.empty(); ++i) r += str;
+            out = V{r}; return true;
+        }
+        if (m == "chars") {
+            out = V::MakeArray();
+            for (std::uint32_t cp : Utf8Decode(str)) out.AsArray()->push_back(V{Utf8Encode(cp)});
+            return true;
+        }
+        if (m == "reverse") { std::string r = str; std::reverse(r.begin(), r.end()); out = V{r}; return true; }
         if (m == "Remove") {
             std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str;
             if (p < r.size()) r.erase(p, a.size() > 1 ? SafeSize(a[1].AsFloat()) : std::string::npos);
@@ -158,12 +193,30 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
                 out = V::MakeArray(); for (auto& kq : keyed) out.AsArray()->push_back(kq.second);
                 return true;
             }
-            if (m == "Sort") {   // xs.Sort((a, b) => a - b)
+            if (m == "Sort" || m == "sort") {   // xs.Sort((a, b) => a - b)
                 std::vector<V> sorted = items;
                 std::stable_sort(sorted.begin(), sorted.end(), [&](const V& x, const V& y) {
                     std::vector<V> xy{x, y}; return (*invoke)(a[0], xy).AsFloat() < 0.0f; });
-                *arr = sorted; return true;
+                *arr = sorted;
+                if (m == "sort") out = v;
+                return true;
             }
+            // ---- the library's lower-case names: xs.map(f), xs.filter(f), xs.reduce(f, start) ----
+            if (m == "map") { out = V::MakeArray(); for (auto& x : items) out.AsArray()->push_back(call1(x)); return true; }
+            if (m == "filter") { out = V::MakeArray(); for (auto& x : items) if (call1(x).AsBool()) out.AsArray()->push_back(x); return true; }
+            if (m == "reduce") {
+                std::size_t at = 0;
+                V acc;
+                if (a.size() > 1) acc = a[1];
+                else if (!items.empty()) acc = items[at++];
+                for (; at < items.size(); ++at) { std::vector<V> xy{acc, items[at]}; acc = (*invoke)(a[0], xy); }
+                out = acc; return true;
+            }
+            if (m == "find") { for (auto& x : items) if (call1(x).AsBool()) { out = x; return true; } return true; }
+            if (m == "find_index") { for (std::size_t i = 0; i < items.size(); ++i) if (call1(items[i]).AsBool()) { out = V{(float)i}; return true; } out = V{-1.0f}; return true; }
+            if (m == "any") { bool r = false; for (auto& x : items) if (call1(x).AsBool()) { r = true; break; } out = V{r}; return true; }
+            if (m == "all") { bool r = true; for (auto& x : items) if (!call1(x).AsBool()) { r = false; break; } out = V{r}; return true; }
+            if (m == "for_each") { for (auto& x : items) call1(x); return true; }
         }
         if (m == "Add" || m == "Push" || m == "Enqueue") { arr->push_back(arg(0)); return true; }
         if (m == "AddRange") { if (auto o = arg(0).AsArray()) { auto copy = *o; arr->insert(arr->end(), copy.begin(), copy.end()); } return true; }
@@ -185,7 +238,42 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
                 return nums ? x.AsFloat() < y.AsFloat() : x.AsString() < y.AsString(); });
             return true;
         }
-        if (m == "ToArray" || m == "ToList") { out = V::MakeArray(); *out.AsArray() = *arr; return true; }
+        if (m == "ToArray" || m == "ToList" || m == "copy") { out = V::MakeArray(); *out.AsArray() = *arr; return true; }
+        // ---- the library's lower-case names ----
+        if (m == "push")     { for (auto& x : a) arr->push_back(x); out = v; return true; }
+        if (m == "pop")      { if (!arr->empty()) { out = arr->back(); arr->pop_back(); } return true; }
+        if (m == "contains") { out = V{find(arg(0)) >= 0}; return true; }
+        if (m == "index_of") { out = V{(float)find(arg(0))}; return true; }
+        if (m == "reverse")  { std::reverse(arr->begin(), arr->end()); out = v; return true; }
+        if (m == "sort") {   // numbers by value, text as text; in place
+            std::stable_sort(arr->begin(), arr->end(), [](const V& x, const V& y) {
+                if (x.IsString() || y.IsString()) return x.AsString() < y.AsString();
+                return x.AsFloat() < y.AsFloat(); });
+            out = v; return true;
+        }
+        if (m == "join") {
+            const std::string sep = a.empty() ? std::string(", ") : arg(0).AsString();
+            std::string r;
+            for (std::size_t i = 0; i < arr->size(); ++i) { if (i) r += sep; r += (*arr)[i].AsString(); CheckTextLength(r.size()); }
+            out = V{r}; return true;
+        }
+        if (m == "slice") {   // xs.slice(start [, end]); negative counts from the end
+            const int n = (int)arr->size();
+            int st = a.size() > 0 ? SafeInt(a[0].AsFloat()) : 0, en = a.size() > 1 ? SafeInt(a[1].AsFloat()) : n;
+            if (st < 0) st += n;
+            if (en < 0) en += n;
+            st = std::max(0, std::min(st, n));
+            en = std::max(st, std::min(en, n));
+            out = V::MakeArray();
+            for (int i = st; i < en; ++i) out.AsArray()->push_back((*arr)[(std::size_t)i]);
+            return true;
+        }
+        if (m == "insert")    { int i = SafeInt(arg(0).AsFloat()); i = std::max(0, std::min(i, (int)arr->size())); arr->insert(arr->begin() + i, arg(1)); return true; }
+        if (m == "remove_at") { int i = SafeInt(arg(0).AsFloat()); if (i >= 0 && i < (int)arr->size()) { out = (*arr)[(std::size_t)i]; arr->erase(arr->begin() + i); } return true; }
+        if (m == "remove")    { int i = find(arg(0)); if (i >= 0) arr->erase(arr->begin() + i); out = V{i >= 0}; return true; }
+        if (m == "clear")     { arr->clear(); return true; }
+        if (m == "first")     { if (!arr->empty()) out = arr->front(); return true; }
+        if (m == "last")      { if (!arr->empty()) out = arr->back(); return true; }
         if (m == "Sum" || m == "Average" || m == "Max" || m == "Min") {
             if (arr->empty()) { out = V{0.0f}; return true; }
             float acc = m == "Max" ? -1e30f : (m == "Min" ? 1e30f : 0.0f);
@@ -202,6 +290,22 @@ bool CallValueMethod(const V& v, const std::string& m, std::vector<V>& a, V& out
         if (m == "Remove") { out = V{mp->erase(arg(0).AsString()) > 0}; return true; }
         if (m == "Clear")  { mp->clear(); return true; }
         if (m == "GetValueOrDefault") { auto it = mp->find(arg(0).AsString()); out = it != mp->end() ? it->second : arg(1); return true; }
+        // ---- the library's lower-case names ----
+        if (m == "keys" || m == "values" || m == "items") {   // items: [key, value] pairs
+            out = V::MakeArray();
+            for (auto& kv : *mp) {
+                if (m == "keys") out.AsArray()->push_back(V{kv.first});
+                else if (m == "values") out.AsArray()->push_back(kv.second);
+                else out.AsArray()->push_back(ListOf<V>({V{kv.first}, kv.second}));
+            }
+            return true;
+        }
+        if (m == "has")    { out = V{mp->count(arg(0).AsString()) > 0}; return true; }
+        if (m == "get")    { auto it = mp->find(arg(0).AsString()); out = it != mp->end() ? it->second : arg(1); return true; }
+        if (m == "set")    { (*mp)[arg(0).AsString()] = arg(1); out = v; return true; }
+        if (m == "remove") { out = V{mp->erase(arg(0).AsString()) > 0}; return true; }
+        if (m == "clear")  { mp->clear(); return true; }
+        if (m == "copy")   { out = V::MakeMap(); *out.AsMap() = *mp; return true; }
         return false;
     }
     return false;

@@ -27,6 +27,10 @@ private:
     Token String();
     Token CharLiteral();
     Token InterpString();
+    /// """text""" (and $"""..."""): many lines, no escapes; a line break right after the opening quotes is dropped.
+    Token TripleString(bool interp);
+    /// @"text": C#'s verbatim string, many lines, no escapes, "" is one quote.
+    Token VerbatimString();
     Token Ident();
     Token Operator();
 

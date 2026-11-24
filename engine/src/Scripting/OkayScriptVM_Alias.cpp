@@ -304,8 +304,7 @@ void OkayScriptVM::Impl::RegisterPlainAliasBuiltins(BuiltinCtx& c) {
         // Logging
         alias("log", "print");
         alias("log_message", "print");
-        alias("json_stringify", "to_json");
-        alias("json_parse", "from_json");
+        // json_stringify / json_parse come with to_json / from_json (CoreBuiltins.hpp InstallJsonBuiltins).
 
 }
 

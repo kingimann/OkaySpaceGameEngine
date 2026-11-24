@@ -188,6 +188,8 @@ add_library(okay_engine
     src/Scripting/ScriptVM.cpp
     src/Scripting/ScriptApiRegistry.cpp
     src/Scripting/ScriptApiCore.cpp
+    src/Scripting/ScriptBindings.cpp
+    src/Scripting/ScriptBindingsGenerated.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp

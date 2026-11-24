@@ -6,6 +6,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Scene/GameObject.hpp"
 
 #include <algorithm>
@@ -24,18 +25,8 @@ std::string Lower(std::string s) {
     return s;
 }
 
-VsValue PropertyToValue(const PropertyValue& v) {
-    switch (v.Type()) {
-        case PropertyType::Bool:   return VsValue(v.AsBool());
-        case PropertyType::Int:    return VsValue((float)v.AsInt());
-        case PropertyType::Float:  return VsValue(v.AsFloat());
-        case PropertyType::Enum:   return VsValue(v.EnumName().empty() ? std::to_string(v.AsEnum()) : v.EnumName());
-        case PropertyType::Vec2:   return VsValue(Vec3{v.AsVec2().x, v.AsVec2().y, 0});
-        case PropertyType::Vec3:   return VsValue(v.AsVec3());
-        case PropertyType::Color:  return VsValue(Vec3{v.AsColor().r, v.AsColor().g, v.AsColor().b});
-        default:                   return VsValue(v.ToString());
-    }
-}
+// One conversion for visual scripts and OkayScript: the script binding layer's (okay/Scripting/ScriptBindings.hpp).
+VsValue PropertyToValue(const PropertyValue& v) { return scriptbind::PropertyToScript(v); }
 
 bool SetFromWire(GameObject& go, const std::string& path, const VsValue& in, std::string& error) {
     if (in.IsBool()) return PropertyRegistry::SetProperty(go, path, PropertyValue::MakeBool(in.AsBool()), &error);

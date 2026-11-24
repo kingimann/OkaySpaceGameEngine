@@ -771,7 +771,7 @@ void OkayScriptVM::Impl::RegisterMovementHelperBuiltins(BuiltinCtx& c) {
             char c = KeyCharFromName(a[0].AsString());
             if (c != 0 && Input::GetKeyDown(c)) {
                 std::string fn = a[1].AsString();
-                if (rt.functions.count(fn) || rt.builtins.count(fn)) { std::vector<Value> none; rt.Call(fn, none); }
+                if (rt.functions.count(fn) || rt.builtins.count(fn)) { std::vector<Value> none; rt.CallFunction(fn, none); }
             }
             return Value{};
         };

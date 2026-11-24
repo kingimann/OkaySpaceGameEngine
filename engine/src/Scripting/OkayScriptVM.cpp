@@ -192,6 +192,18 @@ bool Runtime::EngineSetDotted(const std::string& name, const Value& v) {
         const std::string base = name.substr(0, dot), rest = name.substr(dot + 1);
         if (base.find('.') == std::string::npos && !(base == "this" && IsClassInstance(self)) && Has(base)) {
             Value bv = Get(base);
+            if (bv.IsComponentHandle() && rest.find('.') == std::string::npos) {   // light.intensity = 2
+                std::string err;
+                switch (scriptbind::SetMember(bv, rest, v, err)) {
+                    case scriptbind::Result::Ok: return true;
+                    case scriptbind::Result::Error: throw ScriptError(err);
+                    case scriptbind::Result::NotFound: break;
+                }
+                const scriptbind::ClassBinding* cls = nullptr;
+                scriptbind::Resolve(bv, &cls);
+                throw ScriptError("can't set '" + rest + "': " + (cls ? cls->name : std::string("this component")) +
+                                  " has no such property");
+            }
             if (bv.IsObject()) {
                 GameObject* o = ResolveObject(nullptr, bv);
                 if (!o) throw ScriptError("can't set '" + name + "': the object no longer exists");
@@ -267,6 +279,20 @@ struct EngineHooks final : okayscript::BasicHost<Value> {
     // other.tag, other.transform, GetComponent<T>().enabled ... on an object reference or a component reference.
     bool GetMember(okayscript::BasicRuntime<Value>& brt, const Value& v, const std::string& prop, Value& out) override {
         Runtime& r = R(brt);
+        if (v.IsComponentHandle()) {   // a component from the generic binding layer: registry properties
+            std::string err;
+            switch (scriptbind::GetMember(v, prop, out, err)) {
+                case scriptbind::Result::Ok: return true;
+                case scriptbind::Result::Error: throw ScriptError(err);
+                case scriptbind::Result::NotFound: break;
+            }
+            // The object's own members (transform, name, tag, activeSelf), as on an object reference.
+            const Value obj = Value::Object(v.AsObjectId());
+            if (ObjectMember(ResolveObject(nullptr, obj), obj, prop, out)) return true;
+            const scriptbind::ClassBinding* cls = nullptr;
+            scriptbind::Resolve(v, &cls);
+            throw ScriptError((cls ? cls->name : std::string("this component")) + " has no property '" + prop + "'");
+        }
         if (IsComponentRef(v)) {
             std::vector<Value> a{Value{v.AsString().substr(1)}, Value{prop}};
             out = r.Call("__get_component", a);
@@ -295,6 +321,18 @@ struct EngineHooks final : okayscript::BasicHost<Value> {
     // expr.member = value on an object reference or a component reference.
     bool SetMember(okayscript::BasicRuntime<Value>& brt, const Value& target, const std::string& name, const Value& v) override {
         Runtime& r = R(brt);
+        if (target.IsComponentHandle()) {
+            std::string err;
+            switch (scriptbind::SetMember(target, name, v, err)) {
+                case scriptbind::Result::Ok: return true;
+                case scriptbind::Result::Error: throw ScriptError(err);
+                case scriptbind::Result::NotFound: break;
+            }
+            const scriptbind::ClassBinding* cls = nullptr;
+            scriptbind::Resolve(target, &cls);
+            throw ScriptError("can't set '" + name + "': " + (cls ? cls->name : std::string("this component")) +
+                              " has no such property");
+        }
         if (target.IsObject()) {   // GameObject.Find("Door").transform.position = v
             GameObject* o = ResolveObject(nullptr, target);
             if (!o) throw ScriptError("can't set '" + name + "': the object no longer exists");
@@ -315,6 +353,24 @@ struct EngineHooks final : okayscript::BasicHost<Value> {
     bool CallMember(okayscript::BasicRuntime<Value>& brt, const Value& v, const std::string& method, std::vector<Value>& args,
                     Value& out) override {
         Runtime& r = R(brt);
+        if (v.IsComponentHandle()) {   // light.SetIntensity(2): a generated method of the component's class
+            std::string err;
+            switch (scriptbind::CallMethod(v, method, args, out, err)) {
+                case scriptbind::Result::Ok: return true;
+                case scriptbind::Result::Error: throw ScriptError(err);
+                case scriptbind::Result::NotFound: break;
+            }
+            // The object's own methods (CompareTag, GetComponent, SetActive) work on a component too.
+            if (method == "CompareTag" || method == "GetComponent" || method == "SetActive") {
+                Value obj = Value::Object(v.AsObjectId());
+                out = r.CallOnObject(obj, method, args);
+                return true;
+            }
+            (void)r;
+            const scriptbind::ClassBinding* cls = nullptr;
+            scriptbind::Resolve(v, &cls);
+            throw ScriptError((cls ? cls->name : std::string("this component")) + " has no method '" + method + "'");
+        }
         if (IsComponentRef(v)) {   // rb.AddForce(...), anim.SetTrigger("Jump")
             std::vector<Value> a{Value{v.AsString().substr(1)}, Value{method}};
             a.insert(a.end(), args.begin(), args.end());
@@ -373,7 +429,7 @@ EngineHooks g_engineHooks;   // stateless: one for every VM
 
 void InitEngineRuntime(Runtime& rt) {
     rt.hooks = &g_engineHooks;
-    rt.limits.runtimeErrorLines = false;          // engine messages stay as they were: no line on runtime errors
+    rt.limits.runtimeErrorLines = true;           // runtime errors carry their line ("line 12: ..."), see ErrorText
     rt.namedArgBuiltins.insert("StartCoroutine"); // StartCoroutine(Blink(delay: 0.2)) passes the names on
     rt.canonEvent = CanonEvent;
 }
@@ -463,6 +519,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->program = std::make_unique<okayscript::Program>();
         okayscript::ParseSource(source, *m_impl->program);   // as before, a syntax error leaves nothing loaded
         for (auto& kv : m_impl->program->functions) m_impl->rt.functions[kv.first] = &kv.second;
+        m_impl->rt.BumpCalls();   // cached call targets in bytecode are stale
         for (auto& kv : m_impl->program->classes) m_impl->rt.classes[kv.first] = &kv.second;
         m_impl->rt.localNames = m_impl->program->localNames;
         const okayscript::StmtList& topLevel = m_impl->program->top;
@@ -474,8 +531,8 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         // Load (the contract every caller relies on). In bare mode the top-level
         // is also the per-frame loop, so this first run is the first tick — the
         // first Update skips re-running it to keep the overall tick count intact.
-        for (auto& s : topLevel) {
-            const okayscript::Flow f = m_impl->rt.Run(*s);
+        {
+            const okayscript::Flow f = m_impl->rt.RunBody(topLevel, m_impl->program->topCode);
             if (f == okayscript::Flow::Return) return true;   // a bare top-level return is harmless (as before, the
                                                                 // script then counts as not loaded)
             if (f != okayscript::Flow::Normal) { m_impl->loaded = true; return true; }   // stray break/continue
@@ -567,6 +624,15 @@ std::vector<ScriptDiagnostic> OkayScriptVM::ValidateAll(const std::string& sourc
 void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
 namespace {
+// A runtime error as the player and the editor see it: "line 12: Light.intensity wants a number, got text" when the
+// error knows its line (ScriptError::line, filled by the core because Limits::runtimeErrorLines is on) or, raised
+// without one (a builtin's error), the line of the statement that was running when it was raised; else as it is.
+std::string ErrorText(const Runtime& rt, const std::exception& e) {
+    const auto* se = dynamic_cast<const ScriptError*>(&e);
+    const int line = !se ? 0 : se->line > 0 ? se->line : rt.Ln(rt.curLine);
+    if (line > 0) return "line " + std::to_string(line) + ": " + e.what();
+    return e.what();
+}
 // Call the first of `names` that the script defines (with the given args).
 // Lets a script use PascalCase (Start/Update) or the classic
 // lowercase (start/update) names interchangeably.
@@ -574,8 +640,8 @@ void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
                std::vector<Value>& args, const char* label) {
     for (const char* n : names) {
         if (rt.functions.count(n)) {
-            try { rt.Call(n, args); }
-            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", e.what()); }
+            try { rt.CallFunction(n, args); }   // the script's own, even when a builtin has its name
+            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", ErrorText(rt, e)); }
             return;
         }
     }
@@ -602,11 +668,9 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
         } else {
             // A stray top-level return/break/continue ends this frame's run, like it does in Load.
             try {
-                if (m_impl->program)
-                    for (auto& s : m_impl->program->top)
-                        if (m_impl->rt.Run(*s) != okayscript::Flow::Normal) break;
+                if (m_impl->program) m_impl->rt.RunBody(m_impl->program->top, m_impl->program->topCode);
             }
-            catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
+            catch (const std::exception& e) { Log::Error("OkayScript (bare): ", ErrorText(m_impl->rt, e)); }
         }
     }
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
@@ -614,7 +678,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     // Scheduled after()/every() callbacks tick even without an update().
     if (!m_impl->rt.timers.empty()) {
         try { m_impl->rt.TickTimers(deltaTime); }
-        catch (const std::exception& e) { Log::Error("OkayScript timer: ", e.what()); }
+        catch (const std::exception& e) { Log::Error("OkayScript timer: ", ErrorText(m_impl->rt, e)); }
     }
     Runtime& rt = m_impl->rt;
     if (!rt.coroutines.empty()) {
@@ -757,17 +821,17 @@ vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::
         // declares beyond those its usual default for the parameter's type.
         const std::size_t want = std::min(m_impl->rt.functions[fn]->params.size(), all.size());
         std::vector<Value> args(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(want));
-        try { ret = m_impl->rt.Call(fn, args); }
+        try { ret = m_impl->rt.CallFunction(fn, args); }   // the script's own, even when a builtin has its name (shake)
         catch (const std::exception& e) {
-            if (error) *error = e.what();
-            else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
+            if (error) *error = ErrorText(m_impl->rt, e);
+            else Log::Error("OkayScript ", fn.c_str(), "(): ", ErrorText(m_impl->rt, e));
         }
     }
     // Listeners added with += run as well, including when no function is defined.
     try { m_impl->rt.FireSubs(function, all); }
     catch (const std::exception& e) {
-        if (error && error->empty()) *error = e.what();
-        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", e.what());
+        if (error && error->empty()) *error = ErrorText(m_impl->rt, e);
+        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", ErrorText(m_impl->rt, e));
     }
     return ret;
 }

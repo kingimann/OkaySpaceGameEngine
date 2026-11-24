@@ -108,8 +108,12 @@ std::string MultiStmt::Dump() const {
 namespace {
 struct LocalNameWalker {
     std::unordered_set<std::string>& out;
+    std::vector<std::string>* order = nullptr;            ///< CollectBodyLocals: first-seen order
+    std::unordered_set<std::string>* statics = nullptr;   ///< CollectBodyLocals: names declared `static`
+    bool lambdas = true;                                   ///< look into expressions for lambdas
+    void Add(const std::string& n) { if (out.insert(n).second && order) order->push_back(n); }
     void Fn(const FunctionDecl& f) {
-        for (auto& p : f.params) out.insert(p);
+        for (auto& p : f.params) Add(p);
         for (auto& d : f.defaults) if (d) E(*d);
         List(f.body, true);
     }
@@ -119,7 +123,10 @@ struct LocalNameWalker {
             case StmtKind::Expr: E(*static_cast<const ExprStmt&>(st).e); break;
             case StmtKind::VarDecl: {
                 auto& s = static_cast<const VarDeclStmt&>(st);
-                if (local) out.insert(s.n);
+                if (local) {
+                    if ((s.kind & KStatic) && statics) statics->insert(s.n);
+                    else Add(s.n);
+                }
                 if (s.init) E(*s.init);
                 break;
             }
@@ -128,7 +135,7 @@ struct LocalNameWalker {
             case StmtKind::Yield: { auto& s = static_cast<const YieldStmt&>(st); if (s.e) E(*s.e); break; }
             case StmtKind::Try: {
                 auto& s = static_cast<const TryStmt&>(st);
-                if (local && !s.catchVar.empty()) out.insert(s.catchVar);
+                if (local && !s.catchVar.empty()) Add(s.catchVar);
                 List(s.body, local); List(s.catchB, local);
                 break;
             }
@@ -152,7 +159,7 @@ struct LocalNameWalker {
             }
             case StmtKind::ForEach: {
                 auto& s = static_cast<const ForEachStmt&>(st);
-                if (local) out.insert(s.var);
+                if (local) Add(s.var);
                 E(*s.iterable); List(s.body, local);
                 break;
             }
@@ -162,6 +169,7 @@ struct LocalNameWalker {
     }
     void Args(const std::vector<ExprPtr>& a) { for (auto& e : a) E(*e); }
     void E(const Expr& ex) {
+        if (!lambdas) return;
         switch (ex.kind) {
             case ExprKind::Number: case ExprKind::String: case ExprKind::Bool: case ExprKind::Var: break;
             case ExprKind::InterpString:
@@ -189,7 +197,7 @@ struct LocalNameWalker {
             }
             case ExprKind::Lambda: {   // a lambda's parameters and declarations are locals of the lambda's own scope
                 auto& e = static_cast<const LambdaExpr&>(ex);
-                for (auto& p : e.params) out.insert(p);
+                for (auto& p : e.params) Add(p);
                 for (auto& d : e.defaults) if (d) E(*d);
                 List(e.body, true);
                 break;
@@ -200,6 +208,15 @@ struct LocalNameWalker {
     }
 };
 } // namespace
+
+void CollectBodyLocals(const StmtList& body, std::vector<std::string>& names, std::unordered_set<std::string>& statics) {
+    std::unordered_set<std::string> seen(names.begin(), names.end());
+    LocalNameWalker w{seen};
+    w.order = &names;
+    w.statics = &statics;
+    w.lambdas = false;
+    w.List(body, true);
+}
 
 void CollectLocalNames(Program& prog) {
     LocalNameWalker w{prog.localNames};

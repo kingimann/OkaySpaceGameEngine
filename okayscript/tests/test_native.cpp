@@ -124,6 +124,23 @@ int main() {
         in.Define("v", [](Args&) { return Value{2.0}; });
         CHECK_EQ(Run("print(v())", &in), std::string("2\n"));
     }
+    TEST("a host calling an event by name gets the script's own function, not a native of the same name");
+    {
+        Interpreter in;
+        InstallStandardLibrary(in);
+        in.Define("shake", [](Args&) { return Value{-1.0}; });
+        CHECK_EQ(Run("var hits = 0\nfunction shake(n) { hits = hits + n; return hits; }\nPulse += shake\nprint(shake(1))", &in),
+                 std::string("-1\n"));   // inside the script a call by name still finds the native first
+        std::vector<Value> args{Value{2.0}};
+        CHECK_EQ(in.Rt().CallFunction("shake", args).AsString(), std::string("2"));
+        std::vector<Value> three{Value{3.0}};
+        in.Rt().FireSubs("Pulse", three);   // `Pulse += shake` named the script's function
+        CHECK_EQ(in.GetGlobal("hits").AsString(), std::string("5"));
+        std::vector<Value> none;
+        bool threw = false;   // no script function: as any call by name
+        try { in.Rt().CallFunction("nothing_here", none); } catch (const RuntimeError&) { threw = true; }
+        CHECK(threw);
+    }
     TEST("the Host seam answers dotted names and unknown calls");
     {
         Interpreter in;

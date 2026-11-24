@@ -436,6 +436,9 @@ add_test(NAME script_bindings COMMAND test_script_bindings)
 if(OKAY_PYTHON)
     # The generated script bindings (engine/src/Scripting/ScriptBindingsGenerated.cpp) match the headers.
     add_test(NAME script_bindings_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_script_bindings.py --check)
+    # No bound method reaches files, sockets, platform services or the clipboard; enum and count arguments are
+    # range-checked (docs/scripting/script_bindings.md "Side effects scripts cannot reach").
+    add_test(NAME script_bindings_rules COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_script_bindings.py)
 endif()
 
 add_executable(test_scene_load test_scene_load.cpp)

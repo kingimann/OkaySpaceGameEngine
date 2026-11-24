@@ -5,6 +5,7 @@
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
+#include <fstream>
 #include <map>
 
 namespace okay {
@@ -12,7 +13,25 @@ namespace okay {
 namespace {
 thread_local int g_imageDirect = 0;
 debugutil::SpinLock g_imageHoldLock;
-std::map<std::string, AssetHandle<Image>> g_imageHeld;
+struct HeldImage {
+    AssetHandle<Image> handle;
+    Image copy;
+    std::uint64_t hash = 0;
+    bool has = false;
+};
+
+std::uint64_t FileHash(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::uint64_t h = 14695981039346656037ull;
+    char buf[4096];
+    while (f) {
+        f.read(buf, sizeof(buf));
+        const auto n = f.gcount();
+        for (std::streamsize i = 0; i < n; ++i) { h ^= (unsigned char)buf[i]; h *= 1099511628211ull; }
+    }
+    return h;
+}
+std::map<std::string, HeldImage> g_imageHeld;
 
 bool LoadImageFile(Image& img, const std::string& path, std::string* error) {
     DecodedImage dec;
@@ -30,19 +49,41 @@ bool LoadImageFile(Image& img, const std::string& path, std::string* error) {
 }
 
 bool Image::Load(const std::string& path, std::string* error) {
+    const std::uint64_t hash = FileHash(path);
+    if (g_imageDirect == 0 && hash != 0) {
+        debugutil::SpinGuard hold(g_imageHoldLock);
+        auto it = g_imageHeld.find(path);
+        if (it != g_imageHeld.end() && it->second.has && it->second.hash == hash) {
+            *this = it->second.copy;
+            return true;
+        }
+    }
     if (g_imageDirect == 0) {
-        ++g_imageDirect;
-        auto handle = AssetManager::Instance().Get<Image>(path, error);
-        --g_imageDirect;
-        if (!handle) { *this = Image(); return false; }
+        bool fresh = false;
         {
             debugutil::SpinGuard hold(g_imageHoldLock);
-            g_imageHeld[handle.Path()] = handle;
+            fresh = g_imageHeld.find(path) == g_imageHeld.end();
         }
-        *this = *handle.Get();
-        return true;
+        if (fresh) {
+            ++g_imageDirect;
+            auto handle = AssetManager::Instance().Get<Image>(path, error);
+            --g_imageDirect;
+            if (!handle) { *this = Image(); return false; }
+            *this = *handle.Get();
+            debugutil::SpinGuard hold(g_imageHoldLock);
+            g_imageHeld[path] = HeldImage{handle, *this, hash, true};
+            return true;
+        }
     }
-    return LoadImageFile(*this, path, error);
+    if (!LoadImageFile(*this, path, error)) return false;
+    if (g_imageDirect == 0) {
+        debugutil::SpinGuard hold(g_imageHoldLock);
+        HeldImage& slot = g_imageHeld[path];
+        slot.copy = *this;
+        slot.hash = hash;
+        slot.has = true;
+    }
+    return true;
 }
 
 bool Image::SavePNG(const std::string& path) const {

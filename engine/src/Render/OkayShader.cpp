@@ -1748,33 +1748,6 @@ bool Stat(const std::string& path, std::filesystem::file_time_type& t, std::uint
 } // namespace
 
 ShaderFile LoadShaderFile(const std::string& path, int recheckMs) {
-    struct ShaderAsset { std::shared_ptr<const Compiled> compiled; std::uint64_t generation = 0; };
-    static thread_local int direct = 0;
-    if (direct == 0) {
-        static bool ready = false;
-        if (!ready) {
-            ready = true;
-            AssetManager::Instance().RegisterLoader<ShaderAsset>("Shader",
-                [](const std::string& p, std::string&) -> std::shared_ptr<ShaderAsset> {
-                    const ShaderFile sf = LoadShaderFile(p, 0);
-                    if (!sf.compiled) return nullptr;
-                    auto a = std::make_shared<ShaderAsset>();
-                    a->compiled = sf.compiled;
-                    a->generation = sf.generation;
-                    return a;
-                });
-        }
-        ++direct;
-        auto handle = AssetManager::Instance().Get<ShaderAsset>(path);
-        --direct;
-        if (handle && handle->compiled) {
-            static debugutil::SpinLock holdLock;
-            static std::map<std::string, AssetHandle<ShaderAsset>> held;
-            debugutil::SpinGuard g(holdLock);
-            held[handle.Path()] = handle;
-            return ShaderFile{handle->compiled, handle->generation, path};
-        }
-    }
     const auto now = std::chrono::steady_clock::now();
     {
         debugutil::SpinGuard g(g_fileLock);

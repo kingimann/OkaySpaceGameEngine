@@ -110,26 +110,11 @@ bool AudioClip::LoadFLAC(const std::string& path, std::string* error, bool downm
 }
 
 namespace {
-thread_local int g_audioDirect = 0;
 debugutil::SpinLock g_audioHoldLock;
 std::map<std::string, AssetHandle<AudioClip>> g_audioHeld;
 }
 
-// Whole-file loads go through AssetManager (cache, ref count, hot reload). Streaming
-// playback stays in AudioStream and is not changed here.
 bool AudioClip::Load(const std::string& path, std::string* error, bool downmix) {
-    if (g_audioDirect == 0 && !downmix) {
-        ++g_audioDirect;
-        auto handle = AssetManager::Instance().Get<AudioClip>(path, error);
-        --g_audioDirect;
-        if (!handle) return false;
-        {
-            debugutil::SpinGuard hold(g_audioHoldLock);
-            g_audioHeld[handle.Path()] = handle;
-        }
-        *this = *handle.Get();
-        return true;
-    }
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
     const std::string ext = LowerExt(path);
     if (ext == "ogg") return LoadOGG(path, error, mono);
@@ -172,6 +157,14 @@ std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.si
 
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
+    // The plain clip (no resample, no forced mono) is the asset manager's copy. Streaming reads the file itself.
+    if (!mono && rate == 0) {
+        auto handle = AssetManager::Instance().Get<AudioClip>(path, error);
+        if (!handle) return nullptr;
+        debugutil::SpinGuard hold(g_audioHoldLock);
+        g_audioHeld[path] = handle;
+        return std::shared_ptr<const AudioClip>(handle.Shared());
+    }
     const auto key = std::make_pair(CacheName(path) + (mono ? "\n:mono" : ""), rate);
     std::uintmax_t size = 0; std::int64_t time = 0;
     FileStamp(path, size, time);

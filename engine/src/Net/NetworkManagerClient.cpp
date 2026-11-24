@@ -123,6 +123,7 @@ void NetworkManager::ClientTick(float dt) {
             m_pingTimer = 1.0f;
         }
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
+        if (m_joined) VarResendTick(dt);             // and shared variable writes the host has not acked
         {
             std::vector<std::vector<std::uint8_t>> due;
             m_toServer.ordered.CollectResend(dt, due);
@@ -139,12 +140,16 @@ void NetworkManager::ClientTick(float dt) {
         if (!(from == m_serverEp)) {   // only our server talks to us
             // ...but a player on the host's migration list knocking (a join) means the host is
             // gone and we are the one it chose as the next host: move now (host migration).
+            // The knock is plaintext and unauthenticated (every player holds the list), so it only counts
+            // once our own link says the same: the host has gone quiet (KnockHeeded). A player still
+            // hearing a live host ignores it, so one forged datagram cannot pull it off the host.
             if (n >= 1 && (buf[0] == Join || buf[0] == JoinHello)) {
-                if (m_joined && !m_migPeers.empty())
+                if (m_joined && !m_migPeers.empty() && KnockHeeded())
                     for (const MigPeer& mp : m_migPeers) if (mp.ep == from && mp.id != m_localId) { m_migrateNow = true; break; }
                 // Still looking for the new host, and someone on the list is joining US: it gave up on
                 // everyone before us, so we host now (MigrationTick) instead of waiting out our own try.
-                if (m_migrating && !m_joined)
+                // Only once we have waited a while on our own try too: it gave up after a whole one.
+                if (m_migrating && !m_joined && m_migWait >= 0.5f * migrationJoinTimeoutSeconds)
                     for (const MigPeer& mp : m_mig.candidates) if (mp.ep == from && mp.id > m_mig.myOldId) { m_migrateNow = true; break; }
             }
             continue;
@@ -262,6 +267,7 @@ void NetworkManager::ClientTick(float dt) {
             m_resumed = p.Ok() && (welcomeFlags & 64) != 0;
             if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
             m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
+            if (!m_joined) m_varSeen.clear();   // a new session: the host numbers its changes afresh
             m_joined = true;
             m_joinRejected = false;
             m_joinRejectReason.clear();
@@ -343,8 +349,27 @@ void NetworkManager::ClientTick(float dt) {
         } else if (type == SyncVar) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            if (!p.Ok()) continue;
+            const std::uint32_t ver = p.ReadU32();   // a host of this version or newer: acknowledge it
+            if (p.Ok()) {
+                if (m_varAcks.size() < 1024) m_varAcks.emplace_back(key, ver);   // sent together after this frame's reads
+                auto seen = m_varSeen.find(key);
+                if (seen != m_varSeen.end() && ver <= seen->second) continue;   // a repeat, or older than one applied
+                if (m_varSeen.size() >= kMaxVarPending && seen == m_varSeen.end()) m_varSeen.clear();
+                m_varSeen[key] = ver;
+            }
             net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
+        } else if (type == VarAck) {
+            // The host has some of our writes: stop sending them.
+            const std::uint8_t count = p.ReadU8();
+            for (std::uint8_t i = 0; i < count && p.Ok(); ++i) {
+                const std::string key = p.ReadString();
+                const std::uint32_t ver = p.ReadU32();
+                if (!p.Ok()) break;
+                auto v = m_varOut.find(key);
+                if (v != m_varOut.end() && ver >= v->second.ver) m_varOut.erase(v);
+            }
         } else if (type == Correct) {
             // The server rejected a move (or teleported us): go where it says.
             const float x = p.ReadF32(), y = p.ReadF32(), z = p.ReadF32();
@@ -403,6 +428,7 @@ void NetworkManager::ClientTick(float dt) {
             if (m_rtt < 0.0f) m_rtt = 0.0f;
         }
     }
+    if (!m_varAcks.empty()) FlushVarAcks();   // receipts for the shared variables read above
     if (m_migrateNow && m_joined) {   // the host said goodbye, or the next host is being looked for
         m_migrateNow = false;
         if (BeginMigration("the host left the game")) return;

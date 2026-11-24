@@ -29,7 +29,8 @@ namespace {
         InputCmd = 28,               // client -> server: [string pawn][u8 n] n x [u32 tick][u32 seq][f32 mx my yaw pitch][u32 held][u32 pressed]
         PawnAck = 29,                // server -> a client: [string pawn][u32 seq][f32 x y z] where its input seq left the pawn
         // 30-32 NetChannels, 33-34 NetDelta.
-        FragAck = 35                 // either way, plaintext: [u32 msgId][u32 count][bitmask] the pieces of a message that arrived
+        FragAck = 35,                // either way, plaintext: [u32 msgId][u32 count][bitmask] the pieces of a message that arrived
+        VarAck = 36                  // either way: [u8 n] n x [string key][u32 version]: SyncVar changes that arrived (not sent again)
     };
     constexpr float kClockQuietLimit = 10.0f;   // no good clock answer for this long: reported
     constexpr float kClockReportEvery = 2.0f;   // one drift report per heartbeat window

@@ -723,12 +723,93 @@ void NetworkManager::SetVar(const std::string& key, const std::string& value) {
     net::NoteObject(key, key.size() + value.size(), false);
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
-        net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, p.Data(), p.Size());
+        BumpVar(key);
+        for (auto& [ep, c] : m_clients) SendVarTo(c, key);
     } else if (m_mode == Mode::Client && m_joined) {
-        net::Packet p(SyncVar); p.Write(key); p.Write(value);
-        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
-        SendDatagram(m_serverEp, p.Data(), p.Size());
+        VarPending v; v.ver = ++m_varCounter; v.value = value;
+        SendOwnVar(key, v);
+        if (m_varOut.size() < kMaxVarPending || m_varOut.count(key)) m_varOut[key] = std::move(v);
+    }
+}
+
+// Reliable shared variables. The host's SyncVar is [key][value][u32 version]; a client's is
+// [key][value][u64 cookie, if it has one][u32 version]. An older peer reads only key and value
+// (it ignores what follows) and never acknowledges: the newest value is then sent again
+// kVarResendTries times and dropped, as before (a lossy link could lose it there).
+void NetworkManager::SendVarTo(Client& c, const std::string& key) {
+    auto it = m_syncVars.find(key);
+    auto vit = m_varVer.find(key);
+    const std::uint32_t ver = vit == m_varVer.end() ? 0 : vit->second;
+    net::Packet p(SyncVar); p.Write(key); p.Write(it != m_syncVars.end() ? it->second : std::string()); p.Write(ver);
+    SendDatagram(c.endpoint, p.Data(), p.Size());
+    if (c.varOut.size() < kMaxVarPending || c.varOut.count(key)) c.varOut[key] = VarPending{ver, 0, std::string()};
+}
+
+// VarAck: [u8 n] n x ([string key][u32 version]). A client gathers its receipts over a frame and
+// sends them together (a join's full sync is one receipt datagram per ~1 KB, not one per variable).
+void NetworkManager::SendVarAck(const net::Endpoint& to, const std::string& key, std::uint32_t ver) {
+    net::Packet a(VarAck); a.Write(std::uint8_t(1)); a.Write(key); a.Write(ver);
+    SendDatagram(to, a.Data(), a.Size());
+}
+
+void NetworkManager::FlushVarAcks() {
+    std::size_t at = 0;
+    while (at < m_varAcks.size()) {
+        net::Packet a(VarAck);
+        std::size_t n = 0, bytes = 0;
+        while (at + n < m_varAcks.size() && n < 64 && bytes + m_varAcks[at + n].first.size() + 8 < 1000) {
+            bytes += m_varAcks[at + n].first.size() + 8; ++n;
+        }
+        a.Write(std::uint8_t(n));
+        for (std::size_t i = 0; i < n; ++i) { a.Write(m_varAcks[at + i].first); a.Write(m_varAcks[at + i].second); }
+        SendDatagram(m_serverEp, a.Data(), a.Size());
+        at += n;
+    }
+    m_varAcks.clear();
+}
+
+void NetworkManager::SendOwnVar(const std::string& key, const VarPending& v) {
+    net::Packet p(SyncVar); p.Write(key); p.Write(v.value);
+    if (m_sessionCookie) WriteU64(p, m_sessionCookie);
+    p.Write(v.ver);
+    SendDatagram(m_serverEp, p.Data(), p.Size());
+}
+
+std::size_t NetworkManager::VarsUnacked() const {
+    if (m_mode == Mode::Client) return m_varOut.size();
+    std::size_t n = 0;
+    for (const auto& [ep, c] : m_clients) n += c.varOut.size();
+    return n;
+}
+
+void NetworkManager::VarResendTick(float dt) {
+    // Each change waits kReliableResend for its receipt, then goes again (the newest value).
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients) {
+            std::vector<std::string> due;
+            for (auto it = c.varOut.begin(); it != c.varOut.end(); ) {
+                if ((it->second.age += dt) < kReliableResend) { ++it; continue; }
+                if (++it->second.tries > kVarResendTries) { it = c.varOut.erase(it); continue; }   // never acked: an older client
+                if (due.size() < 64) due.push_back(it->first);   // a few at a time: the rest next frame
+                ++it;
+            }
+            for (const std::string& key : due) {
+                const int tries = c.varOut[key].tries;
+                SendVarTo(c, key);          // the newest value and version (what changed since replaces what was lost)
+                c.varOut[key].tries = tries;
+            }
+        }
+    } else if (m_mode == Mode::Client && m_joined) {
+        int sent = 0;
+        for (auto it = m_varOut.begin(); it != m_varOut.end(); ) {
+            VarPending& v = it->second;
+            if ((v.age += dt) < kReliableResend || sent >= 64) { ++it; continue; }
+            if (++v.tries > kVarResendTries) { it = m_varOut.erase(it); continue; }
+            v.age = 0.0f;
+            SendOwnVar(it->first, v);
+            ++sent;
+            ++it;
+        }
     }
 }
 
@@ -1284,6 +1365,13 @@ void NetworkManager::PruneFragments(float dt) {
             f = (f->age += dt) > kFragmentTtl ? outs.erase(f) : std::next(f);
         oIt = outs.empty() ? m_fragOut.erase(oIt) : std::next(oIt);
     }
+    // "Put together lately" lists of peers who are gone (left, timed out, kicked): a long-running
+    // host would otherwise keep one per address it ever heard from.
+    for (auto d = m_fragDone.begin(); d != m_fragDone.end(); )
+        d = Handshaken(d->first) ? std::next(d) : m_fragDone.erase(d);
+    // Sent messages for a peer who is gone are never acknowledged: drop them now, not after the TTL.
+    for (auto oIt = m_fragOut.begin(); oIt != m_fragOut.end(); )
+        oIt = (m_mode == Mode::Server && !Handshaken(oIt->first)) ? m_fragOut.erase(oIt) : std::next(oIt);
 }
 
 void NetworkManager::Send(const std::string& channel, const std::string& data) {

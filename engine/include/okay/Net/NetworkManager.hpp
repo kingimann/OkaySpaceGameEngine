@@ -516,7 +516,11 @@ public:
     /// Set a shared variable. On the server it applies and broadcasts to every
     /// client; on a client it asks the server, which applies and re-broadcasts.
     /// Great for scores, game phase, who's turn it is — one source of truth.
+    /// A change is sent again (the newest value only, a few times a second) until the
+    /// other side acknowledges it, so a lost datagram does not lose the change.
     void SetVar(const std::string& key, const std::string& value);
+    /// Variable changes sent and not acknowledged yet (to every client on the host; to the host on a client).
+    std::size_t VarsUnacked() const;
     /// Read the local copy of a synced variable ("" if unset).
     std::string GetVar(const std::string& key) const;
     /// Every shared variable (a read-only view, for tests and tools: how many, and how big).
@@ -903,6 +907,19 @@ public:
     int HostMigrations() const { return m_migrations; }
     /// Client: the host offered migration for this session (it sent the player list it would use).
     bool MigrationOffered() const { return !m_migPeers.empty(); }
+    /// Client: the list the host offered, as (old id, address this player would use) - for tests and tools.
+    std::vector<std::pair<std::uint32_t, net::Endpoint>> MigrationList() const {
+        std::vector<std::pair<std::uint32_t, net::Endpoint>> out;
+        for (const auto& p : m_migPeers) out.emplace_back(p.id, p.ep);
+        return out;
+    }
+    /// The address to reach a listed player at. The host lists a player on its own computer as this
+    /// computer (127.x); a player on another computer reaches that one at the host's address instead.
+    static net::Endpoint MigrationAddress(const net::Endpoint& listed, const net::Endpoint& hostAsSeen) {
+        const bool listedLoop = (listed.address >> 24) == 127, hostLoop = (hostAsSeen.address >> 24) == 127;
+        if (listedLoop && !hostLoop && hostAsSeen.address != 0) return net::Endpoint{hostAsSeen.address, listed.port};
+        return listed;
+    }
 
     // ---- Rollback (deterministic games; off until started) ----
     /// See okay/Net/Rollback.hpp: fixed tick, input delay, input exchange, saved states, resimulation.
@@ -958,6 +975,9 @@ private:
         bool Seen(std::uint32_t seq) const;   // Accept would say no (nothing changes)
         void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
     };
+    // A shared variable change waiting for its acknowledgement (VarAck): the version
+    // sent, how many times it was sent again, and (a client's own write) the value.
+    struct VarPending { std::uint32_t ver = 0; int tries = 0; std::string value; float age = 0.0f; };
     struct Client {
         net::Endpoint endpoint;
         std::uint32_t id;
@@ -979,6 +999,8 @@ private:
         bool  pktReported = false;   // ...reported once a second at most
         std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
         int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
+        std::unordered_map<std::string, VarPending> varOut;   // changes sent to it, not acked (key -> our version)
+        std::unordered_map<std::string, std::uint32_t> varIn;  // the newest version of its own writes applied, per key
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -1107,6 +1129,17 @@ public:
     /// (tests use it to probe the limits without sockets).
     bool FeedFragmentForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size,
                              std::vector<std::uint8_t>& out) { return TakeFragment(from, data, size, out); }
+    /// Feed one piece receipt (FragAck) as if it came from `from` (tests: forged receipts).
+    void FeedFragAckForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) { OnFragAck(from, data, size); }
+    /// Peers with a "put together lately" list (kept only for peers still in the session).
+    std::size_t FragDonePeers() const { return m_fragDone.size(); }
+    /// Sent pieced messages kept for per-piece resend, and their bytes.
+    std::size_t FragOutMessages() const { std::size_t n = 0; for (const auto& e : m_fragOut) n += e.second.size(); return n; }
+    std::size_t FragOutBytes() const {
+        std::size_t n = 0;
+        for (const auto& e : m_fragOut) for (const auto& f : e.second) { n += f.plain.size(); for (const auto& pc : f.pieces) n += pc.size(); }
+        return n;
+    }
 private:
     bool Handshaken(const net::Endpoint& from) const;
     bool TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
@@ -1455,6 +1488,7 @@ private:
     void MigrationHostTick(float dt);
     void OnMigWire(std::uint32_t from, const std::string& data);
     bool BeginMigration(const std::string& why);   // client: true when it moves on instead of ending
+    bool KnockHeeded() const;              // client: our own link to the host is quiet enough to believe a knock
     void MigrationTick(float dt);
     void TryNextHost();
     void RestoreCarry();
@@ -1568,6 +1602,23 @@ private:
     void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
+    // Reliable shared variables (NetworkManagerSync.cpp): every change carries a version; the
+    // receiver acknowledges it (VarAck) and ignores an older version arriving late; the sender
+    // sends the newest value again until acknowledged (kVarResendTries times at most).
+    static constexpr int kVarResendTries = 24;          // x kReliableResend: about 6 s
+    static constexpr std::size_t kMaxVarPending = 4096; // per peer
+    std::unordered_map<std::string, std::uint32_t> m_varVer;   // host: the version of each variable's value
+    std::uint32_t m_varCounter = 0;                           // host: versions given out; client: our own writes
+    std::unordered_map<std::string, std::uint32_t> m_varSeen;  // client: the newest host version applied, per key
+    std::unordered_map<std::string, VarPending> m_varOut;      // client: our writes the host has not acked
+    std::uint32_t BumpVar(const std::string& key) { return m_varVer[key] = ++m_varCounter; }
+    void SendVarTo(Client& c, const std::string& key);    // host: the current value, tracked until acked
+    void SendVarAck(const net::Endpoint& to, const std::string& key, std::uint32_t ver);
+    std::vector<std::pair<std::string, std::uint32_t>> m_varAcks;   // client: receipts to send this frame
+    void FlushVarAcks();
+    void SendOwnVar(const std::string& key, const VarPending& v);   // client: one of our writes
+    void VarResendTick(float dt);
+    void HandleClientVar(Client& c, const std::string& key, const std::string& value, bool hasVer, std::uint32_t ver);
 };
 
 } // namespace okay

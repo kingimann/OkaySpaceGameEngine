@@ -73,6 +73,7 @@ void NetworkManager::ServerTick(float dt) {
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
     RelayKeepAlive(dt);
     PruneFragments(dt);
+    VarResendTick(dt);   // shared variable changes not acknowledged yet
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
@@ -452,10 +453,7 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 if (haveResumed) ResendUnacked(c.id, resumed.resend);   // what it had not acked when it dropped
                 // Full sync: send every current synced variable to the newcomer.
-                for (auto& [k, v] : m_syncVars) {
-                    net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
-                    SendDatagram(from, sv.Data(), sv.Size());
-                }
+                for (auto& [k, v] : m_syncVars) SendVarTo(c, k);   // sent again until it acknowledges each
                 SendLifeSnapshot(c.id);   // who is dead or hurt right now
                 {   // replicated systems (build mode, quests) send what the newcomer missed
                     const std::uint32_t joined = c.id;
@@ -467,41 +465,22 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
-            std::string senderRoom;
-            {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
-                auto cl = m_clients.find(from);
-                if (cl == m_clients.end() || !CookieOk(cl->second, p) || !rateOk(cl->second, len)) continue;
-                senderRoom = cl->second.room;
-                // Sized like a variable, and not a key factory: a client makes
-                // at most kMaxClientVars keys of its own.
-                const bool isNew = !m_syncVars.count(key);
-                if (key.empty() || key.size() > kMaxVarKey || value.size() > kMaxVarValue ||
-                    (isNew && cl->second.varsCreated >= kMaxClientVars)) continue;
-                if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) {
-                    // Put the sender's copy back to the server's value (it set it locally first).
-                    if (m_clients.count(from)) {
-                        auto cur = m_syncVars.find(key);
-                        net::Packet back(SyncVar); back.Write(key); back.Write(cur != m_syncVars.end() ? cur->second : std::string());
-                        SendDatagram(from, back.Data(), back.Size());
-                    }
-                    continue;
-                }
-                // A counter the rules name (detect.economy): the detector checks the claimed value against what the server expects.
-                if (anticheat.DetectOn() && anticheat.detector.settings.FindEconomy(key)) {
-                    char* end = nullptr;
-                    const float v = std::strtof(value.c_str(), &end);
-                    if (end && end != value.c_str() && *end == '\0') anticheat.detector.OnClaimedValue(cl->second.id, key, v, anticheat.Clock());
-                    else anticheat.detector.OnMalformed(cl->second.id, "economy value unreadable", anticheat.Clock());
-                    if (anticheat.detector.KickRequested(cl->second.id)) { AntiCheatAfterRefusal(cl->second.id); continue; }
-                }
+            auto cl = m_clients.find(from);   // only joined clients may change shared state
+            if (!p.Ok() || cl == m_clients.end() || !CookieOk(cl->second, p) || !rateOk(cl->second, len)) continue;
+            const std::uint32_t ver = p.ReadU32();   // absent from an older client
+            HandleClientVar(cl->second, key, value, p.Ok(), ver);
+        } else if (type == VarAck) {
+            // A client has one of our variable changes: stop sending it.
+            auto cl = m_clients.find(from);
+            if (cl == m_clients.end()) continue;
+            const std::uint8_t count = p.ReadU8();
+            for (std::uint8_t i = 0; i < count && p.Ok(); ++i) {
+                const std::string key = p.ReadString();
+                const std::uint32_t ver = p.ReadU32();
+                if (!p.Ok()) break;
+                auto v = cl->second.varOut.find(key);
+                if (v != cl->second.varOut.end() && ver >= v->second.ver) cl->second.varOut.erase(v);
             }
-            if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
-            net::NoteObject(key, key.size() + value.size(), true);
-            ApplySyncVar(key, value);
-            // A client's write goes to its own room (the host applies every one).
-            net::Packet out(SyncVar); out.Write(key); out.Write(value);
-            for (auto& [ep, c] : m_clients)
-                if (c.room == senderRoom) SendDatagram(c.endpoint, out.Data(), out.Size());
         } else if (type == ClockPong) {
             // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
             auto it = m_clients.find(from);
@@ -912,6 +891,55 @@ void NetworkManager::ServerTick(float dt) {
         c.pipes.ordered.CollectResend(dt, due);
         for (const auto& bytes : due) SendDatagram(c.endpoint, bytes.data(), bytes.size());
     }
+}
+
+// A client's SyncVar (its cookie and rate already checked): the checks, then apply it and send it to
+// its room. With a version (a client of this version or newer) the change is acknowledged whether
+// it was taken or refused, so the client stops sending it again, and a late copy of an older write
+// of its own is not applied over a newer one.
+void NetworkManager::HandleClientVar(Client& c, const std::string& key, const std::string& value, bool hasVer, std::uint32_t ver) {
+    const net::Endpoint from = c.endpoint;
+    const std::uint32_t id = c.id;
+    // Sized like a variable, and not a key factory: a client makes at most kMaxClientVars keys of its own.
+    const bool isNew = !m_syncVars.count(key);
+    if (key.empty() || key.size() > kMaxVarKey || value.size() > kMaxVarValue || (isNew && c.varsCreated >= kMaxClientVars)) {
+        if (hasVer && !key.empty() && key.size() <= kMaxVarKey) SendVarAck(from, key, ver);   // refused: do not send it again
+        return;
+    }
+    if (hasVer) {
+        auto seen = c.varIn.find(key);
+        if (seen != c.varIn.end() && ver <= seen->second) { SendVarAck(from, key, ver); return; }   // a repeat, or older than one applied
+        if (c.varIn.size() >= kMaxVarPending && seen == c.varIn.end()) c.varIn.clear();
+        c.varIn[key] = ver;
+    }
+    if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(id, key)) {
+        // Put the sender's copy back to the server's value (it set it locally first).
+        auto cl = m_clients.find(from);
+        if (cl == m_clients.end()) return;
+        if (hasVer) SendVarAck(from, key, ver);
+        BumpVar(key);   // newer than what the sender holds of ours
+        SendVarTo(cl->second, key);
+        return;
+    }
+    // A counter the rules name (detect.economy): the detector checks the claimed value against what the server expects.
+    if (anticheat.DetectOn() && anticheat.detector.settings.FindEconomy(key)) {
+        char* end = nullptr;
+        const float v = std::strtof(value.c_str(), &end);
+        if (end && end != value.c_str() && *end == '\0') anticheat.detector.OnClaimedValue(id, key, v, anticheat.Clock());
+        else anticheat.detector.OnMalformed(id, "economy value unreadable", anticheat.Clock());
+        if (anticheat.detector.KickRequested(id)) { AntiCheatAfterRefusal(id); return; }
+    }
+    auto cl = m_clients.find(from);
+    if (cl == m_clients.end()) return;
+    if (isNew) ++cl->second.varsCreated;
+    if (hasVer) SendVarAck(from, key, ver);
+    net::NoteObject(key, key.size() + value.size(), true);
+    ApplySyncVar(key, value);
+    BumpVar(key);
+    // A client's write goes to its own room (the host applies every one).
+    const std::string room = cl->second.room;
+    for (auto& [ep, other] : m_clients)
+        if (other.room == room) SendVarTo(other, key);
 }
 
 } // namespace okay

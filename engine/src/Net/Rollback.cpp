@@ -5,12 +5,15 @@
 // forward again. No outside code.
 //
 // Wire ("__rb", unreliable, every player to every player through the host):
-//   [u8 version 1][u8 run][u8 inputDelay][u32 first frame][u8 n] n x ([u8 len][len bytes])
+//   [u8 version 2][u8 run][u8 inputDelay][u8 maxInputBytes][u32 tickRate x 1000][u8 players][u32 players hash]
+//   [u32 first frame][u8 n] n x ([u8 len][len bytes])
 //   [u8 acks] acks x ([u32 player][u32 frames of that player's inputs held])
 //   [u32 checksum frame][u32 checksum lo][u32 checksum hi]   (frame 0xFFFFFFFF = none yet)
 // The inputs are the sender's own, for frames first .. first+n-1: everything
 // some player has not confirmed yet (at most kMaxFramesPerPacket), so a lost
-// packet is covered by the next one.
+// packet is covered by the next one. The settings and the player set travel in
+// every packet: a player who started differently stops the game in plain words
+// instead of drifting apart.
 #include "okay/Net/Rollback.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Core/StringId.hpp"
@@ -21,11 +24,17 @@
 namespace okay::net {
 
 namespace {
-constexpr std::uint8_t kWireVersion = 1;
+constexpr std::uint8_t kWireVersion = 2;
 constexpr std::uint32_t kNone = 0xFFFFFFFFu;
 constexpr int kMaxStepsPerTick = 8;          // catching up after a stall: at most this many frames per Update
 constexpr std::size_t kKeepHashes = 256;
 
+std::uint32_t TickMilli(float hz) { return (std::uint32_t)std::lround((double)hz * 1000.0); }
+std::string HzText(std::uint32_t milli) {
+    std::string t = std::to_string(milli / 1000);
+    if (milli % 1000) { std::string f = std::to_string(1000 + milli % 1000).substr(1); while (f.back() == '0') f.pop_back(); t += "." + f; }
+    return t;
+}
 void PutU8(std::string& s, std::uint8_t v) { s.push_back((char)v); }
 void PutU32(std::string& s, std::uint32_t v) { for (int i = 0; i < 4; ++i) s.push_back((char)((v >> (8 * i)) & 0xFF)); }
 struct Reader {
@@ -57,8 +66,13 @@ bool Rollback::Start(const Settings& settings, SaveFn save, LoadFn load, InputFn
     m_me = m_nm.LocalId();
     m_players.clear();
     for (const auto& p : m_nm.Players()) m_players.push_back(p.id);
-    std::sort(m_players.begin(), m_players.end());
     if (std::find(m_players.begin(), m_players.end(), m_me) == m_players.end()) m_players.push_back(m_me);
+    std::sort(m_players.begin(), m_players.end());
+    {
+        std::string ids;
+        for (std::uint32_t id : m_players) ids += std::to_string(id) + ",";
+        m_playersHash = (std::uint32_t)StringId::HashOf(ids);
+    }
     m_peers.clear();
     const std::uint32_t delay = (std::uint32_t)m_settings.inputDelay;
     for (std::uint32_t id : m_players) {
@@ -181,6 +195,10 @@ void Rollback::SendInputs() {
     PutU8(w, kWireVersion);
     PutU8(w, m_run);
     PutU8(w, (std::uint8_t)m_settings.inputDelay);
+    PutU8(w, (std::uint8_t)m_settings.maxInputBytes);
+    PutU32(w, TickMilli(m_settings.tickRate));
+    PutU8(w, (std::uint8_t)std::min<std::size_t>(255, m_players.size()));
+    PutU32(w, m_playersHash);
     PutU32(w, first);
     std::vector<const std::string*> list;
     for (std::uint32_t f = first; f < me.have; ++f) {
@@ -213,10 +231,28 @@ void Rollback::OnMessage(std::uint32_t from, const std::string& data) {
     if (r.U8() != kWireVersion || !r.ok) return;
     if (r.U8() != m_run) return;   // an earlier (or later) game of theirs
     const std::uint8_t delay = r.U8();
-    if (r.ok && delay != (std::uint8_t)m_settings.inputDelay) {
-        Stop("player " + std::to_string(from) + " uses input delay " + std::to_string(delay) + " and this player " +
-             std::to_string(m_settings.inputDelay) + "; every player must start rollback with the same settings");
-        return;
+    const std::uint8_t maxBytes = r.U8();
+    const std::uint32_t tickMilli = r.U32();
+    const std::uint8_t nPlayers = r.U8();
+    const std::uint32_t playersHash = r.U32();
+    if (!r.ok) return;
+    {   // every player must have started with the same settings and the same players
+        const std::string who = "player " + std::to_string(from);
+        const char* same = "; every player must start rollback with the same settings";
+        std::string why;
+        if (delay != (std::uint8_t)m_settings.inputDelay)
+            why = who + " uses input delay " + std::to_string(delay) + " and this player " + std::to_string(m_settings.inputDelay) + same;
+        else if (tickMilli != TickMilli(m_settings.tickRate))
+            why = who + " runs at " + HzText(tickMilli) + " Hz and this player at " + HzText(TickMilli(m_settings.tickRate)) + " Hz" + same;
+        else if (maxBytes != (std::uint8_t)m_settings.maxInputBytes)
+            why = who + " allows inputs of " + std::to_string(maxBytes) + " bytes and this player " +
+                  std::to_string(m_settings.maxInputBytes) + same;
+        else if (nPlayers != (std::uint8_t)std::min<std::size_t>(255, m_players.size()) || playersHash != m_playersHash)
+            why = (nPlayers == m_players.size()
+                       ? who + " started with other players than this player (" + std::to_string(nPlayers) + " each)"
+                       : who + " started with " + std::to_string(nPlayers) + " players and this player with " + std::to_string(m_players.size())) +
+                  "; start rollback once every player is in the session (Players() lists the same players everywhere)";
+        if (!why.empty()) { Stop(why); return; }
     }
     const std::uint32_t first = r.U32();
     const std::uint8_t n = r.U8();
@@ -234,9 +270,15 @@ void Rollback::OnMessage(std::uint32_t from, const std::string& data) {
     const std::uint32_t ckFrame = r.U32();
     const std::uint64_t ck = (std::uint64_t)r.U32() | ((std::uint64_t)r.U32() << 32);
     if (!r.ok) return;
-    if (first > p.have + 100000u) return;   // nonsense
+    // No player can honestly be further ahead than its input delay plus how far it may predict past
+    // our inputs (a margin for timing): later frames are not kept, so a peer cannot park inputs for
+    // frames far in the future (they are sent again once they are due).
+    const std::uint32_t horizon = std::max(m_frame, p.have) + (std::uint32_t)m_settings.inputDelay * 2u +
+                                  (std::uint32_t)m_settings.maxPrediction + kAheadMargin;
+    if (first >= horizon) return;
     for (std::size_t i = 0; i < inputs.size(); ++i) {
         const std::uint32_t f = first + (std::uint32_t)i;
+        if (f >= horizon) break;
         if (f < (std::uint32_t)m_settings.inputDelay || p.inputs.count(f)) continue;   // the first frames are fixed; a repeat changes nothing
         if (f < p.have) continue;   // already had (and maybe pruned)
         std::string in = inputs[i];
@@ -260,6 +302,18 @@ void Rollback::OnMessage(std::uint32_t from, const std::string& data) {
             m_theirHashes[ckFrame] = ck;
         }
     }
+}
+
+std::size_t Rollback::HeldInputs() const {
+    std::size_t n = 0;
+    for (const auto& [id, p] : m_peers) n += p.inputs.size();
+    return n;
+}
+
+std::size_t Rollback::HeldInputBytes() const {
+    std::size_t n = 0;
+    for (const auto& [id, p] : m_peers) for (const auto& [f, in] : p.inputs) n += in.size();
+    return n;
 }
 
 void Rollback::HashConfirmed() {

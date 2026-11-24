@@ -18,8 +18,9 @@
 //            [&](std::uint32_t frame, const std::vector<net::Rollback::FrameInput>& in) { Step(in); });
 //
 // Every player in the session when Start is called takes part (call it on
-// every peer, after Players() lists everyone; the order they start in does
-// not matter; a game started again is the next run on every peer, and
+// every peer, after Players() lists everyone, with the same settings: the
+// players, tick rate, input delay and input size are compared and a mismatch
+// stops it with LastError; the order they start in does not matter; a game started again is the next run on every peer, and
 // packets of another run are ignored). Inputs go through the Network Manager ("__rb", unreliable,
 // every packet repeats all inputs the others have not confirmed yet, so a
 // lost one costs nothing but a resend). A checksum of a confirmed frame's
@@ -84,6 +85,9 @@ public:
     std::uint32_t Desyncs() const { return m_desyncs; }             ///< confirmed frames whose state differed from another player's
     std::uint32_t ChecksumsCompared() const { return m_compared; }
     const std::string& LastError() const { return m_lastError; }
+    /// Inputs held for every player (entries and bytes): bounded by how far ahead a player may be.
+    std::size_t HeldInputs() const;
+    std::size_t HeldInputBytes() const;
 
     /// Called by the Network Manager: each Update, and for every "__rb" message.
     void Tick(float dt);
@@ -91,6 +95,9 @@ public:
 
     static constexpr std::size_t kKeepStates = 128;
     static constexpr std::size_t kMaxFramesPerPacket = 64;
+    /// Frames past what a player can honestly be ahead (inputDelay + maxPrediction past our frame)
+    /// that its inputs may still be for; later ones are not kept (they come again when due).
+    static constexpr std::uint32_t kAheadMargin = 16;
 
 private:
     struct Peer {
@@ -113,6 +120,7 @@ private:
     std::uint32_t m_rollbackTo = 0xFFFFFFFFu;
     std::uint32_t m_hashedUpTo = 0;
     float m_accum = 0.0f;
+    std::uint32_t m_playersHash = 0;                   // the players who started, as one number (compared with the others')
     std::uint32_t m_rollbacks = 0, m_resimFrames = 0, m_stalls = 0, m_desyncs = 0, m_compared = 0;
     std::string m_lastError;
 

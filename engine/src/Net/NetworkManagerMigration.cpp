@@ -6,7 +6,9 @@
 //   1. The host sends each client in its room the same list ("__mig", reliable and
 //      ordered, again whenever it changes): every client's id, name and address as
 //      the host sees it. Only when the session may migrate (MigrationAllowedHere)
-//      and has at least two clients (an empty list clears it again).
+//      and has at least two clients (an empty list clears it again). A player on the
+//      host's own computer is listed as 127.0.0.1; a player on another computer reads
+//      that as the host's address (MigrationAddress).
 //   2. The host leaving: Stop() sends "__bye" to every client (three times); a host
 //      that crashed is noticed after serverTimeoutSeconds of silence.
 //   3. Every client takes the lowest id on the list. That player hosts on the local
@@ -17,7 +19,11 @@
 //      off and the next lowest is tried. A player that hears a join from someone on
 //      the list while it still waits for the old host knows the host is gone too,
 //      and one still trying a lower id that hears a join from a higher one hosts at
-//      once (the higher one gave up on the lower ids already).
+//      once (the higher one gave up on the lower ids already). Such a knock is plain
+//      and anyone on the list could send one, so it counts only once this player's
+//      own link agrees: its host has been quiet a while (KnockHeeded), or, when
+//      already looking, it has waited half a try itself. A player still hearing a
+//      live host ignores knocks.
 //   5. Everyone keeps the shared variables, the ownership table, the synced objects
 //      and the player stand-ins. The new host is player 0; the old host's stand-in
 //      and its own spawned objects ("sp/0/...") go, as a leaving client's do, and
@@ -130,7 +136,7 @@ void NetworkManager::OnMigWire(std::uint32_t from, const std::string& data) {
         const unsigned long port = std::strtoul(line.c_str() + b2 + 1, nullptr, 10);
         if (end != line.c_str() + b1 || id == 0 || id > 0xFFFFFFFFul || addr > 0xFFFFFFFFul || port == 0 || port > 65535) return;
         mp.id = (std::uint32_t)id;
-        mp.ep = net::Endpoint{(std::uint32_t)addr, (std::uint16_t)port};
+        mp.ep = MigrationAddress(net::Endpoint{(std::uint32_t)addr, (std::uint16_t)port}, m_serverEp);
         mp.name = line.substr(b3 + 1);
         list.push_back(std::move(mp));
     }
@@ -245,6 +251,14 @@ void NetworkManager::MigrationTick(float dt) {
         m_mig.candidates.erase(m_mig.candidates.begin());
         TryNextHost();
     }
+}
+
+bool NetworkManager::KnockHeeded() const {
+    // A live host sends many times a second (snapshots, the roster, pongs): this much silence means our own
+    // link to it is going too. Half a chosen host's wait, at least 1.5 s, never more than the timeout itself.
+    float quiet = std::max(1.5f, 0.5f * migrationJoinTimeoutSeconds);
+    if (serverTimeoutSeconds > 0.0f) quiet = std::min(quiet, serverTimeoutSeconds);
+    return m_serverSilence >= quiet;
 }
 
 bool NetworkManager::TakeExpectedId(const net::Endpoint& from, std::uint32_t& id) {

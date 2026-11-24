@@ -15,12 +15,23 @@
 //   rollback   two peers at 100 ms latency with jitter and loss run the same deterministic game with
 //              input delay and rollback: they end in identical states (checksums compared, no desync)
 //   rbscript   the same through OkayScript (net.rollback_start and the rollback_* functions)
+//   knock      (review of #1232, F1) a player on the list sends another a forged "join" while the host
+//              is alive: nothing changes; a real migration still works
+//   miglan     (F2) a player on the host's computer is reached at the host's address from another one
+//   fragstate  (F3) forged piece receipts grow nothing; a gone peer's piece state is forgotten
+//   vars       shared variables at 40% loss: every change arrives, the newest value wins, all acked
+//   netsim     the simulator's loss and latency apply once between two sockets of one program, and a
+//              burst is delayed, not dropped
+//   rbguard    (F4) rollback refuses a peer with another tick rate, input size or player set, and does
+//              not keep inputs for frames far in the future
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Net/Net.hpp"
 #include "okay/Net/NetSim.hpp"
 #include "okay/Net/Rollback.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/StringId.hpp"
+#include "okay/Net/Packet.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 
@@ -338,7 +349,7 @@ int main() {
             for (Peer* p : {&a, &b, &c}) if (!p->nm->Joined() || !p->nm->MigrationOffered() || p->nm->Players().size() != 4) return false;
             return true;
         }));
-        h.nm->SetVar("level", "3");   // (a shared variable goes out unreliably: set it before the network turns bad)
+        h.nm->SetVar("level", "3");
         CHECK(PumpAll(ScenesOf(all), 300, [&] { return b.nm->GetVar("level") == "3" && c.nm->GetVar("level") == "3"; }));
         net::SimSettings& sim = net::Simulator();
         sim.enabled = true; sim.latencyMs = 40.0f; sim.jitterMs = 10.0f; sim.loss = 0.05f;
@@ -397,6 +408,272 @@ int main() {
         PumpAll(ScenesOf(all2), 20);
         CHECK(!x.nm->MigrationOffered() && !y.nm->MigrationOffered());
         for (Peer* p : all2) p->nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- knock (review F1: a forged knock changes nothing)
+    {
+        Peer h("KnockHost"), a("KnockA"), b("KnockB"), c("KnockC");
+        CHECK(h.nm->StartServer(0));
+        const std::uint16_t port = h.nm->ServerPort();
+        std::vector<Peer*> all{&h, &a, &b, &c};
+        CHECK(a.nm->StartClient("127.0.0.1", port));
+        CHECK(PumpAll(ScenesOf(all), 200, [&] { return a.nm->Joined(); }));
+        CHECK(b.nm->StartClient("127.0.0.1", port));
+        CHECK(PumpAll(ScenesOf(all), 200, [&] { return b.nm->Joined(); }));
+        CHECK(c.nm->StartClient("127.0.0.1", port));
+        CHECK(PumpAll(ScenesOf(all), 400, [&] {
+            for (Peer* p : {&a, &b, &c}) if (!p->nm->Joined() || !p->nm->MigrationOffered() || p->nm->Players().size() != 4) return false;
+            return true;
+        }));
+        // c is on everyone's migration list. It sends a's address one plain datagram that looks like a
+        // join (byte 1, then byte 24), from its own listed address, while the host is alive.
+        const std::uint16_t cPort = c.nm->ServerPort();
+        net::Endpoint aEp;
+        CHECK(net::UdpSocket::Resolve("127.0.0.1", a.nm->ServerPort(), aEp));
+        c.nm->Stop();   // frees c's port for the forger; a still lists c until the host's next list
+        net::UdpSocket forger;
+        CHECK(forger.Open() && forger.Bind(cPort));
+        std::vector<std::uint8_t> knock(64, 0);
+        std::vector<Peer*> live{&h, &a, &b};
+        for (int i = 0; i < 60; ++i) {   // and keeps knocking, with both bytes
+            knock[0] = (i % 2) ? 24 : 1;
+            if (i < 2 || i % 10 == 0) forger.SendTo(aEp, knock.data(), knock.size());
+            PumpAll(ScenesOf(live), 1);
+        }
+        std::printf("  knock: after forged knocks a is %s, %d move(s); host has %zu players\n",
+                    a.nm->IsServer() ? "HOSTING (split)" : a.nm->Joined() ? "still on the host" : "gone", a.nm->HostMigrations(),
+                    h.nm->Players().size());
+        CHECK(a.nm->IsClient() && a.nm->Joined() && !a.nm->Migrating() && a.nm->HostMigrations() == 0);
+        CHECK(b.nm->IsClient() && b.nm->Joined() && b.nm->HostMigrations() == 0);
+        CHECK(h.nm->IsServer());
+        CHECK(PumpAll(ScenesOf(live), 200, [&] { return h.nm->Players().size() == 3 && a.nm->Players().size() == 3; }));
+        forger.Close();
+        // A real migration still works: the host quits, a hosts, b comes back.
+        h.nm->Stop();
+        std::vector<Peer*> left{&a, &b};
+        CHECK(PumpAll(ScenesOf(left), 600, [&] {
+            return a.nm->IsServer() && b.nm->Joined() && a.nm->HostMigrations() == 1 && b.nm->HostMigrations() == 1 && !b.nm->Migrating();
+        }));
+        for (Peer* p : all) p->nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- miglan (review F2: a host-machine player on the list)
+    {
+        const net::Endpoint loop{0x7F000001u, 5000}, hostLan{0xC0A80105u, 7777}, hostLoop{0x7F000001u, 7777};
+        const net::Endpoint other{0xC0A80107u, 6000};
+        const net::Endpoint e = NetworkManager::MigrationAddress(loop, hostLan);
+        CHECK(e.address == hostLan.address && e.port == 5000);   // another computer reaches it at the host's address
+        CHECK(NetworkManager::MigrationAddress(loop, hostLoop) == loop);   // on the host's computer: as listed
+        CHECK(NetworkManager::MigrationAddress(other, hostLan) == other);  // a LAN player: as listed
+        CHECK(NetworkManager::MigrationAddress(other, hostLoop) == other);
+    }
+
+    // ---------------------------------------------------------------- fragstate (review F3)
+    {
+        Scene hs("FragHost"); hs.physicsEnabled = false;
+        Scene cs("FragClient"); cs.physicsEnabled = false;
+        auto* hn = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* cn = cs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        CHECK(hn->StartServer(0));
+        CHECK(cn->StartClient("127.0.0.1", hn->ServerPort()));
+        CHECK(PumpAll({&hs, &cs}, 200, [&] { return cn->Joined() && hn->Players().size() == 2; }));
+        std::string up, down;
+        hn->OnEvent("bigup", [&](std::uint32_t, const std::string& d) { up = d; });
+        cn->OnEvent("bigdown", [&](std::uint32_t, const std::string& d) { down = d; });
+        std::string payload(12 * 1024, 'x');
+        for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = (char)('a' + (i * 11) % 26);
+        CHECK(cn->SendEvent("bigup", payload, false));
+        CHECK(PumpAll({&hs, &cs}, 300, [&] { return up == payload; }));
+        CHECK(hn->FragDonePeers() == 1);   // the host remembers what it put together from this client
+        // A flood of forged piece receipts "from the client" while the host sends it a big message.
+        const net::Endpoint cEp{0x7F000001u, cn->ServerPort()};
+        CHECK(hn->SendEvent("bigdown", payload, false));
+        const std::size_t msgs0 = hn->FragOutMessages(), bytes0 = hn->FragOutBytes();
+        CHECK(msgs0 >= 1);
+        Random rng(99);
+        std::vector<std::uint8_t> ack;
+        for (int i = 0; i < 20000; ++i) {
+            const std::uint32_t id = (std::uint32_t)rng.Range(0, 2000), count = (std::uint32_t)rng.Range(1, 4096);
+            net::Packet p((std::uint8_t)35); p.Write(id); p.Write(count);
+            ack.assign(p.Data(), p.Data() + p.Size());
+            ack.resize(ack.size() + (count + 7) / 8, (std::uint8_t)rng.Range(0, 255));
+            hn->FeedFragAckForTest(cEp, ack.data(), ack.size());
+        }
+        std::printf("  fragstate: after 20000 forged receipts the host holds %zu message(s), %zu bytes (was %zu, %zu)\n",
+                    hn->FragOutMessages(), hn->FragOutBytes(), msgs0, bytes0);
+        CHECK(hn->FragOutMessages() <= msgs0 && hn->FragOutBytes() <= bytes0);   // nothing grows
+        CHECK(PumpAll({&hs, &cs}, 600, [&] { return down == payload; }));        // and the message still arrives
+        // The client leaves: the host forgets its per-address piece state (it leaked until Stop before).
+        cn->Stop();
+        CHECK(PumpAll({&hs}, 300, [&] { return hn->Players().size() == 1 && hn->FragDonePeers() == 0; }));
+        std::printf("  fragstate: after the client left the host keeps %zu piece list(s)\n", hn->FragDonePeers());
+        CHECK(hn->FragDonePeers() == 0 && hn->FragOutMessages() == 0);
+        hn->Stop();
+    }
+
+    // ---------------------------------------------------------------- vars (shared variables survive loss)
+    {
+        SimGuard guard;
+        Scene hs("VarHost"); hs.physicsEnabled = false;
+        Scene cs("VarClient"); cs.physicsEnabled = false;
+        auto* hn = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* cn = cs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        CHECK(hn->StartServer(0));
+        CHECK(cn->StartClient("127.0.0.1", hn->ServerPort()));
+        CHECK(PumpAll({&hs, &cs}, 200, [&] { return cn->Joined() && hn->Players().size() == 2; }));
+        net::SimSettings& sim = net::Simulator();
+        sim.enabled = true; sim.latencyMs = 30.0f; sim.jitterMs = 25.0f; sim.loss = 0.4f;
+        for (int i = 0; i < 40; ++i) {
+            hn->SetVar("h" + std::to_string(i), std::to_string(i));
+            cn->SetVar("c" + std::to_string(i), std::to_string(i * 2));
+        }
+        for (int v = 1; v <= 60; ++v) {   // a value changed every frame: the newest one wins, not a late old one
+            hn->SetVar("hot", std::to_string(v));
+            cn->SetVar("cold", std::to_string(v));
+            PumpAll({&hs, &cs}, 1, {}, nullptr, 1);
+        }
+        auto allThere = [&] {
+            for (int i = 0; i < 40; ++i) {
+                if (cn->GetVar("h" + std::to_string(i)) != std::to_string(i)) return false;
+                if (hn->GetVar("c" + std::to_string(i)) != std::to_string(i * 2)) return false;
+            }
+            return cn->GetVar("hot") == "60" && hn->GetVar("cold") == "60" && cn->GetVar("cold") == "60" &&
+                   hn->VarsUnacked() == 0 && cn->VarsUnacked() == 0;
+        };
+        int frames = 0;
+        const bool ok = PumpAll({&hs, &cs}, 1500, allThere, &frames, 4);
+        int missing = 0;
+        for (int i = 0; i < 40; ++i) {
+            if (cn->GetVar("h" + std::to_string(i)) != std::to_string(i)) ++missing;
+            if (hn->GetVar("c" + std::to_string(i)) != std::to_string(i * 2)) ++missing;
+        }
+        std::printf("  vars: 80 changes and 2 x 60 quick ones at 40%% loss: %d missing, hot \"%s\" cold \"%s\", unacked %zu + %zu, after %d frames\n",
+                    missing, cn->GetVar("hot").c_str(), hn->GetVar("cold").c_str(), hn->VarsUnacked(), cn->VarsUnacked(), frames);
+        CHECK(ok);
+        sim.enabled = false;
+        hn->Stop(); cn->Stop();
+    }
+
+    // ---------------------------------------------------------------- netsim (the settings mean what they say)
+    {
+        SimGuard guard;
+        net::UdpSocket sa, sb;
+        CHECK(sa.Open() && sa.Bind(0) && sb.Open() && sb.Bind(0));
+        net::Endpoint toB;
+        CHECK(net::UdpSocket::Resolve("127.0.0.1", sb.LocalPort(), toB));
+        std::vector<std::uint8_t> got(net::kMaxDatagram);
+        net::Endpoint from;
+        auto drain = [&] {   // read B (through the simulator) and pump A's held datagrams
+            int n = 0;
+            net::PumpSimulator(sa);
+            while (net::TakeDatagram(sb, got.data(), got.size(), from) > 0) ++n;
+            return n;
+        };
+        auto send = [&](const std::uint8_t* d, std::size_t len) {
+            if (!net::HoldDatagram(sa, toB, d, len)) sa.SendTo(toB, d, len);
+        };
+        drain();   // B reads through the simulator, as a Network Manager's socket does
+        net::SimSettings& sim = net::Simulator();
+        sim.enabled = true; sim.latencyMs = 0.0f; sim.jitterMs = 0.0f; sim.loss = 0.3f; sim.duplicate = 0.0f;
+        const std::uint8_t msg[32] = {7};
+        int received = 0;
+        const int sent = 3000;
+        for (int i = 0; i < sent; ++i) {
+            send(msg, sizeof msg);
+            if (i % 50 == 49) received += drain();
+        }
+        for (int i = 0; i < 20; ++i) { received += drain(); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+        const float lossSeen = 1.0f - (float)received / (float)sent;
+        std::printf("  netsim: loss 30%% set, %.1f%% seen between two sockets of one program\n", lossSeen * 100.0f);
+        CHECK(lossSeen > 0.25f && lossSeen < 0.35f);   // was ~51% (dropped on the way out and again on the way in)
+        // A burst under 200 ms of latency is delayed, not lost (one queue of 256 for everyone dropped the rest).
+        sim.loss = 0.0f; sim.latencyMs = 200.0f;
+        received = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 1000; ++i) {
+            send(msg, sizeof msg);
+            if (i % 25 == 24) received += drain();
+        }
+        double firstAt = -1.0;
+        while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(900)) {
+            const int n = drain();
+            if (n > 0 && firstAt < 0.0) firstAt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            received += n;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        std::printf("  netsim: 1000 datagrams at 200 ms latency: %d arrived, the first after %.0f ms, %zu overflowed\n", received,
+                    firstAt * 1000.0, net::SimulatorOverflows());
+        CHECK(received == 1000);
+        CHECK(firstAt > 0.15 && firstAt < 0.35);   // the latency once (it was added on the way out and again on the way in)
+        sim.enabled = false;
+        net::ResetSimulator(sa); net::ResetSimulator(sb);
+    }
+
+    // ---------------------------------------------------------------- rbguard (review F4: settings agreed, future inputs capped)
+    {
+        Scene hs("RbgHost"); hs.physicsEnabled = false;
+        Scene cs("RbgClient"); cs.physicsEnabled = false;
+        auto* hn = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* cn = cs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        CHECK(hn->StartServer(0));
+        CHECK(cn->StartClient("127.0.0.1", hn->ServerPort()));
+        CHECK(PumpAll({&hs, &cs}, 300, [&] { return cn->Joined() && cn->Players().size() == 2 && hn->Players().size() == 2; }));
+        const std::uint32_t cid = cn->LocalId();
+        net::Rollback::Settings st;
+        st.tickRate = 50.0f; st.inputDelay = 2; st.maxPrediction = 8; st.maxInputBytes = 255;
+        int runs = 0;
+        auto start = [&] {
+            ++runs;
+            return hn->Rollback().Start(st, [] { return std::string("s"); }, [](const std::string&) {}, [] { return std::string("i"); },
+                                        [](std::uint32_t, const std::vector<net::Rollback::FrameInput>&) {});
+        };
+        auto put32 = [](std::string& w, std::uint32_t v) { for (int i = 0; i < 4; ++i) w.push_back((char)((v >> (8 * i)) & 0xFF)); };
+        const std::uint32_t goodHash = (std::uint32_t)StringId::HashOf("0," + std::to_string(cid) + ",");
+        // The client's "__rb" packet as the wire describes it (okay/Net/Rollback.cpp), with every field chosen.
+        auto packet = [&](std::uint8_t delay, std::uint8_t maxBytes, float hz, std::uint8_t players, std::uint32_t hash,
+                          std::uint32_t first, int n, int len) {
+            std::string w;
+            w.push_back((char)2); w.push_back((char)runs); w.push_back((char)delay); w.push_back((char)maxBytes);
+            put32(w, (std::uint32_t)std::lround(hz * 1000.0f)); w.push_back((char)players); put32(w, hash);
+            put32(w, first); w.push_back((char)n);
+            for (int i = 0; i < n; ++i) { w.push_back((char)len); w.append((std::size_t)len, 'z'); }
+            w.push_back((char)0);                      // no acks
+            put32(w, 0xFFFFFFFFu); put32(w, 0); put32(w, 0);   // no checksum yet
+            return w;
+        };
+        CHECK(start());
+        hn->Rollback().OnMessage(cid, packet(2, 255, 50.0f, 2, goodHash, 2, 3, 4));   // a fair packet is taken
+        CHECK(hn->Rollback().Running());
+        const std::size_t held0 = hn->Rollback().HeldInputs();
+        CHECK(held0 >= 3);
+        // A peer parks 255 inputs of 255 bytes for frames far in the future, again and again.
+        for (std::uint32_t k = 0; k < 400; ++k) hn->Rollback().OnMessage(cid, packet(2, 255, 50.0f, 2, goodHash, 1000 + k * 255, 255, 255));
+        // And a run of 255 from the next frame on: only those up to how far ahead a player can be are kept.
+        hn->Rollback().OnMessage(cid, packet(2, 255, 50.0f, 2, goodHash, 5, 255, 255));
+        const std::size_t held1 = hn->Rollback().HeldInputs(), bytes1 = hn->Rollback().HeldInputBytes();
+        std::printf("  rbguard: after forged future inputs the host holds %zu inputs, %zu bytes (from %zu)\n", held1, bytes1, held0);
+        CHECK(held1 <= held0 + 2 * 2 + 8 + net::Rollback::kAheadMargin + 2);
+        CHECK(bytes1 < 16 * 1024);   // was up to ~25 MB
+        CHECK(hn->Rollback().Running());
+        // A different tick rate, input size or player set stops it in plain words.
+        hn->Rollback().OnMessage(cid, packet(2, 255, 60.0f, 2, goodHash, 2, 1, 1));
+        std::printf("  rbguard: tick rate: \"%s\"\n", hn->Rollback().LastError().c_str());
+        CHECK(!hn->Rollback().Running() && hn->Rollback().LastError().find("60 Hz") != std::string::npos);
+        CHECK(start());
+        hn->Rollback().OnMessage(cid, packet(2, 64, 50.0f, 2, goodHash, 2, 1, 1));
+        std::printf("  rbguard: input size: \"%s\"\n", hn->Rollback().LastError().c_str());
+        CHECK(!hn->Rollback().Running() && hn->Rollback().LastError().find("64 bytes") != std::string::npos);
+        CHECK(start());
+        hn->Rollback().OnMessage(cid, packet(2, 255, 50.0f, 3, 12345u, 2, 1, 1));
+        std::printf("  rbguard: players: \"%s\"\n", hn->Rollback().LastError().c_str());
+        CHECK(!hn->Rollback().Running() && hn->Rollback().LastError().find("players") != std::string::npos);
+        CHECK(start());
+        hn->Rollback().OnMessage(cid, packet(2, 255, 50.0f, 2, 12345u, 2, 1, 1));   // the same count, other players
+        CHECK(!hn->Rollback().Running() && hn->Rollback().LastError().find("players") != std::string::npos);
+        CHECK(start());
+        hn->Rollback().OnMessage(cid, packet(3, 255, 50.0f, 2, goodHash, 2, 1, 1));   // the input delay, as before
+        CHECK(!hn->Rollback().Running() && hn->Rollback().LastError().find("input delay") != std::string::npos);
+        hn->Stop(); cn->Stop();
     }
 
     // ---------------------------------------------------------------- rollback (C++)

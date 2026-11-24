@@ -411,6 +411,7 @@ void NetworkManager::Stop() {
     m_remoteTarget.clear();
     m_fragOut.clear();
     m_fragDone.clear();
+    m_varVer.clear(); m_varSeen.clear(); m_varOut.clear(); m_varAcks.clear();
     m_migPeers.clear();
     m_migSent.clear();
     m_migResend = 0.0f;

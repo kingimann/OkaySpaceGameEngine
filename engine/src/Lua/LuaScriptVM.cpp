@@ -1260,16 +1260,16 @@ std::vector<ScriptDiagnostic> LuaScriptVM::Lint(const std::string& source) {
         if (k >= t.size()) continue;
         const std::string& n = t[k].text;
         bool known = false;
-        std::string near;
+        std::string nearName;
         for (const char* h : kHandlers) {
             if (n == h) { known = true; break; }
             std::string lower = h;
             for (char& ch : lower) ch = (char)std::tolower((unsigned char)ch);
             if (n == lower) { known = true; break; }   // old style: update, start
-            if (near.empty() && EditDistance(n, h) <= 2 && n.size() >= 4) near = h;
+            if (nearName.empty() && EditDistance(n, h) <= 2 && n.size() >= 4) nearName = h;
         }
-        if (!known && !near.empty())
-            out.push_back(ScriptDiagnostic{t[k].line, n + " is never called by the engine. Did you mean " + near + "? (names are case-sensitive)", 1, t[k].col});
+        if (!known && !nearName.empty())
+            out.push_back(ScriptDiagnostic{t[k].line, n + " is never called by the engine. Did you mean " + nearName + "? (names are case-sensitive)", 1, t[k].col});
     }
     std::stable_sort(out.begin(), out.end(), [](const ScriptDiagnostic& a, const ScriptDiagnostic& b) { return a.line < b.line; });
     return out;

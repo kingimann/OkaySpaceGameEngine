@@ -71,9 +71,9 @@ public:
     }
     Token Next();
     int line() const { return line_; }
-    [[noreturn]] void Fail(const std::string& msg, int line, int col, const std::string& near) {
+    [[noreturn]] void Fail(const std::string& msg, int line, int col, const std::string& nearText) {
         std::string m = msg;
-        if (!near.empty()) m += " near " + near;
+        if (!nearText.empty()) m += " near " + nearText;
         throw CompileError{m, line, col};
     }
 private:
@@ -369,13 +369,13 @@ private:
     const Token& Lookahead() { if (ahead_.t == 0) ahead_ = lex_.Next(); return ahead_; }
     bool Test(int t) { if (tok_.t == t) { Next(); return true; } return false; }
     [[noreturn]] void ErrorAt(const std::string& msg, const Token& t) {
-        std::string near;
+        std::string nearText;
         switch (t.t) {
-            case T_NAME: case T_STRING: near = "'" + t.s.substr(0, 40) + "'"; break;
-            case T_INT: case T_FLT: near = "'" + t.s + "'"; break;
-            default: near = TokText(t.t);
+            case T_NAME: case T_STRING: nearText = "'" + t.s.substr(0, 40) + "'"; break;
+            case T_INT: case T_FLT: nearText = "'" + t.s + "'"; break;
+            default: nearText = TokText(t.t);
         }
-        throw CompileError{msg + " near " + near, t.line, t.col};
+        throw CompileError{msg + " near " + nearText, t.line, t.col};
     }
     [[noreturn]] void Error(const std::string& msg) { ErrorAt(msg, tok_); }
     [[noreturn]] void ErrorPlain(const std::string& msg) { throw CompileError{msg, prevLine_, tok_.col}; }

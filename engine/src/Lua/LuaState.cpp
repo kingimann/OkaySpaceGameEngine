@@ -1554,7 +1554,7 @@ std::vector<Value> State::CallValue(const Value& fn, const std::vector<Value>& a
 // ------------------------------------------------------------------ coroutines
 bool State::IsYieldable() const { return co_ != main_ && co_->nest == 0; }
 
-int State::Yield(int nargs) {
+int State::YieldValues(int nargs) {
     if (co_ == main_) Error("attempt to yield from outside a coroutine");
     if (co_->nest > 0) Error("attempt to yield across a C-call boundary");
     co_->nYield = nargs;

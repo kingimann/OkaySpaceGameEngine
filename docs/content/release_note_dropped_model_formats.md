@@ -6,6 +6,12 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: this happened, with one format dropped, not the list below.** Assimp was deleted (branch `claude/no-assimp-1`).
+> By then every extension it read had a reader of ours, ON by default, except Nendo `.ndo`. The note for the release, in plain
+> words: "Model import no longer uses the Assimp library. Every format it read is now read by our own code, except Nendo
+> (.ndo), a format from a modeller that has not been sold for about twenty years: there is no description of it and no sample
+> file to write a reader from." The draft below is kept as history.
+
 Status: DRAFT. Nothing in this note has happened yet: Assimp is still in the build (off by default, on in the Windows
 distribution) and no default has been changed. The roadmap (`docs/status/own_code_roadmap.md`, Assimp row and order step 3)
 requires this announcement to be published **one release before** Assimp is removed. The owner decides the release

@@ -187,7 +187,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_MD5");
         SetImportBackend(".md5mesh", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".md5mesh") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".md5mesh") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "skel.md5mesh", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_MD5") != std::string::npos);
             CHECK(ImportableExtensions().find(".md5mesh") == std::string::npos);

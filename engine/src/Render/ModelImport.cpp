@@ -46,7 +46,6 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/FbxReader.hpp"
-#include "okay/Core/ThirdParty.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -69,7 +68,7 @@ namespace okay {
 using model_import::Lower;
 using model_import::BaseName;
 // Which reader read the last model (set by the import paths below, logged once per ImportModelScene): "the own LXO
-// reader", "the own FBX reader", "Assimp", ... and the reading time in ms (-1 = not measured). Thread-local: imports on two threads
+// reader", "the own FBX reader", ... and the reading time in ms (-1 = not measured). Thread-local: imports on two threads
 // do not mix.
 static thread_local std::string g_readBy;
 static thread_local double g_readMs = -1.0;
@@ -83,32 +82,10 @@ static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
 }
 
 
-bool AssimpAvailable() {
-#ifdef OKAY_HAVE_ASSIMP
-    return true;
-#else
-    return false;
-#endif
-}
-
 std::string ImportableExtensions() {
-    // Built in: OBJ, glTF, FBX (our own okay::fbx) and our own STL / PLY readers, plus everything
-    // the Assimp build can read. .dae is added when our own Collada reader is switched on
-    // (it is off by default, so this part is worked out per call, not cached).
-    static const std::string list = [] {
-        std::string out = ".obj .gltf .glb .vrm .fbx .stl .ply";   // .vrm: a VRM avatar is a binary glTF 2.0 file
-#ifdef OKAY_HAVE_ASSIMP
-        std::string e = assimp_backend::Extensions(), cur;
-        e += ' ';
-        for (char c : e) {
-            if (c != ' ') { cur += c; continue; }
-            if (!cur.empty() && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
-            cur.clear();
-        }
-#endif
-        return out;
-    }();
-    std::string res = list;
+    // Always read: OBJ, glTF, FBX (our own okay::fbx) and our own STL / PLY readers. Every other format is listed while its
+    // reader is switched on (OKAY_OWN_<FMT>, all ON by default), so this part is worked out per call, not cached.
+    std::string res = ".obj .gltf .glb .vrm .fbx .stl .ply";   // .vrm: a VRM avatar is a binary glTF 2.0 file
     for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
@@ -162,7 +139,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     if (!IsModelFile(path)) { if (ok) *ok = false; return Mesh(); }
     std::string p = Lower(path);
     if (EndsWith(p, ".vrm")) { g_readBy = "the own glTF reader (VRM)"; return LoadGLTF(path, ok, outTexture); }   // glTF 2.0 binary, never version 1
-    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
+    if (EndsWith(p, ".obj")) {
         g_readBy = "the own OBJ reader";
         return Mesh::LoadOBJ(path, ok, outTexture);
     }
@@ -176,7 +153,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
         return fok ? m : Mesh();
     }
     // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
-    // STL / PLY readers, or Assimp when the build has it. One static mesh.
+    // readers for every other format. One static mesh.
     ImportedModel im;
     Mesh m;
     if (!ImportModelData(path, im, ImportBackend::Default, /*flatten=*/true, nullptr)) {
@@ -418,12 +395,6 @@ ModelCounts CountModel(const ImportedModel& m) {
 }
 
 namespace {
-
-#ifdef OKAY_PREFER_OWN_READERS_DEFAULT
-constexpr bool kPreferOwnDefault = true;
-#else
-constexpr bool kPreferOwnDefault = false;
-#endif
 
 #ifdef OKAY_OWN_COLLADA_DEFAULT
 constexpr bool kOwnColladaDefault = true;
@@ -792,12 +763,11 @@ int OwnSlot(const std::string& ext) {
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
 
-// Whether our reader is the one for a format (slot 3 and up). Order: SetImportBackend in code (checked by the caller), then
-// OKAY_THIRD_PARTY=1 (every format back to Assimp; okay/Core/ThirdParty.hpp), then OKAY_OWN_<FMT>=0/1, then the CMake option
-// (ON for every reader since the owner's approval of 2026-11-17, except the NDO seam, which refuses every file).
+// Whether our reader is switched on for a format (slot 3 and up). Order: SetImportBackend in code (checked by the caller), then
+// OKAY_OWN_<FMT>=0/1, then the CMake option (ON for every reader). There is no other reader: Assimp was removed on 2026-11-24
+// (branch claude/no-assimp-1), so a format switched off is refused with a message that names its switch.
 bool OwnOptedIn(int slot) {
     if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
-    if (ThirdPartyForced()) return false;
     bool v = kOptIn[slot - 3].cmakeDefault;
     if (const char* e = std::getenv(kOptIn[slot - 3].var)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
@@ -813,17 +783,9 @@ std::string ExtensionOf(const std::string& path) {
     return Lower(path.substr(dot));
 }
 
-bool AssimpReadsExt(const std::string& ext) {
-#ifdef OKAY_HAVE_ASSIMP
-    return (" " + assimp_backend::Extensions() + " ").find(" " + Lower(ext) + " ") != std::string::npos;
-#else
-    (void)ext; return false;
-#endif
-}
-
 // The one-static-mesh mode for the readers added after Collada / 3DS: every node's transform (the root's Z-up to Y-up
 // turn included) is baked into the vertices and normals of the parts on it, skins and clips are dropped and one root
-// node is left, as Assimp's pre-transform step does. (A skinned part at its bind pose is the mesh seen through its
+// node is left (the usual "pre-transform" import step). (A skinned part at its bind pose is the mesh seen through its
 // root, so the baked result is the bind pose.)
 void FlattenImportedModel(ImportedModel& m) {
     std::vector<Mat4> world(m.nodes.size());
@@ -868,27 +830,12 @@ bool SetImportBackend(const std::string& ext, ImportBackend which) {
 
 ImportBackend EffectiveImportBackend(const std::string& ext) {
     const int s = OwnSlot(ext);
-    if (s < 0) return AssimpReadsExt(ext) ? ImportBackend::Assimp : ImportBackend::Default;
-    ImportBackend c = (ImportBackend)g_backendChoice[s].load();
-    if (c == ImportBackend::Own) return ImportBackend::Own;
-    if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
-    // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
-    // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s >= 3) {   // the readers from Collada on: ours unless switched off (OKAY_OWN_<FMT>=0 or OKAY_THIRD_PARTY=1); then Assimp
-        if (OwnOptedIn(s)) return ImportBackend::Own;
-        if (AssimpAvailable()) return ImportBackend::Assimp;
-        // OKAY_THIRD_PARTY=1 in a build without Assimp: nothing else can read the file, so ours still does. A single format
-        // switched off with OKAY_OWN_<FMT>=0 stays off (the import then says how to switch it on).
-        if (ThirdPartyForced() && kOptIn[s - 3].cmakeDefault) return ImportBackend::Own;
-        return ImportBackend::Default;
-    }
-    if (s == 0 || !AssimpAvailable()) return ImportBackend::Own;
-    // STL / PLY: ours by default (OKAY_PREFER_OWN_READERS, ON since 2026-11-17); OKAY_OWN_STL / OKAY_OWN_PLY = 0/1 and
-    // OKAY_THIRD_PARTY=1 change it at run time.
-    if (ThirdPartyForced()) return ImportBackend::Assimp;
-    bool own = kPreferOwnDefault;
-    if (const char* e = std::getenv(s == 1 ? "OKAY_OWN_STL" : "OKAY_OWN_PLY")) { if (e[0] == '1') own = true; else if (e[0] == '0') own = false; }
-    return own ? ImportBackend::Own : ImportBackend::Assimp;
+    if (s < 0) return ImportBackend::Default;   // no reader for this format
+    if ((ImportBackend)g_backendChoice[s].load() == ImportBackend::Own) return ImportBackend::Own;
+    // OBJ, STL and PLY (slots 0 to 2) are always ours. The readers from Collada on are ours unless switched off
+    // (OKAY_OWN_<FMT>=0 or -DOKAY_OWN_<FMT>=OFF); a format switched off has no reader (the import then says how to switch it on).
+    if (s < 3 || OwnOptedIn(s)) return ImportBackend::Own;
+    return ImportBackend::Default;
 }
 
 bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
@@ -906,7 +853,7 @@ bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
     return false;
 }
 
-// .xml (slot 45): several formats Assimp reads under this extension, told apart by the root element. Only the first 8 KiB are
+// .xml (slot 45): several model formats use this extension, told apart by the root element. Only the first 8 KiB are
 // looked at (UTF-16 text with its zero bytes dropped): the root element, and for <mesh> its first child element (<sharedgeometry>,
 // <submeshes> or <submesh> is OGRE XML, anything else an Irrlicht mesh). The file is then read by that format's own reader.
 static bool ReadXmlByRoot(const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* loader) {
@@ -982,10 +929,10 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
 
 static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
-    // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
+    // `flatten`: bake node transforms into the vertices (one static mesh); see FlattenImportedModel.
     const std::string ext = ExtensionOf(path);
     // glTF 1.0 (.gltf / .glb, version 1): our own reader when it is switched on (glTF 2.0 files are read by Gltf.hpp and never
-    // come through here; with the switch off a glTF 1.0 file is refused by the glTF import, Assimp is never asked).
+    // come through here; with the switch off a glTF 1.0 file is refused by the glTF import).
     // An explicit ImportBackend::Own asks for our reader whatever the switch says (as for the other formats).
     std::string probeWhy;
     if ((ext == ".gltf" || ext == ".glb") && (which == ImportBackend::Own ? RunReaderGuarded([&]() -> bool { return GltfFileIsVersion1(path); }, probeWhy)
@@ -998,45 +945,19 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
         g_readBy = "the own glTF 1.0 reader";
         return true;
     }
-    // Our reader rejects a second `element vertex`. Assimp still loads that file,
-    // and the default choice would hand it to Assimp after our reader said no.
-    // The two blocks then contribute normals and UVs that do not line up with
-    // positions. Refuse the file before either backend runs.
+    // A second `element vertex` would give normals and UVs that do not line up with
+    // positions. Refuse the file before any reader runs.
     if (ext == ".ply" && PlyFileDeclaresDuplicateVertex(path)) {
         if (err) *err = "PLY declares more than one vertex element";
         return false;
     }
-    ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
-    // Assimp 5.4.3's RAW importer leaves null child pointers in the scene when a file has two or more groups of triangles, and the
-    // import crashed on them (RawFileUnsafeForAssimp, RawReader.cpp). Such a file is never handed to Assimp: with the default
-    // choice (or the per-format switch set to Assimp) our RAW reader reads it, and an explicit request for Assimp is refused.
-    bool assimpUnsafe = false;
-#ifdef OKAY_HAVE_ASSIMP
-    if (use == ImportBackend::Assimp && ext == ".raw" && RawFileUnsafeForAssimp(path)) {
-        assimpUnsafe = true;
-        if (which == ImportBackend::Assimp) {
-            if (err) *err = "RAW: this file has more than one group of triangles, which crashes Assimp 5.4.3's RAW importer; read it with our own RAW reader (OKAY_OWN_RAW=1)";
-            return false;
-        }
-        Log::Warning("model import '", path, "': more than one group of triangles, which Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader");
-        use = ImportBackend::Own;
-    }
-#endif
-    if (use == ImportBackend::Assimp) {
-#ifdef OKAY_HAVE_ASSIMP
-        g_readBy = "Assimp";
-        return assimp_backend::Read(path, flatten, out, err);
-#else
-        if (err) *err = "this build was compiled without Assimp";
-        return false;
-#endif
-    }
+    const ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Own) {
         const int s = OwnSlot(ext);
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
         // the mesh files an Irrlicht scene names are read through this same seam, with the default choice of backend (our own
-        // reader where it is switched on, else Assimp when the build has it); one level only, so a scene cannot name a scene
+        // reader where it is switched on); one level only, so a scene cannot name a scene
         thread_local int loaderDepth = 0;
         const IrrMeshLoader irrLoader = [&](const std::string& p, ImportedModel& m, std::string* e) {
             if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr") || EndsWith(Lower(p), ".lws") || EndsWith(Lower(p), ".mot")) { if (e) *e = "a scene file may not load another scene"; return false; }
@@ -1097,12 +1018,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
             g_readBy = OwnReaderName(s);
             return true;
         }
-        // Our reader said no. With the default choice, give Assimp a go when the build has it.
-        if (which == ImportBackend::Default && AssimpAvailable() && !assimpUnsafe) {
-#ifdef OKAY_HAVE_ASSIMP
-            if (assimp_backend::Read(path, flatten, out, nullptr)) { g_readBy = "Assimp (" + OwnReaderName(s) + " refused it: " + e1.substr(0, 200) + ")"; return true; }
-#endif
-        }
+        // Our reader said no: there is no other reader, the import fails with its reason.
         out = ImportedModel{};
         if (err) *err = e1;
         return false;
@@ -1114,9 +1030,9 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
         const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
-            *err = std::string("no ") + nm + " reader enabled: our own reader is switched off (" + var + "=0, or OKAY_THIRD_PARTY=1, or a build with -D" + var +
+            *err = std::string("no ") + nm + " reader enabled: our own reader is switched off (" + var + "=0, or a build with -D" + var +
                    "=OFF; set " + var + "=1, build with -D" + var +
-                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own))";
         else *err = "no reader for this format in this build";
     }
     return false;
@@ -1742,7 +1658,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             return nullptr;
         }
     }
-    // Non-glTF (OBJ / STL / PLY / Assimp formats): read through the seam, as a node
+    // Non-glTF (OBJ / STL / PLY / every other format): read through the seam, as a node
     // hierarchy with skins + animations where the format has them (FBX rigs etc.).
     // Falls through to the flattened single-mesh path on failure.
     if (!isGltf) {
@@ -1827,9 +1743,9 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             if (!tex.empty()) mr->texture = tex;
         }
         AutoNormalizeImportScale(scene, root);
-        // A file that names no mesh at all (no nodes, no meshes) is an empty scene, as Assimp reads it; one that names
+        // A file that names no mesh at all (no nodes, no meshes) is an empty scene; one that names
         // meshes none of which could be read is a failed import.
-        // (Assimp also wants a scene: a file with no "scenes" at all, or a glTF 1.0 file whose meshes are an object, fails.)
+        // (A file with no "scenes" at all, or a glTF 1.0 file whose meshes are an object, fails.)
         const JVal* ms = doc.root.Find("meshes");
         const JVal* scs = doc.root.Find("scenes");
         const bool namesNoMesh = !ms || (ms->type == JVal::Arr && ms->arr.empty());
@@ -2161,7 +2077,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 // Rigged (skinned) parts and meshes with blend shapes keep the file's normals: their vertices are shared with the
 // skin weights and the shapes, so they are not rebuilt.
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
-    // One line per import, so the Console shows which reader read the file (an OKAY_OWN_<FMT> switch at work, or Assimp)
+    // One line per import, so the Console shows which reader read the file (an OKAY_OWN_<FMT> switch at work)
     // and how long it took: "model import 'x.lxo': read by the own LXO reader in 1.20 ms (whole import 3.40 ms)".
     g_readBy.clear(); g_readMs = -1.0;
     if (!IsModelFile(path)) {

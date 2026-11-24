@@ -1,0 +1,129 @@
+; FBX 6.1.0 project file
+; written by scripts/gen_fbx_fixtures.py (FBX 6.x layout)
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 6100
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+CreationTime: "2008-01-01 10:00:00:000"
+
+Creator: "okay gen_fbx_fixtures.py"
+
+Definitions:  {
+	Version: 100
+	Count: 4
+}
+
+Objects:  {
+	Model: "Model::Cube","Mesh" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation","Lcl Translation","A+",10.0,20.0,30.0
+			Property: "Lcl Rotation","Lcl Rotation","A+",0.0,30.0,0.0
+			Property: "Lcl Scaling","Lcl Scaling","A+",1.0,2.0,1.0
+		}
+		MultiLayer: 0
+		MultiTake: 1
+		Shading: Y
+		Culling: "CullingOff"
+		Vertices: -1,-1,1,1,-1,1,1,1,1,-1,1,1,
+-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1
+		PolygonVertexIndex: 0,1,2,-4,5,4,7,-7,4,0,3,-8
+,1,5,6,-3,3,2,6,-8,4,5,1,-1
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: 0,0,1,0,0,1,0,0,1,0,0,1,
+0,0,-1,0,0,-1,0,0,-1,0,0,-1,
+-1,0,0,-1,0,0,-1,0,0,-1,0,0,
+1,0,0,1,0,0,1,0,0,1,0,0,
+0,1,0,0,1,0,0,1,0,0,1,0,
+0,-1,0,0,-1,0,0,-1,0,0,-1,0
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: 0,0,1,0,1,1,0,1
+			UVIndex: 0,1,2,3,0,1,2,3,0,1,2,3,
+0,1,2,3,0,1,2,3,0,1,2,3
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: 0
+		}
+		LayerElementTexture: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			BlendMode: "Translucent"
+			TextureAlpha: 1.0
+			TextureId: 0
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+	}
+	Material: "Material::Red","" {
+		Version: 102
+		ShadingModel: "phong"
+		MultiLayer: 0
+		Properties60:  {
+			Property: "ShadingModel","KString","","Phong"
+			Property: "DiffuseColor","ColorRGB","",0.9,0.1,0.1
+			Property: "EmissiveColor","ColorRGB","",0.1,0.0,0.0
+			Property: "ShininessExponent","double","",25.0
+		}
+	}
+	Texture: "Texture::Diffuse","TextureVideoClip" {
+		Type: "TextureVideoClip"
+		Version: 202
+		TextureName: "Texture::Diffuse"
+		Properties60:  {
+			Property: "Translation","Vector","A+",0.0,0.0,0.0
+		}
+		Media: "Video::Diffuse"
+		FileName: "C:\art\red.png"
+		RelativeFilename: "red.png"
+	}
+	GlobalSettings:  {
+		Version: 1000
+		Properties60:  {
+			Property: "UpAxis","int","",2.0
+			Property: "UpAxisSign","int","",1.0
+			Property: "FrontAxis","int","",1.0
+			Property: "FrontAxisSign","int","",-1.0
+			Property: "CoordAxis","int","",0.0
+			Property: "CoordAxisSign","int","",1.0
+			Property: "UnitScaleFactor","double","",1.0
+		}
+	}
+}
+
+Connections:  {
+	Connect: "OO","Model::Cube","Model::Scene"
+	Connect: "OO","Material::Red","Model::Cube"
+	Connect: "OO","Texture::Diffuse","Model::Cube"
+}
+
+Version5:  {
+	Settings:  {
+		FrameRate: "30"
+		TimeFormat: 1
+	}
+}

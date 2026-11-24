@@ -200,7 +200,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Parts:**
   - 41.10.1 System libraries - SDL2 (system package; MinGW 2.30.9 fetched in CI and release; Emscripten's own port on the web), libsodium (system package, or MinGW prebuilt 1.0.20, optional)
   - 41.10.2 Fetched at configure time - Dear ImGui docking commit `036bf939...` (editor and launcher; the tag is written in both `CMakeLists.txt` and `launcher/CMakeLists.txt`), Assimp v5.4.3 (only with `OKAY_USE_ASSIMP=ON`, on in the Windows dist)
-  - 41.10.3 Vendored single files - `engine/third_party` (ufbx only; the stb image code and the editor's ImGuiColorTextEdit copy are gone)
+  - 41.10.3 Vendored single files - none left: `engine/third_party` is gone (ufbx was deleted on 2026-11-23; the stb image code earlier) and the editor's ImGuiColorTextEdit copy was deleted on 2026-11-23 (replaced by `OkayUI::CodeEdit`)
   - 41.10.4 Tool versions in CI - Emscripten 3.1.51, ubuntu-latest, ubuntu-22.04 for the Linux server, windows-latest for the export check
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
 - **API:** `OKAY_IMGUI_TAG`, `FETCHCONTENT_SOURCE_DIR_IMGUI`, `OKAY_IMGUI_SRC`, `SDL2_VERSION`

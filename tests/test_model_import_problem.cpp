@@ -82,6 +82,10 @@ int main() {
     CHECK(Fails(d.at("notfbx.fbx"), "not an FBX file"));
     Write(d.at("cut.fbx"), std::string("Kaydara FBX Binary  \0\x1a\0", 23) + Le32(7400));
     CHECK(Fails(d.at("cut.fbx"), "FBX reader could not read it"));
+    // FBX 5.x (2005 and before) is not read: the message names the version and says what to do
+    Write(d.at("old5.fbx"), std::string("Kaydara FBX Binary  \0\x1a\0", 23) + Le32(5000) + std::string(13, '\0'));
+    CHECK(Fails(d.at("old5.fbx"), "FBX 5.0"));
+    CHECK(Has(DescribeModelImportProblem(d.at("old5.fbx")), "FBX 2011"));
     // read through the import seam: the reader's own words come back
     Write(d.at("junk.stl"), "solid x\n  this is not a facet\nendsolid\n");
     {

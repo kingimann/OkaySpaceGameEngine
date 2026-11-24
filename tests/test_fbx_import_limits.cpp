@@ -9,8 +9,8 @@
 #include <fstream>
 #include <string>
 
-// Hostile FBX files through the importer, on the DEFAULT path (ufbx) and with our own reader switched on
-// (which hands a refused file to ufbx): a Model parent chain far deeper than any stack, files that
+// Hostile FBX files through the importer (our own reader, the only FBX reader since ufbx was deleted on
+// 2026-11-23; these cases ran on both readers until then): a Model parent chain far deeper than any stack, files that
 // declare too many animation stacks / layers / curves, and many takes pointing at the same curves. The
 // import must fail cleanly (ok == false, no crash, no unbounded allocation). Files are written to the
 // temp directory, never the source tree.
@@ -33,7 +33,7 @@ static std::string ChainFbx(int n) {
 }
 // One animated model: `stacks` takes sharing one layer and `curveNodes` curve nodes (translation, rotation,
 // scale), each with one curve running `spanSec` seconds. `extraLayers` empty layers and `extraCurves` bare
-// curves pad the counts. The curves are cubic with `keys` keys, so ufbx resamples them at 30 Hz (at most 32 samples per key).
+// curves pad the counts. The curves are cubic with `keys` keys.
 static std::string AnimFbx(int stacks, int extraLayers, int extraCurves, double spanSec, int curveNodes = 1, int keys = 2) {
     static const char* kProp[3] = {"Lcl Translation", "Lcl Rotation", "Lcl Scaling"};
     std::string s = kHeader; s += "Objects:  {\n\tModel: 1, \"Model::M\", \"Null\" {\n\t}\n";
@@ -57,14 +57,12 @@ static std::string AnimFbx(int stacks, int extraLayers, int extraCurves, double 
     return s + "}\n";
 }
 
-// Imports `text` with ufbx (own = false) or with our reader on (own = true, ufbx behind it); returns ok.
-static bool Import(const std::string& text, bool own, const char* tag, int* clips = nullptr) {
+// Imports `text`; returns ok.
+static bool Import(const std::string& text, const char* tag, int* clips = nullptr) {
     const fs::path f = TempFile(tag);
     { std::ofstream o(f, std::ios::binary); o.write(text.data(), (std::streamsize)text.size()); }
-    fbx::SetOwnReaderEnabled(own);
     Scene sc("limits"); bool ok = false;
     GameObject* root = ImportModelScene(sc, f.string(), &ok);
-    fbx::SetOwnReaderEnabled(false);
     if (clips) { auto* ma = root ? root->GetComponent<ModelAnimator>() : nullptr; *clips = ma ? (int)ma->clips.size() : 0; }
     std::error_code ec; fs::remove(f, ec);
     CHECK(ok == (root != nullptr));   // a failed import hands back nothing
@@ -73,28 +71,26 @@ static bool Import(const std::string& text, bool own, const char* tag, int* clip
 
 int main() {
     RUN_SUITE("fbx import: deep node chain (flat file, depth only in Connections)");
-    for (bool own : {false, true}) {
-        CHECK(!Import(ChainFbx(100000), own, "deep"));                    // far past the stack: refused, not recursed
-        CHECK(!Import(ChainFbx(3000), own, "deep3k"));                    // past the depth cap (2048)
+    {
+        CHECK(!Import(ChainFbx(100000), "deep"));                    // far past the stack: refused, not recursed
+        CHECK(!Import(ChainFbx(3000), "deep3k"));                    // past the depth cap (2048)
         int clips = 0;
-        CHECK(Import(ChainFbx(1500), own, "ok1500", &clips));            // a deep but legal chain still imports (iteratively)
+        CHECK(Import(ChainFbx(1500), "ok1500", &clips));            // a deep but legal chain still imports (iteratively)
     }
 
     RUN_SUITE("fbx import: animation counts");
     const fbx::Limits lim;
-    for (bool own : {false, true}) {
+    {
         int clips = 0;
-        CHECK(Import(AnimFbx(3, 0, 0, 10.0), own, "sane", &clips) && clips == 3);
-        CHECK(!Import(AnimFbx((int)lim.maxAnimStacks + 1, 0, 0, 1.0), own, "stacks"));
-        CHECK(!Import(AnimFbx(1, (int)lim.maxAnimLayers, 0, 1.0), own, "layers"));
-        CHECK(!Import(AnimFbx(1, 0, (int)lim.maxAnimCurves, 1.0), own, "curves"));
+        CHECK(Import(AnimFbx(3, 0, 0, 10.0), "sane", &clips) && clips == 3);
+        CHECK(!Import(AnimFbx((int)lim.maxAnimStacks + 1, 0, 0, 1.0), "stacks"));
+        CHECK(!Import(AnimFbx(1, (int)lim.maxAnimLayers, 0, 1.0), "layers"));
+        CHECK(!Import(AnimFbx(1, 0, (int)lim.maxAnimCurves, 1.0), "curves"));
     }
 
     RUN_SUITE("fbx import: whole-file bake budget (many takes sharing one curve)");
-    for (bool own : {false, true}) {
-        // every take alone bakes fine; 128 of them with three curve nodes of 1000 keys over 1000 s are millions of baked keys
-        // (our reader refuses it by its own budget and hands the file to ufbx, which refuses it by the same numbers)
-        CHECK(!Import(AnimFbx((int)lim.maxAnimStacks, 0, 0, 1000.0, 3, 1000), own, "budget"));
-    }
+    // every take alone bakes fine; 128 of them with three curve nodes of 1000 keys over 1000 s are millions of baked keys,
+    // refused by the reader's budget
+    CHECK(!Import(AnimFbx((int)lim.maxAnimStacks, 0, 0, 1000.0, 3, 1000), "budget"));
     TEST_MAIN_RESULT();
 }

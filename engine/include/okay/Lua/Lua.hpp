@@ -334,7 +334,7 @@ public:
     /// Returns false (with the error value pushed) when the coroutine raised an error.
     bool Resume(Coroutine* co, int nargs, int* nresults);
     /// Called by coroutine.yield: marks a yield of the top nargs values.
-    int Yield(int nargs);
+    int YieldValues(int nargs);
     bool IsYieldable() const;
     void CloseCoroutine(Coroutine* co);
 

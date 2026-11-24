@@ -354,7 +354,7 @@ int C_resume(State& L, int n) {
     return InsertFirst(L, from, Value::Bool(ok));
 }
 
-int C_yield(State& L, int n) { return L.Yield(n); }
+int C_yield(State& L, int n) { return L.YieldValues(n); }
 
 int C_status(State& L, int n) {
     (void)n;

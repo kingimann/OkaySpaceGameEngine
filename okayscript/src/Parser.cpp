@@ -7,6 +7,9 @@
 #include "okayscript/Lexer.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -55,14 +58,31 @@ public:
     }
     // Plain classes (`class Item { ... }`, no base) are real types made with `new`.
     // A class with a base (`class Hero : Behaviour`) is the component and is not recorded.
+    // A class whose base is a plain class (`class Dog : Animal`) is a plain class too: it extends that one.
     void ScanUserClasses() {
+        std::vector<std::pair<std::string, std::string>> withBase;   // (class, base)
         for (std::size_t i = 0; i + 1 < m_toks.size(); ++i) {
             if (m_toks[i].type != Tok::Ident) continue;
             if (m_toks[i].text != "class" && m_toks[i].text != "struct") continue;
             if (m_toks[i + 1].type != Tok::Ident) continue;
             const std::size_t j = SkipTypeSuffix(i + 2);
             if (m_toks[j].type == Tok::LBrace) m_userClasses.insert(m_toks[i + 1].text);
+            else if (m_toks[j].type == Tok::Colon && m_toks[j + 1].type == Tok::Ident && m_toks[SkipTypeSuffix(j + 2)].type == Tok::LBrace)
+                withBase.push_back({m_toks[i + 1].text, m_toks[j + 1].text});
         }
+        for (bool grew = true; grew;) {
+            grew = false;
+            for (auto& cb : withBase)
+                if (!m_userClasses.count(cb.first) && m_userClasses.count(cb.second)) { m_userClasses.insert(cb.first); grew = true; }
+        }
+    }
+    // The base of the class declared at m_pos is a plain class: it is a plain class that extends it.
+    bool BaseIsUserClass() const {
+        std::size_t i = m_pos;
+        while (m_toks[i].type == Tok::Ident && m_toks[i].text != "class" && m_toks[i].text != "struct") ++i;
+        if (m_toks[i].type != Tok::Ident || m_toks[i + 1].type != Tok::Ident) return false;
+        i = SkipTypeSuffix(i + 2);
+        return m_toks[i].type == Tok::Colon && m_toks[i + 1].type == Tok::Ident && m_userClasses.count(m_toks[i + 1].text);
     }
     // Skip `[modifiers] enum Name [: type] { ... }` (already collected by ScanEnums).
     bool SkipEnumDecl() {
@@ -195,7 +215,7 @@ public:
             return;
         }
         if (IsClassAhead()) {
-            if (!ClassHasBase()) { ParseUserClass(); return; }
+            if (!ClassHasBase() || BaseIsUserClass()) { ParseUserClass(); return; }
             while (Check(Tok::Ident) && Peek().text != "class" && Peek().text != "struct") ++m_pos;  // modifiers
             Expect(Tok::Ident, "'class'");                                // the 'class' keyword
             Expect(Tok::Ident, "class name");                            // its name
@@ -238,7 +258,7 @@ public:
         // parsed as a statement, not a function named "foreach".
         // switch / try / catch / throw too (the engine parser read a top-level `switch (x) { }` as a function
         // named switch; fixed here, test_parser "top-level statement words").
-        static const std::set<std::string> kStatementWords = {"foreach", "do", "switch", "try", "catch", "throw"};
+        static const std::set<std::string> kStatementWords = {"foreach", "do", "switch", "try", "catch", "throw", "finally"};
         if (kStatementWords.count(m_toks[i].text)) return false;
         if (m_toks[i + 1].type != Tok::LParen) return false;
         int depth = 0;
@@ -252,7 +272,7 @@ public:
     // Skip C# attributes like [SerializeField] or [Header("Stats")] that may
     // precede a field/method. Balanced brackets, so [Range(0, 1)] works too.
     void SkipAttributes() {
-        while (Check(Tok::LBracket)) {
+        while (Check(Tok::LBracket) && !IsDestructureAssignAhead()) {   // `[a, b] = ...` is not an attribute
             int depth = 0;
             do {
                 if (Check(Tok::LBracket)) ++depth;
@@ -515,18 +535,25 @@ private:
         m_pos = SkipTypeSuffix(m_pos);
         if (m_classes.count(name))
             throw ScriptError("there's already a class named '" + name + "'", line);
-        Expect(Tok::LBrace, "'{'");
         UserClass cls;
         cls.name = name;
-        auto addField = [&](std::string fname, unsigned char kind, bool isPublic, ExprPtr init) {
-            for (auto& f : cls.fields)
+        if (Match(Tok::Colon)) {   // class Dog : Animal (a plain class it extends)
+            cls.base = Expect(Tok::Ident, "base class").text;
+            m_pos = SkipTypeSuffix(m_pos);
+            if (!m_userClasses.count(cls.base)) throw ScriptError(name + " can't extend '" + cls.base + "': it is not a class in this file", line);
+            if (cls.base == name) throw ScriptError(name + " can't extend itself", line);
+        }
+        Expect(Tok::LBrace, "'{'");
+        auto addField = [&](std::string fname, unsigned char kind, bool isPublic, ExprPtr init, bool isStatic) {
+            auto& list = isStatic ? cls.staticFields : cls.fields;
+            for (auto& f : list)
                 if (f.name == fname) throw ScriptError(name + " already has a field named '" + fname + "'", Peek().line);
             FieldDef fd;
             fd.name = std::move(fname);
             fd.kind = (unsigned char)(kind & 0x0F);
-            fd.isPublic = isPublic;
+            fd.isPublic = isPublic || isStatic;
             fd.init = std::move(init);
-            cls.fields.push_back(std::move(fd));
+            list.push_back(std::move(fd));
         };
         while (!Check(Tok::RBrace) && !Check(Tok::End)) {
             SkipAttributes();
@@ -540,8 +567,48 @@ private:
             if (IsEnumAhead()) { SkipEnumDecl(); continue; }
             const bool isPublic = HasPublicModifier();
             const unsigned char flags = DeclKindAhead();
-            if (flags & (KStatic | KConst))
-                throw ScriptError("plain classes can't be static or const yet", Peek().line);
+            const bool isStatic = (flags & KStatic) != 0;
+            if (flags & KConst)
+                throw ScriptError("plain classes can't have const fields yet", Peek().line);
+            // `public static V2 operator +(V2 a, V2 b) { ... }`: a static method named "operator+".
+            if (IsOperatorAhead()) {
+                while (!(Check(Tok::Ident) && Peek().text == "operator")) ++m_pos;
+                ++m_pos;
+                const Tok opTok = Peek().type;
+                ++m_pos;
+                std::string opName = std::string("operator") + OperatorText(opTok);
+                MethodDef md;
+                md.decl = ParseParamsAndBody();
+                md.decl.name = name + "." + opName;
+                md.isPublic = true;
+                if (md.decl.params.size() != 2) throw ScriptError(opName + " takes two values", Peek().line);
+                cls.staticMethods[opName] = std::move(md);
+                continue;
+            }
+            // `public int Hp { get { return hp; } set { hp = value; } }` (or `get => expr;`): a property.
+            if (IsPropertyAhead()) {
+                const std::string pname = ConsumeIdentRun("property name");
+                Expect(Tok::LBrace, "'{'");
+                while (!Check(Tok::RBrace) && !Check(Tok::End)) {
+                    while (Check(Tok::Ident) && Peek().text != "get" && Peek().text != "set") ++m_pos;   // private set
+                    const std::string acc = Expect(Tok::Ident, "'get' or 'set'").text;
+                    MethodDef md;
+                    md.isPublic = isPublic;
+                    if (acc == "set") md.decl.params.push_back("value"), md.decl.paramKinds.push_back(0), md.decl.defaults.emplace_back();
+                    if (Match(Tok::Arrow)) {
+                        ExprPtr e = ParseExpression();
+                        if (acc == "get") md.decl.body.push_back(std::make_unique<ReturnStmt>(std::move(e)));
+                        else md.decl.body.push_back(std::make_unique<ExprStmt>(std::move(e)));
+                        Match(Tok::Semicolon);
+                    } else {
+                        md.decl.body = ParseBlock();
+                    }
+                    md.decl.name = name + "." + acc + "_" + pname;
+                    cls.methods[acc + "_" + pname] = std::move(md);
+                }
+                Expect(Tok::RBrace, "'}'");
+                continue;
+            }
             if (Check(Tok::Function) || IsTypedFunctionAhead() || IsBareFunctionAhead()) {
                 std::string mname;
                 FunctionDecl decl;
@@ -554,6 +621,14 @@ private:
                 MethodDef md;
                 md.decl = std::move(decl);
                 md.isPublic = isPublic;
+                if (isStatic) {
+                    if (cls.staticMethods.count(mname))
+                        throw ScriptError(name + " already has a static method named '" + mname + "'", Peek().line);
+                    md.decl.name = name + "." + mname;
+                    md.isPublic = true;
+                    cls.staticMethods.emplace(mname, std::move(md));
+                    continue;
+                }
                 if (mname == name) {
                     const int arity = (int)md.decl.params.size();
                     if (cls.ctors.count(arity))
@@ -576,14 +651,14 @@ private:
                 int initCol = Peek().column;
                 if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
                 CheckLiteralInit(kind, fname, init.get(), declLine, initCol);
-                addField(std::move(fname), kind, isPublic, std::move(init));
+                addField(std::move(fname), kind, isPublic, std::move(init), isStatic);
                 while (Match(Tok::Comma)) {
                     std::string n2 = Expect(Tok::Ident, "field name").text;
                     ExprPtr i2;
                     int col2 = Peek().column;
                     if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
                     CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
-                    addField(std::move(n2), kind, isPublic, std::move(i2));
+                    addField(std::move(n2), kind, isPublic, std::move(i2), isStatic);
                 }
                 Match(Tok::Semicolon);
                 continue;
@@ -593,6 +668,36 @@ private:
         Expect(Tok::RBrace, "'}'");
         Match(Tok::Semicolon);
         m_classes.emplace(name, std::move(cls));
+    }
+
+    // `... operator +(` inside a class.
+    bool IsOperatorAhead() const {
+        for (std::size_t i = m_pos; m_toks[i].type == Tok::Ident; ++i)
+            if (m_toks[i].text == "operator") {
+                const Tok t = m_toks[i + 1].type;
+                return OperatorText(t)[0] != '?' && m_toks[i + 2].type == Tok::LParen;
+            }
+        return false;
+    }
+    // The operators a class may define (operator+ ...), as written; "?" for any other token. The text comes from
+    // TokName, the lexer's one table of token spellings ("'+'" without its quotes).
+    static std::string OperatorText(Tok t) {
+        switch (t) {
+            case Tok::Plus: case Tok::Minus: case Tok::Star: case Tok::Slash: case Tok::Percent:
+            case Tok::Eq: case Tok::Ne: case Tok::Lt: case Tok::Gt: case Tok::Le: case Tok::Ge: break;
+            default: return "?";
+        }
+        const std::string s = TokName(t);
+        return s.substr(1, s.size() - 2);
+    }
+    // `[modifiers] Type Name { get ...` / `{ set ...` with a body or `=>` (not the `{ get; set; }` auto form).
+    bool IsPropertyAhead() const {
+        int idents = 0;
+        std::size_t i = ScanIdentRun(m_pos, idents);
+        if (idents < 2 || m_toks[i].type != Tok::LBrace || IsAutoPropertyAt(i)) return false;
+        std::size_t j = i + 1;
+        while (m_toks[j].type == Tok::Ident && m_toks[j].text != "get" && m_toks[j].text != "set") ++j;
+        return m_toks[j].type == Tok::Ident && (m_toks[j + 1].type == Tok::LBrace || m_toks[j + 1].type == Tok::Arrow);
     }
 
     // Blocks, statements and lambdas nest by recursion: cap it so thousands of them are a parse error, not a stack
@@ -617,9 +722,17 @@ private:
     }
     StmtPtr ParseStatementInner() {
         // yield return <expr>; / yield break;  (coroutines)
-        if (Check(Tok::Ident) && Peek().text == "yield") {
+        if (Check(Tok::Ident) && Peek().text == "yield" && m_toks[m_pos + 1].line == Peek().line &&
+            m_toks[m_pos + 1].type != Tok::Assign && m_toks[m_pos + 1].type != Tok::LParen) {
             ++m_pos;
             if (Match(Tok::Break)) { Match(Tok::Semicolon); return std::make_unique<ReturnStmt>(nullptr); }
+            if (!Check(Tok::Return)) {   // `yield value;`: a generator step
+                auto st = std::make_unique<YieldStmt>();
+                st->generator = true;
+                if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) st->e = ParseExpression();
+                Match(Tok::Semicolon);
+                return st;
+            }
             Expect(Tok::Return, "'return' after 'yield'");
             auto st = std::make_unique<YieldStmt>();
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) st->e = ParseExpression();
@@ -645,14 +758,45 @@ private:
                     Match(Tok::Var);
                     if (Check(Tok::Ident)) {
                         st->catchVar = m_toks[m_pos++].text;
-                        if (Check(Tok::Ident)) st->catchVar = m_toks[m_pos++].text;  // typed
+                        if (Check(Tok::Ident)) { st->catchVar = m_toks[m_pos++].text; st->typedCatch = true; }   // typed
                     }
                     Expect(Tok::RParen, "')'");
                 }
                 st->catchB = ParseBlock();
             }
+            if (Check(Tok::Ident) && Peek().text == "finally") {
+                ++m_pos;
+                st->hasFinally = true;
+                st->finallyB = ParseBlock();
+            }
             return st;
         }
+        // import "file.okay" [as name]
+        if (Check(Tok::Ident) && Peek().text == "import" && m_toks[m_pos + 1].type == Tok::String) {
+            ++m_pos;
+            auto st = std::make_unique<ImportStmt>();
+            st->path = m_toks[m_pos++].text;
+            if (Check(Tok::Ident) && Peek().text == "as") { ++m_pos; st->alias = Expect(Tok::Ident, "module name after 'as'").text; }
+            else {
+                std::string stem = st->path;
+                const auto slash = stem.find_last_of("/\\");
+                if (slash != std::string::npos) stem = stem.substr(slash + 1);
+                const auto dot = stem.find('.');
+                if (dot != std::string::npos) stem = stem.substr(0, dot);
+                for (char& ch : stem) if (!std::isalnum((unsigned char)ch)) ch = '_';
+                if (stem.empty() || std::isdigit((unsigned char)stem[0]))
+                    throw ScriptError("import: give the module a name with `as` (\"" + st->path + "\" has no usable name)", Peek().line);
+                st->alias = stem;
+            }
+            Match(Tok::Semicolon);
+            return st;
+        }
+        // var [a, b] = list / var {x, y} = map; and [a, b] = [b, a] (assignment)
+        if (Check(Tok::Var) && (m_toks[m_pos + 1].type == Tok::LBracket || m_toks[m_pos + 1].type == Tok::LBrace)) {
+            ++m_pos;
+            return ParseDestructure(true);
+        }
+        if (Check(Tok::LBracket) && IsDestructureAssignAhead()) return ParseDestructure(false);
         // C#-style: foreach (var item in collection) { ... }
         if (Check(Tok::Ident) && Peek().text == "foreach") {
             ++m_pos;
@@ -812,6 +956,44 @@ private:
         auto e = ParseExpression();
         Match(Tok::Semicolon);
         return std::make_unique<ExprStmt>(std::move(e));
+    }
+
+    // `[a, b] = ...` at the start of a statement: a bracket of plain names (or _) closed and followed by '='.
+    bool IsDestructureAssignAhead() const {
+        std::size_t i = m_pos + 1;
+        bool sawName = false;
+        while (m_toks[i].type == Tok::Ident && m_toks[i].text.find('.') == std::string::npos) {
+            sawName = true;
+            ++i;
+            if (m_toks[i].type == Tok::Comma) { ++i; continue; }
+            break;
+        }
+        return sawName && m_toks[i].type == Tok::RBracket && m_toks[i + 1].type == Tok::Assign;
+    }
+    StmtPtr ParseDestructure(bool declare) {
+        auto st = std::make_unique<DestructureStmt>();
+        st->declare = declare;
+        st->isMap = Check(Tok::LBrace);
+        const Tok close = st->isMap ? Tok::RBrace : Tok::RBracket;
+        ++m_pos;   // '[' or '{'
+        while (!Check(close)) {
+            std::string key = Expect(Tok::Ident, "a name to unpack into").text;
+            if (key.find('.') != std::string::npos) throw ScriptError("can't unpack into '" + key + "': use a plain name", Prev().line, Prev().column);
+            std::string name = key;
+            if (st->isMap && Match(Tok::Colon)) name = Expect(Tok::Ident, "a name after ':'").text;   // {x: px}
+            if (!st->isMap && name == "_") name.clear();
+            for (auto& prev : st->names)
+                if (!name.empty() && prev == name) throw ScriptError("'" + name + "' is unpacked twice", Prev().line, Prev().column);
+            st->names.push_back(name);
+            if (st->isMap) st->keys.push_back(key);
+            if (!Match(Tok::Comma)) break;
+        }
+        Expect(close, st->isMap ? "'}'" : "']'");
+        if (st->names.empty()) throw ScriptError("nothing to unpack", Peek().line, Peek().column);
+        Expect(Tok::Assign, "'=' after the names to unpack");
+        st->init = ParseExpression();
+        Match(Tok::Semicolon);
+        return st;
     }
 
     std::vector<StmtPtr> SingleStmt() {
@@ -1060,10 +1242,22 @@ private:
         // After `?.`, the rest of this chain is skipped when a step is null.
         bool safe = false;
         for (;;) {
+            // `[a, b] = ...` on a new line starts a statement (destructuring), it does not index the line before
+            if (Check(Tok::LBracket) && Peek().line != Prev().line && IsDestructureAssignAhead()) break;
             if (Match(Tok::LBracket)) {
                 ExprPtr idx = ParseExpression();
                 Expect(Tok::RBracket, "']'");
                 e = std::make_unique<IndexExpr>(std::move(e), std::move(idx), safe);
+            } else if (Check(Tok::LParen) && Peek().line == Prev().line) {
+                // f(1)(2), fs[0](x): call the value the expression gives (a lambda or a function value)
+                ++m_pos;
+                auto call = std::make_unique<MethodCallExpr>(std::move(e), "Invoke", safe);
+                call->line = Prev().line;
+                if (!Check(Tok::RParen)) {
+                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+                }
+                Expect(Tok::RParen, "')'");
+                e = std::move(call);
             } else if (Match(Tok::QuestionDot)) {
                 safe = true;
                 e = ParseMemberStep(std::move(e), true);
@@ -1076,6 +1270,22 @@ private:
     // `{ a, b, c }` — a C# collection / array initializer (nested for dictionaries).
     ExprPtr ParseBraceList() {
         Expect(Tok::LBrace, "'{'");
+        // {"key": value, name: value}: a map literal
+        if ((Check(Tok::String) || (Check(Tok::Ident) && Peek().text.find('.') == std::string::npos)) &&
+            m_toks[m_pos + 1].type == Tok::Colon) {
+            auto map = std::make_unique<MapExpr>();
+            while (!Check(Tok::RBrace) && !Check(Tok::End)) {
+                if (!Check(Tok::String) && !Check(Tok::Ident)) throw ScriptError("parse error: expected a key (a name or text) in the map", Peek().line, Peek().column);
+                std::string key = m_toks[m_pos++].text;
+                Expect(Tok::Colon, "':' after the key");
+                for (auto& k : map->keys) if (k == key) throw ScriptError("the key '" + key + "' is in this map twice", Prev().line, Prev().column);
+                map->keys.push_back(std::move(key));
+                map->values.push_back(ParseExpression());
+                if (!Match(Tok::Comma)) break;
+            }
+            Expect(Tok::RBrace, "'}'");
+            return map;
+        }
         auto arr = std::make_unique<ArrayExpr>();
         while (!Check(Tok::RBrace) && !Check(Tok::End)) {
             arr->elems.push_back(ParseExpression());
@@ -1184,7 +1394,17 @@ private:
     }
 
     ExprPtr ParsePrimary() {
-        if (Match(Tok::Number)) return std::make_unique<NumberExpr>(Prev().number);
+        if (Match(Tok::Number)) {
+            auto n = std::make_unique<NumberExpr>(Prev().number);
+            if (Prev().isLong) {
+                errno = 0;
+                const long long iv = std::strtoll(Prev().text.c_str(), nullptr, 10);
+                if (errno == ERANGE) throw ScriptError("whole number " + Prev().text + "L is too large (64 bits)", Prev().line, Prev().column);
+                n->isInt = true;
+                n->iv = (std::int64_t)iv;
+            }
+            return n;
+        }
         if (Match(Tok::String)) return std::make_unique<StringExpr>(Prev().text);
         if (Match(Tok::InterpString)) return BuildInterp(Prev().text);
         if (Match(Tok::True))   return std::make_unique<BoolExpr>(true);

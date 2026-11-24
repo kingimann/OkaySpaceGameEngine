@@ -350,6 +350,13 @@ void Physics3D::Clear() {
     m_engine.reset();   // the world holds bodies for components about to be freed
 }
 
+void Physics3D::SetSleep(float linearSpeed, float angularSpeed, float seconds) {
+    m_sleepSet = true;
+    m_sleepLinear = std::max(linearSpeed, 0.0f);
+    m_sleepAngular = std::max(angularSpeed, 0.0f);
+    m_sleepTime = std::max(seconds, 0.0f);
+}
+
 phys::World* Physics3D::EngineWorld() { return m_engine ? &m_engine->world : nullptr; }
 std::uint32_t Physics3D::EngineBody(const Rigidbody3D* rb) const {
     if (!m_engine) return phys::kInvalidId;
@@ -369,6 +376,11 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     phys::World& W = E.world;
     m_stats = PhysicsStepStats{};
     W.gravity = P3(gravity);
+    if (m_sleepSet) {
+        W.sleepLinear = m_sleepLinear;
+        W.sleepAngular = m_sleepAngular;
+        W.timeToSleep = std::max(m_sleepTime, 0.0f);
+    }
     W.velocityIterations = std::min(std::max(solverIterations, 4), 30);
     W.positionIterations = 3;
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {
@@ -619,7 +631,7 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
         auto bodyIt = ra ? E.bodies.find(ra) : E.bodies.end();
         if (bodyIt == E.bodies.end()) continue;   // the joint moves THIS body
-        GameObject* partner = j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);
+        GameObject* partner = Joint3DPartner(scene, j);
         Rigidbody3D* rbB = partner ? partner->GetComponent<Rigidbody3D>() : nullptr;
         auto partnerIt = rbB ? E.bodies.find(rbB) : E.bodies.end();
         const phys::BodyId other = partnerIt != E.bodies.end() ? partnerIt->second.id : phys::kInvalidId;
@@ -951,6 +963,125 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     }
     E.touching.swap(nowList);
     E.touchingSet.swap(nowSet);
+}
+
+// Distance from `point` to one engine piece. Meshes and heightfields use the triangle closest
+// point (a zero-radius sphere only reports a hit when the point lies on a triangle). Convex pieces
+// use GJK against a point. A plane is the half-space under its normal, not its huge bounding box.
+float DistanceToPiece(const EnginePiece& piece, const Vec3& point, float maxDistance, Vec3& closest) {
+    const phys::Shape& shape = piece.shape;
+    if (shape.type == phys::ShapeType::Mesh && shape.mesh) {
+        const phys::V3 local = piece.world.ApplyInv(P3(point));
+        const float reach = std::max(maxDistance, 0.0f) + 1.0f;
+        const phys::Aabb box{local - phys::V3{reach, reach, reach}, local + phys::V3{reach, reach, reach}};
+        std::vector<phys::Tri3> tris;
+        shape.mesh->Collect(box, tris);
+        float best = 1e30f;
+        Vec3 bestLocal = E3(local);
+        const Vec3 at = E3(local);
+        for (const phys::Tri3& t : tris) {
+            Vec3 c = trimesh::ClosestPointOnTriangle(at, E3(t.a), E3(t.b), E3(t.c));
+            float d2 = (at - c).SqrMagnitude();
+            if (d2 < best) { best = d2; bestLocal = c; }
+        }
+        if (!(best < 1e29f)) return 1e30f;
+        closest = E3(piece.world.Apply(P3(bestLocal)));
+        return (point - closest).Magnitude();
+    }
+    if (shape.type == phys::ShapeType::Plane) {
+        Vec3 n = E3(phys::Rotate(piece.world.q, shape.planeNormal));
+        float mag = n.Magnitude();
+        if (!(mag > 1e-8f)) return 1e30f;
+        n = n * (1.0f / mag);
+        float signedDist = Vec3::Dot(point - E3(piece.world.p), n) - shape.planeOffset;
+        if (signedDist <= 0.0f) { closest = point; return 0.0f; }
+        closest = point - n * signedDist;
+        return signedDist;
+    }
+    phys::Shape probe = phys::Shape::Sphere(0.0f);
+    phys::Xf at{P3(point), phys::Q{}};
+    phys::DistanceResult dist = phys::GjkDistance(probe, at, shape, piece.world);
+    const float rad = shape.CoreRadius();
+    if (dist.overlap || dist.distance <= rad) { closest = point; return 0.0f; }
+    if (!std::isfinite(dist.distance)) return 1e30f;
+    Vec3 n = E3(dist.normal);
+    float nm = n.Magnitude();
+    if (nm < 1e-8f) {
+        Vec3 away = point - E3(dist.pB);
+        nm = away.Magnitude();
+        if (!(nm > 1e-8f)) { closest = point; return 0.0f; }
+        n = away * (1.0f / nm);
+    } else {
+        n = n * (1.0f / nm);
+    }
+    closest = E3(dist.pB) - n * rad;
+    return dist.distance - rad;
+}
+
+void ConsiderSolid(NearestSolid3D& best, bool& any, float maxDistance, Collider3D* col, GameObject* go,
+                   const Vec3& cp, float d) {
+    if (!std::isfinite(d) || d > maxDistance) return;
+    if (any && !(d < best.distance)) return;
+    any = true;
+    best.hit = true;
+    best.collider = col;
+    best.gameObject = go;
+    best.point = cp;
+    best.distance = d;
+}
+
+NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float maxDistance,
+                                        GameObject* ignore, std::uint32_t layerMask) {
+    NearestSolid3D best;
+    if (!(maxDistance >= 0.0f) || !std::isfinite(maxDistance) || !std::isfinite(point.x + point.y + point.z)) return best;
+    bool any = false;
+    MeshCache cache;
+    for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
+        {   // a collider that cannot be nearer than what is found (or within reach) is skipped before any shape is built
+            Vec3 mn, mx;
+            col->WorldAABB(mn, mx);
+            if (std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) {
+                const float dx = std::max(std::max(mn.x - point.x, point.x - mx.x), 0.0f);
+                const float dy = std::max(std::max(mn.y - point.y, point.y - mx.y), 0.0f);
+                const float dz = std::max(std::max(mn.z - point.z, point.z - mx.z), 0.0f);
+                const float lowest = std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-3f;
+                if (lowest > maxDistance || (any && lowest >= best.distance)) continue;
+            }
+        }
+        if (col->shape() == Collider3D::Shape::Mesh) {   // the mesh's own triangle tree (built once, kept by the collider)
+            auto* mc = static_cast<MeshCollider3D*>(col);
+            if (mc->HasTriangles()) {
+                const trimesh::WorldView view(mc->Tris(), mc->WorldMatrix());
+                const bool closed = mc->Tris().ClosedWinding() != 0;   // inside a closed mesh is 0 away, however far the skin is
+                Vec3 cp = point;
+                float d = 0.0f;
+                bool inside = false;
+                if (view.Nearest(point, closed ? 1e30f : maxDistance, cp, d, inside)) {
+                    if (inside) { cp = point; d = 0.0f; }
+                    ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+                }
+                continue;
+            }
+        }
+        std::vector<EnginePiece> pieces;
+        if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
+        for (const EnginePiece& piece : pieces) {
+            Vec3 cp = point;
+            const float d = DistanceToPiece(piece, point, maxDistance, cp);
+            ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+        }
+    }
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, layerMask)) continue;
+        EnginePiece piece;
+        if (!PieceOfTerrain(terr, piece)) continue;
+        Vec3 cp = point;
+        const float d = DistanceToPiece(piece, point, maxDistance, cp);
+        ConsiderSolid(best, any, maxDistance, nullptr, terr->gameObject, cp, d);
+    }
+    if (!any) return NearestSolid3D{};
+    return best;
 }
 
 } // namespace okay

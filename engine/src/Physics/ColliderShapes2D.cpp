@@ -33,8 +33,8 @@ Vec2 Support(const Piece& p, const Vec2& d) {
 
 namespace {
 float Cross(const Vec2& a, const Vec2& b) { return a.x * b.y - a.y * b.x; }
-float Area2(const std::vector<Vec2>& p) {
-    float a = 0; for (std::size_t i = 0; i < p.size(); ++i) a += Cross(p[i], p[(i + 1) % p.size()]); return a;
+float Area2(const std::vector<Vec2>& p) {   // twice the signed area (> 0 = counter-clockwise), measured from the first corner so it is exact far from the origin
+    float a = 0; for (std::size_t i = 1; i + 1 < p.size(); ++i) a += Cross(p[i] - p[0], p[i + 1] - p[0]); return a;
 }
 bool PointInTri(const Vec2& p, const Vec2& a, const Vec2& b, const Vec2& c) {
     return Cross(b - a, p - a) >= -1e-9f && Cross(c - b, p - b) >= -1e-9f && Cross(a - c, p - c) >= -1e-9f;
@@ -170,7 +170,11 @@ void PiecesOf(const Collider2D* c, std::vector<Piece>& out, bool withSkin) {
         break;
     }
     }
-    for (std::size_t i = first; i < out.size(); ++i) { out[i].r += skin; out[i].Bounds(); }
+    for (std::size_t i = first; i < out.size(); ++i) {
+        // Every piece is handed on counter-clockwise. A mirrored object (a flipped sprite: negative scale) turns a box's corners clockwise.
+        if (out[i].v.size() >= 3 && Area2(out[i].v) < 0.0f) std::reverse(out[i].v.begin(), out[i].v.end());
+        out[i].r += skin; out[i].Bounds();
+    }
 }
 
 bool IsGeneric(const Collider2D* c) {

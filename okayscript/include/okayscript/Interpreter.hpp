@@ -51,6 +51,11 @@ public:
     /// Call a script function or native by name (RuntimeError on failure).
     V Call(const std::string& name, std::vector<V> args = {});
 
+    /// How `import "file.okay"` finds a module (ModuleSystem::load). Without one, import is a runtime error: an
+    /// embedder that gives scripts no file access sets none. The CLI's reads files next to the importing file.
+    using ModuleLoader = decltype(ModuleSystem<V>::load);
+    void SetModuleLoader(ModuleLoader load);
+
     void SetOutput(std::ostream* out);
     void SetInput(std::istream* in);
     std::ostream& Output() const;

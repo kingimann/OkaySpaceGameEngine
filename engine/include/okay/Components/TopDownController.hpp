@@ -46,6 +46,7 @@ public:
     float deceleration = 55.0f;
     // Movement axes: world-aligned (W = +world Z forward) or relative to the camera yaw.
     bool  cameraRelative = false;
+    float stepOffset = 0.35f;           // tallest ledge (metres) the body is lifted onto when it moves with no Rigidbody3D; 0 = none
 
     // ---- Camera (fixed angle, follows from above) ----
     float cameraDistance = 12.0f;       // how far the camera sits from the player

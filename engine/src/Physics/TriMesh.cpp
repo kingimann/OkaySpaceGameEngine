@@ -1,16 +1,36 @@
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/StringId.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
+#include <string_view>
+#include <vector>
 
 namespace okay {
 
 namespace {
 constexpr int kLeafSize = 4;
+// The deepest level Build makes (the root is 0). The walks keep their to-do list in a fixed array (64 entries in
+// QueryAABB and RayLocal, 128 in Nearest) and need one entry more than the tree is deep, so no walk can ever run out
+// and skip a branch. A median split halves the triangles at every level, so a real mesh is nowhere near this.
+constexpr int kDeepestLevel = 60;
 
 inline bool Finite3(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+
+// The box around the eight corners of [lo, hi] after the matrix m moves them (one place for all three users).
+void BoxThrough(const Mat4& m, const Vec3& lo, const Vec3& hi, Vec3& outMin, Vec3& outMax) {
+    const Vec3 first = m.MultiplyPoint(lo);
+    outMin = outMax = first;
+    for (int corner = 1; corner < 8; ++corner) {
+        const Vec3 q = m.MultiplyPoint({(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y, (corner & 4) ? hi.z : lo.z});
+        outMin = Vec3::Min(outMin, q);
+        outMax = Vec3::Max(outMax, q);
+    }
+}
 
 inline float Axis(const Vec3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
 
@@ -52,7 +72,50 @@ bool RayTri(const Vec3& o, const Vec3& d, const Vec3& a, const Vec3& b, const Ve
 }
 } // namespace
 
+int TriMesh::ClosedWinding() const {
+    if (m_winding != -2) return m_winding;
+    m_winding = 0;
+    const std::size_t n = m_tri.size() / 3;
+    if (n < 4) return 0;
+    auto vertexKey = [](const Vec3& v) {   // the corner's coordinates as bits, -0 and +0 alike, hashed with the engine's string hash
+        std::uint32_t w[3];
+        const float f[3] = {v.x, v.y, v.z};
+        for (int i = 0; i < 3; ++i) {
+            std::memcpy(&w[i], &f[i], sizeof(std::uint32_t));
+            if ((w[i] & 0x7fffffffu) == 0) w[i] = 0;
+        }
+        return (std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(w), sizeof w));
+    };
+    struct Edge { std::uint64_t key; std::uint8_t forward; };
+    std::vector<Edge> edges;
+    edges.reserve(n * 3);
+    double volume = 0.0;
+    for (std::size_t t = 0; t < n; ++t) {
+        const Vec3 c[3] = {m_tri[3 * t], m_tri[3 * t + 1], m_tri[3 * t + 2]};
+        const std::uint64_t k[3] = {vertexKey(c[0]), vertexKey(c[1]), vertexKey(c[2])};
+        for (int e = 0; e < 3; ++e) {
+            const std::uint64_t a = k[e], b = k[(e + 1) % 3];
+            if (a == b) return 0;
+            const std::uint64_t lo = std::min(a, b), hi = std::max(a, b);
+            const std::uint64_t ends[2] = {lo, hi};
+            edges.push_back({(std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(ends), sizeof ends)),
+                             (std::uint8_t)(a < b ? 1 : 0)});
+        }
+        const Vec3 cr = Vec3::Cross(c[1], c[2]);
+        volume += (double)c[0].x * cr.x + (double)c[0].y * cr.y + (double)c[0].z * cr.z;
+    }
+    std::sort(edges.begin(), edges.end(), [](const Edge& x, const Edge& y) { return x.key < y.key; });
+    for (std::size_t i = 0; i < edges.size(); i += 2)   // every edge exactly twice, once in each direction
+        if (i + 1 >= edges.size() || edges[i].key != edges[i + 1].key || edges[i].forward == edges[i + 1].forward ||
+            (i + 2 < edges.size() && edges[i + 2].key == edges[i].key))
+            return 0;
+    if (!(std::fabs(volume) > 1e-12)) return 0;
+    m_winding = volume > 0.0 ? 1 : -1;
+    return m_winding;
+}
+
 void TriMesh::Clear() {
+    m_winding = -2;
     m_tri.clear(); m_nodes.clear();
     m_bmin = m_bmax = Vec3{0, 0, 0};
     m_dropped = 0;
@@ -82,8 +145,8 @@ void TriMesh::Build(const Mesh& mesh) {
     m_nodes.reserve(static_cast<std::size_t>(n) / 2 + 2);
     m_nodes.emplace_back();
     // Iterative build: (node, lo, hi) ranges over idx.
-    struct Job { int node, lo, hi; };
-    std::vector<Job> jobs; jobs.push_back({0, 0, n});
+    struct Job { int node, lo, hi, depth; };
+    std::vector<Job> jobs; jobs.push_back({0, 0, n, 0});
     while (!jobs.empty()) {
         Job j = jobs.back(); jobs.pop_back();
         Vec3 mn{1e30f, 1e30f, 1e30f}, mx{-1e30f, -1e30f, -1e30f};
@@ -103,8 +166,8 @@ void TriMesh::Build(const Mesh& mesh) {
         int count = j.hi - j.lo;
         Vec3 ext = cmx - cmn;
         int axis = ext.x >= ext.y && ext.x >= ext.z ? 0 : ext.y >= ext.z ? 1 : 2;
-        if (count <= kLeafSize || Axis(ext, axis) <= 0.0f) {
-            // (identical centroids can't be split further: keep them as one leaf)
+        if (count <= kLeafSize || Axis(ext, axis) <= 0.0f || j.depth >= kDeepestLevel) {
+            // (identical centroids can't be split further: keep them as one leaf; so is a branch at the deepest level)
             m_nodes[j.node].first = j.lo; m_nodes[j.node].count = count;
             continue;
         }
@@ -114,8 +177,8 @@ void TriMesh::Build(const Mesh& mesh) {
         int left = static_cast<int>(m_nodes.size());
         m_nodes.emplace_back(); m_nodes.emplace_back();
         m_nodes[j.node].first = left; m_nodes[j.node].count = 0;
-        jobs.push_back({left, j.lo, mid});
-        jobs.push_back({left + 1, mid, j.hi});
+        jobs.push_back({left, j.lo, mid, j.depth + 1});
+        jobs.push_back({left + 1, mid, j.hi, j.depth + 1});
     }
     m_tri.resize(static_cast<std::size_t>(n) * 3);
     for (int k = 0; k < n; ++k)
@@ -147,7 +210,7 @@ bool TriMesh::RayLocal(const Vec3& o, const Vec3& d, float maxT, float& t, int& 
         float tl, tr;
         bool hl = RayBox(o, d, m_nodes[n.first].mn, m_nodes[n.first].mx, best, tl);
         bool hr = RayBox(o, d, m_nodes[n.first + 1].mn, m_nodes[n.first + 1].mx, best, tr);
-        if (sp + 2 > 64) continue;
+        if (sp + 2 > 64) continue;   // (never: see kDeepestLevel)
         if (hl && hr) {
             if (tl <= tr) { stack[sp++] = {n.first + 1, tr}; stack[sp++] = {n.first, tl}; }
             else          { stack[sp++] = {n.first, tl};     stack[sp++] = {n.first + 1, tr}; }
@@ -158,6 +221,48 @@ bool TriMesh::RayLocal(const Vec3& o, const Vec3& d, float maxT, float& t, int& 
     t = best; tri = bestTri;
     return true;
 }
+
+namespace {
+// How many times the surface of `mesh` wraps around the local point `p`: a ray from `p` along +X is followed and
+// every triangle it leaves through counts +1, every one it enters through -1. For a closed mesh (ClosedWinding) the
+// answer is 0 exactly when `p` is outside, whatever the shape: sharp edges, corners and hollows included. Only the
+// boxes on the ray are walked. (Written from the definition of the winding number and of an edge function.)
+int WindingAround(const TriMesh& mesh, const Vec3& p) {
+    if (mesh.Empty() || !Finite3(p)) return 0;
+    // Seen along +X from p, which way the corners u then v turn around p in the y/z plane (+1, -1), and the cross
+    // product behind it. A pair of corners is always worked out in the same order, whichever triangle asks, so the two
+    // triangles of an edge get exactly opposite answers. A turn of exactly zero (the ray goes through the edge or a
+    // corner) is settled as if p sat a hair off in y and a much smaller hair off in z: the ray then passes through
+    // exactly one of the triangles around that edge or corner. 0 = the edge runs along the ray.
+    auto turn = [&p](const Vec3& u, const Vec3& v, double& cross) {
+        const bool swap = v.y < u.y || (v.y == u.y && (v.z < u.z || (v.z == u.z && v.x < u.x)));
+        const Vec3& lo = swap ? v : u;
+        const Vec3& hi = swap ? u : v;
+        const double ly = (double)lo.y - p.y, lz = (double)lo.z - p.z, hy = (double)hi.y - p.y, hz = (double)hi.z - p.z;
+        double c = 0.0;
+        int s = 0;
+        if (ly != hy || lz != hz) {
+            c = ly * hz - lz * hy;
+            s = c > 0.0 ? 1 : c < 0.0 ? -1 : lz != hz ? (lz > hz ? 1 : -1) : (hy > ly ? 1 : -1);
+        }
+        cross = swap ? -c : c;
+        return swap ? -s : s;
+    };
+    int total = 0;
+    mesh.QueryAABB(p, Vec3{mesh.BoundsMax().x, p.y, p.z}, [&](int i) {
+        Vec3 a, b, c;
+        mesh.Triangle(i, a, b, c);
+        double ab, bc, ca;
+        const int s = turn(a, b, ab);
+        if (s == 0 || turn(b, c, bc) != s || turn(c, a, ca) != s) return;   // p's line misses the triangle
+        const double sum = ab + bc + ca;                                    // (twice the triangle's area seen along X)
+        if (sum == 0.0) return;
+        const double x = (bc * ((double)a.x - p.x) + ca * ((double)b.x - p.x) + ab * ((double)c.x - p.x)) / sum;
+        if (x > 0.0) total += s;                                            // in front of p: the ray goes through it
+    });
+    return total;
+}
+} // namespace
 
 namespace trimesh {
 
@@ -225,23 +330,12 @@ WorldView::WorldView(const TriMesh& mesh, const Mat4& l2w) : m_mesh(&mesh), m_l2
 }
 
 void WorldView::WorldBounds(Vec3& mn, Vec3& mx) const {
-    mn = {1e30f, 1e30f, 1e30f}; mx = {-1e30f, -1e30f, -1e30f};
     if (!Valid()) { mn = mx = Vec3{0, 0, 0}; return; }
-    const Vec3& lo = m_mesh->BoundsMin(); const Vec3& hi = m_mesh->BoundsMax();
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_l2w.MultiplyPoint({i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z});
-        mn = {std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z)};
-        mx = {std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z)};
-    }
+    BoxThrough(m_l2w, m_mesh->BoundsMin(), m_mesh->BoundsMax(), mn, mx);
 }
 
 void WorldView::LocalBounds(const Vec3& wmn, const Vec3& wmx, Vec3& lmn, Vec3& lmx) const {
-    lmn = {1e30f, 1e30f, 1e30f}; lmx = {-1e30f, -1e30f, -1e30f};
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_w2l.MultiplyPoint({i & 1 ? wmx.x : wmn.x, i & 2 ? wmx.y : wmn.y, i & 4 ? wmx.z : wmn.z});
-        lmn = {std::min(lmn.x, p.x), std::min(lmn.y, p.y), std::min(lmn.z, p.z)};
-        lmx = {std::max(lmx.x, p.x), std::max(lmx.y, p.y), std::max(lmx.z, p.z)};
-    }
+    BoxThrough(m_w2l, wmn, wmx, lmn, lmx);
     // Float slack so a triangle touching the box edge isn't culled by rounding.
     Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-5f, 1e-5f, 1e-5f);
     lmn = lmn - pad; lmx = lmx + pad;
@@ -250,6 +344,38 @@ void WorldView::LocalBounds(const Vec3& wmn, const Vec3& wmx, Vec3& lmn, Vec3& l
 void WorldView::WorldTri(int i, Vec3& a, Vec3& b, Vec3& c) const {
     Vec3 la, lb, lc; m_mesh->Triangle(i, la, lb, lc);
     a = m_l2w.MultiplyPoint(la); b = m_l2w.MultiplyPoint(lb); c = m_l2w.MultiplyPoint(lc);
+}
+
+bool WorldView::Nearest(const Vec3& p, float maxDist, Vec3& point, float& dist, bool& inside) const {
+    inside = false;
+    if (!Valid() || !(maxDist >= 0.0f)) return false;
+    // Inside a closed mesh? Asked in the mesh's own space (being inside does not change with the placing), from the
+    // whole surface, not from the nearest triangle: at a sharp edge that triangle can face the wrong way.
+    if (m_mesh->ClosedWinding() != 0 && WindingAround(*m_mesh, m_w2l.MultiplyPoint(p)) != 0) {
+        inside = true;
+        point = p;
+        dist = 0.0f;
+        return true;
+    }
+    auto boxLowerBound = [&](const Vec3& lo, const Vec3& hi) {   // a local box, as the world box around its eight corners
+        Vec3 mn, mx;
+        BoxThrough(m_l2w, lo, hi, mn, mx);
+        const float dx = std::max(std::max(mn.x - p.x, p.x - mx.x), 0.0f);
+        const float dy = std::max(std::max(mn.y - p.y, p.y - mx.y), 0.0f);
+        const float dz = std::max(std::max(mn.z - p.z, p.z - mx.z), 0.0f);
+        return std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-4f;   // (slack: a triangle on the box edge is never skipped)
+    };
+    auto triDistance = [&](int i) {
+        Vec3 a, b, c; WorldTri(i, a, b, c);
+        return (p - ClosestPointOnTriangle(p, a, b, c)).Magnitude();
+    };
+    int tri = -1;
+    const float best = m_mesh->Nearest(maxDist, boxLowerBound, triDistance, tri);
+    if (tri < 0) return false;
+    Vec3 a, b, c; WorldTri(tri, a, b, c);
+    point = ClosestPointOnTriangle(p, a, b, c);
+    dist = best;
+    return true;
 }
 
 bool WorldView::Raycast(const Vec3& origin, const Vec3& dir, float maxT, float& t, Vec3& normal) const {

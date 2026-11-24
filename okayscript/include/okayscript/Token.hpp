@@ -23,6 +23,7 @@ struct Token {
     double number = 0.0;
     int line = 0;
     bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
+    bool isLong = false;   ///< a whole number written with the suffix L (123L): a 64-bit integer
     int column = 0;        ///< 1-based column where this token starts
 };
 

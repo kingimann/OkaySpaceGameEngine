@@ -2,6 +2,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/Mesh.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -54,7 +55,47 @@ public:
         }
     }
 
+    /// The triangle nearest to a query. The tree is walked nearest box first and every box that cannot beat the best
+    /// triangle so far is skipped, so a point near a 100k-triangle mesh visits a few dozen nodes, not the mesh.
+    /// `boxLowerBound(mn, mx)` is a lower bound of the query's distance to anything inside a (local) box, and
+    /// `triDistance(i)` the exact distance to triangle i. Only a triangle no farther than `limit` counts; the
+    /// result is that distance, or `limit` with `bestTri` -1 when there is none.
+    template <class BoxLB, class TriDist>
+    float Nearest(float limit, BoxLB&& boxLowerBound, TriDist&& triDistance, int& bestTri) const {
+        bestTri = -1;
+        float best = limit;
+        if (m_nodes.empty()) return best;
+        struct Item { int node; float lb; };
+        Item stack[128];
+        int sp = 0;
+        stack[sp++] = {0, boxLowerBound(m_nodes[0].mn, m_nodes[0].mx)};
+        while (sp > 0) {
+            const Item it = stack[--sp];
+            if (it.lb > best) continue;
+            const Node& n = m_nodes[it.node];
+            if (n.count > 0) {
+                for (int i = 0; i < n.count; ++i) {
+                    const float d = triDistance(n.first + i);
+                    if (d < best || (bestTri < 0 && d <= best)) { best = d; bestTri = n.first + i; }
+                }
+            } else if (sp + 2 <= 128) {
+                Item a{n.first, boxLowerBound(m_nodes[n.first].mn, m_nodes[n.first].mx)};
+                Item b{n.first + 1, boxLowerBound(m_nodes[n.first + 1].mn, m_nodes[n.first + 1].mx)};
+                if (a.lb < b.lb) std::swap(a, b);   // the nearer one goes on last, so it is taken first
+                if (a.lb <= best) stack[sp++] = a;
+                if (b.lb <= best) stack[sp++] = b;
+            }
+        }
+        return best;
+    }
+
+    /// +1 when the triangles are a closed surface wound outward (every edge shared by exactly two triangles, one in
+    /// each direction), -1 when wound inward, 0 when the mesh is open or not a clean surface: only a closed mesh has
+    /// an inside. Worked out once (the first time it is asked) and kept until the next Build.
+    int ClosedWinding() const;
+
 private:
+    mutable int m_winding = -2;    // -2 = not worked out yet
     struct Node {
         Vec3 mn, mx;
         int first = 0;    // leaf: first triangle; inner: index of the left child (right = +1)
@@ -99,6 +140,12 @@ public:
     Contact Sphere(const Vec3& c, float r) const;
     Contact Capsule(const Vec3& a, const Vec3& b, float r) const;
     Contact Box(const Vec3& c, const Vec3& half, const Vec3& ax, const Vec3& ay, const Vec3& az) const;
+    /// The point of the placed mesh nearest to `p` and its distance, only when that is no more than `maxDist`.
+    /// A point inside a closed mesh (see TriMesh::ClosedWinding) is answered at once, with no search for a triangle:
+    /// `inside` is true, `point` is `p` itself and `dist` is 0, however far the skin is. Inside is counted from the
+    /// whole surface (crossings of one ray), so it is right beside sharp edges and corners too.
+    /// Otherwise walks the tree nearest box first (TriMesh::Nearest), so it costs the same on a small mesh and a huge one.
+    bool Nearest(const Vec3& p, float maxDist, Vec3& point, float& dist, bool& inside) const;
 
 private:
     const TriMesh* m_mesh;

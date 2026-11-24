@@ -10,6 +10,7 @@
 // exit(n) in a script ends with n (0..255). Errors go to stderr as "file:line: message".
 #include "okayscript/OkayScript.hpp"
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <new>
 #include <iostream>
@@ -30,9 +31,28 @@ void Usage(std::ostream& o) {
          "exit(n) in a script ends with n.\n";
 }
 
+// import "x.okay": found next to the file that imports it (the working folder for -e), read whole.
+bool LoadModule(const std::string& path, const std::string& from, std::string& resolved, std::string& source,
+                std::string& error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path p(path);
+    if (p.is_relative() && !from.empty() && from != "-e") p = fs::path(from).parent_path() / p;
+    fs::path canon = fs::weakly_canonical(p, ec);
+    resolved = (ec ? p : canon).generic_string();
+    std::ifstream f(resolved, std::ios::binary);
+    if (!f) { error = "can't read '" + p.generic_string() + "'"; return false; }
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    source = ss.str();
+    return true;
+}
+
 int RunProgram(const std::string& source, const std::string& file, const std::vector<std::string>& extra) {
     okayscript::Interpreter in;
     okayscript::InstallStandardLibrary(in);
+    okayscript::InstallSystemLibrary(in);   // files, sleep and env: the CLI's only (Stdlib.hpp)
+    in.SetModuleLoader(LoadModule);
     in.GetLimits().maxLoopIterations = 0;   // a program may loop as long as it likes; recursion stays capped
     okayscript::Value args = okayscript::Value::MakeArray();
     for (const std::string& a : extra) args.AsArray()->push_back(okayscript::Value{a});

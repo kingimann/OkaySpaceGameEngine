@@ -233,7 +233,7 @@ int main() {
         CHECK(HasOwnReader(".ter") && HasOwnReader(".TER"));
         TestUnsetEnv("OKAY_OWN_TER");
         SetImportBackend(".ter", ImportBackend::Default);
-        if (!AssimpAvailable() && EffectiveImportBackend(".ter") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".ter") == ImportBackend::Default) {
             CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_TER") != std::string::npos);
             CHECK(ImportableExtensions().find(".ter") == std::string::npos);

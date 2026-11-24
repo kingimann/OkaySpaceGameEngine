@@ -180,6 +180,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
@@ -896,6 +897,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
         std::cerr << "[scene] Instantiate failed: " << error << "\n";
         return nullptr;
     }
+    if (root) RetargetClonedJoints(&prefab, root);
     return root;
 }
 

@@ -1210,6 +1210,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                     << " " << j->driveDampingRatio << " " << j->driveMaxTorque;
         }
         out << "\n";
+        if (!j->connectedGuid.empty())
+            out << "  jointlink " << Quote(j->connectedGuid) << "\n";
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)

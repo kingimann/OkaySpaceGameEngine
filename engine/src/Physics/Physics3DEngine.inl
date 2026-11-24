@@ -961,4 +961,97 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     E.touchingSet.swap(nowSet);
 }
 
+// Distance from `point` to one engine piece. Meshes and heightfields use the triangle closest
+// point (a zero-radius sphere only reports a hit when the point lies on a triangle). Convex pieces
+// use GJK against a point. A plane is the half-space under its normal, not its huge bounding box.
+float DistanceToPiece(const EnginePiece& piece, const Vec3& point, float maxDistance, Vec3& closest) {
+    const phys::Shape& shape = piece.shape;
+    if (shape.type == phys::ShapeType::Mesh && shape.mesh) {
+        const phys::V3 local = piece.world.ApplyInv(P3(point));
+        const float reach = std::max(maxDistance, 0.0f) + 1.0f;
+        const phys::Aabb box{local - phys::V3{reach, reach, reach}, local + phys::V3{reach, reach, reach}};
+        std::vector<phys::Tri3> tris;
+        shape.mesh->Collect(box, tris);
+        float best = 1e30f;
+        Vec3 bestLocal = E3(local);
+        const Vec3 at = E3(local);
+        for (const phys::Tri3& t : tris) {
+            Vec3 c = trimesh::ClosestPointOnTriangle(at, E3(t.a), E3(t.b), E3(t.c));
+            float d2 = (at - c).SqrMagnitude();
+            if (d2 < best) { best = d2; bestLocal = c; }
+        }
+        if (!(best < 1e29f)) return 1e30f;
+        closest = E3(piece.world.Apply(P3(bestLocal)));
+        return (point - closest).Magnitude();
+    }
+    if (shape.type == phys::ShapeType::Plane) {
+        Vec3 n = E3(phys::Rotate(piece.world.q, shape.planeNormal));
+        float mag = n.Magnitude();
+        if (!(mag > 1e-8f)) return 1e30f;
+        n = n * (1.0f / mag);
+        float signedDist = Vec3::Dot(point - E3(piece.world.p), n) - shape.planeOffset;
+        if (signedDist <= 0.0f) { closest = point; return 0.0f; }
+        closest = point - n * signedDist;
+        return signedDist;
+    }
+    phys::Shape probe = phys::Shape::Sphere(0.0f);
+    phys::Xf at{P3(point), phys::Q{}};
+    phys::DistanceResult dist = phys::GjkDistance(probe, at, shape, piece.world);
+    const float rad = shape.CoreRadius();
+    if (dist.overlap || dist.distance <= rad) { closest = point; return 0.0f; }
+    if (!std::isfinite(dist.distance)) return 1e30f;
+    Vec3 n = E3(dist.normal);
+    float nm = n.Magnitude();
+    if (nm < 1e-8f) {
+        Vec3 away = point - E3(dist.pB);
+        nm = away.Magnitude();
+        if (!(nm > 1e-8f)) { closest = point; return 0.0f; }
+        n = away * (1.0f / nm);
+    } else {
+        n = n * (1.0f / nm);
+    }
+    closest = E3(dist.pB) - n * rad;
+    return dist.distance - rad;
+}
+
+void ConsiderSolid(NearestSolid3D& best, bool& any, float maxDistance, Collider3D* col, GameObject* go,
+                   const Vec3& cp, float d) {
+    if (!std::isfinite(d) || d > maxDistance) return;
+    if (any && !(d < best.distance)) return;
+    any = true;
+    best.hit = true;
+    best.collider = col;
+    best.gameObject = go;
+    best.point = cp;
+    best.distance = d;
+}
+
+NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float maxDistance,
+                                        GameObject* ignore, std::uint32_t layerMask) {
+    NearestSolid3D best;
+    if (!(maxDistance >= 0.0f) || !std::isfinite(maxDistance) || !std::isfinite(point.x + point.y + point.z)) return best;
+    bool any = false;
+    MeshCache cache;
+    for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
+        std::vector<EnginePiece> pieces;
+        if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
+        for (const EnginePiece& piece : pieces) {
+            Vec3 cp = point;
+            const float d = DistanceToPiece(piece, point, maxDistance, cp);
+            ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+        }
+    }
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, layerMask)) continue;
+        EnginePiece piece;
+        if (!PieceOfTerrain(terr, piece)) continue;
+        Vec3 cp = point;
+        const float d = DistanceToPiece(piece, point, maxDistance, cp);
+        ConsiderSolid(best, any, maxDistance, nullptr, terr->gameObject, cp, d);
+    }
+    if (!any) return NearestSolid3D{};
+    return best;
+}
+
 } // namespace okay

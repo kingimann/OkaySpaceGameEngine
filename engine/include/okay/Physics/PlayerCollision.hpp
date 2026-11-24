@@ -8,18 +8,49 @@
 
 namespace okay {
 
-/// Keep a transform-moved player (no Rigidbody3D) from clipping through walls/floors:
-/// approximate the body as a sphere and push it out of any solid geometry, then shift
-/// the player by that correction. Uses the player's BoxCollider3D for the body size
-/// when present, else a sensible default. Call right after moving the Transform.
+// A sideways push from a walkable floor or a low riser is turned into a step up, so a body
+// resting in a slope is lifted straight out (no downhill creep) and a kerb lower than
+// `stepUp` is walked onto. A wall that still blocks at that height keeps the raw push.
+template <class F>
+Vec3 SeatUpright(Scene& scene, GameObject* self, const Vec3& center, float bottom, F resolveAt) {
+    Vec3 fixed = resolveAt(center);
+    Vec3 d = fixed - center;
+    if (d.x * d.x + d.z * d.z <= 1e-8f) return fixed;
+    const float stepUp = 0.35f;
+    Vec3 raised = center + Vec3{0.0f, stepUp, 0.0f};
+    Vec3 rf = resolveAt(raised);
+    Vec3 rd = rf - raised;
+    if (rd.x * rd.x + rd.z * rd.z > 2.5e-3f) return fixed;
+    RaycastHit3D g = scene.physics3D().Raycast(scene, rf, Vec3{0.0f, -1.0f, 0.0f},
+                                               stepUp + bottom + 0.2f, self, Physics3D::kAllLayers, false);
+    if (!g.hit || g.normal.y < 0.35f) return fixed;
+    float drop = g.distance - bottom;
+    if (drop < -0.05f || drop > stepUp + 0.15f) return fixed;
+    Vec3 landed{center.x, rf.y - drop, center.z};
+    for (int k = 0; k < 5; ++k) {
+        Vec3 check = resolveAt(landed);
+        float cx = check.x - landed.x, cy = check.y - landed.y, cz = check.z - landed.z;
+        if (cx * cx + cz * cz < 1e-6f && cy < 0.001f && cy > -0.001f) return landed;
+        float lift = std::sqrt(cx * cx + cy * cy + cz * cz);
+        if (!(lift > 1e-5f)) return landed;
+        landed.x = center.x;
+        landed.y += lift;
+        landed.z = center.z;
+    }
+    return landed;
+}
+
+/// Keep a transform-moved player (no Rigidbody3D) from clipping through walls, floors or ceilings.
+/// A capsule, and a tall box (the usual character), is pushed out as a capsule: the head meets a
+/// ceiling and the feet meet a floor. That push is the default. On a walkable slope the separation
+/// is straight up, so standing still does not slide downhill, and a riser lower than a step is
+/// walked over. A cube stays a sphere at the waist. Call right after moving the Transform.
 inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
     if (!self || !self->transform) return;
     auto shift = [&](const Vec3& from, const Vec3& fixed) {
         Vec3 delta = fixed - from;
         if (delta.SqrMagnitude() > 1e-10f) self->transform->Translate(delta);
     };
-    // A real capsule (or a tall box, which is the usual character stand-in) is pushed out as a capsule,
-    // so the head meets a ceiling and the feet meet a floor. A cube stays the old waist sphere.
     if (auto* cap = self->GetComponent<CapsuleCollider3D>()) {
         if (cap->shape() == Collider3D::Shape::Capsule) {
             Vec3 a, b;
@@ -27,7 +58,11 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
             Vec3 center = (a + b) * 0.5f;
             Vec3 axis = b - a;
             float half = axis.Magnitude() * 0.5f;
-            shift(center, scene.physics3D().ResolveCapsule(scene, center, axis, half, cap->WorldRadius(), self));
+            float radius = cap->WorldRadius();
+            auto resolveAt = [&](const Vec3& c) {
+                return scene.physics3D().ResolveCapsule(scene, c, axis, half, radius, self);
+            };
+            shift(center, SeatUpright(scene, self, center, half + radius, resolveAt));
             return;
         }
     }
@@ -36,10 +71,14 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
         float radius = Mathf::Max(0.05f, Mathf::Min(h.x, h.z));
         Vec3 center = bc->WorldCenter();
         float half = h.y - radius;
-        if (half > 0.02f)
-            shift(center, scene.physics3D().ResolveCapsule(scene, center, Vec3{0, 1, 0}, half, radius, self));
-        else
+        if (half > 0.02f) {
+            auto resolveAt = [&](const Vec3& c) {
+                return scene.physics3D().ResolveCapsule(scene, c, Vec3{0, 1, 0}, half, radius, self);
+            };
+            shift(center, SeatUpright(scene, self, center, half + radius, resolveAt));
+        } else {
             shift(center, scene.physics3D().ResolveSphere(scene, center, radius, self));
+        }
         return;
     }
     Vec3 center = self->transform->Position() + Vec3{0.0f, 0.9f, 0.0f};

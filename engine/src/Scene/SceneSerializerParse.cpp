@@ -1582,6 +1582,10 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "jointlink") {   // the partner's guid, written after that joint
+                    const std::string g = ReadQuoted(in);
+                    auto joints = go->GetComponents<Joint3D>();
+                    if (!joints.empty() && joints.back()) joints.back()->connectedGuid = g;
                 } else if (field == "joint2d") {
                     auto* j = go->AddComponent<Joint2D>();
                     int bk = 0, ac = 1;

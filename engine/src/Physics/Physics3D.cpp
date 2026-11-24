@@ -1188,12 +1188,66 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     return best;
 }
 
+// How far `q` reaches from its centre along `n` (n should be unit length).
+float ShapeReach(const QueryShape& q, const Vec3& n) {
+    if (q.kind == QueryShape::Box)
+        return std::fabs(Vec3::Dot(q.box.ax, n)) * q.box.h.x
+             + std::fabs(Vec3::Dot(q.box.ay, n)) * q.box.h.y
+             + std::fabs(Vec3::Dot(q.box.az, n)) * q.box.h.z;
+    float reach = q.r;
+    if (q.kind == QueryShape::Capsule) {
+        Vec3 seg = q.b - q.a;
+        float len = seg.Magnitude();
+        if (len > 1e-8f) reach += 0.5f * len * std::fabs(Vec3::Dot(seg * (1.0f / len), n));
+    }
+    return reach;
+}
+
+// Terrain is part of every shape cast, not only a zero-radius ray. The ray hits the
+// surface; the cast hits earlier by the shape's reach along the ground normal.
+void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+                     GameObject* ignore, std::uint32_t mask, std::vector<RaycastHit3D>& hits) {
+    if (!(dir.SqrMagnitude() > 0.5f) || !(maxDist > 0.0f)) return;
+    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+        if (!TerrainPasses(terr, ignore, mask) || !terr->gameObject) continue;
+        float t = 0.0f;
+        Vec3 n{0, 1, 0};
+        float reachGuess = q.kind == QueryShape::Box ? (q.box.h.x + q.box.h.y + q.box.h.z) : q.r + 0.01f;
+        if (!RayTerrain(terr, q.Center(), dir, maxDist + reachGuess + 1.0f, t, n)) continue;
+        float approach = -Vec3::Dot(n, dir);
+        if (!(approach > 0.05f)) continue;
+        float hitT = t - ShapeReach(q, n) / approach;
+        if (hitT < 0.0f) hitT = 0.0f;
+        if (hitT > maxDist) continue;
+        RaycastHit3D h;
+        h.hit = true; h.collider = nullptr; h.gameObject = terr->gameObject;
+        h.distance = hitT; h.point = q.Center() + dir * t; h.normal = n;
+        hits.push_back(h);
+    }
+}
+
 // Every collider the sweep touches, nearest first. Each candidate is marched on its own, with the same
 // step and bisection as Sweep, so a thin wall between two samples is not skipped and a later wall is kept.
+// A zero direction or a zero distance still reports what the shape already overlaps, the same as SphereCast
+// testing the place it stands.
 std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
                                    GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
     std::vector<RaycastHit3D> hits;
-    if (dir.SqrMagnitude() < 1e-12f || !(maxDist > 0.0f) || !std::isfinite(maxDist)) return hits;
+    const bool badDir = !(dir.SqrMagnitude() >= 1e-12f) || !std::isfinite(dir.x) || !std::isfinite(dir.y) || !std::isfinite(dir.z);
+    const bool zeroDist = !(maxDist > 1e-8f);
+    if (badDir || zeroDist) {
+        if (!(maxDist >= 0.0f) || !std::isfinite(maxDist)) return hits;
+        for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+            if (!Passes(c, ignore, mask, queryTriggers)) continue;
+            Vec3 n, p;
+            if (!ShapeTouch(c, q, n, p)) continue;
+            RaycastHit3D h;
+            h.hit = true; h.collider = c; h.gameObject = c->gameObject;
+            h.distance = 0.0f; h.point = p; h.normal = n;
+            hits.push_back(h);
+        }
+        return hits;
+    }
     struct Cand { Collider3D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
@@ -1240,6 +1294,7 @@ std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3
         h.distance = hitT; h.point = p; h.normal = n;
         hits.push_back(h);
     }
+    AddTerrainSweep(scene, q, dir, maxDist, ignore, mask, hits);
     std::sort(hits.begin(), hits.end(), [](const RaycastHit3D& a, const RaycastHit3D& b) {
         return a.distance < b.distance;
     });
@@ -1391,6 +1446,9 @@ RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& ha
 std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                                const Vec3& direction, const Quat& rotation, float maxDistance,
                                                GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    // A box with no size is a ray, and a ray includes terrain (the same as SphereCastAll with radius 0).
+    if (!(halfExtents.x > 1e-6f) && !(halfExtents.y > 1e-6f) && !(halfExtents.z > 1e-6f))
+        return RaycastAll(scene, center, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
     return SweepAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
                     ignore, layerMask, queryTriggers);
 }
@@ -1405,6 +1463,8 @@ RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, 
 std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                                    const Vec3& direction, float maxDistance, GameObject* ignore,
                                                    std::uint32_t layerMask, bool queryTriggers) {
+    if (!(radius > 0.0f) && (a - b).SqrMagnitude() < 1e-12f)
+        return RaycastAll(scene, a, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
     return SweepAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
                     ignore, layerMask, queryTriggers);
 }
@@ -1450,11 +1510,17 @@ Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfS
         Vec3 b = center + axis * halfSegment;
         for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
             if (!Alive(col) || (ignore && col->gameObject == ignore) || col->isTrigger) continue;
-            Vec3 waist = ClosestOnSegment(col->WorldCenter(), a, b);
-            Vec3 samples[3] = {a, b, waist};
+            // Seven stations along the segment, plus the point nearest this collider.
+            // Three stations (the two ends and the waist) miss a corner that overlaps
+            // the body between them.
+            Vec3 samples[8];
+            int ns = 0;
+            for (int s = 0; s <= 6; ++s) samples[ns++] = a + (b - a) * ((float)s / 6.0f);
+            samples[ns++] = ClosestOnSegment(col->WorldCenter(), a, b);
             Vec3 best{0, 0, 0};
             float best2 = 0.0f;
-            for (const Vec3& sample : samples) {
+            for (int si = 0; si < ns; ++si) {
+                const Vec3& sample = samples[si];
                 Vec3 s = sample;
                 if (!NudgeSphere(col, s, radius)) continue;
                 Vec3 d = s - sample;
@@ -1471,63 +1537,6 @@ Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfS
         if (!moved) break;
     }
     return center;
-}
-
-NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float maxDistance,
-                                        GameObject* ignore, std::uint32_t layerMask) {
-    NearestSolid3D best;
-    if (!(maxDistance >= 0.0f) || !std::isfinite(maxDistance) || !std::isfinite(point.x + point.y + point.z)) return best;
-    best.distance = maxDistance;
-    bool any = false;
-    for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
-        Vec3 cp = point;
-        float d = 1e30f;
-        if (col->shape() == Collider3D::Shape::Sphere) {
-            auto* s = static_cast<SphereCollider3D*>(col);
-            Vec3 c = s->WorldCenter();
-            float r = s->WorldRadius();
-            Vec3 delta = point - c;
-            float m = delta.Magnitude();
-            if (m <= r) { cp = point; d = 0.0f; }
-            else if (m > 1e-8f) { cp = c + delta * (r / m); d = m - r; }
-        } else if (col->shape() == Collider3D::Shape::Box) {
-            cp = ClosestOnOBB(MakeOBB3(static_cast<BoxCollider3D*>(col)), point);
-            d = (point - cp).Magnitude();
-        } else if (col->shape() == Collider3D::Shape::Capsule) {
-            auto* cap = static_cast<CapsuleCollider3D*>(col);
-            Vec3 a, b; cap->Segment(a, b);
-            Vec3 on = ClosestOnSegment(point, a, b);
-            Vec3 delta = point - on;
-            float m = delta.Magnitude();
-            float r = cap->WorldRadius();
-            if (m <= r) { cp = point; d = 0.0f; }
-            else { cp = on + delta * (r / m); d = m - r; }
-        } else if (MeshCollider3D* mc = TriMeshOf(col)) {
-            trimesh::Contact k = trimesh::WorldView(ActiveTris(mc), mc->WorldMatrix()).Sphere(point, 0.0f);
-            if (k.hit) { cp = k.point; d = 0.0f; }
-            else {
-                Vec3 mn, mx; col->WorldAABB(mn, mx);
-                cp = ClampVec(point, mn, mx);
-                d = (point - cp).Magnitude();
-            }
-        } else {
-            Vec3 mn, mx; col->WorldAABB(mn, mx);
-            cp = ClampVec(point, mn, mx);
-            d = (point - cp).Magnitude();
-        }
-        if (!std::isfinite(d) || d > maxDistance) continue;
-        if (!any || d < best.distance) {
-            any = true;
-            best.hit = true;
-            best.collider = col;
-            best.gameObject = col->gameObject;
-            best.point = cp;
-            best.distance = d;
-        }
-    }
-    if (!any) return NearestSolid3D{};
-    return best;
 }
 
 } // namespace okay

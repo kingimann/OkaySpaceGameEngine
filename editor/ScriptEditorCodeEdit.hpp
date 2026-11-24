@@ -1,38 +1,45 @@
 #pragma once
-// ScriptEditorCodeEdit: the script editor's view of OkayUI::CodeEdit, in the vocabulary the script editor already speaks
-// to ImGuiColorTextEdit (editor/vendor/TextEditor.h).
+// ScriptEditorCodeEdit: the script editor's code widget, OkayUI::CodeEdit, in the vocabulary the script editor speaks (the
+// vocabulary of the vendored ImGuiColorTextEdit it replaced; that copy is deleted). The script language's words and the palette
+// types the editor needs live here too (LanguageWords, ScriptPalette, PaletteIndex).
 //
 //  - Positions are Coord{line, column} where the column is a DISPLAY column (one character is one column, a tab advances
-//    to the next multiple of the tab size), like TextEditor::Coordinates. CodeEdit's own positions are byte offsets.
-//  - Error markers and breakpoints are keyed by 1-based line number, like TextEditor::ErrorMarkers and Breakpoints.
-//  - GetText() ends with a newline, like TextEditor::GetText().
+//    to the next multiple of the tab size). CodeEdit's own positions are byte offsets.
+//  - Error markers and breakpoints are keyed by 1-based line number.
+//  - GetText() ends with a newline.
 //  - Geometry (RowHeight, CharWidth, TextStartX, ContentOrigin, CaretScreenPosBelow, ScreenToCoords, FirstVisibleLine) is
 //    that of the last Draw, in screen pixels.
 //
 // This file and its .cpp use no Dear ImGui and no SDL: they build and are tested headless (okayui/tests/test_okayui_script_adapter.cpp).
-// The widget that picks between this and the ImGui editor is editor/ScriptEditorWidget.hpp.
+// The widget that draws it inside the Dear ImGui script editor window is editor/ScriptEditorWidget.hpp.
 #include "okay/UI/OkayUICodeEdit.hpp"
 
+#include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 namespace scripteditor {
 
-/// The words of a script language as the Dear ImGui editor's LanguageDefinition lists them (editor/ScriptEditorWidget.hpp fills it
-/// from TextEditor::LanguageDefinition): keywords, type names, known names (built-ins: the identifiers with a tooltip), line comment
-/// starts and the block comment pair.
+/// The words of a script language: keywords, type names, known names (built-ins, in their own colour), line comment starts,
+/// the block comment pair, and the docs: what a word's hover tooltip says (a built-in's signature and doc, "X (built-in type)").
 struct LanguageWords {
     std::vector<std::string> keywords, types, known, lineComments;
     std::string blockStart, blockEnd;
+    std::map<std::string, std::string> docs;
 };
 
-/// TextEditor::Palette's 24 colours in TextEditor::PaletteIndex order (Default, Keyword, Number, String, CharLiteral, Punctuation,
-/// Preprocessor, Identifier, KnownIdentifier, PreprocIdentifier, Comment, MultiLineComment, Background, Cursor, Selection,
-/// ErrorMarker, Breakpoint, LineNumber, CurrentLineFill, CurrentLineFillInactive, CurrentLineEdge, TypeName, Function, Member),
-/// each 0xAABBGGRR like OkayUI.
-constexpr int kImGuiPaletteSize = 24;
+/// The script editor's 24 colours, each 0xAABBGGRR like OkayUI, in this order (the order of the palette the vendored editor took;
+/// OkayScriptPalette in ScriptAssist.cpp fills it).
+enum class PaletteIndex : int {
+    Default, Keyword, Number, String, CharLiteral, Punctuation, Preprocessor, Identifier, KnownIdentifier, PreprocIdentifier,
+    Comment, MultiLineComment, Background, Cursor, Selection, ErrorMarker, Breakpoint, LineNumber, CurrentLineFill,
+    CurrentLineFillInactive, CurrentLineEdge, TypeName, Function, Member, Max
+};
+constexpr int kScriptPaletteSize = (int)PaletteIndex::Max;
+using ScriptPalette = std::array<unsigned, kScriptPaletteSize>;
 
 struct Coord {
     int mLine = 0, mColumn = 0;
@@ -83,16 +90,20 @@ public:
     // ---- configuration ----
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
-    /// Colour with these words instead (the script's language: OkayScript or C#, Lua on the Lua branch), in the Dear ImGui editor's
-    /// order (a call before a known name). Kept across SetColorizerEnable(false / true).
+    /// Colour with these words instead (the script's language: OkayScript or C#, Lua on the Lua branch), a call coloured before a
+    /// known name. Kept across SetColorizerEnable(false / true). Its docs are the hover tooltips (with colouring on or off).
     void SetLanguage(const LanguageWords& words);
-    /// The Dear ImGui editor's palette (kImGuiPaletteSize colours, see above): text colours, background (also the gutter: one
-    /// background inside the frame), caret, selection, the error wash, the breakpoint wash, line numbers and the caret's line box.
-    void SetPaletteFromImGui(const unsigned* colors, int count);
+    /// The palette (kScriptPaletteSize colours in PaletteIndex order): text colours, background (also the gutter: one background
+    /// inside the frame), caret, selection, the error wash, the breakpoint wash, line numbers and the caret's line box.
+    void SetPaletteColors(const unsigned* colors, int count);
+    void SetPalette(const ScriptPalette& p) { SetPaletteColors(p.data(), (int)p.size()); }
+    /// Pixels between the line numbers and the text (the Density setting); at least 4.
+    void SetLeftMargin(int px) { ed_.SetTextMargin(px > 4 ? (float)px : 4.0f); }
     void SetUserTypes(const std::unordered_set<std::string>& types);
-    /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
+    /// Error markers by 1-based line. A message that starts with "warning: " is a warning (amber). The message is the line's
+    /// tooltip ("Error at line N: "...); the text after the line is the script editor's own overlay (main.cpp), not drawn here.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
-    /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
+    /// Breakpoint marks by 1-based line.
     void SetBreakpoints(const std::unordered_set<int>& lines);
     void SetHandleKeyboardInputs(bool on) { ed_.SetHandleKeyboardInput(on); }
     void SetReadOnly(bool on) { ed_.SetReadOnly(on); }

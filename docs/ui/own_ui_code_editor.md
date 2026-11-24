@@ -59,13 +59,14 @@ The list is from `grep "te\." editor/main.cpp` (the script editor's calls) plus 
 | `IsTextChanged` | HAVE | `Draw` returns it; also `Version()` |
 | Syntax highlighting with a language definition | HAVE | `CodeLanguage` (keywords, types, known words, line and block comments), `OkayScriptLanguage()`, `CLikeLanguage()`; or any callback `CodeHighlighter` (token ranges with a colour id, one line at a time with a state that carries block comments across lines). Not regex based |
 | `SetUserTypes` (classes and enums declared in the script) | HAVE | `SetUserTypes` |
-| Known identifiers (VM built-ins in a different colour) | HAVE | `CodeLanguage::known`, colour `CodeColor_Known`. The hover tooltip with the signature (the library had it) is the caller's: `LineTokens` and `ScreenToPos` give what is under the pointer |
+| Known identifiers (VM built-ins in a different colour) | HAVE | `CodeLanguage::known`, colour `CodeColor_Known`. The hover tooltip with the signature and doc (the library had it): `SetHoverInfo` / `HoverText` (step 31); the script editor passes `LanguageWords::docs` |
 | `SetColorizerEnable` | HAVE | `SetHighlighter(nullptr)` turns colouring off |
 | Palette | HAVE | `CodePalette`, `DefaultCodePalette()` is the script editor's Darcula-flavoured one; the script editor passes its own `OkayScriptPalette` (`ScriptEditorCodeEdit::SetPaletteFromImGui`, step 29) |
 | `SetErrorMarkers` | HAVE | `SetMarkers`: a gutter mark, a wash over the line, a wavy underline under a column range, the message as a tooltip |
 | `SetBreakpoints` and the gutter click | HAVE | `SetBreakpoints`, `ToggleBreakpoint`, `SetBreakpointCallback`; breakpoints move with the text |
 | Current line highlight | HAVE | while focused with no selection; with `currentLineInactive` also while unfocused, outlined with `currentLineEdge`, across the gutter (step 29) |
 | Scrolling: wheel, scroll bars, caret kept visible, `FirstVisibleLine` | HAVE | `ScrollX`, `ScrollY`, `SetScroll`, `GoToLine`, `FirstVisibleLine`, `VisibleLineCount` |
+| `SetLeftMargin` (space between the line numbers and the text; the Density setting) | HAVE | `SetTextMargin` (step 31) |
 | `RowHeight`, `CharWidth`, `TextStartX`, `ContentOrigin`, `CaretScreenPosBelow`, `ScreenToCoords` | HAVE | `LineHeight`, `CharWidth`, `GutterWidth` / `ViewRect`, `PosToScreen`, `CaretScreenPosBelow`, `ScreenToPos` |
 | `SetHandleKeyboardInputs` (the autocomplete popup owns the keys) | HAVE | `SetHandleKeyboardInput` |
 | Read-only mode | HAVE | `SetReadOnly`: moving, selecting and copying work, nothing else |
@@ -181,7 +182,7 @@ Everything in this step is tested headless only. `editor/main.cpp` and `editor/S
 
 Test results (Release, Linux): `okayui_codeedit` 491 checks 0 failures (before the fix 25 failures), `okayui_script_adapter` 98/0 (18), `okayui_host` 93/0 (4), `okayui_capture` 43/0 (16), `okayui_codeedit_imgui` 86/0 (failed, then crashed). The golden image `codeedit_highlight.png` is unchanged (the new look is off in the default palette). Not run: `okayui_codeedit_fuzz` and the other OkayUI suites (not rebuilt).
 
-Wiring: `oked::UseOkayUICodeEdit()` (the OkayUI backend, or the developer variable `OKAY_UI_CODEEDIT=1` with the Dear ImGui screens) picks the widget; `oked::OkayUIInputOn()` routes mouse and keys to OkayUI in either case.
+Wiring (until step 31): `oked::UseOkayUICodeEdit()` (the OkayUI backend, or the developer variable `OKAY_UI_CODEEDIT=1` with the Dear ImGui screens) picked the widget; `oked::OkayUIInputOn()` routes mouse and keys to OkayUI in either case.
 
 NOT DONE (step 29):
 - Build and run the editor with these changes (Xvfb), take side-by-side screenshots (vendored against ours) and look at them: popups over the code, the frame, line numbers, caret-line box, scroll bars.
@@ -191,3 +192,29 @@ NOT DONE (step 29):
 - `okayui_codeedit_fuzz` and the full OkayUI suite after the `OkayUI.cpp` change (capture, `finalizeFrame` ends an open capture).
 - Windows build and run; the embed's textures with the Direct3D 11 / own ImGui renderers were not exercised (only the headless rasteriser).
 - A captured CodeEdit on a secondary viewport (Script Editor dragged out to its own OS window): mouse coordinates there were already wrong before this step.
+
+
+## Step 31: the switch, and the vendored copy deleted (2026-11-23, branch `claude/third-party-4`)
+
+The script editor's code is now always `OkayUI::CodeEdit`. `ScriptEditorWidget` holds only the OkayUI widget (no second editor, no
+carrying text between two); `oked::UseOkayUICodeEdit()` is always true in a build with OkayUI, so `OkayUIInputOn()` always routes
+the mouse over the code and the keys while it has the keyboard (the path `OKAY_UI_CODEEDIT=1` used in steps 28 to 30). The
+developer variable `OKAY_UI_CODEEDIT` is no longer read. `editor/vendor/` (`TextEditor.cpp`, `.h`, `.LICENSE`) is deleted, with its
+CMake lines and the script exclusions that named it.
+
+Gaps found by reading every call the script editor made on the vendored widget, closed in CodeEdit with tests written first:
+
+| Gap | Now | Tests |
+|---|---|---|
+| `SetLeftMargin`: the space between the line numbers and the text (Density setting, 0 to 32 px) | `CodeEdit::SetTextMargin` (default 4, 0 to 200); a click in it is column 0; the adapter's `SetLeftMargin` keeps at least 4 | `okayui_codeedit` `ScriptEditorGapTests`, `okayui_script_adapter` |
+| Hover tooltip on a known word: a built-in's signature and doc, "X (built-in type)" | `CodeEdit::SetHoverInfo` (word to text) and `HoverText(x, y)`: the cell under the pointer, letters, digits and `_`; an error's message wins on its line; Draw shows it as a tooltip. `LanguageWords::docs` carries the texts, `OkayScriptLanguageWords()` fills them as before | both suites |
+| The types the editor took from the vendored header (`TextEditor::Palette`, `PaletteIndex`, `LanguageDefinition`, `Coordinates`, `ErrorMarkers`, `Breakpoints`, `Keywords`) | ours: `scripteditor::ScriptPalette`, `PaletteIndex`, `LanguageWords`, `Coord` (`editor/ScriptEditorCodeEdit.hpp`); `ScriptEditorWidget` names the containers with standard types | `okayui_script_adapter` |
+| `SetShowWhitespaces(false)` | not needed: CodeEdit never draws whitespace marks | - |
+| The regex tokens of the language definition | not needed: only the `#` line comment used one; it is a plain line comment now (`lineComments = {"//", "#"}`) | `okayui_script_adapter` (Lua-like words) |
+
+Checked and left as is: the error's message after the end of a line is drawn by the script editor's own overlay in `main.cpp`
+(the widget draws none, so it shows once).
+
+NOT DONE (step 31): the editor was not run in a window after the switch; not built or run on Windows (only the changed headless
+files were syntax-checked with MinGW); the editor built on OkayUI itself (`OKAY_EDITOR_ON_OKAYUI`, off, not in CI) got a plain
+fallback `Render` that was not compiled; IME only with synthetic events.

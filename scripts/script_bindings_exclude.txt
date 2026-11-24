@@ -1,0 +1,7 @@
+# Classes or Class.Method entries that scripts/gen_script_bindings.py must not bind, one per line.
+# Each one here crashed or misbehaved when the parity test (tests/test_script_bindings.cpp) called it with
+# ordinary script values: an engine-internal method that trusts its caller (an index it does not check).
+# Reaching them from a script would let a script crash the game, so they stay C++ only until they check their input.
+CompoundCollider3D.PartFrame
+CompoundCollider3D.PartSupport
+ModelAnimator.SlotOfClip

@@ -26,7 +26,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
-namespace net { class Packet; class BuildSync; class QuestSync; }
+namespace net { class Packet; class BuildSync; class QuestSync; class Rollback; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -52,6 +52,10 @@ public:
     bool StartServer(std::uint16_t port);
     /// Connect to a server at host:port (host may be a name or dotted IP).
     bool StartClient(const std::string& host, std::uint16_t port);
+    /// Host on `port` if it is free on this computer; otherwise join the game
+    /// already hosted on it at `host` (this computer by default). Two copies of
+    /// a game on one PC become host and client with no setup (AutoStart::Auto).
+    bool HostOrJoin(std::uint16_t port = kDefaultPort, const std::string& host = "127.0.0.1");
     void Stop();
 
     // ---- Relay (NAT traversal) ----------------------------------------
@@ -380,7 +384,10 @@ public:
     const std::string& Room() const { return m_localRoom; }
 
     // ---- No-code setup: start automatically when the scene plays ------
-    enum class AutoStart { None, Host, Join };
+    /// Auto: host if the port is free on this computer, otherwise join the
+    /// game already hosted here (127.0.0.1), so pressing Play in two copies of
+    /// the game on one PC makes a two-player test with no setup.
+    enum class AutoStart { None, Host, Join, Auto };
     AutoStart   autoStart = AutoStart::None;
     std::uint16_t autoPort = 45000;
     std::string autoHost = "127.0.0.1";
@@ -509,7 +516,11 @@ public:
     /// Set a shared variable. On the server it applies and broadcasts to every
     /// client; on a client it asks the server, which applies and re-broadcasts.
     /// Great for scores, game phase, who's turn it is — one source of truth.
+    /// A change is sent again (the newest value only, a few times a second) until the
+    /// other side acknowledges it, so a lost datagram does not lose the change.
     void SetVar(const std::string& key, const std::string& value);
+    /// Variable changes sent and not acknowledged yet (to every client on the host; to the host on a client).
+    std::size_t VarsUnacked() const;
     /// Read the local copy of a synced variable ("" if unset).
     std::string GetVar(const std::string& key) const;
     /// Every shared variable (a read-only view, for tests and tools: how many, and how big).
@@ -767,6 +778,167 @@ public:
     void SetPeerLeftHandler(std::function<void(std::uint32_t)> f) {
         m_peerLeft = std::move(f);
     }
+    // ---- The easy layer: players, join / leave and named events on every peer ----
+    // The same on the host and on every client, so game code never asks which
+    // side it is on. Visual Script (On Player Joined, Send Network Event, ...),
+    // OkayScript (net.on, on_player_joined) and okay::Net (Net.hpp) all sit on these.
+
+    /// The default game port (Host, Join, Auto Start and the LAN scan's first port).
+    static constexpr std::uint16_t kDefaultPort = 45000;
+    /// One player in the session. `id` 0 is the host (when it plays).
+    struct Player { std::uint32_t id = 0; std::string name; bool isHost = false, isLocal = false; };
+    /// Everyone in this peer's session and room, you included, sorted by id.
+    /// Empty while offline. A client's list follows the host's roster (about once a second).
+    std::vector<Player> Players() const;
+    /// The host? (A listen server or a dedicated server.) Same as IsServer().
+    bool IsHost() const { return IsServer(); }
+    /// Run `f(id, name)` each time another player joins, on every peer. A client
+    /// that joins gets one call for each player already there (the host first).
+    /// Returns an id for RemoveListener.
+    int OnPlayerJoined(std::function<void(std::uint32_t id, const std::string& name)> f);
+    /// Run `f(id)` each time another player leaves (quit, timed out or kicked), on every peer.
+    int OnPlayerLeft(std::function<void(std::uint32_t id)> f);
+    /// Run `f(from, data)` when the named network event arrives ("" = every event,
+    /// with the name in ReceivedEvent::name via OnAnyEvent). `from` is the sender's player id.
+    int OnEvent(const std::string& name, std::function<void(std::uint32_t from, const std::string& data)> f);
+    struct ReceivedEvent { std::uint32_t from = 0; std::string name, data; };
+    int OnAnyEvent(std::function<void(const ReceivedEvent&)> f);
+    void RemoveListener(int id);
+    /// Send a named event to every player in the room, reliably and in order
+    /// (resent until it arrives; events reach each player in the order they were
+    /// sent; a client's goes through the host, which stamps the real sender).
+    /// Big data is split into pieces and put back together on the way.
+    /// With `includeSelf` (the default) it also runs here, so "an event happens
+    /// everywhere". Names: 1-64 letters, digits, '_', '-', '.', ' '; data up to
+    /// kMaxEventData bytes. False (and LastError says why) if it was not sent.
+    bool SendEvent(const std::string& name, const std::string& data = "", bool includeSelf = true);
+    /// The same, to one player only (it does not run here unless `target` is you).
+    bool SendEventTo(std::uint32_t target, const std::string& name, const std::string& data = "");
+    static constexpr std::size_t kMaxEventName = 64, kMaxEventData = 16 * 1024;
+    static bool EventNameOk(const std::string& name);
+    /// The last thing that went wrong, in plain words ("Could not reach host
+    /// 1.2.3.4:45000 (no answer after 15 s)."), or "" if nothing did. Cleared by
+    /// the next Host / Join. Every failure is also written to the log once.
+    const std::string& LastError() const { return m_lastError; }
+    /// Network time in seconds, the same on every peer to within about half a
+    /// round trip: the host's clock since it started hosting. 0 while offline.
+    double NetworkTime() const;
+    // ---- Ownership handoff (server-authoritative) ----
+    /// Host: hand the networked object `netId` (its Network Sync's id) to `player`
+    /// (0 = the host). Every peer's copy follows: the owner's copy drives it, the
+    /// others follow it, and the host takes its transform from that player only
+    /// (any other client's is refused). It holds for players who join later; when
+    /// the owner leaves, the object goes back to the host. False if not the host.
+    bool GiveOwnership(const std::string& netId, std::uint32_t player);
+    /// Client: ask the host for `netId`. The host grants it when its Network Sync
+    /// says "Players can claim it" (clientClaimable) and no other client holds it,
+    /// or when `allowOwnershipRequest` (host) says yes. The answer comes back as an
+    /// ownership change (OnOwnershipChanged). The host itself just takes it.
+    void RequestOwnership(const std::string& netId);
+    /// Host's rule for RequestOwnership (unset: the clientClaimable rule above).
+    std::function<bool(std::uint32_t player, const std::string& netId)> allowOwnershipRequest;
+    /// Who holds `netId` after a handoff; -1 if it was never handed (its Network Sync's authority decides).
+    std::int64_t OwnerOf(const std::string& netId) const;
+    /// Run `f(netId, owner)` on every peer when an object changes hands.
+    int OnOwnershipChanged(std::function<void(const std::string& netId, std::uint32_t owner)> f);
+    /// Does this peer drive `netId` now (its own player, an object it was given, ...)?
+    bool IsMine(const std::string& netId) const;
+
+    // ---- Stats ----
+    struct NetStats {
+        float rttMs = 0.0f;          ///< round trip to the host; on the host, the average over its clients
+        float lossPercent = 0.0f;    ///< pings without an answer, last ~16 s; on the host, the average over its clients (it pings each once a second)
+        float bytesInPerSec = 0.0f;  ///< this peer's socket, last full second
+        float bytesOutPerSec = 0.0f;
+        int   players = 0;           ///< Players().size()
+        double networkTime = 0.0;    ///< NetworkTime()
+    };
+    NetStats Stats() const;
+    /// Host: one client's round trip (ms) and loss (%), from the host's own pings. False for an unknown player.
+    bool PeerLink(std::uint32_t player, float& rttMs, float& lossPercent) const;
+
+    // ---- In-game network stats overlay ----
+    /// Show ping, loss, bandwidth and the player count on screen while playing (the player draws it top right;
+    /// the editor adds it to the Game view's stats). Also net.show_stats(true) and the Show Network Stats node.
+    bool showStatsOverlay = false;
+    /// The overlay's text lines ("Ping 42 ms", "Loss 3.1 %", ...): empty while offline. With rollback running,
+    /// its frame, rollbacks and stalls too; on the host, a line per client.
+    std::vector<std::string> StatsLines() const;
+    /// The Network Manager whose overlay is on (the most recently started one first), or nullptr.
+    static NetworkManager* OverlayManager();
+
+    // ---- Big messages ----
+    /// A reliable message bigger than one datagram goes in pieces; the far side tells which pieces it has,
+    /// and a resend sends only the missing ones. Pieces sent again since this manager started, and how many
+    /// resends of a whole message that saved.
+    std::size_t PiecesResent() const { return m_piecesResent; }
+    std::size_t PieceResends() const { return m_pieceResends; }
+
+    // ---- Host migration ----
+    /// When the host leaves (quits, or goes silent for serverTimeoutSeconds), the players left agree on a new
+    /// host, the one with the lowest player id, without talking: they all hold the same list. It hosts on the
+    /// port it already used, so the others can reach it at the address the old host saw; they join it, keep
+    /// their player ids (it knows them by that address) and the game goes on. The new host becomes player 0
+    /// (OnHostMigrated says which id it had), takes over the shared variables, the ownership table and every
+    /// synced object it already mirrors; the old host's own spawned objects ("sp/0/...") go, as a leaving
+    /// client's do.
+    ///   Off:    never (the session ends when the host leaves, as before).
+    ///   Lan:    the default. Only when every player is on this computer or a private network (10.x, 172.16-31.x,
+    ///           192.168.x, 127.x, 169.254.x): the host shares each player's address with the others, which is
+    ///           only fine where they can see each other anyway.
+    ///   Always: also over the internet (players then learn each other's addresses; joining a player behind a
+    ///           home router usually fails, and the next player is tried).
+    /// Never through a relay, for a dedicated server, with anti-cheat rules, a token verifier or join check on
+    /// the host (a player can't be trusted to enforce those), with a pinned host key on the client, or with
+    /// only one client (nobody to play with). A client with autoReconnect on waits for its host instead when
+    /// the host goes silent (a clean leave still migrates).
+    enum class HostMigration { Off, Lan, Always };
+    HostMigration hostMigration = HostMigration::Lan;
+    /// Client: how long to wait for the chosen new host before trying the next one (seconds).
+    float migrationJoinTimeoutSeconds = 3.0f;
+    /// New host: how long players are waited for (kept in the player list) before they count as gone.
+    float migrationGraceSeconds = 6.0f;
+    /// Run `f(previousId)` on every peer once the game has a new host: `previousId` is the id the new host had
+    /// before it became player 0 (anything a game keyed by that id now belongs to 0).
+    int OnHostMigrated(std::function<void(std::uint32_t previousId)> f);
+    /// Between the host leaving and the new host taking over.
+    bool Migrating() const { return m_migrating; }
+    /// Times this peer moved to a new host (or became one).
+    int HostMigrations() const { return m_migrations; }
+    /// Client: the host offered migration for this session (it sent the player list it would use).
+    bool MigrationOffered() const { return !m_migPeers.empty(); }
+    /// Client: the list the host offered, as (old id, address this player would use) - for tests and tools.
+    std::vector<std::pair<std::uint32_t, net::Endpoint>> MigrationList() const {
+        std::vector<std::pair<std::uint32_t, net::Endpoint>> out;
+        for (const auto& p : m_migPeers) out.emplace_back(p.id, p.ep);
+        return out;
+    }
+    /// The address to reach a listed player at. The host lists a player on its own computer as this
+    /// computer (127.x); a player on another computer reaches that one at the host's address instead.
+    static net::Endpoint MigrationAddress(const net::Endpoint& listed, const net::Endpoint& hostAsSeen) {
+        const bool listedLoop = (listed.address >> 24) == 127, hostLoop = (hostAsSeen.address >> 24) == 127;
+        if (listedLoop && !hostLoop && hostAsSeen.address != 0) return net::Endpoint{hostAsSeen.address, listed.port};
+        return listed;
+    }
+
+    // ---- Rollback (deterministic games; off until started) ----
+    /// See okay/Net/Rollback.hpp: fixed tick, input delay, input exchange, saved states, resimulation.
+    net::Rollback& Rollback() { return *m_rollback; }
+    const net::Rollback& Rollback() const { return *m_rollback; }
+
+    // ---- Bad-network testing ----
+    /// Added one-way delay (ms), random extra delay (ms) and the share of datagrams
+    /// dropped (%), to test a game on a bad connection on one PC. All 0 (the
+    /// default) is off. They drive the program-wide simulator (net::Simulator(),
+    /// so every Network Manager in this program shares them) each frame while any
+    /// is above 0, so they can be changed while playing.
+    float simulateLatencyMs = 0.0f, simulateJitterMs = 0.0f, simulateLossPercent = 0.0f;
+
+    /// Find this scene's Network Manager, or add one (on an object "__Network").
+    static NetworkManager* Ensure(Scene& scene);
+    /// The most recently started Network Manager that is still alive (okay::Net uses it).
+    static NetworkManager* Current();
+
     /// Drain the queue of messages received since the last call (for polling
     /// code and scripts that don't use a callback).
     std::vector<NetMessage> TakeMessages() {
@@ -803,6 +975,9 @@ private:
         bool Seen(std::uint32_t seq) const;   // Accept would say no (nothing changes)
         void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
     };
+    // A shared variable change waiting for its acknowledgement (VarAck): the version
+    // sent, how many times it was sent again, and (a client's own write) the value.
+    struct VarPending { std::uint32_t ver = 0; int tries = 0; std::string value; float age = 0.0f; };
     struct Client {
         net::Endpoint endpoint;
         std::uint32_t id;
@@ -824,6 +999,8 @@ private:
         bool  pktReported = false;   // ...reported once a second at most
         std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
         int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
+        std::unordered_map<std::string, VarPending> varOut;   // changes sent to it, not acked (key -> our version)
+        std::unordered_map<std::string, std::uint32_t> varIn;  // the newest version of its own writes applied, per key
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -880,6 +1057,11 @@ private:
         std::uint8_t rttCount = 0, rttNext = 0;
         std::uint64_t pingNonce = 0;
         double pingSentMs = 0.0;
+        // The host's own pings to it, once a second (Stats / PeerLink): stamp, age, answered.
+        struct Mark { float stamp = 0.0f; float age = 0.0f; bool answered = false; };
+        std::vector<Mark> linkMarks;   // the last 16
+        float linkTimer = 0.0f;
+        float linkRtt = 0.0f;          // ms, the last answered one
     };
     // Sealed-join key exchanges waiting for their Join (server side), by address.
     struct PendingJoin {
@@ -947,6 +1129,17 @@ public:
     /// (tests use it to probe the limits without sockets).
     bool FeedFragmentForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size,
                              std::vector<std::uint8_t>& out) { return TakeFragment(from, data, size, out); }
+    /// Feed one piece receipt (FragAck) as if it came from `from` (tests: forged receipts).
+    void FeedFragAckForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) { OnFragAck(from, data, size); }
+    /// Peers with a "put together lately" list (kept only for peers still in the session).
+    std::size_t FragDonePeers() const { return m_fragDone.size(); }
+    /// Sent pieced messages kept for per-piece resend, and their bytes.
+    std::size_t FragOutMessages() const { std::size_t n = 0; for (const auto& e : m_fragOut) n += e.second.size(); return n; }
+    std::size_t FragOutBytes() const {
+        std::size_t n = 0;
+        for (const auto& e : m_fragOut) for (const auto& f : e.second) { n += f.plain.size(); for (const auto& pc : f.pieces) n += pc.size(); }
+        return n;
+    }
 private:
     bool Handshaken(const net::Endpoint& from) const;
     bool TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
@@ -954,6 +1147,26 @@ private:
     void PruneFragments(float dt);
     std::unordered_map<net::Endpoint, std::unordered_map<std::uint32_t, FragAsm>, net::EndpointHash> m_fragIn;
     std::uint32_t m_fragNextId = 0;
+    // Per-piece resend: reliable messages sent in pieces, kept until every piece is acknowledged, so the
+    // resend of the same message sends only what is missing (NetworkManagerSync.cpp).
+    struct FragOut {
+        std::vector<std::uint8_t> plain;                  // the message as the caller sent it (before sealing)
+        std::vector<std::vector<std::uint8_t>> pieces;    // the datagrams, as first sent
+        std::vector<bool> acked;
+        std::uint32_t id = 0;
+        bool allowEncrypt = true;
+        int resends = 0;
+        float age = 0.0f;
+    };
+    std::unordered_map<net::Endpoint, std::vector<FragOut>, net::EndpointHash> m_fragOut;
+    std::unordered_map<net::Endpoint, std::vector<std::pair<std::uint32_t, std::uint32_t>>, net::EndpointHash> m_fragDone;   // (id, count) put together lately
+    std::size_t m_piecesResent = 0, m_pieceResends = 0;
+    static constexpr std::size_t kMaxFragOutPerPeer = 8;
+    static constexpr std::size_t kMaxFragOutBytes = 256u * 1024u;   // bigger messages are resent whole
+    static constexpr int kMaxPieceResends = 12;                     // then a fresh copy (new id, all pieces)
+    static constexpr std::size_t kFragDoneKept = 16;
+    void SendFragAck(const net::Endpoint& to, std::uint32_t id, std::uint32_t count, const FragAsm* asm_);
+    void OnFragAck(const net::Endpoint& from, const std::uint8_t* data, std::size_t size);
 
     void InitServerState();
     void ServerTick(float dt);
@@ -970,6 +1183,7 @@ private:
     // After the tables they unregister from (destroyed first).
     std::unique_ptr<net::BuildSync> m_buildSync;
     std::unique_ptr<net::QuestSync> m_questSync;
+    std::unique_ptr<net::Rollback> m_rollback;
     /// A client's message on a "__req/" channel: true if it was one (handled or dropped).
     bool HandleClientRequest(Client& from, const std::string& channel, const std::string& data);
     /// Server: object life events (death, respawn, health) go out on one ordered channel so a
@@ -1199,6 +1413,7 @@ private:
     bool  m_matchOn = false, m_matchEnded = false;
     float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;
     float m_rosterTimer = 0.0f;
+    int m_rosterBurst = 0;          // server: rosters still to send at once (someone just joined), one a frame
     std::uint32_t m_querySecret = 0;  // keys the player-list query challenge
     std::uint32_t QueryChallenge(const net::Endpoint& from) const;
     // Client-only: the roster the server sends, and position corrections received.
@@ -1220,6 +1435,80 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+    // The easy layer (NetworkManagerEvents.cpp).
+    struct Listener {
+        int id = 0;
+        std::string name;   // OnEvent's name ("" for the others)
+        std::function<void(std::uint32_t, const std::string&)> joined;
+        std::function<void(std::uint32_t)> left;
+        std::function<void(std::uint32_t, const std::string&)> event;
+        std::function<void(const ReceivedEvent&)> any;
+        std::function<void(const std::string&, std::uint32_t)> owner;
+        std::function<void(std::uint32_t)> migrated;
+    };
+    std::vector<Listener> m_listeners;
+    int m_nextListener = 1;
+    std::unordered_map<std::uint32_t, std::string> m_knownPlayers;   // who the join / leave events have announced
+    bool m_playersAnnounced = false;
+    std::string m_lastError;
+    bool m_errorNoted = false;   // the current join / connection failure was already turned into m_lastError
+    double m_clientNetTime = -1.0;   // client: the host's clock, from snapshots (-1 = not heard yet)
+    void SetError(const std::string& plain);
+    float m_timeTimer = 0.0f;    // host: time since the clock was last sent
+    void PlayersTick(float dt);  // each Update: join / leave events from the roster, the network clock
+    void OnHostTime(const std::string& data);
+    void ErrorsTick();           // each Update: a timed-out join or a lost connection becomes LastError
+    void OnEventWire(std::uint32_t from, const std::string& wire);
+    void DispatchEvent(std::uint32_t from, const std::string& name, const std::string& data);
+    void RaisePlayerEvent(bool joined, std::uint32_t id, const std::string& name);
+    // Host migration (NetworkManagerMigration.cpp).
+    struct MigPeer { std::uint32_t id = 0; std::string name; net::Endpoint ep; };
+    std::vector<MigPeer> m_migPeers;       // client: every client of the host, as the host sees them ("__mig")
+    std::string m_migSent;                 // host: the list it last sent (sent again when it changes)
+    float m_migResend = 0.0f;
+    bool m_migrating = false;
+    int m_migrations = 0;
+    bool m_migrateNow = false;             // client: a player on the list is joining us, so the host is gone
+    float m_migWait = 0.0f;                // client: seconds waiting for the chosen new host
+    struct MigCarry {                      // what a peer keeps across the move
+        std::uint32_t myOldId = 0;
+        std::uint16_t localPort = 0;
+        std::vector<MigPeer> candidates;   // sorted by id; the front is tried next
+        std::unordered_map<std::string, std::string> vars;
+        std::unordered_map<std::string, std::uint32_t> owners;
+        std::unordered_map<std::uint32_t, GameObject*> remotes;
+        std::unordered_map<std::uint32_t, Vec3> remoteTargets;
+        std::unordered_map<std::uint32_t, std::string> known;
+        std::string serverName;
+    } m_mig;
+    std::vector<MigPeer> m_migExpect;      // new host: players expected back, with their old ids
+    float m_migGrace = 0.0f;               // new host: seconds left to wait for them
+    std::uint16_t m_bindPort = 0;          // client: bind this local port (a migrating player keeps its address)
+    bool MigrationAllowedHere() const;     // host: may this session migrate?
+    void MigrationHostTick(float dt);
+    void OnMigWire(std::uint32_t from, const std::string& data);
+    bool BeginMigration(const std::string& why);   // client: true when it moves on instead of ending
+    bool KnockHeeded() const;              // client: our own link to the host is quiet enough to believe a knock
+    void MigrationTick(float dt);
+    void TryNextHost();
+    void RestoreCarry();
+    void FinishMigration(std::uint32_t newHostOldId);
+    bool TakeExpectedId(const net::Endpoint& from, std::uint32_t& id);   // new host: a returning player
+    void SendHostBye();                    // host: tell every client it is leaving (Stop)
+    void RaiseHostMigrated(std::uint32_t previousId);   // listeners, graphs, scripts (NetworkManagerEvents.cpp)
+    std::unordered_map<std::string, std::uint32_t> m_netOwners;   // netId -> owner, after a handoff
+    void ApplyOwner(const std::string& netId, std::uint32_t owner);   // here, on this peer
+    void OnOwnerWire(std::uint32_t from, const std::string& data);    // "__own" (host -> clients)
+    void OnOwnerRequest(std::uint32_t from, const std::string& netId); // "__ownreq" (client -> host)
+    // Stats: socket bytes this second, and the client's pings (stamp, answered).
+    std::size_t m_bytesInAcc = 0, m_bytesOutAcc = 0;
+    float m_bytesInRate = 0.0f, m_bytesOutRate = 0.0f, m_statTimer = 0.0f;
+    struct PingMark { float stamp = 0.0f; float age = 0.0f; bool answered = false; };
+    std::vector<PingMark> m_pingMarks;   // the last 16
+    void NotePingSent(float stamp);
+    void NotePong(float stamp);
+    bool m_simApplied = false;   // this manager turned the simulator on
+    void SimulatorTick();
 
     // Networked transforms (drop-in object replication via NetworkSync).
     struct SyncObj {
@@ -1313,6 +1602,23 @@ private:
     void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
+    // Reliable shared variables (NetworkManagerSync.cpp): every change carries a version; the
+    // receiver acknowledges it (VarAck) and ignores an older version arriving late; the sender
+    // sends the newest value again until acknowledged (kVarResendTries times at most).
+    static constexpr int kVarResendTries = 24;          // x kReliableResend: about 6 s
+    static constexpr std::size_t kMaxVarPending = 4096; // per peer
+    std::unordered_map<std::string, std::uint32_t> m_varVer;   // host: the version of each variable's value
+    std::uint32_t m_varCounter = 0;                           // host: versions given out; client: our own writes
+    std::unordered_map<std::string, std::uint32_t> m_varSeen;  // client: the newest host version applied, per key
+    std::unordered_map<std::string, VarPending> m_varOut;      // client: our writes the host has not acked
+    std::uint32_t BumpVar(const std::string& key) { return m_varVer[key] = ++m_varCounter; }
+    void SendVarTo(Client& c, const std::string& key);    // host: the current value, tracked until acked
+    void SendVarAck(const net::Endpoint& to, const std::string& key, std::uint32_t ver);
+    std::vector<std::pair<std::string, std::uint32_t>> m_varAcks;   // client: receipts to send this frame
+    void FlushVarAcks();
+    void SendOwnVar(const std::string& key, const VarPending& v);   // client: one of our writes
+    void VarResendTick(float dt);
+    void HandleClientVar(Client& c, const std::string& key, const std::string& value, bool hasVer, std::uint32_t ver);
 };
 
 } // namespace okay

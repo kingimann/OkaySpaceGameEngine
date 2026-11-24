@@ -117,5 +117,14 @@ inline double Area(const okay::ImportedModel& m) {
         }
     return a;
 }
+// Triangle `i` (the index of its first corner in me.triangles): the unnormalised face normal and the centroid.
+inline void FaceOf(const okay::Mesh& me, std::size_t i, double n[3], double c[3]) {
+    const okay::Vec3 &a = me.vertices[(std::size_t)me.triangles[i]], &b = me.vertices[(std::size_t)me.triangles[i + 1]], &d = me.vertices[(std::size_t)me.triangles[i + 2]];
+    const double u[3] = {(double)b.x - a.x, (double)b.y - a.y, (double)b.z - a.z}, v[3] = {(double)d.x - a.x, (double)d.y - a.y, (double)d.z - a.z};
+    n[0] = u[1] * v[2] - u[2] * v[1]; n[1] = u[2] * v[0] - u[0] * v[2]; n[2] = u[0] * v[1] - u[1] * v[0];
+    c[0] = ((double)a.x + b.x + d.x) / 3; c[1] = ((double)a.y + b.y + d.y) / 3; c[2] = ((double)a.z + b.z + d.z) / 3;
+}
+// A read is fine when it gave a sane model, or a refusal with a reason that left nothing behind.
+inline bool SaneOrRefused(bool ok, const okay::ImportedModel& m, const std::string& err) { return ok ? Sane(m) : (!err.empty() && m.parts.empty() && m.nodes.empty()); }
 inline std::size_t TriCount(const okay::ImportedModel& m) { std::size_t n = 0; for (const okay::ImportedPart& p : m.parts) n += p.mesh.triangles.size() / 3; return n; }
 } // namespace fx

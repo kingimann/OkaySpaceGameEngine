@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 28 headers, 221 names.
+Back to the [code index](../code_index.md). 29 headers, 231 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -25,13 +25,13 @@ Back to the [code index](../code_index.md). 28 headers, 221 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `Session` struct, line 372: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 381: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 391: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 400: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 412: Which backend signs players in.
-- `AccountService` class, line 418: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1305: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `Session` struct, line 349: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 358: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 368: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 377: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 389: Which backend signs players in.
+- `AccountService` class, line 395: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1220: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -57,6 +57,13 @@ Back to the [code index](../code_index.md). 28 headers, 221 names.
 - `WriteBmp32` function, line 29
 - `EncodeBmp32Bgra` function, line 42: Surface variant: rows of 0xAARRGGBB words (B,G,R,A in memory) with a pitch, as an SDL ARGB8888 surface holds them.
 - `WriteBmp32Bgra` function, line 65: Encodes and writes to 'path'. Returns false if the arguments are bad or the file cannot be written.
+
+## `engine/include/okay/Platform/CurlFallback.hpp`
+
+- `Disabled` function, line 48: OKAY_NO_CURL=1: never start curl (the native client's answer is final).
+- `RunSpec` struct, line 53
+- `RunResult` struct, line 60
+- `RunCurlProcess` function, line 106: Start 'curl' with 'args' (without the program name), hidden, and wait for it. Standard input and error are the null
 
 ## `engine/include/okay/Platform/Forums.hpp`
 
@@ -101,19 +108,25 @@ Back to the [code index](../code_index.md). 28 headers, 221 names.
 
 ## `engine/include/okay/Platform/NativeFetch.hpp`
 
-- `OwnOutcome` enum, line 24
-- `OwnDownloadSpec` struct, line 34
-- `OwnDownloadResult` struct, line 48
-- `OwnDownload` function, line 68: GET 'url' into the file 'path' (replacing it), like 'curl -L -f [--max-filesize N] [--retry N] -o path url' with a
-- `OwnHeadDump` function, line 125: A HEAD request that follows redirects, like 'curl -sIL': true when a final answer arrived (any status, as curl -I
+- `OwnOutcome` enum, line 47
+- `OwnDownloadSpec` struct, line 57
+- `OwnDownloadResult` struct, line 73
+- `OwnDownload` function, line 96: GET 'url' into the file 'path' (replacing it), like 'curl -L -f [--max-filesize N] [--retry N] -o path url' with a
+- `OwnHeadDump` function, line 156: OwnHeadDump and OwnFetchPrefix run on whichever native client RequestEx has (the own client, or WinHTTP).
+- `FetchToFile` function, line 476: GET 'url' into the file 'path' (replacing it only when the whole file arrived), like 'curl -L -f [--max-filesize N]
+- `HeadDump` function, line 503: A HEAD request that follows redirects, like 'curl -sIL': true when an answer arrived (any status, as curl -I does
 
 ## `engine/include/okay/Platform/NativeHttp.hpp`
 
-- `Result` struct, line 44
-- `NativeAvailable` function, line 90: True where the native client exists: Windows (WinHTTP), or POSIX built with
-- `ShouldFallBackToCurl` function, line 245: The no-re-send decision, kept here so it can be tested. After a failed native call, may the caller try the same
-- `RequestOptions` struct, line 253: Extra controls for downloads (own client only; on Windows and without OKAY_OWN_HTTP this returns reached=false
-- `ExResult` struct, line 279: Result of RequestEx: Result plus what a resumable download needs.
+- `Result` struct, line 50
+- `CleanHeaderLine` function, line 65: A header line with every CR, LF and NUL taken out (the curl fallback's CurlCfgQuote does the same), so a value that came
+- `CleanHeaderLines` function, line 72: CleanHeaderLine on each line; a line that is empty afterwards is dropped.
+- `HeaderCarriesSecret` function, line 81: True when the header line's NAME looks like it carries a credential (Authorization, X-Authorization, apikey, a token,
+- `AnyHeaderCarriesSecret` function, line 88
+- `NativeAvailable` function, line 127: True where the native client exists: Windows (WinHTTP), or POSIX built with
+- `ShouldFallBackToCurl` function, line 147: The no-re-send decision, kept here so it can be tested. After a failed native call, may the caller try the same
+- `RequestOptions` struct, line 155: Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
+- `ExResult` struct, line 189: Result of RequestEx: Result plus what a resumable download needs.
 
 ## `engine/include/okay/Platform/OwnHttp.hpp`
 

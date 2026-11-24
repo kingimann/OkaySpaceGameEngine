@@ -99,13 +99,13 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
-# Our own model readers are the default since 2026-11-17; Assimp (and ufbx, always built) must stay in the release as their
+# Our own model readers are the default since 2026-11-17 (FBX is ours only: ufbx was deleted); Assimp must stay in the release as their
 # fallback and as what OKAY_THIRD_PARTY=1 switches back to. Refuse a tree whose cache lost Assimp.
 if ! grep -q '^OKAY_USE_ASSIMP:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; then
     echo "refused: $BUILD_DIR is configured without Assimp (OKAY_USE_ASSIMP is not ON): the model-reader fallback and OKAY_THIRD_PARTY=1 need it" >&2
     exit 1
 fi
-echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back)."
+echo "Model readers: own by default, Assimp compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back; FBX is always our own)."
 # The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
 # is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
@@ -150,6 +150,9 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
+# okay: the engine's command line (tools/okay-cli): new, open, play, build, test, and version control with git (okay vc).
+# It sits beside the editor and the player so it finds them.
+[ -f "$BUILD_DIR/bin/okay.exe" ] && cp "$BUILD_DIR/bin/okay.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
@@ -248,8 +251,8 @@ cp -r engine/include "$XBOX_SRC/engine/"
 mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
 # Engine mode (-EngineMode) compiles the whole engine for UWP: it needs the engine sources, its CMake list (read at configure time) and shared/.
 cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engine/" && cp -r shared "$XBOX_SRC/"
-# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). No engine/third_party:
-# ufbx is not compiled for UWP (our own FBX reader is the only one), so it is not shipped here.
+# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). There is no
+# engine/third_party any more (ufbx was deleted; our own FBX reader is the only one).
 cp CMakeLists.txt "$XBOX_SRC/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
 cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
@@ -282,6 +285,7 @@ Keep SDL2.dll next to it.
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
+  okay.exe              the command line: okay new, okay open, okay play, okay vc save ...
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/online/relay.md)
 

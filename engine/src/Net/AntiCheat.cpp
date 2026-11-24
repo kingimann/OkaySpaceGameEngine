@@ -416,15 +416,29 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
         }
         return true;
     }
-    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
-        const std::string name = channel.substr(6);
-        bool ownRate = false, ownSize = false;
-        if (settings.maxRpcBytes > 0 && rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
-        if (settings.maxRpcBytes > 0 && !ownSize && data.size() > (std::size_t)settings.maxRpcBytes)
-            return Refuse(peer, CheatKind::RpcRejected, name + " (too long)");
-        if (!CountRpc(peer, name)) return false;
-        if (validateRpc && !validateRpc(peer, name, data)) return Refuse(peer, CheatKind::RpcRejected, name);
+    // An RPC, or a named network event (the easy layer's "__ev": "[@<player>|]<name>\n<data>"):
+    // the same rules by name, so a Net Validator for "hit" covers the RPC "hit" and the event "hit".
+    std::string name, payload;
+    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) { name = channel.substr(6); payload = data; }
+    else if (channel == "__ev") {
+        std::size_t from = 0;
+        if (!data.empty() && data[0] == '@') {
+            const std::size_t bar = data.find('|');
+            if (bar == std::string::npos) return true;   // malformed: the event layer drops it
+            from = bar + 1;
+        }
+        const std::size_t nl = data.find('\n', from);
+        if (nl == std::string::npos) return true;
+        name = data.substr(from, nl - from);
+        payload = data.substr(nl + 1);
     }
+    else return true;
+    bool ownRate = false, ownSize = false;
+    if (settings.maxRpcBytes > 0 && rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
+    if (settings.maxRpcBytes > 0 && !ownSize && payload.size() > (std::size_t)settings.maxRpcBytes)
+        return Refuse(peer, CheatKind::RpcRejected, name + " (too long)");
+    if (!CountRpc(peer, name)) return false;
+    if (validateRpc && !validateRpc(peer, name, payload)) return Refuse(peer, CheatKind::RpcRejected, name);
     return true;
 }
 

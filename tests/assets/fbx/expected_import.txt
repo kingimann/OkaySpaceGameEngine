@@ -1,0 +1,243 @@
+# Our FBX importer's output (our own reader), recorded on 2026-11-23 by tests/test_fbx_reader.cpp (OKAY_FBX_WRITE_EXPECTED). In the
+# build just before ufbx was deleted, the old ufbx-versus-ours comparison passed on every file (14 fixtures; with the corpus, 42 real
+# files); the deletion did not change our reader's code, and these values were then also checked against the same snapshot taken
+# through ufbx: all agree within the comparison's tolerances, except clip samples past the end of a take (ufbx kept keys there, ours
+# cuts at the span: takes_bin, Granate, mar_rifle, mp5_sil, multiple_animations_test) and the vertex counts of
+# animation_with_skeleton (ufbx kept duplicate vertices; the old test allowed 0.5 %), the known differences the old test skipped.
+# fbx_reader now holds the importer to these values, with the tolerances that comparison used. Columns (tab separated): file, key, text, numbers.
+# Fixtures of tests/assets/fbx (scripts/gen_fbx_fixtures.py).
+bridge_bin.fbx	uvmeshes	-	0
+bridge_bin.fbx	counts	-	2 1 0 0 8 0
+bridge_bin.fbx	verts	-	8
+bridge_bin.fbx	clips	-	0 0
+bridge_bin.fbx	bbox	-	0 0 0 0.0399999991 0.0399999991 0
+bridge_bin.fbx	area	-	0.00119999994
+bridge_bin.fbx	names	Annulus|bridge_bin	
+bridge_bin.fbx	mat.Annulus	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+bridge_bin.fbx	flat	-	8 24 1 0
+cube_yup_m_bin75.fbx	uvsets.0	UVMap	20 20
+cube_yup_m_bin75.fbx	uvmeshes	-	1
+cube_yup_m_bin75.fbx	counts	-	2 1 0 0 12 0
+cube_yup_m_bin75.fbx	verts	-	24
+cube_yup_m_bin75.fbx	clips	-	0 0
+cube_yup_m_bin75.fbx	bbox	-	8.63397408 18 28.6339741 11.3660259 22 31.3660259
+cube_yup_m_bin75.fbx	area	-	40.0000172
+cube_yup_m_bin75.fbx	names	Cube|cube_yup_m_bin75	
+cube_yup_m_bin75.fbx	mat.Cube	-|-	0.899999976 0.100000001 0.100000001 1 0.100000001 0 0 0 0.66 0.575000048 0
+cube_yup_m_bin75.fbx	flat	-	24 36 1 1
+cube_zup_cm_ascii.fbx	uvsets.0	UVMap	20 20
+cube_zup_cm_ascii.fbx	uvmeshes	-	1
+cube_zup_cm_ascii.fbx	counts	-	2 1 0 0 12 0
+cube_zup_cm_ascii.fbx	verts	-	24
+cube_zup_cm_ascii.fbx	clips	-	0 0
+cube_zup_cm_ascii.fbx	bbox	-	0.0863397494 0.28633976 -0.219999999 0.113660254 0.313660264 -0.180000007
+cube_zup_cm_ascii.fbx	area	-	0.00399999903
+cube_zup_cm_ascii.fbx	names	Cube|cube_zup_cm_ascii	
+cube_zup_cm_ascii.fbx	mat.Cube	-|-	0.899999976 0.100000001 0.100000001 1 0.100000001 0 0 0 0.66 0.575000048 0
+cube_zup_cm_ascii.fbx	flat	-	24 36 1 1
+cube_zup_cm_bin.fbx	uvsets.0	UVMap	20 20
+cube_zup_cm_bin.fbx	uvmeshes	-	1
+cube_zup_cm_bin.fbx	counts	-	2 1 0 0 12 0
+cube_zup_cm_bin.fbx	verts	-	24
+cube_zup_cm_bin.fbx	clips	-	0 0
+cube_zup_cm_bin.fbx	bbox	-	0.0863397494 0.28633976 -0.219999999 0.113660254 0.313660264 -0.180000007
+cube_zup_cm_bin.fbx	area	-	0.00399999903
+cube_zup_cm_bin.fbx	names	Cube|cube_zup_cm_bin	
+cube_zup_cm_bin.fbx	mat.Cube	cube_zup_cm_bin_tex0.png|-	1 1 1 1 0.100000001 0 0 0 0.66 0.575000048 0
+cube_zup_cm_bin.fbx	flat	-	24 36 1 1
+ngon_bin.fbx	uvmeshes	-	0
+ngon_bin.fbx	counts	-	4 2 0 0 8 0
+ngon_bin.fbx	verts	-	14
+ngon_bin.fbx	clips	-	0 0
+ngon_bin.fbx	bbox	-	0 0 0 0.0599999987 0.0199999996 0
+ngon_bin.fbx	area	-	0.00055299998
+ngon_bin.fbx	names	NGon|NGon_A|NGon_B|ngon_bin	
+ngon_bin.fbx	mat.NGon_A	-|-	1 0 0 1 0 0 0 0 0.16 0 0
+ngon_bin.fbx	mat.NGon_B	-|-	0 0 1 1 0 0 0 0 0.16 0 0
+ngon_bin.fbx	flat	-	14 24 1 0
+orphan_video_bin.fbx	uvmeshes	-	0
+orphan_video_bin.fbx	counts	-	2 1 0 0 1 0
+orphan_video_bin.fbx	verts	-	3
+orphan_video_bin.fbx	clips	-	0 0
+orphan_video_bin.fbx	bbox	-	0 0 0 2 2 0
+orphan_video_bin.fbx	area	-	2
+orphan_video_bin.fbx	names	Tri|orphan_video_bin	
+orphan_video_bin.fbx	mat.Tri	orphan_video_bin_tex0.png|-	1 1 1 1 0 0 0 0 0.16 0 0
+orphan_video_bin.fbx	flat	-	3 3 1 0
+pbr_bin.fbx	uvmeshes	-	0
+pbr_bin.fbx	counts	-	6 5 0 0 5 0
+pbr_bin.fbx	verts	-	15
+pbr_bin.fbx	clips	-	0 0
+pbr_bin.fbx	bbox	-	0 0 0 0.210000008 0.00999999978 0
+pbr_bin.fbx	area	-	0.000250000016
+pbr_bin.fbx	names	Gltf|MetalRough|Phong|Physical|SpecGloss|pbr_bin	
+pbr_bin.fbx	mat.Gltf	-|-	0.5 0.25 0.125 0.5
+pbr_bin.fbx	mat.MetalRough	-|-	0.5 0.25 0.125 1
+pbr_bin.fbx	mat.Phong	-|-	0 0 0 0
+pbr_bin.fbx	mat.Physical	-|-	1 0.5 0.25 0.899999976
+pbr_bin.fbx	mat.SpecGloss	-|-	0.5 0.25 0.125 0
+pbr_bin.fbx	flat	-	15 15 1 0
+pivot_bin.fbx	uvmeshes	-	0
+pivot_bin.fbx	counts	-	2 1 0 0 12 0
+pivot_bin.fbx	verts	-	24
+pivot_bin.fbx	clips	-	0 0
+pivot_bin.fbx	bbox	-	-0.0101525709 0.000791518018 0.00439058244 0.0461890325 0.0428855047 0.0592862293
+pivot_bin.fbx	area	-	0.00639999995
+pivot_bin.fbx	names	Piv|pivot_bin	
+pivot_bin.fbx	mat.Piv	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+pivot_bin.fbx	flat	-	24 36 1 0
+plain_bin.fbx	uvmeshes	-	0
+plain_bin.fbx	counts	-	3 1 0 0 3 0
+plain_bin.fbx	verts	-	7
+plain_bin.fbx	clips	-	0 0
+plain_bin.fbx	bbox	-	0.00118060783 0.0199999996 -0.00684040226 0.0262759533 0.0470482074 0.0167198889
+plain_bin.fbx	area	-	0.000623606786
+plain_bin.fbx	names	Parent|Pyr|plain_bin	
+plain_bin.fbx	mat.Pyr	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+plain_bin.fbx	flat	-	7 9 1 0
+rig_ascii.fbx	uvsets.0	UVMap	48 48
+rig_ascii.fbx	uvmeshes	-	1
+rig_ascii.fbx	counts	-	5 1 1 3 24 1
+rig_ascii.fbx	verts	-	48
+rig_ascii.fbx	clips	-	1 4
+rig_ascii.fbx	bbox	-	-0.00499999989 0 -0.00499999989 0.00499999989 0.0299999993 0.00499999989
+rig_ascii.fbx	area	-	0.00119999997
+rig_ascii.fbx	names	Bone0|Bone1|Bone2|Tube|rig_ascii	
+rig_ascii.fbx	mat.Tube	-|-	0.300000012 0.600000024 0.899999976 1 0 0 0 0 0.16 0 0
+rig_ascii.fbx	clip.0	rig_ascii	4
+rig_ascii.fbx	key.0.Bone0@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@0.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@0.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@0.75	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@1.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@1.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@1.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone0@1.90	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone1@0.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.0871557444 0.99619472
+rig_ascii.fbx	key.0.Bone1@0.25	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.279743195 0.960074842
+rig_ascii.fbx	key.0.Bone1@0.50	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.4617486 0.887010813
+rig_ascii.fbx	key.0.Bone1@0.75	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.279914826 0.960024834
+rig_ascii.fbx	key.0.Bone1@1.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.087155737 0.99619472
+rig_ascii.fbx	key.0.Bone1@1.25	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.108955763 0.994046628
+rig_ascii.fbx	key.0.Bone1@1.50	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.300705791 0.953716934
+rig_ascii.fbx	key.0.Bone1@1.90	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.300705791 0.953716934
+rig_ascii.fbx	key.0.Bone2@0.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@0.25	pppsssq	0 0.0106250001 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@0.50	pppsssq	0 0.0112499995 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@0.75	pppsssq	0 0.0118749999 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@1.00	pppsssq	0 0.0124999993 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@1.25	pppsssq	0 0.0131249996 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@1.50	pppsssq	0 0.0137499999 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Bone2@1.90	pppsssq	0 0.0147500001 0 1 1 1 0 0 0 1
+rig_ascii.fbx	key.0.Tube@0.00	w	0
+rig_ascii.fbx	key.0.Tube@0.25	w	0.125
+rig_ascii.fbx	key.0.Tube@0.50	w	0.25
+rig_ascii.fbx	key.0.Tube@0.75	w	0.375
+rig_ascii.fbx	key.0.Tube@1.00	w	0.5
+rig_ascii.fbx	key.0.Tube@1.25	w	0.625
+rig_ascii.fbx	key.0.Tube@1.50	w	0.75
+rig_ascii.fbx	key.0.Tube@1.90	w	0.949999988
+rig_ascii.fbx	skin.Tube	Bone0|Bone1|Bone2	3 48
+rig_ascii.fbx	ibind.Tube.0	-	1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+rig_ascii.fbx	ibind.Tube.1	-	1 0 0 0 0 1 0 -0.00999999978 0 0 1 0 0 0 0 1
+rig_ascii.fbx	ibind.Tube.2	-	1 0 0 0 0 1 0 -0.0199999996 0 0 1 0 0 0 0 1
+rig_ascii.fbx	weights.Tube	-	16 16 16 0 0 1.75999995 0
+rig_ascii.fbx	flat	-	48 72 1 1
+rig_bin75.fbx	uvsets.0	UVMap	48 48
+rig_bin75.fbx	uvmeshes	-	1
+rig_bin75.fbx	counts	-	5 1 1 3 24 1
+rig_bin75.fbx	verts	-	48
+rig_bin75.fbx	clips	-	1 4
+rig_bin75.fbx	bbox	-	-0.00499999989 0 -0.00499999989 0.00499999989 0.0299999993 0.00499999989
+rig_bin75.fbx	area	-	0.00119999997
+rig_bin75.fbx	names	Bone0|Bone1|Bone2|Tube|rig_bin75	
+rig_bin75.fbx	mat.Tube	-|-	0.300000012 0.600000024 0.899999976 1 0 0 0 0 0.16 0 0
+rig_bin75.fbx	clip.0	rig_bin75	4
+rig_bin75.fbx	key.0.Bone0@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@0.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@0.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@0.75	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@1.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@1.25	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@1.50	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone0@1.90	pppsssq	0 0 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone1@0.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.0871557444 0.99619472
+rig_bin75.fbx	key.0.Bone1@0.25	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.279734612 0.960077345
+rig_bin75.fbx	key.0.Bone1@0.50	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.4617486 0.887010813
+rig_bin75.fbx	key.0.Bone1@0.75	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.279829025 0.960049868
+rig_bin75.fbx	key.0.Bone1@1.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0.087155737 0.99619472
+rig_bin75.fbx	key.0.Bone1@1.25	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.108866878 0.994056344
+rig_bin75.fbx	key.0.Bone1@1.50	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.300705791 0.953716934
+rig_bin75.fbx	key.0.Bone1@1.90	pppsssq	0 0.00999999978 0 1 1 1 0 0 -0.300705791 0.953716934
+rig_bin75.fbx	key.0.Bone2@0.00	pppsssq	0 0.00999999978 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@0.25	pppsssq	0 0.0106250001 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@0.50	pppsssq	0 0.0112499995 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@0.75	pppsssq	0 0.0118749999 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@1.00	pppsssq	0 0.0124999993 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@1.25	pppsssq	0 0.0131249996 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@1.50	pppsssq	0 0.0137499999 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Bone2@1.90	pppsssq	0 0.0147500001 0 1 1 1 0 0 0 1
+rig_bin75.fbx	key.0.Tube@0.00	w	0
+rig_bin75.fbx	key.0.Tube@0.25	w	0.125
+rig_bin75.fbx	key.0.Tube@0.50	w	0.25
+rig_bin75.fbx	key.0.Tube@0.75	w	0.375
+rig_bin75.fbx	key.0.Tube@1.00	w	0.5
+rig_bin75.fbx	key.0.Tube@1.25	w	0.625
+rig_bin75.fbx	key.0.Tube@1.50	w	0.75
+rig_bin75.fbx	key.0.Tube@1.90	w	0.949999988
+rig_bin75.fbx	skin.Tube	Bone0|Bone1|Bone2	3 48
+rig_bin75.fbx	ibind.Tube.0	-	1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+rig_bin75.fbx	ibind.Tube.1	-	1 0 0 0 0 1 0 -0.00999999978 0 0 1 0 0 0 0 1
+rig_bin75.fbx	ibind.Tube.2	-	1 0 0 0 0 1 0 -0.0199999996 0 0 1 0 0 0 0 1
+rig_bin75.fbx	weights.Tube	-	16 16 16 0 0 1.75999995 0
+rig_bin75.fbx	flat	-	48 72 1 1
+takes_bin.fbx	uvmeshes	-	0
+takes_bin.fbx	counts	-	2 1 0 0 12 0
+takes_bin.fbx	verts	-	24
+takes_bin.fbx	clips	-	3 3
+takes_bin.fbx	bbox	-	-0.00999999978 -0.00999999978 -0.00999999978 0.00999999978 0.00999999978 0.00999999978
+takes_bin.fbx	area	-	0.00239999994
+takes_bin.fbx	names	Mover|takes_bin	
+takes_bin.fbx	mat.Mover	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+takes_bin.fbx	clip.0	first	1
+takes_bin.fbx	key.0.Mover@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.0.Mover@0.25	pppsssq	0.0250000004 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.0.Mover@0.50	pppsssq	0.0500000007 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.0.Mover@0.75	pppsssq	0.075000003 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.0.Mover@1.00	pppsssq	0.100000001 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	clip.1	second	1
+takes_bin.fbx	key.1.Mover@0.00	pppsssq	0.100000001 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.1.Mover@0.25	pppsssq	0.075000003 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.1.Mover@0.50	pppsssq	0.0500000007 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.1.Mover@0.75	pppsssq	0.0249999985 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.1.Mover@1.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	clip.2	whole	1
+takes_bin.fbx	key.2.Mover@0.00	pppsssq	0 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@0.25	pppsssq	0.0250000004 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@0.50	pppsssq	0.0500000007 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@0.75	pppsssq	0.075000003 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@1.00	pppsssq	0.100000001 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@1.25	pppsssq	0.075000003 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@1.50	pppsssq	0.0500000007 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	key.2.Mover@1.90	pppsssq	0.0100000054 0 0 1 1 1 0 0 0 1
+takes_bin.fbx	flat	-	24 36 1 0
+uv2_ascii.fbx	uvsets.0	UVMap|Lightmap	8 13.6000001
+uv2_ascii.fbx	uvmeshes	-	1
+uv2_ascii.fbx	counts	-	2 1 0 0 4 0
+uv2_ascii.fbx	verts	-	6
+uv2_ascii.fbx	clips	-	0 0
+uv2_ascii.fbx	bbox	-	0 0 0 0.0199999996 0.00999999978 0
+uv2_ascii.fbx	area	-	0.000199999995
+uv2_ascii.fbx	names	TwoQuads|uv2_ascii	
+uv2_ascii.fbx	mat.TwoQuads	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+uv2_ascii.fbx	flat	-	6 12 1 1
+uv2_bin.fbx	uvsets.0	UVMap|Lightmap	8 13.6000001
+uv2_bin.fbx	uvmeshes	-	1
+uv2_bin.fbx	counts	-	2 1 0 0 4 0
+uv2_bin.fbx	verts	-	6
+uv2_bin.fbx	clips	-	0 0
+uv2_bin.fbx	bbox	-	0 0 0 0.0199999996 0.00999999978 0
+uv2_bin.fbx	area	-	0.000199999995
+uv2_bin.fbx	names	TwoQuads|uv2_bin	
+uv2_bin.fbx	mat.TwoQuads	-|-	1 1 1 1 0 0 0 0 0.16 0 0
+uv2_bin.fbx	flat	-	6 12 1 1

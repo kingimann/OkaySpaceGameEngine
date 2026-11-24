@@ -137,29 +137,17 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
                                    std::istreambuf_iterator<char>());
-    if (wav::OwnWavEnabled()) {   // opt-in own decoder (OKAY_OWN_WAV); the code below stays the default
-        wav::WavAudio a;
-        std::string e;
-        if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
-        sampleRate = a.sampleRate;
-        channels = audio_detail::KeptChannels(a.channels, downmix);
-        if (channels == a.channels) samples = std::move(a.samples);
-        else {
-            samples.resize(a.FrameCount());
-            audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
-        }
-        return true;
+    // Our own decoder (okay::wav) is the only WAV reader: PCM 8 to 32 bit, float, A-law, mu-law, MS and IMA ADPCM.
+    wav::WavAudio a;
+    std::string e;
+    if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
+    sampleRate = a.sampleRate;
+    channels = audio_detail::KeptChannels(a.channels, downmix);
+    if (channels == a.channels) samples = std::move(a.samples);
+    else {
+        samples.resize(a.FrameCount());
+        audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
     }
-    auto src = AudioByteSource::FromPointer(buf.data(), buf.size());
-    audio_detail::WavInfo w;
-    if (const char* err = audio_detail::ParseWav(*src, w)) { if (error) *error = err; return false; }
-
-    const int outCh = audio_detail::KeptChannels(w.channels, downmix);
-    const std::uint64_t frames = w.Frames();
-    samples.resize(static_cast<std::size_t>(frames) * static_cast<std::size_t>(outCh));
-    sampleRate = static_cast<int>(w.rate);
-    channels = outCh;
-    audio_detail::ConvertWavFrames(w, buf.data() + w.dataOffset, static_cast<std::size_t>(frames), samples.data(), outCh);
     return true;
 }
 

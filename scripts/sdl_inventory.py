@@ -213,7 +213,7 @@ CAPS = [
      "GAP: PainterDesc has no driver choice", r"SDL_HINT_RENDER_DRIVER"),
     # ---- file ----
     ("f.wav", "file", "OTHER", "WAV loading and the audio format words around it",
-     "okay::wav (engine/include/okay/Audio/WavDecoder.hpp) behind shared/WavPlayback.hpp, off by default (OKAY_OWN_WAV). Not an okay::platform job",
+     "okay::wav (engine/include/okay/Audio/WavDecoder.hpp) behind shared/WavPlayback.hpp, the only WAV reader (SDL_LoadWAV deleted). The AUDIO_* format words stay until the SDL audio device is replaced. Not an okay::platform job",
      r"SDL_LoadWAV|SDL_FreeWAV|SDL_AudioFormat|AUDIO_[SUF](8|16|32)(LSB|MSB|SYS)?|SDL_AUDIO_(BITSIZE|ISBIGENDIAN|ISFLOAT|ISSIGNED)|SDL_Swap16"),
     ("f.bmp", "file", "GAP", "save a surface as a BMP file",
      "GAP: none (the engine has its own PNG writer; the one caller is the editor's --vs-shot tool)", r"SDL_SaveBMP"),

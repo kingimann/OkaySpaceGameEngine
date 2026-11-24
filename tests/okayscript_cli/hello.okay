@@ -1,0 +1,4 @@
+// The smallest program: top-level statements run in order.
+print("Hello from OkayScript")
+var name = "world"
+print($"hello, {name}!")

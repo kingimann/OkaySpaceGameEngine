@@ -42,7 +42,7 @@ build/tests/test_examples_work
 | roundtrip | Serialise, load, serialise gives the same text; the file on disk is what the scene serialises to; loading skips no record and keeps no "unknown record"; a second round gives the same text again. |
 | problems | `CollectProjectDiagnostics`, the model behind the Problems panel, reports no error (missing asset, missing script, bad reference, no camera). Warnings are listed, not failed. |
 | play120 | Play runs 120 fixed frames with no Console error and no exception; Stop puts the scene back exactly as it was; the project does not read as "changed" afterwards (so the editor does not ask to save). |
-| interact | The family's own check with simulated keys and mouse, through the editor's own key mapping (`editor/EditorPlayInput.hpp`). It runs twice: in the scene the template just built ("fresh") and in the project reopened from disk ("reopened"). |
+| interact | The family's own check with simulated keys and mouse, through the editor's own key mapping (`okay::AppendHeldMainKeys` in `engine/include/okay/Input/PlatformKeys.hpp`). It runs twice: in the scene the template just built ("fresh") and in the project reopened from disk ("reopened"). |
 
 The interaction checks, by family:
 

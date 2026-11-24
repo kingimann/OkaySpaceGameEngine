@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batche_fixtures.hpp"
+#include "gs_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cmath>
 #include <cstdio>
@@ -75,13 +76,44 @@ int main() {
         ImportedModel m; std::string err;
         CHECK(ReadHmpBuffer(fx::BuildHmp(sp), m, &err) && HasNote(m, "3 frames"));
     }
+    {   // HMP5 and HMP4 (Conitec's published HMP5 layout; HMP4 keeps the skin size in the header): a 2 x 2 grid
+        for (char ver : {'5', '4'}) {
+            ImportedModel m; std::string err;
+            const bool ok = ReadHmpBuffer(gs::Hmp45(ver), m, &err);
+            if (!ok) std::fprintf(stderr, "  HMP%c: %s\n", ver, err.c_str());
+            CHECK(ok && fx::Sane(m) && fx::TriCount(m) == 2 && HasNote(m, "skin"));
+            if (!ok) continue;
+            const Mesh& me = m.parts[0].mesh;
+            CHECK(me.vertices.size() == 4);
+            CHECK(fx::Near(me.vertices[0].x, -2) && fx::Near(me.vertices[0].y, -2) && fx::Near(me.vertices[0].z, 1));
+            CHECK(fx::Near(me.vertices[1].x, 2) && fx::Near(me.vertices[1].z, 2));
+            CHECK(fx::Near(me.vertices[2].y, 2) && fx::Near(me.vertices[2].z, 3) && fx::Near(me.vertices[3].z, 4));
+            CHECK(HasNote(m, ver == '4' ? "HMP4" : "HMP5"));
+        }
+        {   // HMP5 skin types: 16 bit, 24 bit and 32 bit, with or without mipmaps (the pixel count decides where the grid starts)
+            for (int t : {0, 2, 3, 4, 5, 10, 11, 12, 13}) {
+                std::string s = gs::Hmp45('5');
+                const int bpp = t == 0 ? 1 : (t & 7) == 4 ? 3 : (t & 7) == 5 ? 4 : 2;
+                const std::size_t n = (std::size_t)bpp * 4 + ((t & 8) ? (std::size_t)bpp * 1 : 0);   // 2 x 2, then 1 x 1, 0 x 0, 0 x 0 mipmaps
+                std::string g = s.substr(0, 84);
+                fx::Put32(s, 84, (std::uint32_t)t);
+                g += s.substr(84, 12); g.append(n, (char)1); g += s.substr(84 + 12 + 8);
+                ImportedModel m; std::string err;
+                const bool ok = ReadHmpBuffer(g, m, &err);
+                if (!ok) std::fprintf(stderr, "  HMP5 skin type %d: %s\n", t, err.c_str());
+                CHECK(ok && fx::TriCount(m) == 2);
+            }
+        }
+    }
     {   // refusals
         const std::string good = fx::BuildHmp();
         CHECK(Refused("", "too short"));
         CHECK(Refused(good.substr(0, 83), "too short"));
         { std::string s = good; s[0] = 'X'; CHECK(Refused(s, "not an HMP")); }
-        { fx::HmpSpec sp; sp.version = '5'; CHECK(Refused(fx::BuildHmp(sp), "only HMP7")); }
-        { fx::HmpSpec sp; sp.version = '4'; CHECK(Refused(fx::BuildHmp(sp), "only HMP7")); }
+        { fx::HmpSpec sp; sp.version = '6'; CHECK(Refused(fx::BuildHmp(sp), "HMP4, HMP5 and HMP7")); }
+        { fx::HmpSpec sp; sp.version = '3'; CHECK(Refused(fx::BuildHmp(sp), "HMP4, HMP5 and HMP7")); }
+        { std::string s = gs::Hmp45('5'); fx::Put32(s, 84, 4); CHECK(Refused(s, "height grid")); }   // HMP5: a 2 x 2 skin of type 4 (3 bytes a pixel) takes 4 bytes more: the grid runs past the end
+        { std::string s = gs::Hmp45('4'); fx::Put32(s, 52, 0); CHECK(Refused(s, "skin size")); }   // HMP4: the skin size lives in the header
         { std::string s = good; fx::Put32(s, hmpoff::kNumVerts, 0xFFFFFFFFu); CHECK(Refused(s, "vertex count")); }
         { std::string s = good; fx::Put32(s, hmpoff::kNumVerts, 0x7FFFFFFFu); CHECK(Refused(s, "budget")); }
         { std::string s = good; fx::Put32(s, hmpoff::kNumVerts, 1048577); CHECK(Refused(s, "budget")); }

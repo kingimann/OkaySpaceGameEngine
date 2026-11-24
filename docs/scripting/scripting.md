@@ -10,6 +10,7 @@
 
 - [OkayScript](#okayscript-1) (was `docs/scripting.md`)
 - [OkayScript function reference](#okayscript-function-reference) (was `docs/scripting_reference.md`)
+- [Standalone OkayScript](#standalone-okayscript) (internal notes: the engine-independent library and CLI)
 
 ## OkayScript
 
@@ -1742,3 +1743,46 @@ If this object has a collider, define either of these to react to contacts:
 function on_collision() { /* hit a solid */ }
 function on_trigger()   { /* entered a trigger volume */ }
 ```
+
+## Standalone OkayScript
+
+*Internal notes, 2026-11-24 (branch `claude/okayscript-lang-1`; feature map 13.8; open items in `docs/status/UNFINISHED.md`
+"OkayScript standalone core").*
+
+- **Where:** `okayscript/` (library `okayscript_lang`, C++17 standard library only; CLI `okayscript_cli`, program name
+  `okayscript`). Headers in `okayscript/include/okayscript/`: `Token`, `Lexer`, `Error`, `Ast`, `Parser`, `Value`,
+  `Environment`, `Interpreter`, `Native`, `Stdlib`, `OkayScript` (all of them).
+- **Shared with the engine:** everything. The parser, syntax tree and interpreter core are templates over the value
+  type (`Runtime.hpp`, `detail/*.ipp`). The CLI runs them on `okayscript::Value`; `engine/src/Scripting/OkayScriptVM.cpp`
+  instantiates them for `vs::VsValue`, derives its `Runtime` from `BasicRuntime` (timers, coroutines, raycast
+  results), registers its commands as raw `builtins`, and answers scene names, object references, components and
+  `yield return` through `EngineHooks` (a `BasicHost`). The engine's old parser and runtime are gone.
+- **Language:** C#-style and C-style syntax with classes, enums, statics, events, lambdas, coroutines (when the host
+  runs them). Rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so
+  lambdas do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==`
+  compares text as text, anything else as numbers. Numbers are 32-bit floats. Changes made while moving the engine on:
+  a declaration's words stop at the end of its line; `switch`/`try`/`catch`/`throw` at the top level are statements,
+  not functions; `xs[i] %= n` works; `m.key = v` sets a map entry. The engine sets `Limits::runtimeErrorLines` off,
+  so its runtime errors keep no line; the CLI and embedders get the line.
+- **Natives:** `Interpreter::Define(name, fn, Arity)` (raw `Runtime::builtins` take the values only, as the engine's do). `Args::Number/String/Bool/List/Map(i)` check one argument's type;
+  `Args::Fail` and any C++ exception become a runtime error on the calling line. Natives are found before script
+  functions (engine order). `okayscript::Host` (`ReadName`, `WriteName`, `CallUnknown`) is the seam for an embedder's
+  own names; the engine is meant to fill it in when it moves onto the library.
+- **CLI:** `okayscript file.okay [args]` runs the top level, then `main()` (given the argument list when it has a
+  parameter; the list is also the global `args`); `okayscript -e "code"`; `okayscript -- file` for a name starting with
+  `-`. Exit 0, 1 runtime error (or out of memory), 2 syntax error, 64 usage error, 66 unreadable file, or `exit(n)`
+  clamped to 0..255. Errors on stderr as `file:line: message`. The CLI turns the loop limit off; the recursion limit
+  (200 calls deep) stays. Text is capped at 64 Mi characters (`s + s` in a loop is a runtime error, not a crash), and
+  blocks, lambdas and namespaces nest at most 200 deep (a parse error).
+- **Builtins:** the maths and conversion builtins (`CoreBuiltins.hpp`) are one set the engine and the CLI both
+  register, with the engine's rules (`len(x, y)` is a 2D vector's length; `sqrt(-4)` is nan; `num("12abc")` is 12).
+  The CLI adds only input and output: print, println, write, input, exit.
+- **Speed:** everything runs as bytecode (`docs/scripting/okayscript_vm.md`; the tree walker is deleted); a
+  function's locals are frame slots; `return`, `break` and `continue` are jumps or a returned status, never C++
+  exceptions. Callgrind counts for `tests/bench_okayscript.cpp` (the tree walker on main / bytecode stage 1 / stage 2):
+  arith 218.4M / 55.4M / 56.2M, calls 196.4M / 139.9M / 68.4M, deep reads 100.6M / 9.2M / 9.0M, list work 133.0M /
+  77.4M / 80.4M, text building 2417.7M / 815.5M / 815.1M; `okayscript_bench` guards them.
+- **Tests:** `okayscript_lang_lexer`, `_parser`, `_interpreter`, `_native`, `_errors` (link only the library);
+  `okayscript_cli_<case>` from `tests/okayscript_cli/` (`.okay`, `.args`, `.in`, `.out`, `.err`, `.code`);
+  `okayscript_no_engine` (no engine include under `okayscript/`, the CLI links no engine library; CMake also refuses to
+  configure if it does).

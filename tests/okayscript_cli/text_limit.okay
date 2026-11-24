@@ -1,0 +1,2 @@
+var s = "ab"
+while (true) s = s + s

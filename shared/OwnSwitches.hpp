@@ -7,7 +7,7 @@
 //  * Every item is ON by default (owner, 2026-11-23: "i want our stuff to be on by default, all of them"); the person can turn
 //    any of them off. The choices are saved in one small text file, own_switches.cfg, in the person's own settings folder
 //    (Windows: %LOCALAPPDATA%\OkaySpace; elsewhere $XDG_CONFIG_HOME/okayspace or ~/.config/okayspace), so the launcher and the
-//    editor, which sit in different folders, read the same file. Format: a line `off=wav` (ids the person turned off; an item
+//    editor, which sit in different folders, read the same file. Format: a line `off=http` (ids the person turned off; an item
 //    is on unless it is listed there, so an item added to the table later starts on) and, for older programs, a line
 //    `on=okayui,http` (the ids that are on). No file, or a file without an `off=` line (written by the old off-by-default
 //    version, where an id missing from `on=` only meant "never chosen"), means: nothing turned off, everything on.
@@ -33,7 +33,7 @@ namespace okay::ownswitches {
 enum Needs : unsigned { kNone = 0, kNotWindows = 1, kNeedsOkayUi = 2 };
 
 struct Item {
-    const char* id;        // short stable name stored in the file ("wav")
+    const char* id;        // short stable name stored in the file ("http")
     const char* label;     // the words on the screen
     const char* desc;      // one plain line
     const char* env;       // the environment variable that switches it on
@@ -48,8 +48,7 @@ inline const std::vector<Item>& Items() {
         {"okayui",   "OkayUI screens",        "Draw the screens that have an OkayUI version (What's New, the editor Console) with our own toolkit instead of Dear ImGui.", "OKAY_UI_BACKEND",      "okayui", kNeedsOkayUi},
         {"inspector", "OkayUI Inspector",     "Draw the Inspector's component bodies with our own toolkit (a preview). Needs \"OkayUI screens\" on too; any body that has no OkayUI version, or a newer Dear ImGui one, stays Dear ImGui.", "OKAY_UI_INSPECTOR", "1", kNeedsOkayUi},
         {"ownrender", "OkayUI own renderer",  "Draw the OkayUI screens with OkayUI's own renderer instead of SDL's geometry calls: Direct3D 11 where the window uses SDL's Direct3D 11 renderer (the Windows default), OpenGL where it uses SDL's OpenGL renderer. Any other frame draws as before.", "OKAY_UI_OWN_RENDER", "1", kNeedsOkayUi},
-        {"wav",      "Our own WAV reader",    "Read .wav sound files with our own decoder instead of the built-in one.",                                                      "OKAY_OWN_WAV",         "1",      kNone},
-        {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows already uses WinHTTP).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
+        {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows uses its built-in WinHTTP for every download and web call).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
         {"platform", "Our own window layer",  "Open windows, read the keyboard and mouse and draw with our own okay::platform backend and OpenGL painter instead of SDL (Linux only; OKAY_OWN_PAINTER=software uses the CPU painter).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
     };
     return t;

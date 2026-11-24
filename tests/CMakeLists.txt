@@ -3760,11 +3760,20 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     set_tests_properties(platform_default_env_own_short PROPERTIES
         ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
     # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
-    if(TARGET okay-platform-selftest)
+    # Not in a Windows build: there it runs as its own step of .github/workflows/windows-tests.yml (`--ci`), on
+    # the runner's real desktop, with its report in the job summary.
+    if(TARGET okay-platform-selftest AND NOT WIN32)
         add_test(NAME platform_selftest_auto
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
         set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+        # The --ci mode the Windows workflow uses, here with no sound device at all: audio is NOT TESTED, not FAIL,
+        # and the event pump check (pushed event, resize through the X server) must pass.
+        add_test(NAME platform_selftest_ci
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --ci)
+        set_tests_properties(platform_selftest_ci PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=okay-no-such-device"
+                             PASS_REGULAR_EXPRESSION "\\[PASS\\] event pump.*RESULT: nothing failed")
     endif()
 endif()
 

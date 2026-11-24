@@ -24,10 +24,6 @@ add_executable(test_module_weapons_save test_module_weapons_save.cpp)
 target_link_libraries(test_module_weapons_save PRIVATE okay::engine)
 add_test(NAME module_weapons_save COMMAND test_module_weapons_save)
 
-add_executable(test_module_weapons_script test_module_weapons_script.cpp)
-target_link_libraries(test_module_weapons_script PRIVATE okay::engine)
-add_test(NAME module_weapons_script COMMAND test_module_weapons_script)
-
 add_executable(test_module_weapons_menu test_module_weapons_menu.cpp)
 target_link_libraries(test_module_weapons_menu PRIVATE okay::engine)
 add_test(NAME module_weapons_menu COMMAND test_module_weapons_menu)

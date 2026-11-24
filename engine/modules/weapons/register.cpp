@@ -1,13 +1,11 @@
-// Weapons module: the crosshair scene record and the OkayScript weapon commands.
+// Weapons module: the crosshair scene record.
 // The record is still written and read at its old place in the scene file, so a save
-// with every module on is byte-identical. The script commands used to be hand-written
-// in the OkayScript VM.
+// with every module on is byte-identical. The weapon script commands stay in the
+// OkayScript VM: those files are under an open claim on another lane.
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
-#include "okay/Scripting/ScriptApiRegistry.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Components/Crosshair.hpp"
-#include "okay/Components/MeleeAttacker.hpp"
-#include "okay/Components/RangedWeapon.hpp"
 #include <iostream>
 
 namespace okay {
@@ -64,15 +62,6 @@ void ReadCrosshair(GameObject& go, std::istream& in) {
         in >> cr->spreadRecover >> cr->spreadMax;
 }
 
-ScriptApiEntry WeaponFn(const char* name, ScriptApiFn fn) {
-    ScriptApiEntry e;
-    e.name = name;
-    e.module = "weapons";
-    e.ret = ScriptApiType::Float;
-    e.fn = std::move(fn);
-    return e;
-}
-
 } // namespace
 
 void Register_weapons(ModuleContext&) {
@@ -82,27 +71,6 @@ void Register_weapons(ModuleContext&) {
     rec.read = &ReadCrosshair;
     rec.inChain = true;   // the scene chain calls this at the old crosshair site
     ComponentSerializerRegistry::Register(std::move(rec));
-
-    AddScriptApi(WeaponFn("weapon_swing", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* m = self ? self->GetComponent<MeleeAttacker>() : nullptr;
-        if (!m) return vs::VsValue{0.0f};
-        m->Swing();
-        return vs::VsValue{1.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_fire", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        return vs::VsValue{g && g->Fire() ? 1.0f : 0.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_reload", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        if (!g) return vs::VsValue{0.0f};
-        g->Reload();
-        return vs::VsValue{1.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_ammo", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        return vs::VsValue{(float)(g ? g->Rounds() : 0)};
-    }));
 }
 
 } // namespace modules

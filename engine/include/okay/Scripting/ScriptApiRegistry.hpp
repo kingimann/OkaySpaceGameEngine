@@ -63,9 +63,6 @@ struct ScriptApiEntry {
     bool pure = false;                    ///< no side effects: a value node in a visual script
     /// OkayScript only: give a Bool result as 1 / 0 (what the old OkayScript save functions returned).
     bool boolAsNumber = false;
-    /// Module that adds this function. Empty = always available. A switched-off module's functions
-    /// are not installed into a new script VM.
-    std::string module;
     /// Typed language only: a compile-time check of a literal argument ("" = fine). Same shape as
     /// script::ApiMethod::checkLiteral.
     std::function<std::string(int argIndex, const std::string& literal)> checkLiteral;

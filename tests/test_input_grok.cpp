@@ -124,7 +124,7 @@ int main() {
         Input::FeedGamepadAt(1, {0, 0}, 0);
     }
 
-    RUN_SUITE("response survives save and load");
+    RUN_SUITE("overrides text holds bindings only, not the response");
     {
         ActionSet set;
         ActionDef& look = set.Add("Look", ValueType::Vector2);
@@ -135,16 +135,13 @@ int main() {
         look.response.sensitivity = 1.5f;
         look.response.invertY = true;
         const std::string saved = set.ExportOverrides();
-        look.response = {};
+        CHECK(saved == "ov Look 0 stick:left\n");          // the response is saved as "inputresp.<action>" (suite below)
         set.Rebind("Look", 0, 0, "stick:right");
-        CHECK(set.ImportOverrides(saved) >= 1);
+        CHECK(set.ImportOverrides(saved) == 1);
         const ActionDef* back = set.Find("Look");
         CHECK(back && back->bindings[0].parts[0] == "stick:left");
-        CHECK(std::fabs(back->response.deadzone - 0.25f) < 1e-4f);
-        CHECK(std::fabs(back->response.curve - 2.0f) < 1e-4f);
-        CHECK(std::fabs(back->response.sensitivity - 1.5f) < 1e-4f);
+        CHECK(std::fabs(back->response.curve - 2.0f) < 1e-4f);   // importing bindings leaves the response alone
         CHECK(back->response.invertY);
-        CHECK(!back->response.invertX);
     }
 
     RUN_SUITE("gesture drives an action");
@@ -213,27 +210,22 @@ int main() {
         Gestures::Reset();
     }
 
-    RUN_SUITE("response overrides keep action names with spaces");
+    RUN_SUITE("old response lines in the overrides text are dropped");
     {
-        ActionSet a;
-        a.Add("Fire Gun", ValueType::Axis1D);
-        a.Add("Look", ValueType::Vector2);
-        InputActions::Response r; r.deadzone = 0.3f; r.curve = 2.0f; r.sensitivity = 1.5f; r.invertY = true;
-        a.Find("Fire Gun")->response = r;
-        a.Find("Look")->response = r;
-        const std::string text = a.ExportOverrides();
+        // What an earlier version exported for "Fire Gun" and "Look". Neither line is applied, counted or kept.
+        const std::string old = "ovresp Fire Gun 0.3 2 1.5 0 1\novresp Look 0.3 2 1.5 0 1\n";
         ActionSet b;
         b.Add("Fire Gun", ValueType::Axis1D);
         b.Add("Look", ValueType::Vector2);
-        CHECK(b.ImportOverrides(text) == 2);
-        CHECK_NEAR(b.Find("Fire Gun")->response.deadzone, 0.3f, 0.001f);
-        CHECK_NEAR(b.Find("Fire Gun")->response.curve, 2.0f, 0.001f);
-        CHECK(b.Find("Fire Gun")->response.invertY);
-        CHECK_NEAR(b.Find("Look")->response.sensitivity, 1.5f, 0.001f);
-        ActionSet c;   // a set without the action keeps the line for later
+        CHECK(b.ImportOverrides(old) == 0);
+        CHECK_NEAR(b.Find("Fire Gun")->response.curve, 1.0f, 0.001f);
+        CHECK(!b.Find("Fire Gun")->response.invertY);
+        CHECK_NEAR(b.Find("Look")->response.sensitivity, 1.0f, 0.001f);
+        CHECK(b.ExportOverrides().empty());
+        ActionSet c;   // a set without the action does not keep the line either
         c.Add("Look", ValueType::Vector2);
-        CHECK(c.ImportOverrides(text) == 1);
-        CHECK(c.ExportOverrides().find("Fire Gun") != std::string::npos);
+        CHECK(c.ImportOverrides(old) == 0);
+        CHECK(c.ExportOverrides().empty());
     }
 
     RUN_SUITE("a response has one store: the newest one wins");

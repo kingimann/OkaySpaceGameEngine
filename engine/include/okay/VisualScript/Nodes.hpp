@@ -691,7 +691,7 @@ inline NetworkManager* VsNet(VsContext& ctx, bool create = false) {
     if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
     Scene* s = ctx.gameObject->scene();
     NetworkManager* n = s->FindObjectOfType<NetworkManager>();
-    if (!n && create) n = s->CreateGameObject("__Network")->AddComponent<NetworkManager>();
+    if (!n && create) n = NetworkManager::Ensure(*s);
     return n;
 }
 
@@ -730,7 +730,7 @@ struct NetHostNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* n = VsNet(ctx, true))
-            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, "could not start the server on port " + std::to_string(port) + " (is it already in use?)");
+            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, n->LastError());
         return 0;
     }
 };
@@ -740,7 +740,7 @@ struct NetJoinNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* n = VsNet(ctx, true))
-            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, "could not connect to " + host + ":" + std::to_string(port));
+            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, n->LastError());
         return 0;
     }
 };
@@ -853,6 +853,72 @@ struct NetMatchStartedNode : VsNode {
 // Host only: true when every client in the room is ready.
 struct NetAllReadyNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->AllReady(); }
+};
+
+// ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
+// Host if the port is free on this computer, else join the game hosted on it.
+struct NetHostOrJoinNode : VsNode {
+    int port;
+    explicit NetHostOrJoinNode(int p) : port(p) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->HostOrJoin((std::uint16_t)port)) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+// Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
+struct NetSendEventNode : VsNode {
+    std::string name;
+    explicit NetSendEventNode(std::string nm) : name(std::move(nm)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNetOrSay(this, g, ctx))
+            if (!n->SendEvent(name, In(0, g, ctx).AsString())) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+// Who sent the network event being handled (a player id; 0 = the host).
+struct NetEventSenderNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto it = ctx.variables.find("event_sender");
+        return it != ctx.variables.end() ? it->second : VsValue(0.0f);
+    }
+};
+// Players in the game, this one included.
+struct NetPlayerCountNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->Players().size() : 0.0f; }
+};
+// The id of player number in0 (0 = the first, in id order); -1 past the end.
+struct NetPlayerIdAtNode : VsNode {
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return -1.0f;
+        const auto list = n->Players();
+        const float f = In(0, g, ctx).AsFloat();
+        const int i = std::isfinite(f) ? (int)f : -1;
+        return i >= 0 && i < (int)list.size() ? (float)list[(std::size_t)i].id : -1.0f;
+    }
+};
+// The name of the player with id in0.
+struct NetPlayerNameNode : VsNode {
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return std::string{};
+        const float f = In(0, g, ctx).AsFloat();
+        for (const auto& p : n->Players())
+            if (std::isfinite(f) && (float)p.id == f) return p.name;
+        return std::string{};
+    }
+};
+struct NetLastErrorNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->LastError() : std::string{}; }
+};
+struct NetTimeNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->NetworkTime() : 0.0f; }
+};
+struct NetPingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->RttMs() : 0.0f; }
 };
 
 // ---- Steam ------------------------------------------------------------

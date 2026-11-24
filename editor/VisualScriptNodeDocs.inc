@@ -14926,13 +14926,13 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "NetIsServer";
-        d.title = "Is Server";
+        d.title = "Is Host";
         d.description = "True on the computer hosting the game.";
         d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
         d.component = "";
-        d.example = "Wire Is Server's Bool output into another node's input. It has no flow of its own.";
+        d.example = "Wire Is Host's Bool output into another node's input. It has no flow of its own.";
         d.related = "";
-        d.keywords = "is server";
+        d.keywords = "is host";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({false, false, "Bool", "Bool", "True or false. It is a Bool. Wire it into an input that expects a Bool.", ""});
@@ -14971,13 +14971,13 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "NetId";
-        d.title = "My Net Id";
+        d.title = "My Player Id";
         d.description = "This player's network id.";
         d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
         d.component = "";
-        d.example = "Wire My Net Id's Id output into another node's input. It has no flow of its own.";
+        d.example = "Wire My Player Id's Id output into another node's input. It has no flow of its own.";
         d.related = "";
-        d.keywords = "my net id";
+        d.keywords = "my player id";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({false, false, "Id", "Number", "The network id. It is a Number. Wire it into an input that expects a Number.", ""});
@@ -15225,6 +15225,192 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.settingDefault = "";
         d.pins.push_back({false, true, "", "Flow", "After On Object RPC finishes, the flow continues from here to the next step.", ""});
         d.pins.push_back({false, false, "Value", "Any", "The value that was read. It is an Any. Wire it into an input that expects an Any.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetHostOrJoin";
+        d.title = "Host or Join";
+        d.description = "Hosts on this port if nobody on this computer is hosting there yet, otherwise joins that game: press Play in two copies of the game for a two-player test with no setup.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Host or Join on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "host or join";
+        d.setting = "port (45000). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Host or Join runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Host or Join finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnPlayerJoined";
+        d.title = "On Player Joined";
+        d.description = "Runs on every player when another player joins (a player who joins also gets one run for each player already there). Event Value is the new player's id, Event Name their name.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Drop On Player Joined into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on player joined";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Player Joined finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnPlayerLeft";
+        d.title = "On Player Left";
+        d.description = "Runs on every player when another player leaves, times out or is kicked. Event Value is their id, Event Name their name.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Drop On Player Left into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on player left";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Player Left finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetSendEvent";
+        d.title = "Send Network Event";
+        d.description = "Sends a named event to every player, this one too: their On Network Event nodes of the same name run with the Data. Reliable: it arrives once, in order with other events.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Send Network Event after an event such as On Start or On Update, and wire a value into Data.";
+        d.related = "";
+        d.keywords = "send network event";
+        d.setting = "event name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Send Network Event runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Send Network Event finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Data", "Any", "The payload sent to the other players. It is an Any. Unwired, this is nothing.", "nothing"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnNetworkEvent";
+        d.title = "On Network Event";
+        d.description = "Runs when a Send Network Event of this name arrives, from any player (this one too). The Data output is what was sent; Event Sender is who sent it.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire On Network Event's Data output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "on network event";
+        d.setting = "event name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Network Event finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Data", "Any", "What On Network Event produces on Data. It is an Any. Wire it into an input that expects an Any.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetEventSender";
+        d.title = "Event Sender";
+        d.description = "Inside On Network Event: the id of the player who sent it (0 = the host).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Event Sender's Player Id output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "event sender";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Player Id", "Number", "What Event Sender produces on Player Id. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetPlayerCount";
+        d.title = "Player Count";
+        d.description = "How many players are in the game, this one included.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Player Count's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "player count";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetPlayerIdAt";
+        d.title = "Player Id At";
+        d.description = "The id of player number Index (0 = the first), in id order; -1 past the end. Loop from 0 to Player Count.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Player Id At's Id output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "player id at";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Index", "Number", "Which entry. The first is 0. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Id", "Number", "The network id. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetPlayerName";
+        d.title = "Player Name";
+        d.description = "The name of the player with this id.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Player Name's Name output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "player name";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Player Id", "Number", "The Player Id input of Player Name. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Name", "Text", "The name. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetLastError";
+        d.title = "Network Error";
+        d.description = "What last went wrong with the network, in plain words (empty when nothing did): a host that did not answer, a port in use, a refused join.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Network Error's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "network error";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetTime";
+        d.title = "Network Time";
+        d.description = "Network time in seconds: the same on every player (the host's clock), for timers everyone must agree on.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Network Time's Seconds output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "network time";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Seconds", "Number", "What Network Time produces on Seconds. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetPing";
+        d.title = "Ping";
+        d.description = "The round trip to the host in milliseconds (0 on the host).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Ping's Ms output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "ping";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Ms", "Number", "What Ping produces on Ms. It is a Number. Wire it into an input that expects a Number.", ""});
         add(std::move(d));
     }
     {

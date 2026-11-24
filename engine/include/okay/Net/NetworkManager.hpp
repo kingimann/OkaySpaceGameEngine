@@ -52,6 +52,10 @@ public:
     bool StartServer(std::uint16_t port);
     /// Connect to a server at host:port (host may be a name or dotted IP).
     bool StartClient(const std::string& host, std::uint16_t port);
+    /// Host on `port` if it is free on this computer; otherwise join the game
+    /// already hosted on it at `host` (this computer by default). Two copies of
+    /// a game on one PC become host and client with no setup (AutoStart::Auto).
+    bool HostOrJoin(std::uint16_t port = kDefaultPort, const std::string& host = "127.0.0.1");
     void Stop();
 
     // ---- Relay (NAT traversal) ----------------------------------------
@@ -380,7 +384,10 @@ public:
     const std::string& Room() const { return m_localRoom; }
 
     // ---- No-code setup: start automatically when the scene plays ------
-    enum class AutoStart { None, Host, Join };
+    /// Auto: host if the port is free on this computer, otherwise join the
+    /// game already hosted here (127.0.0.1), so pressing Play in two copies of
+    /// the game on one PC makes a two-player test with no setup.
+    enum class AutoStart { None, Host, Join, Auto };
     AutoStart   autoStart = AutoStart::None;
     std::uint16_t autoPort = 45000;
     std::string autoHost = "127.0.0.1";
@@ -767,6 +774,56 @@ public:
     void SetPeerLeftHandler(std::function<void(std::uint32_t)> f) {
         m_peerLeft = std::move(f);
     }
+    // ---- The easy layer: players, join / leave and named events on every peer ----
+    // The same on the host and on every client, so game code never asks which
+    // side it is on. Visual Script (On Player Joined, Send Network Event, ...),
+    // OkayScript (net.on, on_player_joined) and okay::Net (Net.hpp) all sit on these.
+
+    /// The default game port (Host, Join, Auto Start and the LAN scan's first port).
+    static constexpr std::uint16_t kDefaultPort = 45000;
+    /// One player in the session. `id` 0 is the host (when it plays).
+    struct Player { std::uint32_t id = 0; std::string name; bool isHost = false, isLocal = false; };
+    /// Everyone in this peer's session and room, you included, sorted by id.
+    /// Empty while offline. A client's list follows the host's roster (about once a second).
+    std::vector<Player> Players() const;
+    /// The host? (A listen server or a dedicated server.) Same as IsServer().
+    bool IsHost() const { return IsServer(); }
+    /// Run `f(id, name)` each time another player joins, on every peer. A client
+    /// that joins gets one call for each player already there (the host first).
+    /// Returns an id for RemoveListener.
+    int OnPlayerJoined(std::function<void(std::uint32_t id, const std::string& name)> f);
+    /// Run `f(id)` each time another player leaves (quit, timed out or kicked), on every peer.
+    int OnPlayerLeft(std::function<void(std::uint32_t id)> f);
+    /// Run `f(from, data)` when the named network event arrives ("" = every event,
+    /// with the name in ReceivedEvent::name via OnAnyEvent). `from` is the sender's player id.
+    int OnEvent(const std::string& name, std::function<void(std::uint32_t from, const std::string& data)> f);
+    struct ReceivedEvent { std::uint32_t from = 0; std::string name, data; };
+    int OnAnyEvent(std::function<void(const ReceivedEvent&)> f);
+    void RemoveListener(int id);
+    /// Send a named event to every player in the room, reliably and in order
+    /// (resent until it arrives; events reach each player in the order they were
+    /// sent; a client's goes through the host, which stamps the real sender).
+    /// Big data is split into pieces and put back together on the way.
+    /// With `includeSelf` (the default) it also runs here, so "an event happens
+    /// everywhere". Names: 1-64 letters, digits, '_', '-', '.', ' '; data up to
+    /// kMaxEventData bytes. False (and LastError says why) if it was not sent.
+    bool SendEvent(const std::string& name, const std::string& data = "", bool includeSelf = true);
+    /// The same, to one player only (it does not run here unless `target` is you).
+    bool SendEventTo(std::uint32_t target, const std::string& name, const std::string& data = "");
+    static constexpr std::size_t kMaxEventName = 64, kMaxEventData = 16 * 1024;
+    static bool EventNameOk(const std::string& name);
+    /// The last thing that went wrong, in plain words ("Could not reach host
+    /// 1.2.3.4:45000 (no answer after 15 s)."), or "" if nothing did. Cleared by
+    /// the next Host / Join. Every failure is also written to the log once.
+    const std::string& LastError() const { return m_lastError; }
+    /// Network time in seconds, the same on every peer to within about half a
+    /// round trip: the host's clock since it started hosting. 0 while offline.
+    double NetworkTime() const;
+    /// Find this scene's Network Manager, or add one (on an object "__Network").
+    static NetworkManager* Ensure(Scene& scene);
+    /// The most recently started Network Manager that is still alive (okay::Net uses it).
+    static NetworkManager* Current();
+
     /// Drain the queue of messages received since the last call (for polling
     /// code and scripts that don't use a callback).
     std::vector<NetMessage> TakeMessages() {
@@ -1220,6 +1277,30 @@ private:
     std::vector<NetMessage> m_inbox;
     std::function<void(std::uint32_t, const std::string&)> m_peerJoined;
     std::function<void(std::uint32_t)> m_peerLeft;
+    // The easy layer (NetworkManagerEvents.cpp).
+    struct Listener {
+        int id = 0;
+        std::string name;   // OnEvent's name ("" for the others)
+        std::function<void(std::uint32_t, const std::string&)> joined;
+        std::function<void(std::uint32_t)> left;
+        std::function<void(std::uint32_t, const std::string&)> event;
+        std::function<void(const ReceivedEvent&)> any;
+    };
+    std::vector<Listener> m_listeners;
+    int m_nextListener = 1;
+    std::unordered_map<std::uint32_t, std::string> m_knownPlayers;   // who the join / leave events have announced
+    bool m_playersAnnounced = false;
+    std::string m_lastError;
+    bool m_errorNoted = false;   // the current join / connection failure was already turned into m_lastError
+    double m_clientNetTime = -1.0;   // client: the host's clock, from snapshots (-1 = not heard yet)
+    void SetError(const std::string& plain);
+    float m_timeTimer = 0.0f;    // host: time since the clock was last sent
+    void PlayersTick(float dt);  // each Update: join / leave events from the roster, the network clock
+    void OnHostTime(const std::string& data);
+    void ErrorsTick();           // each Update: a timed-out join or a lost connection becomes LastError
+    void OnEventWire(std::uint32_t from, const std::string& wire);
+    void DispatchEvent(std::uint32_t from, const std::string& name, const std::string& data);
+    void RaisePlayerEvent(bool joined, std::uint32_t id, const std::string& name);
 
     // Networked transforms (drop-in object replication via NetworkSync).
     struct SyncObj {

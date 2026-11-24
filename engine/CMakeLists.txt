@@ -137,6 +137,8 @@ add_library(okay_engine
     # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
     # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
     src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerEvents.cpp
+    src/Net/Net.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp
     src/Net/NetworkManagerClient.cpp

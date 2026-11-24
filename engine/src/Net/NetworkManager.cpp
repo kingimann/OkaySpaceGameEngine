@@ -111,11 +111,13 @@ static bool EncryptionBuiltIn(bool wanted) {
 
 bool NetworkManager::StartServer(std::uint16_t port) {
     Stop();
-    if (!EncryptionBuiltIn(encryption)) return false;
-    if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
+    m_lastError.clear(); m_errorNoted = false;
+    if (!EncryptionBuiltIn(encryption)) { SetError("Could not host: this build has no network encryption, and the Network Manager asks for it."); return false; }
+    if (!net::Startup()) { SetError("Could not host: the computer's network could not be started."); return false; }
     m_netStarted = true;
     if (!m_socket.Open() || !m_socket.Bind(port)) {
-        OKAY_ERROR("net: failed to bind server port ", port);
+        SetError("Could not host on port " + std::to_string(port) + ": the port is already in use (another copy of the game "
+                 "may be hosting there; join it instead, or pick another port).");
         Stop();
         return false;
     }
@@ -240,20 +242,22 @@ std::string NetworkManager::LastJoinRefusal() { return g_joinRefusal; }
 
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     g_joinRefusal.clear();
+    m_lastError.clear(); m_errorNoted = false;
     if (g_joinGate) {
         std::string why;
         if (!g_joinGate(*this, host, port, false, std::string(), why)) {
             g_joinRefusal = why.empty() ? std::string("join refused") : why;
-            OKAY_WARN("net: not joining ", host, ":", port, ": ", g_joinRefusal);
+            SetError("Not joining " + host + ":" + std::to_string(port) + ": " + g_joinRefusal + ".");
             return false;
         }
     }
     Stop();
-    if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
+    m_lastError.clear(); m_errorNoted = false;
+    if (!net::Startup()) { SetError("Could not join: the computer's network could not be started."); return false; }
     m_netStarted = true;
-    if (!m_socket.Open()) { OKAY_ERROR("net: failed to open client socket"); Stop(); return false; }
+    if (!m_socket.Open()) { SetError("Could not join: no network socket could be opened."); Stop(); return false; }
     if (!net::UdpSocket::Resolve(host, port, m_serverEp)) {
-        OKAY_ERROR("net: cannot resolve ", host);
+        SetError("Could not find host \"" + host + "\": the name or address does not resolve (check the spelling, or use its IP address).");
         Stop();
         return false;
     }
@@ -524,6 +528,7 @@ void NetworkManager::Start() {
     if (!launch.empty() && JoinByLink(launch)) return;
     if (autoStart == AutoStart::Host) StartServer(autoPort);
     else if (autoStart == AutoStart::Join) StartClient(autoHost, autoPort);
+    else if (autoStart == AutoStart::Auto) HostOrJoin(autoPort);
 }
 
 namespace {

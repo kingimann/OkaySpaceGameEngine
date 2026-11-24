@@ -442,6 +442,8 @@ void NetworkManager::Update(float dt) {
     else if (m_reconnecting) ReconnectTick(dt);
     InterpolateRemotes(dt);
     SyncTick(dt);
+    PlayersTick(dt);
+    ErrorsTick();
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
@@ -575,6 +577,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         }
         return;
     }
+    // Named network events (the easy layer, NetworkManagerEvents.cpp) and the host's clock.
+    if (channel == "__ev") { OnEventWire(from, data); return; }
+    if (channel == "__time") { if (m_mode == Mode::Client && from == 0) OnHostTime(data); return; }
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
@@ -1234,6 +1239,8 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
     }
     if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
+    if (channel == "__ev")   // a named event (checked again when it is opened): bounded
+        return data.size() <= kMaxEventData + kMaxEventName + 16;
     return false;   // __match_start and any other reserved channel: host only
 }
 

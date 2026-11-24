@@ -33,16 +33,19 @@ struct InputValue {
     bool operator==(const InputValue& o) const { return x == o.x && y == o.y && z == o.z; }
 };
 
-/// One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "invert(x)", "invert(xy)",
+/// One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "axial(0.2)", "axial(0.2,0.9)", "invert(x)", "invert(xy)",
 /// "scale(2)", "scale(2,0.5,1)", "normalize", "swizzle(yx)", "smooth(0.1)", "curve(2)", "clamp(-1,1)".
 struct Processor {
-    enum class Kind { Deadzone, Invert, Scale, Normalize, Swizzle, Smooth, Curve, Clamp } kind = Kind::Scale;
+    enum class Kind { Deadzone, Invert, Scale, Normalize, Swizzle, Smooth, Curve, Clamp, Axial } kind = Kind::Scale;
     float a = 0, b = 0, c = 0;      ///< parameters (see Apply)
     int mask = 7;                   ///< Invert: bit 0 x, 1 y, 2 z. Swizzle: the order, 3 bits per output (0 x, 1 y, 2 z). Scale: how many numbers were given (1..3)
-    float state[3] = {0, 0, 0};     ///< Smooth keeps the previous output here
+    float state[3] = {0, 0, 0};     ///< Smooth keeps the previous output here (slot 0: the combined read)
     bool primed = false;
-    /// Apply to `v` (a vector's deadzone and curve work on its length; the rest per component). `dt` is the frame time (Smooth).
-    InputValue Apply(const InputValue& v, float dt);
+    float slotState[4][3] = {};     ///< Smooth for controller 0..3, so one player's stick does not drag another's
+    bool slotPrimed[4] = {};
+    /// Apply to `v` (a vector's deadzone and curve work on its length; axial works per component). `dt` is the frame
+    /// time (Smooth). `slot` 0 is the combined read; 1..4 are controllers 0..3, each with its own Smooth memory.
+    InputValue Apply(const InputValue& v, float dt, int slot = 0);
     std::string ToString() const;
     static bool Parse(const std::string& text, Processor& out);
 };
@@ -246,6 +249,18 @@ public:
     bool Pressed(const std::string& name) const;
     bool Held(const std::string& name) const;
     bool Released(const std::string& name) const;
+
+    // ---- press timing on THIS set (a local player's own actions; InputActions reads the shared table)
+    /// A press of `name` happened within `window` seconds and has not been used up.
+    bool Buffered(const std::string& name, float window = 0.15f) const;
+    /// Use up that buffered press. False when there is none inside `window`, so a stale press cannot fire late.
+    bool Consume(const std::string& name, float window = 0.15f);
+    /// The press this frame is the second one inside `window` seconds of the previous press.
+    bool DoubleTap(const std::string& name, float window = 0.3f) const;
+    /// Seconds the action has been held, or 0 when it is up.
+    float HeldFor(const std::string& name) const;
+    /// True on the frame the hold crosses `seconds` (a "hold to confirm" that fires once).
+    bool HoldReached(const std::string& name, float seconds) const;
 
     // ---- phases (what happened this Update)
     const std::vector<PhaseEvent>& Events() const { return m_events; }

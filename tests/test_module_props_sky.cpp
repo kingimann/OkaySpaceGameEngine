@@ -19,7 +19,16 @@ int main() {
     RegisterBuiltinProperties();
     auto on = PropertyRegistry::FindByName("DayNightCycle");
     CHECK(on && HasField(*on, "time") && HasField(*on, "dayLengthSeconds"));
-    std::cout << "sky_weather on: DayNightCycle fields " << on->properties.size() << " (includes time)\n";
+    const int fields = (int)on->properties.size();
+    std::cout << "sky_weather on: DayNightCycle fields " << fields << " (includes time)\n";
+
+    // Rebuilding the table must register the fields again while the module stays on.
+    // A one-shot hook would leave DayNightCycle missing here.
+    PropertyRegistry::Clear();
+    RegisterBuiltinProperties();
+    auto rebuilt = PropertyRegistry::FindByName("DayNightCycle");
+    CHECK(rebuilt && (int)rebuilt->properties.size() == fields && HasField(*rebuilt, "time"));
+    std::cout << "sky_weather on, table rebuilt: DayNightCycle fields " << rebuilt->properties.size() << "\n";
 
     PropertyRegistry::Clear();
     ModuleManifest saved = ModuleRegistry::Get().Find("sky_weather")->manifest;
@@ -29,6 +38,11 @@ int main() {
     CHECK(!off);
     std::cout << "sky_weather off: DayNightCycle has no property table\n";
 
+    PropertyRegistry::Clear();
     ModuleRegistry::Get().Add(saved, true);
+    RegisterBuiltinProperties();
+    auto back = PropertyRegistry::FindByName("DayNightCycle");
+    CHECK(back && HasField(*back, "time"));
+    std::cout << "sky_weather on again: DayNightCycle fields " << back->properties.size() << "\n";
     TEST_MAIN_RESULT();
 }

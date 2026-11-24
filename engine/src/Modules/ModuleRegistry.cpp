@@ -1,5 +1,6 @@
 #include "okay/Modules/ModuleRegistry.hpp"
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <set>
 
@@ -12,16 +13,28 @@ bool Has(const std::vector<std::string>& v, const std::string& s) {
 } // namespace
 
 ModuleRegistry& ModuleRegistry::Get() {
-    // Not a function-local static initialiser: a hook may ask for the registry again while it runs (a module that adds a property table
-    // reaches the property registry, which wants the module list). The second call gets the half-filled registry instead of deadlocking.
-    // Modules are added once at start, before other threads run engine code (see the class comment).
-    static ModuleRegistry* r = nullptr;
-    if (!r) {
-        r = new ModuleRegistry();   // lives for the whole run, never destroyed (no exit-order problems)
-        detail::RegisterGeneratedModules(*r);
-        r->RunRegisterHooks();
+    // Not a function-local static: a hook may ask for the registry again while it runs. The pointer is
+    // published before the hooks, so that re-entry sees the half-filled registry. phase makes a second
+    // thread wait instead of building a second registry (MakeNode can run on a worker before the main
+    // thread has touched this).
+    static std::atomic<ModuleRegistry*> published{nullptr};
+    static std::atomic<int> phase{0};   // 0 empty, 1 building, 2 ready
+    static thread_local bool initializing = false;
+    if (phase.load(std::memory_order_acquire) == 2) return *published.load(std::memory_order_acquire);
+    if (initializing) return *published.load(std::memory_order_relaxed);
+    int expected = 0;
+    if (phase.compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
+        initializing = true;
+        auto* created = new ModuleRegistry();   // lives for the whole run, never destroyed
+        published.store(created, std::memory_order_release);
+        detail::RegisterGeneratedModules(*created);
+        created->RunRegisterHooks();
+        phase.store(2, std::memory_order_release);
+        initializing = false;
+        return *created;
     }
-    return *r;
+    while (phase.load(std::memory_order_acquire) != 2) {}
+    return *published.load(std::memory_order_acquire);
 }
 
 void ModuleRegistry::Add(const ModuleManifest& m, bool enabled) {

@@ -1,4 +1,6 @@
 #include "okay/Scene/PropertyRegistry.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
+#include "okay/Debug/DebugUtil.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
@@ -496,6 +498,8 @@ PropertyRegistry::ScopedHookSuppression::~ScopedHookSuppression() { --t_suppress
 
 // ---- Builtins -------------------------------------------------------------------------------
 
+void ApplyPropertyContributors();
+
 void RegisterBuiltinProperties() {
     Table& t = GetTable();
     if (t.builtinsDone.load(std::memory_order_acquire)) return;
@@ -507,7 +511,40 @@ void RegisterBuiltinProperties() {
     if (t.builtinsDone.load(std::memory_order_acquire)) return;
     struct Guard { bool& flag; explicit Guard(bool& f) : flag(f) { flag = true; } ~Guard() { flag = false; } } guard(registering);
     detail::RegisterBuiltinPropertyTable();
+    ApplyPropertyContributors();
     t.builtinsDone.store(true, std::memory_order_release);
+}
+
+namespace {
+struct PropertyContributor { std::string module; void (*fn)(); };
+std::vector<PropertyContributor>& PropertyContributors() {
+    static std::vector<PropertyContributor> v;
+    return v;
+}
+debugutil::SpinLock& PropertyContributorLock() {
+    static debugutil::SpinLock lock;
+    return lock;
+}
+} // namespace
+
+void AddPropertyContributor(const char* module, void (*fn)()) {
+    if (!fn) return;
+    debugutil::SpinGuard guard(PropertyContributorLock());
+    for (const PropertyContributor& c : PropertyContributors()) if (c.fn == fn) return;
+    PropertyContributors().push_back({module ? module : "", fn});
+}
+
+void ApplyPropertyContributors() {
+    ModuleRegistry::Get();   // hooks record contributors; this call is what fills the list the first time
+    std::vector<PropertyContributor> copy;
+    {
+        debugutil::SpinGuard guard(PropertyContributorLock());
+        copy = PropertyContributors();
+    }
+    for (const PropertyContributor& c : copy) {
+        if (!c.module.empty() && !ModuleRegistry::Get().IsEnabled(c.module)) continue;
+        c.fn();
+    }
 }
 
 // ---- Snapshot, diff, copy ----------------------------------------------------------------------

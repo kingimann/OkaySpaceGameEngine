@@ -3,12 +3,15 @@
 // module, so a build that leaves sky_weather off does not offer those fields.
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/PropertyBuilder.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 
 namespace okay {
 namespace modules {
 
-void Register_sky_weather(ModuleContext&) {
+namespace {
+
+void RegisterDayNightProperties() {
     constexpr double kBig = 100000.0;
     PropertyBuilder<DayNightCycle> b("DayNightCycle", "daynight", "Environment");
     b.AddFloat("dayLengthSeconds", &DayNightCycle::dayLengthSeconds).Range(0, kBig, 1).Tooltip("Real seconds for a full 24h day")
@@ -27,6 +30,14 @@ void Register_sky_weather(ModuleContext&) {
      .AddColor("skyHorizon", &DayNightCycle::skyHorizon).Range(0, 1, 0.01).Tooltip("Sunrise/sunset orange")
      .AddColor("skyNight", &DayNightCycle::skyNight).Range(0, 1, 0.01).Tooltip("Deep night");
     b.Commit();
+}
+
+} // namespace
+
+void Register_sky_weather(ModuleContext&) {
+    // Remembered and run again whenever the property table is rebuilt. The hook itself
+    // runs only once, so committing here would not survive PropertyRegistry::Clear().
+    AddPropertyContributor("sky_weather", &RegisterDayNightProperties);
 }
 
 } // namespace modules

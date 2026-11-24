@@ -1,6 +1,5 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
-#include "okay/Debug/DebugUtil.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
@@ -521,15 +520,21 @@ std::vector<PropertyContributor>& PropertyContributors() {
     static std::vector<PropertyContributor> v;
     return v;
 }
-debugutil::SpinLock& PropertyContributorLock() {
-    static debugutil::SpinLock lock;
-    return lock;
-}
+// A short spin lock, held only while the list is copied or appended to. It is not the builtin mutex: a
+// hook that runs on another thread (inside ModuleRegistry::Get) must be able to add a contributor while
+// this thread holds that mutex and waits for the hooks to finish.
+struct ContributorGuard {
+    static std::atomic_flag& Flag() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
+    ContributorGuard() { while (Flag().test_and_set(std::memory_order_acquire)) {} }
+    ~ContributorGuard() { Flag().clear(std::memory_order_release); }
+    ContributorGuard(const ContributorGuard&) = delete;
+    ContributorGuard& operator=(const ContributorGuard&) = delete;
+};
 } // namespace
 
 void AddPropertyContributor(const char* module, void (*fn)()) {
     if (!fn) return;
-    debugutil::SpinGuard guard(PropertyContributorLock());
+    ContributorGuard guard;
     for (const PropertyContributor& c : PropertyContributors()) if (c.fn == fn) return;
     PropertyContributors().push_back({module ? module : "", fn});
 }
@@ -538,7 +543,7 @@ void ApplyPropertyContributors() {
     ModuleRegistry::Get();   // hooks record contributors; this call is what fills the list the first time
     std::vector<PropertyContributor> copy;
     {
-        debugutil::SpinGuard guard(PropertyContributorLock());
+        ContributorGuard guard;
         copy = PropertyContributors();
     }
     for (const PropertyContributor& c : copy) {

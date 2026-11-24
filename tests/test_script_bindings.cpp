@@ -6,6 +6,7 @@
 #include <Okay.hpp>
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Light.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
@@ -191,6 +192,55 @@ int main() {
         CHECK(r.Run("t_grabCam").AsBool());
         CHECK(r.lamp->RemoveComponent(r.cam));
         CHECK(r.Run("t_camNull").AsBool());
+    }
+
+    // ---- Review B1: no file, network, platform or clipboard method is reachable (gen_script_bindings.py DENY_*) ----
+    {
+        const char* deniedMethods[] = {"Terrain.ExportHeightmap", "Terrain.ImportHeightmap", "NavMeshSurface.Save",
+                                       "NavMeshSurface.Load", "BuilderMode.SaveModel", "BuilderMode.SaveMap",
+                                       "VehicleController.ToFile", "VehicleController.LoadPresetText",
+                                       "ScriptComponent.SetPath", "ScriptComponent.LoadFile",
+                                       "VisualScriptComponent.SetPath", "VisualScriptComponent.LoadFromFile",
+                                       "UIInputField.PasteFromClipboard", "UIInputField.CopyToClipboard",
+                                       "AudioSource.OpenStream", "Character.SaveClipsToFile", "Character.LoadClipsFromFile"};
+        const char* deniedClasses[] = {"NetworkManager", "NetworkObject", "NetworkSync", "NetworkPlayerSpawner",
+                                       "NetValidator", "SteamManager", "UIFilePicker", "UIHotReload"};
+        int found = 0;
+        for (const sb::ClassBinding& cls : sb::AllClasses()) {
+            for (const char* dc : deniedClasses)
+                if (cls.name == dc && !cls.methods.empty()) { std::printf("  %s has bound methods\n", dc); ++found; }
+            for (const sb::MethodBinding& m : cls.methods)
+                for (const char* dm : deniedMethods)
+                    if (cls.name + "." + m.name == dm) { std::printf("  %s is bound\n", dm); ++found; }
+        }
+        CHECK(found == 0);
+    }
+
+    // ---- Review B2: enum arguments in their range, counts and indexes capped (no gigabyte allocations) ----
+    {
+        Rig r("function t_count() { var l = GetComponent(\"LineRenderer\"); l.SetPositionCount(2000000000); }\n"
+              "function t_index() { var l = GetComponent(\"LineRenderer\"); l.SetPosition(2000000000, vec3(0, 0, 0)); }\n"
+              "function t_fine() { var l = GetComponent(\"LineRenderer\"); l.SetPositionCount(3); return 1; }\n");
+        CHECK(r.loaded);
+        r.lamp->AddComponent<LineRenderer>();
+        std::string e;
+        r.Run("t_count", &e);
+        CHECK(Has(e, "LineRenderer.SetPositionCount(): argument 1 must be -1 to 1048576"));
+        r.Run("t_index", &e);
+        CHECK(Has(e, "LineRenderer.SetPosition(): argument 1 must be -1 to 1048576"));
+        CHECK(r.Run("t_fine").AsFloat() == 1.0f);
+        Scene s("Enum");
+        GameObject* g = s.CreateGameObject("E");
+        if (const sb::ClassBinding* hs = sb::FindClass("HealthStat")) {
+            Component* c = hs->add ? hs->add(*g) : nullptr;
+            if (c) {
+                vs::VsValue out;
+                std::string err;
+                CHECK(sb::CallOn(*c, *hs, "SetDeathAction", {vs::VsValue{99.0f}}, out, err) == sb::Result::Error);
+                CHECK(Has(err, "argument 1 must be 0 to"));
+                CHECK(sb::CallOn(*c, *hs, "SetDeathAction", {vs::VsValue{1.0f}}, out, err) == sb::Result::Ok);
+            } else CHECK(false);
+        } else CHECK(false);
     }
 
     // ---- Parity: every bound class is found by its name and every method is reachable and callable ----

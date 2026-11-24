@@ -300,6 +300,8 @@ std::vector<Case> Programs() {
                      "print(date_text(0), date_text(951782400), date_text(-86400), date_text(4102444800L), date_text(1234567890))"},
     };
     for (auto& c : lang2) p.push_back(c);
+    p.push_back({"print_cycle", "var l = []\nl.Add(l)\nl.Add(1)\nprint(l)\nvar m = new Dictionary<string, int>()\nm.self = m\nm.k = 2\nprint(m)\n"
+                                "var deep = []\nfor (var i = 0; i < 500; i++) { deep = [deep]; }\nprint(deep.ToString().Length > 0)"});
     p.push_back({"loop_limit", "var n = 0\nwhile (true) {\n  n++;\n}", 1000});
     p.push_back({"for_limit", "for (var i = 0; ; i++) { if (i == 5) print(i); }", 50});
     // Every CLI test script (tests/okayscript_cli) as well.

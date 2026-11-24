@@ -14,6 +14,7 @@
 #include "okay/Scene/Properties.hpp"
 #include "okay/VisualScript/VsValue.hpp"
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <typeindex>
@@ -117,7 +118,14 @@ vs::VsValue PropertyToScript(const PropertyValue& v);
 bool ScriptToProperty(const PropertyDesc& desc, const vs::VsValue& v, PropertyValue& out, std::string& error);
 
 // ---- Helpers the generated code uses ----------------------------------------------------------------------------
+/// A script argument out of the range its parameter takes: CallOn turns it into the call's error
+/// ("Light.SetMode(): argument 1 must be 0 to 3, got 9").
+struct ArgError : std::runtime_error { using std::runtime_error::runtime_error; };
 long long ArgInt(const vs::VsValue& v);
+/// A whole number in [lo, hi] (an enum's values, the range of the C++ type), else ArgError for argument idx.
+long long ArgIntIn(const vs::VsValue& v, int idx, long long lo, long long hi);
+/// A count or an index: -1 .. max (so one call cannot make the engine allocate gigabytes), else ArgError.
+long long ArgCount(const vs::VsValue& v, int idx, long long max);
 Vec2 ArgVec2(const vs::VsValue& v);
 Vec4 ArgVec4(const vs::VsValue& v);
 Quat ArgQuat(const vs::VsValue& v);

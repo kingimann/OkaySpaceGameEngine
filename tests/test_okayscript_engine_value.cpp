@@ -67,6 +67,18 @@ int main() {
     Check(r == "8 [1, 2, 3] [10, 20, 30]\n", "functions, lists, lambdas", r);
     r = run("var o = 0\nprint(o ?? \"none\")\nnope()");
     Check(r == "none\nERROR 3: call to undefined function 'nope'", "null and errors with a line", r);
+    // Language stage 2 on the engine's value (docs/scripting/okayscript_vm.md): no 64-bit integers there, so 123L and
+    // (long)x are its 32-bit floats; closures, finally, generators, map literals and classes work the same.
+    r = run("var big = 16777217L\nprint(big, (long)2.9, 7L / 2)");
+    Check(r == "16777216 2 3.5\n", "123L is the engine's float (no Int in VsValue)", r);
+    r = run("function counter() { var n = 0; return () => { n += 1; return n; }; }\nvar c = counter()\nc()\nprint(c(), {k: 3}.k)");
+    Check(r == "2 3\n", "closures and map literals on VsValue", r);
+    r = run("function g() { yield 1; yield 2; }\nvar s = 0\nforeach (var x in g()) { s += x; }\n"
+            "function f() { try { return 1; } finally { s += 10; } }\nf()\nprint(s)");
+    Check(r == "13\n", "generators and finally on VsValue", r);
+    r = run("class A { public int v = 1; public int Get() { return v; } }\nclass B : A { public int Get() { return super.Get() + 10; } }\n"
+            "print(new B().Get())");
+    Check(r == "11\n", "class inheritance and super on VsValue", r);
     std::cout << g_checks << " checks, " << g_fail << " failures\n";
     return g_fail == 0 ? 0 : 1;
 }

@@ -46,6 +46,7 @@ Color4 Value::AsColor() const {
 
 float Value::AsFloat() const {
     if (auto* f = std::get_if<Number>(&m_data)) return *f;
+    if (auto* i = std::get_if<Int64>(&m_data)) return (float)i->v;
     if (auto* b = std::get_if<bool>(&m_data)) return *b ? 1.0f : 0.0f;
     if (auto* v = std::get_if<Vec3>(&m_data)) return v->Magnitude();
     if (auto* c = std::get_if<Color4>(&m_data)) return c->a;
@@ -61,6 +62,7 @@ float Value::AsFloat() const {
 bool Value::AsBool() const {
     if (auto* b = std::get_if<bool>(&m_data)) return *b;
     if (auto* f = std::get_if<Number>(&m_data)) return !std::isnan(*f) && *f != 0.0f;
+    if (auto* i = std::get_if<Int64>(&m_data)) return i->v != 0;
     if (auto* s = std::get_if<std::string>(&m_data)) {
         std::string t;
         t.reserve(s->size());
@@ -84,6 +86,7 @@ bool Value::AsBool() const {
 Vec3 Value::AsVec3() const {
     if (auto* v = std::get_if<Vec3>(&m_data)) return *v;
     if (auto* f = std::get_if<Number>(&m_data)) return Vec3{*f};
+    if (auto* i = std::get_if<Int64>(&m_data)) return Vec3{(float)i->v};
     if (auto* c = std::get_if<Color4>(&m_data)) return Vec3{c->r, c->g, c->b};
     return Vec3::Zero;
 }
@@ -92,6 +95,7 @@ std::string Value::AsString() const {
     if (auto* s = std::get_if<std::string>(&m_data)) return *s;
     if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";
     if (auto* f = std::get_if<Number>(&m_data)) return FormatNumber(*f);
+    if (auto* i = std::get_if<Int64>(&m_data)) return std::to_string(i->v);
     if (auto* v = std::get_if<Vec3>(&m_data))
         return "(" + FormatNumber(v->x) + ", " + FormatNumber(v->y) + ", " + FormatNumber(v->z) + ")";
     if (auto* c = std::get_if<Color4>(&m_data)) return HexColor(*c);
@@ -120,6 +124,7 @@ std::string Value::AsString() const {
 }
 
 const char* Value::TypeName() const {
+    if (IsInt()) return "int";
     if (IsNumber()) return "number";
     if (IsBool()) return "bool";
     if (IsString()) return "string";

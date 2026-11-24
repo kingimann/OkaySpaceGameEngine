@@ -472,6 +472,10 @@ private:
             return true;
         case Expr::Kind::Unary: {
             std::int64_t v = 0;
+            if (e.text == "sizeof" && e.ty) {
+                out = sizeOf(e.ty.get());
+                return out > 0;
+            }
             if (e.kids.empty() || !e.kids[0] || !constInt(*e.kids[0], v)) return false;
             if (e.text == "-") out = static_cast<std::int64_t>(0 - static_cast<std::uint64_t>(v));
             else if (e.text == "+") out = v;
@@ -487,6 +491,13 @@ private:
             if (e.text == "&&") { out = x && y; return true; }
             if (e.text == "||") { out = x || y; return true; }
             return fold(e.text, x, y, out);
+        }
+        case Expr::Kind::Cond: {
+            std::int64_t c = 0, a = 0, b = 0;
+            if (e.kids.size() != 3 || !e.kids[0] || !e.kids[1] || !e.kids[2]) return false;
+            if (!constInt(*e.kids[0], c) || !constInt(*e.kids[1], a) || !constInt(*e.kids[2], b)) return false;
+            out = c ? a : b;
+            return true;
         }
         case Expr::Kind::Cast: {
             std::int64_t v = 0;
@@ -787,6 +798,15 @@ private:
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
         }
+        if (s->ref && s->agg) {
+            // A reference to an object: its value is the object's address (as for a local object).
+            Val v;
+            v.op = Operand::vreg(s->reg);
+            v.step = s->step;
+            v.inner = s->inner;
+            v.fields = s->fields;
+            return v;
+        }
         if (s->ref) {
             int dst = fresh();
             Inst ld;
@@ -983,6 +1003,13 @@ private:
                 if (!b.ok) return a;
                 baseOp = b.op;
                 fields = std::move(b.fields);
+            }
+            if (fields.empty() && e.kids[0]->checked) {
+                // The object's fields from its checked type (a pointer read through a returned
+                // reference carries no field list of its own).
+                const Type* ot = e.kids[0]->checked.get();
+                if (e.text == "->" && ot->kind == Type::Kind::Pointer && ot->inner) ot = ot->inner.get();
+                if (ot->kind == Type::Kind::Struct || ot->kind == Type::Kind::Union) fields = layoutOf(ot);
             }
             const std::string& fname = e.kids[1]->text;
             const FieldOff* field = nullptr;
@@ -1800,14 +1827,15 @@ private:
                 err(e.line, e.col, "not lowered");
                 return {};
             }
-            if (s->ref) {
+            if (s->ref && !s->agg) {
                 Operand val = narrow(rhs.op, s->width, s->zext);
                 storeBits(Operand::vreg(s->reg), val, s->width > 0 ? s->width : 8);
                 return Val{val, 0, 0};
             }
             if (s->agg) {
+                // An object, or a reference to one: copy the bytes into it.
                 int sz = s->objSize > 0 ? s->objSize : s->width;
-                Operand addr = addrOf(*s);
+                Operand addr = s->ref ? Operand::vreg(s->reg) : addrOf(*s);
                 if (rhs.pair) {
                     storeBits(addr, rhs.op, 8);
                     storeBits(addAddr(addr, 8), rhs.hi, sz - 8);
@@ -1870,7 +1898,7 @@ private:
         if (lhs.checked && isFp(*lhs.checked)) {
             int w = fpWidthOf(lhs.checked.get());
             if (rhs.fpw != w) rhs = cvtFp(rhs, rhs.fpw, w);
-            storeBits(a.op, rhs.op, 8);
+            storeBits(a.op, rhs.op, w == 4 ? 4 : 8);  // a float is 4 bytes: 8 wrote past it
             Val out;
             out.op = rhs.op;
             out.fpw = w;
@@ -1903,6 +1931,7 @@ private:
         emitJmp(eL);
         startBlock(eL);
         Val result{Operand::vreg(dst), 0, 0};
+        if (e.checked) result.fpw = fpWidthOf(e.checked.get());
         // Two pointers to objects of one class: the result points to that class too.
         result.step = first.step;
         result.inner = first.inner;

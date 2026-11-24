@@ -263,9 +263,10 @@ void place_extra(FuncDecl* fn, Local local, const Gen& gen) {
     fn->locals.push_back(local);
 }
 
-Node assign_name(const std::string& dest, Node rhs) {
+Node assign_name(const std::string& dest, Node rhs, uint64_t init_store = 0) {
     Node as;
     as.kind = Node::Assign;
+    as.number = init_store;  // 1: the initializing store of a declaration or of a const global at startup
     Node lhs;
     lhs.kind = Node::Name;
     lhs.text = dest;
@@ -282,6 +283,7 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
     std::string dest;
     bool is_return = false;
     bool drop = false;
+    uint64_t dest_init = 0;
     if (stmt->kind == Node::Return && stmt->kids.size() == 1 && stmt->kids[0].kind == Node::Call) {
         call = &stmt->kids[0];
         is_return = true;
@@ -290,6 +292,7 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
                stmt->kids[0].kids[0].kind == Node::Name) {
         call = &stmt->kids[0].kids[1];
         dest = stmt->kids[0].kids[0].text;
+        dest_init = stmt->kids[0].number;  // `const int k = f();`: still an initialization after inlining
     } else if (stmt->kind == Node::ExprStmt && !stmt->kids.empty() && stmt->kids[0].kind == Node::Call) {
         call = &stmt->kids[0];
         drop = true;
@@ -358,7 +361,7 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
                 ret.kids.push_back(std::move(expr));
                 block.kids.push_back(std::move(ret));
             } else {
-                block.kids.push_back(assign_name(dest, std::move(expr)));
+                block.kids.push_back(assign_name(dest, std::move(expr), dest_init));
             }
             return;
         }

@@ -1,0 +1,42 @@
+// okay-ms own standard header: std::unordered_map, written from ISO/IEC 14882 [unord.map]. Own minimal version: it is
+// the sorted-vector map of <map> (needs operator< on the key, not std::hash), so iteration is in ascending key order,
+// which the standard allows ("unspecified order"), and an insert or erase in the middle is linear time. The
+// differences from the standard listed in <map> hold here too.
+#pragma once
+#include <map>
+namespace std {
+template <typename K, typename V>
+class unordered_map {
+    map<K, V> items_;
+
+public:
+    typedef K key_type;
+    typedef V mapped_type;
+    typedef pair<K, V> value_type;
+    typedef size_t size_type;
+    typedef pair<K, V>* iterator;
+    typedef const pair<K, V>* const_iterator;
+    unordered_map() {}
+    unordered_map(initializer_list<pair<K, V> > list) : items_(list) {}
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    pair<K, V>* begin() { return items_.begin(); }
+    const pair<K, V>* begin() const { return items_.begin(); }
+    pair<K, V>* end() { return items_.end(); }
+    const pair<K, V>* end() const { return items_.end(); }
+    void clear() { items_.clear(); }
+    void reserve(size_t) {}
+    size_t count(const K& key) const { return items_.count(key); }
+    bool contains(const K& key) const { return items_.contains(key); }
+    pair<K, V>* find(const K& key) { return items_.find(key); }
+    const pair<K, V>* find(const K& key) const { return items_.find(key); }
+    V& operator[](const K& key) { return items_[key]; }
+    V& at(const K& key) { return items_.at(key); }
+    const V& at(const K& key) const { return items_.at(key); }
+    pair<pair<K, V>*, bool> insert(const pair<K, V>& entry) { return items_.insert(entry); }
+    pair<pair<K, V>*, bool> emplace(const K& key, const V& value) { return items_.emplace(key, value); }
+    pair<pair<K, V>*, bool> insert_or_assign(const K& key, const V& value) { return items_.insert_or_assign(key, value); }
+    size_t erase(const K& key) { return items_.erase(key); }
+    pair<K, V>* erase(pair<K, V>* pos) { return items_.erase(pos); }
+};
+}

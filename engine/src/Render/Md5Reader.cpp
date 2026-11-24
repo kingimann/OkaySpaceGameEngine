@@ -40,11 +40,7 @@ struct Scanner {
     explicit Scanner(const std::string& s) : t(&s) {}
     Tok Next() {
         const std::string& s = *t;
-        for (;;) {
-            while (pos < s.size() && IsWs(s[pos])) { if (s[pos] == '\n') ++line; ++pos; }
-            if (pos + 1 < s.size() && s[pos] == '/' && s[pos + 1] == '/') { while (pos < s.size() && s[pos] != '\n' && s[pos] != '\r') ++pos; continue; }
-            break;
-        }
+        SkipSpaceAndLineComments(s, pos, line);
         Tok k; k.line = line;
         if (pos >= s.size()) return k;
         const char c = s[pos];

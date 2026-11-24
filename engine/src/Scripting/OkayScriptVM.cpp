@@ -624,10 +624,12 @@ void OkayScriptVM::Bind(ScriptHost* host) { m_impl->rt.host = host; }
 
 namespace {
 // A runtime error as the player and the editor see it: "line 12: Light.intensity wants a number, got text" when the
-// error knows its line (ScriptError::line, filled by the core because Limits::runtimeErrorLines is on), else as it is.
-std::string ErrorText(const std::exception& e) {
-    if (const auto* se = dynamic_cast<const ScriptError*>(&e); se && se->line > 0)
-        return "line " + std::to_string(se->line) + ": " + e.what();
+// error knows its line (ScriptError::line, filled by the core because Limits::runtimeErrorLines is on) or, raised
+// without one (a builtin's error), the line of the statement that was running when it was raised; else as it is.
+std::string ErrorText(const Runtime& rt, const std::exception& e) {
+    const auto* se = dynamic_cast<const ScriptError*>(&e);
+    const int line = !se ? 0 : se->line > 0 ? se->line : rt.Ln(rt.curLine);
+    if (line > 0) return "line " + std::to_string(line) + ": " + e.what();
     return e.what();
 }
 // Call the first of `names` that the script defines (with the given args).
@@ -638,7 +640,7 @@ void CallFirst(Runtime& rt, std::initializer_list<const char*> names,
     for (const char* n : names) {
         if (rt.functions.count(n)) {
             try { rt.Call(n, args); }
-            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", ErrorText(e)); }
+            catch (const std::exception& e) { Log::Error("OkayScript ", label, "(): ", ErrorText(rt, e)); }
             return;
         }
     }
@@ -669,7 +671,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
                     for (auto& s : m_impl->program->top)
                         if (m_impl->rt.Run(*s) != okayscript::Flow::Normal) break;
             }
-            catch (const std::exception& e) { Log::Error("OkayScript (bare): ", ErrorText(e)); }
+            catch (const std::exception& e) { Log::Error("OkayScript (bare): ", ErrorText(m_impl->rt, e)); }
         }
     }
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
@@ -677,7 +679,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     // Scheduled after()/every() callbacks tick even without an update().
     if (!m_impl->rt.timers.empty()) {
         try { m_impl->rt.TickTimers(deltaTime); }
-        catch (const std::exception& e) { Log::Error("OkayScript timer: ", ErrorText(e)); }
+        catch (const std::exception& e) { Log::Error("OkayScript timer: ", ErrorText(m_impl->rt, e)); }
     }
     Runtime& rt = m_impl->rt;
     if (!rt.coroutines.empty()) {
@@ -822,15 +824,15 @@ vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::
         std::vector<Value> args(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(want));
         try { ret = m_impl->rt.Call(fn, args); }
         catch (const std::exception& e) {
-            if (error) *error = ErrorText(e);
-            else Log::Error("OkayScript ", fn.c_str(), "(): ", ErrorText(e));
+            if (error) *error = ErrorText(m_impl->rt, e);
+            else Log::Error("OkayScript ", fn.c_str(), "(): ", ErrorText(m_impl->rt, e));
         }
     }
     // Listeners added with += run as well, including when no function is defined.
     try { m_impl->rt.FireSubs(function, all); }
     catch (const std::exception& e) {
-        if (error && error->empty()) *error = ErrorText(e);
-        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", ErrorText(e));
+        if (error && error->empty()) *error = ErrorText(m_impl->rt, e);
+        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", ErrorText(m_impl->rt, e));
     }
     return ret;
 }

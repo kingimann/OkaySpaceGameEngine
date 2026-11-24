@@ -100,21 +100,26 @@ keys and buttons) and on-screen touch controls. Docs: [input](docs/engine/input.
 ([script API registry](docs/scripting/script_api_registry.md)):
 - **OkayScript**, the default language. A script file is a component: its fields show in the Inspector, and `Start()`
   and `Update()` run by name. C#-style and C-style syntax both work. It has its own code editor, debugger and profiler.
-  [OkayScript guide](docs/scripting/scripting.md).
+  Since 2.903.8 and 2.903.9 it is a standalone language (`okayscript/`, with its own `okayscript` command line) that the
+  engine runs as bytecode, and `GetComponent("Name")` reaches every engine component through generated bindings.
+  [OkayScript guide](docs/scripting/scripting.md), [bytecode machine](docs/scripting/okayscript_vm.md),
+  [bindings](docs/scripting/script_bindings.md).
 - **Typed OkayScript** (the C#-style language): a script is `class Name : Behaviour`, and every name and type is
-  checked before it runs, so a script either runs or says why not, with line and column. It is listed as a duplicate
-  of OkayScript in the feature map; a merge is planned.
+  checked before it runs, so a script either runs or says why not, with line and column. It shares one command table
+  with OkayScript for the commands moved so far (#1159).
 - **Visual Script**: logic made by wiring boxes (nodes) together instead of typing. Nodes explain themselves.
   [Visual Script format](docs/scripting/visual_scripting.md), [node list](docs/visual_scripting_nodes.md).
 - **Action Lists**: no-code rules, "when this happens, if this is true, do these steps".
 
 The old optional Lua and Mono C# backends were removed. A project that names them still loads; those scripts just do
-not run and say so.
+not run and say so. New C# (on the .NET runtime) and Lua (our own) are planned as alternatives next to OkayScript
+(`CLAUDE.md` rule 24c); neither is on main yet.
 
 **UI.** Two separate things. **Game UI** is the interface inside your game: a canvas with buttons, bars and the usual
 widgets, keyboard and gamepad focus, HTML/CSS-style documents, in-world UI and localization
-([in-game UI](docs/ui/in_game_ui.md)). **OkayUI** (`okayui/`) is our own UI toolkit that replaces Dear ImGui in the
-editor and launcher ([OkayUI](docs/ui/own_ui_toolkit.md), [catalogue](docs/ui_catalogue.md)).
+([in-game UI](docs/ui/in_game_ui.md)). **OkayUI** (`okayui/`) is our own UI toolkit that is replacing Dear ImGui in the
+editor and launcher: the Crash Log, Audio Mixer and History windows and the script editor's code view are OkayUI only,
+most other screens are still Dear ImGui ([OkayUI](docs/ui/own_ui_toolkit.md), [catalogue](docs/ui_catalogue.md)).
 
 **Audio.** AudioSource components mixed into stereo, mixer groups, WAV, OGG and MP3, music, 3D sound with echo,
 pitch that follows speed and muffling through walls. WAV files are read by our own decoder. Docs:
@@ -122,7 +127,8 @@ pitch that follows speed and muffling through walls. WAV files are read by our o
 
 **Networking and online.** Host or join over UDP with authenticated encryption, sync and prediction, remote calls,
 networked players, matchmaking and lobbies, a relay for players behind home routers, dedicated servers (the same
-player with no window), server-side anti-cheat and voice chat. Online services (accounts, cloud saves, leaderboards)
+player with no window), server-side anti-cheat and voice chat. An easy layer does host-or-join, events and the player list in one call or one node,
+with host migration on a LAN and a rollback mode. Online services (accounts, cloud saves, leaderboards)
 run on a Supabase backend that our own code talks to over its plain web API. The launcher adds friends, parties,
 chat, community servers and a workshop. Docs: [multiplayer](docs/online/multiplayer.md),
 [relay](docs/online/relay.md), [dedicated servers](docs/online/dedicated-server.md),
@@ -156,22 +162,28 @@ OkayScript, and File > Build Settings (Ctrl+B) to export a game. Docs: [editor](
 
 The owner's rule: write every part ourselves, even if it takes time ([CLAUDE.md](CLAUDE.md) rules 17 to 19a). We
 write from specifications, file-format documents and papers, never by copying code from another project. Each
-replacement goes through the same steps: a seam (one place the old library is called), our own backend off by
-default, tests against clear criteria, the default flipped only with the owner's approval, and the old code deleted
-one release later. The full plan: [docs/status/own_code_roadmap.md](docs/status/own_code_roadmap.md). What is ours and
+replacement goes through the same steps: a seam (one place the old library is called), our own backend, tests
+against the old one until ours gives the same or better results, then ours becomes THE path and the old code is
+deleted. Nothing is kept off by default (rule 17, 2026-11-22); cryptography is the one exception (below). The full plan: [docs/status/own_code_roadmap.md](docs/status/own_code_roadmap.md). What is ours and
 what is still outside code: [docs/status/THIRD_PARTY.md](docs/status/THIRD_PARTY.md).
 
 **Ours and on by default:** the engine core, physics, our glTF and OBJ readers, our own readers for many other model
 formats (switched on 2026-11-17; Assimp stays as the fallback where it is built), our own FBX reader (the only FBX
 reader since ufbx was deleted; it reads FBX 6.0 to 7.x), the texture library, and since 2.903.3 the OkayUI screens
-and Inspector, the OkayUI renderer and our own WAV reader (Settings > Experimental starts with every box ticked; untick one to go back).
+and Inspector and the OkayUI renderer (Settings > Experimental starts with every box ticked; untick one to go back), and
+our own WAV decoder (the only WAV reader since 2026-11-23).
 
-**Ours but still off by default:** the platform layer that replaces SDL2 (the Linux backend is tested, the Windows one
-is not yet), our own HTTP client (replaces curl), our own build tool `okay-build` (replaces CMake) and our own
-compiler work.
+**Deleted on 2026-11-23:** ufbx, `SDL_LoadWAV` and the vendored ImGuiColorTextEdit text editor widget (the script
+editor uses our own `OkayUI::CodeEdit`).
 
-**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build), curl, libsodium and a
-vendored text editor widget. No new outside libraries or SDKs may be added.
+**HTTP:** every download and web call goes through one seam: WinHTTP (part of Windows) on Windows, our own HTTP client on
+Linux when switched on, and curl only as the last fallback.
+
+**Ours but not the default yet:** the platform layer that replaces SDL2 (the Linux backend is tested, the Windows one
+is not yet), our own build tool `okay-build` (replaces CMake) and our own compiler work (outside CMake, CI and releases).
+
+**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build, as the fallback reader),
+curl (last HTTP fallback) and libsodium. No new outside libraries or SDKs may be added.
 
 **The crypto exception.** Encryption cannot be replaced on our word: it needs an outside review first, and the owner
 decided on 2026-11-14 not to hire one. So **libsodium stays the default in every release**, our own `okay::crypto`
@@ -260,7 +272,8 @@ header lists its other settings.
 
 | Folder | What is in it |
 |---|---|
-| `engine/` | The engine library: headers in `include/okay/<area>/`, code in `src/`, the few remaining outside libraries in `third_party/`. |
+| `engine/` | The engine library: headers in `include/okay/<area>/`, code in `src/` (no vendored outside code is left; `third_party/` was deleted with ufbx). |
+| `okayscript/` | OkayScript as a standalone language: the library the engine runs on, the `okayscript` command line and its tests. |
 | `editor/` | The editor (`OkayEngine.exe`). |
 | `launcher/` | The launcher (`OkaySpace.exe`): sign-in, library, updates, community. |
 | `player/` | The runtime that plays an exported game (`OkaySpacePlayer.exe`), also used as the dedicated server. |
@@ -268,7 +281,7 @@ header lists its other settings.
 | `shared/` | Code shared by the launcher, editor and player (self-update, test hooks, fonts). |
 | `relay/` | The multiplayer relay server. |
 | `platform/` | Platform-specific packaging; today the Xbox UWP project. |
-| `tools/` | Our own tools: the build tool (`okaybuild`), compiler work (`okaycc`, `okayms`), texture and content tools, generators. |
+| `tools/` | Our own tools: the `okay` command line (`okay-cli`: projects, scenes, scripts, export, Git underneath with scene-aware merge), the build tool (`okaybuild`), compiler work (`okaycc`, `okayms`), texture and content tools, generators. |
 | `examples/` | Small example projects and scenes: physics, ragdoll, vehicles, boat, water, UI, visual script, networking, an account server, editor plugins and more. |
 | `sandbox/` | The small demo game. |
 | `tests/` | Unit and integration tests (CTest), test assets and export checks. |

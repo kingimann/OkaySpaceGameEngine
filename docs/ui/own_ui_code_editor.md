@@ -1,6 +1,6 @@
 # OkayUI::CodeEdit: our own code editor widget (replaces ImGuiColorTextEdit)
 
-> **What this is:** Own code. Part of the "replace every third-party library" work (`docs/status/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/ui/own_ui_toolkit.md`, section 4.29).
+> **What this is:** Own code; it replaced ImGuiColorTextEdit (deleted 2026-11-23). Part of the "replace every third-party library" work (`docs/status/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/ui/own_ui_toolkit.md`, section 4.29).
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
@@ -8,7 +8,7 @@
 
 Own code. Part of the "replace every third-party library" work (`docs/status/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/ui/own_ui_toolkit.md`, section 4.29).
 
-**Status: built and tested headless; wired into the script editor behind the developer-only OkayUI backend (step 27 below); run in a real window once (Linux, Xvfb, step 28 below), what that showed is fixed or listed there.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/status/own_flip_proposal.md` section 4.
+**Status (2026-11-23, step 31 below): the script editor's only code view.** The script editor always draws its code with `OkayUI::CodeEdit` (through `editor/ScriptEditorCodeEdit.*` and `ScriptEditorWidget`); the vendored ImGuiColorTextEdit (`editor/vendor/TextEditor.*`) and the developer switch `OKAY_UI_CODEEDIT` are deleted. Tested headless and run in a real window once (Linux, Xvfb, step 28); not run on Windows. The steps below are the history of how it got there.
 
 ## Where it is
 

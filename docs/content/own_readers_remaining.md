@@ -6,6 +6,12 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **Since this was written (checked 2026-11-24):** every row below has a reader of ours on main except Nendo (`.ndo`, a seam
+> that refuses every file, `OKAY_OWN_NDO` OFF): glTF 1.0, OpenGEX, MDL (Quake 1, Half-Life 1 and 3D GameStudio MDL3/4/5/7), Q3BSP,
+> SIB, HMP4/5 and OGRE binary meshes and skeletons were added between 2026-11-16 and 2026-11-23, and all readers are on by default
+> since 2026-11-17 (ufbx was deleted on 2026-11-23). The current per-extension list is `docs/status/own_code_roadmap.md`,
+> section "What still needs Assimp". The counts below are from 2026-11-16.
+
 Goal (owner): no third-party dependency. Assimp v5.4.3 is the last big one on the model-import side. This page lists every
 format it can read that we cannot yet read ourselves, says how hard each one is, whether Assimp's own test directory has real
 files for it, and in what order to write them. The rule in `docs/status/own_code_roadmap.md` stays: a format is **not dropped

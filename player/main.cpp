@@ -24,6 +24,7 @@
 #include <unistd.h>
 #endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
+#include "okay/Input/InputRuntime.hpp"      // the game's own input asset at start-up
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
@@ -1817,6 +1818,7 @@ int main(int argc, char** argv) {
     AudioMixer::groupVolume[(int)AudioGroup::Music] = cfg.extra.musicVolume;   // Build Settings > Game: starting group volumes
     AudioMixer::groupVolume[(int)AudioGroup::SFX] = cfg.extra.sfxVolume;
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
+    okay::InputRuntime::UseProjectAsset(baseDir);   // the game's own input asset (<data>/Assets/input.okayinput, shipped by the export), else the default one
     InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.

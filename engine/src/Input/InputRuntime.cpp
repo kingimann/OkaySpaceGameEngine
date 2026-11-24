@@ -123,7 +123,8 @@ void InputRuntime::Update(float dt) {
 bool InputRuntime::UseProjectAsset(const std::string& projectDir) {
     Reset();
     if (projectDir.empty()) return false;
-    const std::string path = projectDir + "/Assets/input.okayinput";
+    const char last = projectDir.back();
+    const std::string path = projectDir + (last == '/' || last == '\\' ? "" : "/") + kProjectAssetRef;
     std::ifstream f(path);
     return f.good() && LoadAsset(path);
 }

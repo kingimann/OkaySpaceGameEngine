@@ -242,3 +242,5 @@ drop: ^\s*namespace\ \{$
 add: ^\s*namespace\ ui_core\ \{$
 drop: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\ =\ \-1\.0f\)\ \{$
 add: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\)\ \{$
+
+# ---- part 3: OkayUI_Tabs.cpp (tab bars: TabBar, BeginTabBar / BeginTabItem, TabItemButton, the dock strip amend)

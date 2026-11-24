@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 48 headers, 464 names.
+Back to the [code index](../code_index.md). 48 headers, 466 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -310,34 +310,36 @@ Back to the [code index](../code_index.md). 48 headers, 464 names.
 - `ReadIqmFile` function, line 388
 - `ReadCobFile` function, line 389
 - `ReadNdoFile` function, line 390
-- `ReadTerragenFile` function, line 391
-- `ReadMdcFile` function, line 392
-- `ReadHmpFile` function, line 393
-- `ReadCsmFile` function, line 394
-- `ReadQ3dFile` function, line 396: Quick3D objects and scenes (.q3o, .q3s): meshes with polygon faces and materials; embedded textures and the scene chunk are not used.
-- `ReadQ3dBuffer` function, line 397
-- `ReadRawFile` function, line 399: Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
-- `ReadRawBuffer` function, line 400
-- `RawFileUnsafeForAssimp` function, line 404: True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
-- `ReadPmxFile` function, line 405
-- `ReadLwsFile` function, line 407: 'path' is a .lws scene or a .mot motion file.
-- `ReadGltf1Buffer` function, line 415: glTF 1.0 ('.gltf' with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
-- `ReadGltf1File` function, line 416
-- `IsGltf1` function, line 418: True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
-- `GltfFileIsVersion1` function, line 421: True when the file at 'path' is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
-- `ReadOgexBuffer` function, line 432: OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
-- `ReadOgexFile` function, line 433
-- `ReadMdlBuffer` function, line 441: MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
-- `ReadMdlFile` function, line 442
-- `ReadQ3bspFile` function, line 445: Quake III Arena maps ('.bsp' version 46, or a '.pk3' zip holding maps/<name>.bsp): the render geometry of every model, one part per
-- `ReadQ3bspBuffer` function, line 446
-- `ImportBackend` enum, line 449
-- `HasOwnReader` function, line 460: True when 'ext' (".stl", any case) has one of our own readers.
-- `SetImportBackend` function, line 464: Choose the backend for one extension (".stl"), or for every format with
-- `EffectiveImportBackend` function, line 467: The backend a read of 'ext' will actually use right now, after defaults and
-- `RunReaderGuarded` function, line 472: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
-- `MergeModelMeshes` function, line 485: One merged Mesh from an ImportedModel (parts concatenated, node transforms
-- `BuildSceneFromModel` function, line 491: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
+- `ReadSibFile` function, line 395: Silo models ('.sib', Nevercenter), worked out from the one sample file (no public description exists): shapes (positions,
+- `ReadSibBuffer` function, line 396
+- `ReadTerragenFile` function, line 397
+- `ReadMdcFile` function, line 398
+- `ReadHmpFile` function, line 399
+- `ReadCsmFile` function, line 400
+- `ReadQ3dFile` function, line 402: Quick3D objects and scenes (.q3o, .q3s): meshes with polygon faces and materials; embedded textures and the scene chunk are not used.
+- `ReadQ3dBuffer` function, line 403
+- `ReadRawFile` function, line 405: Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
+- `ReadRawBuffer` function, line 406
+- `RawFileUnsafeForAssimp` function, line 410: True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
+- `ReadPmxFile` function, line 411
+- `ReadLwsFile` function, line 413: 'path' is a .lws scene or a .mot motion file.
+- `ReadGltf1Buffer` function, line 421: glTF 1.0 ('.gltf' with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
+- `ReadGltf1File` function, line 422
+- `IsGltf1` function, line 424: True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
+- `GltfFileIsVersion1` function, line 427: True when the file at 'path' is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+- `ReadOgexBuffer` function, line 438: OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
+- `ReadOgexFile` function, line 439
+- `ReadMdlBuffer` function, line 447: MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
+- `ReadMdlFile` function, line 448
+- `ReadQ3bspFile` function, line 451: Quake III Arena maps ('.bsp' version 46, or a '.pk3' zip holding maps/<name>.bsp): the render geometry of every model, one part per
+- `ReadQ3bspBuffer` function, line 452
+- `ImportBackend` enum, line 455
+- `HasOwnReader` function, line 466: True when 'ext' (".stl", any case) has one of our own readers.
+- `SetImportBackend` function, line 470: Choose the backend for one extension (".stl"), or for every format with
+- `EffectiveImportBackend` function, line 473: The backend a read of 'ext' will actually use right now, after defaults and
+- `RunReaderGuarded` function, line 478: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
+- `MergeModelMeshes` function, line 491: One merged Mesh from an ImportedModel (parts concatenated, node transforms
+- `BuildSceneFromModel` function, line 497: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
 
 ## `engine/include/okay/Render/ModelImport.hpp`
 

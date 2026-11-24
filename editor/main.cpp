@@ -124,7 +124,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
-#include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client first, curl only as its last fallback)
 #include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
 #include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
@@ -797,9 +797,8 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "AnimComponentNames.hpp"  // "Animator" (the state graph) vs "Clip Player" (the simple keyframe Animator class)
-#include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
 
-// Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
+// Holding D in EditorState::Play, through AppendHeldMainKeys (the Play key mapping), walks a Move
 // with WASD cube into a Door. E then changes the Press E colour.
 static void RunStaleGraphTest(int& failures) {
     using namespace okay;
@@ -912,7 +911,6 @@ static void RunEditorPlayKeyTest(int& failures) {
     auto check = [&](bool cond, const char* what) {
         if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
     };
-    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
     EditorState ped;
     auto place = [&](const char* name, const char* which, Vec3 at) {
         GameObject* go = ped.scene().CreateGameObject(name);
@@ -930,23 +928,27 @@ static void RunEditorPlayKeyTest(int& failures) {
     GameObject* sw = place("Switch", "Press E", {4, 0, 2});
     if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
     ped.Play();
-    Uint8 ks[SDL_NUM_SCANCODES] = {};
-    ks[SDL_SCANCODE_D] = 1;
+    // Held keys are faked; letters at their US places, as the Play feed reads them with no layout loaded.
+    using PKey = okay::platform::Key;
+    bool ks[okay::platform::kKeyCount] = {};
+    auto held = [&](PKey k) { return (int)k >= 0 && (int)k < okay::platform::kKeyCount && ks[(int)k]; };
+    auto usPlace = [](char c) { return okay::KeyForLetter(PKey::Unknown, c); };
+    ks[(int)PKey::D] = true;
     for (int i = 0; i < 70; ++i) {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
     check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
     check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
-    ks[SDL_SCANCODE_D] = 0;
+    ks[(int)PKey::D] = false;
     Input::FeedKeys({});
     ped.Tick(1.0f / 60.0f);
-    ks[SDL_SCANCODE_E] = 1;
+    ks[(int)PKey::E] = true;
     {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        AppendHeldMainKeys(held, usPlace, false, down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
@@ -6123,14 +6125,15 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
     h.cpuCores = SDL_GetCPUCount();
     h.ramMB = SDL_GetSystemRAM();
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0) h.displayHz = dm.refresh_rate;
+    okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
+    if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
 }
 // Turn the saved modes into the values in use (g_ssaa, g_vsync). Called at start-up and when the user changes a mode.
@@ -53399,6 +53402,7 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -53407,7 +53411,7 @@ int main(int argc, char** argv) {
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
-    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, OkayEditorBuildStamp());   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
         if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);
@@ -54094,16 +54098,12 @@ int main(int argc, char** argv) {
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
                 if (e.type == EvT::KeyDown && !e.repeat) {
-                    const PKey sc = e.key;
-                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
-                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
-                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
-                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                    // The same rule as the held keys and the player: letters by the layout, or by position when
+                    // "keys by position" is on (KeyForLetter). Esc is left out: the editor gives it to the game by its
+                    // own release rule (PlayPointerFrame::feedEscapeToGame).
+                    std::vector<char> tapped;
+                    okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*sdlSeam, c); }, tapped);
+                    for (char c : tapped) if (c != (char)27) Input::FeedKeyTap(c);
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
@@ -54334,28 +54334,9 @@ int main(int argc, char** argv) {
             auto keyHeld = [&](PKey k) { return kb && kb->IsKeyDown(k); };
             std::vector<char> down;
             // By the layout's letter (AZERTY W is the key labelled W); a layout with no Latin letters
-            // (Russian, Greek...) falls back to the US place so W A S D stay alive.
-            auto letterDown = [&](char c) {
-                PKey sc = kb ? kb->KeyForChar(c) : PKey::Unknown;
-                if (sc == PKey::Unknown) sc = (PKey)(c >= 'a' ? (int)PKey::A + (c - 'a')
-                                                  : c == '0' ? (int)PKey::N0 : (int)PKey::N1 + (c - '1'));
-                return keyHeld(sc);
-            };
-            for (char c = 'a'; c <= 'z'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            for (char c = '0'; c <= '9'; ++c)
-                if (letterDown(c)) down.push_back(c);
-            if (keyHeld(PKey::Space)) down.push_back(' ');
-            if (keyHeld(PKey::LShift) || keyHeld(PKey::RShift)) down.push_back(Input::KeyShift); // sprint
-            if (keyHeld(PKey::LCtrl)  || keyHeld(PKey::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-            if (keyHeld(PKey::LGui)   || keyHeld(PKey::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-            if (keyHeld(PKey::Backspace)) down.push_back((char)8); // text editing
-            if (keyHeld(PKey::Return) || keyHeld(PKey::KpEnter)) down.push_back('\r');
-            if (pointer.feedEscapeToGame) down.push_back((char)27);
-            if (keyHeld(PKey::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-            if (keyHeld(PKey::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-            if (keyHeld(PKey::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-            if (keyHeld(PKey::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
+            // (Russian, Greek...) falls back to the US place so W A S D stay alive. Same mapping as the player.
+            okay::AppendHeldMainKeys(keyHeld, [&](char c) { return okay::KeyForLetter(kb ? kb->KeyForChar(c) : PKey::Unknown, c); },
+                                     pointer.feedEscapeToGame, down);
 
             // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
             if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
@@ -55685,7 +55666,7 @@ int main(int argc, char** argv) {
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((uint32_t)(wait * 1000.0)); }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).

@@ -282,9 +282,11 @@ still runs on pull requests and on main under the same name. To check it, see `d
 * **Windows cross-compile (the PR check), 2026-11-24.** The MinGW toolchain comes from `scripts/ci-install-mingw.sh`: only the
   win32 thread model (the release's, rule 21a; the script fails if the compiler says otherwise), cmake and ninja from the runner
   image, the .deb files from an Actions cache keyed on the Ubuntu release (`apt-mingw-win32-<codename>-`, not the image version),
-  installed with no network when the cache has them, else downloaded six at a time with retries. `CCACHE_SLOPPINESS=time_macros`
-  lets ccache reuse `editor/main.cpp`, which uses `__TIME__` and was recompiled on every run (about 5 minutes); in this CI build the
-  crash handler's build stamp can therefore be stale (release.yml is unchanged). The job prints `ccache -s` and the slowest
+  installed with no network when the cache has them, else downloaded six at a time with retries. `release.yml` uses the same
+  script (plus zip, nsis, osslsigncode; key `apt-mingw-win32-release-<codename>-`). The editor's `__DATE__ " " __TIME__` lives in
+  `editor/BuildStamp.cpp`: ccache never reuses a file that uses `__TIME__`, so while it sat in `editor/main.cpp` that file (about
+  5 minutes) recompiled in every CI and release build. Now only the tiny file recompiles and the stamp stays exact (no
+  `CCACHE_SLOPPINESS`). The PR check prints `ccache -s` and the slowest
   build steps. `workflow_dispatch` with `pr_check_only` runs just this job on a branch.
 * **Tests run four at a time:** `ctest -j4 --timeout 300`. Before this the 805 tests ran one by one. A scan of `tests/` found no
   two tests that write the same file or listen on the same port (temp folders are unique, servers use port 0, the few fixed

@@ -1,4 +1,4 @@
-// Hostile input, budgets and mutation fuzz for the own OpenGEX and MDL readers. Needs only the two reader sources and
+// Hostile input, budgets and mutation fuzz for the own OpenGEX and MDL readers (MDL: Quake 1, Half-Life 1, 3D GameStudio MDL3 to MDL7). Needs only the two reader sources and
 // okay/Render/ModelData.hpp, so it builds on its own, e.g.
 //   g++ -std=c++17 -O1 -g -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -DOKAY_STANDALONE_TEST
 //       -Iengine/include -Iengine/src/Render -Iengine/src/Core -Itests tests/test_e4_hostile.cpp engine/src/Render/OgexReader.cpp engine/src/Render/MdlReader.cpp -o e4_hostile
@@ -13,9 +13,11 @@
 #include "reader_hostile_common.hpp"
 #include "alloc_budget.hpp"
 #include "e4_fixtures.hpp"
+#include "gs_fixtures.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <string>
 
@@ -258,8 +260,64 @@ static void OgexHugeMatrix() {
     CHECK(ok ? hostile::Sane(m) : !err.empty());
 }
 
+// 3D GameStudio models: the largest MDL3 the caps allow (1,000,000 vertices, 2,000,000 triangles) and an MDL7 of 65,536 groups.
+static void GameStudioBudgets() {
+    {
+        std::string o;
+        o += "MDL3"; P32(o, 0);
+        for (float f : {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f}) { std::uint32_t u; std::memcpy(&u, &f, 4); P32(o, (std::int32_t)u); }
+        P32(o, 0); P32(o, 0); P32(o, 0); P32(o, 0);
+        const std::int32_t nv = 1000000, nt = 2000000;
+        P32(o, 0); P32(o, 0); P32(o, 0); P32(o, nv); P32(o, nt); P32(o, 1); P32(o, 0); P32(o, 0); P32(o, 0);
+        for (std::int32_t t = 0; t < nt; ++t) { const std::int32_t a = (t * 7) % (nv - 2); for (std::int32_t v : {a, a + 1, a + 2}) { o.push_back((char)(v & 255)); o.push_back((char)((v >> 8) & 255)); } o.append(6, '\0'); }
+        P32(o, 0); o.append(8 + 16, '\0');
+        for (std::int32_t v = 0; v < nv; ++v) { o.push_back((char)(v & 255)); o.push_back((char)((v >> 8) & 255)); o.push_back((char)((v >> 16) & 255)); o.push_back(0); }
+        const Run r = MdlRun("MDL3 at the vertex and triangle caps", o);
+        CHECK(r.ok || !r.err.empty());
+    }
+    {
+        gs::Mdl7Spec sp;
+        const std::string one = gs::Mdl7(sp);
+        // repeat group 1 (the small one) until there are 65,536 groups
+        const std::size_t g1 = 48 + (std::size_t)(std::uint8_t)one[52] + ((std::size_t)(std::uint8_t)one[53] << 8);
+        std::string g = one.substr(0, g1);
+        const std::string grp = one.substr(g1);
+        for (int i = 0; i < 65535; ++i) g += grp;
+        gs::Put32At(g, gs::mdl7off::kGroups, 65536);
+        gs::Put32At(g, gs::mdl7off::kDataSize, (std::uint32_t)g.size());
+        const Run r = MdlRun("MDL7 with 65,536 groups", g);
+        CHECK(r.ok);
+        gs::Put32At(g, gs::mdl7off::kGroups, 65537);
+        ImportedModel m; std::string err;
+        CHECK(!ReadMdlBuffer(g, "", m, &err) && err.find("group count") != std::string::npos);
+    }
+}
+
+// MDL7 time: the skin -> part lookup is a table, not a search per triangle. 4,096 skins and 2,000,000 triangles that cycle
+// through them (a review found the per-triangle search; it made this file take seconds).
+static void Mdl7ManySkins() {
+    std::string o;
+    o += "MDL7"; P32(o, 0); P32(o, 0); P32(o, 1); P32(o, 0); P32(o, 0); P32(o, 0);
+    for (unsigned v : {36u, 28u, 16u, 68u, 8u, 16u, 26u, 26u, 68u, 24u}) gs::P16(o, v);
+    const std::int32_t ns = 4096, nt = 2000000;
+    const std::size_t g0 = o.size();
+    P32(o, 1); P32(o, 0); gs::PStr(o, "g", 16);
+    P32(o, ns); P32(o, 0); P32(o, nt); P32(o, 3); P32(o, 0);
+    for (std::int32_t s = 0; s < ns; ++s) { P32(o, 0x10); P32(o, 0); P32(o, 0); gs::PStr(o, "s", 16); for (int k = 0; k < 17; ++k) gs::PF(o, k == 0 ? 1.0f : 0.0f); }
+    for (std::int32_t t = 0; t < nt; ++t) { gs::P16(o, 0); gs::P16(o, 1); gs::P16(o, 2); gs::P16(o, 0xFFFF); gs::P16(o, 0xFFFF); gs::P16(o, 0xFFFF); P32(o, t % ns); }
+    for (int v = 0; v < 3; ++v) { gs::PF(o, v == 1 ? 1.0f : 0.0f); gs::PF(o, v == 2 ? 1.0f : 0.0f); gs::PF(o, 0); gs::P16(o, 0xFFFF); gs::PF(o, 0); gs::PF(o, 0); gs::PF(o, 1); }
+    gs::Put32At(o, g0 + 4, (std::uint32_t)(o.size() - g0));
+    gs::Put32At(o, 16, (std::uint32_t)o.size());
+    const double t0 = Now();
+    const Run r = MdlRun("MDL7 with 4,096 skins and 2,000,000 triangles", o);
+    const double secs = Now() - t0;
+    CHECK(r.ok && r.m.parts.size() == (std::size_t)ns && secs < (budget::kSanitizerBuild ? 20.0 : 2.0));
+}
+
 int main() {
     RUN_SUITE("e4_hostile");
+    Mdl7ManySkins();
+    GameStudioBudgets();
     OgexHugeMatrix();
     OgexBudgets();
     MdlBudgets();
@@ -272,6 +330,11 @@ int main() {
     Sweep("quake mdl, group first", false, e4::QuakeMdl(nullptr, true), iters / 2);
     Sweep("half-life mdl", false, e4::HalfLifeMdl(), iters);
     Sweep("half-life mdl, flipped normal", false, e4::HalfLifeMdl(-1.0f), iters / 2);
+    { gs::Mdl5Spec sp; Sweep("gamestudio mdl3", false, gs::Mdl5(sp), iters); }
+    { gs::Mdl5Spec sp; sp.version = '4'; sp.wordFrames = true; Sweep("gamestudio mdl4, word frames", false, gs::Mdl5(sp), iters / 2); }
+    { gs::Mdl5Spec sp; sp.version = '5'; Sweep("gamestudio mdl5", false, gs::Mdl5(sp), iters); }
+    Sweep("gamestudio mdl7", false, gs::Mdl7(), iters);
+    { gs::Mdl7Spec sp; sp.animatedFrameVerts = 2; Sweep("gamestudio mdl7, frame records", false, gs::Mdl7(sp), iters / 2); }
     // With OKAY_MODEL_CORPUS set (docs/content/model_corpus.md: the "test" folder of an Assimp 5.4.3 checkout), real files are
     // read whole, then fuzzed the same way (a smaller sweep: they are larger).
     if (const char* c = std::getenv("OKAY_MODEL_CORPUS")) {
@@ -279,7 +342,9 @@ int main() {
         const struct { const char* path; bool ogex; } real[] = {
             {"models/OpenGEX/Example.ogex", true}, {"models/OpenGEX/animation_example.ogex", true}, {"models/OpenGEX/collada.ogex", true},
             {"models/MDL/MDL (HL1)/man.mdl", false}, {"models/MDL/MDL (HL1)/multiple_roots.mdl", false},
-            {"models/MDL/MDL (HL1)/chrome_sphere.mdl", false}, {"models-nonbsd/MDL/IDPO (Quake1)/steg.mdl", false}};
+            {"models/MDL/MDL (HL1)/chrome_sphere.mdl", false}, {"models-nonbsd/MDL/IDPO (Quake1)/steg.mdl", false},
+            {"models/MDL/MDL5 (3DGS A5)/PhosphoricAcid_MDl5.mdl", false}, {"models/MDL/MDL7 (3DGS A7)/PhosphoricAcid_MDl7.mdl", false},
+            {"models/MDL/MDL7 (3DGS A7)/Sphere_DiffPinkBlueSpec_Alpha90.mdl", false}, {"models-nonbsd/MDL/MDL7 (3DGS A7)/broadleavedtreeD.mdl", false}};
         for (const auto& r : real) {
             const std::string bytes = hostile::Slurp(root + r.path);
             if (bytes.empty()) { std::fprintf(stderr, "  real file %s: not found, skipped\n", r.path); continue; }

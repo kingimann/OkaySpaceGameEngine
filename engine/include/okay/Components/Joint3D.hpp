@@ -42,6 +42,10 @@ public:
     std::uint64_t connectedId = 0;
     /// The other body's Guid(). Saved with the scene and restored on load. Empty means "use the name".
     std::string connectedGuid;
+    /// The name `connectedBody` had when the link was made (ConnectTo, or the load of a saved link). Typing another
+    /// name in `connectedBody` afterwards is a new choice: the link is dropped and the name is used (see Joint3DPartner).
+    /// A rename of the linked object does not touch `connectedBody`, so it keeps the link. Not saved.
+    std::string linkedName;
     Vec3  anchor{0, 0, 0};            ///< world anchor point when there's no connected body
     float distance = 1.0f;            ///< rest length (Distance / Spring)
     bool  autoConfigure = true;       ///< set `distance`/offset from the start separation
@@ -89,10 +93,12 @@ public:
             connectedId = other->InstanceId();
             connectedGuid = other->Guid();
             connectedBody = other->name;
+            linkedName = connectedBody;
             partner.object = other;
         } else {
             connectedId = 0;
             connectedGuid.clear();
+            linkedName.clear();
             partner.object = nullptr;
         }
         partner.version = 0;

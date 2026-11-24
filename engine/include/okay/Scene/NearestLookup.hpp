@@ -67,6 +67,10 @@ inline GameObject* CachedPartner(const Scene& scene, J* j) {
 /// same-named stand-in.
 inline GameObject* Joint3DPartner(const Scene& scene, Joint3D* j) {
     if (!j) return nullptr;
+    if (j->connectedId != 0 || !j->connectedGuid.empty()) {
+        if (j->linkedName.empty()) j->linkedName = j->connectedBody;   // a link that came with a copy: its name is the one it has now
+        else if (j->connectedBody != j->linkedName) j->ConnectTo(nullptr);   // a new name was typed: that is the partner now
+    }
     if (j->connectedId != 0) {
         GameObject* g = j->Linked();
         if (!g || g->scene() != &scene) return nullptr;
@@ -74,7 +78,8 @@ inline GameObject* Joint3DPartner(const Scene& scene, Joint3D* j) {
     }
     if (!j->connectedGuid.empty()) {
         GameObject* g = scene.FindByGuid(j->connectedGuid);
-        if (!g || g->IsDestroyed() || g->scene() != &scene) return nullptr;
+        if (!g) return j->connectedBody.empty() ? nullptr : CachedPartner(scene, j);   // not in this scene (placed from a prefab or text): by name
+        if (g->IsDestroyed() || g->scene() != &scene) return nullptr;
         j->connectedId = g->InstanceId();
         j->partner.object = g;
         j->partner.version = 0;

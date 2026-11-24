@@ -396,21 +396,21 @@ bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
 // ReorderComponents) also writes a `comporder` record that puts them back. An object that already loads in its own
 // order writes no extra line, so a scene made of such objects is saved exactly as before; so is an object with one
 // component or none. An object that was arranged on purpose (HasCustomComponentOrder) always writes the record.
-void WriteComponentsOf(std::ostream& out, GameObject* go) {
+void WriteComponentsOf(std::ostream& out, GameObject* go, const ObjectNumbers* localIndex = nullptr) {
     std::size_t others = 0;
     for (const auto& c : go->Components()) if (c.get() != static_cast<const Component*>(go->transform)) ++others;
-    if (others < 2) { WriteComponentRecords(out, go); return; }
-    if (go->HasCustomComponentOrder()) { WriteComponentRecords(out, go); WriteComponentOrderLine(out, go); return; }
+    if (others < 2) { WriteComponentRecords(out, go, localIndex); return; }
+    if (go->HasCustomComponentOrder()) { WriteComponentRecords(out, go, localIndex); WriteComponentOrderLine(out, go); return; }
     std::ostringstream records;   // this object's records only: they are read back to see what order they load in
     records.copyfmt(out);
-    WriteComponentRecords(records, go);
+    WriteComponentRecords(records, go, localIndex);
     const std::string text = records.str();
     out << text;
     if (!LoadsInStoredOrder(go, text)) WriteComponentOrderLine(out, go);
 }
 // The components, then the records this build did not understand when it read the object, as they were.
-void WriteComponents(std::ostream& out, GameObject* go) {
-    WriteComponentsOf(out, go);
+void WriteComponents(std::ostream& out, GameObject* go, const ObjectNumbers* localIndex = nullptr) {
+    WriteComponentsOf(out, go, localIndex);
     for (const std::string& r : go->unknownRecords) out << "  " << r << "\n";
 }
 } // namespace
@@ -883,7 +883,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
         for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
         out << "  parent " << pIdx << "\n";
-        WriteComponents(out, go);
+        WriteComponents(out, go, &localIndex);
         out << "end\n";
     }
     return out.str();

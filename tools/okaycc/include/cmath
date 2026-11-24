@@ -38,7 +38,7 @@ inline float fabs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
 inline double abs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
 inline float abs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
 inline double floor(double x) {
-    if (!(x - x == 0)) return x;  // infinity or NaN
+    if (!(x - x == 0) || x == 0) return x;  // infinity, NaN, and +-0 (the sign of zero is kept)
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
     double t = (double)(long)x;
     t = t > x ? t - 1.0 : t;
@@ -46,7 +46,7 @@ inline double floor(double x) {
 }
 inline float floor(float x) { return (float)floor((double)x); }
 inline double ceil(double x) {
-    if (!(x - x == 0)) return x;
+    if (!(x - x == 0) || x == 0) return x;
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
     double t = (double)(long)x;
     t = t < x ? t + 1.0 : t;
@@ -68,5 +68,7 @@ inline bool isfinite(double x) { return x - x == 0; }
 inline bool isfinite(float x) { return x - x == 0; }
 inline bool isinf(double x) { return x == x && !(x - x == 0); }
 inline bool isnan(double x) { return !(x == x); }
+inline bool signbit(double x) { return (*(unsigned long *)&x >> 63) != 0; }
+inline bool signbit(float x) { return (*(unsigned int *)&x >> 31) != 0; }
 inline bool isnan(float x) { return !(x == x); }
 }  // namespace std

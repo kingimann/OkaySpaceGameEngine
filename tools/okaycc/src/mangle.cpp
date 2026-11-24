@@ -6,6 +6,18 @@ namespace okaycc {
 namespace compiler {
 std::string mangleTag(const std::string& qualified) { return mangleNested(qualified); }
 
+static void dropConst(Type& t) {
+    t.cnst = false;
+    if (t.inner) dropConst(*t.inner);
+}
+// The type with every const dropped: how a thrown object and a handler are matched (a handler for
+// const char* takes a thrown char*, [except.handle]/3 qualification conversion).
+std::string mangleTypeNoCv(const Type& t) {
+    auto c = cloneType(t);
+    dropConst(*c);
+    return mangleType(*c);
+}
+
 std::string mangleType(const Type& t) {
     switch (t.kind) {
     case Type::Kind::Void: return "v";
@@ -16,8 +28,10 @@ std::string mangleType(const Type& t) {
     case Type::Kind::Long: return t.unsign ? "m" : "l";
     case Type::Kind::Float: return "f";
     case Type::Kind::Double: return "d";
-    case Type::Kind::Pointer: return t.inner ? "P" + mangleType(*t.inner) : "Pv";
-    case Type::Kind::Reference: return t.inner ? (t.rref ? "O" : "R") + mangleType(*t.inner) : "Rv";
+    // A const pointee is K<type> ([mangle.qualified-type]); top-level const is not mangled.
+    case Type::Kind::Pointer: return t.inner ? "P" + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Pv";
+    case Type::Kind::Reference:
+        return t.inner ? (t.rref ? "O" : "R") + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Rv";
     case Type::Kind::Struct:
     case Type::Kind::Union:
         if (t.tag.empty()) return "i";

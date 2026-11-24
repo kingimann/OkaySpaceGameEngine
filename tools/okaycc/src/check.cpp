@@ -480,6 +480,29 @@ private:
             } else if (st->kind != Type::Kind::Struct && st->kind != Type::Kind::Union) {
                 err(e.line, e.col, "operand of '.' is not a struct");
                 return bad(e.line, e.col);
+            } else if (!obj.lvalue && st->kind == Type::Kind::Struct && !quiet_ &&
+                       (e.kids[0]->kind == Expr::Kind::Call || e.kids[0]->kind == Expr::Kind::Comma)) {
+                // f().n or T(args).n: the object is a temporary; it gets a name that lives to the
+                // end of the full expression ([class.temporary]/4) and the field is read from it.
+                std::string tmp;
+                std::unique_ptr<Expr> first;
+                if (e.kids[0]->kind == Expr::Kind::Comma && e.kids[0]->ival == 9 && !e.kids[0]->text.empty()) {
+                    tmp = e.kids[0]->text;
+                    first = std::move(e.kids[0]);
+                } else {
+                    tmp = newTemp(*obj.type, e, true);
+                    first = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[0]), e), e);
+                }
+                auto mem = mkE(Expr::Kind::Member, e);
+                mem->text = ".";
+                mem->kids.push_back(mkName(tmp, e));
+                mem->kids.push_back(std::move(e.kids[1]));
+                auto both = eCommaNode(std::move(first), std::move(mem), e);
+                e.kind = Expr::Kind::Comma;
+                e.text.clear();
+                e.ival = 0;
+                e.kids = std::move(both->kids);
+                return checkExpr(e);
             }
             st = canonOf(st);
             const std::string& fname = e.kids[1]->text;
@@ -795,9 +818,16 @@ private:
                 return false;
             }
             // An object that is not an lvalue (the result of a call): put it in a hidden local and
-            // call the operator on that.
-            std::string tmp = newTemp(*probe.type, e, true);
-            auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[lhsAt]), e), e);
+            // call the operator on that. A T(args) temporary already is one: use it as it is.
+            std::string tmp;
+            std::unique_ptr<Expr> assign;
+            if (e.kids[lhsAt]->kind == Expr::Kind::Comma && e.kids[lhsAt]->ival == 9 && !e.kids[lhsAt]->text.empty()) {
+                tmp = e.kids[lhsAt]->text;
+                assign = std::move(e.kids[lhsAt]);
+            } else {
+                tmp = newTemp(*probe.type, e, true);
+                assign = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[lhsAt]), e), e);
+            }
             auto member = mkE(Expr::Kind::Member, e);
             member->text = ".";
             member->kids.push_back(mkName(tmp, e));
@@ -1067,6 +1097,7 @@ private:
             // T&& prefers an rvalue or the result of std::move; an lvalue fits only as a last resort
             // (a forwarding reference in a template instance takes it).
             bool rv = !arg.lvalue || arg.xvalue;
+            if (arg.type->cnst && !param.inner->cnst) return -1;  // const B&& does not bind to B&&
             if (sameType(*param.inner, *arg.type)) return rv ? 0 : 3;
             return derivedFrom(*arg.type, *param.inner) ? (rv ? 1 : 3) : -1;
         }
@@ -1075,12 +1106,21 @@ private:
             // worse than to T&&.
             if (!arg.lvalue)
                 return sameType(*param.inner, *arg.type) || derivedFrom(*arg.type, *param.inner) ? 2 : -1;
+            if (arg.type->cnst && !param.inner->cnst) return -1;  // a const object does not bind to B&
             if (arg.xvalue) return sameType(*param.inner, *arg.type) ? 2 : -1;  // T& for a moved value: worse than T&&
             if (sameType(*param.inner, *arg.type)) return 0;
             return derivedFrom(*arg.type, *param.inner) ? 1 : -1;
         }
         if (sameType(param, *arg.type)) return 0;
-        return canAssign(param, arg) ? 1 : -1;
+        if (!canAssign(param, arg)) return -1;
+        // [over.ics.rank]: a promotion (float to double, a small integer or bool to int) beats a
+        // conversion (float to int, int to long, ...).
+        using K = Type::Kind;
+        if (param.kind == K::Double && arg.type->kind == K::Float) return 1;
+        if (param.kind == K::Int && !param.unsign &&
+            (arg.type->kind == K::Char || arg.type->kind == K::Short || arg.type->kind == K::Bool))
+            return 1;
+        return 4;
     }
 
     // Choose among overloads by argument count, then by how well the argument types fit.
@@ -1197,6 +1237,28 @@ private:
     }
 
     // Match a prototype type (with "\x02T" placeholders) against an argument type and bind T.
+    // One call argument against one parameter pattern. A forwarding reference (T&& with T a
+    // parameter of this template, [temp.deduct.call]/3) given an lvalue deduces T as an lvalue
+    // reference, so std::forward<T> collapses back to T& ([dcl.ref]/6).
+    bool deduceArg(const Type& pat, const ET& a, const TemplateSig& sig, std::vector<std::unique_ptr<Type>>& bound) {
+        if (pat.kind == Type::Kind::Reference && pat.rref && pat.inner && pat.inner->kind == Type::Kind::Struct &&
+            !pat.inner->tag.empty() && pat.inner->tag[0] == '\x02' && a.lvalue && !a.xvalue && a.type &&
+            a.type->kind != Type::Kind::Function) {
+            for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                if (sig.names[i] != pat.inner->tag.substr(1)) continue;
+                auto r = prim(Type::Kind::Reference);
+                r->inner = cloneType(*a.type);
+                if (!bound[i]) {
+                    bound[i] = std::move(r);
+                    return true;
+                }
+                return sameType(*bound[i], *r);
+            }
+        }
+        ET d = decay(copyET(a));
+        return deduceType(pat, *d.type, sig, bound);
+    }
+
     bool deduceType(const Type& pat, const Type& arg, const TemplateSig& sig,
                     std::vector<std::unique_ptr<Type>>& bound) {
         if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
@@ -1276,7 +1338,7 @@ private:
             ET a = checkExpr(*e.kids[i + 1]);
             if (a.bad || !a.type) return {};
             ET d = decay(copyET(a));
-            if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *d.type, sig, bound)) {
+            if (sig.fn->params[i].type && !deduceArg(*sig.fn->params[i].type, a, sig, bound)) {
                 err(e.line, e.col, "conflicting types for a template argument");
                 return {};
             }
@@ -1491,7 +1553,7 @@ private:
                     if (c0.kids[i] && c0.kids[i]->ty) b[i] = cloneType(*c0.kids[i]->ty);
                 bool ok = true;
                 for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
-                    if (cand.fn->params[i].type && !deduceType(*cand.fn->params[i].type, *argTypes[i].type, cand, b))
+                    if (cand.fn->params[i].type && !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
                         ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)
                     if (!b[i]) ok = false;
@@ -1529,6 +1591,23 @@ private:
                 instDirty() = true;
             }
             c0.text = inst;
+        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, 8, "\x01" "dtorif:") == 0) {
+            // The destructor of a local of a class used inside its own body: run it if the
+            // finished class has one.
+            auto it = canonStructs().find(c0.text.substr(8));
+            const Param* d = nullptr;
+            if (it != canonStructs().end() && it->second)
+                for (const Param& p : it->second->params)
+                    if (p.name == "<dtor>" && !p.mangled.empty()) d = &p;
+            if (!d) {
+                e.kind = Expr::Kind::Int;
+                e.ival = 0;
+                e.kids.clear();
+                e.text.clear();
+                return checkExpr(e);
+            }
+            c0.text = d->mangled;
+            return checkCall(e);
         } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kCtor.size(), kCtor) == 0) {
             std::string tag = c0.text.substr(kCtor.size());
             auto it = canonStructs().find(tag);
@@ -1594,7 +1673,7 @@ private:
                 const Param* d1 = cit != canonStructs().end() ? findSpecial(cit->second.get(), "<dtor>") : nullptr;
                 if (d1) dtorName = d1->mangled;
             } else {
-                types = mangleType(*T);
+                types = mangleTypeNoCv(*T);
             }
             std::string th = newTemp(*ptrTo(cloneType(*T)), e, false);
             auto sizeOf = mkE(Expr::Kind::Unary, e);
@@ -1797,6 +1876,12 @@ private:
                     std::unique_ptr<Expr> selfArg;
                     if (mem.text == "->") {
                         selfArg = std::move(mem.kids[0]);
+                    } else if (!obj.lvalue && mem.kids[0]->kind == Expr::Kind::Comma && mem.kids[0]->ival == 9 &&
+                               !mem.kids[0]->text.empty()) {
+                        // T(args).f(): the temporary already has a name and lives to the end of the
+                        // full expression ([class.temporary]/4); call on it, do not copy its bytes.
+                        std::string tname = mem.kids[0]->text;
+                        selfArg = eCommaNode(std::move(mem.kids[0]), eUnary("&", mkName(tname, e), e), e);
                     } else if (!obj.lvalue && obj.type && obj.type->kind == Type::Kind::Struct && !obj.bad) {
                         // A member call on an object that is a result (f().g()): the object goes into
                         // a hidden local and the call is made on that.

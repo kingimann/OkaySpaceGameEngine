@@ -74,6 +74,7 @@ struct Type {
     bool unsized = false;
     bool variadic = false;
     bool rref = false;  // a Reference that is an rvalue reference T&& ([dcl.ref])
+    bool cnst = false;  // declared const ([dcl.type.cv]); written before the type name only
     std::vector<Param> params;
     // Class facts (Itanium C++ ABI layout of a single-inheritance class).
     std::string base;                // tag of the one base class, or empty
@@ -197,6 +198,7 @@ bool hasSideEffects(const Expr& e);
 std::string mangleType(const Type& t);
 std::string mangleFunc(const std::string& qualified, const Type& fn);
 std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn);
+std::string mangleTypeNoCv(const Type& t);
 std::string mangleData(const std::string& qualified);
 
 // templates.cpp

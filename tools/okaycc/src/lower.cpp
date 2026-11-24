@@ -2785,6 +2785,21 @@ private:
         } else if (d.body) {
             lowerStmt(*d.body);
         }
+        const auto& tail = fn_.blocks[static_cast<std::size_t>(cur_)].code;
+        if (d.name == "main" && d.type && d.type->inner && d.type->inner->kind == Type::Kind::Int &&
+            (tail.empty() || tail.back().op != Inst::Op::Ret)) {
+            // Reaching the } of main returns 0 (C11 5.1.2.2.3, C++ [basic.start.main]/5).
+            Stmt r;
+            r.kind = Stmt::Kind::Return;
+            r.line = d.line;
+            r.col = d.col;
+            r.expr = std::make_unique<Expr>();
+            r.expr->kind = Expr::Kind::Int;
+            r.expr->line = d.line;
+            r.expr->col = d.col;
+            r.expr->checked = std::make_unique<Type>();
+            lowerStmt(r);
+        }
         mod_.funcs.push_back(std::move(fn_));
     }
 };

@@ -248,6 +248,9 @@ static dd cosDD(dd r) {
 }
 /* sin (wantCos 0) or cos (wantCos 1) of x as double-double */
 static dd trigDD(double x, int wantCos) {
+    /* Above 2^62 the quotient no longer fits a long (and the 106-bit pi/2 is far too short for
+     * the reduction): no value is given (see the plan). */
+    if (x > 4611686018427387904.0 || x < -4611686018427387904.0) return mk(qnan(), 0.0);
     double kd = x / gPiOver2.hi;
     long k = (long)(kd < 0 ? kd - 0.5 : kd + 0.5);
     dd r = mk(x, 0.0);
@@ -328,14 +331,16 @@ double __okay_pow(double x, double y) {
         return 0.0;
     }
     int neg = 0;
+    if (x == 0.0) {
+        /* pow(+-0, y): 0 or inf, negative for -0 and an odd integer y (C F.10.4.4) */
+        double z = y > 0 ? 0.0 : inf();
+        if ((bitsOf(x) >> 63) != 0 && isInteger(y) && isOdd(y)) z = -z;
+        return z;
+    }
     if (x < 0) {
         if (!isInteger(y)) return qnan();
         neg = isOdd(y);
         x = -x;
-    }
-    if (x == 0.0) {
-        double z = y > 0 ? 0.0 : inf();
-        return neg ? -z : z;
     }
     if (x - x != 0) { /* x is infinite */
         double z = y > 0 ? inf() : 0.0;

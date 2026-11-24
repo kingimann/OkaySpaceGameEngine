@@ -4,6 +4,7 @@
 // runtime's own number rules (32-bit floats, x / 0 and x % 0 give 0). A function's locals get frame slots, worked
 // out from its declarations before its code is made.
 #include "okayscript/Bytecode.hpp"
+#include <cstdint>
 #include <cmath>
 #include <sstream>
 #include <unordered_map>
@@ -31,13 +32,22 @@ public:
         Emit(Op::End);
     }
     /// A function or lambda: parameters take the first slots, then each name the body declares.
+    /// A local a lambda inside uses gets no slot: it lives in the frame's box (Chunk::boxNames), by name.
     void Function(const std::vector<std::string>& params, const StmtList& body) {
-        for (const std::string& p : params) c.paramSlot.push_back(SlotOf(p, true));
-        std::vector<std::string> names;
+        std::unordered_set<std::string> captured;
+        CollectCapturedNames(params, body, captured);
+        for (const std::string& p : params) {
+            if (captured.count(p)) { c.paramSlot.push_back(-1); continue; }
+            c.paramSlot.push_back(SlotOf(p, true));
+        }
+        std::vector<std::string> names(params.begin(), params.end());
         std::unordered_set<std::string> statics;
         CollectBodyLocals(body, names, statics);
-        for (const std::string& n : names)
-            if (!statics.count(n)) SlotOf(n, true);
+        for (const std::string& n : names) {
+            if (statics.count(n)) continue;
+            if (captured.count(n)) { c.boxNames.push_back(n); continue; }
+            SlotOf(n, true);
+        }
         Body(body);
     }
     void OneExpression(const Expr& e) {
@@ -52,6 +62,44 @@ private:
     int tryDepth = 0;
     std::vector<LoopTargets> loops;
     std::unordered_map<std::string, int> slots;
+    /// The `finally` bodies around the code being compiled: a return, break or continue that leaves them runs each
+    /// one first (innermost first), with the try handlers outside it.
+    struct FinallyScope { int tryDepth; const StmtList* body; };
+    std::vector<FinallyScope> finallies;
+
+    /// Leave the finally bodies opened at try depth >= `downTo` (a jump or return out of them): drop the handlers
+    /// above each one and run its code. Returns the try depth that is left.
+    int LeaveFinallies(int downTo) {
+        int cur = tryDepth;
+        for (int i = (int)finallies.size() - 1; i >= 0 && finallies[(std::size_t)i].tryDepth >= downTo; --i) {
+            const FinallyScope f = finallies[(std::size_t)i];
+            if (cur > f.tryDepth) Emit(Op::TryPop, cur - f.tryDepth);
+            cur = f.tryDepth;
+            RunFinally(f, (std::size_t)i);
+        }
+        return cur;
+    }
+    /// The code of a finally body, compiled as if only the finallies outside it (below index `at`) were open.
+    void RunFinally(const FinallyScope& f, std::size_t at) {
+        std::vector<FinallyScope> saved(finallies.begin() + (std::ptrdiff_t)at, finallies.end());
+        finallies.resize(at);
+        const int savedDepth = tryDepth;
+        tryDepth = f.tryDepth;
+        List(*f.body);
+        tryDepth = savedDepth;
+        finallies.insert(finallies.end(), saved.begin(), saved.end());
+    }
+    /// Declare (or, for `[a, b] = ...`, assign) the name `n` from the value on top of the stack, popping it.
+    void DeclareFromTop(const std::string& n, bool declare) {
+        const int slot = SlotOf(n);
+        if (declare) {
+            if (slot >= 0) Emit(Op::DefineSlot, slot, &n);
+            else Emit(Op::Define, 0, &n);
+        } else {
+            c.code[Emit(slot >= 0 ? Op::StoreSlotPop : Op::StorePop, slot, &n)].b = NewCache();
+        }
+        Drop();
+    }
 
     /// The slot of a local name (made when `make`), or -1 for a name that is not a local of this body.
     int SlotOf(const std::string& n, bool make = false) {
@@ -97,7 +145,9 @@ private:
     static Const Fold(const Expr& ex) {
         Const r;
         switch (ex.kind) {
-            case ExprKind::Number: r.k = K::Num; r.n = (float)static_cast<const NumberExpr&>(ex).v; return r;
+            case ExprKind::Number:
+                if (static_cast<const NumberExpr&>(ex).isInt) return r;   // 123L: a whole number, pushed as one
+                r.k = K::Num; r.n = (float)static_cast<const NumberExpr&>(ex).v; return r;
             case ExprKind::Bool: r.k = K::Bool; r.b = static_cast<const BoolExpr&>(ex).v; return r;
             case ExprKind::Unary: {
                 auto& e = static_cast<const UnaryExpr&>(ex);
@@ -337,6 +387,14 @@ private:
                 Push();
                 return;
             }
+            case ExprKind::Map: {
+                auto& e = static_cast<const MapExpr&>(ex);
+                for (auto& v : e.values) Expression(*v);
+                Emit(Op::MakeMap, (int)e.values.size(), &e.keys);
+                Drop((int)e.values.size());
+                Push();
+                return;
+            }
             case ExprKind::Lambda: Emit(Op::MakeLambda, 0, &ex); Push(); return;
             case ExprKind::New: {
                 auto& e = static_cast<const NewExpr&>(ex);
@@ -366,7 +424,11 @@ private:
                 if (byName) PatchTo(taken, Here());
                 return;
             }
-            case ExprKind::Number: case ExprKind::Bool: break;   // folded above
+            case ExprKind::Number:   // only 123L gets here (other numbers are folded above)
+                Emit(Op::PushInt, 0, &static_cast<const NumberExpr&>(ex).iv);
+                Push();
+                return;
+            case ExprKind::Bool: break;   // folded above
         }
         // Number and Bool are always folded above.
         c.code[Emit(Op::PushNum)].f = 0.0f;
@@ -427,34 +489,75 @@ private:
                 auto& s = static_cast<const YieldStmt&>(st);
                 Emit(Op::Line, st.line);
                 if (s.e) Expression(*s.e); else { Emit(Op::PushNull); Push(); }
-                Emit(Op::Yield, st.line);
+                Emit(s.generator ? Op::GenYield : Op::Yield, st.line);
+                if (s.generator) c.generator = true;
                 Drop();
                 return;
             }
+            case StmtKind::Destructure: {
+                // The value once; each name takes its item (list pattern) or key (map pattern).
+                auto& s = static_cast<const DestructureStmt&>(st);
+                Emit(Op::Line, st.line);
+                Expression(*s.init);
+                for (std::size_t i = 0; i < s.names.size(); ++i) {
+                    if (s.names[i].empty()) continue;
+                    Emit(Op::Unpack, (int)i, s.isMap ? &s.keys[i] : nullptr);
+                    Push();
+                    DeclareFromTop(s.names[i], s.declare);
+                }
+                Emit(Op::Pop);
+                Drop();
+                return;
+            }
+            case StmtKind::Import: {
+                auto& s = static_cast<const ImportStmt&>(st);
+                Emit(Op::Line, st.line);
+                Emit(Op::Import, st.line, &s);
+                Push();
+                DeclareFromTop(s.alias, true);
+                return;
+            }
             case StmtKind::Try: {
-                // An error in the body goes to the catch (its variable holds the message), or is dropped without
-                // one (engine rule). Leaving the body any other way forgets the handler.
+                // An error in the body goes to the catch (its variable holds the message or the thrown value, or an
+                // error object when typed), or is dropped without one (engine rule) unless there is a finally: then
+                // the finally runs and the error goes on. The finally code runs on every way out (it is emitted at
+                // each: the end, the error path, and before a return, break or continue that leaves the body).
                 auto& s = static_cast<const TryStmt&>(st);
                 Emit(Op::Line, st.line);
+                const int outer = tryDepth;
+                if (s.hasFinally) finallies.push_back({outer, &s.finallyB});
                 const std::size_t begin = Emit(Op::TryBegin);
-                c.code[begin].b = (s.hasCatch && !s.catchVar.empty()) ? 1 : 0;
+                const bool binds = s.hasCatch && !s.catchVar.empty();
+                c.code[begin].b = binds ? (s.typedCatch ? 2 : 1) : (!s.hasCatch && s.hasFinally ? 3 : 0);
                 ++tryDepth;
                 List(s.body);
                 --tryDepth;
                 Emit(Op::TryEnd);
-                const std::size_t over = Emit(Op::Jump);
+                std::vector<std::size_t> toEnd{Emit(Op::Jump)};
                 PatchTo(begin, Here());
                 if (s.hasCatch) {
-                    if (!s.catchVar.empty()) {
-                        Push();   // the message the handler pushes
-                        const int slot = SlotOf(s.catchVar);
-                        if (slot >= 0) Emit(Op::DefineSlot, slot, &s.catchVar);
-                        else Emit(Op::Define, 0, &s.catchVar);
-                        Drop();
+                    if (binds) {
+                        Push();   // what the handler pushes
+                        DeclareFromTop(s.catchVar, true);
                     }
+                    std::size_t inner = 0;
+                    if (s.hasFinally) { inner = Emit(Op::TryBegin); c.code[inner].b = 3; ++tryDepth; }
                     List(s.catchB);
+                    if (s.hasFinally) {
+                        --tryDepth;
+                        Emit(Op::TryEnd);
+                        toEnd.push_back(Emit(Op::Jump));
+                        PatchTo(inner, Here());   // an error in the catch: the finally, then the error goes on
+                    }
                 }
-                PatchTo(over, Here());
+                if (s.hasFinally) {   // the error path: the finally, then the error goes on
+                    finallies.pop_back();
+                    List(s.finallyB);
+                    Emit(Op::Rethrow);
+                }
+                const int end = Here();
+                for (std::size_t j : toEnd) PatchTo(j, end);
+                if (s.hasFinally) List(s.finallyB);   // the normal way out
                 return;
             }
             case StmtKind::Switch: {
@@ -493,8 +596,8 @@ private:
             case StmtKind::Return: {
                 auto& s = static_cast<const ReturnStmt&>(st);
                 Emit(Op::Line, st.line);
-                if (s.e) { Expression(*s.e); Emit(Op::Return); Drop(); }
-                else Emit(Op::ReturnNone);
+                if (s.e) { Expression(*s.e); LeaveFinallies(0); Emit(Op::Return); Drop(); }
+                else { LeaveFinallies(0); Emit(Op::ReturnNone); }
                 return;
             }
             case StmtKind::Break:
@@ -506,7 +609,8 @@ private:
                 for (auto it = loops.rbegin(); it != loops.rend(); ++it)
                     if (brk || !it->isSwitch) { target = &*it; break; }
                 if (!target) { Emit(Op::EndFlow, (int)(brk ? Flow::Break : Flow::Continue)); return; }
-                if (tryDepth > target->tryDepth) Emit(Op::TryPop, tryDepth - target->tryDepth);
+                const int left = LeaveFinallies(target->tryDepth);
+                if (left > target->tryDepth) Emit(Op::TryPop, left - target->tryDepth);
                 const std::size_t j = Emit(Op::Jump);
                 (brk ? target->breaks : target->continues).push_back(j);
                 return;
@@ -620,7 +724,7 @@ private:
 
 const char* OpName(Op op) {
     switch (op) {
-        case Op::Line: return "line"; case Op::PushNum: return "push_num"; case Op::PushBool: return "push_bool";
+        case Op::Line: return "line"; case Op::PushNum: return "push_num"; case Op::PushInt: return "push_int"; case Op::PushBool: return "push_bool";
         case Op::PushStr: return "push_str"; case Op::PushNull: return "push_null"; case Op::PushDefault: return "push_default";
         case Op::Pop: return "pop"; case Op::Load: return "load"; case Op::Store: return "store";
         case Op::StorePop: return "store_pop"; case Op::LoadSlot: return "load_slot"; case Op::StoreSlot: return "store_slot";
@@ -635,12 +739,14 @@ const char* OpName(Op op) {
         case Op::IndexCompound: return "index_compound"; case Op::Member: return "member";
         case Op::MemberSet: return "member_set"; case Op::Cast: return "cast";
         case Op::MethodCall: return "method_call"; case Op::CallNamed: return "call_named";
-        case Op::MakeList: return "make_list"; case Op::MakeLambda: return "make_lambda"; case Op::New: return "new";
+        case Op::MakeList: return "make_list"; case Op::MakeMap: return "make_map"; case Op::MakeLambda: return "make_lambda"; case Op::New: return "new";
         case Op::AppendLit: return "append_lit"; case Op::AppendText: return "append_text";
         case Op::EventVar: return "event_var"; case Op::Subscribe: return "subscribe";
         case Op::CompoundCur: return "compound_cur"; case Op::CompoundStore: return "compound_store";
         case Op::SwitchCase: return "switch_case"; case Op::Throw: return "throw"; case Op::TryBegin: return "try_begin";
         case Op::TryEnd: return "try_end"; case Op::TryPop: return "try_pop"; case Op::Yield: return "yield";
+        case Op::Rethrow: return "rethrow"; case Op::GenYield: return "gen_yield"; case Op::Unpack: return "unpack";
+        case Op::Import: return "import";
         case Op::JumpIfNullishNull: return "jump_if_nullish_null";
         case Op::JumpUnlessNullishKeep: return "jump_unless_nullish_keep";
         case Op::SkipUnlessIndexable: return "skip_unless_indexable";
@@ -681,6 +787,7 @@ std::string Disassemble(const Chunk& c) {
         o << i << ' ' << OpName(in.op);
         switch (in.op) {
             case Op::PushNum: o << ' ' << in.f; break;
+            case Op::PushInt: o << ' ' << *static_cast<const std::int64_t*>(in.p); break;
             case Op::PushBool: o << ' ' << (in.a ? "true" : "false"); break;
             case Op::PushStr: case Op::Load: case Op::Store: case Op::StorePop: case Op::Define: case Op::GetName:
             case Op::AssignName: case Op::AppendLit:
@@ -709,8 +816,13 @@ std::string Disassemble(const Chunk& c) {
             case Op::Line: case Op::Jump: case Op::JumpIfFalse: case Op::JumpIfTrue: case Op::JumpIfFalseKeep:
             case Op::JumpIfTrueKeep: case Op::EndFlow: case Op::LoopInit: case Op::LoopCount: case Op::PushDefault:
             case Op::JumpIfNullishNull: case Op::JumpUnlessNullishKeep: case Op::SwitchCase: case Op::TryPop:
-            case Op::MakeList: case Op::Throw: case Op::Yield:
+            case Op::MakeList: case Op::MakeMap: case Op::Throw: case Op::Yield: case Op::GenYield:
                 o << ' ' << in.a; break;
+            case Op::Unpack:
+                o << ' ' << in.a;
+                if (in.p) o << ' ' << *static_cast<const std::string*>(in.p);
+                break;
+            case Op::Import: o << ' ' << static_cast<const ImportStmt*>(in.p)->path; break;
             case Op::TryBegin: case Op::SkipUnlessIndexable: o << ' ' << in.a << ' ' << in.b; break;
             case Op::ForEachStart: case Op::ForEachNext: o << ' ' << in.a << ' ' << in.b << ' ' << in.c; break;
             default: break;

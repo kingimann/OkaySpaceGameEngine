@@ -3,7 +3,7 @@
 // equal what the format's own Read*File gives directly, so a wrong arm in the dispatch chain fails here. Also checked: the
 // environment variables OKAY_OWN_OPENGEX / OKAY_OWN_MDL and SetImportBackend switch a format on and off, ImportableExtensions
 // follows, flatten bakes the node tree, a Quake and a Half-Life file both reach the one MDL reader, the 3D GameStudio magics are
-// refused with their own message, and the format is off by default (the message names the switch when the build has no Assimp).
+// refused with their own message, and the format is off by default (switched off, the message names the switch).
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "e4_fixtures.hpp"
@@ -65,8 +65,8 @@ int main() {
             ImportedModel d; std::string e2;
             CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
         }
-        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable() && !c.onByDefault) seam::CheckOffWithoutAssimp(path, c.ext, c.env);
+        // off by default (the format cannot be read at all, and the message names the switch)
+        if (!c.onByDefault) seam::CheckSwitchedOff(path, c.ext, c.env);
     }
     {   // upper case extension; the other formats' readers do not take these files; GameStudio magics get their own message
         SetImportBackend("*", ImportBackend::Own);

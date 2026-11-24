@@ -5,6 +5,11 @@
 > **Status:** combined on 2026-11-20 from 38 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
 >
 > **Last checked:** 2026-11-20, paths and links against main.
+>
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`). These readers are now the only model readers, every one ON by
+> default except the Nendo seam. Where a section below says "Assimp stays the fallback", "off by default" or "before it can become
+> the default", that is history: there is no fallback, and a file our reader refuses fails the import with our reader's reason.
+> The one extension no longer read is Nendo `.ndo` (section "Our own NDO reader", decision "Dropped").
 
 ## Contents
 
@@ -1949,7 +1954,24 @@ A real file with joints, weights and animation; more than four real files; Windo
 
 *Was `docs/own_ndo_reader.md` until 2026-11-20.*
 
-Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, slot 36). Do not switch it on: it refuses every file.
+Status: **header recognised, body NOT read; `.ndo` is dropped since Assimp was deleted (2026-11-24).** Off by default (`OKAY_OWN_NDO`, slot 36). Do not switch it on: it refuses every file.
+
+### Decision 2026-11-24: dropped (`claude/no-assimp-1`)
+
+Assimp was the only thing that read `.ndo`. With it deleted, `.ndo` is **not supported**: a `.ndo` file is not listed as importable
+and its import fails (with `OKAY_OWN_NDO=1` the seam says "Nendo file ... recognised but not read"; without it the message names
+the switch). Why it is dropped and not written, with the evidence:
+
+- **No description we may follow.** Searched twice (2026-11-22, 2026-11-23): the only descriptions of the body are other projects'
+  importer code (rule 19a). Nothing else was found.
+- **No usable sample.** The corpus (Assimp v5.4.3 `test/`) has 0 ordinary `.ndo` files: its two are crash-regression inputs of 287
+  and 173 bytes, broken on purpose. Every other format in this page was written from a description or from real sample files.
+- **How rare it is.** Nendo (Nichimen Graphics, later Izware) is a modeller from the late 1990s that has not been sold or updated
+  for about twenty years; few tools still export it (Wings 3D is one), and no user, test or project asked for it.
+- **Not dropped "because it is hard"** (rule 17): there is nothing to write from. **To reopen:** real `.ndo` files of known content.
+  Wings 3D (free, `apt` package `wings3d` 2.3 is available on the build machine, not installed) can export Nendo; a few known shapes
+  exported from it on the owner's PC, with the same shapes as `.obj`, would let us work the layout out byte by byte as MDL7 and SIB
+  were. Using Wings 3D as a black box is fine; reading its exporter's code is not (rule 19a).
 
 ### What exists
 
@@ -1982,7 +2004,7 @@ So the body is **still not read** and the seam still refuses every file. **What 
 content. The cleanest way to get them: Wings 3D (a free modeller) can export Nendo files; exporting a few known shapes from it
 (a cube, a cube with one material and UVs, a cylinder) on the owner's PC, together with the same shapes as `.obj`, would give
 files we can analyse byte by byte against a known answer, the way MDL7 and SIB were done. A Nendo install with its sample
-models would do too. Without either, `.ndo` stays with Assimp.
+models would do too. Without either, `.ndo` is not read (Assimp, which read it, was deleted on 2026-11-24).
 
 ### Provenance
 

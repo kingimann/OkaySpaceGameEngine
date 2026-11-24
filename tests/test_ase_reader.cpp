@@ -170,7 +170,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_ASE");
         SetImportBackend(".ase", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".ase") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".ase") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "scene.ase", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_ASE") != std::string::npos);
             CHECK(ImportableExtensions().find(".ase") == std::string::npos);

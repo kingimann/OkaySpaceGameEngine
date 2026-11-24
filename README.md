@@ -168,7 +168,7 @@ deleted. Nothing is kept off by default (rule 17, 2026-11-22); cryptography is t
 what is still outside code: [docs/status/THIRD_PARTY.md](docs/status/THIRD_PARTY.md).
 
 **Ours and on by default:** the engine core, physics, our glTF and OBJ readers, our own readers for many other model
-formats (switched on 2026-11-17; Assimp stays as the fallback where it is built), our own FBX reader (the only FBX
+formats (switched on 2026-11-17, and the only model readers since Assimp was removed on 2026-11-24), our own FBX reader (the only FBX
 reader since ufbx was deleted; it reads FBX 6.0 to 7.x), the texture library, and since 2.903.3 the OkayUI screens
 and Inspector and the OkayUI renderer (Settings > Experimental starts with every box ticked; untick one to go back), and
 our own WAV decoder (the only WAV reader since 2026-11-23).
@@ -182,8 +182,8 @@ Linux when switched on, and curl only as the last fallback.
 **Ours but not the default yet:** the platform layer that replaces SDL2 (the Linux backend is tested, the Windows one
 is not yet), our own build tool `okay-build` (replaces CMake) and our own compiler work (outside CMake, CI and releases).
 
-**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build, as the fallback reader),
-curl (last HTTP fallback) and libsodium. No new outside libraries or SDKs may be added.
+**Outside code still in use:** SDL2, Dear ImGui, curl (last HTTP fallback) and libsodium (Assimp was deleted on
+2026-11-24, ufbx and the vendored text editor widget on 2026-11-23). No new outside libraries or SDKs may be added.
 
 **The crypto exception.** Encryption cannot be replaced on our word: it needs an outside review first, and the owner
 decided on 2026-11-14 not to hire one. So **libsodium stays the default in every release**, our own `okay::crypto`
@@ -262,7 +262,6 @@ header lists its other settings.
 | `OKAY_BUILD_PLAYER` | OFF | The game player runtime (needs SDL2). |
 | `OKAY_USE_SODIUM` | ON | Packet encryption with libsodium. |
 | `OKAY_OWN_CRYPTO` | OFF | Our own crypto instead of libsodium. Unreviewed; keep off. |
-| `OKAY_USE_ASSIMP` | OFF | Assimp as a fallback for model formats (on in the Windows release script). |
 | `OKAY_OWN_<FORMAT>` | mostly ON | Our own reader for one model or sound format. |
 
 `./launch.sh` (Linux) builds the launcher once and hands off to it. The other build scripts are in `scripts/`

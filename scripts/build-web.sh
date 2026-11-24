@@ -22,7 +22,7 @@ if [ -n "$SCENE" ] && [ -f "$SCENE" ]; then
     PRELOAD="--preload-file ${SCENE}@game.okayscene"
 fi
 
-# libsodium (packet encryption) and Assimp (model import) have no WebAssembly
+# libsodium (packet encryption) has no WebAssembly
 # build, and the relay / OkayUI's Direct3D backend aren't part of the web player
 # (the engine's CMake already skips the last two under Emscripten). SDL2 comes from
 # Emscripten's own port (-sUSE_SDL=2), which Emscripten fetches once on the first
@@ -39,7 +39,7 @@ emcmake cmake -S . -B build-web \
     ${LAUNCHER[@]+"${LAUNCHER[@]}"} \
     -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
     -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF \
-    -DOKAY_USE_SODIUM=OFF -DOKAY_USE_ASSIMP=OFF \
+    -DOKAY_USE_SODIUM=OFF \
     -DCMAKE_EXE_LINKER_FLAGS="${PRELOAD}"
 cmake --build build-web -j "$(nproc 2>/dev/null || echo 2)"
 

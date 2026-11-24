@@ -203,7 +203,6 @@ struct State {
     std::string undoName, redoName; // "Move" makes "Undo Move"; "" makes "Undo"
     bool clipboardHasObject = false;
     int  recentCount = 0;           // scenes in Open Recent
-    bool assimp = false;            // Import Model reads more formats (tooltip only)
     bool isolating = false;         // Isolate mode is on
     bool darkMode = true;           // the editor is in dark mode (false = light mode)
 };
@@ -260,7 +259,7 @@ inline std::vector<Entry> FileMenu(const State& s) {
     m.push_back(Slot("file.upgrade"));   // Project Upgrade... (drawn by ProjectUpgradeUI.cpp, greyed out with its own reason)
     m.push_back(Sep());
     m.push_back(Item("file.import", "Import Model...", "",
-                     std::string("FBX, glTF, GLB, OBJ, STL, PLY") + (s.assimp ? ", DAE, 3DS, ..." : "")));
+                     "FBX, glTF, GLB, OBJ, STL, PLY, DAE, 3DS, BLEND, X and more (all read by our own readers)."));
     m.push_back(Item("file.merge", "Merge Scene into Current...", "",
                      "Combine another scene into this one to build a seamless world.\nThe Hierarchy marks where each merged scene begins.\n"
                      "Tip: you can also drag a .okayscene from Project onto the Hierarchy."));

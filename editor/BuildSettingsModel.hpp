@@ -609,11 +609,13 @@ inline std::string MergeIgnore(const std::string& existing, const std::vector<st
     std::istringstream in(existing);
     for (std::string l; std::getline(in, l);) { while (!l.empty() && l.back() == '\r') l.pop_back(); have.push_back(l); }
     std::string out = existing;
+    // A file with Windows line ends (git's autocrlf on checkout, or a Windows editor) gets its new lines with them too.
+    const std::string eol = existing.find("\r\n") != std::string::npos ? "\r\n" : "\n";
     int n = 0;
     for (const std::string& w : wanted) {
         if (std::find(have.begin(), have.end(), w) != have.end()) continue;
-        if (n == 0) { if (!out.empty() && out.back() != '\n') out += "\n"; out += heading + "\n"; }
-        out += w + "\n"; ++n;
+        if (n == 0) { if (!out.empty() && out.back() != '\n') out += eol; out += heading + eol; }
+        out += w + eol; ++n;
     }
     if (added) *added = n;
     return out;

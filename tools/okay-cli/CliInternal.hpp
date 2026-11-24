@@ -14,6 +14,12 @@ std::string JoinWords(const std::vector<std::string>& v, std::size_t from = 0);
 std::string Pad(std::string s, std::size_t n);
 /// `path` relative to `root` with forward slashes (`path` itself when that is not possible).
 std::string RelTo(const std::string& path, const std::string& root);
+/// `p` made absolute and real, with forward slashes and no trailing slash: symbolic links resolved and, on Windows,
+/// short 8.3 folder names (C:/Users/RUNNER~1) expanded to the long ones git prints. Parts that do not exist yet are kept.
+std::string LongPath(const std::string& p);
+/// Where `path` is inside the folder `root` ("Assets/Level.okayscene", forward slashes), or "" when it is not inside it
+/// (or is `root` itself). Short and long names of the same folder match; on Windows case and slashes do not matter.
+std::string RelInside(const std::string& path, const std::string& root);
 /// Parse a command's arguments (adds --help/-h); a bad command line is said in plain words with the command's help.
 bool ParseArgs(okay::CommandLine& cl, const std::vector<std::string>& args, const std::string& command, const Io& io);
 /// A line of text-merge clash marks (<<<<<<< or >>>>>>>) is in `text`.

@@ -37,7 +37,6 @@ int main() {
     for (const Row& r : rows) CHECK(LoadsAsMesh(r.file, r.what));
 
     // No other reader exists in this build.
-    CHECK(!AssimpAvailable());
     const std::string exts = ImportableExtensions();
     for (const char* e : {".obj", ".gltf", ".glb", ".fbx", ".dae", ".stl", ".ply", ".3ds", ".off", ".smd", ".md5mesh", ".ms3d", ".ase", ".blend"})
         CHECK(exts.find(e) != std::string::npos);

@@ -22,7 +22,6 @@ struct Box {
 
 struct Pt {
     int x, y;
-    Pt() : x(0), y(0) {}  // our vector needs a default constructor (no placement new yet)
     Pt(int a, int b) : x(a), y(b) {}
 };
 

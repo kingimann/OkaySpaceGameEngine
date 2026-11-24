@@ -157,6 +157,9 @@
 #include "okay/Core/SaveData.hpp"
 #include "okay/Math/Easing.hpp"
 #include "okayscript/Lexer.hpp"      // Tok, Token, ScriptError, Lexer (the engine-independent OkayScript core)
+#include "okayscript/Parser.hpp"     // the OkayScript parser and syntax tree
+#include "okayscript/Runtime.hpp"    // the interpreter core (a template over the value type)
+#include "okayscript/detail/Support.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -398,49 +401,16 @@ using okayscript::Token;
 using okayscript::ScriptError;
 using okayscript::Lexer;
 
-// ===================== AST =====================
-struct Runtime;
-
-struct Expr { virtual ~Expr() = default; virtual Value Eval(Runtime&) = 0; };
-struct Stmt { virtual ~Stmt() = default; virtual void Exec(Runtime&) = 0; };
-using ExprPtr = std::unique_ptr<Expr>;
-using StmtPtr = std::unique_ptr<Stmt>;
-
-struct ReturnSignal { Value value; };
-struct BreakSignal {};
-struct ContinueSignal {};
-
-// ===================== Environment / Runtime =====================
-// What a declared variable may hold. `int x`, `float x`, `bool x` and `string x`
-// are real types: assignments convert (an int drops its fraction) or fail with a
-// clear error instead of silently storing the wrong kind of value. `const` /
-// `readonly` variables can't change after they're set. `var` and other types
-// (Vector3, List<int>, ...) hold anything.
-enum VarKind : unsigned char { KAny = 0, KInt = 1, KFloat = 2, KBool = 3, KString = 4, KConst = 0x10, KStatic = 0x20 };
-
-inline unsigned char TypeKind(const std::string& t) {
-    static const std::unordered_map<std::string, unsigned char> k = {
-        {"int", KInt}, {"long", KInt}, {"short", KInt}, {"byte", KInt}, {"uint", KInt},
-        {"ulong", KInt}, {"ushort", KInt}, {"sbyte", KInt},
-        {"float", KFloat}, {"double", KFloat}, {"decimal", KFloat},
-        {"bool", KBool}, {"string", KString}};
-    auto it = k.find(t);
-    return it == k.end() ? KAny : it->second;
-}
-inline const char* KindName(unsigned char k) {
-    switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
-                        case KString: return "a string"; default: return "a variable"; }
-}
-// This VM spells null as the number 0 (an unset variable, a missed Find or
-// GetComponent, the name `null`). A real object name, a bool, a vector, or any
-// other number is present. A destroyed object reference (instance id) is null too.
-inline bool IsNullish(const Value& v) {
-    if (v.IsBool() || v.IsString() || v.IsVec3()) return false;
-    if (v.IsObject()) return v.AsObjectId() == 0 || !vs::VsObjectAlive(v.AsObjectId());
-    if (v.IsArray()) return !v.AsArray();
-    if (v.IsMap()) return !v.AsMap();
-    return v.IsNumber() && v.AsFloat() == 0.0f;
-}
+// ===================== The language core =====================
+// The parser, syntax tree and interpreter are the engine-independent OkayScript core (okayscript/: Parser.hpp,
+// Runtime.hpp), instantiated in OkayScriptVM.cpp for the engine's value (vs::VsValue). The engine adds its scene
+// names, object references and components through its okayscript::BasicHost (EngineHooks in OkayScriptVM.cpp).
+using ReturnSignal = okayscript::ReturnSignal<Value>;
+using okayscript::BreakSignal;
+using okayscript::ContinueSignal;
+using Environment = okayscript::BasicEnvironment<Value>;
+using okayscript::IsNullish;
+using okayscript::detail::IsClassInstance;
 
 // ---- Object references (#888 Findings 108 and 111) ----------------------------
 // A reference to a scene object is the object's instance id (a VsValue object),
@@ -515,111 +485,19 @@ struct ActAsObject {
     ActAsObject& operator=(const ActAsObject&) = delete;
 };
 
-inline const char* ValueKindName(const Value& v) {
-    if (v.IsString()) return "text";
-    if (v.IsBool()) return "true/false";
-    if (v.IsNumber()) return "a number";
-    if (v.IsVec3()) return "a vector";
-    if (v.IsArray()) return "a list";
-    if (v.IsMap()) return "a map";
-    return "that value";
-}
-/// A plain-class object: a map tagged with the class that made it. Other maps
-/// (dictionaries, lambdas) are not objects, so `==` keeps treating them as before.
-inline bool IsClassInstance(const Value& v) {
-    auto m = v.AsMap();
-    if (!m) return false;
-    auto it = m->find("__class");
-    return it != m->end() && it->second.IsString();
-}
-/// Convert `v` for a variable of `kind`, or throw a readable error.
-inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string& name) {
-    const unsigned char t = kind & 0x0F;
-    auto fail = [&](const char* hint) -> Value {
-        throw ScriptError("'" + name + "' is " + KindName(kind) + ", so it can't hold " + ValueKindName(v) + hint, 0);
-    };
-    switch (t) {
-        case KInt:
-            if (v.IsNumber()) return Value{(float)SafeInt64(v.AsFloat())};   // drops the fraction, like (int)
-            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
-            return fail(v.IsString() ? " (use int.Parse(text))" : "");
-        case KFloat:
-            if (v.IsNumber()) return v;
-            if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
-            return fail(v.IsString() ? " (use float.Parse(text))" : "");
-        case KBool:
-            if (v.IsBool()) return v;
-            if (v.IsNumber()) return Value{v.AsFloat() != 0.0f};
-            if (v.IsObject()) return Value{v.AsBool()};   // an object reference: true while it exists
-            return fail("");
-        case KString:
-            if (v.IsString()) return v;
-            // `void OnCollisionEnter(string other)`: an object reference keeps its
-            // identity in a string variable and still reads as the object's name.
-            if (v.IsObject()) return v;
-            return fail(" (turn it into text with $\"{value}\" or .ToString())");
-        default: return v;
-    }
-}
-inline Value DefaultForKind(unsigned char kind) {
-    switch (kind & 0x0F) { case KBool: return Value{false}; case KString: return Value{std::string()};
-                           default: return Value{}; }
-}
+struct Runtime;
+/// Gives a new Runtime the engine's hooks and settings (OkayScriptVM.cpp).
+void InitEngineRuntime(Runtime& rt);
 
-struct Environment {
-    std::unordered_map<std::string, Value> vars;
-    std::unordered_map<std::string, unsigned char> kinds;   ///< typed / const variables only
-};
-
-// `static` variables: one copy shared by every object running the same script
-// (keyed by its source), so e.g. `static int alive;` counts all the enemies.
-inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
-    static std::unordered_map<std::size_t, std::shared_ptr<Environment>> all;
-    auto& e = all[std::hash<std::string>{}(source)];
-    if (!e) e = std::make_shared<Environment>();
-    return e;
-}
-
-struct FunctionDecl {
-    std::vector<std::string> params;
-    std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
-    std::vector<ExprPtr> defaults;           ///< null unless the parameter was written `a = expr`
-    std::vector<StmtPtr> body;
-    unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
-};
-
-// A plain class (no base type). Instances are maps, so copies share one object
-// and an unset variable stays null. A class WITH a base is not one of these:
-// it is still the component, and its fields and methods are hoisted.
-struct FieldDef {
-    std::string name;
-    unsigned char kind = KAny;
-    bool isPublic = false;
-    ExprPtr init;
-};
-struct MethodDef {
-    FunctionDecl decl;
-    bool isPublic = false;
-};
-struct UserClass {
-    std::string name;
-    std::vector<FieldDef> fields;
-    std::unordered_map<std::string, MethodDef> methods;
-    std::unordered_map<int, MethodDef> ctors;   ///< one constructor per number of arguments
-};
-
-struct Runtime {
-    std::vector<Environment> scopes{1};                 // scopes[0] = global
-    std::shared_ptr<Environment> statics;               // `static` variables shared by this script's objects
-    std::unordered_map<std::string, FunctionDecl> functions;
-    std::unordered_map<std::string, UserClass> classes;
-    Value self;                 ///< plain-class object a method or constructor is running on
-    std::string selfClass;
-    std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
+struct Runtime : okayscript::BasicRuntime<Value> {
     ScriptHost* host = nullptr;
     /// ref.Method(args) on an object reference (other.SetActive(false),
     /// door.transform.Translate(1, 0, 0), other.GetComponent<Rigidbody>()).
     Value CallOnObject(const Value& ref, const std::string& method, std::vector<Value>& args);
+    /// The engine's own dotted names (Time.deltaTime, transform.position, gameObject.name, Color.red, a component
+    /// or object reference in a variable): read / write by their whole text. EngineHooks hands them to the core.
+    Value EngineDotted(const std::string& name, bool& ok);
+    bool EngineSetDotted(const std::string& name, const Value& v);
 
     // Details of the most recent raycast()/raycast3() call, exposed to scripts
     // through ray_object()/ray_x()/ray_dist()/... accessors.
@@ -659,9 +537,6 @@ struct Runtime {
     void Resume(Coroutine* co);
     // Called on the coroutine's own thread by `yield return`.
     void YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond = Value{}, bool condWhile = false, bool real = false);
-    // Names from the call that started a coroutine (StartCoroutine(Blink(delay: 0.2))).
-    // Set only while that builtin runs, on the caller's thread.
-    const std::vector<std::string>* activeArgNames = nullptr;
     int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {});
     void StopCoroutine(Coroutine* co);
     void StopCoroutines(const std::string& fn);   // "" = all
@@ -689,126 +564,14 @@ struct Runtime {
         for (const auto& fn : due) if (functions.count(fn)) Call(fn, none);
     }
 
-    Environment& Global() { return scopes.front(); }
-
-    void Define(const std::string& n, const Value& v) {
-        Environment& e = scopes.back();
-        e.vars[n] = v;
-        if (!e.kinds.empty()) e.kinds.erase(n);
-    }
-    /// A typed / const declaration: converts the value and remembers the type.
-    void DefineTyped(const std::string& n, const Value& v, unsigned char kind) {
-        Environment& e = scopes.back();
-        e.vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
-        if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
-    }
-    /// A `static` declaration: only the first object to run it sets the value;
-    /// everyone else shares it from then on.
-    void DefineStatic(const std::string& n, const Value& v, unsigned char kind) {
-        if (!statics) statics = std::make_shared<Environment>();
-        if (statics->vars.count(n)) return;
-        statics->vars[n] = (kind & 0x0F) ? CoerceToKind(kind, v, n) : v;
-        statics->kinds[n] = kind;
-    }
-    static bool AssignIn(Environment& e, const std::string& n, const Value& v) {
-        auto f = e.vars.find(n);
-        if (f == e.vars.end()) return false;
-        if (!e.kinds.empty()) {
-            auto k = e.kinds.find(n);
-            if (k != e.kinds.end()) {
-                if (k->second & KConst) throw ScriptError("'" + n + "' is const, so it can't change after it's set", 0);
-                f->second = (k->second & 0x0F) ? CoerceToKind(k->second, v, n) : v;
-                return true;
-            }
-        }
-        f->second = v;
-        return true;
-    }
-    /// A field of the object the current method is running on (locals and parameters
-    /// are checked first by Get/Assign, so they shadow the field).
-    FieldDef* SelfField(const std::string& n) {
-        if (selfClass.empty()) return nullptr;
-        auto cit = classes.find(selfClass);
-        if (cit == classes.end()) return nullptr;
-        for (auto& f : cit->second.fields) if (f.name == n) return &f;
-        return nullptr;
-    }
-    void WriteField(const Value& inst, const FieldDef& f, const Value& v) {
-        auto mp = inst.AsMap();
-        if (!mp) throw ScriptError("can't set '" + f.name + "': the object is null");
-        (*mp)[f.name] = (f.kind & 0x0F) ? CoerceToKind(f.kind, v, f.name) : v;
-    }
-    void Assign(const std::string& n, const Value& v) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (AssignIn(*it, n, v)) return;
-        if (statics && AssignIn(*statics, n, v)) return;
-        if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
-        Global().vars[n] = v; // create global on first assignment
-    }
     /// Set a global from outside (the Inspector): converted to its declared type
     /// when it has one; a value that can't convert is ignored.
     void SetGlobalChecked(const std::string& n, const Value& v) {
         Environment& g = Global();
         auto k = g.kinds.find(n);
         if (k == g.kinds.end()) { g.vars[n] = v; return; }
-        try { g.vars[n] = CoerceToKind(k->second, v, n); } catch (const ScriptError&) {}
+        try { g.vars[n] = okayscript::CoerceToKind<Value>(k->second, v, n); } catch (const ScriptError&) {}
     }
-    Value Get(const std::string& n) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-            auto f = it->vars.find(n);
-            if (f != it->vars.end()) return f->second;
-        }
-        if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
-        if (SelfField(n)) {
-            auto mp = self.AsMap();
-            if (!mp) return Value{};
-            auto it = mp->find(n);
-            return it == mp->end() ? Value{} : it->second;
-        }
-        return Value{}; // undefined reads as 0/false/empty
-    }
-    bool Has(const std::string& n) {
-        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
-            if (it->vars.count(n)) return true;
-        if (statics && statics->vars.count(n)) return true;
-        return SelfField(n) != nullptr;
-    }
-
-    Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
-    Value InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args);
-    Value MakeInstance(const std::string& type, std::vector<Value>& args);
-    Value GetMember(const Value& inst, const std::string& name, bool external);
-    void SetMember(const Value& inst, const std::string& name, const Value& v, bool external);
-    Value CallMethod(const Value& inst, const std::string& method, std::vector<Value>& args, bool external);
-    UserClass* ClassOf(const Value& inst);
-    bool SameInstance(const Value& inst) const;
-    bool HasMethod(const std::string& name);
-
-    // C# lambdas (x => x * 2, (a, b) => { ... }): a lambda value is {"__lambda": id};
-    // calling it runs its body in a new frame on top of the current scopes, so it
-    // sees the locals of the code that called it (fine for ForEach/Find/Where...).
-    struct LambdaBody {
-        const std::vector<std::string>* params;
-        const std::vector<StmtPtr>* body;
-        const std::vector<ExprPtr>* defaults = nullptr;
-    };
-    std::unordered_map<int, LambdaBody> lambdas;
-    static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
-    Value CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
-
-    // dotted property read/write (transform.position.x, Time.timeScale,
-    // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
-    // SetDotted returns true when it handled the assignment.
-    Value GetDotted(const std::string& name, bool& ok);
-    bool  SetDotted(const std::string& name, const Value& v);
-
-    // `OnClick += handler` listeners. Fired by the engine event (CallEvent) and
-    // by raise(). A listener is a lambda value or {"__fn": "FunctionName"}.
-    struct Sub { std::string name; Value fn; };
-    std::vector<Sub> subs;
-    void AddSub(const std::string& event, const Value& fn);
-    void RemoveSub(const std::string& event, const Value& fn);
-    void FireSubs(const std::string& event, std::vector<Value>& args);
-    bool HasSub(const std::string& event) const;
 };
 
 // A component reference returned by GetComponent<T>(): the string "@T" for this
@@ -916,7 +679,7 @@ struct OkayScriptVM::Impl {
     // Tweens and timers outlive a call; their callbacks check this so they do
     // nothing once the script is gone (its component removed or reloaded).
     std::shared_ptr<int> life = std::make_shared<int>(0);
-    std::vector<StmtPtr> topLevel;
+    std::unique_ptr<okayscript::Program> program;   // the loaded source: functions, classes and lambdas point into it
     bool loaded = false;
     ~Impl() { rt.StopCoroutines(""); }   // unwind every suspended coroutine thread
     // "Bare mode": a script with NO functions at all — its top-level statements ARE the

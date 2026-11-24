@@ -90,8 +90,8 @@ int main() {
         InstallStandardLibrary(in);
         in.Define("add", [](Args& a) { return Value{a.Number(0) + a.Number(1)}; }, Arity::Exactly(2));
         in.Define("first", [](Args& a) { return a.List(0)->empty() ? Value{} : a.List(0)->front(); }, Arity::Exactly(1));
-        CHECK_EQ(Run("var x = 1\nvar y = add(x, \"two\")", &in), std::string("ERROR runtime 2: add(): argument 2 must be a number, got string"));
-        CHECK_EQ(Run("first(5)", &in), std::string("ERROR runtime 1: first(): argument 1 must be a list, got number"));
+        CHECK_EQ(Run("var x = 1\nvar y = add(x, \"two\")", &in), std::string("ERROR runtime 2: add(): argument 2 must be a number, got text"));
+        CHECK_EQ(Run("first(5)", &in), std::string("ERROR runtime 1: first(): argument 1 must be a list, got a number"));
     }
     TEST("errors a native raises itself, and C++ exceptions, carry the line");
     {

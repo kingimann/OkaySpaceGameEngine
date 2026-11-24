@@ -1,0 +1,512 @@
+#pragma once
+// Scopes, typed variables and calls (natives, script functions, lambdas, methods by dotted name) of the OkayScript core.
+// Written for this project; the rules are the engine OkayScriptVM's (engine/src/Scripting/OkayScriptVM.cpp).
+#include "okayscript/Runtime.hpp"
+#include "okayscript/detail/Support.hpp"
+#include "okayscript/detail/ValueMethods.ipp"
+
+namespace okayscript {
+
+namespace detail {
+struct CallDepthGuard {
+    int& depth;
+    CallDepthGuard(int& d, int max, const std::string& what) : depth(d) {
+        if (depth >= max) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", 0);
+        ++depth;
+    }
+    ~CallDepthGuard() { --depth; }
+    CallDepthGuard(const CallDepthGuard&) = delete;
+    CallDepthGuard& operator=(const CallDepthGuard&) = delete;
+};
+inline bool AnyNamed(const std::vector<std::string>* names) {
+    if (!names) return false;
+    for (const std::string& n : *names) if (!n.empty()) return true;
+    return false;
+}
+// Lay call arguments onto parameter slots. Extra positional arguments are ignored (engine rule).
+template <class V>
+void PlaceArgs(const std::vector<std::string>& params, const std::vector<V>& args, const std::vector<std::string>* names,
+               std::vector<char>& present, std::vector<V>& slot, const std::string& what) {
+    present.assign(params.size(), 0);
+    slot.assign(params.size(), V{});
+    bool sawNamed = false;
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string nm = (names && i < names->size()) ? (*names)[i] : std::string();
+        if (nm.empty()) {
+            if (sawNamed) throw RuntimeError(what + ": a value without a name can't follow a named one", 0);
+            if (next >= params.size()) continue;
+            slot[next] = args[i]; present[next] = 1; ++next;
+        } else {
+            sawNamed = true;
+            std::size_t idx = params.size();
+            for (std::size_t p = 0; p < params.size(); ++p) if (params[p] == nm) { idx = p; break; }
+            if (idx == params.size()) throw RuntimeError(what + " has no parameter '" + nm + "'", 0);
+            if (present[idx]) throw RuntimeError(what + ": '" + nm + "' was given twice", 0);
+            slot[idx] = args[i]; present[idx] = 1;
+        }
+    }
+}
+template <class V> struct PopScope {
+    std::vector<BasicEnvironment<V>>& s;
+    ~PopScope() { s.pop_back(); }
+};
+} // namespace detail
+
+// ---- Scopes ------------------------------------------------------------------------------------------------------
+template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v) {
+    Env& e = scopes.back();
+    e.vars[n] = v;
+    if (!e.kinds.empty()) e.kinds.erase(n);
+}
+template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const V& v, unsigned char kind) {
+    Env& e = scopes.back();
+    e.vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
+    if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
+}
+namespace detail {
+template <class V> bool AssignIn(BasicEnvironment<V>& e, const std::string& n, const V& v) {
+    auto f = e.vars.find(n);
+    if (f == e.vars.end()) return false;
+    if (!e.kinds.empty()) {
+        auto k = e.kinds.find(n);
+        if (k != e.kinds.end()) {
+            if (k->second & KConst) throw RuntimeError("'" + n + "' is const, so it can't change after it's set", 0);
+            f->second = (k->second & 0x0F) ? CoerceToKind<V>(k->second, v, n) : v;
+            return true;
+        }
+    }
+    f->second = v;
+    return true;
+}
+} // namespace detail
+// Every scope on the stack is searched, innermost first, then the globals (dynamic scoping, as in the engine): a
+// function also sees the locals of the functions that called it, and a lambda the locals of whoever calls it.
+// Then the shared statics, then (inside a method) the fields of the object it runs on.
+template <class V> void BasicRuntime<V>::Assign(const std::string& n, const V& v) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (detail::AssignIn(*it, n, v)) return;
+    if (statics && detail::AssignIn(*statics, n, v)) return;
+    if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
+    Global().vars[n] = v;   // a new name becomes a global
+}
+template <class V> V BasicRuntime<V>::Get(const std::string& n) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        auto f = it->vars.find(n);
+        if (f != it->vars.end()) return f->second;
+    }
+    if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
+    if (const_cast<BasicRuntime*>(this)->SelfField(n)) {
+        auto mp = self.AsMap();
+        if (!mp) return V{};
+        auto it = mp->find(n);
+        return it == mp->end() ? V{} : it->second;
+    }
+    return V{};   // never set: 0
+}
+template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
+        if (it->vars.count(n)) return true;
+    if (statics && statics->vars.count(n)) return true;
+    return const_cast<BasicRuntime*>(this)->SelfField(n) != nullptr;
+}
+
+// ---- Statics -----------------------------------------------------------------------------------------------------
+template <class V> void BasicRuntime<V>::DefineStatic(const std::string& n, const V& v, unsigned char kind) {
+    if (!statics) statics = std::make_shared<Env>();
+    if (statics->vars.count(n)) return;   // only the first run sets it
+    statics->vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
+    statics->kinds[n] = kind;
+}
+template <class V> std::shared_ptr<BasicEnvironment<V>> BasicRuntime<V>::SharedStatics(const std::string& source) {
+    static std::unordered_map<std::size_t, std::shared_ptr<Env>> all;
+    auto& e = all[std::hash<std::string>{}(source)];
+    if (!e) e = std::make_shared<Env>();
+    return e;
+}
+
+// ---- Plain classes -----------------------------------------------------------------------------------------------
+template <class V> UserClass* BasicRuntime<V>::ClassOf(const V& inst) {
+    auto mp = inst.AsMap();
+    if (!mp) return nullptr;
+    auto tag = mp->find("__class");
+    if (tag == mp->end() || !tag->second.IsString()) return nullptr;
+    auto cit = classes.find(tag->second.AsString());
+    return cit == classes.end() ? nullptr : const_cast<UserClass*>(cit->second);
+}
+template <class V> bool BasicRuntime<V>::SameInstance(const V& inst) const {
+    auto a = self.AsMap(), b = inst.AsMap();
+    return a && b && a.get() == b.get();
+}
+template <class V> bool BasicRuntime<V>::HasMethod(const std::string& name) {
+    if (selfClass.empty() || name.find('.') != std::string::npos) return false;
+    auto cit = classes.find(selfClass);
+    return cit != classes.end() && cit->second->methods.count(name) != 0;
+}
+namespace detail {
+inline const FieldDef* FindField(const UserClass& c, const std::string& n) {
+    for (auto& f : c.fields) if (f.name == n) return &f;
+    return nullptr;
+}
+} // namespace detail
+template <class V> const FieldDef* BasicRuntime<V>::SelfField(const std::string& n) {
+    if (selfClass.empty()) return nullptr;
+    auto cit = classes.find(selfClass);
+    if (cit == classes.end()) return nullptr;
+    return detail::FindField(*cit->second, n);
+}
+template <class V> void BasicRuntime<V>::WriteField(const V& inst, const FieldDef& f, const V& v) {
+    auto mp = inst.AsMap();
+    if (!mp) throw RuntimeError("can't set '" + f.name + "': the object is null", 0);
+    (*mp)[f.name] = (f.kind & 0x0F) ? CoerceToKind<V>(f.kind, v, f.name) : v;
+}
+template <class V> V BasicRuntime<V>::GetMember(const V& inst, const std::string& name, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw RuntimeError("no field '" + name + "' on this value", 0);
+    const FieldDef* f = detail::FindField(*c, name);
+    if (!f) throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    if (external && !f->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
+    auto mp = inst.AsMap();
+    auto it = mp->find(name);
+    return it == mp->end() ? V{} : it->second;
+}
+template <class V> void BasicRuntime<V>::SetMember(const V& inst, const std::string& name, const V& v, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw RuntimeError("can't set '" + name + "' on this value", 0);
+    const FieldDef* f = detail::FindField(*c, name);
+    if (!f) throw RuntimeError(c->name + " has no field '" + name + "'", 0);
+    if (external && !f->isPublic && !SameInstance(inst)) throw RuntimeError("'" + name + "' is private on " + c->name, 0);
+    WriteField(inst, *f, v);
+}
+namespace detail {
+// Runs `fn` with `self` set to an object, and puts the old one back afterwards (also when it throws).
+template <class V> struct SelfScope {
+    BasicRuntime<V>& r; V prev; std::string prevClass;
+    SelfScope(BasicRuntime<V>& rt, const V& inst, const std::string& cls) : r(rt), prev(rt.self), prevClass(rt.selfClass) {
+        r.self = inst; r.selfClass = cls;
+    }
+    ~SelfScope() { r.self = prev; r.selfClass = prevClass; }
+    SelfScope(const SelfScope&) = delete;
+    SelfScope& operator=(const SelfScope&) = delete;
+};
+} // namespace detail
+template <class V> V BasicRuntime<V>::CallMethod(const V& inst, const std::string& method, std::vector<V>& args, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw RuntimeError("no method '" + method + "' on this value", 0);
+    auto mit = c->methods.find(method);
+    if (mit == c->methods.end()) {
+        if (const FieldDef* f = detail::FindField(*c, method)) {
+            if (external && !f->isPublic && !SameInstance(inst))
+                throw RuntimeError("'" + method + "' is private on " + c->name, 0);
+            auto mp = inst.AsMap();
+            auto it = mp->find(method);
+            V fv = it == mp->end() ? V{} : it->second;
+            if (IsLambda(fv)) return CallLambda(fv, args);
+        }
+        throw RuntimeError(c->name + " has no method '" + method + "'", 0);
+    }
+    if (external && !mit->second.isPublic && !SameInstance(inst))
+        throw RuntimeError("'" + method + "' is private on " + c->name, 0);
+    detail::SelfScope<V> scope(*this, inst, c->name);
+    FunctionDecl& decl = mit->second.decl;
+    if (decl.name.empty()) decl.name = c->name + "." + method;
+    return Invoke(decl, args, nullptr);
+}
+template <class V> V BasicRuntime<V>::MakeInstance(const std::string& type, std::vector<V>& args) {
+    detail::CallDepthGuard guard(CallDepth(), limits.maxCallDepth, "new " + type);
+    auto cit = classes.find(type);
+    if (cit == classes.end()) throw RuntimeError("no class named '" + type + "'", 0);
+    UserClass& c = *const_cast<UserClass*>(cit->second);
+    V inst = V::MakeMap();
+    (*inst.AsMap())["__class"] = V{type};
+    detail::SelfScope<V> scope(*this, inst, type);
+    for (auto& f : c.fields) {
+        V v = f.init ? Eval(*f.init) : DefaultForKind<V>(f.kind);
+        if (f.kind & 0x0F) v = CoerceToKind<V>(f.kind, v, f.name);
+        (*inst.AsMap())[f.name] = std::move(v);
+    }
+    auto ct = c.ctors.find((int)args.size());
+    if (ct != c.ctors.end()) {
+        if (ct->second.decl.name.empty()) ct->second.decl.name = type;
+        Invoke(ct->second.decl, args, nullptr);
+    } else if (!args.empty() || !c.ctors.empty()) {
+        throw RuntimeError(type + " has no constructor that takes " + std::to_string(args.size()) +
+                           (args.size() == 1 ? " value" : " values"), 0);
+    }
+    return inst;
+}
+
+// ---- Events ------------------------------------------------------------------------------------------------------
+namespace detail {
+template <class V> bool SameListener(const V& a, const V& b) {
+    auto ma = a.AsMap(), mb = b.AsMap();
+    if (!ma || !mb) return false;
+    if (ma->count("__lambda") && mb->count("__lambda")) return (*ma)["__lambda"].AsFloat() == (*mb)["__lambda"].AsFloat();
+    if (ma->count("__fn") && mb->count("__fn")) return (*ma)["__fn"].AsString() == (*mb)["__fn"].AsString();
+    return false;
+}
+} // namespace detail
+template <class V> void BasicRuntime<V>::AddSub(const std::string& event, const V& fn) { subs.push_back(Sub{event, fn}); }
+template <class V> void BasicRuntime<V>::RemoveSub(const std::string& event, const V& fn) {
+    auto canon = [&](const std::string& n) { return canonEvent ? canonEvent(n) : n; };
+    const std::string c = canon(event);
+    for (auto it = subs.begin(); it != subs.end(); ++it)
+        if (canon(it->name) == c && detail::SameListener(it->fn, fn)) { subs.erase(it); return; }
+}
+template <class V> bool BasicRuntime<V>::HasSub(const std::string& event) const {
+    auto canon = [&](const std::string& n) { return canonEvent ? canonEvent(n) : n; };
+    const std::string c = canon(event);
+    for (const auto& s : subs) if (canon(s.name) == c) return true;
+    return false;
+}
+template <class V> void BasicRuntime<V>::FireSubs(const std::string& event, std::vector<V>& args) {
+    auto canon = [&](const std::string& n) { return canonEvent ? canonEvent(n) : n; };
+    const std::string c = canon(event);
+    const std::vector<Sub> snap = subs;
+    for (const Sub& s : snap) {
+        if (canon(s.name) != c) continue;
+        auto m = s.fn.AsMap();
+        if (!m) continue;
+        if (m->count("__fn")) {
+            const std::string fn = (*m)["__fn"].AsString();
+            if (functions.count(fn)) Call(fn, args);
+            continue;
+        }
+        if (IsLambda(s.fn)) CallLambda(s.fn, args);
+    }
+}
+
+template <class V> void BasicRuntime<V>::CountIteration(long long& n, const char* what) const {
+    if (limits.maxLoopIterations > 0 && ++n > limits.maxLoopIterations)
+        throw RuntimeError(std::string(what) + " exceeded iteration limit", 0);
+}
+
+// ---- Dotted names ------------------------------------------------------------------------------------------------
+template <class V> V BasicRuntime<V>::GetDotted(const std::string& name, bool& ok) {
+    ok = true;
+    V out;
+    if (hooks && hooks->ReadName(*this, name, out)) return out;
+    const auto dot = name.rfind('.');
+    if (dot != std::string::npos) {
+        const std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
+        if (base == "this" && detail::IsClassInstance(self)) return GetMember(self, prop, false);
+        if (base.find('.') == std::string::npos) {
+            if (Has(base)) {
+                const V bv = Get(base);
+                if (detail::IsClassInstance(bv)) return GetMember(bv, prop, true);
+                if (hooks && hooks->GetMember(*this, bv, prop, out)) return out;
+                if (detail::ValueProperty<V>(bv, prop, out)) return out;
+                if (hooks && hooks->GetMemberLast(*this, bv, prop, out)) return out;
+            }
+        } else {
+            bool inner = false;
+            const V bv = GetDotted(base, inner);
+            if (inner && detail::IsClassInstance(bv)) return GetMember(bv, prop, true);
+            if (inner && hooks && hooks->GetMember(*this, bv, prop, out)) return out;
+            if (inner && detail::ValueProperty<V>(bv, prop, out)) return out;
+            if (inner && hooks && hooks->GetMemberLast(*this, bv, prop, out)) return out;
+        }
+    }
+    ok = false;
+    return V{};
+}
+template <class V> bool BasicRuntime<V>::SetDotted(const std::string& name, const V& v) {
+    const auto dot = name.rfind('.');
+    if (dot == std::string::npos) return false;
+    const std::string base = name.substr(0, dot), field = name.substr(dot + 1);
+    if (base.find('.') == std::string::npos) {
+        if (base == "this" && detail::IsClassInstance(self)) { SetMember(self, field, v, false); return true; }
+        if (Has(base) && detail::IsClassInstance(Get(base))) { SetMember(Get(base), field, v, true); return true; }
+    }
+    if (hooks && hooks->WriteName(*this, name, v)) return true;
+    V bv;
+    if (base.find('.') == std::string::npos) {
+        if (!Has(base)) return false;
+        bv = Get(base);
+    } else {
+        bool ok = false;
+        bv = GetDotted(base, ok);
+        if (!ok) return false;
+    }
+    if (auto m = bv.AsMap()) { (*m)[field] = v; return true; }   // m.key = v
+    // v.x = 3 on a variable holding a vector
+    if (base.find('.') == std::string::npos && field.size() == 1 && (field[0] == 'x' || field[0] == 'y' || field[0] == 'z')) {
+        auto vec = bv.AsVec3();
+        if (field[0] == 'x') vec.x = v.AsFloat(); else if (field[0] == 'y') vec.y = v.AsFloat(); else vec.z = v.AsFloat();
+        Assign(base, V{vec});
+        return true;
+    }
+    return false;
+}
+
+// ---- Calls -------------------------------------------------------------------------------------------------------
+
+template <class V> bool BasicRuntime<V>::IsLambda(const V& v) { return detail::IsLambdaValue(v); }
+
+template <class V>
+V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names) {
+    const std::string what = fn.name + "()";
+    detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, what);
+    std::vector<char> present;
+    std::vector<V> slot;
+    detail::PlaceArgs<V>(fn.params, args, names, present, slot, what);
+    scopes.push_back(Env{});
+    detail::PopScope<V> pop{scopes};
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+        V v;
+        if (present[i]) v = slot[i];
+        else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
+        else v = k ? DefaultForKind<V>(k) : V{};
+        if (!k) Define(fn.params[i], v);
+        else DefineTyped(fn.params[i], v, k);
+    }
+    V ret;
+    try {
+        for (auto& s : fn.body) Run(*s);
+    } catch (ReturnSignal<V>& rs) {
+        ret = rs.value;
+    } catch (BreakSignal&) {       // a stray break/continue (no loop around it) ends the function
+    } catch (ContinueSignal&) {
+    }
+    if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what);
+    return ret;
+}
+
+template <class V>
+V BasicRuntime<V>::Call(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names, int line) {
+    line = Ln(line);
+    try {
+        auto bi = builtins.find(name);
+        if (bi != builtins.end() && !natives.count(name)) {
+            if (detail::AnyNamed(names) && !namedArgBuiltins.count(name))
+                throw RuntimeError("'" + name + "' doesn't take named arguments", line);
+            const std::vector<std::string>* prev = activeArgNames;
+            activeArgNames = names;
+            struct Restore { const std::vector<std::string>*& p; const std::vector<std::string>* v; ~Restore() { p = v; } } restore{activeArgNames, prev};
+            return bi->second(args);
+        }
+        auto nat = natives.find(name);
+        if (nat != natives.end()) {
+            if (detail::AnyNamed(names)) throw RuntimeError("'" + name + "' doesn't take named arguments", line);
+            const BasicNative<V>& n = nat->second;
+            if (!n.arity.Accepts(args.size()))
+                throw RuntimeError(name + "() takes " + n.arity.Describe() + ", got " + std::to_string(args.size()), line);
+            BasicArgs<V> a(*this, name, args, line);
+            try {
+                return n.fn(a);
+            } catch (const ScriptError&) {
+                throw;
+            } catch (const std::exception& e) {   // a C++ error inside a native is a script error on this line
+                throw RuntimeError(name + "(): " + e.what(), line);
+            }
+        }
+        if (HasMethod(name)) return CallMethod(self, name, args, false);   // inside a method, its class's own first
+        auto f = functions.find(name);
+        if (f != functions.end()) return Invoke(*f->second, args, names);
+
+        // `name.Method(...)` on a variable: s.ToUpper(), xs.Add(3), m.ContainsKey("a").
+        const auto dot = name.rfind('.');
+        if (dot != std::string::npos && dot > 0) {
+            const std::string base = name.substr(0, dot), method = name.substr(dot + 1);
+            bool ok = false;
+            V obj;
+            if (base.find('.') == std::string::npos) {
+                if (base == "this" && detail::IsClassInstance(self)) { obj = self; ok = true; }
+                else if (Has(base)) { obj = Get(base); ok = true; }
+            }
+            if (!ok) obj = GetDotted(base, ok);
+            if (ok && detail::IsClassInstance(obj)) return CallMethod(obj, method, args, true);
+            V out;
+            if (ok && hooks && hooks->CallMember(*this, obj, method, args, out)) return out;
+            detail::LambdaInvoker<V> inv = [this](const V& fv, std::vector<V>& xs) { return CallLambda(fv, xs); };
+            if (ok && detail::CallValueMethod<V>(obj, method, args, out, &inv)) return out;
+            if (ok && obj.AsMap()) {   // a lambda stored in a map: m.handler(1)
+                auto it = obj.AsMap()->find(method);
+                if (it != obj.AsMap()->end() && IsLambda(it->second)) return CallLambda(it->second, args, names);
+            }
+        }
+        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args, names);   // Action f = () => ...; f();
+        V out;
+        if (hooks && hooks->CallUnknown(*this, name, args, out)) return out;
+        throw RuntimeError("call to undefined function '" + name + "'", line);
+    } catch (ScriptError& e) {
+        if (e.line == 0) e.line = line;
+        throw;
+    }
+}
+
+template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& args, const std::vector<std::string>* names) {
+    auto m = f.AsMap();
+    if (!m) throw RuntimeError("not a function", 0);
+    auto it = m->find("__lambda");
+    if (it == m->end()) throw RuntimeError("not a function", 0);
+    auto lb = lambdas.find(detail::SafeInt(it->second.AsFloat()));
+    if (lb == lambdas.end()) throw RuntimeError("lambda is no longer available", 0);
+    detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, "a lambda");
+    const auto& ps = *lb->second.params;
+    const std::vector<ExprPtr>* defs = lb->second.defaults;
+    std::vector<char> present;
+    std::vector<V> slot;
+    detail::PlaceArgs<V>(ps, args, names, present, slot, "lambda");
+    scopes.push_back(Env{});
+    detail::PopScope<V> pop{scopes};
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        V v;
+        if (present[i]) v = slot[i];
+        else if (defs && i < defs->size() && (*defs)[i]) v = Eval(*(*defs)[i]);
+        Define(ps[i], v);
+    }
+    V ret;
+    try { for (auto& st : *lb->second.body) Run(*st); }
+    catch (ReturnSignal<V>& rs) { ret = rs.value; }
+    return ret;
+}
+
+template <class V> V BasicRuntime<V>::CallValue(const V& fn, std::vector<V>& args, const std::vector<std::string>* names) {
+    if (IsLambda(fn)) return CallLambda(fn, args, names);
+    if (auto m = fn.AsMap()) {
+        auto it = m->find("__fn");
+        if (it != m->end()) return Call(it->second.AsString(), args, names);
+    }
+    if (fn.IsString()) return Call(fn.AsString(), args, names);
+    throw RuntimeError(std::string("not a function (") + detail::ValueKindName(fn) + ")", 0);
+}
+
+// ---- Natives -----------------------------------------------------------------------------------------------------
+template <class V> void BasicArgs<V>::Fail(const std::string& message) const { throw RuntimeError(m_name + "(): " + message, m_line); }
+template <class V> void BasicArgs<V>::Need(std::size_t i, const char* type) const {
+    if (i >= m_values.size()) Fail("argument " + std::to_string(i + 1) + " is missing (" + type + " expected)");
+    Fail("argument " + std::to_string(i + 1) + " must be " + type + ", got " + detail::ValueKindName(m_values[i]));
+}
+template <class V> double BasicArgs<V>::Number(std::size_t i) const {
+    if (i >= m_values.size() || !m_values[i].IsNumber()) Need(i, "a number");
+    return m_values[i].AsFloat();
+}
+template <class V> std::string BasicArgs<V>::String(std::size_t i) const {
+    if (i >= m_values.size() || !m_values[i].IsString()) Need(i, "text");
+    return m_values[i].AsString();
+}
+template <class V> bool BasicArgs<V>::Bool(std::size_t i) const {
+    if (i >= m_values.size() || !m_values[i].IsBool()) Need(i, "true/false");
+    return m_values[i].AsBool();
+}
+template <class V>
+typename std::decay_t<decltype(std::declval<V>().AsArray())> BasicArgs<V>::List(std::size_t i) const {
+    if (i >= m_values.size() || !m_values[i].AsArray()) Need(i, "a list");
+    return m_values[i].AsArray();
+}
+template <class V>
+typename std::decay_t<decltype(std::declval<V>().AsMap())> BasicArgs<V>::Map(std::size_t i) const {
+    if (i >= m_values.size() || !m_values[i].AsMap()) Need(i, "a map");
+    return m_values[i].AsMap();
+}
+template <class V> V BasicArgs<V>::Call(const V& fn, std::vector<V> args) const {
+    try {
+        return m_rt.CallValue(fn, args);
+    } catch (ScriptError& e) {
+        if (e.line == 0) e.line = m_rt.Ln(m_line);
+        throw;
+    }
+}
+
+} // namespace okayscript

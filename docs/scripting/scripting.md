@@ -1752,16 +1752,19 @@ function on_trigger()   { /* entered a trigger volume */ }
 - **Where:** `okayscript/` (library `okayscript_lang`, C++17 standard library only; CLI `okayscript_cli`, program name
   `okayscript`). Headers in `okayscript/include/okayscript/`: `Token`, `Lexer`, `Error`, `Ast`, `Parser`, `Value`,
   `Environment`, `Interpreter`, `Native`, `Stdlib`, `OkayScript` (all of them).
-- **Shared with the engine today:** only the lexer. `Tok`, `Token`, `ScriptError` and `Lexer` moved out of
-  `engine/src/Scripting/OkayScriptVMInternal.hpp` unchanged; the engine VM uses them through `using` lines and links
-  `okayscript_lang`. The engine's parser, syntax tree and runtime are still its own.
-- **Language:** the engine VM's grammar and rules without classes, coroutines, events, statics and scene objects.
-  Same rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so lambdas
-  do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==` compares text as
-  text, anything else as numbers. Numbers are 32-bit floats in both. Differences from the engine: a
-  declaration's words stop at the end of its line; `"abc"[1]` gives `"b"`; `m.key = v` sets a map entry; runtime errors
-  carry the line of the statement that failed; `print` of a lambda shows `<function>`.
-- **Natives:** `Interpreter::Define(name, fn, Arity)`. `Args::Number/String/Bool/List/Map(i)` check one argument's type;
+- **Shared with the engine:** everything. The parser, syntax tree and interpreter core are templates over the value
+  type (`Runtime.hpp`, `detail/*.ipp`). The CLI runs them on `okayscript::Value`; `engine/src/Scripting/OkayScriptVM.cpp`
+  instantiates them for `vs::VsValue`, derives its `Runtime` from `BasicRuntime` (timers, coroutines, raycast
+  results), registers its commands as raw `builtins`, and answers scene names, object references, components and
+  `yield return` through `EngineHooks` (a `BasicHost`). The engine's old parser and runtime are gone.
+- **Language:** C#-style and C-style syntax with classes, enums, statics, events, lambdas, coroutines (when the host
+  runs them). Rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so
+  lambdas do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==`
+  compares text as text, anything else as numbers. Numbers are 32-bit floats. Changes made while moving the engine on:
+  a declaration's words stop at the end of its line; `switch`/`try`/`catch`/`throw` at the top level are statements,
+  not functions; `xs[i] %= n` works; `m.key = v` sets a map entry. The engine sets `Limits::runtimeErrorLines` off,
+  so its runtime errors keep no line; the CLI and embedders get the line.
+- **Natives:** `Interpreter::Define(name, fn, Arity)` (raw `Runtime::builtins` take the values only, as the engine's do). `Args::Number/String/Bool/List/Map(i)` check one argument's type;
   `Args::Fail` and any C++ exception become a runtime error on the calling line. Natives are found before script
   functions (engine order). `okayscript::Host` (`ReadName`, `WriteName`, `CallUnknown`) is the seam for an embedder's
   own names; the engine is meant to fill it in when it moves onto the library.

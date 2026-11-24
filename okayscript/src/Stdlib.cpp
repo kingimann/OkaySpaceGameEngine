@@ -57,7 +57,7 @@ void InstallStandardLibrary(Interpreter& in) {
         const Value& v = a[0];
         if (v.IsNumber()) return v;
         if (v.IsBool()) return Value{v.AsBool() ? 1.0 : 0.0};
-        double d = 0.0;
+        float d = 0.0f;
         if (v.IsString() && Value::ParseFinite(v.AsString(), d)) return Value{d};
         a.Fail("'" + v.AsString() + "' is not a number");
     }, Arity::Exactly(1));

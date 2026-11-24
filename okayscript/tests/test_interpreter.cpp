@@ -143,7 +143,7 @@ int main() {
     CHECK_EQ(Run("var s = \"  Hello  \"\nprint(s.Trim().ToUpper(), s.Length, s.Trim().Length)"), std::string("HELLO 9 5\n"));
     CHECK_EQ(Run("var s = \"a,b,c\"\nvar parts = s.Split(\",\")\nprint(parts, parts.Count, s.Replace(\",\", \"-\"), s.IndexOf(\"b\"))"),
              std::string("[a, b, c] 3 a-b-c 2\n"));
-    CHECK_EQ(Run("var s = \"abc\"\nprint(s[1], s.Substring(1, 1), s.Contains(\"bc\"), s.StartsWith(\"ab\"))"), std::string("b b true true\n"));
+    CHECK_EQ(Run("var s = \"abc\"\nprint(s[1], s.Substring(1, 1), s.Contains(\"bc\"), s.StartsWith(\"ab\"))"), std::string("0 b true true\n"));   // indexing text reads 0 (engine rule)
     CHECK_EQ(Run("var xs = []\nxs.Add(3)\nxs.Add(1)\nxs.Add(2)\nxs.Sort()\nprint(xs, xs.Count, xs.Contains(2), xs.IndexOf(3))"),
              std::string("[1, 2, 3] 3 true 2\n"));
     CHECK_EQ(Run("var xs = [5, 6]\nxs[0] = 9\nxs[2] = 7\nxs[1] += 4\nprint(xs, xs[10])"), std::string("[9, 10, 7] 0\n"));

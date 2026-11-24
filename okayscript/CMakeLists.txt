@@ -1,17 +1,15 @@
 # OkayScript: our own scripting language as a library that depends only on the C++17 standard library, so programs
-# other than the engine can use it. The engine's OkayScriptVM uses its lexer (Token/Lexer/Error); the parser,
-# interpreter, native-function API and standard library here are the standalone runtime (docs/scripting/scripting.md
-# "Standalone OkayScript"). Nothing in this folder may include an engine header: only include/ is on the include path,
-# and the okayscript_no_engine test checks the sources and the CLI's link line.
+# other than the engine can use it. It holds the whole language: lexer, parser, syntax tree, and the interpreter core
+# (a template over the value type, Runtime.hpp). The engine's OkayScriptVM runs this same core on its own value
+# (engine/src/Scripting/OkayScriptVM.cpp) and adds its builtins and scene names. Nothing in this folder may include an
+# engine header: only include/ is on the include path, and the okayscript_no_engine test checks the sources and the
+# CLI's link line (docs/scripting/scripting.md "Standalone OkayScript").
 add_library(okayscript_lang STATIC
     src/Lexer.cpp
     src/Value.cpp
     src/Ast.cpp
     src/Parser.cpp
-    src/Eval.cpp
-    src/Runtime.cpp
-    src/ValueMethods.cpp
-    src/Interpreter.cpp
+    src/Instantiate.cpp
     src/Stdlib.cpp
 )
 target_include_directories(okayscript_lang PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

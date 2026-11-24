@@ -11,9 +11,9 @@
 //   abs sqrt pow floor ceil round min max sin cos tan clamp   math on numbers (min/max take 1 or more)
 //   exit([code])                     stop the program (the CLI ends with that code)
 // and the global constant PI.
-namespace okayscript {
+#include "okayscript/Interpreter.hpp"
 
-class Interpreter;
+namespace okayscript {
 
 void InstallStandardLibrary(Interpreter& interp);
 

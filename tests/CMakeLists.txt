@@ -1037,11 +1037,15 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
 # OkayScript, the standalone language (okayscript/, docs/scripting/scripting.md "Standalone OkayScript"): its tests link
 # only okayscript_lang, never the engine. Lexer, parser, interpreter, natives and errors run real code and check output.
-foreach(_oks lexer parser interpreter native errors)
+foreach(_oks lexer parser interpreter native errors classes)
     add_executable(test_okayscript_lang_${_oks} ${PROJECT_SOURCE_DIR}/okayscript/tests/test_${_oks}.cpp)
     target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
     add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
 endforeach()
+# The same core instantiated for the engine's own value (vs::VsValue), as the engine's OkayScriptVM runs it.
+add_executable(test_okayscript_engine_value test_okayscript_engine_value.cpp)
+target_link_libraries(test_okayscript_engine_value PRIVATE okay::engine okayscript::lang)
+add_test(NAME okayscript_engine_value COMMAND test_okayscript_engine_value)
 # The okayscript CLI: each tests/okayscript_cli/<case> runs the real program and checks stdout, stderr and the exit code.
 file(GLOB _oks_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
      ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.out ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.err

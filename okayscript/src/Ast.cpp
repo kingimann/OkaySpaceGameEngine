@@ -1,6 +1,7 @@
 // Dump(): the syntax tree as small S-expressions, for tests and debugging. Written for this project.
 #include "okayscript/Ast.hpp"
-#include "okayscript/Interpreter.hpp"
+#include "okayscript/Environment.hpp"
+#include "okayscript/Value.hpp"
 
 namespace okayscript {
 
@@ -29,7 +30,7 @@ std::string DumpList(const StmtList& list) {
     return s + ")";
 }
 
-std::string NumberExpr::Dump() const { return Value::FormatNumber(v); }
+std::string NumberExpr::Dump() const { return Value::FormatNumber((float)v); }
 std::string StringExpr::Dump() const { return Quote(v); }
 std::string BoolExpr::Dump() const { return v ? "true" : "false"; }
 std::string InterpStringExpr::Dump() const {
@@ -69,6 +70,12 @@ std::string LambdaExpr::Dump() const {
     for (std::size_t i = 0; i < params.size(); ++i) s += (i ? " " : "") + params[i];
     return s + ") " + DumpList(body) + ")";
 }
+
+std::string NewExpr::Dump() const { return "(new " + type + ArgList(args) + ")"; }
+std::string EventOrCompoundExpr::Dump() const {
+    return std::string("(") + (remove ? "-=" : "+=") + " " + name + " " + rhs->Dump() + ")";
+}
+std::string YieldStmt::Dump() const { return "(yield " + Opt(e) + ")"; }
 
 std::string ExprStmt::Dump() const { return e->Dump(); }
 std::string VarDeclStmt::Dump() const {

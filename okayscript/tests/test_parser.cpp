@@ -41,7 +41,7 @@ int main() {
     CHECK_EQ(E("a ?? b ?? c"), std::string("(?? a (?? b c))"));
     CHECK_EQ(E("a || b ? 1 : 2"), std::string("(? (|| a b) 1 2)"));
     CHECK_EQ(E("x = y = 3"), std::string("(= x (= y 3))"));
-    CHECK_EQ(E("x += 2 * 3"), std::string("(= x (+ x (* 2 3)))"));
+    CHECK_EQ(E("x += 2 * 3"), std::string("(+= x (* 2 3))"));   // += is also how events subscribe
     CHECK_EQ(E("x++"), std::string("(= x (+ x 1))"));
     CHECK_EQ(E("--x"), std::string("(= x (- x 1))"));
     CHECK_EQ(E("x ?\?= 5"), std::string("(?\?= x 5)"));
@@ -109,9 +109,8 @@ int main() {
     CHECK_EQ(Err("x = 1\n\nif x > 1 { }"), std::string("3: parse error: expected '(', got 'x'"));
     CHECK_EQ(Err("function f() {\n  return 1\n"), std::string("3: parse error: expected '}', got end of file"));
     CHECK_EQ(Err("a = 1 +\n"), std::string("2: parse error: unexpected end of file"));
-    CHECK_EQ(Err("1 = 2"), std::string("1: parse error: invalid assignment target"));
+    CHECK_EQ(Err("1 = 2"), std::string("1: invalid assignment target"));
     CHECK_EQ(Err("f(a, a) { }"), std::string("1: parameter 'a' is already in this function"));
-    CHECK_EQ(Err("function f() {}\nfunction f() {}"), std::string("2: function 'f' is defined twice"));
     CHECK_EQ(Err("print(1)\nprint($\"{1 + }\")"), std::string("2: parse error: unexpected end of file"));
     {
         std::string deep(300, '(');

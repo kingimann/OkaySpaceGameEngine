@@ -53,10 +53,7 @@ fs::path FileArg(const std::string& file, const std::string& project) {
 }
 
 std::string Canon(const std::string& p) {
-    std::error_code ec;
-    fs::path c = fs::weakly_canonical(fs::absolute(p, ec), ec);
-    std::string s = c.generic_string();
-    while (s.size() > 1 && s.back() == '/') s.pop_back();
+    std::string s = LongPath(p);   // git prints long names; the person's path may hold a short one (RUNNER~1)
 #if defined(_WIN32)
     s = okay::str::LowerAscii(s);
 #endif
@@ -331,13 +328,8 @@ std::string BuildOutputDir(const std::string& root) {
     oked::BuildProfile live;
     std::string selected;
     if (!oked::ParseBuildLive(ReadFile(oked::BuildLiveFile(root)), live, selected)) return "";
-    std::string dir = live.outputDir;
-    std::error_code ec;
-    if (!dir.empty() && fs::path(dir).is_absolute()) {
-        const std::string rel = RelTo(dir, root);
-        dir = rel.rfind("..", 0) == 0 || fs::path(rel).is_absolute() ? std::string() : rel;
-    }
-    return dir;
+    const std::string dir = live.outputDir;
+    return !dir.empty() && fs::path(dir).is_absolute() ? RelInside(dir, root) : dir;   // outside the project: not ignored
 }
 
 int VcInit(const std::vector<std::string>& args, const std::string& project, const Io& io) {
@@ -519,8 +511,8 @@ int VcResolve(const std::vector<std::string>& args, const std::string& project, 
     std::error_code ec;
     const fs::path abs = FileArg(file, project);
     const std::string top = git.TopLevel();
-    const std::string rel = RelTo(abs.string(), top);
-    if (rel.rfind("..", 0) == 0) { io.Warn(file + " is not inside this project."); return 1; }
+    const std::string rel = RelInside(abs.string(), top);   // git's top is the long name; abs may use a short one
+    if (rel.empty()) { io.Warn(file + " is not inside this project."); return 1; }
     const fs::path report = ClashReportPath(top, rel);
     const bool unmerged = !Trim(git.Capture({"--literal-pathspecs", "ls-files", "-u", "--", abs.string()}).out).empty();
     if (!unmerged && !fs::exists(report, ec)) { io.Say(file + " has no clash to settle."); return 0; }
@@ -632,8 +624,8 @@ int VcUndo(const std::vector<std::string>& args, const std::string& project, con
     const std::string rev = Trim(v.out);
     if (v.exitCode != 0 || rev.empty()) { io.Warn("There is no save called \"" + given + "\". See them with: okay vc history " + file); return 1; }
     const std::string top = git.TopLevel();
-    const std::string rel = RelTo(abs.string(), top);
-    if (rel.rfind("..", 0) == 0) { io.Warn(file + " is not inside this project."); return 1; }
+    const std::string rel = RelInside(abs.string(), top);   // git's top is the long name; abs may use a short one
+    if (rel.empty()) { io.Warn(file + " is not inside this project."); return 1; }
     const RunResult exists = git.Capture({"cat-file", "-e", rev + ":" + rel});
     if (exists.exitCode != 0) {
         io.Warn(given == "HEAD" ? file + " was never saved, so there is no saved copy to go back to."

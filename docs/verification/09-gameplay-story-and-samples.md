@@ -13,7 +13,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     2. Make a short dialogue (a line and two choices) and save it.
   - **You should see (expected, not yet seen on Windows):** a graph editor for dialogue and a quest list.
   - **Known partial:** steps beyond opening the window are unverified; see docs/gameplay/dialogue_quests.md.
-  - **More:** [dialogue_quests.md](../../gameplay/dialogue_quests.md)
+  - **More:** [dialogue_quests.md](../gameplay/dialogue_quests.md)
 
 - [ ] **V-GP-002** Cutscene timeline example
   - **Map:** 10. **Where:** editor
@@ -23,7 +23,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     3. Press Play on the scene.
   - **You should see (expected, not yet seen on Windows):** the camera sequence of the intro plays; the Timeline window shows its tracks.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [cutscenes.md](../../gameplay/cutscenes.md)
+  - **More:** [cutscenes.md](../gameplay/cutscenes.md)
 
 - [ ] **V-GP-003** Behavior tree example
   - **Map:** 9, 11. **Where:** editor
@@ -32,7 +32,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     2. Open **View > Editors & Tools > Behavior Tree** and press Play.
   - **You should see (expected, not yet seen on Windows):** the tree runs and the window shows which node is active.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [behavior_trees.md](../../gameplay/behavior_trees.md)
+  - **More:** [behavior_trees.md](../gameplay/behavior_trees.md)
 
 - [ ] **V-GP-004** Weapons window and arena
   - **Map:** 11. **Where:** editor
@@ -42,7 +42,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     3. Press Play and fire.
   - **You should see (expected, not yet seen on Windows):** the weapon from `weapons.okayweapon` fires; the Weapons window edits its numbers.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-GP-005** Items, loot and recipes
   - **Map:** 11. **Where:** editor, Project panel and View menu
@@ -51,7 +51,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     2. Open **View > Editors & Tools > Items, Loot & Recipes**.
   - **You should see (expected, not yet seen on Windows):** item, loot and recipe files are created and listed in the window.
   - **Known partial:** none known.
-  - **More:** [inventory.md](../../gameplay/inventory.md)
+  - **More:** [inventory.md](../gameplay/inventory.md)
 
 - [ ] **V-GP-006** Save Manager (steps unverified)
   - **Map:** 35. **Where:** editor, View menu

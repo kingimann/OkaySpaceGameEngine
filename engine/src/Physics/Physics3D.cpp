@@ -520,19 +520,34 @@ void Physics3D::StepTerrain(Scene& scene) {
             if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
             if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
             const Vec3 pos = rb->transform->Position();
-            float foot = 0.5f;   // how far the body reaches below its origin (from its collider box)
+            // The underside: the collider box's bottom and footprint (else 0.5 m below the origin, a point).
+            float bottom = pos.y - 0.5f;
+            Vec3 lo = pos, hi = pos;
             if (auto* col = rb->gameObject->GetComponent<Collider3D>()) {
                 Vec3 mn, mx; col->WorldAABB(mn, mx);
-                foot = std::max(pos.y - mn.y, 0.0f);
+                bottom = std::min(mn.y, pos.y);
+                lo = mn; hi = mx;
             }
+            // The core rests the real shape on the grid, so on a slope a box stands on its downhill edge and the surface
+            // under its centre is lower than its bottom (0.14 m for a 0.6 m box on 25 degrees). Grounded when the bottom is
+            // within 5 cm of the surface under the centre OR any corner of the footprint. (Before the core collided terrain,
+            // the terrain step put the origin on the surface under the centre, so the centre alone was enough.)
+            const Vec3 probes[5] = {{pos.x, 0.0f, pos.z}, {lo.x, 0.0f, lo.z}, {hi.x, 0.0f, lo.z}, {lo.x, 0.0f, hi.z}, {hi.x, 0.0f, hi.z}};
             for (Terrain* terr : terrains) {
                 if (!terr->gameObject || !terr->gameObject->transform) continue;
                 const Mat4 l2w = terr->gameObject->transform->LocalToWorldMatrix();
-                const Vec3 lp = l2w.Inverse().MultiplyPoint(pos);
+                const Mat4 w2l = l2w.Inverse();
+                const Vec3 lp = w2l.MultiplyPoint(pos);
                 const float half = terr->size * 0.5f;
                 if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) continue;
-                const float groundY = l2w.MultiplyPoint({lp.x, terr->SampleHeight(lp.x, lp.z), lp.z}).y + foot;
-                if (pos.y <= groundY + 0.05f) {
+                bool onIt = false;
+                for (const Vec3& pr : probes) {
+                    const Vec3 lq = w2l.MultiplyPoint({pr.x, pos.y, pr.z});
+                    if (lq.x < -half || lq.x > half || lq.z < -half || lq.z > half) continue;
+                    const float groundY = l2w.MultiplyPoint({lq.x, terr->SampleHeight(lq.x, lq.z), lq.z}).y;
+                    if (bottom <= groundY + 0.05f) { onIt = true; break; }
+                }
+                if (onIt) {
                     rb->groundedOnTerrain = true;
                     rb->groundNormal = l2w.MultiplyVector(terr->NormalAt(lp.x, lp.z)).Normalized();
                 }

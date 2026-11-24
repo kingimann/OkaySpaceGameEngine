@@ -916,12 +916,13 @@ bool ParseSkeleton(const std::string& src, Skel& sk, std::string* err) {
     return ParseSkeletonXml(src, sk, err);
 }
 
-// OKAY_OWN_OGRE_SKELBIN=1 (or true / on / yes): the file readers also look for the binary skeleton a mesh links to. Off by default.
+// The file readers also look for the binary skeleton a mesh links to. On by default since 2026-11-23 (rule 19d: the own path is the
+// default; Assimp read the binary skeleton too). OKAY_OWN_OGRE_SKELBIN=0 (or false / off / no) switches it off.
 bool SkelBinSwitchOn() {
     const char* v = std::getenv("OKAY_OWN_OGRE_SKELBIN");
-    if (!v) return false;
+    if (!v || !*v) return true;
     const std::string s = detail::txt::Lower(v);
-    return s == "1" || s == "true" || s == "on" || s == "yes";
+    return !(s == "0" || s == "false" || s == "off" || s == "no");
 }
 
 // The skeleton a mesh file links to, next to the mesh: `<link>.xml` first (the form the XML tools write), then, with the switch

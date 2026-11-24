@@ -742,10 +742,18 @@ bool WriteZip(const std::string& zipPath, const std::string& rootDir, bool compr
 }
 
 bool WriteZipEntries(const std::string& zipPath, const std::vector<ZipInput>& entries, bool compress, ZipStats* stats, std::string* error) {
-    auto fail = [&](const std::string& m) { if (error) *error = m; std::error_code ec; fs::remove(fs::u8path(zipPath), ec); return false; };
+    // The half-written archive is closed before it is removed: Windows cannot delete a file that is still open, so a
+    // failed write used to leave a broken .zip behind there (build_pipeline on the Windows runner).
+    std::ofstream out;
+    auto fail = [&](const std::string& m) {
+        if (error) *error = m;
+        if (out.is_open()) out.close();
+        std::error_code ec; fs::remove(fs::u8path(zipPath), ec);
+        return false;
+    };
     for (const ZipInput& e : entries)
         if (e.name.empty()) { if (error) *error = "a zip entry has no name"; return false; }
-    std::ofstream out(fs::u8path(zipPath), std::ios::binary | std::ios::trunc);
+    out.open(fs::u8path(zipPath), std::ios::binary | std::ios::trunc);
     if (!out) return fail("cannot write " + zipPath);
 
     const std::time_t now = std::time(nullptr);

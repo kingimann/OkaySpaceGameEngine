@@ -1,5 +1,6 @@
 // AssetDatabase: reference extractors and the dependency graph.
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Render/TexturePath.hpp"
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/DataPack.hpp"
@@ -114,11 +115,10 @@ bool DepExtension(const std::string& ext) {
 }
 
 bool HostilePath(const std::string& path) {
-    if (path.empty() || path.size() > 260) return true;
-    if (path.find("://") != std::string::npos) return true;
-    for (unsigned char c : path)
-        if (c < 32 || c == '<' || c == '>' || c == '|' || c == '*' || c == '?' || c == '"') return true;
-    return false;
+    if (path.size() > 260) return true;
+    std::string s = path;
+    for (char& c : s) if (c == '\\') c = '/';
+    return texture_path_detail::Screen(s, nullptr) == texture_path_detail::Kind::Refused;
 }
 
 void ConsiderPath(const std::string& text, std::size_t begin, std::size_t end, std::vector<FoundRef>& out) {
@@ -133,21 +133,6 @@ void ConsiderPath(const std::string& text, std::size_t begin, std::size_t end, s
     r.end = end;
     r.quoted = begin > 0 && text[begin - 1] == '"';
     out.push_back(std::move(r));
-}
-
-bool IsPathChar(unsigned char c) {
-    return std::isalnum(c) || c == '/' || c == '\\' || c == '.' || c == '_' || c == '-' || c == '+' || c == '@' || c == ':';
-}
-
-void ScanPathRuns(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
-    std::size_t i = lb;
-    while (i < le) {
-        if (!IsPathChar(static_cast<unsigned char>(text[i]))) { ++i; continue; }
-        std::size_t j = i + 1;
-        while (j < le && IsPathChar(static_cast<unsigned char>(text[j]))) ++j;
-        ConsiderPath(text, i, j, out);
-        i = j;
-    }
 }
 
 bool IsNumberToken(const std::string& t) {
@@ -294,8 +279,7 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text) {
 std::vector<FoundRef> ExtractModelRefs(const std::string& text) {
     std::vector<FoundRef> out;
     ForEachLine(text, [&](std::size_t lb, std::size_t le) {
-        if (TakeModelLine(text, lb, le, out)) return;
-        ScanPathRuns(text, lb, le, out);
+        TakeModelLine(text, lb, le, out);
     });
     if (out.size() > 4096) out.resize(4096);
     return out;
@@ -315,7 +299,7 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
-    RegisterExtractor("model", {"obj", "mtl", "fbx", "dae"}, wrap(&ExtractModelRefs));
+    // Models stay out of UsedBy until rename uses this extractor. A binary .fbx must not be rewritten by a path splice.
 }
 
 void AssetDatabase::RegisterExtractor(const std::string& name, const std::vector<std::string>& extensions, RefExtractor extractor) {

@@ -9,11 +9,12 @@ int main() {
     RUN_SUITE("profiler_jobs");
     JobSystem jobs(0);
     SetEngineJobs(&jobs);
-    jobs.Submit([] {});
+    jobs.Submit([] {});   // before the frame: not part of this frame's job time
     Profiler& p = Prof();
     p.enabled = true;
     p.paused = false;
     p.BeginFrame();
+    jobs.Submit([] {});
     p.EndFrame(16.0);
     p.enabled = false;
     SetEngineJobs(nullptr);

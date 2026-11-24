@@ -837,6 +837,9 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (pi == m_pathIndex.end() || present.count(pi->second)) continue;
             auto sl = m_slots.find(pi->second);
             if (sl == m_slots.end()) continue;
+            // Same path is not enough: a new file put where a deleted one was must not inherit that GUID.
+            ensureHash(c);
+            if (sl->second.rec.hash == 0 || c.hash == 0 || c.hash != sl->second.rec.hash) continue;
             c.guid = pi->second;
             c.needsWrite = opt.createMetas || sl->second.rec.metaVersion > 0;   // an in-memory asset stays in memory
             c.labels = sl->second.rec.labels;
@@ -1339,12 +1342,6 @@ bool AssetDatabase::StartWatch(std::string* error) {
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
     if (w.handle == INVALID_HANDLE_VALUE) { if (error) *error = "cannot watch the folder"; return false; }
-    if (!Arm(w)) {
-        if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
-        CloseHandle(w.handle);
-        if (error) *error = "cannot watch the folder";
-        return false;
-    }
 #else
     w.fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (w.fd < 0) { if (error) *error = "cannot watch the folder"; return false; }
@@ -1364,6 +1361,16 @@ bool AssetDatabase::StartWatch(std::string* error) {
     }
 #endif
     g_watches.emplace(this, std::move(w));
+#if defined(_WIN32)
+    // Arm only once the OVERLAPPED lives in the map. Arming the stack copy left the kernel
+    // writing into memory that the move had already finished with.
+    DirWatch& live = g_watches.find(this)->second;
+    if (!Arm(live)) {
+        StopWatch();
+        if (error) *error = "cannot watch the folder";
+        return false;
+    }
+#endif
     return true;
 }
 
@@ -1383,9 +1390,14 @@ std::vector<std::string> AssetDatabase::PollWatch() {
     if (WaitForSingleObject(w.ov.hEvent, 0) != WAIT_OBJECT_0) return out;
     DWORD got = 0;
     if (!GetOverlappedResult(w.handle, &w.ov, &got, FALSE) || got == 0) {
+        const DWORD err = GetLastError();
         CloseHandle(w.ov.hEvent);
         w.ov.hEvent = nullptr;
         Arm(w);
+        if (err == ERROR_NOTIFY_ENUM_DIR) {
+            Log::Warning("folder watch overflow on ", w.root, "; scanning the whole folder");
+            out.push_back(w.root);
+        }
         return out;
     }
     std::size_t off = 0;
@@ -1436,7 +1448,12 @@ void AssetDatabase::StopWatch() {
     auto it = g_watches.find(this);
     if (it == g_watches.end()) return;
 #if defined(_WIN32)
-    if (it->second.ov.hEvent) CloseHandle(it->second.ov.hEvent);
+    if (it->second.pending && it->second.handle != INVALID_HANDLE_VALUE)
+        CancelIoEx(it->second.handle, &it->second.ov);
+    if (it->second.ov.hEvent) {
+        WaitForSingleObject(it->second.ov.hEvent, 2000);
+        CloseHandle(it->second.ov.hEvent);
+    }
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
 #else
     if (it->second.fd >= 0) ::close(it->second.fd);

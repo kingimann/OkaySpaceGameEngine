@@ -60,6 +60,12 @@ int main() {
     CHECK(scratch.GetNumber("score") == 10.0);
     CHECK(!DataAsset::ReloadIfChanged("never_existed.okaydata"));
 
+    DataAsset& edit = DataAsset::Cached("edit.okaydata");
+    edit.Set("a", "1");
+    CHECK(edit.Save("edit.okaydata"));
+    edit.Set("a", "5");
+    CHECK(DataAsset::Cached("edit.okaydata").GetNumber("a") == 5.0);
+
     DataAsset::InvalidateAll();
     fs::current_path(old);
     std::error_code ec;

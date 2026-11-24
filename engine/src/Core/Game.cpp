@@ -1,5 +1,6 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Core/EventBus.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -111,6 +112,20 @@ void Game::NotifyFocus(bool focused) {
 
 // ---- quit ----------------------------------------------------------------------
 
+namespace {
+void PublishQuitEvent(const GameQuit& ev) {
+    auto send = [ev]() {
+        try { EngineBus().Publish(ev); }
+        catch (const std::exception& e) { Log::Warning("Game quit event threw: ", e.what()); }
+        catch (...) { Log::Warning("Game quit event threw"); }
+    };
+    if (JobSystem* js = RunningEngineJobs()) {
+        if (!js->IsMainThread()) { js->RunOnMainThread(send); return; }
+    }
+    send();
+}
+} // namespace
+
 void Game::ForceQuit(const std::string& reason, int exitCode) {
     std::lock_guard<std::mutex> lock(g_quitMutex);
     if (!s_quit.load(std::memory_order_relaxed)) {
@@ -135,13 +150,13 @@ bool Game::RequestQuit(const std::string& reason, int exitCode) {
         g_inGuard = false;
         if (!allow) {
             ++g_vetoes;
-            EngineBus().Publish(GameQuit{reason, exitCode, false});
+            PublishQuitEvent(GameQuit{reason, exitCode, false});
             return false;
         }
     }
     const bool already = QuitRequested();
     ForceQuit(reason, exitCode);
-    if (!already) EngineBus().Publish(GameQuit{reason, exitCode, true});
+    if (!already) PublishQuitEvent(GameQuit{reason, exitCode, true});
     return true;
 }
 

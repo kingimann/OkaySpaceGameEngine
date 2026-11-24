@@ -537,6 +537,14 @@ FileStatus ReadSlotFile(const std::string& path, const std::string& slot, std::s
     return FileStatus::Ok;
 }
 
+bool LegacyToDocument(const std::string& path, const std::string& slot, SaveDocument& doc, SaveSlotInfo& info,
+                      bool& usedBackup, std::string& err) {
+    wholescene::State st;
+    if (wholescene::ReadLegacy(path, slot, st, info, &usedBackup, &err) != wholescene::LegacyStatus::Ok) return false;
+    wholescene::ToDocument(st, doc);
+    return true;
+}
+
 } // namespace
 
 bool SaveStore::Read(const std::string& slot, SaveDocument& out, SaveSlotInfo* info, std::string* error, SaveLoadReport* report) const {
@@ -545,17 +553,15 @@ bool SaveStore::Read(const std::string& slot, SaveDocument& out, SaveSlotInfo* i
     SeparateTwinSaves(slot);
     if (LegacyOnly(slot)) {
         // An older SaveGame file: a whole-scene document with the file's own header values.
-        wholescene::State st;
+        SaveDocument doc;
         SaveSlotInfo si;
         bool usedBackup = false;
         std::string err;
-        if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, si, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+        if (!LegacyToDocument(LegacySlotPath(slot), slot, doc, si, usedBackup, err)) {
             if (error) *error = err;
             if (info) *info = si;
             return false;
         }
-        SaveDocument doc;
-        wholescene::ToDocument(st, doc);
         if (report) { report->usedBackup = usedBackup; report->fromVersion = report->toVersion = m_dataVersion; }
         if (info) *info = si;
         if (error) *error = usedBackup ? err : std::string();
@@ -751,13 +757,11 @@ void SaveStore::PrepareOverwrite(const std::string& slot) {
     SeparateTwinSaves(slot);
     if (!LegacyOnly(slot)) return;
     // The first save over an older .okaygame slot: keep that save as this slot's backup, as saving over any slot does.
-    wholescene::State st;
+    SaveDocument doc;
     SaveSlotInfo meta;
     bool usedBackup = false;
     std::string err;
-    if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, meta, &usedBackup, &err) != wholescene::LegacyStatus::Ok) return;
-    SaveDocument doc;
-    wholescene::ToDocument(st, doc);
+    if (!LegacyToDocument(LegacySlotPath(slot), slot, doc, meta, usedBackup, err)) return;
     meta.version = 1;
     meta.wholeScene = true;
     meta.legacyFile = meta.fromBackup = false;
@@ -767,16 +771,14 @@ void SaveStore::PrepareOverwrite(const std::string& slot) {
 }
 
 bool SaveStore::UpgradeLegacy(const std::string& slot, std::string* error) {
-    wholescene::State st;
+    SaveDocument doc;
     SaveSlotInfo meta;
     bool usedBackup = false;
     std::string err;
-    if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, meta, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+    if (!LegacyToDocument(LegacySlotPath(slot), slot, doc, meta, usedBackup, err)) {
         if (error) *error = err;
         return false;
     }
-    SaveDocument doc;
-    wholescene::ToDocument(st, doc);
     meta.version = 1;
     meta.wholeScene = true;
     meta.legacyFile = meta.fromBackup = false;
@@ -845,16 +847,14 @@ bool SaveStore::ExportRaw(const std::string& slot, std::string& bytes, SaveSlotI
         // An older .okaygame slot has no .okayslot yet. Export it in the current container without
         // writing that file or retiring the legacy one (sync can upload it before anyone saves).
         if (!LegacyOnly(slot)) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
-        wholescene::State st;
+        SaveDocument doc;
         SaveSlotInfo meta;
         bool usedBackup = false;
         std::string err;
-        if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, meta, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+        if (!LegacyToDocument(LegacySlotPath(slot), slot, doc, meta, usedBackup, err)) {
             if (error) *error = err.empty() ? "No save in slot \"" + slot + "\"" : err;
             return false;
         }
-        SaveDocument doc;
-        wholescene::ToDocument(st, doc);
         meta.version = 1;
         meta.wholeScene = true;
         meta.legacyFile = false;

@@ -118,6 +118,14 @@ public:
         m_stack.clear();
         m_frameStart = Now();
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
+        if (!m_jobPrimed) {
+            const JobFrameNote jobs = NoteRunningJobs();
+            if (jobs.live) {
+                m_prevJobBusy = jobs.busyMs;
+                m_prevJobDone = jobs.completed;
+                m_jobPrimed = true;
+            }
+        }
     }
     void Begin(const char* name) {
         if (!enabled || !OnOwnerThread()) return;
@@ -150,8 +158,9 @@ public:
                 calls = static_cast<int>(jobs.completed - m_prevJobDone);
             m_prevJobBusy = jobs.busyMs;
             m_prevJobDone = jobs.completed;
+            // Depth -1 so job time is not added into cpuMs. It is already inside the systems that waited.
             if (busy > 0.0 || calls > 0)
-                m_build.push_back(Bucket{"Jobs", busy, busy, calls, 0, 0.0});
+                m_build.push_back(Bucket{"Jobs", busy, busy, calls, -1, 0.0});
         }
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;
@@ -315,6 +324,7 @@ private:
     bool    m_haveEpoch = false;
     double  m_prevJobBusy = 0.0;
     std::uint64_t m_prevJobDone = 0;
+    bool    m_jobPrimed = false;
 
     static std::chrono::steady_clock::time_point Now() { return std::chrono::steady_clock::now(); }
     static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }

@@ -1,4 +1,5 @@
 #include "okay/Core/Game.hpp"
+#include "okay/Core/EventBus.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -34,6 +35,12 @@ void Game::Refresh() {
     if (p == s_paused) return;
     s_paused = p;
     Time::SetFrozen(p);
+    static int depth = 0;
+    if (depth >= 4) return;
+    ++depth;
+    try { EngineBus().Publish(GamePaused{p}); }
+    catch (...) { --depth; throw; }
+    --depth;
 }
 
 void Game::SetPaused(bool paused) {
@@ -126,9 +133,15 @@ bool Game::RequestQuit(const std::string& reason, int exitCode) {
         catch (const std::exception& e) { Log::Warning("Game quit guard threw: ", e.what(), " (quit allowed)"); }
         catch (...) { Log::Warning("Game quit guard threw (quit allowed)"); }
         g_inGuard = false;
-        if (!allow) { ++g_vetoes; return false; }
+        if (!allow) {
+            ++g_vetoes;
+            EngineBus().Publish(GameQuit{reason, exitCode, false});
+            return false;
+        }
     }
+    const bool already = QuitRequested();
     ForceQuit(reason, exitCode);
+    if (!already) EngineBus().Publish(GameQuit{reason, exitCode, true});
     return true;
 }
 

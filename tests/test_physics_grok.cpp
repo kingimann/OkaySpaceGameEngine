@@ -118,6 +118,21 @@ int main() {
         CHECK(!skip.hit);   // the trigger is ignored and the box face is 2 units away
     }
 
+    // Closest point on a 2D box sits on the face.
+    RUN_SUITE("2d closest point");
+    {
+        Scene s("near2");
+        auto* box = s.CreateGameObject("Box");
+        box->AddComponent<BoxCollider2D>()->size = {2, 2};
+        SurfaceQuery2D q = s.physics().ClosestPoint(s, {3, 0});
+        CHECK(q.hit);
+        CHECK(q.gameObject == box);
+        CHECK_NEAR(q.point.x, 1.0f, 0.05f);
+        CHECK_NEAR(q.distance, 2.0f, 0.05f);
+        SurfaceQuery2D inside = s.physics().ClosestPoint(s, {0.2f, 0});
+        CHECK(inside.hit && inside.distance < 0.001f);
+    }
+
     // A 2D circle cast through two boxes reports both, the nearer one first.
     RUN_SUITE("2d shape cast all hits");
     {

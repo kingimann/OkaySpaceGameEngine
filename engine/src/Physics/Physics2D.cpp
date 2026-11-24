@@ -1501,6 +1501,55 @@ std::vector<RaycastHit2D> Physics2D::CapsuleCastAll(Scene& scene, const Vec2& a,
     return SweepQueryAll(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
+SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float maxDistance,
+                                        GameObject* ignore, std::uint32_t layerMask) {
+    SurfaceQuery2D best;
+    if (!(maxDistance >= 0.0f) || !std::isfinite(point.x + point.y)) return best;
+    best.distance = maxDistance;
+    bool any = false;
+    for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(col, ignore, layerMask, false)) continue;
+        Vec2 cp = point;
+        float d = 1e30f;
+        if (col->shape() == Collider2D::Shape::Circle) {
+            auto* c = static_cast<CircleCollider2D*>(col);
+            Vec2 center = c->WorldCenter();
+            float r = c->WorldRadius();
+            Vec2 delta = point - center;
+            float m = delta.Magnitude();
+            if (m <= r) { cp = point; d = 0.0f; }
+            else if (m > 1e-8f) { cp = center + delta * (r / m); d = m - r; }
+        } else if (col->shape() == Collider2D::Shape::Box) {
+            cp = ClosestOnOBB2(MakeOBB(static_cast<BoxCollider2D*>(col)), point);
+            d = (point - cp).Magnitude();
+        } else if (col->shape() == Collider2D::Shape::Capsule) {
+            auto* cap = static_cast<CapsuleCollider2D*>(col);
+            Vec2 a, b; cap->Segment(a, b);
+            Vec2 on = ClosestOnSegment(point, a, b);
+            Vec2 delta = point - on;
+            float m = delta.Magnitude();
+            float r = cap->WorldRadius();
+            if (m <= r) { cp = point; d = 0.0f; }
+            else if (m > 1e-8f) { cp = on + delta * (r / m); d = m - r; }
+        } else {
+            Vec2 mn, mx; col->WorldAABB(mn, mx);
+            cp = {Mathf::Clamp(point.x, mn.x, mx.x), Mathf::Clamp(point.y, mn.y, mx.y)};
+            d = (point - cp).Magnitude();
+        }
+        if (!std::isfinite(d) || d > maxDistance) continue;
+        if (!any || d < best.distance) {
+            any = true;
+            best.hit = true;
+            best.collider = col;
+            best.gameObject = col->gameObject;
+            best.point = cp;
+            best.distance = d;
+        }
+    }
+    if (!any) return SurfaceQuery2D{};
+    return best;
+}
+
 void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
     Transform* t = rb->transform;
     Vec2 motion = rb->velocity * dt;

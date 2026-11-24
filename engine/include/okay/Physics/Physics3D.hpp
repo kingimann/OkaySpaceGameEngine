@@ -221,6 +221,13 @@ public:
     NearestSolid3D ClosestPoint(Scene& scene, const Vec3& point, float maxDistance = 1e9f,
                                 GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers);
 
+    /// What the scene queries above did since the last ResetQueryStats (PhysicsQueryStats).
+    const PhysicsQueryStats& QueryStats() const { return m_queryStats; }
+    void ResetQueryStats() { m_queryStats = PhysicsQueryStats{}; }
+    /// Test switch: while true, a scene query hands every collider of the scene to its exact tests instead of asking
+    /// the broad phase which ones are near. The code after that is the same, so tests compare the two answers.
+    static bool& QueryFullScan();
+
     void Clear();   // forget the engine world (the scene is being cleared; Physics3DEngine.inl)
 
     // ---- the physics engine core underneath (okay::phys::World; docs/physics/physics_core.md) ----
@@ -256,6 +263,7 @@ public:
 
 private:
     PhysicsStepStats m_stats;
+    PhysicsQueryStats m_queryStats;
     bool m_sleepSet = false;
     float m_sleepLinear = 0.05f, m_sleepAngular = 0.05f, m_sleepTime = 0.5f;
     struct EngineBridge;                // the engine world and the scene <-> world maps (Physics3DEngine.inl)

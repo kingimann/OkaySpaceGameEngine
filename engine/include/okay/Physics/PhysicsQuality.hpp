@@ -23,4 +23,14 @@ struct PhysicsStepStats {
     int warmStarted = 0;     // contact points that started from last step's push
 };
 
+/// What the 3D scene queries (rays, overlaps, casts, closest point) did since Physics3D::ResetQueryStats. For tests and
+/// the profiler: it shows how much of the scene a query had to look at.
+struct PhysicsQueryStats {
+    std::uint64_t queries = 0;        // query calls
+    std::uint64_t considered = 0;     // colliders a query looked at one by one
+    std::uint64_t shapeTests = 0;     // colliders that went on to an exact shape test
+    std::uint64_t boundsUpdates = 0;  // collider boxes worked out again for the broad phase
+    std::uint64_t gridBuilds = 0;     // height grids built for ClosestPoint (terrain, heightfield)
+};
+
 } // namespace okay

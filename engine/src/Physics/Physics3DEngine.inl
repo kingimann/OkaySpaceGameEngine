@@ -1032,7 +1032,9 @@ NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float ma
     if (!(maxDistance >= 0.0f) || !std::isfinite(maxDistance) || !std::isfinite(point.x + point.y + point.z)) return best;
     bool any = false;
     MeshCache cache;
+    ++m_queryStats.queries;
     for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        ++m_queryStats.considered;
         if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
         {   // a collider that cannot be nearer than what is found (or within reach) is skipped before any shape is built
             Vec3 mn, mx;
@@ -1053,6 +1055,7 @@ NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float ma
                 Vec3 cp = point;
                 float d = 0.0f;
                 bool inside = false;
+                ++m_queryStats.shapeTests;
                 if (view.Nearest(point, closed ? 1e30f : maxDistance, cp, d, inside)) {
                     if (inside) { cp = point; d = 0.0f; }
                     ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
@@ -1061,6 +1064,8 @@ NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float ma
             }
         }
         std::vector<EnginePiece> pieces;
+        ++m_queryStats.shapeTests;
+        if (col->shape() == Collider3D::Shape::Heightfield) ++m_queryStats.gridBuilds;
         if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
         for (const EnginePiece& piece : pieces) {
             Vec3 cp = point;
@@ -1071,6 +1076,7 @@ NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float ma
     for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
         if (!TerrainPasses(terr, ignore, layerMask)) continue;
         EnginePiece piece;
+        ++m_queryStats.gridBuilds;
         if (!PieceOfTerrain(terr, piece)) continue;
         Vec3 cp = point;
         const float d = DistanceToPiece(piece, point, maxDistance, cp);

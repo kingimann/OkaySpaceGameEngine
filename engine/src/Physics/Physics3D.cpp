@@ -904,8 +904,11 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
     best.distance = maxDistance;
     Vec3 dir = direction.Normalized();
     const QueryCache& q = QueryLists(scene);
+    ++m_queryStats.queries;
+    m_queryStats.considered += q.colliders.size();
     for (Collider3D* c : q.colliders) {
         if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, best.distance)) continue;
+        ++m_queryStats.shapeTests;
         float t; Vec3 n;
         if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
             best.hit = true; best.collider = c; best.gameObject = c->gameObject;
@@ -935,8 +938,11 @@ std::vector<RaycastHit3D> Physics3D::RaycastAll(Scene& scene, const Vec3& origin
         hits.push_back(h);
     };
     const QueryCache& q = QueryLists(scene);
+    ++m_queryStats.queries;
+    m_queryStats.considered += q.colliders.size();
     for (Collider3D* c : q.colliders) {
         if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, maxDistance)) continue;
+        ++m_queryStats.shapeTests;
         float t; Vec3 n;
         if (RayCollider(c, origin, dir, maxDistance, t, n)) add(c, c->gameObject, t, n);
     }
@@ -1112,10 +1118,13 @@ bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
 }
 
 std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_t mask,
-                                 bool queryTriggers, GameObject* ignore) {
+                                 bool queryTriggers, GameObject* ignore, PhysicsQueryStats& st) {
     std::vector<Collider3D*> out;
+    ++st.queries;
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        ++st.shapeTests;
         Vec3 n, p;
         if (ShapeTouch(c, q, n, p)) out.push_back(c);
     }
@@ -1144,7 +1153,7 @@ bool SweepWindow(Collider3D* c, const Vec3& origin, const Vec3& dir, const Vec3&
 // still slide along it).
 RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
                    GameObject* ignore, std::uint32_t mask, bool queryTriggers,
-                   bool skipStartOverlaps, bool skipTriMeshes = false,
+                   bool skipStartOverlaps, PhysicsQueryStats& st, bool skipTriMeshes = false,
                    const std::vector<Collider3D*>* only = nullptr) {
     RaycastHit3D best;
     struct Cand { Collider3D* c; float t0, t1; };
@@ -1153,11 +1162,14 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     float lo = 1e30f, hi = -1e30f;
     std::vector<Collider3D*> everything;
     if (!only) everything = scene.FindObjectsOfType<Collider3D>();
+    ++st.queries;
     for (Collider3D* c : (only ? *only : everything)) {
+        ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         if (skipTriMeshes && MeshHasTris(c)) continue;
         float t0, t1;
         if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
+        ++st.shapeTests;
         Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere near the path)
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
         cands.push_back({c, t0, t1});
@@ -1246,14 +1258,17 @@ void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float m
 // A zero direction or a zero distance still reports what the shape already overlaps, the same as SphereCast
 // testing the place it stands.
 std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
-                                   GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+                                   GameObject* ignore, std::uint32_t mask, bool queryTriggers, PhysicsQueryStats& st) {
     std::vector<RaycastHit3D> hits;
+    ++st.queries;
     const bool badDir = !(dir.SqrMagnitude() >= 1e-12f) || !std::isfinite(dir.x) || !std::isfinite(dir.y) || !std::isfinite(dir.z);
     const bool zeroDist = !(maxDist > 1e-8f);
     if (badDir || zeroDist) {
         if (!(maxDist >= 0.0f) || !std::isfinite(maxDist)) return hits;
         for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+            ++st.considered;
             if (!Passes(c, ignore, mask, queryTriggers)) continue;
+            ++st.shapeTests;
             Vec3 n, p;
             if (!ShapeTouch(c, q, n, p)) continue;
             RaycastHit3D h;
@@ -1267,9 +1282,11 @@ std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         float t0, t1;
         if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
+        ++st.shapeTests;
         cands.push_back({c, t0, t1});
     }
     float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
@@ -1416,20 +1433,22 @@ bool NudgeSphere(Collider3D* col, Vec3& c, float r) {
 std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& center, float radius,
                                                   std::uint32_t layerMask, bool queryTriggers,
                                                   GameObject* ignore) {
-    return Overlap(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore);
+    return Overlap(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore, m_queryStats);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapBox(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                                const Quat& rotation, std::uint32_t layerMask,
                                                bool queryTriggers, GameObject* ignore) {
-    return Overlap(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore);
+    return Overlap(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore, m_queryStats);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapCapsule(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                                    std::uint32_t layerMask, bool queryTriggers,
                                                    GameObject* ignore) {
-    return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
+    return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore, m_queryStats);
 }
+
+bool& Physics3D::QueryFullScan() { static bool on = false; return on; }
 
 Physics3D::IgnoreHierarchy::IgnoreHierarchy(const GameObject* root) : m_prev(g_ignoreTree) { g_ignoreTree = root; }
 Physics3D::IgnoreHierarchy::~IgnoreHierarchy() { g_ignoreTree = m_prev; }
@@ -1440,7 +1459,7 @@ RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3&
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
     return Sweep(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
-                 queryTriggers, /*skipStartOverlaps*/ false);
+                 queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
 }
 
 std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
@@ -1448,14 +1467,14 @@ std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& ori
                                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return RaycastAll(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
-    return SweepAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers);
+    return SweepAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers, m_queryStats);
 }
 
 RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                 const Vec3& direction, const Quat& rotation, float maxDistance,
                                 GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
     return Sweep(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
-                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
 }
 
 std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
@@ -1465,14 +1484,14 @@ std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center
     if (!(halfExtents.x > 1e-6f) && !(halfExtents.y > 1e-6f) && !(halfExtents.z > 1e-6f))
         return RaycastAll(scene, center, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
     return SweepAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
-                    ignore, layerMask, queryTriggers);
+                    ignore, layerMask, queryTriggers, m_queryStats);
 }
 
 RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                     const Vec3& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
     return Sweep(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
-                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
+                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
 }
 
 std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
@@ -1481,7 +1500,7 @@ std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a,
     if (!(radius > 0.0f) && (a - b).SqrMagnitude() < 1e-12f)
         return RaycastAll(scene, a, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
     return SweepAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
-                    ignore, layerMask, queryTriggers);
+                    ignore, layerMask, queryTriggers, m_queryStats);
 }
 
 const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }

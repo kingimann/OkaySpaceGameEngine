@@ -143,6 +143,7 @@ jobs:
           restore-keys: |
             apt-mingw-win32-release-${{ env.UBUNTU_CODENAME }}-
             apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-
+            apt-mingw-
 
       - name: Install toolchain
         id: install

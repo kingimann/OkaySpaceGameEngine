@@ -232,6 +232,10 @@ public:
     /// The engine joint of a Joint3D (0xFFFFFFFF when it has none).
     std::uint32_t EngineJoint(const Joint3D* j) const;
 
+    /// How still a body must be, and for how long, before it sleeps. Linear and angular speeds are
+    /// metres and radians per second. The next step uses these. Defaults match the engine (0.05, 0.05, 0.5).
+    void SetSleep(float linearSpeed, float angularSpeed, float seconds);
+
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
     static const TriggerContact3D* CurrentTrigger();
@@ -252,6 +256,8 @@ public:
 
 private:
     PhysicsStepStats m_stats;
+    bool m_sleepSet = false;
+    float m_sleepLinear = 0.05f, m_sleepAngular = 0.05f, m_sleepTime = 0.5f;
     struct EngineBridge;                // the engine world and the scene <-> world maps (Physics3DEngine.inl)
     std::unique_ptr<EngineBridge> m_engine;
     void StepEngine(Scene& scene, float dt);

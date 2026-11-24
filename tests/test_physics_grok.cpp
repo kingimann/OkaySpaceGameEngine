@@ -118,6 +118,29 @@ int main() {
         CHECK(!skip.hit);   // the trigger is ignored and the box face is 2 units away
     }
 
+    // A resting crate stays awake when the sleep timer is long, and sleeps when it is short.
+    RUN_SUITE("sleep timer");
+    {
+        auto rest = [](float seconds, float watch) {
+            Scene s("sleep");
+            auto* ground = s.CreateGameObject("Ground");
+            ground->transform->localPosition = {0, -0.5f, 0};
+            ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+            ground->AddComponent<BoxCollider3D>()->size = {20, 1, 20};
+            auto* box = s.CreateGameObject("Crate");
+            box->transform->localPosition = {0, 0.55f, 0};
+            auto* rb = box->AddComponent<Rigidbody3D>();
+            box->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+            s.physics3D().SetSleep(0.08f, 0.08f, seconds);
+            s.Start();
+            const int n = (int)(watch / (1.0f / 50.0f));
+            for (int i = 0; i < n; ++i) s.Update(1.0f / 50.0f);
+            return rb->sleeping;
+        };
+        CHECK(!rest(8.0f, 1.5f));
+        CHECK(rest(0.05f, 2.0f));
+    }
+
     // Closest point on a 2D box sits on the face.
     RUN_SUITE("2d closest point");
     {

@@ -350,6 +350,13 @@ void Physics3D::Clear() {
     m_engine.reset();   // the world holds bodies for components about to be freed
 }
 
+void Physics3D::SetSleep(float linearSpeed, float angularSpeed, float seconds) {
+    m_sleepSet = true;
+    m_sleepLinear = std::max(linearSpeed, 0.0f);
+    m_sleepAngular = std::max(angularSpeed, 0.0f);
+    m_sleepTime = std::max(seconds, 0.0f);
+}
+
 phys::World* Physics3D::EngineWorld() { return m_engine ? &m_engine->world : nullptr; }
 std::uint32_t Physics3D::EngineBody(const Rigidbody3D* rb) const {
     if (!m_engine) return phys::kInvalidId;
@@ -369,6 +376,11 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     phys::World& W = E.world;
     m_stats = PhysicsStepStats{};
     W.gravity = P3(gravity);
+    if (m_sleepSet) {
+        W.sleepLinear = m_sleepLinear;
+        W.sleepAngular = m_sleepAngular;
+        W.timeToSleep = std::max(m_sleepTime, 0.0f);
+    }
     W.velocityIterations = std::min(std::max(solverIterations, 4), 30);
     W.positionIterations = 3;
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {

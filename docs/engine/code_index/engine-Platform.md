@@ -113,8 +113,8 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 - `OwnDownloadResult` struct, line 73
 - `OwnDownload` function, line 96: GET 'url' into the file 'path' (replacing it), like 'curl -L -f [--max-filesize N] [--retry N] -o path url' with a
 - `OwnHeadDump` function, line 156: OwnHeadDump and OwnFetchPrefix run on whichever native client RequestEx has (the own client, or WinHTTP).
-- `FetchToFile` function, line 460: GET 'url' into the file 'path' (replacing it only when the whole file arrived), like 'curl -L -f [--max-filesize N]
-- `HeadDump` function, line 487: A HEAD request that follows redirects, like 'curl -sIL': true when an answer arrived (any status, as curl -I does
+- `FetchToFile` function, line 476: GET 'url' into the file 'path' (replacing it only when the whole file arrived), like 'curl -L -f [--max-filesize N]
+- `HeadDump` function, line 503: A HEAD request that follows redirects, like 'curl -sIL': true when an answer arrived (any status, as curl -I does
 
 ## `engine/include/okay/Platform/NativeHttp.hpp`
 

@@ -14,4 +14,11 @@ default 4 0 0.35
 exec 1 0 2
 exec 2 0 3
 exec 3 0 4
+node 5 OnButtonClicked Play
+pos 5 40 320
+entry OnButtonClicked:Play 5
+node 6 SetVar playPressed
+pos 6 340 320
+default 6 0 1
+exec 5 0 6
 comment 20 240 1200 80 3 "Fade is a full-screen panel. The bar is on this object."

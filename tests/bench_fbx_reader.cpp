@@ -1,4 +1,4 @@
-// Speed and memory of our own FBX reader (okay::fbx) against ufbx, on the same files.
+// Speed and memory of our own FBX reader (okay::fbx) and of the FBX import (until 2026-11-23 also against ufbx, which was then deleted).
 //
 // Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --parts-digest | --import-digest | --uv-sets] [--only WHAT [--time]] <file.fbx | directory> ...
 //       (a directory is searched recursively for .fbx files; with no argument it reads $OKAY_MODEL_CORPUS and the
@@ -8,14 +8,12 @@
 // about 50 ms have passed, so their median is not timer noise):
 //   own-tree    okay::fbx::Parse      the element tree only (binary or ASCII)
 //   own-load    okay::fbx::LoadMemory the tree plus the scene build (nodes, meshes as polygons, skins, clips): our
-//                                     reader's own structures, which is what ufbx_load_memory produces for ufbx (the
-//                                     triangles are made by the import, fbx::BuildParts, as ufbx's are by its import)
-//   ufbx-load   ufbx_load_memory      with the options the engine's ufbx path uses (ModelImport.cpp, LoadFbx)
-//   imp-own / imp-ufbx                the full import through the seam, ImportModelScene, with our reader switched on
-//                                     and off (file read, reader, GameObjects, MeshRenderer / SkinnedMesh / clips)
+//                                     reader's own structures (the triangles are made by the import, fbx::BuildParts)
+//   imp-own                           the full import through the seam, ImportModelScene (file read, reader,
+//                                     GameObjects, MeshRenderer / SkinnedMesh / clips)
 // and the PEAK heap bytes each of those needed above what was allocated before the call. The heap is counted by
 // replacing malloc / free / realloc / calloc / memalign in this program (glibc only: they forward to glibc's own
-// __libc_* functions), so ufbx's C allocations, our C++ `new` and everything in the importer are counted the same
+// __libc_* functions), so C allocations, our C++ `new` and everything in the importer are counted the same
 // way. On other C libraries the memory columns print "-".
 //
 // Not part of ctest: it prints numbers, it does not check them. Correctness is checked by fbx_reader and
@@ -23,8 +21,7 @@
 // bit, the meshes' polygon arrays included), to show that a speed change did not change the output; `--parts-digest`
 // hashes the scene after BuildParts without the polygon arrays (the triangulated parts: what `--digest` hashed before
 // the reader left the triangulation to the import, 2026-11-16); `--import-digest` does the same for the whole imported
-// scene (our reader on), hashed as SceneSerializer writes it. `--only own-tree|own-load|ufbx-load|import-own|
-// import-ufbx` runs just that, once per file, for a profiler (valgrind --tool=callgrind); with `--time` it runs it
+// scene (our reader on), hashed as SceneSerializer writes it. `--only own-tree|own-load|import-own` runs just that, once per file, for a profiler (valgrind --tool=callgrind); with `--time` it runs it
 // --runs times per file and prints the minimum and the median (steadier for one file on a busy machine). Large synthetic files: python3 scripts/gen_fbx_bench.py <dir>.
 // Written for this project; the counting allocator and the statistics are our own.
 #include "okay/Render/FbxReader.hpp"
@@ -33,7 +30,6 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Log.hpp"
-#include "ufbx.h"
 
 #include <algorithm>
 #include <atomic>
@@ -137,23 +133,9 @@ Measure Run(int runs, const std::function<bool()>& fn) {
     return m;
 }
 
-ufbx_load_opts UfbxOpts() {   // the same settings as LoadFbx in engine/src/Render/ModelImport.cpp
-    const fbx::Limits lim;
-    ufbx_load_opts o{};
-    o.target_axes = ufbx_axes_right_handed_y_up;
-    o.target_unit_meters = 1.0f;
-    o.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
-    o.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_COMPENSATE;
-    o.generate_missing_normals = true;
-    o.ignore_missing_external_files = true;
-    o.evaluate_skinning = false;
-    o.node_depth_limit = (uint32_t)lim.maxNodeDepth;
-    return o;
-}
-
 struct Row {
     std::string name; std::size_t bytes = 0; bool synthetic = false;
-    Measure tree, own, ufbx, impOwn, impUfbx;
+    Measure tree, own, impOwn;
 };
 
 std::string Mb(long long b) {
@@ -272,7 +254,7 @@ std::uint64_t Digest(const fbx::Scene& s, bool polygons) {
 int main(int argc, char** argv) {
     int runs = 5;
     bool quiet = false, digest = false, partsDigest = false, importDigest = false, timeOnly = false, uvSets = false;
-    std::string only;   // --only own-tree|own-load|ufbx-load|import-own|import-ufbx: run that once per file (for a profiler)
+    std::string only;   // --only own-tree|own-load|import-own: run that once per file (for a profiler)
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -323,10 +305,8 @@ int main(int argc, char** argv) {
     Log::Configure("error");   // the import path logs per file; keep the table readable
     if (importDigest) {   // one line per file: a hash of the whole imported scene (our reader on), as the scene file writes it
         for (const std::string& path : files) {
-            fbx::SetOwnReaderEnabled(true);
             Scene sc("digest"); bool ok = false;
             ImportModelScene(sc, path, &ok);
-            fbx::SetOwnReaderEnabled(false);
             // every line but the random object guids
             std::string text;
             {
@@ -362,11 +342,8 @@ int main(int argc, char** argv) {
             bool ok = false;
             if (only == "own-tree") { fbx::Document d; std::string e; ok = fbx::Parse(data.data(), data.size(), d, &e); }
             else if (only == "own-load") { fbx::Scene s; std::string e; ok = fbx::LoadMemory(data.data(), data.size(), s, &e); }
-            else if (only == "ufbx-load") { const ufbx_load_opts uo = UfbxOpts(); ufbx_error e{}; ufbx_scene* s = ufbx_load_memory(data.data(), data.size(), &uo, &e); ok = s != nullptr; ufbx_free_scene(s); }
-            else if (only == "import-own" || only == "import-ufbx") {
-                fbx::SetOwnReaderEnabled(only == "import-own");
+            else if (only == "import-own") {
                 Scene sc("bench"); ok = ImportModelScene(sc, path, &ok) && ok;
-                fbx::SetOwnReaderEnabled(false);
             } else return -1;
             return ok ? 1 : 0;
             };
@@ -389,73 +366,40 @@ int main(int argc, char** argv) {
         }
         r.tree = Run(runs, [&] { fbx::Document d; std::string e; return fbx::Parse(data.data(), data.size(), d, &e); });
         r.own = Run(runs, [&] { fbx::Scene s; std::string e; return fbx::LoadMemory(data.data(), data.size(), s, &e); });
-        const ufbx_load_opts uo = UfbxOpts();
-        r.ufbx = Run(runs, [&] {
-            ufbx_error e{};
-            ufbx_scene* s = ufbx_load_memory(data.data(), data.size(), &uo, &e);
-            if (!s) return false;
-            ufbx_free_scene(s);
-            return true;
+        r.impOwn = Run(runs, [&] {
+            Scene sc("bench"); bool ok = false;
+            GameObject* root = ImportModelScene(sc, path, &ok);
+            return ok && root;
         });
-        auto import = [&](bool own) {
-            return [&, own] {
-                fbx::SetOwnReaderEnabled(own);
-                Scene sc("bench"); bool ok = false;
-                GameObject* root = ImportModelScene(sc, path, &ok);
-                fbx::SetOwnReaderEnabled(false);
-                return ok && root;
-            };
-        };
-        r.impOwn = Run(runs, import(true));
-        r.impUfbx = Run(runs, import(false));
         if (!quiet)
-            std::fprintf(stderr, "%-48s %8zu KB  own %s ms  ufbx %s ms\n", r.name.c_str(), r.bytes / 1024, Ms(r.own).c_str(), Ms(r.ufbx).c_str());
+            std::fprintf(stderr, "%-48s %8zu KB  own %s ms  import %s ms\n", r.name.c_str(), r.bytes / 1024, Ms(r.own).c_str(), Ms(r.impOwn).c_str());
         rows.push_back(std::move(r));
     }
 
     if (!only.empty()) return 0;
 
     // ---- per-file table (markdown) ----
-    std::printf("| File | KB | own tree ms | own load ms | ufbx load ms | time own/ufbx | own peak MB | ufbx peak MB | mem own/ufbx | import own ms | import ufbx ms | import own/ufbx | import own MB | import ufbx MB |\n");
-    std::printf("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
-    for (const Row& r : rows) {
-        std::printf("| %s | %zu | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.name.c_str(), r.bytes / 1024,
-                    Ms(r.tree).c_str(), Ms(r.own).c_str(), Ms(r.ufbx).c_str(), r.own.ok && r.ufbx.ok ? Ratio(r.own.ms, r.ufbx.ms).c_str() : "-",
-                    Mb(r.own.peak).c_str(), Mb(r.ufbx.peak).c_str(), r.own.ok && r.ufbx.ok ? Ratio((double)r.own.peak, (double)r.ufbx.peak).c_str() : "-",
-                    Ms(r.impOwn).c_str(), Ms(r.impUfbx).c_str(), r.impOwn.ok && r.impUfbx.ok ? Ratio(r.impOwn.ms, r.impUfbx.ms).c_str() : "-",
-                    Mb(r.impOwn.peak).c_str(), Mb(r.impUfbx.peak).c_str());
-    }
+    std::printf("| File | KB | own tree ms | own load ms | own peak MB | import ms | import peak MB |\n");
+    std::printf("|---|---:|---:|---:|---:|---:|---:|\n");
+    for (const Row& r : rows)
+        std::printf("| %s | %zu | %s | %s | %s | %s | %s |\n", r.name.c_str(), r.bytes / 1024, Ms(r.tree).c_str(), Ms(r.own).c_str(),
+                    Mb(r.own.peak).c_str(), Ms(r.impOwn).c_str(), Mb(r.impOwn.peak).c_str());
 
-    // ---- totals over the files both readers read ----
+    // ---- totals over the files that read ----
     for (int group = 0; group < 2; ++group) {
-        double own = 0, ufbx = 0, io = 0, iu = 0, tree = 0; long long po = 0, pu = 0, ipo = 0, ipu = 0; std::size_t kb = 0; int n = 0;
+        double own = 0, io = 0, tree = 0; long long po = 0, ipo = 0; std::size_t kb = 0; int n = 0;
         for (const Row& r : rows) {
-            if (r.synthetic != (group == 1) || !r.own.ok || !r.ufbx.ok || !r.impOwn.ok || !r.impUfbx.ok) continue;
-            ++n; kb += r.bytes / 1024; tree += r.tree.ms; own += r.own.ms; ufbx += r.ufbx.ms; io += r.impOwn.ms; iu += r.impUfbx.ms;
-            po = std::max(po, r.own.peak); pu = std::max(pu, r.ufbx.peak); ipo = std::max(ipo, r.impOwn.peak); ipu = std::max(ipu, r.impUfbx.peak);
+            if (r.synthetic != (group == 1) || !r.own.ok || !r.impOwn.ok) continue;
+            ++n; kb += r.bytes / 1024; tree += r.tree.ms; own += r.own.ms; io += r.impOwn.ms;
+            po = std::max(po, r.own.peak); ipo = std::max(ipo, r.impOwn.peak);
         }
         if (!n) continue;
-        std::printf("\n%s, %d files, %zu KB: own tree %.1f ms, own load %.1f ms, ufbx load %.1f ms (%s); import own %.1f ms, import ufbx %.1f ms (%s); "
-                    "largest peak: own %s MB, ufbx %s MB; import own %s MB, import ufbx %s MB\n",
-                    group ? "Synthetic (bench_*)" : "Real files and fixtures", n, kb, tree, own, ufbx, Ratio(own, ufbx).c_str(), io, iu,
-                    Ratio(io, iu).c_str(), Mb(po).c_str(), Mb(pu).c_str(), Mb(ipo).c_str(), Mb(ipu).c_str());
+        std::printf("\n%s, %d files, %zu KB: own tree %.1f ms, own load %.1f ms, import %.1f ms; largest peak: own %s MB, import %s MB\n",
+                    group ? "Synthetic (bench_*)" : "Real files and fixtures", n, kb, tree, own, io, Mb(po).c_str(), Mb(ipo).c_str());
     }
-
-    // ---- worst ratios, on files where ufbx needs at least 1 ms (below that the numbers are mostly fixed costs) ----
-    std::vector<const Row*> big;
-    for (const Row& r : rows) if (r.own.ok && r.ufbx.ok && r.ufbx.ms >= 1.0) big.push_back(&r);
-    auto worst = [&](const char* label, const std::function<double(const Row&)>& key) {
-        std::vector<const Row*> v = big;
-        std::sort(v.begin(), v.end(), [&](const Row* a, const Row* b) { return key(*a) > key(*b); });
-        std::printf("\nWorst %s (ufbx load >= 1 ms):\n", label);
-        for (std::size_t i = 0; i < v.size() && i < 5; ++i) std::printf("  %-48s %.2fx\n", v[i]->name.c_str(), key(*v[i]));
-    };
-    worst("load time own/ufbx", [](const Row& r) { return r.own.ms / r.ufbx.ms; });
-    worst("load peak memory own/ufbx", [](const Row& r) { return r.ufbx.peak > 0 ? (double)r.own.peak / (double)r.ufbx.peak : 0.0; });
-    worst("import time own/ufbx", [](const Row& r) { return r.impUfbx.ok && r.impOwn.ok && r.impUfbx.ms > 0 ? r.impOwn.ms / r.impUfbx.ms : 0.0; });
     int fails = 0;
-    for (const Row& r : rows) if (!r.own.ok || !r.ufbx.ok) { ++fails; std::printf("\nnot read: %s (own %s, ufbx %s)\n", r.name.c_str(), r.own.ok ? "ok" : "fail", r.ufbx.ok ? "ok" : "fail"); }
-    std::printf("\n%zu files, %d not read by one of the readers. Runs per measurement: at least %d. Heap counting: %s.\n", rows.size(), fails, runs,
+    for (const Row& r : rows) if (!r.own.ok || !r.impOwn.ok) { ++fails; std::printf("\nnot read: %s (reader %s, import %s)\n", r.name.c_str(), r.own.ok ? "ok" : "fail", r.impOwn.ok ? "ok" : "fail"); }
+    std::printf("\n%zu files, %d not read. Runs per measurement: at least %d. Heap counting: %s.\n", rows.size(), fails, runs,
 #ifdef OKAY_BENCH_COUNT_HEAP
                 "on"
 #else

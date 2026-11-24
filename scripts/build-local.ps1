@@ -11,6 +11,11 @@
   editor, launcher and player the SDL2 development files (pass the folder with -Sdl2Dir).
 
   Programs end up in <BuildDir>\bin (OkayEngine.exe = editor, OkaySpace.exe = launcher, OkaySpacePlayer.exe = player).
+
+  The same recipe is in C++ as `okay engine build` (tools/okay-cli/Engine.cpp), which needs no PowerShell and finds
+  the tools and SDL2 itself. This script stays to build okay itself on a PC that has no okay yet. The two must build
+  the same way: tests/test_okay_cli.cpp checks that this file still has the CMake options and targets okay uses, so
+  change both together.
 .PARAMETER Target
   What to build: All (default), Editor, Launcher, Player, Sandbox or Tests.
 .PARAMETER Config

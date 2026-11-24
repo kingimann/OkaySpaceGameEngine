@@ -1,0 +1,15 @@
+; FBX 5.0.0 project file
+; ----
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1002
+	FBXVersion: 5000
+}
+
+Objects:  {
+	Model: "Model::Cube", "Mesh" {
+		Version: 196
+		Vertices: 0,0,0,1,0,0,0,1,0
+		PolygonVertexIndex: 0,1,-3
+	}
+}

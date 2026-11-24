@@ -3,4 +3,3 @@
 src/Render/GLRenderer.cpp            # OpenGL does not exist in UWP (Direct3D 11 only)
 src/Render/D3D12Renderer.cpp         # Direct3D 12 preview renderer: d3d12 + D3DCompile; a UWP app on Xbox One uses Direct3D 11
 src/Net/PhotonTransport.cpp          # third-party SDK adapter, an empty file unless that SDK is installed; reads SDL
-third_party/ufbx/ufbx.c            # third-party FBX library (the only third-party code in engine/); our own okay::fbx is the only FBX reader here

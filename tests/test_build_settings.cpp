@@ -209,12 +209,14 @@ int main() {
     {
         RUN_SUITE("version control file");
         const auto lines = IgnoreLines("Builds\\Win/");
-        CHECK(std::find(lines.begin(), lines.end(), "Builds/Win/") != lines.end());
+        CHECK(std::find(lines.begin(), lines.end(), "/Builds/Win/") != lines.end());   // anchored: only the project's own top folder
+        CHECK(std::find(lines.begin(), lines.end(), "*.log") == lines.end());           // a game's own .log files are not hidden
+        for (const auto& l : lines) if (l.find('/') != std::string::npos) CHECK(l[0] == '/');
         { const auto outside = IgnoreLines("C:/x"); CHECK(std::find(outside.begin(), outside.end(), "C:/x/") == outside.end()); }   // outside the project: not listed
         CHECK(IgnoreLines("../out").size() == IgnoreLines("").size());
         int added = 0;
-        const std::string a = MergeIgnore("node_modules/\n*.log", lines, &added);
-        CHECK(added == (int)lines.size() - 1 && a.find("node_modules/\n*.log\n# added by") != std::string::npos);
+        const std::string a = MergeIgnore("node_modules/\n/.okay/build_history.txt", lines, &added);
+        CHECK(added == (int)lines.size() - 1 && a.find("node_modules/\n/.okay/build_history.txt\n# added by") != std::string::npos);
         int again = -1;
         CHECK(MergeIgnore(a, lines, &again) == a && again == 0);                   // running it twice changes nothing
         CHECK(MergeIgnore("", lines, &added).rfind("# added by", 0) == 0);

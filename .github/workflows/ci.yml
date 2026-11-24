@@ -528,7 +528,6 @@ jobs:
           # the switches must really reach the compiler, or this job would test the old stack
           grep -q 'OKAY_OWN_STACK_BUILD' build-own/build.ninja
           grep -q 'OKAY_OWN_HTTP_DEFAULT_ON' build-own/build.ninja
-          grep -q 'OKAY_OWN_FBX_DEFAULT' build-own/build.ninja
           grep -q 'OKAY_PLATFORM_DEFAULT_OWN' build-own/build.ninja
           grep -q 'OKAY_OWN_CRYPTO' build-own/build.ninja
 
@@ -633,7 +632,9 @@ jobs:
       - name: Check for newly downloaded apt packages
         id: apt-new
         if: always()
-        run: bash scripts/ci-apt-cache.sh after "${{ steps.install.outcome }}"
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: bash scripts/ci-apt-cache.sh after "$INSTALL_OUTCOME"
 
       - name: Save downloaded apt packages
         if: always() && steps.apt-new.outputs.save == '1'

@@ -162,15 +162,15 @@ one release later. The full plan: [docs/status/own_code_roadmap.md](docs/status/
 what is still outside code: [docs/status/THIRD_PARTY.md](docs/status/THIRD_PARTY.md).
 
 **Ours and on by default:** the engine core, physics, our glTF and OBJ readers, our own readers for many other model
-formats (switched on 2026-11-17; Assimp stays as the fallback where it is built), our own FBX reader (ufbx is the
-fallback), the texture library, and since 2.903.3 the OkayUI screens and Inspector, the OkayUI renderer and our own
-WAV reader (Settings > Experimental starts with every box ticked; untick one to go back).
+formats (switched on 2026-11-17; Assimp stays as the fallback where it is built), our own FBX reader (the only FBX
+reader since ufbx was deleted; it reads FBX 6.0 to 7.x), the texture library, and since 2.903.3 the OkayUI screens
+and Inspector, the OkayUI renderer and our own WAV reader (Settings > Experimental starts with every box ticked; untick one to go back).
 
 **Ours but still off by default:** the platform layer that replaces SDL2 (the Linux backend is tested, the Windows one
 is not yet), our own HTTP client (replaces curl), our own build tool `okay-build` (replaces CMake) and our own
 compiler work.
 
-**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build), ufbx, curl, libsodium and a
+**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build), curl, libsodium and a
 vendored text editor widget. No new outside libraries or SDKs may be added.
 
 **The crypto exception.** Encryption cannot be replaced on our word: it needs an outside review first, and the owner

@@ -1,4 +1,4 @@
-// The Dear ImGui bodies of the Problems, Stats, History, Tags and Layers, Physics and Profiler panels (see EditorPanelViews.hpp).
+// The Dear ImGui bodies of the Problems, Stats, Tags and Layers, Physics and Profiler panels (see EditorPanelViews.hpp; History has none: OkayUI only).
 // The drawing is what the editor's DrawProblems, DrawStats, DrawHistory, DrawTagsAndLayersSettings, the Physics section of
 // DrawProjectSettings and DrawProfiler drew before they were split from the editor's state; the right-click menus of the first
 // three are new and the OkayUI ports have the same ones.
@@ -174,66 +174,6 @@ StatsIntent DrawStatsBodyImGui(StatsModel& m, const PanelViewHooks& hooks) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%s", kStatsFooter);
     ImGui::PopStyleColor();
-    return out;
-}
-
-// ---- History ----------------------------------------------------------------------------------------------------------------
-
-HistoryIntent DrawHistoryBodyImGui(const HistoryModel& m, const PanelViewHooks&) {
-    HistoryIntent out;
-    ImGui::BeginDisabled(m.undoDepth <= 0);
-    if (ImGui::Button("Undo##hist")) out.undo = 1;
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(m.redoDepth <= 0);
-    if (ImGui::Button("Redo##hist")) out.redo = 1;
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", HistoryStatusText(m).c_str());
-    ImGui::Separator();
-    ImGui::BeginChild("##histlist");
-    if (m.undoDepth <= 0 && m.redoDepth <= 0) {
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextDisabled("%s", kHistoryEmpty);
-        ImGui::EndChild();
-        return out;
-    }
-    // Timeline rail down the left: a node per state, the current one filled with the accent colour, future (redo) states
-    // hollow and dimmed.
-    ImDrawList* hdl = ImGui::GetWindowDrawList();
-    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
-    const float railTopY = ImGui::GetCursorScreenPos().y;
-    const std::vector<HistoryRow> rows = HistoryRows(m);
-    {
-        const float rowH = ImGui::GetTextLineHeightWithSpacing();
-        hdl->AddLine(ImVec2(railX, railTopY + 4.0f), ImVec2(railX, railTopY + (float)rows.size() * rowH - 4.0f),
-                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
-    }
-    for (std::size_t r = 0; r < rows.size(); ++r) {
-        const HistoryRow& row = rows[r];
-        const bool current = row.kind == HistoryCurrent, ahead = row.kind == HistoryAhead;
-        char lbl[220]; std::snprintf(lbl, sizeof(lbl), "     %s##hrow%d", row.label.c_str(), (int)r);
-        if (ahead) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        const bool hit = ImGui::Selectable(lbl, current);
-        if (ahead) ImGui::PopStyleColor();
-        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        const float cy = (mn.y + mx.y) * 0.5f;
-        if (current) hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f, ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
-        else hdl->AddCircle(ImVec2(railX, cy), 3.0f,
-                            ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text, 0.55f), 12, 1.5f);
-        bool jump = hit;
-        if (ImGui::BeginPopupContextItem()) {
-            if (!current && ImGui::MenuItem("Jump to this state")) jump = true;
-            if (ImGui::MenuItem("Copy name")) out.copy = (int)r;
-            ImGui::EndPopup();
-        }
-        if (jump && !current && out.undo == 0 && out.redo == 0) {
-            if (ahead) out.redo = row.steps; else out.undo = row.steps;
-        }
-    }
-    ImGui::EndChild();
     return out;
 }
 

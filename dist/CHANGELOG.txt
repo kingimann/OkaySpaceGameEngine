@@ -13,9 +13,9 @@ v2.903.7
     own Windows code.
   - Model files: 3D GameStudio .mdl (versions 3, 4, 5 and 7) and .hmp
     terrain files, and Silo .sib files, open with our own readers.
-  - Known problem: a broken or deliberately damaged .mdl file can crash
-    the editor while importing. The fix is being tested and comes in the
-    next update; normal .mdl files are not affected.
+  - Fixed: a broken or deliberately damaged .mdl file could crash the
+    editor while importing, and a damaged .sib file could use gigabytes
+    of memory. Both are now refused with a clear message.
 
 v2.903.6
   Bug fixes and more of our own model readers

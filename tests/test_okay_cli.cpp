@@ -10,6 +10,7 @@
 #include "test_framework.hpp"
 
 #include "Cli.hpp"
+#include "CliInternal.hpp"   // LongPath, RelInside
 #include "Engine.hpp"
 #include "Git.hpp"
 #include "Process.hpp"
@@ -18,11 +19,23 @@
 #include <Okay.hpp>
 #include "okay/Core/StringUtil.hpp"
 
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>   // GetShortPathNameW, for the short-name check
+#endif
 
 namespace fs = std::filesystem;
 using okaycli::Io;
@@ -33,11 +46,28 @@ namespace {
 
 bool Has(const std::string& hay, const std::string& needle) { return hay.find(needle) != std::string::npos; }
 
+/// The engine checkout. Not __FILE__: Ninja compiles with a relative path (../tests/test_okay_cli.cpp), which only
+/// works from the build folder, and the Windows test job runs the copied .exe from another folder.
+fs::path RepoRoot() {
+#ifdef OKAY_SOURCE_DIR
+    return fs::path(OKAY_SOURCE_DIR);
+#else
+    return fs::absolute(fs::path(__FILE__)).parent_path().parent_path();
+#endif
+}
+
 std::string Read(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream s;
     s << f.rdbuf();
     return s.str();
+}
+/// The entries of a folder; none (not an exception that ends the test) when it is missing or can't be read.
+std::vector<fs::path> FilesIn(const fs::path& dir) {
+    std::vector<fs::path> v;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) v.push_back(it->path());
+    return v;
 }
 void Write(const fs::path& p, const std::string& t) {
     fs::create_directories(p.parent_path());
@@ -177,6 +207,33 @@ void TestIgnoreAndAttributes() {
         CHECK(in(at, b));
     CHECK(okaycli::vc::MergeDriverCommand("C:\\Program Files\\okay.exe") == "\"C:/Program Files/okay.exe\" vc merge-driver %O %A %B %P");
     CHECK(okaycli::vc::DiffDriverCommand("/opt/my $dir/okay") == "\"/opt/my \\$dir/okay\" vc diff-driver");
+}
+
+/// Is a path inside a folder: the vc commands ask this of the file named on the command line and git's top folder.
+void TestRelInside(const fs::path& tmp) {
+    RUN_SUITE("okay cli: a path inside a folder, however the two are written");
+    using okaycli::detail::LongPath;
+    using okaycli::detail::RelInside;
+    const fs::path top = tmp / "inside" / "Game";
+    fs::create_directories(top / "Assets");
+    CHECK(RelInside((top / "Assets" / "Level.okayscene").string(), top.string()) == "Assets/Level.okayscene");   // need not exist
+    CHECK(RelInside((top / "Assets" / ".." / "a.txt").string(), top.string()) == "a.txt");
+    CHECK(RelInside((top / "Assets").string(), top.string() + "/") == "Assets");
+    CHECK(RelInside(top.string(), top.string()).empty());                                        // the folder itself
+    CHECK(RelInside((tmp / "inside" / "Game2" / "a.txt").string(), top.string()).empty());       // a name that only starts the same
+    CHECK(RelInside((tmp / "inside" / "a.txt").string(), top.string()).empty());
+    CHECK(RelInside((top / ".." / "Game" / "b.txt").string(), top.string()) == "b.txt");
+    CHECK(LongPath((top / "Assets" / "").string()) == LongPath((top / "Assets").string()));     // no trailing slash
+    CHECK(LongPath(top.string()).find('\\') == std::string::npos);
+#if defined(_WIN32)
+    // Windows: case and slashes do not matter, and a folder's short 8.3 name is the same folder as its long one.
+    std::string upper = top.string();
+    for (char& c : upper) c = (char)std::toupper((unsigned char)c);
+    CHECK(RelInside(upper + "\\Assets\\X.png", top.generic_string()) == "Assets/X.png");
+    wchar_t shortName[1024] = {0};
+    if (GetShortPathNameW(top.wstring().c_str(), shortName, 1024) > 0)
+        CHECK(RelInside(fs::path(shortName).string() + "\\Assets\\Y.png", top.string()) == "Assets/Y.png");
+#endif
 }
 
 void TestStatusGrouping() {
@@ -327,6 +384,32 @@ void TestGit(const fs::path& tmp) {
     CHECK(Has(GitOut(root, {"config", "diff.okayscene.command"}), "vc diff-driver"));
     CHECK(GitOut(root, {"symbolic-ref", "--short", "HEAD"}).rfind("main", 0) == 0);
     CHECK(Cli({"--project", P, "vc", "init"}, s) == 0 && Has(s.out, "already had everything"));   // safe to run again
+    // The same project named another way (on Windows the temp folder's short name C:\Users\RUNNER~1 while git prints
+    // the long one; here a symbolic link) is still this repository, not "inside another Git folder".
+    const fs::path alias = tmp / "vc-alias";
+    std::error_code linkEc;
+    fs::create_directory_symlink(where, alias, linkEc);
+    if (!linkEc) {
+        const std::string PA = (alias / "Game").string();
+        CHECK(Cli({"--project", PA, "vc", "init"}, s) == 0 && Has(s.out, "already had everything"));
+        CHECK(okaycli::detail::RelInside((alias / "Game" / "Assets" / "x.png").string(), root.string()) == "Assets/x.png");
+    }
+    // A .gitignore with Windows line ends (git's autocrlf, a Windows editor): its lines still count, and lines added
+    // to it get the same line ends.
+    {
+        const std::string lf = Read(root / ".gitignore");
+        std::string crlf;
+        for (char c : lf) { if (c == '\n') crlf += '\r'; crlf += c; }
+        Write(root / ".gitignore", crlf);
+        CHECK(Cli({"--project", P, "vc", "init"}, s) == 0 && Has(s.out, ".gitignore already had everything"));
+        CHECK(Read(root / ".gitignore") == crlf);
+        int added = 0;
+        const std::string more = okaycli::vc::GitIgnoreText(crlf, "Out/Win", &added);
+        bool allCrlf = true;
+        for (std::size_t i = crlf.size(); i < more.size(); ++i) if (more[i] == '\n' && more[i - 1] != '\r') allCrlf = false;
+        CHECK(added == 1 && Has(more, "\r\n/Out/Win/\r\n") && allCrlf);
+        Write(root / ".gitignore", lf);
+    }
 
     CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.out, "Scenes and prefabs (1)") && Has(s.out, "Nothing has been saved yet"));
     CHECK(Cli({"--project", P, "vc", "status", "--json"}, s) == 0 && Has(s.out, "\"saved\":false") && Has(s.out, "\"state\":\"new\"") &&
@@ -376,8 +459,8 @@ void TestGit(const fs::path& tmp) {
     okay::Vec3 a, b;
     CHECK(PositionOf(Read(scene), "A", a) && a.x == 4.0f);
     bool kept = false;
-    for (const auto& e : fs::directory_iterator(root / ".okay" / "backups" / "undo"))
-        if (PositionOf(Read(e.path()), "A", b) && b.x == 8.0f) kept = true;
+    for (const fs::path& e : FilesIn(root / ".okay" / "backups" / "undo"))
+        if (PositionOf(Read(e), "A", b) && b.x == 8.0f) kept = true;
     CHECK(kept);
     CHECK(Cli({"--project", P, "vc", "undo", scene.string()}, s) == 0 && Has(s.out, "no changes since the last save"));
     const std::string first = GitOut(root, {"rev-list", "--max-parents=0", "HEAD"}).substr(0, 7);
@@ -398,8 +481,8 @@ void TestGit(const fs::path& tmp) {
         CHECK(Cli({"--project", P, "vc", "undo", xb.string()}, s) == 0);
     }
     int copiesA = 0, copiesB = 0;
-    for (const auto& e : fs::directory_iterator(root / ".okay" / "backups" / "undo")) {
-        const std::string n = e.path().filename().string();
+    for (const fs::path& e : FilesIn(root / ".okay" / "backups" / "undo")) {
+        const std::string n = e.filename().string();
         if (n.rfind("Assets~A~x.okayscene.", 0) == 0) ++copiesA;
         if (n.rfind("Assets~B~x.okayscene.", 0) == 0) ++copiesB;
     }
@@ -621,7 +704,7 @@ void TestEngineDetect(const fs::path& tmp) {
     CHECK(fs::path(FindEngineSource(src.string(), "/")) == src);
     CHECK(FindEngineSource((tmp / "nocmake").string(), src.string()).empty());   // --source wins, and must be real
     // The real repository is one.
-    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    const fs::path repo = RepoRoot();
     CHECK(IsEngineSource(repo.string()));
 
     // SDL2: the MinGW download (one prefix per CPU), the Visual Studio download (cmake/ at the top), SDL2_DIR naming
@@ -763,7 +846,7 @@ void TestEnginePlan(const fs::path& tmp) {
     CHECK(problems == 0 && Has(ok, "Everything needed") && Has(ok, win.cmake));
 
     // build-local.ps1 still builds the same recipe: its CMake options, targets and defaults are the ones above.
-    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    const fs::path repo = RepoRoot();
     const std::string ps1 = Read(repo / "scripts" / "build-local.ps1");
     std::size_t last = 0;
     bool inOrder = true;
@@ -1050,7 +1133,7 @@ void TestProjectAndVsCommands(const fs::path& tmp) {
     }
 
     // Visual Script graphs: the repository's example graph is fine; a damaged one is an error.
-    const fs::path repo = fs::path(__FILE__).parent_path().parent_path();
+    const fs::path repo = RepoRoot();
     fs::create_directories(proj / "Assets" / "Graphs");
     std::error_code ec;
     fs::copy_file(repo / "examples" / "visual_script" / "patrol.okayvs", proj / "Assets" / "Graphs" / "patrol.okayvs", ec);
@@ -1089,6 +1172,7 @@ int main(int argc, char** argv) {
     TestArguments();
     TestIgnoreAndAttributes();
     TestStatusGrouping();
+    TestRelInside(tmp);
     TestProjects(tmp);
 #if !defined(_WIN32)
     TestPathLookup(tmp);

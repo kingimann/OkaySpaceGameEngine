@@ -3276,6 +3276,8 @@ if(TARGET okay_cli_lib)
     add_executable(test_okay_cli test_okay_cli.cpp)
     target_link_libraries(test_okay_cli PRIVATE okay_cli_lib)
     target_include_directories(test_okay_cli PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    # The checkout, for build-local.ps1 and the example graph: __FILE__ is relative under Ninja (Windows job runs elsewhere).
+    target_compile_definitions(test_okay_cli PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME okay_cli COMMAND test_okay_cli)
     set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()

@@ -17,6 +17,17 @@ constexpr int kLeafSize = 4;
 
 inline bool Finite3(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
+// The box around the eight corners of [lo, hi] after the matrix m moves them (one place for all three users).
+void BoxThrough(const Mat4& m, const Vec3& lo, const Vec3& hi, Vec3& outMin, Vec3& outMax) {
+    const Vec3 first = m.MultiplyPoint(lo);
+    outMin = outMax = first;
+    for (int corner = 1; corner < 8; ++corner) {
+        const Vec3 q = m.MultiplyPoint({(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y, (corner & 4) ? hi.z : lo.z});
+        outMin = Vec3::Min(outMin, q);
+        outMax = Vec3::Max(outMax, q);
+    }
+}
+
 inline float Axis(const Vec3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
 
 // Slab test of a ray (o, d) against [mn, mx]; the entry t (>= 0) when it hits within maxT.
@@ -273,23 +284,12 @@ WorldView::WorldView(const TriMesh& mesh, const Mat4& l2w) : m_mesh(&mesh), m_l2
 }
 
 void WorldView::WorldBounds(Vec3& mn, Vec3& mx) const {
-    mn = {1e30f, 1e30f, 1e30f}; mx = {-1e30f, -1e30f, -1e30f};
     if (!Valid()) { mn = mx = Vec3{0, 0, 0}; return; }
-    const Vec3& lo = m_mesh->BoundsMin(); const Vec3& hi = m_mesh->BoundsMax();
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_l2w.MultiplyPoint({i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z});
-        mn = {std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z)};
-        mx = {std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z)};
-    }
+    BoxThrough(m_l2w, m_mesh->BoundsMin(), m_mesh->BoundsMax(), mn, mx);
 }
 
 void WorldView::LocalBounds(const Vec3& wmn, const Vec3& wmx, Vec3& lmn, Vec3& lmx) const {
-    lmn = {1e30f, 1e30f, 1e30f}; lmx = {-1e30f, -1e30f, -1e30f};
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_w2l.MultiplyPoint({i & 1 ? wmx.x : wmn.x, i & 2 ? wmx.y : wmn.y, i & 4 ? wmx.z : wmn.z});
-        lmn = {std::min(lmn.x, p.x), std::min(lmn.y, p.y), std::min(lmn.z, p.z)};
-        lmx = {std::max(lmx.x, p.x), std::max(lmx.y, p.y), std::max(lmx.z, p.z)};
-    }
+    BoxThrough(m_w2l, wmn, wmx, lmn, lmx);
     // Float slack so a triangle touching the box edge isn't culled by rounding.
     Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-5f, 1e-5f, 1e-5f);
     lmn = lmn - pad; lmx = lmx + pad;
@@ -304,12 +304,8 @@ bool WorldView::Nearest(const Vec3& p, float maxDist, Vec3& point, float& dist, 
     inside = false;
     if (!Valid() || !(maxDist >= 0.0f)) return false;
     auto boxLowerBound = [&](const Vec3& lo, const Vec3& hi) {   // a local box, as the world box around its eight corners
-        Vec3 mn{1e30f, 1e30f, 1e30f}, mx{-1e30f, -1e30f, -1e30f};
-        for (int i = 0; i < 8; ++i) {
-            const Vec3 w = m_l2w.MultiplyPoint({i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z});
-            mn = {std::min(mn.x, w.x), std::min(mn.y, w.y), std::min(mn.z, w.z)};
-            mx = {std::max(mx.x, w.x), std::max(mx.y, w.y), std::max(mx.z, w.z)};
-        }
+        Vec3 mn, mx;
+        BoxThrough(m_l2w, lo, hi, mn, mx);
         const float dx = std::max(std::max(mn.x - p.x, p.x - mx.x), 0.0f);
         const float dy = std::max(std::max(mn.y - p.y, p.y - mx.y), 0.0f);
         const float dz = std::max(std::max(mn.z - p.z, p.z - mx.z), 0.0f);

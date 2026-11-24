@@ -76,6 +76,7 @@ How to build a game with the editor and the ready-made parts.
 
 **Scripting and UI**
 - [OkayScript](scripting/scripting.md): the language guide and function reference.
+- [OkayScript bytecode machine](scripting/okayscript_vm.md): design note for the compiler and stack machine.
 - [Visual Script format](scripting/visual_scripting.md) and [Visual Script clarity](scripting/visual_script_clarity.md).
 - [engine_api.md](engine_api.md): every function scripts can call (generated).
 - [visual_scripting_nodes.md](visual_scripting_nodes.md): every Visual Script node (generated).

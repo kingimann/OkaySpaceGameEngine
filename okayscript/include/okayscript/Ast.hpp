@@ -84,6 +84,10 @@ using StmtList = std::vector<StmtPtr>;
 /// exception, so it costs nothing on the hot path (a `return` value waits in BasicRuntime::retVal).
 enum class Flow : unsigned char { Normal, Return, Break, Continue };
 
+/// A body compiled to bytecode (Bytecode.hpp), made the first time the body runs and kept with the syntax tree.
+struct Chunk;
+using ChunkPtr = std::shared_ptr<const Chunk>;
+
 struct FunctionDecl {
     std::string name;
     std::vector<std::string> params;
@@ -92,6 +96,7 @@ struct FunctionDecl {
     StmtList body;
     unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
     int line = 0;
+    mutable ChunkPtr code;                   ///< `body` as bytecode, once it has run
 };
 
 /// A plain class (`class Item { ... }`, no base type). Instances are maps tagged {"__class": name}, so copies share
@@ -123,6 +128,7 @@ struct Program {
     /// typed declaration, foreach, catch) inside a function, method, constructor or lambda. A name that is not here
     /// can only be a global, a static or a field, so reading it skips the walk over the call stack's scopes.
     std::unordered_set<std::string> localNames;
+    mutable ChunkPtr topCode;   ///< `top` as bytecode, once it has run
 };
 /// Fill prog.localNames (ParseSource does this).
 void CollectLocalNames(Program& prog);
@@ -248,6 +254,7 @@ struct LambdaExpr : ExprOf<ExprKind::Lambda> {
     std::vector<std::string> params;
     std::vector<ExprPtr> defaults;
     StmtList body;
+    mutable ChunkPtr code;   ///< `body` as bytecode, once it has run
     std::string Dump() const override;
 };
 

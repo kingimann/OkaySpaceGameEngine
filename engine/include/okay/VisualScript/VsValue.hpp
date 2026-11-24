@@ -142,6 +142,11 @@ public:
     bool IsVec3() const { return std::holds_alternative<Vec3>(m_data); }
     bool IsBool() const { return std::holds_alternative<bool>(m_data); }
     bool IsNumber() const { return std::holds_alternative<float>(m_data); }
+    /// The number itself when this is a number, else nullptr (OkayScript's fast path for number maths).
+    const float* NumberPtr() const { return std::get_if<float>(&m_data); }
+    /// Make this the number f / the bool b (in place when it already is one: OkayScript's hot path).
+    void SetNumber(float f) { if (auto* p = std::get_if<float>(&m_data)) *p = f; else m_data = f; }
+    void SetBool(bool b) { if (auto* p = std::get_if<bool>(&m_data)) *p = b; else m_data = b; }
     std::string AsString() const {
         if (auto* s = std::get_if<std::string>(&m_data)) return *s;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";

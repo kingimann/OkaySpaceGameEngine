@@ -49,8 +49,8 @@ void PlaceArgs(const std::vector<std::string>& params, const std::vector<V>& arg
     }
 }
 template <class V> struct PopScope {
-    std::vector<BasicEnvironment<V>>& s;
-    ~PopScope() { s.pop_back(); }
+    BasicRuntime<V>& rt;
+    ~PopScope() { rt.scopes.pop_back(); rt.BumpVars(); }
 };
 } // namespace detail
 
@@ -58,14 +58,18 @@ template <class V> struct PopScope {
 template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v) {
     if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);   // keeps Lookup's shortcut true
     Env& e = scopes.back();
-    e.vars[n] = v;
-    if (!e.kinds.empty()) e.kinds.erase(n);
+    auto ins = e.vars.try_emplace(n);
+    ins.first->second = v;
+    // A new name may hide one further out, and a dropped type rule changes how it is written: places cached by
+    // bytecode are stale. Setting a name this scope already has changes nothing they rely on.
+    if (ins.second || (!e.kinds.empty() && e.kinds.erase(n))) BumpVars();
 }
 template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const V& v, unsigned char kind) {
     if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);
     Env& e = scopes.back();
     e.vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
     if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
+    BumpVars();
 }
 namespace detail {
 template <class V> bool AssignIn(BasicEnvironment<V>& e, const std::string& n, const V& v) {
@@ -92,18 +96,37 @@ template <class V> void BasicRuntime<V>::Assign(const std::string& n, const V& v
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
     Global().vars[n] = v;   // a new name becomes a global
 }
-template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n) const {
+namespace detail {
+template <class V> void FillCache(NameCache* c, const BasicEnvironment<V>& e, const std::string& n, const V* p,
+                                  unsigned long long epoch) {
+    if (!c) return;
+    c->epoch = epoch;
+    c->value = const_cast<V*>(p);
+    c->writable = e.kinds.empty() || !e.kinds.count(n);
+}
+} // namespace detail
+template <class V> void BasicRuntime<V>::AssignCached(const std::string& n, const V& v, NameCache& cache) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (detail::AssignIn(*it, n, v)) { detail::FillCache(&cache, *it, n, &it->vars.find(n)->second, varEpoch); return; }
+    }
+    if (statics && detail::AssignIn(*statics, n, v)) return;
+    if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
+    auto& slot = Global().vars[n];   // a new name becomes a global
+    slot = v;
+    detail::FillCache(&cache, Global(), n, &slot, varEpoch);
+}
+template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n, NameCache* cache) const {
     if (scopes.size() > 1 && !localNames.count(n)) {
         // Not a local anywhere: only the globals (scopes[0]) and the statics can hold it.
         auto f = scopes.front().vars.find(n);
-        if (f != scopes.front().vars.end()) return &f->second;
+        if (f != scopes.front().vars.end()) { detail::FillCache(cache, scopes.front(), n, &f->second, varEpoch); return &f->second; }
         if (statics && !statics->vars.empty()) { auto g = statics->vars.find(n); if (g != statics->vars.end()) return &g->second; }
         return nullptr;
     }
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
         if (it->vars.empty()) continue;
         auto f = it->vars.find(n);
-        if (f != it->vars.end()) return &f->second;
+        if (f != it->vars.end()) { detail::FillCache(cache, *it, n, &f->second, varEpoch); return &f->second; }
     }
     if (statics && !statics->vars.empty()) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return &f->second; }
     return nullptr;
@@ -125,6 +148,7 @@ template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
 
 // ---- Statics -----------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::DefineStatic(const std::string& n, const V& v, unsigned char kind) {
+    BumpVars();
     if (!statics) statics = std::make_shared<Env>();
     if (statics->vars.count(n)) return;   // only the first run sets it
     statics->vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
@@ -357,18 +381,23 @@ template <class V> bool BasicRuntime<V>::IsLambda(const V& v) { return detail::I
 
 template <class V>
 V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names) {
+    return Invoke(fn, args.data(), args.size(), names);
+}
+template <class V>
+V BasicRuntime<V>::Invoke(const FunctionDecl& fn, const V* args, std::size_t argc, const std::vector<std::string>* names) {
     auto what = [&fn] { return fn.name + "()"; };
     detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, what);
     const int callerLine = curLine;
     scopes.push_back(Env{});
-    detail::PopScope<V> pop{scopes};
+    BumpVars();
+    detail::PopScope<V> pop{*this};
     const std::size_t np = fn.params.size();
     if (!names) {
         // Positional arguments (nearly every call): bind them straight, no slot lists.
         for (std::size_t i = 0; i < np; ++i) {
             const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
             V v;
-            if (i < args.size()) v = args[i];
+            if (i < argc) v = args[i];
             else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
             else if (k) v = DefaultForKind<V>(k);
             if (!k) scopes.back().vars[fn.params[i]] = std::move(v);   // parameters are in localNames (CollectLocalNames)
@@ -376,8 +405,8 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const st
         }
     } else {
         std::vector<char> present;
-        std::vector<V> slot;
-        detail::PlaceArgs<V>(fn.params, args, names, present, slot, what());
+        std::vector<V> slot, given(args, args + argc);
+        detail::PlaceArgs<V>(fn.params, given, names, present, slot, what());
         for (std::size_t i = 0; i < np; ++i) {
             const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
             V v;
@@ -388,9 +417,10 @@ V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const st
             else DefineTyped(fn.params[i], v, k);
         }
     }
+    BumpVars();   // the parameters are new names in this scope
     V ret;
     // A stray break/continue (no loop around it) ends the function, like return.
-    if (RunList(fn.body) == Flow::Return) ret = std::move(retVal);
+    if (RunBody(fn.body, fn.code) == Flow::Return) ret = std::move(retVal);
     curLine = callerLine;
     if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what());
     return ret;
@@ -471,7 +501,8 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
     std::vector<V> slot;
     detail::PlaceArgs<V>(ps, args, names, present, slot, "lambda");
     scopes.push_back(Env{});
-    detail::PopScope<V> pop{scopes};
+    BumpVars();
+    detail::PopScope<V> pop{*this};
     for (std::size_t i = 0; i < ps.size(); ++i) {
         V v;
         if (present[i]) v = slot[i];
@@ -479,7 +510,7 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
         Define(ps[i], v);
     }
     V ret;
-    if (RunList(*lb->second.body) == Flow::Return) ret = std::move(retVal);
+    if (RunBody(*lb->second.body, *lb->second.code) == Flow::Return) ret = std::move(retVal);
     curLine = callerLine;
     return ret;
 }

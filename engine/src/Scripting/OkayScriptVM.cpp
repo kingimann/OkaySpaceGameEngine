@@ -463,6 +463,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->program = std::make_unique<okayscript::Program>();
         okayscript::ParseSource(source, *m_impl->program);   // as before, a syntax error leaves nothing loaded
         for (auto& kv : m_impl->program->functions) m_impl->rt.functions[kv.first] = &kv.second;
+        m_impl->rt.BumpCalls();   // cached call targets in bytecode are stale
         for (auto& kv : m_impl->program->classes) m_impl->rt.classes[kv.first] = &kv.second;
         m_impl->rt.localNames = m_impl->program->localNames;
         const okayscript::StmtList& topLevel = m_impl->program->top;
@@ -474,8 +475,8 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         // Load (the contract every caller relies on). In bare mode the top-level
         // is also the per-frame loop, so this first run is the first tick — the
         // first Update skips re-running it to keep the overall tick count intact.
-        for (auto& s : topLevel) {
-            const okayscript::Flow f = m_impl->rt.Run(*s);
+        {
+            const okayscript::Flow f = m_impl->rt.RunBody(topLevel, m_impl->program->topCode);
             if (f == okayscript::Flow::Return) return true;   // a bare top-level return is harmless (as before, the
                                                                 // script then counts as not loaded)
             if (f != okayscript::Flow::Normal) { m_impl->loaded = true; return true; }   // stray break/continue
@@ -602,9 +603,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
         } else {
             // A stray top-level return/break/continue ends this frame's run, like it does in Load.
             try {
-                if (m_impl->program)
-                    for (auto& s : m_impl->program->top)
-                        if (m_impl->rt.Run(*s) != okayscript::Flow::Normal) break;
+                if (m_impl->program) m_impl->rt.RunBody(m_impl->program->top, m_impl->program->topCode);
             }
             catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
         }

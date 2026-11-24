@@ -3,6 +3,7 @@
 // engine OkayScriptVM's: numbers and text mix with + as text, vectors do component maths, a division by zero gives 0,
 // an index outside a list reads as 0, a name nobody set reads as 0. Run gives an error the line of its statement.
 #include "okayscript/detail/Runtime.ipp"
+#include "okayscript/detail/Vm.ipp"
 #include <cmath>
 #include <cstdlib>
 
@@ -60,6 +61,43 @@ template <class V> V Arith(Tok op, const V& a, const V& b) {
     }
 }
 } // namespace detail
+
+// `a[i]` and `a[i] = val` once `a` (and val) are worked out. The index is worked out only when `a` can be indexed, so
+// `index` is a function giving it (the walker evaluates the node; bytecode hands over a value it already has).
+template <class V> template <class IndexFn> V BasicRuntime<V>::IndexRead(const V& a, IndexFn index) {
+    using detail::SafeInt;
+    if (detail::IsClassInstance(a)) return GetMember(a, index().AsString(), true);
+    if (auto v = a.AsArray()) {
+        const int i = SafeInt(index().AsFloat());
+        if (i < 0 || i >= (int)v->size()) return V{};
+        return (*v)[i];
+    }
+    if (auto m = a.AsMap()) {
+        auto it = m->find(index().AsString());
+        return it == m->end() ? V{} : it->second;
+    }
+    return V{};
+}
+template <class V> template <class IndexFn> void BasicRuntime<V>::IndexWrite(const V& a, const V& val, IndexFn index) {
+    using detail::SafeInt;
+    if (detail::IsClassInstance(a)) { SetMember(a, index().AsString(), val, true); return; }
+    if (auto v = a.AsArray()) {
+        const int i = SafeInt(index().AsFloat());
+        if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
+        else if (i == (int)v->size()) v->push_back(val);   // one past the end appends
+    } else if (auto m = a.AsMap()) {
+        (*m)[index().AsString()] = val;
+    }
+}
+// `v.Name(args)` once v and the arguments are worked out: a class method, the host's, then the value's own.
+template <class V> V BasicRuntime<V>::CallMethodOn(const V& v, const MethodCallExpr& e, std::vector<V>& vals) {
+    V out;
+    if (detail::IsClassInstance(v)) return CallMethod(v, e.name, vals, true);
+    if (hooks && hooks->CallMember(*this, v, e.name, vals, out)) return out;
+    detail::LambdaInvoker<V> inv = [this](const V& f, std::vector<V>& xs) { return CallLambda(f, xs); };
+    if (detail::CallValueMethod<V>(v, e.name, vals, out, &inv)) return out;
+    throw RuntimeError("no method '" + e.name + "' on this value", Ln(e.line));
+}
 
 template <class V> Flow BasicRuntime<V>::RunList(const StmtList& list) {
     for (auto& s : list) {
@@ -182,16 +220,12 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
         }
         case ExprKind::MethodCall: {
             auto& e = static_cast<const MethodCallExpr&>(ex);
-            V v = Eval(*e.obj), out;
+            V v = Eval(*e.obj);
             if (e.safe && IsNullish(v)) return V{};
             std::vector<V> vals;
             vals.reserve(e.args.size());
             for (auto& a : e.args) vals.push_back(Eval(*a));
-            if (detail::IsClassInstance(v)) return CallMethod(v, e.name, vals, true);
-            if (hooks && hooks->CallMember(*this, v, e.name, vals, out)) return out;
-            detail::LambdaInvoker<V> inv = [this](const V& f, std::vector<V>& xs) { return CallLambda(f, xs); };
-            if (detail::CallValueMethod<V>(v, e.name, vals, out, &inv)) return out;
-            throw RuntimeError("no method '" + e.name + "' on this value", Ln(e.line));
+            return CallMethodOn(v, e, vals);
         }
         case ExprKind::Call: {
             auto& e = static_cast<const CallExpr&>(ex);
@@ -222,30 +256,13 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
             auto& e = static_cast<const IndexExpr&>(ex);
             V a = Eval(*e.arr);
             if (e.safe && IsNullish(a)) return V{};
-            if (detail::IsClassInstance(a)) return GetMember(a, Eval(*e.index).AsString(), true);
-            if (auto v = a.AsArray()) {
-                const int i = SafeInt(Eval(*e.index).AsFloat());
-                if (i < 0 || i >= (int)v->size()) return V{};
-                return (*v)[i];
-            }
-            if (auto m = a.AsMap()) {
-                auto it = m->find(Eval(*e.index).AsString());
-                return it == m->end() ? V{} : it->second;
-            }
-            return V{};
+            return IndexRead(a, [&] { return Eval(*e.index); });
         }
         case ExprKind::IndexAssign: {
             auto& e = static_cast<const IndexAssignExpr&>(ex);
             V a = Eval(*e.arr);
             V val = Eval(*e.value);
-            if (detail::IsClassInstance(a)) { SetMember(a, Eval(*e.index).AsString(), val, true); return val; }
-            if (auto v = a.AsArray()) {
-                const int i = SafeInt(Eval(*e.index).AsFloat());
-                if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
-                else if (i == (int)v->size()) v->push_back(val);   // one past the end appends
-            } else if (auto m = a.AsMap()) {
-                (*m)[Eval(*e.index).AsString()] = val;
-            }
+            IndexWrite(a, val, [&] { return Eval(*e.index); });
             return val;
         }
         case ExprKind::IndexCompoundAssign: {
@@ -282,7 +299,7 @@ template <class V> V BasicRuntime<V>::Eval(const Expr& ex) {
         }
         case ExprKind::Lambda: {
             auto& e = static_cast<const LambdaExpr&>(ex);
-            lambdas[e.id] = LambdaBody{&e.params, &e.body, &e.defaults};
+            lambdas[e.id] = LambdaBody{&e.params, &e.body, &e.defaults, &e.code};
             V v = V::MakeMap();
             (*v.AsMap())["__lambda"] = V{(float)e.id};
             return v;

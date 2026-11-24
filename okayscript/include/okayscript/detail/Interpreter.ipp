@@ -43,6 +43,7 @@ template <class V> const Program& BasicInterpreter<V>::Parse(const std::string& 
     auto prog = std::make_unique<Program>();
     ParseSource(source, *prog);   // SyntaxError on failure: nothing is added
     for (auto& kv : prog->functions) m_rt.functions[kv.first] = &kv.second;
+    m_rt.BumpCalls();
     for (auto& kv : prog->classes) m_rt.classes[kv.first] = &kv.second;
     m_rt.localNames.insert(prog->localNames.begin(), prog->localNames.end());
     m_rt.statics = BasicRuntime<V>::SharedStatics(source);   // `static` variables are shared by every run of this source
@@ -55,15 +56,16 @@ template <class V> void BasicInterpreter<V>::Load(const std::string& source, con
 template <class V> void BasicInterpreter<V>::Run(const std::string& source, const std::string&) {
     const Program& prog = Parse(source);
     try {
-        for (auto& s : prog.top)
-            if (m_rt.Run(*s) != Flow::Normal) break;   // `return` (or a stray break) at the top level ends the program
+        m_rt.RunBody(prog.top, prog.topCode);   // `return` (or a stray break) at the top level ends the program
     } catch (RuntimeError& e) {
         m_rt.Stamp(e);
         m_rt.scopes.resize(1);
+        m_rt.BumpVars();
         throw;
     } catch (ScriptError& e) {
         m_rt.Stamp(e);
         m_rt.scopes.resize(1);
+        m_rt.BumpVars();
         throw RuntimeError(e);
     }
 }
@@ -80,10 +82,12 @@ template <class V> V BasicInterpreter<V>::Call(const std::string& name, std::vec
     } catch (RuntimeError& e) {
         m_rt.Stamp(e);
         m_rt.scopes.resize(1);
+        m_rt.BumpVars();
         throw;
     } catch (ScriptError& e) {
         m_rt.Stamp(e);
         m_rt.scopes.resize(1);
+        m_rt.BumpVars();
         throw RuntimeError(e);
     }
 }

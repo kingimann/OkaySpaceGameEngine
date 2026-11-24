@@ -32,6 +32,7 @@ void Runtime::Resume(Coroutine* co) {
         co->baseDepth = scopes.size();
         for (auto& f : co->frames) scopes.push_back(std::move(f));
         co->frames.clear();
+        BumpVars();   // the coroutine's scopes are back on the stack
         if (!co->started) {
             co->started = true;
             co->th = std::thread([this, co] {   // lint-allow: win32-thread
@@ -50,6 +51,7 @@ void Runtime::Resume(Coroutine* co) {
             co->cv.wait(lk, [co] { return !co->coTurn; });
         }
         if (co->done && scopes.size() > co->baseDepth) scopes.resize(co->baseDepth);   // unwound by an error
+        BumpVars();
         currentCo = prev;
 }
     // Called on the coroutine's own thread by `yield return`.
@@ -60,6 +62,7 @@ void Runtime::YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond
         co->cond = std::move(cond); co->condWhile = condWhile; co->real = real;
         for (std::size_t i = co->baseDepth; i < scopes.size(); ++i) co->frames.push_back(std::move(scopes[i]));
         scopes.resize(co->baseDepth);
+        BumpVars();   // parked: its scopes are off the stack
         std::unique_lock<std::mutex> lk(co->m);   // lint-allow: win32-thread
         co->coTurn = false; co->cv.notify_all();
         co->cv.wait(lk, [co] { return co->coTurn; });

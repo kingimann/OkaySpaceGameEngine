@@ -251,10 +251,11 @@ then this file gets updated. Keep this file short and true.
     manuals and general compiler ideas, with no code taken from CMake, Ninja, GCC, Clang/LLVM, MSVC, tcc or any other
     project (rule 19a). They stay out of CMake, CI and releases, and nothing in the engine depends on them, until the
     owner says so.
-24d. **Grok has its own lane (owner 2026-11-23: "agree with grok on 422").** Grok works on `grok/*` branches on feature-map
-    areas 1 to 4 (core and scene, rendering and world, modeling and import, characters and cameras): improvements, new
-    features and bug fixes (`Kind: bug` with a failing test first). It claims each piece on #422 like the Claudes
-    (rule 26). Files another lane owns or has an open claim on need an `Agree:` reply. The lane is in `docs/lanes.json`.
+24d. **Grok no longer writes code; the coordinator took its work over** (owner 2026-11-24: "Continue groks work, I don't
+    like how he works"; this replaces 2026-11-23's Grok lane). Grok's open PRs (#1203, #1207, #1208, #1211, #1218) continue
+    on `claude/*` branches with every review finding fixed, and the Grok PRs are closed as superseded. Feature-map areas 1
+    to 4 go back to the coordinator. Grok keeps only rule 24: it reads code and reports bugs on #888. No `Agree:` is needed
+    from Grok for any file; the `grok` entry in `docs/lanes.json` stays only so old branch names still check.
 24b. **Exception: experimental Xbox One export through Microsoft's public Windows SDK and UWP tools (owner 2026-11-18:
     "For Xbox I'll allow it").** The Windows SDK, Visual Studio UWP tools, MakeAppx and SignTool are build tools the owner
     installs on their own PC; nothing from them is copied into the repository or shipped. Only the public SDK: no GDKX

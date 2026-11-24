@@ -5175,3 +5175,8 @@ add_test(NAME dir_watch COMMAND test_dir_watch)
 add_executable(test_scene_asset_guid test_scene_asset_guid.cpp)
 target_link_libraries(test_scene_asset_guid PRIVATE okay::engine)
 add_test(NAME scene_asset_guid COMMAND test_scene_asset_guid)
+
+add_executable(test_text_shape test_text_shape.cpp)
+target_link_libraries(test_text_shape PRIVATE okay::engine)
+target_compile_definitions(test_text_shape PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME text_shape COMMAND test_text_shape)

@@ -9,6 +9,7 @@
 #include "okay/UI/UIFrameTransform.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
+#include "okay/Core/LocPreview.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
@@ -1002,6 +1003,7 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
                  bool italic, float boldOffset) {
+    const std::string shown = okay::ShapeForDisplay(text);
     // Bake at the on-screen pixel size (logical font size × canvas scale) so the
     // atlas is not a fixed 64px face scaled up or down.
     const float logicalH = px * (float)okay::Font8x8::Height;
@@ -1011,10 +1013,10 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     okay::TtfFont* sized = quality == UIQuality::Old ? f->ForPixelHeight(deviceH)
                                                      : f->ForDeviceSize(deviceH, quality != UIQuality::Fast);
     if (!sized || !sized->Valid()) sized = f;
-    sized->Prepare(text);   // bake new characters before the atlas is uploaded
+    sized->Prepare(shown);   // bake new characters before the atlas is uploaded
     if (quality == UIQuality::Best && !italic) {   // the quarter-pixel variants too: they are baked on first use, and must be in the atlas that is uploaded below
-        for (std::size_t i = 0; i < text.size();) {
-            const std::uint32_t cp = okay::utf8::Next(text, i);
+        for (std::size_t i = 0; i < shown.size();) {
+            const std::uint32_t cp = okay::utf8::Next(shown, i);
             if (cp > ' ') for (int ph = 1; ph < okay::TtfFont::kPhases; ++ph) sized->GlyphForPhase(cp, ph);
         }
     }
@@ -1037,8 +1039,8 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     const bool kerning = quality != UIQuality::Old;
     std::uint32_t prevCh = 0;
     float penX = ox, penY = oy;
-    for (std::size_t i = 0; i < text.size();) {
-        const std::uint32_t ch = okay::utf8::Next(text, i);
+    for (std::size_t i = 0; i < shown.size();) {
+        const std::uint32_t ch = okay::utf8::Next(shown, i);
         if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; prevCh = 0; continue; }
         if (kerning && prevCh) penX += sized->Kerning(prevCh, ch, sized->BakeHeight()) * s;
         prevCh = ch;

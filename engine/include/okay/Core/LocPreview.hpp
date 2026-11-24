@@ -83,4 +83,8 @@ private:
     bool m_mirrorRtl = true;
 };
 
+/// Visual order for a left-to-right renderer: Arabic letters take their joining form,
+/// then right-to-left runs are reversed (numbers and Latin stay in order).
+std::string ShapeForDisplay(const std::string& text);
+
 } // namespace okay

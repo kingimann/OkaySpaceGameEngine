@@ -1238,4 +1238,131 @@ std::string Localization::Pseudo(const std::string& text) {
     return out;
 }
 
+namespace {
+
+enum class Dir { L, R, EN, N };
+
+Dir KindOf(std::uint32_t cp) {
+    if (cp >= '0' && cp <= '9') return Dir::EN;
+    if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || (cp >= 0x00C0 && cp <= 0x024F)) return Dir::L;
+    if ((cp >= 0x0590 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF)) return Dir::R;
+    return Dir::N;
+}
+
+// 0 none, 1 dual, 2 right-only. Forms are isolated, final, initial, medial.
+struct Arab {
+    std::uint32_t base;
+    int join;
+    std::uint32_t iso, fin, ini, med;
+};
+
+const Arab* ArabOf(std::uint32_t cp) {
+    static const Arab k[] = {
+        {0x0627, 2, 0xFE8D, 0xFE8E, 0xFE8D, 0xFE8E},
+        {0x0628, 1, 0xFE8F, 0xFE90, 0xFE91, 0xFE92},
+        {0x0629, 2, 0xFE93, 0xFE94, 0xFE93, 0xFE94},
+        {0x062A, 1, 0xFE95, 0xFE96, 0xFE97, 0xFE98},
+        {0x062B, 1, 0xFE99, 0xFE9A, 0xFE9B, 0xFE9C},
+        {0x062C, 1, 0xFE9D, 0xFE9E, 0xFE9F, 0xFEA0},
+        {0x062D, 1, 0xFEA1, 0xFEA2, 0xFEA3, 0xFEA4},
+        {0x062E, 1, 0xFEA5, 0xFEA6, 0xFEA7, 0xFEA8},
+        {0x062F, 2, 0xFEA9, 0xFEAA, 0xFEA9, 0xFEAA},
+        {0x0630, 2, 0xFEAB, 0xFEAC, 0xFEAB, 0xFEAC},
+        {0x0631, 2, 0xFEAD, 0xFEAE, 0xFEAD, 0xFEAE},
+        {0x0632, 2, 0xFEAF, 0xFEB0, 0xFEAF, 0xFEB0},
+        {0x0633, 1, 0xFEB1, 0xFEB2, 0xFEB3, 0xFEB4},
+        {0x0634, 1, 0xFEB5, 0xFEB6, 0xFEB7, 0xFEB8},
+        {0x0635, 1, 0xFEB9, 0xFEBA, 0xFEBB, 0xFEBC},
+        {0x0636, 1, 0xFEBD, 0xFEBE, 0xFEBF, 0xFEC0},
+        {0x0637, 1, 0xFEC1, 0xFEC2, 0xFEC3, 0xFEC4},
+        {0x0638, 1, 0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8},
+        {0x0639, 1, 0xFEC9, 0xFECA, 0xFECB, 0xFECC},
+        {0x063A, 1, 0xFECD, 0xFECE, 0xFECF, 0xFED0},
+        {0x0641, 1, 0xFED1, 0xFED2, 0xFED3, 0xFED4},
+        {0x0642, 1, 0xFED5, 0xFED6, 0xFED7, 0xFED8},
+        {0x0643, 1, 0xFED9, 0xFEDA, 0xFEDB, 0xFEDC},
+        {0x0644, 1, 0xFEDD, 0xFEDE, 0xFEDF, 0xFEE0},
+        {0x0645, 1, 0xFEE1, 0xFEE2, 0xFEE3, 0xFEE4},
+        {0x0646, 1, 0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8},
+        {0x0647, 1, 0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC},
+        {0x0648, 2, 0xFEEE, 0xFEEF, 0xFEEE, 0xFEEF},
+        {0x064A, 1, 0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4},
+    };
+    for (const Arab& a : k) if (a.base == cp) return &a;
+    return nullptr;
+}
+
+bool JoinsNext(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join == 1; }
+bool JoinsPrev(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join != 0; }
+
+void ReverseRun(std::vector<std::uint32_t>& s, std::vector<int>& level, int least) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        if (level[i] < least) { ++i; continue; }
+        std::size_t j = i;
+        while (j < s.size() && level[j] >= least) ++j;
+        std::reverse(s.begin() + (long)i, s.begin() + (long)j);
+        std::reverse(level.begin() + (long)i, level.begin() + (long)j);
+        i = j;
+    }
+}
+
+}
+
+std::string ShapeForDisplay(const std::string& text) {
+    std::vector<std::uint32_t> cps;
+    for (std::size_t i = 0; i < text.size();) cps.push_back(utf8::Next(text, i));
+    if (cps.empty()) return {};
+    std::vector<std::uint32_t> shaped = cps;
+    for (std::size_t i = 0; i < cps.size(); ++i) {
+        const Arab* a = ArabOf(cps[i]);
+        if (!a) continue;
+        bool prev = false, next = false;
+        for (std::size_t p = i; p-- > 0;) {
+            if (KindOf(cps[p]) == Dir::N) continue;
+            prev = JoinsNext(cps[p]);
+            break;
+        }
+        for (std::size_t n = i + 1; n < cps.size(); ++n) {
+            if (KindOf(cps[n]) == Dir::N) continue;
+            next = JoinsPrev(cps[n]) && JoinsNext(cps[i]);
+            break;
+        }
+        std::uint32_t form = a->iso;
+        if (prev && next) form = a->med;
+        else if (prev) form = a->fin;
+        else if (next) form = a->ini;
+        shaped[i] = form;
+    }
+    int base = 0;
+    for (std::uint32_t cp : shaped) {
+        const Dir d = KindOf(cp);
+        if (d == Dir::R) { base = 1; break; }
+        if (d == Dir::L) break;
+    }
+    std::vector<Dir> dir(shaped.size(), Dir::N);
+    for (std::size_t i = 0; i < shaped.size(); ++i) {
+        const Dir d = KindOf(shaped[i]);
+        dir[i] = d == Dir::N ? Dir::N : d;
+    }
+    for (std::size_t i = 0; i < dir.size(); ++i) {
+        if (dir[i] != Dir::N) continue;
+        Dir left = Dir::N, right = Dir::N;
+        for (std::size_t p = i; p-- > 0;) if (dir[p] == Dir::L || dir[p] == Dir::R) { left = dir[p]; break; }
+        for (std::size_t n = i + 1; n < dir.size(); ++n) if (dir[n] == Dir::L || dir[n] == Dir::R) { right = dir[n]; break; }
+        dir[i] = (left == right && left != Dir::N) ? left : (base ? Dir::R : Dir::L);
+    }
+    std::vector<int> level(shaped.size(), base);
+    for (std::size_t i = 0; i < shaped.size(); ++i) {
+        if (base == 0) level[i] = dir[i] == Dir::R ? 1 : 0;
+        else level[i] = (dir[i] == Dir::L || dir[i] == Dir::EN) ? 2 : 1;
+    }
+    int top = 0;
+    for (int lv : level) if (lv > top) top = lv;
+    for (int lv = top; lv >= 1; --lv) ReverseRun(shaped, level, lv);
+    std::string out;
+    for (std::uint32_t cp : shaped) utf8::Append(out, cp);
+    return out;
+}
+
 } // namespace okay

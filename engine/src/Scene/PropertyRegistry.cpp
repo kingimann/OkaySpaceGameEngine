@@ -1,6 +1,5 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
-#include "okay/Debug/DebugUtil.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
@@ -521,15 +520,15 @@ std::vector<PropertyContributor>& PropertyContributors() {
     static std::vector<PropertyContributor> v;
     return v;
 }
-debugutil::SpinLock& PropertyContributorLock() {
-    static debugutil::SpinLock lock;
+std::mutex& PropertyContributorLock() {
+    static std::mutex lock;
     return lock;
 }
 } // namespace
 
 void AddPropertyContributor(const char* module, void (*fn)()) {
     if (!fn) return;
-    debugutil::SpinGuard guard(PropertyContributorLock());
+    std::lock_guard<std::mutex> guard(PropertyContributorLock());
     for (const PropertyContributor& c : PropertyContributors()) if (c.fn == fn) return;
     PropertyContributors().push_back({module ? module : "", fn});
 }
@@ -538,7 +537,7 @@ void ApplyPropertyContributors() {
     ModuleRegistry::Get();   // hooks record contributors; this call is what fills the list the first time
     std::vector<PropertyContributor> copy;
     {
-        debugutil::SpinGuard guard(PropertyContributorLock());
+        std::lock_guard<std::mutex> guard(PropertyContributorLock());
         copy = PropertyContributors();
     }
     for (const PropertyContributor& c : copy) {

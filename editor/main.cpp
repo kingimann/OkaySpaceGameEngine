@@ -1877,6 +1877,7 @@ bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProblems = true;
 bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
+bool g_showTimers = false;     // scheduler and tween dumps
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
 bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
@@ -6230,6 +6231,8 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
     if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::MenuItem("Timers", nullptr, &g_showTimers)) {}
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene's waiting tasks and its tweens, as the scheduler and the tween list describe them.");
     if (ImGui::BeginMenu("Viewport resolution")) {
         const int pcts[] = {100, 75, 50, 35};
         for (int p : pcts) {
@@ -55095,6 +55098,17 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                g_showTimers = true;
+                if (s_focusFrames == 40) {
+                    okay::Scheduler::Options opt;
+                    opt.tag = "demo";
+                    ed.scene().scheduler().Invoke(1.5f, [] {}, opt);
+                    auto tw = ed.scene().tweens().DelayedCall(0.8f, [] {});
+                    if (tw) tw->id = "fade";
+                }
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Timers");
+            }
             if (std::getenv("OKAY_UI_PROFILER")) {
                 g_showProfiler = true;
                 if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Profiler");
@@ -55602,6 +55616,17 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        if (g_showTimers) {
+            if (std::getenv("OKAY_UI_TIMERS")) {
+                ImGui::SetNextWindowPos(ImVec2(280, 80), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(720, 420), ImGuiCond_Always);
+            }
+            if (ImGui::Begin("Timers", &g_showTimers)) {
+                const std::string text = okay::editor::TimerDebugText(ed.scene());
+                ImGui::TextUnformatted(text.c_str());
+            }
+            ImGui::End();
+        }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);

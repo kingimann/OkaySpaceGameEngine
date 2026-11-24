@@ -104,11 +104,59 @@ def split_top(s, sep=","):
     return parts
 
 
+def enum_value(expr, known):
+    """A plain enum value: a number (decimal or hex), an earlier name, -x, a << b, a | b. None otherwise."""
+    expr = expr.strip()
+    if re.fullmatch(r"-?(0[xX][0-9a-fA-F]+|\d+)[uUlL]*", expr):
+        return int(expr.rstrip("uUlL"), 0)
+    if expr in known:
+        return known[expr]
+    for op in ("|", "<<"):
+        if op in expr:
+            parts = [enum_value(x, known) for x in expr.split(op)]
+            if any(x is None for x in parts):
+                return None
+            out = parts[0]
+            for x in parts[1:]:
+                out = (out | x) if op == "|" else (out << x)
+            return out
+    if expr.startswith("(") and expr.endswith(")"):
+        return enum_value(expr[1:-1], known)
+    return None
+
+
+def enum_range(body):
+    """(lowest, highest) of an enum's values; bit-flag enums get highest = every flag set. None when unsure."""
+    known, nxt, values = {}, 0, []
+    for item in split_top(body):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split("=", 1)
+        name = parts[0].strip()
+        if len(parts) > 1:
+            v = enum_value(parts[1], known)
+            if v is None:
+                return None
+            nxt = v
+        known[name] = nxt
+        values.append(nxt)
+        nxt += 1
+    if not values:
+        return None
+    lo, hi = min(values), max(values)
+    if lo >= 0 and hi > len(values) and all(v == 0 or v & (v - 1) == 0 for v in values):
+        hi = 0
+        for v in values:
+            hi |= v   # flags: any combination
+    return (lo, hi)
+
+
 class ClassInfo:
     def __init__(self, name, header, bases, is_struct):
         self.name, self.header, self.bases, self.is_struct = name, header, bases, is_struct
-        self.methods = []          # (name, ret, params[(type, has_default)], is_const, is_static, decl)
-        self.enums = set()
+        self.methods = []          # (name, ret, params[(type, has_default, name)], is_const, is_static, decl)
+        self.enums = {}           # name -> (lowest, highest) value, or None when a value is not a plain number
         self.abstract = False
 
 
@@ -165,11 +213,13 @@ def scan_header(path, rel, classes, global_enums):
                 continue
             m_enum = re.fullmatch(r"enum\s+(?:class\s+|struct\s+)?(\w+)\s*(?::\s*[\w:\s]+)?", head)
             if m_enum:
+                end = skip_block(i)
+                rng = enum_range(text[i + 1:end - 1])
                 if cls is not None:
-                    cls.enums.add(m_enum.group(1))
+                    cls.enums[m_enum.group(1)] = rng
                 elif in_okay_ns():
-                    global_enums.add(m_enum.group(1))
-                i = skip_block(i)
+                    global_enums[m_enum.group(1)] = rng
+                i = end
                 continue
             if cls is not None:
                 handle_member(cls, stack[-1][2], head, True)
@@ -249,8 +299,9 @@ def handle_member(cls, access, stmt, has_body):
                 p = parts[0].strip()
             # drop the parameter name (the last identifier, when there is a type before it)
             mm = re.match(r"^(.*?[\w>&*\]])\s+(\w+)$", p)
-            ptype = mm.group(1) if mm and mm.group(1).strip() not in ("const", "unsigned", "signed", "long") else p
-            plist.append((" ".join(ptype.split()), has_def))
+            named = mm and mm.group(1).strip() not in ("const", "unsigned", "signed", "long")
+            ptype = mm.group(1) if named else p
+            plist.append((" ".join(ptype.split()), has_def, mm.group(2) if named else ""))
     cls.methods.append((name, " ".join(ret.split()), plist, "const" in post.split(), is_static, stmt))
 
 
@@ -287,18 +338,18 @@ class Mapper:
             if for_return and base in self.classes and self.is_component(base) and base not in ("Component",):
                 return ("Component", base)
             return None
-        # enum: nested in the class or a base, or at namespace okay
+        # enum: nested in the class or a base, or at namespace okay; the third item is its (lowest, highest) values
         for c in cls_chain:
             if t in c.enums:
-                return ("Enum", c.name + "::" + t)
+                return ("Enum", c.name + "::" + t, c.enums[t])
             if t.startswith(c.name + "::") and t.split("::", 1)[1] in c.enums:
-                return ("Enum", t)
+                return ("Enum", t, c.enums[t.split("::", 1)[1]])
         if t in self.global_enums:
-            return ("Enum", t)
+            return ("Enum", t, self.global_enums[t])
         if "::" in t:
             owner, inner = t.split("::", 1)
             if owner in self.classes and inner in self.classes[owner].enums:
-                return ("Enum", t)
+                return ("Enum", t, self.classes[owner].enums[inner])
         return None
 
     def is_component(self, name, seen=None):
@@ -320,6 +371,62 @@ class Mapper:
         return out
 
 
+# ---- What game scripts must never reach (docs/scripting/script_bindings.md "Side effects scripts cannot reach") ----
+# Before the generated layer, a script could only touch named save slots, the prefs and the net.* builtins (which have
+# their own rules). So a method that reads or writes a file by name, opens a socket or a server, a window, an overlay,
+# the clipboard, or a platform service is not bound. Three rules, any one is enough:
+#  1. the whole class is a network, platform or file service;
+#  2. a text parameter's name says it is a place (path, file, dir, folder, url, uri, address, host, link, root);
+#  3. a word in the method's name says it (file, clipboard, overlay, cloud, export, import, server, client, relay,
+#     socket, connect, url, download, upload, http, workshop, lobby), or it is on the list below (a method that
+#     writes a file it was given earlier, through a property).
+DENY_CLASSES = {
+    "NetworkManager", "NetworkObject", "NetworkSync", "NetworkPlayerSpawner", "NetValidator",   # sockets: net.* builtins
+    "SteamManager",      # platform service (overlay, cloud files, lobbies)
+    "UIFilePicker",      # browses the disk
+    "UIHotReload",       # reads files from disk as they change
+}
+DENY_METHODS = {
+    "NavMeshSurface.Save", "BuilderMode.SaveModel", "BuilderMode.SaveMap", "SurvivalSave.Save", "SurvivalSave.Load",
+    "Terrain.ExportHeightmap", "Terrain.ImportHeightmap", "VehicleController.ToFile", "VehicleController.LoadPresetText",
+    "VehicleController.SavePresetText", "ScriptComponent.SetPath", "VisualScriptComponent.SetPath",
+}
+DENY_PARAM_WORDS = {"path", "paths", "file", "files", "filename", "filepath", "dir", "dirs", "directory", "folder",
+                    "url", "uri", "address", "host", "hostname", "link", "root"}
+DENY_NAME_WORDS = {"file", "files", "clipboard", "overlay", "cloud", "export", "import", "server", "client", "relay",
+                   "socket", "connect", "url", "download", "upload", "http", "workshop", "lobby"}
+
+
+def words(name):
+    """The lower-case words of a name: filePath -> file, path; ExportHeightmap -> export, heightmap."""
+    return [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", name)]
+
+
+def denied(cls_name, owner_name, mname, params):
+    """Why a method is not bound (a short reason), or ""."""
+    if cls_name in DENY_CLASSES or owner_name in DENY_CLASSES:
+        return "class"
+    if f"{cls_name}.{mname}" in DENY_METHODS or f"{owner_name}.{mname}" in DENY_METHODS:
+        return "list"
+    for (ptype, _, pname) in params:
+        if ("string" in ptype or "char" in ptype) and set(words(pname)) & DENY_PARAM_WORDS:
+            return "parameter " + pname   # text that names a place (a direction `dir` as a vector is fine)
+    if set(words(mname)) & DENY_NAME_WORDS:
+        return "name"
+    return ""
+
+
+# Count- and index-like whole-number parameters: a script value above this is an error, so one call cannot make the
+# engine allocate gigabytes (LineRenderer.SetPositionCount(2e9)).
+COUNT_WORDS = {"count", "size", "capacity", "index", "idx", "length", "len", "num", "number", "slot", "cells",
+               "resolution", "segments", "points", "max", "rows", "cols", "columns", "width", "height", "n", "i"}
+MAX_COUNT = 1 << 20
+
+
+def count_like(pname):
+    return bool(set(words(pname)) & COUNT_WORDS)
+
+
 def load_excludes():
     out = set()
     if os.path.exists(EXCLUDE_FILE):
@@ -331,7 +438,7 @@ def load_excludes():
 
 
 def collect():
-    classes, global_enums = {}, set()
+    classes, global_enums = {}, {}
     headers = []
     for dirpath, _, files in os.walk(os.path.join(INCLUDE, "okay")):
         for f in sorted(files):
@@ -350,7 +457,7 @@ def build_model():
     excludes = load_excludes()
     comps = sorted(n for n in classes if n != "Component" and mapper.is_component(n) and n not in excludes)
     model, stats = [], {"classes": len(comps), "public_methods": 0, "bound": 0, "skipped_type": 0, "skipped_other": 0,
-                        "excluded": 0}
+                        "excluded": 0, "denied": 0}
     for name in comps:
         chain = mapper.chain(name)
         seen_sigs, methods = set(), []
@@ -363,8 +470,11 @@ def build_model():
                 if f"{name}.{mname}" in excludes or f"{owner.name}.{mname}" in excludes:
                     stats["excluded"] += 1 if owner is chain[0] else 0
                     continue
+                if denied(name, owner.name, mname, params):
+                    stats["denied"] += 1 if owner is chain[0] else 0
+                    continue
                 rk = mapper.kind(chain, ret, True)
-                pks = [mapper.kind(chain, p, False) for (p, _) in params]
+                pks = [mapper.kind(chain, p, False) for (p, _, _) in params]
                 if rk is None or any(k is None for k in pks):
                     stats["skipped_type"] += 1 if owner is chain[0] else 0
                     continue
@@ -372,18 +482,23 @@ def build_model():
                 if sig in seen_sigs:
                     continue   # overridden in a subclass: the subclass's one is already in
                 seen_sigs.add(sig)
-                required = sum(1 for (_, d) in params if not d)
+                required = sum(1 for (_, d, _) in params if not d)
                 methods.append({"name": mname, "ret": rk, "params": pks, "required": required, "owner": owner.name,
-                                "const": is_const})
+                                "const": is_const, "pnames": [pn for (_, _, pn) in params]})
                 stats["bound"] += 1 if owner is chain[0] else 0
         model.append({"name": name, "header": classes[name].header, "methods": methods,
                       "abstract": classes[name].abstract})
     return model, stats, classes
 
 
-def conv_arg(kind, ctype, idx):
+def conv_arg(k, idx, pname=""):
+    kind, ctype = k[0], k[1]
     a = f"a[{idx}]"
     if kind == "Bool": return f"{a}.AsBool()"
+    if kind == "Int" and count_like(pname): return f"static_cast<{ctype}>(sb::ArgCount({a}, {idx}, {MAX_COUNT}))"
+    if kind == "Int" and ctype in ("char", "std::uint8_t", "uint8_t", "std::int8_t", "int8_t", "short", "std::int16_t",
+                                   "int16_t", "std::uint16_t", "uint16_t", "int", "std::int32_t", "int32_t"):
+        return f"static_cast<{ctype}>(sb::ArgIntIn({a}, {idx}, std::numeric_limits<{ctype}>::min(), std::numeric_limits<{ctype}>::max()))"
     if kind == "Int": return f"static_cast<{ctype}>(sb::ArgInt({a}))"
     if kind == "Float": return f"static_cast<{ctype}>({a}.AsFloat())"
     if kind == "String": return f"{a}.AsString()"
@@ -392,7 +507,11 @@ def conv_arg(kind, ctype, idx):
     if kind == "Vec4": return f"sb::ArgVec4({a})"
     if kind == "Quat": return f"sb::ArgQuat({a})"
     if kind == "Color": return f"sb::ArgColor({a})"
-    if kind == "Enum": return f"static_cast<{ctype}>(sb::ArgInt({a}))"
+    if kind == "Enum":
+        rng = k[2] if len(k) > 2 else None
+        if rng is None:   # values we could not read: at least the range of an int
+            return f"static_cast<{ctype}>(sb::ArgIntIn({a}, {idx}, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()))"
+        return f"static_cast<{ctype}>(sb::ArgIntIn({a}, {idx}, {rng[0]}LL, {rng[1]}LL))"
     if kind == "Object": return f"sb::ArgObject({a})"
     raise ValueError(kind)
 
@@ -417,7 +536,7 @@ def render(model):
     L = ["// GENERATED by scripts/gen_script_bindings.py from the engine's own headers. Do not edit by hand:",
          "// run `python3 scripts/gen_script_bindings.py` (a test checks it with --check). One entry per component class",
          "// and per public method whose types a script value can carry; properties come from the PropertyRegistry.",
-         '#include "okay/Scripting/ScriptBindings.hpp"']
+         '#include "okay/Scripting/ScriptBindings.hpp"', "#include <limits>"]
     L += [f'#include "{h}"' for h in headers]
     L += ["", "namespace okay::scriptbind {", "namespace {", "using V = vs::VsValue;", "namespace sb = okay::scriptbind;", ""]
     for c in model:
@@ -432,7 +551,7 @@ def render(model):
                 n = len(kinds)
                 body = [f"auto& s = static_cast<{cname}&>(self);"]
                 for argc in range(n, m["required"] - 1, -1):
-                    args = ", ".join(conv_arg(k, t, i) for i, (k, t) in enumerate(m["params"][:argc]))
+                    args = ", ".join(conv_arg(k, i, m["pnames"][i]) for i, k in enumerate(m["params"][:argc]))
                     stmt = wrap_ret(m["ret"][0], m["ret"][1], f"s.{m['name']}({args})")
                     body.append(stmt if argc == m["required"] else f"if (n >= {argc}) {{ {stmt} }}")
                 pk = "{" + ", ".join(f"ArgKind::{k}" for k in kinds) + "}"
@@ -462,6 +581,7 @@ def audit(model, stats, classes):
     print(f"  skipped, a type a script value cannot carry (pointers, references, containers, callbacks): {stats['skipped_type']}")
     print(f"  skipped, engine callbacks or static: {stats['skipped_other']}")
     print(f"  excluded by scripts/script_bindings_exclude.txt: {stats['excluded']}")
+    print(f"  denied (files, network, platform, clipboard: DENY_* in this script): {stats['denied']}")
     total = sum(len(c["methods"]) for c in model)
     print(f"bound methods including inherited ones: {total}")
     # What the hand-written builtins reached before this layer (an upper bound: a class counts when a builtin names

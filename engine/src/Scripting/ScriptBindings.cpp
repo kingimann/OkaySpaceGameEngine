@@ -299,7 +299,12 @@ Result CallOn(Component& c, const ClassBinding& cls, const std::string& method, 
             bool ok = true;
             for (int i = 0; i < argc && ok; ++i) ok = Fits(m.params[static_cast<std::size_t>(i)], args[static_cast<std::size_t>(i)]);
             if (!ok) continue;
-            out = m.fn(c, args.data(), argc);
+            try {
+                out = m.fn(c, args.data(), argc);
+            } catch (const ArgError& e) {
+                error = cls.name + "." + m.name + "(): " + e.what();
+                return Result::Error;
+            }
             return Result::Ok;
         }
         if (firstNamed) break;
@@ -342,6 +347,15 @@ long long ArgInt(const V& v) {
     if (!std::isfinite(d)) return 0;
     return std::llround(std::max(-9.0e18, std::min(9.0e18, d)));
 }
+long long ArgIntIn(const V& v, int idx, long long lo, long long hi) {
+    const double d = static_cast<double>(v.AsFloat());
+    const long long n = ArgInt(v);
+    if (!std::isfinite(d) || n < lo || n > hi)
+        throw ArgError("argument " + std::to_string(idx + 1) + " must be " + std::to_string(lo) + " to " + std::to_string(hi) +
+                       ", got " + v.AsString());
+    return n;
+}
+long long ArgCount(const V& v, int idx, long long max) { return ArgIntIn(v, idx, -1, max); }
 Vec2 ArgVec2(const V& v) { const Vec3 p = v.AsVec3(); return Vec2{p.x, p.y}; }
 Vec4 ArgVec4(const V& v) {
     if (v.IsColor()) { auto c = v.AsColor(); return Vec4{c.r, c.g, c.b, c.a}; }

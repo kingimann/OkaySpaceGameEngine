@@ -343,6 +343,11 @@ s xy
 abs
 3 3 3
 
+#### print_cycle
+[[...], 1]
+{k: 2, self: {...}}
+true
+
 #### loop_limit
 ERROR runtime 3: while loop exceeded iteration limit
 [n=1001]

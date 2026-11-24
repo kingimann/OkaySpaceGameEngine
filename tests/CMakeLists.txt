@@ -2384,7 +2384,7 @@ add_test(NAME file_copy COMMAND test_file_copy)
 # The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
 add_executable(test_project_version test_project_version.cpp)
 target_compile_features(test_project_version PRIVATE cxx_std_17)
-target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME project_version COMMAND test_project_version)
 
 # The launcher's Versions page logic (launcher/VersionsManager.cpp, VersionsNet.cpp): versions.json, install / remove / prune on a temp folder with an injected downloader,
@@ -4481,6 +4481,14 @@ if(_okay_all_readers_on)
     target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_EXPECT_OWN_READERS)
 endif()
 add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# The last Assimp-only extensions routed to our readers: .ask (ASE), .scn (COB), .prj (3DS), .x3db (X3D), .vta (SMD), .md5camera
+# (the MD5 camera reader) and .vrm (glTF 2.0); fixtures built in memory
+add_executable(test_model_import_aliases test_model_import_aliases.cpp)
+target_link_libraries(test_model_import_aliases PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_model_import_aliases PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
+add_test(NAME model_import_aliases COMMAND test_model_import_aliases WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/content/model_corpus.md); without it the test prints "skipped" and passes.

@@ -8,7 +8,7 @@ row: | pe1 | Physics: one physics path (our own physics engine core runs every 3
 no other engine's code): a tree that finds touching pairs fast, exact contacts for every shape, a solver that keeps tall
 stacks still, fast bodies that never pass through thin walls, groups of bodies solved on every CPU core, and joints for
 ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain explanation and numbers:
-[physics_core.md](physics/physics_core.md).
+[physics_core.md](../physics/physics_core.md).
 
 **How to reach it.**
 

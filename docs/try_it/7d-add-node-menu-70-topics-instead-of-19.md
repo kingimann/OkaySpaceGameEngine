@@ -8,9 +8,9 @@ row: | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script
 Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70
 specific topics in 14 sections, and every node is in the topic you would look in. Nothing was removed and your saved
 graphs are unchanged (a graph stores a node's type, never its topic). Code: `editor/VisualScriptCategories.hpp`,
-`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](visual_scripting_naming.md),
-every node under its topic in [visual_scripting_topics.md](visual_scripting_topics.md), and the before-and-after
-measurement in [visual_script_category_audit.md](visual_script_category_audit.md).
+`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](../visual_scripting_naming.md),
+every node under its topic in [visual_scripting_topics.md](../visual_scripting_topics.md), and the before-and-after
+measurement in [visual_script_category_audit.md](../visual_script_category_audit.md).
 
 **How to reach it.**
 

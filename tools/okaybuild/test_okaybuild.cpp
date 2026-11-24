@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -719,11 +720,13 @@ static void testDistLayout() {
     printf("test: package dist matches the Windows distribution layout\n");
     fresh("distl");
     string script = readFile(fs::path(__FILE__).parent_path().parent_path().parent_path() / "scripts/build-windows-dist.sh");
-    check(script.find("OkaySpace.exe") != string::npos && script.find("EXAMPLE_DIRS=") != string::npos, "read the dist script");
+    check(script.find("OkaySpace.exe") != string::npos && script.find("EXAMPLE_DIRS=") != string::npos, "read the dist script (run from the repository root when built from a relative path)");
+    if (script.find("EXAMPLE_DIRS=") == string::npos) return;
     string examples = script.substr(script.find("EXAMPLE_DIRS="));
     auto q1 = examples.find('"'); auto q2 = examples.find('"', q1 + 1);
     examples = examples.substr(q1 + 1, q2 - q1 - 1);
-    string firstEx = examples.substr(0, examples.find(' '));
+    { std::istringstream ws(examples); examples.clear(); ws >> examples; } // the list may be one line or one name per line
+    string firstEx = examples;
     write("fake/OkaySpace.exe", "launcher\n");
     write("fake/SDL2.dll", "dll\n");
     write("fake/OkayEngine.exe", "editor\n");
@@ -1773,11 +1776,257 @@ static void testOnlyAffectedTestsRebuild() {
     o = sh("-j2 --explain ctest", &rc); check(ran(o) == 2 && o.find("CC tb.cpp") == string::npos && o.find("LD tb") == string::npos, "a real edit recompiles and relinks only ta", o);
     o = sh("-j2 ctest", &rc); check(rc == 1 && o.find("FAIL ta") != string::npos && o.find("PASS tb") != string::npos, "the rebuilt program's result is what ctest reports", o);
 }
+
+// The engine writes ui_library_data.cpp while CMake configures (file(READ) of assets/ui/*.okaydata, string(APPEND), file(WRITE) of a
+// .new file, then `cmake -E copy_if_different`). The reader must do the same itself, never run cmake, and the manifest must carry the file.
+static void testConfigureTimeFiles() {
+    printf("test: files written while the CMake files are read (file(WRITE), cmake -E copy_if_different) become sources\n");
+    fresh("cfggen");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(gen CXX)
+set(NAMES alpha beta)
+set(_out "${CMAKE_CURRENT_BINARY_DIR}/data.cpp")
+set(_t "// generated\n#include <cstring>\nconst char* Data(const char* n) {\n")
+foreach(_n ${NAMES})
+    set(_f "${PROJECT_SOURCE_DIR}/data/${_n}.txt")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_f}")
+    file(READ "${_f}" _c)
+    string(APPEND _t "    if (!std::strcmp(n, \"${_n}\")) return R\"D(${_c})D\";\n")
+endforeach()
+string(APPEND _t "    return \"\";\n}\n")
+file(WRITE "${_out}.new" "${_t}")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_out}.new" "${_out}" RESULT_VARIABLE _rc)
+if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "copy_if_different failed")
+endif()
+file(READ "${_out}" _back)
+if(NOT _back STREQUAL _t)
+    message(FATAL_ERROR "reading the generated file back gave other text")
+endif()
+add_executable(app main.cpp)
+target_sources(app PRIVATE "${_out}")
+)CM");
+    write("data/alpha.txt", "say \"hi\" # not a comment; a \\ backslash\n\ttab");
+    write("data/beta.txt", "one");
+    write("main.cpp", "#include <cstdio>\n#include <cstring>\nconst char* Data(const char*);\n"
+                      "int main(){ if (std::strcmp(Data(\"alpha\"), \"say \\\"hi\\\" # not a comment; a \\\\ backslash\\n\\ttab\")) return 3; std::puts(Data(\"beta\")); return 0; }\n");
+    // a cmake on PATH that leaves a mark: the reader must not run it
+    write("fakebin/cmake", "#!/bin/sh\ntouch '" + (gRoot / "cmake-was-run").string() + "'\nexit 1\n");
+    fs::permissions(gRoot / "fakebin/cmake", fs::perms::owner_all);
+    int rc; string pathPre = "PATH='" + (gRoot / "fakebin").string() + "':\"$PATH\" ";
+    string o = capture("cd '" + gRoot.string() + "' && " + pathPre + gTool + " cmake . -o build.okay --audit 2>&1", &rc);
+    string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("skipped target   app") == string::npos && man.find("target app exe") != string::npos, "a target with a source written while reading is written", o + man);
+    check(!fs::exists(gRoot / "cmake-was-run"), "the reader does cmake -E copy_if_different itself and never runs cmake", o);
+    check(man.find("generate {bin}/data.cpp") != string::npos && man.find("{bin}/data.cpp") != string::npos, "the manifest carries the generated file", man);
+    check(o.find("generated files   2") != string::npos, "audit counts the generated files (data.cpp and data.cpp.new)", o);
+    check(man.find("buildfile") != string::npos && man.find("data/beta.txt") != string::npos && man.find("CMakeLists.txt") != string::npos, "the manifest reruns the reader when a CMake file or a configure input changes", man);
+    o = sh("-f build.okay -j2 app", &rc);
+    check(rc == 0, "the program builds with the generated source", o);
+    check(readFile(gRoot / "build/ctest/data.cpp").find("R\"D(one)D\"") != string::npos, "the generated file is written under the build folder ({bin})", readFile(gRoot / "build/ctest/data.cpp"));
+    string run = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(rc == 0 && run == "one\n", "quotes, '#', ';', a backslash and a tab survive the manifest (the program checks them)", run + " rc=" + std::to_string(rc));
+    long long before = mtimeNs(gRoot / "build/ctest/data.cpp");
+    o = sh("-f build.okay -j2 app", &rc);
+    check(rc == 0 && ran(o) == 0 && mtimeNs(gRoot / "build/ctest/data.cpp") == before, "a second build does nothing and leaves the generated file alone", o);
+    sleepMs(); write("data/beta.txt", "two");
+    o = sh("-f build.okay -j2 --explain app", &rc);
+    check(rc == 0 && o.find("regenerating") != string::npos && ran(o) == 2 && o.find("CC main.cpp") == string::npos, "editing a configure input rereads the CMake files and recompiles only the generated file, then relinks", o);
+    run = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(rc == 0 && run == "two\n", "the program has the new text", run);
+    o = sh("cmake . -o plain.okay --no-regen", &rc);
+    check(rc == 0 && readFile(gRoot / "plain.okay").find("buildfile") == string::npos, "--no-regen writes no buildfile block", readFile(gRoot / "plain.okay"));
+    write("bad.okay", "generate {bin}/x.cpp\n  text = \"\\q\"\nend\n");
+    o = sh("-f bad.okay targets", &rc);
+    check(rc == 2 && o.find("unknown escape") != string::npos, "a bad escape in generated text is an error with its line", o);
+}
+// The commands cmake/OkayModules.cmake needs (it writes modules_enabled.cpp and groups the engine sources). Each expect() stops the read
+// with FATAL_ERROR when the reader gives another value, so rc 0 means every value was right.
+static void testCmakeModuleCommands() {
+    printf("test: okay-build cmake: properties, parse_arguments, while, list(TRANSFORM), separate_arguments, folder globs, DEFER\n");
+    fresh("cmakemods");
+    write("mods/a/m.txt", "a"); write("mods/b/m.txt", "b"); write("mods/c/other.txt", "c");
+    write("libs/libfakelib.a", "!<arch>\n");
+    write("main.cpp", "int main(){\n#if defined(LATE_DEF) && defined(SRC_DEF) && SRC_DEF == 2\nreturn 0;\n#else\nreturn 1;\n#endif\n}\n");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(mods CXX)
+function(expect name want)
+    if(NOT "${${name}}" STREQUAL "${want}")
+        message(FATAL_ERROR "${name} is '${${name}}', want '${want}'")
+    endif()
+endfunction()
+file(GLOB found "${CMAKE_SOURCE_DIR}/mods/*/m.txt")
+list(LENGTH found n)
+expect(n 2)
+file(GLOB rel RELATIVE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/mods/*/m.txt")
+expect(rel "mods/a/m.txt;mods/b/m.txt")
+file(RELATIVE_PATH rp "${CMAKE_SOURCE_DIR}/mods" "${CMAKE_SOURCE_DIR}/mods/a/m.txt")
+expect(rp "a/m.txt")
+function(declare name)
+    cmake_parse_arguments(D "CORE" "KIND" "REQUIRES;SOURCES" ${ARGN})
+    set_property(GLOBAL APPEND PROPERTY ALL_NAMES "${name}")
+    set_property(GLOBAL PROPERTY REQ_${name} "${D_REQUIRES}")
+    set(core_${name} "${D_CORE}" PARENT_SCOPE)
+    set(kind_${name} "${D_KIND}" PARENT_SCOPE)
+    if(DEFINED D_SOURCES)
+        set(had_sources_${name} yes PARENT_SCOPE)
+    endif()
+    set(unparsed_${name} "${D_UNPARSED_ARGUMENTS}" PARENT_SCOPE)
+endfunction()
+declare(one CORE KIND lib REQUIRES x y extra_ignored)
+declare(two REQUIRES one stray)
+get_property(names GLOBAL PROPERTY ALL_NAMES)
+expect(names "one;two")
+get_property(req GLOBAL PROPERTY REQ_two)
+expect(req "one;stray")
+get_property(isset GLOBAL PROPERTY NOT_THERE SET)
+expect(isset 0)
+expect(core_one TRUE)
+expect(core_two FALSE)
+expect(kind_one lib)
+expect(had_sources_one "")
+expect(unparsed_one "")
+set(i 0)
+set(seen "")
+while(i LESS 10)
+    list(APPEND seen ${i})
+    math(EXPR i "${i} + 1")
+    if(i EQUAL 3)
+        break()
+    endif()
+endwhile()
+expect(seen "0;1;2")
+set(l " a " "b " " c")
+list(TRANSFORM l STRIP)
+expect(l "a;b;c")
+list(TRANSFORM l APPEND ".x" OUTPUT_VARIABLE l2)
+expect(l2 "a.x;b.x;c.x")
+list(TRANSFORM l2 REPLACE "^(.)\\.x$" "\\1y")
+expect(l2 "ay;by;cy")
+list(TRANSFORM l TOUPPER REGEX "^[ab]$")
+expect(l "A;B;c")
+separate_arguments(words UNIX_COMMAND "src/a.cpp  'with space.cpp' \"q d\" b\\ c")
+expect(words "src/a.cpp;with space.cpp;q d;b c")
+add_executable(app main.cpp)
+get_target_property(srcs app SOURCES)
+expect(srcs "${CMAKE_SOURCE_DIR}/main.cpp")
+get_target_property(sd app SOURCE_DIR)
+expect(sd "${CMAKE_SOURCE_DIR}")
+get_target_property(none app NO_SUCH_PROPERTY)
+expect(none "none-NOTFOUND")
+set_property(SOURCE main.cpp APPEND PROPERTY COMPILE_DEFINITIONS SRC_DEF=2)
+add_compile_definitions(LATE_DEF)
+find_library(FAKE_LIB fakelib PATHS "${CMAKE_SOURCE_DIR}/libs")
+expect(FAKE_LIB "${CMAKE_SOURCE_DIR}/libs/libfakelib.a")
+find_library(NO_LIB surely_not_a_library_name_okb)
+expect(NO_LIB "NO_LIB-NOTFOUND")
+function(at_end)
+    set_property(GLOBAL PROPERTY DEFERRED_RAN "${done_before_end}")
+endfunction()
+cmake_language(DEFER CALL at_end)
+set(done_before_end yes)
+cmake_language(CALL expect done_before_end yes)
+if(NOT CMAKE_VERSION VERSION_LESS 3.19)
+    set(new_enough yes)
+endif()
+expect(new_enough yes)
+math(EXPR m "(7 + 3) * 2 - 10 / 3 % 2 + (1 << 4) - -1")
+expect(m 36)
+math(EXPR h "255" OUTPUT_FORMAT HEXADECIMAL)
+expect(h 0xff)
+)CM");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc);
+    check(rc == 0, "every expect() in the CMake file got its value", o);
+    check(o.find("not understood    0") != string::npos, "nothing in the file is left not understood", o);
+    string man = readFile(gRoot / "build.okay");
+    check(man.find("LATE_DEF") != string::npos, "add_compile_definitions after a target still applies to it (CMake reads it at generate time)", man);
+    check(man.find("file_define = main.cpp SRC_DEF=2") != string::npos, "set_property(SOURCE ... APPEND PROPERTY COMPILE_DEFINITIONS) is a per-file definition", man);
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program sees both definitions", o);
+    write("loop/CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(l CXX)\nset(go TRUE)\nwhile(go)\nendwhile()\n");
+    o = capture("cd '" + (gRoot / "loop").string() + "' && " + gTool + " cmake . -o b.okay 2>&1", &rc);
+    check(rc == 2 && o.find("while() ran 100000 times") != string::npos, "an endless while() stops with its line", o);
+}
+// Review of the configure-time files (PR #1194): a generated file stays inside the build folder, read-only commands write nothing,
+// and the small cases (copy into a folder, one file spelled two ways, math edge cases).
+static void testGeneratedFileSafety() {
+    printf("test: generated files stay in the build folder; only a real build writes them, and only the ones it needs\n");
+    fresh("gensafe");
+    fs::path outside = gRoot.parent_path() / "okaybuild_gensafe_outside"; fs::remove_all(outside);
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(gs CXX)
+file(WRITE "${CMAKE_BINARY_DIR}/../../../ESCAPED.txt" "x")
+file(WRITE "${CMAKE_BINARY_DIR}/../ESCAPED2.txt" "x")
+file(WRITE "${CMAKE_BINARY_DIR}x" "x")
+file(WRITE "${CMAKE_BINARY_DIR}/sub/../d.cpp" "int d(){return 4;}\n")
+file(APPEND "${CMAKE_BINARY_DIR}/./d.cpp" "int d2(){return 5;}\n")
+file(WRITE "${CMAKE_BINARY_DIR}/dir/keep.txt" "k")
+file(WRITE "${CMAKE_BINARY_DIR}/src.txt" "s")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/src.txt" "${CMAKE_BINARY_DIR}/dir" RESULT_VARIABLE rc1)
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/src.txt" "${CMAKE_BINARY_DIR}/../../COPIED.txt" RESULT_VARIABLE rc2)
+if(NOT rc1 EQUAL 0 OR rc2 EQUAL 0)
+    message(FATAL_ERROR "copy results ${rc1} ${rc2}")
+endif()
+file(READ "${CMAKE_BINARY_DIR}/dir/src.txt" back)
+if(NOT back STREQUAL "s")
+    message(FATAL_ERROR "copy into a folder gave '${back}'")
+endif()
+math(EXPR neg "-(-9223372036854775807 - 1)")
+if(NOT neg STREQUAL "-9223372036854775808")
+    message(FATAL_ERROR "negating the smallest number gave ${neg}")
+endif()
+math(EXPR wrap "9223372036854775807 + 1")
+if(NOT wrap STREQUAL "-9223372036854775808")
+    message(FATAL_ERROR "overflow gave ${wrap}")
+endif()
+add_executable(app main.cpp "${CMAKE_BINARY_DIR}/d.cpp")
+)CM");
+    write("main.cpp", "int d(); int d2(); int main(){ return d() + d2() == 9 ? 0 : 1; }\n");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0, "the CMake checks for copy, math and folders pass", o);
+    check(man.find("ESCAPED") == string::npos && man.find("COPIED") == string::npos && man.find("{bin}x") == string::npos, "a write or copy above the build folder, or to {bin}x, is not carried", man);
+    check(o.find("outside the build folder x4") != string::npos, "the refused writes are counted in the audit", o);
+    size_t first = man.find("generate {bin}/d.cpp\n");
+    check(first != string::npos && man.find("generate {bin}/d.cpp\n", first + 1) == string::npos && man.find("{bin}/./") == string::npos && man.find("{bin}/sub/..") == string::npos, "one file spelled two ways is one generate block", man);
+    check(man.find("generate {bin}/dir/src.txt") != string::npos, "cmake -E copy into an existing folder copies into it", man);
+    // read-only commands write nothing
+    for (const char* c : {"-f build.okay --no-regen targets", "-f build.okay graph app", "-f build.okay compdb", "-f build.okay --dry-run app"}) {
+        o = sh(c, &rc); check(rc == 0 && !fs::exists(gRoot / "build/ctest"), string("'") + c + "' writes no generated file", o);
+    }
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "a real build writes the generated source it compiles and the program works", o);
+    check(!fs::exists(gRoot / "build/ctest/src.txt") && !fs::exists(gRoot / "build/ctest/dir/keep.txt"), "files no planned compile uses are not written", o);
+    std::error_code ec; // where the refused writes would have landed ({bin} is build/ctest)
+    bool escaped = fs::exists(gRoot.parent_path() / "ESCAPED.txt") || fs::exists(gRoot / "build/ESCAPED2.txt") || fs::exists(gRoot / "COPIED.txt") || fs::exists(gRoot / "build/ctestx");
+    check(!escaped, "nothing was written above the build folder");
+    o = sh("-f build.okay clean", &rc);
+    check(rc == 0 && !fs::exists(gRoot / "build/ctest/d.cpp"), "clean removes the generated files", o);
+    // hand-written manifests: bad generate paths are refused when the manifest is read
+    for (const char* bad : {"{bin}/../../x.txt", "/tmp/okaybuild_abs.txt", "{bin}x.txt", "rel.txt", "{bin}/a/../../x.txt"}) {
+        write("bad.okay", string("generate ") + bad + "\n  text = \"x\"\nend\ntarget t exe\n  sources = main.cpp\nend\n");
+        o = sh("-f bad.okay targets", &rc);
+        check(rc == 2 && o.find("generate") != string::npos, string("generate ") + bad + " is refused", o);
+    }
+    write("dup.okay", "generate {bin}/a.cpp\n  text = \"x\"\nend\ngenerate {bin}/./a.cpp\n  text = \"y\"\nend\n");
+    o = sh("-f dup.okay targets", &rc); check(rc == 2 && o.find("duplicate generate") != string::npos, "the same file spelled two ways in a manifest is a duplicate", o);
+    // a folder in the build tree that is a link to somewhere else is not followed
+    fs::create_directories(gRoot / "build/ctest"); fs::create_directories(outside); fs::create_directory_symlink(outside, gRoot / "build/ctest/link", ec);
+    write("link.okay", "generate {bin}/link/x.cpp\n  text = \"int main(){return 0;}\"\nend\ntarget t exe\n  sources = {bin}/link/x.cpp\nend\n");
+    o = sh("-f link.okay t", &rc);
+    check(rc == 2 && o.find("outside the build folder") != string::npos && !fs::exists(outside / "x.cpp"), "a generated file behind a link out of the build folder is refused", o);
+    fs::remove_all(outside);
+    write("m/CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(m CXX)\nmath(EXPR x \"1 << 64\")\n");
+    o = capture("cd '" + (gRoot / "m").string() + "' && " + gTool + " cmake . -o b.okay 2>&1", &rc);
+    check(rc == 2 && o.find("math(EXPR)") != string::npos, "a shift of 64 or more is an error, not undefined", o);
+    write("m/CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(m CXX)\nmath(EXPR x \"(-9223372036854775807 - 1) / -1\")\n");
+    o = capture("cd '" + (gRoot / "m").string() + "' && " + gTool + " cmake . -o b.okay 2>&1", &rc);
+    check(rc == 2 && o.find("math(EXPR)") != string::npos, "the one division that overflows is an error", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1800,5 +2049,8 @@ int main(int argc, char** argv) {
     testSharedObjectLibs();
     testFetchAndSha256();
     testOnlyAffectedTestsRebuild();
+    testConfigureTimeFiles();
+    testCmakeModuleCommands();
+    testGeneratedFileSafety();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

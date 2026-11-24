@@ -14,7 +14,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     3. Open the output folder and start the `.exe`.
   - **You should see (expected, not yet seen on Windows):** a standalone game folder with an exe; the exe opens your scene and plays it.
   - **Known partial:** the player (`Tools\OkaySpacePlayer.exe`) must be next to the editor; the build never downloads one.
-  - **More:** [build_mode.md](../../gameplay/build_mode.md)
+  - **More:** [build_mode.md](../gameplay/build_mode.md)
 
 - [ ] **V-BX-002** Build & Run and zip
   - **Map:** 18. **Where:** editor, Build Settings
@@ -39,7 +39,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     2. Check the exit code (`echo %errorlevel%`).
   - **You should see (expected, not yet seen on Windows):** exit code 0 and a built game in `OutDir`.
   - **Known partial:** the exit code is 0 only when the game was built; nothing is downloaded. A GUI exe may not print to the console.
-  - **More:** [../../editor.md](../../editor/editor.md)
+  - **More:** [../../editor.md](../editor/editor.md)
 
 - [ ] **V-BX-005** Editor update check
   - **Map:** 18.5, 17.1.2. **Where:** editor, Engine menu
@@ -48,7 +48,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     2. Read the popup and the Console line ("Up to date" or "Update available").
   - **You should see (expected, not yet seen on Windows):** a message with the current and the latest version.
   - **Known partial:** the editor's own installer uses the same checksum rules as the launcher (docs/release/updater.md); not run on Windows by us.
-  - **More:** [updater.md](../../release/updater.md)
+  - **More:** [updater.md](../release/updater.md)
 
 - [ ] **V-BX-006** Installer and zip layout (steps unverified)
   - **Map:** 18.1. **Where:** Windows
@@ -58,7 +58,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     3. Start `OkaySpace.exe`.
   - **You should see (expected, not yet seen on Windows):** the launcher starts; the Tools folder holds the editor and player.
   - **Known partial:** the installer path is `%LOCALAPPDATA%\OkaySpace`; code signing is not done yet (the owner's step, CLAUDE.md rule 14), so Windows SmartScreen may warn.
-  - **More:** [packaging.md](../../release/packaging.md)
+  - **More:** [packaging.md](../release/packaging.md)
 
 - [ ] **V-BX-007** Release files have checksums (owner check) (steps unverified)
   - **Map:** 18.5. **Where:** a browser

@@ -14,7 +14,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     3. Open it again and click a row without moving.
   - **You should see (expected, not yet seen on Windows):** the list scrolls row by row under the drag and nothing is picked on release; a plain click picks that row.
   - **Known partial:** no momentum (no flick); touch only on a touch screen.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-UI-002** Buttons and text on a canvas
   - **Map:** 12. **Where:** editor, GameObject menu
@@ -57,7 +57,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     3. Try Ctrl+F (**Find / Replace**), Ctrl+/ (**Toggle Comment**) and Ctrl+Alt+L (**Format Document**).
   - **You should see (expected, not yet seen on Windows):** syntax colours, find and replace work, and the file is saved.
   - **Known partial:** this is the Dear ImGui text editor; our own OkayUI editor widget is built but not used (see V-OC-010).
-  - **More:** [../../scripting.md](../../scripting/scripting.md#okayscript-1)
+  - **More:** [../../scripting.md](../scripting/scripting.md#okayscript-1)
 
 - [ ] **V-UI-007** Run a script in Play (steps unverified)
   - **Map:** 13. **Where:** editor
@@ -76,7 +76,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     3. Read the Console.
   - **You should see (expected, not yet seen on Windows):** nodes appear on the canvas and run when you play.
   - **Known partial:** see docs/visual_script_coverage.md for nodes with weak coverage.
-  - **More:** [../../visual_scripting_nodes.md](../../visual_scripting_nodes.md)
+  - **More:** [../../visual_scripting_nodes.md](../visual_scripting_nodes.md)
 
 - [ ] **V-UI-009** Visual script node playground
   - **Map:** 14, 42. **Where:** editor, File > Examples
@@ -85,7 +85,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     2. Press Play and follow the text on the screen.
   - **You should see (expected, not yet seen on Windows):** each demo explains and runs one group of nodes.
   - **Known partial:** the other **Node Playground (flow and variables)** list needs the `node_playground` examples to be found next to the editor.
-  - **More:** [../../visual_scripting.md](../../scripting/visual_scripting.md)
+  - **More:** [../../visual_scripting.md](../scripting/visual_scripting.md)
 
 - [ ] **V-UI-010** Localization window (steps unverified)
   - **Map:** 31. **Where:** editor, View menu

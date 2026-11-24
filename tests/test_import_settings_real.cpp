@@ -297,5 +297,31 @@ int main() {
         CHECK(TextureImportSampling(both).mipmaps);
     }
 
+    // A settings file rewritten with the same size and the same file time is still read again while it is new: file
+    // times tick coarsely (on Windows a rewrite a few milliseconds later often keeps the time), so tex_dds_load's
+    // "set compress 0" -> "set compress 1" read the old value from the cache there. The time is pinned here so Linux
+    // sees exactly what Windows does. A file that has settled (older than 2 s) is served from the cache as before.
+    RUN_SUITE("a rewrite with the same time and size is seen while the file is new");
+    {
+        Dir d;
+        const std::string pic = d.at("same.png");
+        const std::string meta = pic + ".okaymeta";
+        Write(meta, "okaymeta 1\ntype texture\nimporter texture 2\nset compress 0\n");
+        const auto t = fs::last_write_time(meta);
+        CHECK(ReadImportSetting(pic, "texture", "compress") == "0");
+        Write(meta, "okaymeta 1\ntype texture\nimporter texture 2\nset compress 1\n");
+        fs::last_write_time(meta, t);
+        CHECK(ReadImportSetting(pic, "texture", "compress") == "1");   // (was "0": the cache matched time and size)
+        // Settled: an hour old, read once, then changed behind its back with the same time and size: the cache answers.
+        const auto old = t - std::chrono::hours(1);
+        fs::last_write_time(meta, old);
+        CHECK(ReadImportSetting(pic, "texture", "compress") == "1");
+        Write(meta, "okaymeta 1\ntype texture\nimporter texture 2\nset compress 0\n");
+        fs::last_write_time(meta, old);
+        CHECK(ReadImportSetting(pic, "texture", "compress") == "1");   // cached: no read for a settled file
+        ClearImportSidecarCache();
+        CHECK(ReadImportSetting(pic, "texture", "compress") == "0");
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -2,7 +2,7 @@
 
 # Code index: engine-Input
 
-Back to the [code index](../code_index.md). 22 headers, 112 names.
+Back to the [code index](../code_index.md). 22 headers, 113 names.
 
 ## `engine/include/okay/Input/ActionEditor.hpp`
 
@@ -161,7 +161,8 @@ Back to the [code index](../code_index.md). 22 headers, 112 names.
 
 - `KeyForLetter` function, line 18: The key a letter or digit is on. 'found' is what the layout reported for that character
 - `TapCharsForKey` function, line 33: The characters Input.FeedKeys uses for platform key 'k', for Input::FeedKeyTap: the letter
-- `AppendExtendedKeys` function, line 55: Add every held extended key to 'down' (the vector given to Input::FeedKeys).
+- `AppendHeldMainKeys` function, line 58: Add the characters Input::FeedKeys takes for the main keys held right now: letters and digits by the layout
+- `AppendExtendedKeys` function, line 84: Add every held extended key to 'down' (the vector given to Input::FeedKeys).
 
 ## `engine/include/okay/Input/PlayerInput.hpp`
 

@@ -1,16 +1,13 @@
 #pragma once
-// ScriptEditorWidget: the script editor's code widget. It owns BOTH an ImGuiColorTextEdit (the default, the one people use)
-// and an OkayUI::CodeEdit behind the adapter (editor/ScriptEditorCodeEdit.hpp), and forwards every call the script editor
-// makes to the one that is active. The active one is OkayUI only when oked::UseOkayUICodeEdit() says so (Settings > Experimental
-// "Our own code editor", OKAY_UI_CODEEDIT=1, or the developer-only OkayUI backend, docs/ui/own_ui_toolkit.md section 5); otherwise
-// this is the ImGui editor, exactly as before. When that changes while a script is open, the text, caret and selection move over.
+// ScriptEditorWidget: the script editor's code widget. It is our own OkayUI::CodeEdit behind the adapter
+// (editor/ScriptEditorCodeEdit.hpp), drawn inside the Dear ImGui script editor window: its shapes go into the window's draw list,
+// so Dear ImGui's popups, tooltips and modals are drawn over it. The vendored ImGuiColorTextEdit it replaced is deleted.
 //
-// It speaks TextEditor's vocabulary (TextEditor::Coordinates, 1-based error markers and breakpoints, GetText ending in a
-// newline), so editor/main.cpp changes only the type name and the Render call site.
-#include "TextEditor.h"
+// It speaks the vocabulary the script editor already used (Coordinates with display columns, 1-based error markers and
+// breakpoints, GetText ending in a newline), so editor/main.cpp calls it as before.
+#include "imgui.h"                // first: OkayUI.hpp keeps Dear ImGui's texture id type when imgui.h came before it
 #include "ScriptEditorCodeEdit.hpp"
 #include "MainShared.hpp"
-#include "imgui.h"
 
 #include <algorithm>
 #include <map>
@@ -21,6 +18,8 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
 #include "OkayUIImGuiEmbed.hpp"   // the code's shapes go into the ImGui window's draw list (ImGui's popups then cover them)
+#else
+#include "okay/UI/OkayUI.hpp"     // the editor built on OkayUI itself (OKAY_ON_OKAYUI): the code is drawn straight into the window
 #endif
 
 /// True while an OkayUI script editor has the keyboard (set by ScriptEditorWidget::Render). editor/main.cpp turns Dear ImGui's
@@ -30,88 +29,65 @@ inline bool g_scriptCodeOwnsKeys = false;
 
 class ScriptEditorWidget {
 public:
-    using Coordinates   = TextEditor::Coordinates;
-    using Keywords      = TextEditor::Keywords;
-    using ErrorMarkers  = TextEditor::ErrorMarkers;
-    using Breakpoints   = TextEditor::Breakpoints;
+    using Coordinates   = scripteditor::Coord;
+    using Keywords      = std::unordered_set<std::string>;
+    using ErrorMarkers  = std::map<int, std::string>;
+    using Breakpoints   = std::unordered_set<int>;
 
-    TextEditor& imgui() { return imgui_; }
     scripteditor::ScriptEditorCodeEdit& okay() { return okay_; }
 
-    // ---- one-time configuration: both editors get the same language and colours ----
-    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) { imgui_.SetLanguageDefinition(d); okay_.SetLanguage(WordsOf(d)); }
-    void SetPalette(const TextEditor::Palette& p) { imgui_.SetPalette(p); okay_.SetPaletteFromImGui(p.data(), (int)p.size()); }
-
-    /// The Dear ImGui language definition as plain words for the OkayUI editor: keywords, type names, the known names (its
-    /// identifiers: the built-ins with a tooltip), the line comment, the block comment pair, and a regex token "<literal>.*" that
-    /// colours as a comment (OkayScript's "#" comments) as one more line comment.
-    static scripteditor::LanguageWords WordsOf(const TextEditor::LanguageDefinition& d) {
-        scripteditor::LanguageWords w;
-        w.keywords.assign(d.mKeywords.begin(), d.mKeywords.end());
-        w.types.assign(d.mTypeNames.begin(), d.mTypeNames.end());
-        for (const auto& kv : d.mIdentifiers) w.known.push_back(kv.first);
-        if (!d.mSingleLineComment.empty()) w.lineComments.push_back(d.mSingleLineComment);
-        for (const auto& r : d.mTokenRegexStrings) {
-            if (r.second != TextEditor::PaletteIndex::Comment || r.first.size() < 3 || r.first.compare(r.first.size() - 2, 2, ".*") != 0) continue;
-            const std::string lit = r.first.substr(0, r.first.size() - 2);
-            if (lit.find_first_of("\\[](){}^$.*+?|") == std::string::npos) w.lineComments.push_back(lit);
-        }
-        w.blockStart = d.mCommentStart; w.blockEnd = d.mCommentEnd;
-        return w;
-    }
-    void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
-    void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
-    void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
-    void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); }
+    // ---- one-time configuration ----
+    void SetLanguage(const scripteditor::LanguageWords& w) { okay_.SetLanguage(w); }
+    void SetPalette(const scripteditor::ScriptPalette& p) { okay_.SetPalette(p); }
+    void SetTabSize(int n) { okay_.SetTabSize(n); }
+    void SetLineSpacing(float s) { okay_.SetLineSpacing(s); }
+    void SetLeftMargin(int m) { okay_.SetLeftMargin(m); }
 
     // ---- text ----
-    void SetText(const std::string& t) { if (Okay()) okay_.SetText(t); else imgui_.SetText(t); }
-    std::string GetText() { return Okay() ? okay_.GetText() : imgui_.GetText(); }
-    std::vector<std::string> GetTextLines() { return Okay() ? okay_.GetTextLines() : imgui_.GetTextLines(); }
-    std::string GetCurrentLineText() { return Okay() ? okay_.GetCurrentLineText() : imgui_.GetCurrentLineText(); }
-    int GetTotalLines() { return Okay() ? okay_.GetTotalLines() : imgui_.GetTotalLines(); }
-    int LineLength(int line) { return Okay() ? okay_.LineLength(line) : imgui_.LineLength(line); }
-    void InsertTextUndoable(const std::string& t) { if (Okay()) okay_.InsertTextUndoable(t); else imgui_.InsertTextUndoable(t); }
-    void Delete() { if (Okay()) okay_.Delete(); else imgui_.Delete(); }
-    bool IsTextChanged() { return Okay() ? okay_.IsTextChanged() : imgui_.IsTextChanged(); }
+    void SetText(const std::string& t) { okay_.SetText(t); }
+    std::string GetText() { return okay_.GetText(); }
+    std::vector<std::string> GetTextLines() { return okay_.GetTextLines(); }
+    std::string GetCurrentLineText() { return okay_.GetCurrentLineText(); }
+    int GetTotalLines() { return okay_.GetTotalLines(); }
+    int LineLength(int line) { return okay_.LineLength(line); }
+    void InsertTextUndoable(const std::string& t) { okay_.InsertTextUndoable(t); }
+    void Delete() { okay_.Delete(); }
+    bool IsTextChanged() { return okay_.IsTextChanged(); }
 
     // ---- caret and selection ----
-    Coordinates GetCursorPosition() { return Okay() ? FromOk(okay_.GetCursorPosition()) : imgui_.GetCursorPosition(); }
-    void SetCursorPosition(const Coordinates& c) { if (Okay()) okay_.SetCursorPosition(ToOk(c)); else imgui_.SetCursorPosition(c); }
-    bool HasSelection() { return Okay() ? okay_.HasSelection() : imgui_.HasSelection(); }
-    Coordinates SelStart() { return Okay() ? FromOk(okay_.SelStart()) : imgui_.SelStart(); }
-    Coordinates SelEnd() { return Okay() ? FromOk(okay_.SelEnd()) : imgui_.SelEnd(); }
-    void SetSelection(const Coordinates& a, const Coordinates& b) { if (Okay()) okay_.SetSelection(ToOk(a), ToOk(b)); else imgui_.SetSelection(a, b); }
-    void SelectAll() { if (Okay()) okay_.SelectAll(); else imgui_.SelectAll(); }
-    void SelectWordUnderCursor() { if (Okay()) okay_.SelectWordUnderCursor(); else imgui_.SelectWordUnderCursor(); }
-    std::string GetSelectedText() { return Okay() ? okay_.GetSelectedText() : imgui_.GetSelectedText(); }
+    Coordinates GetCursorPosition() { return okay_.GetCursorPosition(); }
+    void SetCursorPosition(const Coordinates& c) { okay_.SetCursorPosition(c); }
+    bool HasSelection() { return okay_.HasSelection(); }
+    Coordinates SelStart() { return okay_.SelStart(); }
+    Coordinates SelEnd() { return okay_.SelEnd(); }
+    void SetSelection(const Coordinates& a, const Coordinates& b) { okay_.SetSelection(a, b); }
+    void SelectAll() { okay_.SelectAll(); }
+    void SelectWordUnderCursor() { okay_.SelectWordUnderCursor(); }
+    std::string GetSelectedText() { return okay_.GetSelectedText(); }
 
     // ---- per-frame settings ----
-    void SetColorizerEnable(bool on) { imgui_.SetColorizerEnable(on); okay_.SetColorizerEnable(on); }
-    void SetUserTypes(const Keywords& t) { imgui_.SetUserTypes(t); okay_.SetUserTypes(t); }
-    void SetErrorMarkers(const ErrorMarkers& m) { imgui_.SetErrorMarkers(m); okay_.SetErrorMarkers(m); }
-    void SetBreakpoints(const Breakpoints& b) { imgui_.SetBreakpoints(b); okay_.SetBreakpoints(b); }
-    void SetHandleKeyboardInputs(bool on) { imgui_.SetHandleKeyboardInputs(on); okay_.SetHandleKeyboardInputs(on); }
+    void SetColorizerEnable(bool on) { okay_.SetColorizerEnable(on); }
+    void SetUserTypes(const Keywords& t) { okay_.SetUserTypes(t); }
+    void SetErrorMarkers(const ErrorMarkers& m) { okay_.SetErrorMarkers(m); }
+    void SetBreakpoints(const Breakpoints& b) { okay_.SetBreakpoints(b); }
+    void SetHandleKeyboardInputs(bool on) { okay_.SetHandleKeyboardInputs(on); }
 
     // ---- geometry of the last Render (screen pixels) ----
-    float RowHeight() { return Okay() ? okay_.RowHeight() : imgui_.RowHeight(); }
-    float CharWidth() { return Okay() ? okay_.CharWidth() : imgui_.CharWidth(); }
-    int FirstVisibleLine() { return Okay() ? okay_.FirstVisibleLine() : imgui_.FirstVisibleLine(); }
-    float TextStartX() { return Okay() ? okay_.TextStartX() : imgui_.TextStartX(); }
-    ImVec2 ContentOrigin() { if (!Okay()) return imgui_.ContentOrigin(); const auto v = okay_.ContentOrigin(); return ImVec2(v.x, v.y); }
-    ImVec2 CaretScreenPosBelow() { if (!Okay()) return imgui_.CaretScreenPosBelow(); const auto v = okay_.CaretScreenPosBelow(); return ImVec2(v.x, v.y); }
-    Coordinates ScreenToCoords(const ImVec2& p) { return Okay() ? FromOk(okay_.ScreenToCoords(p.x, p.y)) : imgui_.ScreenToCoords(p); }
+    float RowHeight() { return okay_.RowHeight(); }
+    float CharWidth() { return okay_.CharWidth(); }
+    int FirstVisibleLine() { return okay_.FirstVisibleLine(); }
+    float TextStartX() { return okay_.TextStartX(); }
+    ImVec2 ContentOrigin() { const auto v = okay_.ContentOrigin(); return ImVec2(v.x, v.y); }
+    ImVec2 CaretScreenPosBelow() { const auto v = okay_.CaretScreenPosBelow(); return ImVec2(v.x, v.y); }
+    Coordinates ScreenToCoords(const ImVec2& p) { return okay_.ScreenToCoords(p.x, p.y); }
 
-    /// True while the code has the keyboard. The ImGui editor is a child window the script editor finds through ImGui's nav
-    /// window; the OkayUI one reports its own focus (call after Render).
+    /// True while the code has the keyboard (call after Render).
     bool OkayHasKeyboard() const { return okayFocused_; }
-    bool UsingOkayUI() { return Okay(); }
 
-    /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this". `border`: the framed child the Dear ImGui editor draws.
+    /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this". `border`: a framed child with padding.
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {
-        if (!Okay()) { g_scriptCodeOwnsKeys = false; imgui_.Render(id, size, border); return; }
 #ifdef OKAY_HAVE_OKAYUI
-        // The same frame as the Dear ImGui editor: a child window in the code's background colour, with its border and rounding,
+        // A framed Dear ImGui child window in the code's background colour, with its border and rounding,
         // its padding around the text (CodeEdit's content padding) and the scroll bars at its inside edge in ImGui's style.
         const ImGuiStyle& st = ImGui::GetStyle();
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(okay_.Edit().Palette().background));
@@ -131,18 +107,17 @@ public:
         ImGui::InvisibleButton("##okaycode", a);                // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        // The code font: the embedded JetBrains Mono at the size the script editor pushed for the ImGui editor (its zoom and the
-        // UI scale), so both editors show the same text.
+        // The code font: the embedded JetBrains Mono at the size the script editor pushed (its zoom and the UI scale).
         okay_.UseCodeFont(ImGui::GetFontSize());
         OkayUI::CodeEdit& ce = okay_.Edit();
-        if (!clipHooked_) {   // copy and paste through Dear ImGui's clipboard (the system clipboard, no size limit), as the ImGui editor
+        if (!clipHooked_) {   // copy and paste through Dear ImGui's clipboard (the system clipboard, no size limit), as before
             clipHooked_ = true;
             ce.SetClipboardFunctions([](const std::string& t) { ImGui::SetClipboardText(t.c_str()); },
                                      []() { const char* c = ImGui::GetClipboardText(); return std::string(c ? c : ""); });
         }
         ce.SetContentPadding(border ? st.WindowPadding.x : 0.0f, border ? st.WindowPadding.y : 0.0f);
         ce.SetScrollbarStyle(st.ScrollbarSize, st.ScrollbarRounding);
-        ce.SetAlwaysShowHScrollbar(true);                       // as the ImGui editor's child (AlwaysHorizontalScrollbar)
+        ce.SetAlwaysShowHScrollbar(true);                       // the horizontal bar is always there, as it always was
         {
             OkayUI::CodePalette pal = ce.Palette();
             pal.scrollTrack = ImGui::GetColorU32(ImGuiCol_ScrollbarBg);
@@ -174,44 +149,21 @@ public:
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
+#else
+        // The editor on OkayUI (OKAY_ON_OKAYUI): Dear ImGui's names are OkayUI's, so the code is drawn straight into a child window.
+        okay_.UseCodeFont(ImGui::GetFontSize());
+        if (ImGui::BeginChild(id, size.x, size.y, border)) {
+            const OkayUI::Vec2 a = OkayUI::GetContentRegionAvail();
+            okay_.Edit().Draw("##codeedit", a.x > 8.0f ? a.x : 8.0f, a.y > 8.0f ? a.y : 8.0f);
+        }
+        ImGui::EndChild();
+        okayFocused_ = okay_.Edit().Focused();
+        g_scriptCodeOwnsKeys = okayFocused_;
 #endif
     }
 
 private:
-    bool Okay() {
-#ifdef OKAY_HAVE_OKAYUI
-        const bool want = oked::UseOkayUICodeEdit();
-#else
-        const bool want = false;
-#endif
-        if (want != lastOkay_) {            // the backend changed: carry the text and the caret over
-            if (want) Carry(imgui_, okay_); else Carry(okay_, imgui_);
-            lastOkay_ = want;
-        }
-        return want;
-    }
-    static scripteditor::Coord ToOk(const Coordinates& c) { return scripteditor::Coord(c.mLine, c.mColumn); }
-    static Coordinates FromOk(const scripteditor::Coord& c) { return Coordinates(c.mLine, c.mColumn); }
-    static void Carry(TextEditor& from, scripteditor::ScriptEditorCodeEdit& to) {
-        std::string t = from.GetText();
-        if (!t.empty() && t.back() == '\n') t.pop_back();       // GetText ends with the newline both editors add
-        const Coordinates a = from.SelStart(), b = from.SelEnd(), c = from.GetCursorPosition();
-        to.SetText(t);
-        if (a != b) to.SetSelection(ToOk(a), ToOk(b));
-        to.SetCursorPosition(ToOk(c));
-    }
-    static void Carry(scripteditor::ScriptEditorCodeEdit& from, TextEditor& to) {
-        std::string t = from.GetText();
-        if (!t.empty() && t.back() == '\n') t.pop_back();
-        const scripteditor::Coord a = from.SelStart(), b = from.SelEnd(), c = from.GetCursorPosition();
-        to.SetText(t);
-        if (a != b) to.SetSelection(FromOk(a), FromOk(b));
-        to.SetCursorPosition(FromOk(c));
-    }
-
-    TextEditor imgui_;
     scripteditor::ScriptEditorCodeEdit okay_;
-    bool lastOkay_ = false;
     bool okayFocused_ = false;
     bool clipHooked_ = false;
 #ifdef OKAY_HAVE_OKAYUI

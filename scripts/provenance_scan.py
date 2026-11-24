@@ -14,7 +14,7 @@ Two modes, both read only:
 import os, re, subprocess, sys
 
 ROOTS = ["engine", "shared", "editor", "launcher", "player", "okayui", "relay", "tools", "scripts", "tests"]
-SKIP = ("editor/vendor", "engine/third_party", "tests/wycheproof", "tests/data")
+SKIP = ("engine/third_party", "tests/wycheproof", "tests/data")
 EXT = (".cpp", ".hpp", ".h", ".c", ".py", ".sh", ".cmake", ".glsl", ".hlsl", ".js")
 MARK = re.compile(r"ported (from|to)|port of|based on [A-Z]|adapted from|taken from [A-Z]|derived from [A-Z]|translated from|copied from|"
                   r"a la |after (Assimp|stb|SDL|ImGui|minimp3|TweetNaCl)|the way (Assimp|stb|SDL|Godot|Unreal)|"

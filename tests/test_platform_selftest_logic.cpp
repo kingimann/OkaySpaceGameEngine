@@ -112,6 +112,33 @@ int main() {
         CHECK(t2.find("when: now\n") != std::string::npos && t2.find("[FAIL] audio - no device") != std::string::npos &&
               t2.find("1 passed, 1 failed, 1 not tested.") != std::string::npos && t2.find("RESULT: FAILED.") != std::string::npos);
     }
+    // --ci: a step that needs hardware a build machine may lack (GPU OpenGL, a sound card) is NOT TESTED when it does
+    // not work there, never PASS; on a person's PC the same failure is a FAIL. A success is a PASS either way.
+    {
+        CHECK(HardwareStatus(true, false) == Status::Pass && HardwareStatus(true, true) == Status::Pass);
+        CHECK(HardwareStatus(false, false) == Status::Fail && HardwareStatus(false, true) == Status::Skip);
+        CHECK(HardwareDetail("no device", false) == "no device");
+        CHECK(HardwareDetail("no device", true) == "no device (counted as not tested: --ci, this machine may have none)");
+    }
+    // Event pump verdict: a pushed event must come back through PollEvent, and a resize asked of the window must
+    // arrive as a WindowResized event (that one goes through the operating system's queue). The event must carry the
+    // size the window reports afterwards, and that size must differ from the size before; it need not be exactly the
+    // size asked for (DPI scaling, a window manager, a screen smaller than asked can all change it).
+    // Arguments: pushedBack, sawResize, event w/h, reported w/h after, w/h before, asked w/h.
+    {
+        std::string d;
+        CHECK(PumpVerdict(true, true, 520, 340, 520, 340, 640, 400, 520, 340, d) == Status::Pass);
+        CHECK(d == "a pushed event came back; asked for 520x340, the window reports 520x340 and the resize event said 520x340");
+        CHECK(PumpVerdict(true, true, 780, 510, 780, 510, 960, 600, 520, 340, d) == Status::Pass);   // 150 percent DPI
+        CHECK(PumpVerdict(false, true, 520, 340, 520, 340, 640, 400, 520, 340, d) == Status::Fail);
+        CHECK(d.find("the pushed event did not come back") != std::string::npos);
+        CHECK(PumpVerdict(true, false, 0, 0, 520, 340, 640, 400, 520, 340, d) == Status::Fail);
+        CHECK(d.find("no resize event arrived") != std::string::npos);
+        CHECK(PumpVerdict(true, true, 500, 340, 520, 340, 640, 400, 520, 340, d) == Status::Fail);   // event disagrees with the window
+        CHECK(d.find("the resize event said 500x340") != std::string::npos);
+        CHECK(PumpVerdict(true, true, 640, 400, 640, 400, 640, 400, 520, 340, d) == Status::Fail);   // nothing changed
+        CHECK(d.find("the size did not change") != std::string::npos);
+    }
     std::printf("platform_selftest_logic: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -58,8 +58,7 @@ std::string DescribeModelImportProblem(const std::string& path) {
         if (ext.empty()) {
             const std::string dot = p.extension().u8string();
             return dot.empty() ? std::string("the file name has no extension, so the format is not known; this build reads ") + list
-                               : "this build does not read " + Lower(dot) + " files; it reads " + list +
-                                     (AssimpAvailable() ? std::string() : std::string(" (other formats need a build with Assimp)"));
+                               : "this build does not read " + Lower(dot) + " files; it reads " + list;
         }
         std::ifstream in(p, std::ios::binary);
         if (!in) return "the file can't be opened (another program may be using it, or there is no permission to read it)";
@@ -89,7 +88,7 @@ std::string DescribeModelImportProblem(const std::string& path) {
             if (i < got && head[i] != '{') return "it is not a glTF file: a .gltf is text that starts with '{'";
             return "the glTF reader could not make sense of it (damaged JSON, a missing .bin or texture file next to it, or glTF 1.0; the Console line above may say which)";
         }
-        if (ext == ".fbx") {   // read by its own built-in path, not the seam (which would only say "no Assimp")
+        if (ext == ".fbx") {   // read by its own built-in path, not the seam
             const bool binary = got >= 16 && std::string(head, 16) == "Kaydara FBX Bina";
             bool text = false;
             if (!binary) {   // an ASCII FBX starts with comment lines ("; FBX 7.4.0 project file") or the header record

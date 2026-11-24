@@ -71,7 +71,7 @@ int main() {
         SetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         UnsetEnv(c.env);
-        // off by default; without Assimp the format cannot be read and the message names the switch
+        // switched off: the format cannot be read and the message names the switch
         // (skipped for a format whose CMake option is ON in this build: its default is then own)
         bool defaultOn = false;
 #ifdef OKAY_EXPECT_OWN_IQM
@@ -80,7 +80,7 @@ int main() {
 #ifdef OKAY_EXPECT_OWN_COB
         if (std::string(c.env) == "OKAY_OWN_COB") defaultOn = true;
 #endif
-        if (!AssimpAvailable() && !defaultOn) {
+        if (!defaultOn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);
@@ -109,10 +109,10 @@ int main() {
         CHECK(!ImportModelData((dir / "t.ndo").string(), m, ImportBackend::Own, false, &err) && err.find("recognised but not read") != std::string::npos && m.parts.empty());
         WriteFile(dir / "bad.ndo", "not nendo at all");
         CHECK(!ImportModelData((dir / "bad.ndo").string(), m, ImportBackend::Own, false, &err) && err.find("not a Nendo file") != std::string::npos);
-        // the refusing seam is never advertised as importable, even with the own backend switched on (when Assimp is built it may list .ndo itself)
-        if (!AssimpAvailable()) CHECK((" " + ImportableExtensions() + " ").find(" .ndo ") == std::string::npos);
+        // the refusing seam is never advertised as importable, even with the own backend switched on
+        CHECK((" " + ImportableExtensions() + " ").find(" .ndo ") == std::string::npos);
         SetImportBackend("*", ImportBackend::Default);
-        if (!AssimpAvailable()) {
+        {
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData((dir / "t.ndo").string(), d, ImportBackend::Default, false, &e2) && e2.find("OKAY_OWN_NDO") != std::string::npos);
         }

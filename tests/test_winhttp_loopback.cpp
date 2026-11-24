@@ -25,6 +25,13 @@ using namespace okay::http;
 namespace fs = std::filesystem;
 static int g_fail = 0, g_checks = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { ++g_fail; std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
+// Each part of a download check on its own line, so a failure says which part: the outcome (with its value and the
+// seam's error text), the destination file, a leftover .part file.
+#define CHECK_OUTCOME(r, want) do { ++g_checks; if ((r).outcome != (want)) { ++g_fail; \
+    std::printf("FAIL %s:%d: outcome %d, wanted %d (%s); status %ld, attempts %d, error \"%s\"\n", __FILE__, __LINE__, \
+                (int)(r).outcome, (int)(want), #want, (long)(r).status, (r).attempts, (r).error.c_str()); } } while (0)
+#define CHECK_MS(t0, limit) do { ++g_checks; const DWORD ms_ = GetTickCount() - (t0); if (ms_ >= (DWORD)(limit)) { ++g_fail; \
+    std::printf("FAIL %s:%d: took %lu ms, limit %d ms\n", __FILE__, __LINE__, (unsigned long)ms_, (int)(limit)); } } while (0)
 
 static SOCKET g_listen = INVALID_SOCKET;
 static int g_port = 0;
@@ -141,31 +148,31 @@ int main() {
         CHECK(r.outcome == OwnOutcome::Ok && Slurp(out) == pl);
         sp.expectedSha256 = std::string(64, '0');   // a wrong checksum: nothing is kept
         r = FetchToFile(base + "/ok", out, sp);
-        CHECK(r.outcome == OwnOutcome::ChecksumMismatch && !fs::exists(out) && NoParts(dir));
+        CHECK_OUTCOME(r, OwnOutcome::ChecksumMismatch); CHECK(!fs::exists(out)); CHECK(NoParts(dir));
     }
     {   // a 404 is final (no retry, no file); 503 twice then 200 with two retries
         OwnDownloadSpec sp; sp.retries = 2; sp.retryDelayMs = 10;
         OwnDownloadResult r = FetchToFile(base + "/missing", out, sp);
-        CHECK(r.outcome == OwnOutcome::HttpError && r.status == 404 && r.attempts == 1 && !fs::exists(out));
+        CHECK_OUTCOME(r, OwnOutcome::HttpError); CHECK(r.status == 404); CHECK(r.attempts == 1); CHECK(!fs::exists(out));
         r = FetchToFile(base + "/flaky", out, sp);
         CHECK(r.outcome == OwnOutcome::Ok && r.attempts == 3 && Slurp(out) == pl);
     }
     {   // a size cap (announced and counted)
         OwnDownloadSpec sp; sp.maxBytes = 1000;
         OwnDownloadResult r = FetchToFile(base + "/ok", out, sp);
-        CHECK(r.outcome == OwnOutcome::TooBig && !fs::exists(out) && NoParts(dir));
+        CHECK_OUTCOME(r, OwnOutcome::TooBig); CHECK(!fs::exists(out)); CHECK(NoParts(dir));
     }
     {   // cancel while the data trickles in: ends quickly, nothing kept
         OwnDownloadSpec sp; int polls = 0;
         sp.cancelled = [&] { return ++polls > 20; };
         const DWORD t0 = GetTickCount();
         OwnDownloadResult r = FetchToFile(base + "/slow", out, sp);
-        CHECK(r.outcome == OwnOutcome::Cancelled && !fs::exists(out) && NoParts(dir) && GetTickCount() - t0 < 8000);
+        CHECK_OUTCOME(r, OwnOutcome::Cancelled); CHECK(!fs::exists(out)); CHECK(NoParts(dir)); CHECK_MS(t0, 8000);
     }
     {   // a cut answer: without retries it is no clear answer (and curl is off); with one retry it resumes with Range
         OwnDownloadSpec sp; sp.retryDelayMs = 10;
         OwnDownloadResult r = FetchToFile(base + "/trunc", out, sp);
-        CHECK(r.outcome == OwnOutcome::NotHandled && !fs::exists(out) && NoParts(dir));
+        CHECK_OUTCOME(r, OwnOutcome::NotHandled); CHECK(!fs::exists(out)); CHECK(NoParts(dir));
         sp.retries = 1;
         r = FetchToFile(base + "/trunc", out, sp);
         CHECK(r.outcome == OwnOutcome::Ok && r.resumes == 1 && Slurp(out) == pl);
@@ -182,28 +189,29 @@ int main() {
     {   // a silent server: Send's timeout holds; a cancel and the whole-call limit end a blocked call quickly
         DWORD t0 = GetTickCount();
         Result r = Send("GET", base + "/silent", {}, "", "", 1000);
-        CHECK(!r.reached && GetTickCount() - t0 < 4000);
+        CHECK(!r.reached); CHECK_MS(t0, 4000);
         t0 = GetTickCount();
         r = Send("POST", base + "/silent", {}, "x", "", 1000);
-        CHECK(!r.reached && r.maybeSent && GetTickCount() - t0 < 4000);   // a POST that may have arrived: never re-sent by curl
+        CHECK(!r.reached); CHECK(r.maybeSent); CHECK_MS(t0, 4000);   // a POST that may have arrived: never re-sent by curl
         for (const char* p : {"/silent", "/stall"}) {
             OwnDownloadSpec sp; sp.ioMs = 60000;
             const DWORD c0 = GetTickCount();
             sp.cancelled = [c0] { return GetTickCount() - c0 > 300; };
             t0 = GetTickCount();
             OwnDownloadResult d = FetchToFile(base + p, out, sp);
-            CHECK(d.outcome == OwnOutcome::Cancelled && !fs::exists(out) && NoParts(dir));
+            CHECK_OUTCOME(d, OwnOutcome::Cancelled); CHECK(!fs::exists(out)); CHECK(NoParts(dir));
             CHECK(GetTickCount() - t0 < 3000);
             RequestOptions ro; ro.ioMs = 60000; ro.totalMs = 800;
             t0 = GetTickCount();
             const ExResult x = RequestEx("GET", base + p, {}, "", "", "", ro);
-            CHECK(!x.reached && x.error.rfind("timeout", 0) == 0 && GetTickCount() - t0 < 3000);
+            CHECK(!x.reached); CHECK(x.error.rfind("timeout", 0) == 0); CHECK_MS(t0, 3000);
+            if (x.error.rfind("timeout", 0) != 0) std::printf("  (error was \"%s\")\n", x.error.c_str());
         }
     }
     {   // a 407 is no answer from WinHTTP: the seam goes on to curl (off here, so it reports that), even for a POST
         OwnDownloadSpec sp; sp.retries = 2; sp.retryDelayMs = 10;
         OwnDownloadResult d = FetchToFile(base + "/proxyauth", out, sp);
-        CHECK(d.outcome == OwnOutcome::NotHandled && d.attempts == 1 && !fs::exists(out));
+        CHECK_OUTCOME(d, OwnOutcome::NotHandled); CHECK(d.attempts == 1); CHECK(!fs::exists(out));
         Result r = Send("POST", base + "/proxyauth", {}, "x");
         CHECK(!r.reached && r.error.find("curl") != std::string::npos);
     }

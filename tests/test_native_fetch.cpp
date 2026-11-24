@@ -380,6 +380,17 @@ static void TestReviewFixes() {
         std::remove(f.c_str());
     }
     s.Stop();
+    {   // FetchToFile, any path: a failure removes an existing `path` too (the own client always did; WinHTTP and curl left
+        // the old file there, which the Windows run of winhttp_loopback showed). Here: own client off, curl not on PATH.
+        const fs::path old = fs::temp_directory_path() / ("okay_nf_old_" + std::to_string(::getpid()));
+        { std::ofstream o(old, std::ios::binary); o << "old"; }
+        ::unsetenv("OKAY_OWN_HTTP");
+        const OwnDownloadResult r = FetchToFile("http://127.0.0.1:1/x", old, OwnDownloadSpec());
+        ::setenv("OKAY_OWN_HTTP", "1", 1);
+        CHECK(r.outcome == OwnOutcome::NotHandled);
+        CHECK(!fs::exists(old));
+        std::error_code ec; fs::remove(old, ec);
+    }
     {   // Finish: a rename that fails is NotHandled with its reason, never DiskFull
         const fs::path dir = fs::temp_directory_path() / ("okay_nf_fin_" + std::to_string(::getpid()));
         std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir / "target" / "inside", ec);

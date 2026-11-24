@@ -461,18 +461,24 @@ inline OwnDownloadResult FetchToFile(const std::string& url, const std::filesyst
     OwnDownloadSpec sp = spIn;   // header lines lose any CR/LF on every path (CleanHeaderLine)
     sp.userAgent = CleanHeaderLine(sp.userAgent);
     sp.headers = CleanHeaderLines(sp.headers);
+    // On anything but Ok, an existing `path` is removed as well, on every path (the own client's OwnDownload always did;
+    // WinHTTP and curl left the old file there, so a caller could take a stale file for this download's result).
+    auto dropOld = [&](OwnDownloadResult r) {
+        if (r.outcome != OwnOutcome::Ok) { std::error_code ec; std::filesystem::remove(path, ec); }
+        return r;
+    };
     if (NativeAvailable()) {
 #if defined(OKAY_OWN_HTTP_ACTIVE)
         OwnDownloadResult r = OwnDownload(url, fetch_detail::Utf8(path), sp);
-        if (r.outcome != OwnOutcome::NotHandled) return r;
+        if (r.outcome != OwnOutcome::NotHandled) return dropOld(r);
 #elif defined(OKAY_HTTP_WINHTTP)
         OwnDownloadResult r = fetch_detail::WinDownload(url, path, sp);
-        if (r.outcome != OwnOutcome::NotHandled) return r;
-        if (r.error.rfind("rename failed", 0) == 0) return r;   // the file came; curl would only fetch it again to the same rename
+        if (r.outcome != OwnOutcome::NotHandled) return dropOld(r);
+        if (r.error.rfind("rename failed", 0) == 0) return dropOld(r);   // the file came; curl would only fetch it again to the same rename
 #endif
     }
-    if (sp.cancelled && sp.cancelled()) { OwnDownloadResult c; c.outcome = OwnOutcome::Cancelled; return c; }
-    return fetch_detail::CurlDownload(url, path, sp);
+    if (sp.cancelled && sp.cancelled()) { OwnDownloadResult c; c.outcome = OwnOutcome::Cancelled; return dropOld(c); }
+    return dropOld(fetch_detail::CurlDownload(url, path, sp));
 }
 
 /// A HEAD request that follows redirects, like `curl -sIL`: true when an answer arrived (any status, as curl -I does

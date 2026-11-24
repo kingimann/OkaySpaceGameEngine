@@ -3223,6 +3223,15 @@ target_link_libraries(test_core_cli PRIVATE okay::engine)
 target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
 add_test(NAME core_cli COMMAND test_core_cli)
 
+# The okay command line (tools/okay-cli): arguments, help, .gitignore/.gitattributes, git status grouping, empty projects,
+# and with git installed: init, save, history, undo, branches, sync and the scene merge/diff drivers on temp repos (77 = no git).
+if(TARGET okay_cli_lib)
+    add_executable(test_okay_cli test_okay_cli.cpp)
+    target_link_libraries(test_okay_cli PRIVATE okay_cli_lib)
+    add_test(NAME okay_cli COMMAND test_okay_cli)
+    set_tests_properties(okay_cli PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+endif()
+
 # Core console: EventBus extras, Cvars, Console, debug overlay lines
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)

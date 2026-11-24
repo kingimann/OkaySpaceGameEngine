@@ -1,0 +1,27 @@
+# Batch R1 (GLRenderer split) of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Render/GLRenderer.cpp (3,068 lines) keeps the frame (RenderToPixels, the draw passes, LoadGL, Destroy). Moved out, verbatim:
+#   GLRendererInternal.hpp   the GL include preamble and macros, the entry-point typedefs, struct GL, load<> (about 190 lines)
+#   GLRendererShaders.cpp    every GLSL source string, GL g, g_skinBones, compile, buildQuadProgram, makeColorTarget (about 685 lines)
+#   GLRendererPasses.cpp     the programs (main, custom), depth/shadow target, bloom, SSAO, quad, sky and post-chain targets (about 610 lines)
+#   GLRendererResources.cpp  size sets, framebuffer targets, texture upload cache, mesh vertex-buffer cache, skinning bind (about 470 lines)
+#   python3 scripts/check_pure_move.py --base <parent> --head <commit> --source engine/src/Render/GLRenderer.cpp \
+#       --dest engine/src/Render/GLRendererInternal.hpp --dest engine/src/Render/GLRendererShaders.cpp \
+#       --dest engine/src/Render/GLRendererPasses.cpp --dest engine/src/Render/GLRendererResources.cpp \
+#       --rules docs/engine/moves/R1_gl_renderer_split.rules
+# What was in one unnamed namespace of the .cpp now lives in okay::gl_render (the renderer's topic namespace), declared in
+# GLRendererInternal.hpp; the .cpp files open it with `using namespace gl_render;` (what the unnamed namespace did before). The two
+# file-statics the mesh and texture cache share with the rest become plain gl_render functions (change rules); the old forward declaration goes.
+add: ^using namespace gl_render;$
+add: ^extern GL g;
+add: ^extern const char\* k\w+;$
+add: ^extern int g_skinBones;
+add: ^GLuint compile\(GLenum type, const char\* src\);$
+add: ^GLuint buildQuadProgram\(const char\* fragSrc\);$
+add: ^bool makeColorTarget\(
+add: ^std::uint64_t MeshKey\(const SkinnedMesh\* skin\);
+add: ^int GpuTextureCategory\(\);$
+drop: ^\s*namespace \{$
+drop: ^\s*\} // namespace$
+drop: ^static std::uint64_t MeshKey\(const SkinnedMesh\* skin\);
+change: static int GpuTextureCategory() { static const int id = MemoryTracker::Global().Category("Textures (GPU)"); return id; } ==> int gl_render::GpuTextureCategory() { static const int id = MemoryTracker::Global().Category("Textures (GPU)"); return id; }
+change: static std::uint64_t MeshKey(const SkinnedMesh* skin) { ==> std::uint64_t gl_render::MeshKey(const SkinnedMesh* skin) {

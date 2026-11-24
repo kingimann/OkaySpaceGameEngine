@@ -5,6 +5,7 @@
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Debug/DebugUtil.hpp"
 #include "okay/Debug/MemoryTracker.hpp"
 #include "okay/Render/ProcTexture.hpp"
@@ -77,7 +78,8 @@ TextureSettings ReadTextureSettings(const std::string& path) {
     if (path.empty() || path[0] == '@' || path.rfind("proc:", 0) == 0) return s;
     std::ifstream in(path + ".okaymeta", std::ios::binary);
     if (!in) return s;
-    // The `importer texture` block's `set <key> <value>` lines; later lines win, like ReadImportSetting.
+    // The `importer texture` block's `set <key> <value>` lines; later lines win, like ReadImportSetting. Values are
+    // unescaped (the asset database writes them through savefmt::Escape), as ImportSidecar.cpp's ParseBlock does.
     std::string line;
     bool texture = false;
     while (std::getline(in, line)) {
@@ -86,7 +88,7 @@ TextureSettings ReadTextureSettings(const std::string& path) {
         if (!texture || line.rfind("set ", 0) != 0) continue;
         const std::size_t sp = line.find(' ', 4);
         if (sp == std::string::npos) continue;
-        const std::string key = line.substr(4, sp - 4), k = Low(key), v = line.substr(sp + 1), lv = Low(v);
+        const std::string key = line.substr(4, sp - 4), k = Low(key), v = savefmt::Unescape(line.substr(sp + 1)), lv = Low(v);
         if (k == "srgb") ParseFlag(v, s.sRGB);
         else if (k == "linear") { bool lin = false; if (ParseFlag(v, lin)) s.sRGB = !lin; }   // the v1 layout
         else if (k == "filter") {

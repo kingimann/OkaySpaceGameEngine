@@ -1,0 +1,28 @@
+# Batch S7 of the engine modularization plan (docs/engine/modularization_plan.md, section 3.1):
+# engine/src/Components/ActionList.cpp, the second half of the instruction chain in ActionList::Update (array_clear to
+# spawn_wave: arrays, maps, strings, scene/object ops, audio, raycasts, math, game flow; about 730 lines) moves to
+# engine/src/Components/ActionListOps.cpp as ActionList::RunMoreOps(it, op, scene, t). Update calls it where the chain was
+# (same position in the else-if chain); it returns 2 where the old code did `return;` out of Update.
+#   python3 scripts/check_pure_move.py --base origin/main --head HEAD --source engine/src/Components/ActionList.cpp \
+#       --dest engine/src/Components/ActionListOps.cpp --dest engine/src/Components/ActionListInternal.hpp \
+#       --rules docs/engine/moves/S7_actionlist_ops.rules
+# The argument helpers (Num ... ActionRaycast) leave the anonymous namespace for okay::actionlist_ops, declared in
+# ActionListInternal.hpp.
+change: else if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); } ==> if (op == "array_clear") { Arrays()[Str(it, 0)].clear(); }
+change: else if (op == "destroy") { if (scene && gameObject) { scene->Destroy(gameObject); return; } } ==> else if (op == "destroy") { if (scene && gameObject) { scene->Destroy(gameObject); return 2; } }
+change: if (SceneManager::IndexOf(path) < 0 && !ScriptPathOk(path, "load_scene")) return; ==> if (SceneManager::IndexOf(path) < 0 && !ScriptPathOk(path, "load_scene")) return 2;
+change: return; ==> return 2;
+change: else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return; } ==> else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return 2; }
+change: else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return; } ==> else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return 2; }
+drop: ^namespace \{$
+add: ^\s*using namespace actionlist_ops;$
+add: ^\s*int ActionList::RunMoreOps\(
+add: ^\s*const std::vector<Item>& ins = RunList\(\);
+add: ^\s*else return 0;$
+add: ^\s*return 1;$
+add: ^\s*\}$
+add: ^\s*else \{$
+add: ^\s*if \(RunMoreOps\(it, op, scene, t\) == 2\) return;$
+add: ^\s*(float|std::string|int|bool|Ease|Inventory\*|RaycastHit3D) \w+\(.*\);$
+add: ^\s*class (GameObject|Inventory|Scene);$
+drop: ^\} // namespace$

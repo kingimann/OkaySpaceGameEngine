@@ -195,6 +195,9 @@ private:
     int  ResolveTarget(const std::string& t) const;
     // Index of the matching `endOp` for a block opener at `openIp` (handles nesting).
     int  MatchingEnd(std::size_t openIp, const char* openOp, const char* endOp) const;
+    // The op families after the control-flow ones (ActionListOps.cpp). 0 = not one of them, 1 = ran, 2 = ran and
+    // this Update must end now (scene change, self destroyed).
+    int  RunMoreOps(const Item& it, const std::string& op, Scene* scene, Transform* t);
 
     bool m_running = false;
     std::size_t m_ip = 0;

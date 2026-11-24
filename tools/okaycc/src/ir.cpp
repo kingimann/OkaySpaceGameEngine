@@ -410,7 +410,15 @@ void propagateFunction(Function& f) {
             std::vector<Cell> joined;
             bool any = false;
             if (i == 0) {
+                // Every parameter has a value on entry that is not known here: the integer ones
+                // and those that arrive in xmm registers (a float parameter left "unknown" would
+                // join with one branch's copy and be replaced by it).
                 joined.assign(static_cast<std::size_t>(f.params), Cell{3, 0, -1});
+                for (int s : f.xmmSlot) {
+                    if (s < 0) continue;
+                    if (s >= static_cast<int>(joined.size())) joined.resize(static_cast<std::size_t>(s + 1));
+                    joined[static_cast<std::size_t>(s)] = Cell{3, 0, -1};
+                }
                 any = true;
             }
             for (int p : preds[static_cast<std::size_t>(i)]) {
@@ -575,7 +583,10 @@ RegHomes assignRegs(const Function& f) {
             for (const Operand& word : in.stack)
                 if (word.kind == Operand::Kind::Reg) note(word.reg);
             for (const Operand& x : in.xmm)
-                if (x.kind == Operand::Kind::Reg) note(x.reg);
+                if (x.kind == Operand::Kind::Reg) {
+                    note(x.reg);
+                    markMem(x.reg);  // an xmm argument is read from its stack slot (loadXmm)
+                }
             if (in.op == Inst::Op::Lea && in.a.kind == Operand::Kind::Reg) markMem(in.a.reg);
             if (in.fp) {
                 if (in.a.kind == Operand::Kind::Reg && in.extra != 0) markMem(in.a.reg);
@@ -804,8 +815,9 @@ RegHomes assignRegs(const Function& f) {
     return h;
 }
 
-std::string irText(const std::string& source, Diagnostics& diags, const std::string& file) {
-    return printModule(lowerSource(source, diags, file));
+std::string irText(const std::string& source, Diagnostics& diags, const std::string& file,
+                   const std::vector<std::string>& includes) {
+    return printModule(lowerSource(source, diags, file, includes));
 }
 
 }  // namespace okaycc

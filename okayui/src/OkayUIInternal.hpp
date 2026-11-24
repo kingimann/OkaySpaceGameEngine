@@ -6,6 +6,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "OkayUI_FontAtlas.hpp"
+#include "okay/Graphics/TtfFont.hpp"   // okay::TtfFont: the fallback fonts g_fbFonts
 
 namespace OkayUI {
 namespace ui_core {
@@ -463,5 +464,44 @@ extern int g_wflagsNext;
 extern int g_focusWin;
 extern bool g_pinNext, g_bareNext, g_noTitleNext, g_resizeNext;
 extern bool g_dockAware, g_dockRouted;
+struct TabSel { int bar = 0; int sel = 0; };
+// The remembered order and widths of a Reorderable tab bar's tabs (the tabs are placed from last frame's widths, so a drag can swap them).
+struct TabOrder { int bar = 0; int n = 0; int ids[32] = {}; float w[32] = {}; unsigned long long lastFrame = 0; };
+struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0;
+                   int flags = 0; TabOrder* ord = nullptr; int seen[32] = {}; int nSeen = 0; bool fresh = false; };
+struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
+struct DragDrop {
+    bool  active = false;
+    int   payload = 0;
+    bool  armed = false;
+    int   armPayload = 0;
+    float armX = 0, armY = 0;
+};
+struct TypedDrag {
+    bool active = false, armed = false, hasPayload = false; int srcId = 0; float armX = 0, armY = 0;
+    DragPayload pay; char preview[64] = {0};
+};
+inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
+extern TabSel g_tabSel[16];
+extern TabOrder g_tabOrders[16];
+extern TabBarCtx g_tabBar;
+extern DragDrop g_dd;
+extern TypedDrag g_tdd;
+extern bool g_tddExt, g_tddExtSeen, g_tddExtReleased;
+extern int g_nextOpen;
+extern int g_toggledId;
+extern bool g_mPressed;
+extern float g_pressX, g_pressY;
+extern SDL_Texture* const kAtlasTex;
+extern int g_nfb;
+extern okay::TtfFont* g_fbFonts[8];
+extern unsigned g_frame;
+extern ColorSave g_colStack[64];
+extern int g_colTop;
+extern float g_btnAlignX;
+void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest = -1.0f);
+void captureFrameEnd();
+void tickMark(float x, float y, float sz, const unsigned char c[4]);
+void framedTick(float x, float y, float sz, const unsigned char c[4]);
 } // namespace ui_core
 } // namespace OkayUI

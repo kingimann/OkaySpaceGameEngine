@@ -1,0 +1,16 @@
+// <limits> for okay-cc (ISO/IEC 14882 [numeric.limits]). Our own header. One template for the integer
+// types, worked out from sizeof(T) and the sign of T(-1) (two's complement). There are no
+// specializations, so float and double are not described correctly (see the compiler plan).
+#pragma once
+namespace std {
+template <typename T>
+struct numeric_limits {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_signed = T(-1) < T(0);
+    static constexpr bool is_integer = true;
+    static constexpr int digits = (int)sizeof(T) * 8 - (T(-1) < T(0) ? 1 : 0);
+    static T min() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
+    static T max() { return T(~(T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0))); }
+    static T lowest() { return T(-1) < T(0) ? T(T(1) << (sizeof(T) * 8 - 1)) : T(0); }
+};
+}  // namespace std

@@ -209,7 +209,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model.
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
-  - 15.9.2 Undo and redo - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - scene edits are `SceneDeltaCommand`s on an `UndoStack` (text delta, selection by GUID, up to 100 steps, drags and repeated edits of one widget merged, named steps); Edit menu shows "Undo <name>" and greys out; History panel lists and jumps to steps (`DrawHistory`); no recording and no undo during Play; New / Open start an empty history; saved state follows undo
+  - 15.9.2 Undo and redo - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - scene edits are `SceneDeltaCommand`s on an `UndoStack` (text delta, selection by GUID, up to 100 steps, drags and repeated edits of one widget merged, named steps); Edit menu shows "Undo <name>" and greys out; History panel lists and jumps to steps (`DrawHistory`, drawn by OkayUI only: `okayui/screens/OkayUIEditorPanels.cpp`); no recording and no undo during Play; New / Open start an empty history; saved state follows undo
   - 15.9.3 Autosave and recovery - `editor/main.cpp`, `editor/DocRecovery.hpp` - recovery-folder copies of dirty graphs, scripts and the scene; a newer leftover `<scene>.autosave` is still offered and is not written again
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
@@ -256,7 +256,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable watch.
 - **Parts:**
   - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, a visible Collapse toggle (remembered in `okay_settings.txt`) that merges identical level + category + message into one row with an `x37` count and the newest time, details, Error Pause, Open Script, tab badge
-  - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog` ~6642, crash handler ~549-788) - reads crash reports from earlier runs
+  - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog`, crash handler ~549-788), `okayui/screens/OkayUIPanels.cpp` (the window, drawn by OkayUI only) - reads crash reports from earlier runs
   - 15.11.3 Stats - `editor/main.cpp` (`DrawStats` ~10247-10358) - object, mesh and triangle counts, FPS
   - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler` ~42668-42844) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
   - 15.11.5 Net panel - `editor/NetSimPanel.*` - network simulator toggles and bytes and messages per object
@@ -304,7 +304,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor` ~10009) - data assets for scripts
   - 15.13.4 Items, Loot & Recipes - `editor/ContentEditors.cpp` - items, loot tables and crafting recipes (11.2, 11.3); Window menu and View > Editors & Tools
   - 15.13.5 Save Manager - `editor/main.cpp` (`DrawSaveManager` ~10046) - browse and edit `.okaysave` files
-  - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer` ~6588) - mixer buses and volumes (7.1)
+  - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer`), `okayui/screens/OkayUIPanels.cpp` (drawn by OkayUI only) - mixer buses and volumes (7.1)
   - 15.13.7 UI Theme window - `editor/main.cpp` (`DrawUIThemer` ~42586) - see 12.7
   - 15.13.8 Custom Actions window - `editor/main.cpp` (`DrawCustomActions` ~2219) - see 14.6
 - **Code:** `editor/main.cpp`, `editor/ContentEditors.cpp`

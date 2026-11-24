@@ -7,6 +7,7 @@
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
 #include "OkayUIPanels.hpp"
+#include "AudioMixerModel.hpp"   // FillAudioMixerModel
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
@@ -94,17 +95,8 @@ void DrawHostModeUi(HostModeState& st) {
     if (st.panels.dialogs) st.panels.dialogs();   // the error modal and the save question, over everything
     if (st.IsOpen("Audio Mixer")) {
         if (DockBegin("Audio Mixer", &st.OpenRef("Audio Mixer"))) {
-            using okay::AudioMixer; using okay::AudioGroup;
             okayuiscreens::AudioMixerModel m;
-            m.peakLeft = AudioMixer::peak[0]; m.peakRight = AudioMixer::peak[1];
-            m.masterVolume = &AudioMixer::masterVolume; m.masterMuted = &AudioMixer::muted;
-            for (int i = 0; i < (int)AudioGroup::Count; ++i) {
-                m.groupNames.push_back(AudioMixer::GroupName((AudioGroup)i));
-                m.groupVolume.push_back(&AudioMixer::groupVolume[i]);
-                m.groupMuted.push_back(&AudioMixer::groupMuted[i]);
-            }
-            m.duckMusic = &AudioMixer::duckMusicUnderVoice; m.duckLevel = &AudioMixer::duckLevel;
-            m.duckAttack = &AudioMixer::duckAttack; m.duckRelease = &AudioMixer::duckRelease; m.duckGain = AudioMixer::duckGain;
+            FillAudioMixerModel(m);   // the same model as the editor's Audio Mixer window (editor/OkayPanels.cpp)
             const Vec2 p = GetCursorScreenPos(), a = GetContentRegionAvail();
             okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y);
         }

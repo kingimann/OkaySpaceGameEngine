@@ -96,11 +96,12 @@ void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t fr
 
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
-    const float k = 1.0f / static_cast<float>(channels);
+    // Sum in channel order, then divide (not multiply by 1/channels): exactly what ConvertWavFrames does, so a clip
+    // loaded whole through the own WAV decoder and the same file streamed (AudioStream) give the same samples.
     for (std::size_t i = 0; i < frames; ++i) {
         float s = 0.0f;
         for (int c = 0; c < channels; ++c) s += in[i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(c)];
-        out[i] = s * k;
+        out[i] = s / static_cast<float>(channels);
     }
 }
 

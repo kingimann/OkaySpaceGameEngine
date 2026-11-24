@@ -18,6 +18,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsFacing.hpp"
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -76,7 +77,10 @@ static std::string AfterLookAt(const std::string& then) {
 static std::string BulletPrefab() {
     static std::string path;
     if (!path.empty()) return path;
-    path = "/tmp/vs_facing_bullet.okayprefab";
+    // The system temp folder (a script may read a prefab there), not "/tmp": Windows has no /tmp, so the save failed and the
+    // Spawn Projectile row found no bullet. generic_string() gives forward slashes, which a node argument keeps as typed.
+    std::error_code ec;
+    path = (std::filesystem::temp_directory_path(ec) / "vs_facing_bullet.okayprefab").generic_string();
     Scene s; s.physicsEnabled = false;
     GameObject* b = s.CreateGameObject("Bullet");
     auto* rb = b->AddComponent<Rigidbody3D>();

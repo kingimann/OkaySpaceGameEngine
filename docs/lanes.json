@@ -171,7 +171,6 @@
         "engine/src/Platform/**",
         "engine/include/okay/Net/*Crypto*",
         "engine/include/okay/Net/SecureChannel*",
-        "engine/third_party/**",
         "engine/include/okay/Render/*Reader*.hpp",
         "engine/include/okay/Render/ModelImport.hpp",
         "engine/include/okay/Render/ModelData.hpp",

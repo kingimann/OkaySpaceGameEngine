@@ -3,18 +3,19 @@
 #include "okay/Core/Jobs.hpp"
 #include <atomic>
 #include <chrono>
+#include <iostream>
 
 using namespace okay;
 
 int main() {
     RUN_SUITE("job_steal");
     if (!JobSystem::ThreadsAvailable()) {
-        CHECK(true);
+        std::cout << "skipped: this build has no worker threads\n";
         TEST_MAIN_RESULT();
     }
     JobSystem jobs(2);
     if (jobs.WorkerCount() < 2) {
-        CHECK(true);
+        std::cout << "skipped: the pool did not start 2 workers\n";
         TEST_MAIN_RESULT();
     }
     std::atomic<int> phase{0};

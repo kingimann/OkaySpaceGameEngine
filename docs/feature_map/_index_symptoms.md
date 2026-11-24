@@ -405,6 +405,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | autocomplete does not offer a function | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | autosave file shows up in git | [22.2](20-35-planned.md#222-autosave) Autosave |
 | autosave files in my commits | [28.1](20-35-planned.md#281-git-integration) Git integration |
+| autosaves and build output in my commits | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | ban banner on sign-in | [17.9](17-launcher-platform.md#179-admin) Admin |
 | black frame after a driver problem | [2.1](02-rendering-world.md#21-renderers) Renderers |
 | black frame at startup | [17.1](17-launcher-platform.md#171-launcher-shell-and-updater) Launcher shell and updater |
@@ -629,6 +630,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I want an example plugin to copy | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | I want players to design their character | [30.1](20-35-planned.md#301-customization) Customization |
 | I want to commit from the editor | [28.1](20-35-planned.md#281-git-integration) Git integration |
+| I want to make and build a game from a terminal | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | I want to paint forests | [29.2](20-35-planned.md#292-vegetation-painting) Vegetation painting |
 | I want to run my own account server | [42.4](42-examples-samples.md#424-account-server-example) Account server example |
 | I want to see the engine run without the editor | [42.1](42-examples-samples.md#421-sandbox-demo-solar-system) Sandbox demo (solar system) |
@@ -864,6 +866,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | scene file broken and no older copy | [22.4](20-35-planned.md#224-backups) Backups |
 | scene files in a built game aren't readable as text | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | scene will not open after a git merge | [28.4](20-35-planned.md#284-merge-conflict-tools) Merge conflict tools |
+| scenes clash after a git merge | [41.14](41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) okay command line (with Git underneath) |
 | scores reset | [16.12](16-networking.md#1612-rooms-lobby-and-match-flow) Rooms, lobby and match flow |
 | script plays on the wrong model part | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
 | script variables reset | [35.3](20-35-planned.md#353-serialization) Serialization |

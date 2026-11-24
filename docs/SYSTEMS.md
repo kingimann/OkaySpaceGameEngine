@@ -43,7 +43,7 @@ This is **the one list of systems** (the registry). A **system** is a named part
 - [38. Render backends & GPU](#38-render-backends--gpu): Render Backends, Shaders
 - [39. Security & anti-cheat](#39-security--anti-cheat): Network Security, Game File Safety
 - [40. OkayUI standalone library](#40-okayui-standalone-library): OkayUI
-- [41. Build, tools & infrastructure](#41-build-tools--infrastructure): Build System, Online Backend, Replacement Switch, Collaboration Tools, Duplicate Guard
+- [41. Build, tools & infrastructure](#41-build-tools--infrastructure): Build System, Online Backend, Replacement Switch, Collaboration Tools, Duplicate Guard, Okay CLI
 - [42. Examples, samples & sandbox](#42-examples-samples--sandbox): Examples, Game Player
 - [44. Level design and blockout tools](#44-level-design-and-blockout-tools): Level Design Tools
 - [45. Open-world streaming and world partition](#45-open-world-streaming-and-world-partition): World Streaming
@@ -297,6 +297,7 @@ This is **the one list of systems** (the registry). A **system** is a named part
 | **Replacement Switch** | One switch that runs the engine with all our own replacements for third-party code turned on, to try them. | `shared/OwnStack.hpp`, `shared/OwnSwitches.hpp` | `shared/OwnStack.hpp` | [status/own_stack_rollout.md](status/own_stack_rollout.md) | Coordinator | Own-Stack Switch, OKAY_OWN_STACK, own stack, dogfood switch, OwnSwitches | Works | [41.11](feature_map/41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) |
 | **Collaboration Tools** | Scripts that keep the three Claudes from doing the same work twice: lanes, claims, find-existing and branch lint. | `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py` | `scripts/collab_lib.py` | [process/collaboration.md](process/collaboration.md) | Coordinator | lanes, claims, find_existing, collision check, branch lint | Works | [41.12](feature_map/41-build-tools-infra.md#4112-collaboration-tooling-lanes-claims-find-existing-collision-check-branch-lint) |
 | **Duplicate Guard** | Finds pasted code and new copies of shared helpers and fails CI when it finds them (`scripts/dup_lint.py`). | `scripts/dup_lint.py` | `scripts/dup_lint.py` | [process/collaboration.md](process/collaboration.md) | Claude 2 | dup_lint, duplicate check, copy-paste check | Works | [41.12](feature_map/41-build-tools-infra.md#4112-collaboration-tooling-lanes-claims-find-existing-collision-check-branch-lint) |
+| **Okay CLI** | One program, `okay` (`okay.exe`), that makes, opens, plays, runs, builds and tests projects and keeps them in version control with the person's own Git. | `tools/okay-cli/` | `tools/okay-cli/Cli.cpp` | - | Coordinator | okay, okay.exe, okay_cli, okay vc, command line, CLI, OKAY_BUILD_CLI | Partial | [41.14](feature_map/41-build-tools-infra.md#4114-okay-command-line-with-git-underneath) |
 
 ## 42. Examples, samples & sandbox
 

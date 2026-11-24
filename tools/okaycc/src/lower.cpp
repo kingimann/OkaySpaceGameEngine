@@ -537,8 +537,26 @@ private:
             out = -out;
             return true;
         }
-        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0] && e.ty && isFp(*e.ty))
-            return fpConst(*e.kids[0], out);
+        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0] && e.ty && isFp(*e.ty)) {
+            if (!fpConst(*e.kids[0], out)) return false;
+            if (e.ty->kind == Type::Kind::Float) out = static_cast<float>(out);
+            return true;
+        }
+        if (e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.kids[0] && e.kids[1] && e.checked && isFp(*e.checked) &&
+            (e.text == "+" || e.text == "-" || e.text == "*" || e.text == "/")) {
+            // A constant expression in float or double, rounded as the run-time operation would
+            // be (IEEE 754 round to nearest in the operation's type).
+            double a = 0, b = 0;
+            if (!fpConst(*e.kids[0], a) || !fpConst(*e.kids[1], b)) return false;
+            if (e.checked->kind == Type::Kind::Float) {
+                float fa = static_cast<float>(a), fb = static_cast<float>(b);
+                float r = e.text == "+" ? fa + fb : e.text == "-" ? fa - fb : e.text == "*" ? fa * fb : fa / fb;
+                out = r;
+            } else {
+                out = e.text == "+" ? a + b : e.text == "-" ? a - b : e.text == "*" ? a * b : a / b;
+            }
+            return true;
+        }
         std::int64_t v = 0;
         if (constInt(e, v)) {
             out = static_cast<double>(v);
@@ -1007,7 +1025,9 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.fields = p.fields;
-            a.agg = !p.fields.empty();
+            if (a.fields.empty() && e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union))
+                a.fields = layoutOf(e.checked.get());
+            a.agg = !a.fields.empty();
             a.ok = true;
             return a;
         }
@@ -1472,6 +1492,16 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.ok = true;
+            if (e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union)) {
+                // *p of an object is the object (its address), whatever p was lowered from (a
+                // pointer from c ? &x : &y carries no field list).
+                Val v;
+                v.op = p.op;
+                v.fields = p.fields.empty() ? layoutOf(e.checked.get()) : p.fields;
+                v.step = p.step;
+                v.inner = p.inner;
+                return v;
+            }
             Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
             if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // *p of a float or double
             return v;

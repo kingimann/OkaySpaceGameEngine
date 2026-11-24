@@ -503,7 +503,7 @@ private:
             } else if (eatP("=")) {
                 li.mode = 2;
             } else if (isKw("this")) {
-                err("capturing 'this' is not supported");
+                li.caps.emplace_back("this", false);  // [this]: the pointer, by copy
                 advance();
             } else if (!atEnd() && cur().kind == Tok::Ident) {
                 li.caps.emplace_back(cur().text, false);
@@ -577,7 +577,7 @@ private:
                 if (isP(toks_[k], "<")) ++depth;
                 else if (isP(toks_[k], ">")) --depth;
                 else if (isP(toks_[k], ">>")) depth -= 2;
-                else if (depth == 0 && isKwTok(toks_[k], "const")) t->cnst = true;
+                else if (depth == 0 && (isKwTok(toks_[k], "const") || isKwTok(toks_[k], "constexpr"))) t->cnst = true;
             }
         }
         return t;

@@ -258,13 +258,50 @@ static int roundDigits(int n) {
     gDp = gDp + 1;
     return 1;
 }
-/* %f or %e of v with prec digits, into out (no padding). Returns the length. */
+/* %f or %e of v with prec digits, into out (no padding). Returns the length. %g is %e when the
+ * exponent X of v rounded to P significant digits is below -4 or at least P, else %f with P-1-X
+ * digits; then trailing zeros and a bare point go (C 7.21.6.1, the g conversion). */
+static int fmtDouble(double v, int conv, int prec, int plus, char *out);
+static int fmtG(double v, int conv, int prec, int plus, char *out) {
+    int p = prec == 0 ? 1 : prec;
+    int x = 0;
+    int n;
+    int k;
+    int dot;
+    int ee;
+    unsigned long bits = *(unsigned long *)&v;
+    if (((bits >> 52) & 2047) == 2047) return fmtDouble(v, conv == 'G' ? 'E' : 'e', 0, plus, out);
+    expandDouble(v);
+    if (gLen > 0) {
+        roundDigits(p);
+        x = gDp - 1;
+    }
+    if (x < -4 || x >= p) n = fmtDouble(v, conv == 'G' ? 'E' : 'e', p - 1, plus, out);
+    else n = fmtDouble(v, 'f', p - 1 - x, plus, out);
+    dot = -1;
+    ee = n;
+    for (k = 0; k < n; k = k + 1) {
+        if (out[k] == '.') dot = k;
+        if (out[k] == 'e' || out[k] == 'E') ee = k;
+    }
+    if (dot < 0) return n;
+    k = ee;
+    while (k > dot + 1 && out[k - 1] == '0') k = k - 1;
+    if (k == dot + 1) k = dot;
+    {
+        int j;
+        int m = k;
+        for (j = ee; j < n; j = j + 1) out[m++] = out[j];
+        return m;
+    }
+}
 static int fmtDouble(double v, int conv, int prec, int plus, char *out) {
     int n = 0;
     int k;
     unsigned long bits = *(unsigned long *)&v;
     int neg = (bits >> 63) != 0;
     int e = (int)((bits >> 52) & 2047);
+    if (conv == 'g' || conv == 'G') return fmtG(v, conv, prec, plus, out);
     if (neg) out[n++] = '-';
     else if (plus) out[n++] = '+';
     if (e == 2047) {
@@ -456,7 +493,8 @@ int printf(char *fmt, ...) {
                         }
                     }
                     i = i + 1;
-                } else if (fmt[i] == 'f' || fmt[i] == 'F' || fmt[i] == 'e' || fmt[i] == 'E') {
+                } else if (fmt[i] == 'f' || fmt[i] == 'F' || fmt[i] == 'e' || fmt[i] == 'E' || fmt[i] == 'g' ||
+                           fmt[i] == 'G') {
                     char nb[1300];
                     int len;
                     int k;

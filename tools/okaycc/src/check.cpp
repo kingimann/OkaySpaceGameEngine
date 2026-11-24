@@ -194,6 +194,40 @@ private:
         return false;
     }
 
+    // Global const (or constexpr) scalars with constant initializers, by full name: their value
+    // can be used in another constant initializer ([expr.const]).
+    std::map<std::string, std::unique_ptr<Expr>> constInits_;
+    static bool isScalarConst(const Type& t) {
+        using K = Type::Kind;
+        return t.kind == K::Int || t.kind == K::Long || t.kind == K::Short || t.kind == K::Char ||
+               t.kind == K::Bool || t.kind == K::Float || t.kind == K::Double;
+    }
+    // Replace each checked name of such a constant by (T)(its value); true if any was replaced.
+    bool foldConstNames(Expr& e) {
+        if (e.kind == Expr::Kind::Name) {
+            auto it = constInits_.find(e.text);
+            if (it == constInits_.end()) return false;
+            const Type* t = lookupType(e.text);
+            if (!t) return false;
+            auto val = cloneExpr(*it->second);
+            e.kind = Expr::Kind::Cast;
+            e.text.clear();
+            e.ty = cloneType(*t);
+            e.ty->cnst = false;
+            e.kids.clear();
+            e.kids.push_back(std::move(val));
+            return true;
+        }
+        bool any = false;
+        for (auto& k : e.kids)
+            if (k && foldConstNames(*k)) any = true;
+        return any;
+    }
+    const Type* lookupType(const std::string& name) {
+        auto it = scopes_.front().find(name);
+        return it == scopes_.front().end() || !it->second.type ? nullptr : it->second.type.get();
+    }
+
     bool isConst(const Expr& e) {
         switch (e.kind) {
         case Expr::Kind::Int:
@@ -277,6 +311,17 @@ private:
             }
             ET hit = lookup(e.text, e.line, e.col, true);
             if (!hit.bad) return hit;
+            if (method_ && e.text.find("::") == std::string::npos) {
+                // A member function of the class hides the namespace's functions of that name
+                // ([basic.lookup.unqual]/8): the call rewrites it as this->f, so leave the name.
+                const Type* mst = canonOf(method_);
+                if (mst)
+                    for (const Param& f : mst->params)
+                        if (f.name == e.text && !f.mangled.empty() && !isSpecialName(f.name)) {
+                            if (!quiet_) err(e.line, e.col, "a member function name used without a call");
+                            return bad(e.line, e.col);
+                        }
+            }
             {
                 // The enclosing namespaces and classes, innermost first; for N::x too (the first
                 // part of a qualified name is looked up the same way, [basic.lookup.qual]).
@@ -456,6 +501,32 @@ private:
                 cond->kids.push_back(std::move(e.kids[0]));
                 cond->kids.push_back(eUnary("&", std::move(e.kids[1]), e));
                 cond->kids.push_back(eUnary("&", std::move(e.kids[2]), e));
+                e.kind = Expr::Kind::Unary;
+                e.text = "*";
+                e.kids.clear();
+                e.kids.push_back(std::move(cond));
+                return checkExprBody(e);
+            }
+            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && !quiet_) {
+                // Two objects of one class, not both lvalues: a branch that is a temporary gets a
+                // name (destroyed after the full expression only if that branch ran, by its flag),
+                // and the result is *(c ? &x : &y) as above.
+                for (int bi = 1; bi <= 2; ++bi) {
+                    auto& k = e.kids[static_cast<std::size_t>(bi)];
+                    const ET& t = bi == 1 ? a : b;
+                    if (t.lvalue) {
+                        k = eUnary("&", std::move(k), e);
+                    } else if (k->kind == Expr::Kind::Comma && k->ival == 9 && !k->text.empty()) {
+                        std::string nm = k->text;
+                        k = eCommaNode(std::move(k), eUnary("&", mkName(nm, e), e), e);
+                    } else {
+                        std::string tmp = newTemp(*t.type, e, true);
+                        auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(k), e), e);
+                        k = eCommaNode(std::move(assign), eUnary("&", mkName(tmp, e), e), e);
+                    }
+                }
+                auto cond = mkE(Expr::Kind::Cond, e);
+                cond->kids = std::move(e.kids);
                 e.kind = Expr::Kind::Unary;
                 e.text = "*";
                 e.kids.clear();
@@ -2355,7 +2426,14 @@ private:
             if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
         ret_ = d.type->inner.get();
         curFn_ = &d;
-        method_ = nullptr;
+        {
+            // A lambda in a member function that captures this ([this], [&] or [=], used members
+            // implicitly) reads the members through the captured this ([expr.prim.lambda.capture]/7).
+            bool self = li.mode != 0;
+            for (const auto& c : li.caps)
+                if (c.first == "this") self = true;
+            if (!self) method_ = nullptr;
+        }
         loops_ = 0;
         switches_ = 0;
         if (d.body) checkStmts(*d.body);
@@ -2440,6 +2518,15 @@ private:
 
     void checkVar(Decl& d) {
         if (!d.type) return;
+        // A namespace-scope or static member variable N::C::x: its initializer looks up names in
+        // N::C, then N ([basic.lookup.unqual]/13).
+        std::string savedNs = inNs_;
+        struct RestoreNs {
+            std::string& ns;
+            std::string saved;
+            ~RestoreNs() { ns = saved; }
+        } restoreNs{inNs_, savedNs};
+        if (scopes_.size() == 1 && d.name.find("::") != std::string::npos) inNs_ = d.name.substr(0, d.name.rfind("::"));
         if (!d.vt.empty()) return;  // a vtable: already declared
         if (deduceAuto(d)) return;
         if (d.type->kind == Type::Kind::Reference) {
@@ -2468,9 +2555,15 @@ private:
             if (d.init->kind == Expr::Kind::Comma && d.init->ival == 9) {
                 consumed(*d.init);  // T x = T(args): built in place, the temporary is not destroyed
             }
+            if (!src.bad && scopes_.size() == 1 && !isConst(*d.init) && foldConstNames(*d.init)) {
+                // N::b = N::a / 2 with a a const global of constant value: put the value in.
+                src = decay(checkExpr(*d.init));
+            }
             if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
             else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
                 err(d.line, d.col, "initializer is not a constant");
+            if (!src.bad && scopes_.size() == 1 && isConst(*d.init) && isScalarConst(*d.type))
+                constInits_[d.name] = cloneExpr(*d.init);
         }
         add(d.name, cloneType(*d.type), false, d.line, d.col);
     }

@@ -1303,7 +1303,12 @@ struct DirWatch {
     std::string root;
 };
 
-std::map<const AssetDatabase*, DirWatch> g_watches;
+// Heap, never freed: a database that outlives this map (a static browser destroyed during std::exit)
+// must still be able to stop its watch. A normal static map can be destroyed first.
+std::map<const AssetDatabase*, DirWatch>& Watches() {
+    static auto* m = new std::map<const AssetDatabase*, DirWatch>();
+    return *m;
+}
 
 std::string Slash(std::string s) {
     for (char& c : s) if (c == '\\') c = '/';
@@ -1363,14 +1368,14 @@ bool AssetDatabase::StartWatch(std::string* error) {
         add(it->path(), rel);
     }
 #endif
-    g_watches.emplace(this, std::move(w));
+    Watches().emplace(this, std::move(w));
     return true;
 }
 
 std::vector<std::string> AssetDatabase::PollWatch() {
     std::vector<std::string> out;
-    auto it = g_watches.find(this);
-    if (it == g_watches.end()) return out;
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return out;
     DirWatch& w = it->second;
     std::set<std::string> seen;
     auto add = [&](std::string path) {
@@ -1433,15 +1438,15 @@ std::vector<std::string> AssetDatabase::PollWatch() {
 }
 
 void AssetDatabase::StopWatch() {
-    auto it = g_watches.find(this);
-    if (it == g_watches.end()) return;
+    auto it = Watches().find(this);
+    if (it == Watches().end()) return;
 #if defined(_WIN32)
     if (it->second.ov.hEvent) CloseHandle(it->second.ov.hEvent);
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
 #else
     if (it->second.fd >= 0) ::close(it->second.fd);
 #endif
-    g_watches.erase(it);
+    Watches().erase(it);
 }
 
 } // namespace okay

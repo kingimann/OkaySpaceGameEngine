@@ -8505,7 +8505,7 @@ static void ProjectRegisterThumbGenerators() {
     g_pb->AddThumbGenerator(okay::ExtensionsOfType(okay::AssetType::Model), RenderModelImage);
     g_thumbGensFor = true;
 }
-// Types that can have a picture at all (a script or a data file never does: do not even ask).
+// Types that can have a picture at all (a script never does: do not even ask). Data files and fonts do.
 static bool ProjectHasThumb(const std::string& ext) {
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
@@ -51898,6 +51898,11 @@ void DrawPerfOverlay(EditorState& ed) {
 // editor; the window only enables timing while it's open.
 void DrawProfiler(EditorState& ed) {
     okay::Profiler& P = okay::Prof();
+    if (std::getenv("OKAY_UI_PROFILER")) {   // a screenshot wants the window in front, not a thin docked strip
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(160, 36), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(960, 700), ImGuiCond_Always);
+    }
     if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
 
     // Live scene draw stats -> fed into this frame.
@@ -54196,10 +54201,10 @@ int main(int argc, char** argv) {
         // The slow-frame log (okay_editor_perf.log) reads the profiler's scopes, so the timers stay on while it is (the default).
         static okay::editor::perf::SlowFrameLog s_slowLog = [] {
             okay::editor::perf::SlowFrameLog l; l.thresholdMs = okay::editor::perf::SlowFrameLog::ThresholdFrom(std::getenv("OKAY_SLOW_FRAME_MS")); return l; }();
-        {   // one job system for the editor, so the profiler can show the Jobs row (0 workers: jobs run on this thread)
-            static okay::JobSystem editorJobs(0);
-            static bool jobsSet = false;
-            if (!jobsSet) { okay::SetEngineJobs(&editorJobs); jobsSet = true; }
+        {   // one job system for the editor, so the profiler can show the Jobs row (0 workers: jobs run on this thread).
+            // Left alive for the process: std::exit from a screenshot must not destroy it mid-shutdown.
+            static okay::JobSystem* editorJobs = nullptr;
+            if (!editorJobs) { editorJobs = new okay::JobSystem(0); okay::SetEngineJobs(editorJobs); }
         }
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();

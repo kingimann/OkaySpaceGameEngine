@@ -488,11 +488,11 @@ int main() {
             errors.clear();
             auto* crash = scene.CreateGameObject("Crash")->AddComponent<okay::ScriptComponent>("csharp");
             CHECK(crash->LoadSource("using OkayScripting;\npublic class Crashy : Behaviour\n{\n    void Update()\n    {\n"
-                                    "        GameObject g = Find(\"nobody\");\n        Debug.Log(g.name);\n    }\n}\n", &err));
+                                    "        GameObject g = Find(\"nobody\");\n        if (g == null) throw new System.InvalidOperationException(\"nobody here\");\n    }\n}\n", &err));
             scene.Update(0.016f);
             scene.Update(0.016f);
             for (auto& e : errors) std::printf("  runtime error: %s\n", e.c_str());
-            CHECK(hasLine(errors, "Crashy.Update: line 7: NullReferenceException"));
+            CHECK(hasLine(errors, "Crashy.Update: line 7: InvalidOperationException: nobody here"));
             int crashLines = 0; for (auto& e : errors) if (e.find("Crashy.Update") != std::string::npos) ++crashLines;
             CHECK(crashLines == 1);   // logged once, not every frame
             // a binding-layer error is a plain C# exception with the engine's own words
@@ -538,6 +538,7 @@ int main() {
             ExportReport rep = ExportCSharp(CollectCSharpSources(scene), game.string(), env, DefaultCacheDir(), api);
             for (auto& pr : rep.problems) std::printf("  export problem: %s\n", pr.c_str());
             CHECK(rep.needed);
+            CHECK(rep.problems.size() == 1 && rep.problems[0].find("'Broken'") != std::string::npos);   // the one with errors is named
             CHECK(fs::exists(game / "OkayScripting.dll"));
             CHECK(fs::exists(game / "Scripts" / (ContentHash(mover) + ".dll")));
             CHECK(fs::exists(game / "runtime" / "LICENSE.txt"));

@@ -318,7 +318,13 @@ ExportReport ExportCSharp(const std::vector<std::string>& sources, const std::st
     for (auto& src : sources) {
         ++n;
         std::string dll = CachedAssembly(src, cacheDir);
-        if (dll.empty()) { r.ok = false; r.problems.push_back("C# script " + std::to_string(n) + " has not been compiled. Open it in the editor and save it (compile on save), then build again."); continue; }
+        if (dll.empty()) {
+            const std::string cls = DetectScriptClass(src);
+            r.ok = false;
+            r.problems.push_back("C# script " + (cls.empty() ? std::to_string(n) : "'" + cls + "'") +
+                                 " has not been compiled (or has errors). Open it in the editor and save it (compile on save), then build again.");
+            continue;
+        }
         put(dll, fs::path("Scripts") / (ContentHash(src) + ".dll"));
     }
     // The runtime: the install that holds the newest hostfxr.

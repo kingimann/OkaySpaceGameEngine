@@ -1,22 +1,29 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Testing/SceneValidator.hpp"
+#include <algorithm>
 #include <string>
 #include <vector>
 
 using namespace okay;
 using namespace okay::testing;
 
-// The optional Lua and Mono C# backends were removed. An old scene that names one of
-// those languages must still load (no crash), keep its script text, and say clearly
-// that the language is no longer supported, instead of failing silently.
+// The optional Lua and Mono C# backends were removed. An old scene that names Lua must
+// still load (no crash), keep its script text, and say clearly that the language is no
+// longer supported, instead of failing silently. "csharp" / "cs" is a language again
+// (real C# through the hosted .NET runtime, feature map 13.9): an old Mono-style C# script
+// still loads without a crash and says plainly why it does not run.
 int main() {
     RUN_SUITE("script_removed_langs");
 
-    CHECK(AvailableScriptLanguages().size() == 1);
-    for (const char* lang : {"lua", "csharp", "cs"}) {
-        CHECK(CreateScriptVM(lang) == nullptr);
-        CHECK(RemovedScriptLanguageMessage(lang).find("no longer supported") != std::string::npos);
+    const bool hostsDotnet = std::find(AvailableScriptLanguages().begin(), AvailableScriptLanguages().end(),
+                                       std::string("csharp")) != AvailableScriptLanguages().end();
+    CHECK(AvailableScriptLanguages().size() == (hostsDotnet ? 2u : 1u));
+    CHECK(CreateScriptVM("lua") == nullptr);
+    CHECK(RemovedScriptLanguageMessage("lua").find("no longer supported") != std::string::npos);
+    for (const char* lang : {"csharp", "cs"}) {
+        CHECK(CreateScriptVM(lang) != nullptr);
+        CHECK(RemovedScriptLanguageMessage(lang).empty());
     }
     CHECK(RemovedScriptLanguageMessage("okayscript").empty());
     CHECK(RemovedScriptLanguageMessage("nonsense").empty());
@@ -56,8 +63,9 @@ int main() {
     if (lb) {
         CHECK(lb->Language() == "csharp");
         std::string e;
-        CHECK(!lb->LoadSource(lb->Source(), &e));
-        CHECK(e.find("no longer supported") != std::string::npos);
+        CHECK(!lb->LoadSource(lb->Source(), &e));   // an old Mono script: no Behaviour class (or C# not in this build)
+        CHECK(e.find("CsThing") != std::string::npos);
+        CHECK(e.find("Behaviour") != std::string::npos || e.find("not enabled in this build") != std::string::npos);
     }
     bool sawMsg = false;
     for (const auto& m : logged) if (m.find("no longer supported") != std::string::npos) sawMsg = true;
@@ -69,7 +77,7 @@ int main() {
 
     // The scene validator names the problem clearly.
     ValidationReport rep = SceneValidator::Validate(loaded);
-    CHECK(rep.CountCode("script.backend") == 2);
+    CHECK(rep.CountCode("script.backend") == 1);   // the Lua one; the C# one is a compile problem, not a missing backend
     bool clear = false;
     for (const auto& i : rep.issues)
         if (i.code == "script.backend" && i.message.find("no longer supported") != std::string::npos) clear = true;

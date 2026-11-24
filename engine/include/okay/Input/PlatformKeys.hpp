@@ -1,8 +1,9 @@
 #pragma once
 // Physical keys the char-based keyboard feed does not cover: function keys, the
-// navigation block, Tab and the left / right modifiers. They are read by physical
-// position through okay::platform, so they are the same on every keyboard layout
-// and on either backend. (Replaces the SDL-scancode version of this header.)
+// navigation block, Tab, the left / right modifiers, punctuation, the numpad and the
+// lock keys. They are read by physical position through okay::platform, so they are
+// the same on every keyboard layout and on either backend. (Replaces the
+// SDL-scancode version of this header.)
 #include "okay/Input/Input.hpp"
 #include "okay/Platform/Platform.hpp"
 #include <vector>
@@ -78,13 +79,18 @@ inline void AppendHeldMainKeys(platform::Backend& pb, std::vector<char>& down) {
                        pb.IsKeyDown(platform::Key::Escape), down);
 }
 
-/// Add every held extended key to `down` (the vector given to Input::FeedKeys).
-/// The generic Shift / Ctrl / Alt codes are derived by Input::FeedKeys from the
-/// left / right ones.
-inline void AppendExtendedKeys(platform::Backend& pb, std::vector<char>& down) {
+/// Add every held extended key to `down` (the vector given to Input::FeedKeys): F1-F12, Tab, the navigation block,
+/// left / right modifiers, punctuation (as its US character: the key right of P is '[' on every layout), the numpad
+/// (digits and signs with codes of their own; numpad Enter as itself, and as Enter through AppendHeldMainKeys), Caps
+/// Lock, Print Screen, Scroll Lock, Pause, Num Lock and Menu. `held(key)` says whether a physical key is down.
+/// The generic Shift / Ctrl / Alt codes are derived by Input::FeedKeys from the left / right ones.
+template <class Held>
+inline void AppendExtendedKeys(Held held, std::vector<char>& down) {
     using platform::Key;
     for (int n = 1; n <= 12; ++n)
-        if (pb.IsKeyDown((Key)((int)Key::F1 + (n - 1)))) down.push_back(Input::KeyF(n));
+        if (held((Key)((int)Key::F1 + (n - 1)))) down.push_back(Input::KeyF(n));
+    for (int n = 1; n <= 9; ++n)
+        if (held((Key)((int)Key::Kp1 + (n - 1)))) down.push_back(Input::KeyKp(n));
     struct Map { Key key; char out; };
     static const Map kMap[] = {
         {Key::Tab, '\t'},
@@ -94,8 +100,42 @@ inline void AppendExtendedKeys(platform::Backend& pb, std::vector<char>& down) {
         {Key::LShift, Input::KeyLShift}, {Key::RShift, Input::KeyRShift},
         {Key::LCtrl, Input::KeyLCtrl}, {Key::RCtrl, Input::KeyRCtrl},
         {Key::LAlt, Input::KeyLAlt}, {Key::RAlt, Input::KeyRAlt},
+        {Key::Minus, '-'}, {Key::Equals, '='}, {Key::LeftBracket, '['}, {Key::RightBracket, ']'}, {Key::Backslash, '\\'},
+        {Key::Semicolon, ';'}, {Key::Apostrophe, '\''}, {Key::Grave, '`'}, {Key::Comma, ','}, {Key::Period, '.'}, {Key::Slash, '/'},
+        {Key::Kp0, Input::KeyKp(0)}, {Key::KpDivide, Input::KeyKpDivide}, {Key::KpMultiply, Input::KeyKpMultiply},
+        {Key::KpMinus, Input::KeyKpMinus}, {Key::KpPlus, Input::KeyKpPlus}, {Key::KpEnter, Input::KeyKpEnter},
+        {Key::KpPeriod, Input::KeyKpPeriod},
+        {Key::CapsLock, Input::KeyCapsLock}, {Key::PrintScreen, Input::KeyPrintScreen}, {Key::ScrollLock, Input::KeyScrollLock},
+        {Key::Pause, Input::KeyPause}, {Key::NumLock, Input::KeyNumLock}, {Key::Application, Input::KeyMenu},
     };
-    for (const Map& m : kMap) if (pb.IsKeyDown(m.key)) down.push_back(m.out);
+    for (const Map& m : kMap) if (held(m.key)) down.push_back(m.out);
+}
+/// The same on a backend (Backend::IsKeyDown).
+inline void AppendExtendedKeys(platform::Backend& pb, std::vector<char>& down) {
+    AppendExtendedKeys([&pb](platform::Key k) { return pb.IsKeyDown(k); }, down);
+}
+
+/// The Input::FeedMouse button mask (bit 0 left, 1 right, 2 middle, 3 and 4 the side buttons) for a platform mouse
+/// mask (Backend::MouseState / RelativeMouseState: MouseMask bits).
+inline unsigned InputMouseMask(uint32_t platformMask) {
+    unsigned mask = 0;
+    if (platformMask & platform::MouseMask(platform::MouseLeft))   mask |= 1u << 0;
+    if (platformMask & platform::MouseMask(platform::MouseRight))  mask |= 1u << 1;
+    if (platformMask & platform::MouseMask(platform::MouseMiddle)) mask |= 1u << 2;
+    if (platformMask & platform::MouseMask(platform::MouseX1))     mask |= 1u << 3;
+    if (platformMask & platform::MouseMask(platform::MouseX2))     mask |= 1u << 4;
+    return mask;
+}
+/// The Input mouse button (0..4) of a platform MouseButton (an event's `button`), or -1.
+inline int InputMouseButton(int platformButton) {
+    switch (platformButton) {
+        case platform::MouseLeft:   return 0;
+        case platform::MouseRight:  return 1;
+        case platform::MouseMiddle: return 2;
+        case platform::MouseX1:     return 3;
+        case platform::MouseX2:     return 4;
+        default:                    return -1;
+    }
 }
 
 } // namespace okay

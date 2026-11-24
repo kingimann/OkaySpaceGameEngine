@@ -150,6 +150,16 @@ void TestGestureBindings() {
         Input::FeedTouch(3, 2, {80, 90});  Gestures::Tick(5.12); back.Update(0.016f);
         CHECK(back.Pressed("Vault"));
     }
+    // Unbind takes one action, or every action of the gesture; an unknown gesture is refused.
+    CHECK(!Gestures::Bind("wiggle", "Jump") && !Gestures::Bind("tap", ""));
+    CHECK(Gestures::Bind("swipe up", "Jump") && Gestures::Bind("swipe up", "Dash"));
+    Gestures::Unbind("swipe up", "Jump");
+    Input::ClearTypedText(); Gestures::Reset();
+    SwipeUp(9.0, true);
+    InputActions::Tick(0.016f);
+    CHECK(!InputActions::Down("Jump") && InputActions::Down("Dash"));
+    InputActions::Tick(0.016f);           // a second action tick with no new gesture tick does not press it again
+    CHECK(!InputActions::Get("Dash"));
     Input::ClearTypedText(); Gestures::Reset(); Gestures::ClearBinds();
     InputRuntime::Reset(); InputActions::Restore(); Prefs::Clear(); QuietInput();
 }
@@ -179,9 +189,24 @@ void TestMouseSideButtonsAndWheel() {
     CHECK(wl.kind == InputBinding::Kind::Wheel && wr.kind == InputBinding::Kind::Wheel);
     CHECK(wl.ToString() == "wheel:left" && wr.ToString() == "wheel:right" && wl.Label() == "Wheel Left" && wr.Label() == "Wheel Right");
     CHECK(InputBinding::Parse("wheel:up").ToString() == "wheel:up" && InputBinding::Parse("wheel:down").ToString() == "wheel:down");
+    // One notch sideways is one frame of the binding, and a new frame clears it.
+    Input::ClearTypedText();
+    Input::FeedMouseWheelX(1.0f);
+    CHECK(Input::MouseWheelX() == 1.0f && wr.Value() == 1.0f && wl.Value() == 0.0f && Input::MouseWheel() == 0.0f);
+    Input::ClearTypedText();
+    Input::FeedMouseWheelX(-2.0f);
+    CHECK(wl.Value() == 1.0f && wr.Value() == 0.0f);
+    Input::ClearTypedText();
+    CHECK(Input::MouseWheelX() == 0.0f && wl.Value() == 0.0f);
+    // The platform layer's buttons as Input's: the mask the player feeds every frame and the button of a click event.
+    CHECK(InputMouseMask(pf::MouseMask(pf::MouseLeft) | pf::MouseMask(pf::MouseX1)) == ((1u << 0) | (1u << 3)));
+    CHECK(InputMouseMask(pf::MouseMask(pf::MouseRight) | pf::MouseMask(pf::MouseMiddle) | pf::MouseMask(pf::MouseX2)) == ((1u << 1) | (1u << 2) | (1u << 4)));
+    CHECK(InputMouseButton(pf::MouseLeft) == 0 && InputMouseButton(pf::MouseRight) == 1 && InputMouseButton(pf::MouseMiddle) == 2);
+    CHECK(InputMouseButton(pf::MouseX1) == 3 && InputMouseButton(pf::MouseX2) == 4 && InputMouseButton(9) == -1);
     // The player feeds them from the platform layer.
     const std::string player = Slurp(std::string(OKAY_SOURCE_DIR) + "/player/main.cpp");
-    CHECK(Has(player, "okay::platform::MouseX1") && Has(player, "okay::platform::MouseX2"));
+    CHECK(Has(player, "Input::FeedMouse(s_virtualMouse, okay::InputMouseMask(mb))"));
+    CHECK(Has(player, "Input::FeedMouseTap(okay::InputMouseButton(e.button))"));
     CHECK(Has(player, "Input::FeedMouseWheelX("));
     QuietInput();
 }
@@ -197,7 +222,7 @@ void TestGuideButton() {
     CHECK(Input::GamepadButtonLabel(guide, Input::PadFamily::Xbox) == "Guide");
     CHECK(Input::GamepadButtonLabel(guide, Input::PadFamily::PlayStation) == "PS");
     CHECK(Input::GamepadButtonLabel(guide, Input::PadFamily::Switch) == "Home");
-    CHECK(PadButtonName(guide, ControllerFamily::DualSense) == "PS" && PadButtonName(guide, ControllerFamily::XboxSeries) == "Xbox");
+    CHECK(PadButtonName(guide, ControllerFamily::DualSense) == "PS" && PadButtonName(guide, ControllerFamily::XboxSeries) == "Guide");
     const InputBinding b = InputBinding::Parse("pad:guide");
     CHECK(b.kind == InputBinding::Kind::PadButton && b.code == guide && b.ToString() == "pad:guide");
     FakePad pad;
@@ -246,6 +271,38 @@ void TestMoreKeys() {
     CHECK(Input::KeyName(Input::KeyFromName("kp7")) == "Numpad 7");
     CHECK(InputBinding::Parse("key:comma").ToString() == "key:%2c");   // the saved form of ',' is unchanged
     CHECK(InputBinding::Parse("keys:kp8,kp2,kp4,kp6").kind == InputBinding::Kind::Keys4);
+    // The host feed (the one the player and the editor's Play share), with faked physical keys.
+    {
+        using pf::Key;
+        std::vector<Key> heldKeys = {Key::Comma, Key::LeftBracket, Key::Kp7, Key::Kp0, Key::KpEnter, Key::KpPlus, Key::CapsLock, Key::Pause,
+                                     Key::PrintScreen, Key::NumLock, Key::Application, Key::F5};
+        auto held = [&](Key k) { for (Key h : heldKeys) if (h == k) return true; return false; };
+        std::vector<char> down;
+        AppendHeldMainKeys(held, [](char) { return Key::Unknown; }, false, down);
+        AppendExtendedKeys(held, down);
+        Input::FeedKeys(down);
+        CHECK(Input::GetKey(',') && Input::GetKey('[') && !Input::GetKey('.') && !Input::GetKey(']'));
+        CHECK(Input::GetKey(Input::KeyKp(7)) && Input::GetKey(Input::KeyKp(0)) && !Input::GetKey(Input::KeyKp(1)) && !Input::GetKey('7') && !Input::GetKey('0'));
+        CHECK(Input::GetKey(Input::KeyKpEnter) && Input::GetKey('\r'));          // numpad Enter is its own key and still Enter, as before
+        CHECK(Input::FirstKeyDown() == Input::KeyKpEnter);                         // "press a key" gets the numpad key
+        CHECK(Input::GetKey(Input::KeyKpPlus) && Input::GetKey(Input::KeyCapsLock) && Input::GetKey(Input::KeyPause));
+        CHECK(Input::GetKey(Input::KeyPrintScreen) && Input::GetKey(Input::KeyNumLock) && Input::GetKey(Input::KeyMenu) && Input::GetKey(Input::KeyF(5)));
+        CHECK(InputBinding::Parse("key:kpenter").Value() == 1.0f && InputBinding::Parse("key:comma").Value() == 1.0f);
+        // The main Enter alone is not the numpad one.
+        heldKeys = {Key::Return};
+        down.clear();
+        AppendHeldMainKeys(held, [](char) { return Key::Unknown; }, false, down);
+        AppendExtendedKeys(held, down);
+        Input::FeedKeys(down);
+        CHECK(Input::GetKey('\r') && !Input::GetKey(Input::KeyKpEnter));
+        CHECK(InputBinding::Parse("key:kpenter").Value() == 0.0f && InputBinding::Parse("key:enter").Value() == 1.0f);
+        // Typing in a text field: the numpad's digits and signs are typing keys, numpad Enter is not.
+        Input::FeedKeys({Input::KeyKp(4), Input::KeyKpEnter, ','});
+        Input::SetTextFocused(true);
+        CHECK(!Input::GetKeyGame(Input::KeyKp(4)) && !Input::GetKeyGame(',') && Input::GetKeyGame(Input::KeyKpEnter));
+        Input::SetTextFocused(false);
+        CHECK(Input::GetKeyGame(Input::KeyKp(4)));
+    }
     QuietInput();
 }
 

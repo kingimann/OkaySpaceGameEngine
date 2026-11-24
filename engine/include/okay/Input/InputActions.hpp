@@ -19,14 +19,17 @@ class ActionSet;
 ///   mouse:delta                        mouse movement as a direction
 ///   chord:ctrl+z  chord:shift+w        two to four keys that must all be held together
 ///   wheel:up  wheel:down               one notch of the mouse wheel this frame
+///   wheel:left  wheel:right            one notch of the sideways wheel (a tilting wheel, a touchpad)
+///   mouse:x1  mouse:x2                 the mouse's side buttons (shown as "Mouse 4", "Mouse 5")
+///   gesture:tap  gesture:swipeup ...   a touch gesture this frame (the names of Gestures::Happened)
 /// A controller binding can name which controller: "pad:a@1", "stick:left@2",
 /// "dpad@1" (player 1 = second controller). No suffix means the first one.
 struct InputBinding {
-    enum class Kind { None, Key, Mouse, PadButton, Keys4, StickLeft, StickRight, DPad, MouseDelta, Chord, Wheel };
+    enum class Kind { None, Key, Mouse, PadButton, Keys4, StickLeft, StickRight, DPad, MouseDelta, Chord, Wheel, Gesture };
     Kind kind = Kind::None;
-    int  code = 0;          ///< key char, mouse button or PadButton
+    int  code = 0;          ///< key char, mouse button (0..4), PadButton, or the gesture's index (Gestures::NameIndex)
     int  player = 0;        ///< controller index for pad / stick / dpad bindings
-    char keys[4] = {0, 0, 0, 0};   ///< Keys4: up, down, left, right. Chord: the keys, 0 ends the list. Wheel: code is +1 (up) or -1 (down)
+    char keys[4] = {0, 0, 0, 0};   ///< Keys4: up, down, left, right. Chord: the keys, 0 ends the list. Wheel: code is +1 (up), -1 (down), +2 (right) or -2 (left)
 
     static InputBinding Parse(const std::string& text);
     std::string ToString() const;
@@ -151,7 +154,7 @@ public:
     static bool Up(const std::string& name);
 
     // ---- Several local players. An action marked per player is also read for each
-    // controller 0..3: its controller bindings follow the player, its keyboard and mouse
+    // controller 0..Input::kMaxGamepads-1: its controller bindings follow the player, its keyboard and mouse
     // bindings belong to player 0. So "Jump" works for the keyboard player and for every
     // pad at once, and a game reads Get("Jump", 2) for the third controller.
     static void SetPerPlayer(const std::string& action, bool on = true);

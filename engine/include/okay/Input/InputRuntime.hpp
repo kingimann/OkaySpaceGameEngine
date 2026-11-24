@@ -50,7 +50,7 @@ public:
     /// Save `player`'s overrides (Prefs "inputov.player<N>"); player 0's are the table's (InputActions::Save).
     static void SaveOverrides(int player);
     static void Reset();                              ///< forget players and asset (tests)
-    /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.
+    /// Join from a word: "keyboard", "pad0".."pad7" (Input::kMaxGamepads controllers), "any". Returns the player index or -1.
     static int JoinNamed(const std::string& device);
 };
 

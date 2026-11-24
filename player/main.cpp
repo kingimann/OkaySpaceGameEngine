@@ -2043,13 +2043,9 @@ int main(int argc, char** argv) {
                 okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*pb, c); }, tapped);
                 for (char c : tapped) Input::FeedKeyTap(c);
             }
-            if (e.type == ET::MouseButtonDown) {
-                if (e.button == okay::platform::MouseLeft) Input::FeedMouseTap(0);
-                else if (e.button == okay::platform::MouseRight) Input::FeedMouseTap(1);
-                else if (e.button == okay::platform::MouseMiddle) Input::FeedMouseTap(2);
-            }
+            if (e.type == ET::MouseButtonDown) Input::FeedMouseTap(okay::InputMouseButton(e.button));   // left, right, middle and the two side buttons
             if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
-            if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
+            if (e.type == ET::MouseWheel) { Input::FeedMouseWheel(osWheelY); Input::FeedMouseWheelX(e.wheelFlipped ? -e.wheelX : e.wheelX); }
             if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
                 // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
                 int ow = 0, oh = 0;
@@ -2156,7 +2152,7 @@ int main(int argc, char** argv) {
         bool showCursor = (Cursor::visible || gameModal || cursorReleased) && !itemDragging;
         pb->ShowCursor(showCursor);
 
-        // Feed the mouse (position in pixels + left/right/middle button state). When
+        // Feed the mouse (position in pixels + button state, side buttons included). When
         // locked we accumulate relative motion into a virtual position so the
         // controllers' look deltas keep working with a hidden, centred cursor.
         int mx, my; Uint32 mb;
@@ -2181,11 +2177,7 @@ int main(int argc, char** argv) {
             }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
-        unsigned mask = 0;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
-        if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
-        Input::FeedMouse(s_virtualMouse, mask);
+        Input::FeedMouse(s_virtualMouse, okay::InputMouseMask(mb));   // left, right, middle and the two side buttons
         // On-screen controls and gestures read the SDL finger events already fed above
         // (desktop and the web build). This stays on the SDL player path: it does not
         // switch on the own platform backend.

@@ -161,7 +161,7 @@ int InputRuntime::JoinNamed(const std::string& d) {
     PlayerInputManager& p = S().players;
     if (d == "keyboard") return p.Join(JoinDevice::Keyboard);
     if (d == "any") return p.Join(JoinDevice::Any);
-    if (d.size() == 4 && d.compare(0, 3, "pad") == 0 && d[3] >= '0' && d[3] <= '3') return p.Join(JoinDevice::Pad, d[3] - '0');
+    if (d.size() == 4 && d.compare(0, 3, "pad") == 0 && d[3] >= '0' && d[3] < '0' + Input::kMaxGamepads) return p.Join(JoinDevice::Pad, d[3] - '0');
     return -1;
 }
 } // namespace okay

@@ -32,6 +32,7 @@ Input::PadSettings Input::s_padSettings[Input::kMaxGamepads];
 unsigned Input::s_mousePrevious = 0;
 std::string Input::s_typedText;
 float Input::s_mouseWheel = 0.0f;
+float Input::s_mouseWheelX = 0.0f;
 std::vector<Input::Touch> Input::s_touches;
 bool Input::s_uiCaptured = false;
 bool Input::s_touchScreen = false;
@@ -121,7 +122,7 @@ void Input::FeedKeyTap(char key) {
     s_tapKeys[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)))] = true;
 }
 void Input::FeedMouseTap(int button) {
-    if (button >= 0 && button <= 2) s_tapMouse |= 1u << button;
+    if (button >= 0 && button < kMouseButtons) s_tapMouse |= 1u << button;
 }
 
 void Input::DropKeyTaps() { s_tapKeys.fill(false); s_tapMouse = 0; }
@@ -146,10 +147,10 @@ Input::PadFamily Input::FamilyFromName(const std::string& name) {
 std::string Input::GamepadButtonLabel(int b, PadFamily f) {
     if (b < 0 || b >= PadButtonCount) return "?";
     static const char* const kPs[PadButtonCount] = {"Cross", "Circle", "Square", "Triangle", "Share", "Options", "L1", "R1",
-        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "L3", "R3", "L2", "R2"};
+        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "L3", "R3", "L2", "R2", "PS"};
     // Nintendo swaps the face buttons by position: the right button is A, the bottom one B.
     static const char* const kSw[PadButtonCount] = {"B", "A", "Y", "X", "-", "+", "L", "R",
-        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Left Stick", "Right Stick", "ZL", "ZR"};
+        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Left Stick", "Right Stick", "ZL", "ZR", "Home"};
     if (f == PadFamily::PlayStation) return kPs[b];
     if (f == PadFamily::Switch) return kSw[b];
     return GamepadButtonName(b);
@@ -172,16 +173,16 @@ Vec2 Input::MousePosition() { return s_mousePos; }
 Vec2 Input::MouseDelta() { return {s_mousePos.x - s_mousePrevPos.x, s_mousePos.y - s_mousePrevPos.y}; }
 
 bool Input::GetMouseButton(int button) {
-    if (button < 0 || button > 2) return false;
+    if (button < 0 || button >= kMouseButtons) return false;
     return (s_mouseCurrent & (1u << button)) != 0;
 }
 bool Input::GetMouseButtonDown(int button) {
-    if (button < 0 || button > 2) return false;
+    if (button < 0 || button >= kMouseButtons) return false;
     unsigned bit = 1u << button;
     return (s_mouseCurrent & bit) && !(s_mousePrevious & bit);
 }
 bool Input::GetMouseButtonUp(int button) {
-    if (button < 0 || button > 2) return false;
+    if (button < 0 || button >= kMouseButtons) return false;
     unsigned bit = 1u << button;
     return !(s_mouseCurrent & bit) && (s_mousePrevious & bit);
 }
@@ -263,10 +264,10 @@ namespace {
 struct RumbleRequest { float low = 0, high = 0, seconds = 0; bool pending = false; };
 RumbleRequest& PendingRumble(int p) { static RumbleRequest r[Input::kMaxGamepads]; return r[p]; }
 const char* const kPadNames[Input::PadButtonCount] = {
-    "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left", "right", "ls", "rs", "lt", "rt"};
+    "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left", "right", "ls", "rs", "lt", "rt", "guide"};
 const char* const kPadLabels[Input::PadButtonCount] = {
     "A", "B", "X", "Y", "Back", "Start", "LB", "RB", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right",
-    "Left Stick", "Right Stick", "LT", "RT"};
+    "Left Stick", "Right Stick", "LT", "RT", "Guide"};
 } // namespace
 
 void Input::Rumble(float low, float high, float seconds, int player) {
@@ -297,6 +298,7 @@ int Input::GamepadButtonFromName(const std::string& name) {
     std::string n;
     for (char c : name) n += (char)std::tolower((unsigned char)c);
     for (int i = 0; i < PadButtonCount; ++i) if (n == kPadNames[i]) return i;
+    if (n == "home") return PadGuide;   // what Nintendo and PlayStation pads call it
     return -1;
 }
 std::string Input::GamepadButtonKey(int button) {
@@ -315,6 +317,7 @@ void Input::FeedText(const std::string& utf8) { s_typedText += utf8; }
 void Input::ClearTypedText() {
     s_typedText.clear();
     s_mouseWheel = 0.0f;
+    s_mouseWheelX = 0.0f;
     std::size_t n = 0;
     for (auto& t : s_touches) {
         if (t.phase == Touch::Phase::Ended) continue;
@@ -360,6 +363,8 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
 
 float Input::MouseWheel() { return s_mouseWheel; }
 void Input::FeedMouseWheel(float delta) { s_mouseWheel += delta; }
+float Input::MouseWheelX() { return s_mouseWheelX; }
+void Input::FeedMouseWheelX(float delta) { s_mouseWheelX += delta; }
 
 bool Input::TouchScreen() { return s_touchScreen; }
 void Input::SetTouchScreen(bool present) { s_touchScreen = present; }
@@ -412,6 +417,9 @@ bool Input::GetKey(char key) {
 }
 
 char Input::FirstKeyDown() {
+    // Numpad Enter is fed as itself and as Enter (so old Enter bindings keep working): a "press a key" field gets the numpad key.
+    const std::size_t kp = (unsigned char)KeyKpEnter;
+    if (s_current[kp] && !s_previous[kp]) return KeyKpEnter;
     for (std::size_t i = 0; i < 256; ++i)   // the lowest code first
         if (s_current[i] && !s_previous[i]) return static_cast<char>(i);
     return 0;
@@ -428,6 +436,7 @@ bool IsTypingKey(char key) {
     if (u >= '0' && u <= '9') return true;
     if (u == ' ') return true;
     if (u == Input::KeyUp || u == Input::KeyDown || u == Input::KeyLeft || u == Input::KeyRight) return true;
+    if (u >= (unsigned char)Input::KeyKp0 && u <= (unsigned char)Input::KeyKpPeriod) return u != (unsigned char)Input::KeyKpEnter;   // the numpad types digits and signs
     return u >= 33 && u < 127;   // punctuation
 }
 } // namespace
@@ -462,8 +471,21 @@ std::string Input::KeyName(char key) {
         case KeyAlt:      return "Alt";
         case KeyLAlt:     return "Left Alt";
         case KeyRAlt:     return "Right Alt";
+        case KeyKpDivide:   return "Numpad Divide";
+        case KeyKpMultiply: return "Numpad Multiply";
+        case KeyKpMinus:    return "Numpad Minus";
+        case KeyKpPlus:     return "Numpad Plus";
+        case KeyKpEnter:    return "Numpad Enter";
+        case KeyKpPeriod:   return "Numpad Period";
+        case KeyCapsLock:   return "Caps Lock";
+        case KeyPrintScreen: return "Print Screen";
+        case KeyScrollLock: return "Scroll Lock";
+        case KeyPause:      return "Pause";
+        case KeyNumLock:    return "Num Lock";
+        case KeyMenu:       return "Menu";
         default: break;
     }
+    if (key >= KeyKp0 && key <= KeyKp9) return "Numpad " + std::to_string(key - KeyKp0);
     if (key >= KeyF1 && key <= KeyF12) return "F" + std::to_string(key - KeyF1 + 1);
     if (key >= 'a' && key <= 'z') return std::string(1, (char)(key - 'a' + 'A'));
     return std::string(1, key);

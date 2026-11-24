@@ -86,7 +86,7 @@ InputValue Processor::Apply(const InputValue& in, float dt, int slot) {
         case Kind::Smooth: {   // exponential approach: `a` seconds to cover most of the way. Each slot remembers its own output.
             float* st = state;
             bool* pr = &primed;
-            if (slot >= 1 && slot <= 4) { st = slotState[slot - 1]; pr = &slotPrimed[slot - 1]; }
+            if (slot >= 1 && slot <= Input::kMaxGamepads) { st = slotState[slot - 1]; pr = &slotPrimed[slot - 1]; }
             if (!*pr || a <= 0 || dt <= 0) { st[0] = v.x; st[1] = v.y; st[2] = v.z; *pr = true; return v; }
             const float k = 1.0f - std::exp(-dt / a);
             st[0] += (v.x - st[0]) * k; st[1] += (v.y - st[1]) * k; st[2] += (v.z - st[2]) * k;
@@ -339,7 +339,8 @@ int MouseId(int b) { return 2000 + b; }
 int PadId(int button, int player) { return 3000 + player * 100 + button; }
 int StickId(bool right, int player) { return (right ? 4100 : 4000) + player; }
 constexpr int kMouseDeltaId = 5000;
-int WheelId(int dir) { return dir >= 0 ? 5001 : 5002; }
+int WheelId(int dir) { return dir == 2 ? 5003 : dir == -2 ? 5004 : dir >= 0 ? 5001 : 5002; }
+int GestureId(int index) { return 6000 + index; }
 
 // Calls f(id) for every physical input a binding listens to (no allocation).
 template <class F>
@@ -352,6 +353,7 @@ void ForClaims(const InputBinding& b, F f) {
         case K::Keys4:      for (char k : b.keys) f(KeyId(k)); break;
         case K::Chord:      for (char k : b.keys) if (k) f(KeyId(k)); break;
         case K::Wheel:      f(WheelId(b.code)); break;
+        case K::Gesture:    f(GestureId(b.code)); break;
         case K::StickLeft:  f(StickId(false, b.player)); break;
         case K::StickRight: f(StickId(true, b.player)); break;
         case K::DPad:       for (int p : {Input::PadUp, Input::PadDown, Input::PadLeft, Input::PadRight}) f(PadId(p, b.player)); break;

@@ -253,14 +253,23 @@ std::string SceneAssetGuid(const std::string& path) {
 
 std::string ResolveSceneAssetPath(const std::string& storedPath, const std::string& guidText) {
     const AssetDatabase* db = g_sceneIndex.load(std::memory_order_acquire);
-    if (db && !guidText.empty()) {
-        Guid g;
-        if (Guid::Parse(guidText, g)) {
-            const std::string now = db->GuidToPath(g);
-            if (!now.empty()) return now;
-        }
+    if (!db || guidText.empty()) return storedPath;
+    Guid g;
+    if (!Guid::Parse(guidText, g)) return storedPath;
+    const std::string now = db->GuidToPath(g);
+    if (now.empty()) return storedPath;
+    // The stored path still names this asset, or a file that is still there: keep it exactly as
+    // written. The editor stores absolute paths, and the index's Assets-relative form does not
+    // open from the editor, so rewriting a path that works would break it on the next save.
+    if (!storedPath.empty()) {
+        if (db->PathToGuid(storedPath) == g) return storedPath;
+        std::error_code ec;
+        if (fs::exists(PathFromU8(storedPath), ec)) return storedPath;
     }
-    return storedPath;
+    // The file moved: the GUID finds it. An absolute stored path stays absolute.
+    const std::string n = AssetManager::Normalize(storedPath, false);
+    const bool absolute = !n.empty() && (n[0] == '/' || (n.size() >= 2 && n[1] == ':'));
+    return absolute ? db->AbsolutePath(g) : now;
 }
 
 bool Guid::Parse(const std::string& text, Guid& out) {
@@ -863,9 +872,10 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (pi == m_pathIndex.end() || present.count(pi->second)) continue;
             auto sl = m_slots.find(pi->second);
             if (sl == m_slots.end()) continue;
-            // Same path is not enough: a new file put where a deleted one was must not inherit that GUID.
-            ensureHash(c);
-            if (sl->second.rec.hash == 0 || c.hash == 0 || c.hash != sl->second.rec.hash) continue;
+            // The path is known, so this is the same asset, even when its content changed (an edit made
+            // outside the editor, or a meta deleted and the file edited). It keeps its GUID, and step 6
+            // raises SourceChanged for the new content. A file swapped in at the same path between two
+            // scans cannot be told from an edit, so it keeps the id as well.
             c.guid = pi->second;
             c.needsWrite = opt.createMetas || sl->second.rec.metaVersion > 0;   // an in-memory asset stays in memory
             c.labels = sl->second.rec.labels;

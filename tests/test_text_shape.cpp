@@ -36,6 +36,24 @@ int main() {
     CHECK(HasCp(beh, 0xFE91));   // beh initial
     CHECK(First(beh) == 0xFE90);
 
+    // Every strong left-to-right letter counts as left-to-right, not only Latin. Cyrillic first:
+    // the line reads left to right, only the Hebrew word is reversed.
+    CHECK(ShapeForDisplay("\u0414\u0430 \u05E9\u05DC") == "\u0414\u0430 \u05DC\u05E9");
+    CHECK(ShapeForDisplay("\u0391\u03B2") == "\u0391\u03B2");            // Greek
+    CHECK(ShapeForDisplay("\u65E5\u672C") == "\u65E5\u672C");            // CJK
+    CHECK(ShapeForDisplay("\u05E9 \u0414") == "\u0414 \u05E9");          // Hebrew first: right-to-left line
+
+    // "ala" (on): ain initial, lam medial, alef maksura final, drawn last letter first.
+    {
+        const std::string ala = ShapeForDisplay("\u0639\u0644\u0649");
+        CHECK(ala == "\uFEF0\uFEE0\uFECB");
+    }
+    // Yeh with hamza and the Persian letters join too.
+    CHECK(ShapeForDisplay("\u0626\u0628") == "\uFE90\uFE8B");
+    CHECK(ShapeForDisplay("\u067E\u0686\u06AF") == "\uFB93\uFB7D\uFB58");
+    CHECK(ShapeForDisplay("\u06A9\u06CC") == "\uFBFD\uFB90");
+    CHECK(ShapeForDisplay("\u0628\u0698") == "\uFB8B\uFE91");
+
     // A short vowel between the letters must not stop them joining.
     const std::string vowelled = ShapeForDisplay("\u0628\u064E\u0628");
     CHECK(HasCp(vowelled, 0xFE91));

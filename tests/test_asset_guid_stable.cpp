@@ -53,6 +53,43 @@ int main() {
     const Guid other = third.PathToGuid("art/other.png");
     CHECK(!other.IsNull() && other != hero && third.PathToGuid("art/hero.png") == hero);
 
+    // An edit made outside the editor, scanned with the editor's options: the path is known, so it is
+    // the same asset with new content. It keeps its GUID and raises SourceChanged (not Added), which is
+    // what the editor's Browser::TakeChangedFiles passes on to refresh the Scene view.
+    {
+        ScanOptions ed = opt;
+        ed.verifyHashes = false;
+        ed.fullHashLimit = 32u << 20;
+        AssetDatabase db;
+        db.Scan(root.string(), ed);
+        const Guid g = db.PathToGuid("art/hero.png");
+        CHECK(!g.IsNull());
+        Put(root / "art" / "hero.png", "png-bytes-edited-outside");
+        r = db.Scan(root.string(), ed);
+        CHECK(db.PathToGuid("art/hero.png") == g);
+        bool changed = false, added = false;
+        for (const ReimportEvent& ev : r.reimports) {
+            if (ev.path != "art/hero.png") continue;
+            if (ev.reason == ReimportEvent::Reason::SourceChanged) changed = true;
+            if (ev.reason == ReimportEvent::Reason::Added) added = true;
+        }
+        CHECK(changed);
+        CHECK(!added);
+
+        // An asset with a meta: the meta is deleted and the file edited. The database still knows the
+        // path, so the GUID stays.
+        ScanOptions withMeta = ed;
+        withMeta.createMetas = true;
+        AssetDatabase m;
+        m.Scan(root.string(), withMeta);
+        const Guid mg = m.PathToGuid("art/other.png");
+        CHECK(!mg.IsNull() && fs::exists(root / "art" / "other.png.okaymeta"));
+        fs::remove(root / "art" / "other.png.okaymeta");
+        Put(root / "art" / "other.png", "png-other-edited");
+        r = m.Scan(root.string(), ed);
+        CHECK(m.PathToGuid("art/other.png") == mg);
+    }
+
     std::error_code ec;
     fs::remove_all(root, ec);
     TEST_MAIN_RESULT();

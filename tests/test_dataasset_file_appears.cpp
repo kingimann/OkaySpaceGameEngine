@@ -39,6 +39,16 @@ int main() {
     PutFile("stats.okaydata", "hp = 99\n");
     CHECK(DataAsset::Cached("stats.okaydata").GetNumber("hp") == 40.0);
 
+    // The path to read is found with a stat, not by opening it: a folder of that name in the
+    // working directory is not the file, so the copy under the base directory is used.
+    DataAsset::InvalidateAll();
+    fs::create_directories(dir / "base");
+    fs::create_directories(dir / "items.okaydata");          // a folder, not a file
+    PutFile((dir / "base" / "items.okaydata").string(), "count = 7\n");
+    DataAsset::SetBaseDir((dir / "base").string());
+    CHECK(DataAsset::Cached("items.okaydata").GetNumber("count") == 7.0);
+    DataAsset::SetBaseDir("");
+
     DataAsset::InvalidateAll();
     fs::current_path(old);
     std::error_code ec;

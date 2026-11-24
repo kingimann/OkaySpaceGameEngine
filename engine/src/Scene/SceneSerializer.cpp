@@ -782,6 +782,7 @@ float SceneLoadJob::Progress() const {
 
 bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
     if (m_finished) return !m_failed;
+    SceneFileLoadScope loadingFile;   // as in ParseInto: don't invent components the file didn't write
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = m_dir;
     struct Restore { const std::string& d; ~Restore() { g_loadingSceneDir = d; } } restore{prevDir};

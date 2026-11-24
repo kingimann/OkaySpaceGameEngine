@@ -229,12 +229,13 @@ struct JobSystem::Impl {
         const bool haveSelf = self >= 0 && self < (int)laneQ[0].size();
         // One priority at a time, highest first, across this worker's queue and the shared
         // queue. Draining the whole local queue first let three Low jobs run before a High
-        // one that was waiting on the shared queue.
+        // one that was waiting on the shared queue. Any thread may then take the oldest job of
+        // a worker's queue, including a thread that is not a worker (the main thread in Wait),
+        // so a job a busy worker queued is not stuck behind that worker's long job.
         for (int p = 0; p < 3; ++p) {
             if (haveSelf)
                 if (StatePtr s = TakeLocked(laneQ[p][(std::size_t)self], true, false)) return s;
             if (StatePtr s = TakeLocked(ready[p], false, false)) return s;
-            if (!haveSelf) continue;
             for (std::size_t w = 0; w < laneQ[p].size(); ++w) {
                 if ((int)w == self) continue;
                 if (StatePtr s = TakeLocked(laneQ[p][w], false, true)) return s;

@@ -69,6 +69,28 @@ int main() {
     auto* oldSr = old.Find("Old")->GetComponent<SpriteRenderer>();
     CHECK(oldSr && oldSr->texture == "tex/old.png");
 
+    // An absolute path (what the editor stores) that still exists is kept exactly as written,
+    // not rewritten to the index's Assets-relative form (which would not open on reload).
+    const std::string heroAbs = fs::absolute(hero).generic_string();
+    Scene absScene("abs");
+    auto* absSr = absScene.CreateGameObject("Abs")->AddComponent<SpriteRenderer>();
+    absSr->texture = heroAbs;
+    const std::string absSaved = SceneSerializer::Serialize(absScene);
+    CHECK(absSaved.find(kGuid) != std::string::npos);
+    Scene absBack("absBack");
+    CHECK(SceneSerializer::Deserialize(absBack, absSaved, &err));
+    auto* absNow = absBack.Find("Abs")->GetComponent<SpriteRenderer>();
+    CHECK(absNow && absNow->texture == heroAbs);
+    // The same with the older positional "guid <id>" form.
+    {
+        const std::string pos = std::string("okayscene 3\ngameobject 0 \"P\"\n  transform 0 0 0 0 0 0 1 1 1 1\n"
+                                            "  sprite 64 1 1 1 1 1 1 \"") + heroAbs + "\" guid " + kGuid + "\nend\n";
+        Scene ps("pos");
+        CHECK(SceneSerializer::Deserialize(ps, pos, &err));
+        auto* psr = ps.Find("P")->GetComponent<SpriteRenderer>();
+        CHECK(psr && psr->texture == heroAbs);
+    }
+
     // The file moves. The saved GUID still finds it.
     const fs::path moved = root / "moved" / "hero.png";
     fs::create_directories(moved.parent_path());
@@ -79,6 +101,11 @@ int main() {
     CHECK(SceneSerializer::Deserialize(renamed, saved, &err));
     auto* now = renamed.Find("Hero")->GetComponent<SpriteRenderer>();
     CHECK(now && now->texture == "moved/hero.png");
+    // An absolute stored path whose file moved comes back absolute, at the new place.
+    Scene absMoved("absMoved");
+    CHECK(SceneSerializer::Deserialize(absMoved, absSaved, &err));
+    auto* absMovedSr = absMoved.Find("Abs")->GetComponent<SpriteRenderer>();
+    CHECK(absMovedSr && absMovedSr->texture == fs::absolute(moved).generic_string());
 
     SetSceneAssetIndex(nullptr);
     fs::remove_all(root);

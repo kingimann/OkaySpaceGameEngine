@@ -54,6 +54,46 @@ int main() {
         CHECK(copy && copy->GetComponent<SpriteRenderer>() == nullptr);
     }
 
+    // The async loader (SceneLoadJob, a few objects per frame) follows the same rule as Deserialize.
+    {
+        auto countSprites = [](GameObject* go) {
+            int n = 0;
+            if (go) for (auto* s : go->GetComponents<SpriteRenderer>()) { (void)s; ++n; }
+            return n;
+        };
+        const char* both =
+            "okayscene 3\n"
+            "gameobject 0 \"Hero\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "  sprite 64 1 1 1 1 32 32 \"b.png\"\n"
+            "end\n";
+        for (int additive = 0; additive < 2; ++additive) {
+            Scene scene("Job");
+            auto job = SceneLoadJob::OpenText(both, additive != 0);
+            std::string err;
+            for (int i = 0; i < 100 && job && !job->Finished(); ++i) CHECK(job->Step(scene, 1, &err));
+            GameObject* go = scene.Find("Hero");
+            CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+            CHECK(countSprites(go) == 1);
+        }
+        const char* lone =
+            "okayscene 3\n"
+            "gameobject 0 \"Lone\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "end\n";
+        for (int additive = 0; additive < 2; ++additive) {
+            Scene scene("JobLone");
+            auto job = SceneLoadJob::OpenText(lone, additive != 0);
+            std::string err;
+            for (int i = 0; i < 100 && job && !job->Finished(); ++i) CHECK(job->Step(scene, 1, &err));
+            GameObject* go = scene.Find("Lone");
+            CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+            CHECK(countSprites(go) == 0);
+        }
+    }
+
     // --- Animator drives the SpriteRenderer's texture over time ---
     {
         Scene scene("Anim");

@@ -16,15 +16,15 @@ std::string g_baseDir;
 std::unordered_map<std::string, DataAsset> g_cache;
 
 // The path Load() would open: the given path, or that path under the base directory.
+// Checked with a stat (FileStamp.hpp), not by opening the file: a missing path costs no open, and a
+// folder of that name is not taken for the file.
 std::string ReadablePath(const std::string& path) {
-    std::ifstream direct(path);
-    if (direct) return path;
+    if (StampOf(path).sizeOk) return path;
     if (!g_baseDir.empty()) {
         std::string full = g_baseDir;
         if (full.back() != '/' && full.back() != '\\') full += '/';
         full += path;
-        std::ifstream based(full);
-        if (based) return full;
+        if (StampOf(full).sizeOk) return full;
     }
     return path;
 }
@@ -127,14 +127,8 @@ bool DataAsset::Save(const std::string& path) const {
 }
 
 bool DataAsset::Load(const std::string& path) {
-    std::ifstream in(path);
-    if (!in) {
-        if (g_baseDir.empty()) return false;
-        std::string full = g_baseDir;       // retry relative to the game's base dir
-        if (full.back() != '/' && full.back() != '\\') full += '/';
-        in.open(full + path);
-        if (!in) return false;
-    }
+    std::ifstream in(ReadablePath(path));   // the path itself, or that path under the game's base dir
+    if (!in) return false;
     // Only a file that opened replaces the fields.
     std::vector<Field> fields;
     bool escaped = false, first = true;

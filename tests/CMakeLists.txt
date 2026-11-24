@@ -15,6 +15,13 @@ add_executable(test_module_vs_weapons test_module_vs_weapons.cpp)
 target_link_libraries(test_module_vs_weapons PRIVATE okay::engine)
 add_test(NAME module_vs_weapons COMMAND test_module_vs_weapons)
 
+# Review fix: first use of the module registry from many threads at once (uses <thread>, so not built for Windows).
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_module_registry_threads test_module_registry_threads.cpp)
+    target_link_libraries(test_module_registry_threads PRIVATE okay::engine Threads::Threads)
+    add_test(NAME module_registry_threads COMMAND test_module_registry_threads)
+endif()
+
 # module:sky_weather — DayNightCycle's property table is registered by that module.
 add_executable(test_module_props_sky test_module_props_sky.cpp)
 target_link_libraries(test_module_props_sky PRIVATE okay::engine)

@@ -39,6 +39,8 @@ void RegisterVsNode(std::string type, std::string module,
 }
 
 const VsNodeEntry* FindRegisteredVsNode(const std::string& type) {
+    // The module hooks fill the table; the first caller (on any thread) must see them done.
+    okay::ModuleRegistry::Get();
     for (const VsNodeEntry& e : Table()) if (e.type == type) return &e;
     return nullptr;
 }

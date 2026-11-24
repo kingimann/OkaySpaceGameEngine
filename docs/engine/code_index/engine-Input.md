@@ -16,22 +16,22 @@ Back to the [code index](../code_index.md). 22 headers, 113 names.
 - `ValueTypeName` function, line 27
 - `ParseValueType` function, line 28
 - `InputValue` struct, line 30
-- `Processor` struct, line 38: One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "invert(x)", "invert(xy)",
-- `ParseProcessors` function, line 50: "deadzone(0.2) invert(y)" (spaces or ';' between) <-> a list. Parse returns false on any unknown step and leaves 'out' unchanged.
-- `ProcessorsToString` function, line 51
-- `Phase` enum, line 55: Where an action is in an interaction: the player started something (Started), it completed (Performed), or it did not
-- `PhaseName` function, line 56
-- `Interaction` struct, line 61: How an action turns presses into events. Text form: "press", "release", "press_release", "hold(0.5)", "tap(0.2)",
-- `PhaseEvent` struct, line 74: One phase change, reported by ActionSet::Update (also to Subscribe callbacks).
-- `ControlScheme` struct, line 83
-- `BindingSpec` struct, line 89
-- `BindingKindName` function, line 102: "single", "vector2", "vector3", "axis", "chord" (the asset file and the "ovlist" override line).
-- `ParseBindingKind` function, line 103
-- `IsBaseMapName` function, line 105: "" and "Gameplay" (any case) are the base map: always on, what InputActions calls the base context.
-- `ShapeResponse` function, line 107: A 0..1 reading through a response (InputActions::ShapeValue: for drawing the curve).
-- `ActionDef` struct, line 109
-- `ActionMap` struct, line 156: A group of actions that can be switched on and off together (Gameplay, UI, Vehicle). Enabled maps run from the highest
-- `ActionSet` class, line 164
+- `Processor` struct, line 38: One step that reshapes a value. Text form: "deadzone(0.2)", "deadzone(0.2,0.9)", "axial(0.2)", "axial(0.2,0.9)", "invert(x)", "invert(xy)",
+- `ParseProcessors` function, line 53: "deadzone(0.2) invert(y)" (spaces or ';' between) <-> a list. Parse returns false on any unknown step and leaves 'out' unchanged.
+- `ProcessorsToString` function, line 54
+- `Phase` enum, line 58: Where an action is in an interaction: the player started something (Started), it completed (Performed), or it did not
+- `PhaseName` function, line 59
+- `Interaction` struct, line 64: How an action turns presses into events. Text form: "press", "release", "press_release", "hold(0.5)", "tap(0.2)",
+- `PhaseEvent` struct, line 77: One phase change, reported by ActionSet::Update (also to Subscribe callbacks).
+- `ControlScheme` struct, line 86
+- `BindingSpec` struct, line 92
+- `BindingKindName` function, line 105: "single", "vector2", "vector3", "axis", "chord" (the asset file and the "ovlist" override line).
+- `ParseBindingKind` function, line 106
+- `IsBaseMapName` function, line 108: "" and "Gameplay" (any case) are the base map: always on, what InputActions calls the base context.
+- `ShapeResponse` function, line 110: A 0..1 reading through a response (InputActions::ShapeValue: for drawing the curve).
+- `ActionDef` struct, line 112
+- `ActionMap` struct, line 159: A group of actions that can be switched on and off together (Gameplay, UI, Vehicle). Enabled maps run from the highest
+- `ActionSet` class, line 167
 
 ## `engine/include/okay/Input/ControllerMapping.hpp`
 
@@ -93,8 +93,8 @@ Back to the [code index](../code_index.md). 22 headers, 113 names.
 
 ## `engine/include/okay/Input/Gestures.hpp`
 
-- `TouchClaims` class, line 11
-- `Gestures` class, line 21: Names are not case-sensitive and ignore spaces, '_' and '-':
+- `TouchClaims` class, line 13
+- `Gestures` class, line 23: Names are not case-sensitive and ignore spaces, '_' and '-':
 
 ## `engine/include/okay/Input/Haptics.hpp`
 

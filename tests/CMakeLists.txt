@@ -4498,6 +4498,14 @@ if(_okay_all_readers_on)
     target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_EXPECT_OWN_READERS)
 endif()
 add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# The last Assimp-only extensions routed to our readers: .ask (ASE), .scn (COB), .prj (3DS), .x3db (X3D), .vta (SMD), .md5camera
+# (the MD5 camera reader) and .vrm (glTF 2.0); fixtures built in memory
+add_executable(test_model_import_aliases test_model_import_aliases.cpp)
+target_link_libraries(test_model_import_aliases PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_model_import_aliases PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
+add_test(NAME model_import_aliases COMMAND test_model_import_aliases WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/content/model_corpus.md); without it the test prints "skipped" and passes.

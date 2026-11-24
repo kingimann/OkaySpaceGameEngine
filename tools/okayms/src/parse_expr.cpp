@@ -1400,6 +1400,11 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::IntLit;
             out->number = enum_values[name];
             out->type.base = 1;
+        } else if (class_enumerator(name, &out->number)) {
+            // In::P1: an enumerator of an unscoped enumeration declared in class In ([class.member.lookup]); enumerators are
+            // kept in one table here.
+            out->kind = Node::IntLit;
+            out->type.base = 1;
         } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
                    !is(TMinusMinus) && global_const_node(name, out)) {
             // A const global with a constant initializer is a constant ([expr.const]).
@@ -1414,7 +1419,19 @@ bool Parser::parse_unary(Node* out) {
                                 ahead == TUnion || ahead == TEnum ||
                                 (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
+        // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
+        // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
+        bool functional = false;
         if (type_ahead) {
+            size_t k = at + 1;
+            if (tokens[k].kind == TIdent) {
+                ++k;
+            } else {
+                k = after_type_keywords(k);
+            }
+            functional = k > at + 1 && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
+        }
+        if (type_ahead && !functional) {
             next();
             Type ty;
             bool imp = false;
@@ -1544,12 +1561,7 @@ bool Parser::parse_unary(Node* out) {
                 is(TLong)) &&
                [&]() {
                    // int(x), unsigned(x), float(x): a type name of keywords written like a call.
-                   size_t k = at;
-                   while (k < tokens.size() && (tokens[k].kind == TInt || tokens[k].kind == TFloat || tokens[k].kind == TDouble ||
-                                                tokens[k].kind == TChar || tokens[k].kind == TShort ||
-                                                tokens[k].kind == TUnsigned || tokens[k].kind == TSigned ||
-                                                tokens[k].kind == TLong))
-                       ++k;
+                   const size_t k = after_type_keywords(at);
                    return k < tokens.size() && tokens[k].kind == TLParen;
                }()) {
         Type ty;

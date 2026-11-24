@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.5
+  One input system, Windows file copy fix, cleanup
+  - Input: one table of actions and one place where key changes are
+    saved, so rebinding a key works the same everywhere. Controller
+    look feels a little different: no second stick dead zone and no
+    look curve.
+  - Windows: copying a file over one that already exists should work
+    now (built for Windows, not yet tried on a Windows PC).
+  - Physics: the 5,000-body example's camera looks at the bodies again.
+  - Behind the scenes: duplicate code removed (mesh hashes, node names,
+    Base64, PNG writer and more), big files split into smaller files by
+    job (no change in behaviour), and a script to build on Windows.
+  - Known problems in this build (being fixed for the next release):
+    jumping and player movement may feel off, a streamed sound may not
+    match the same sound loaded whole, one project setting is not
+    saved, one picture import setting is wrong, and three Visual Script
+    node checks fail.
+
 v2.903.4
   Release notes, one physics engine, Windows fixes
   - Launcher, What's New: each release now shows its real notes (before,

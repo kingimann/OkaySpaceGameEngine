@@ -4,6 +4,7 @@
 #include "ir.hpp"
 
 #include <string>
+#include <vector>
 
 namespace okaycc {
 
@@ -11,6 +12,6 @@ namespace okaycc {
 // in stack slots. Other integer values use the linear scan in assignRegs.
 std::string emitAssembly(const Module& m);
 std::string compileToAssembly(const std::string& source, Diagnostics& diags,
-                               const std::string& file = "t.c");
+                               const std::string& file = "t.c", const std::vector<std::string>& includes = {});
 
 }  // namespace okaycc

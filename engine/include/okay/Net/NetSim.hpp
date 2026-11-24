@@ -1,7 +1,11 @@
 #pragma once
 // Network simulator and a per-object traffic counter.
 //
-// The simulator sits on NetworkManager's socket send/receive. With it off
+// The simulator sits on NetworkManager's socket send/receive. Each datagram
+// gets the latency, jitter and loss once: on the way out, or, when it goes to
+// another socket of this program that reads through the simulator, when that
+// one reads it (so two managers in one process see the setting, not twice it).
+// With it off
 // (the default) those paths call the socket directly. Latency, jitter, loss
 // and duplication apply only while `enabled` is set, so movement, lag
 // compensation and anti-cheat keep their current packets until a session
@@ -30,6 +34,9 @@ SimSettings& Simulator();
 
 /// True when enabled and at least one knob would change a datagram.
 bool SimulatorActive();
+
+/// Datagrams dropped because a socket had too many waiting (not simulated loss).
+std::size_t SimulatorOverflows();
 
 /// Drop any datagrams still waiting. Settings stay as they are.
 void ResetSimulator();

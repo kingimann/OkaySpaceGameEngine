@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 31 headers, 602 names.
+Back to the [code index](../code_index.md). 31 headers, 604 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -681,11 +681,13 @@ Back to the [code index](../code_index.md). 31 headers, 602 names.
 ## `engine/include/okay/VisualScript/VsValue.hpp`
 
 - `VsParseFinite` function, line 17: 's' as a finite number when the whole string (aside from surrounding spaces)
-- `VsObject` struct, line 32: A reference to a GameObject flowing on a wire (Self, Other, a spawned object,
-- `VsColor` struct, line 35: An RGBA colour, each channel 0..1 (not clamped on store; Make Color and the
-- `VsObjectName` function, line 37: The name of a referenced object ("" when it no longer exists). NodeGraph.cpp.
-- `VsObjectAlive` function, line 39: True while the referenced object exists. NodeGraph.cpp.
-- `VsValue` class, line 44: A dynamically-typed value flowing between graph nodes (the data carried on
+- `VsObject` struct, line 36: A reference to a GameObject flowing on a wire (Self, Other, a spawned object,
+- `VsColor` struct, line 39: An RGBA colour, each channel 0..1 (not clamped on store; Make Color and the
+- `VsObjectName` function, line 41: The name of a referenced object ("" when it no longer exists). NodeGraph.cpp.
+- `VsObjectAlive` function, line 43: True while the referenced object exists. NodeGraph.cpp.
+- `VsComponentAlive` function, line 45: True while the component a handle names exists; its text ("Light(Lamp)"). ScriptBindings.cpp.
+- `VsComponentName` function, line 46
+- `VsValue` class, line 51: A dynamically-typed value flowing between graph nodes (the data carried on
 
 ## `engine/include/okay/VisualScript/VsVariables.hpp`
 

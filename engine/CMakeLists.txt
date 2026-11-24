@@ -137,6 +137,10 @@ add_library(okay_engine
     # NetworkManager's other parts (batch N1, docs/engine/modularization_plan.md): sync and messages,
     # server authority (lag compensation, anti-cheat checks, movement), the server tick and the client tick.
     src/Net/NetworkManagerSync.cpp
+    src/Net/NetworkManagerEvents.cpp
+    src/Net/Net.cpp
+    src/Net/NetworkManagerMigration.cpp
+    src/Net/Rollback.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp
     src/Net/NetworkManagerClient.cpp
@@ -183,6 +187,8 @@ add_library(okay_engine
     src/Scripting/ScriptVM.cpp
     src/Scripting/ScriptApiRegistry.cpp
     src/Scripting/ScriptApiCore.cpp
+    src/Scripting/ScriptBindings.cpp
+    src/Scripting/ScriptBindingsGenerated.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp

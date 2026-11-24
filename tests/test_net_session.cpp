@@ -25,6 +25,7 @@
 //   rbguard    (F4) rollback refuses a peer with another tick rate, input size or player set, and does
 //              not keep inputs for frames far in the future
 #include "test_framework.hpp"
+#include "net_test_util.hpp"
 #include <Okay.hpp>
 #include "okay/Net/Net.hpp"
 #include "okay/Net/NetSim.hpp"
@@ -46,6 +47,9 @@
 #include <vector>
 
 using namespace okay;
+using nettest::ScriptVar;
+using nettest::GraphVar;
+using nettest::HasLine;
 
 namespace {
 constexpr float kFrame = 0.02f;
@@ -64,18 +68,6 @@ struct SimGuard {   // the simulator is program-wide: put it back however a sect
     net::SimSettings saved = net::Simulator();
     ~SimGuard() { net::Simulator() = saved; net::ResetSimulator(); }
 };
-std::string ScriptVar(GameObject* go, const char* name) {
-    auto* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
-    return sc && sc->VM() ? sc->VM()->GetGlobal(name).AsString() : std::string();
-}
-std::string GraphVar(GameObject* go, const char* name) {
-    auto* v = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
-    return v ? v->GetVariable(name).AsString() : std::string();
-}
-bool HasLine(const std::vector<std::string>& lines, const std::string& part) {
-    for (const auto& l : lines) if (l.find(part) != std::string::npos) return true;
-    return false;
-}
 
 // One peer of the migration tests: a scene with a Network Manager, a host-driven crate and a
 // crate that gets handed to a player, a graph and a script that count On Host Migrated.

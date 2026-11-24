@@ -572,7 +572,7 @@ void RelayServer::Poll(float dt, float timeout) {
         if (m_legacyHellos != m_legacyLogged)
             OKAY_INFO("relay: ", m_legacyHellos - m_legacyLogged, " legacy (version 1/2) hellos in the last minute",
                       m_legacyHello ? "" : ", refused", "; ", LegacyPeers(), " legacy peers registered; hellos so far v1=",
-                      HellosByVersion(1), " v2=", HellosByVersion(2), " v3=", HellosByVersion(3), " v4=", HellosByVersion(4));
+                      HellosByVersion(1), " v2=", HellosByVersion(2), " v3=", HellosByVersion(3), " v4=", HellosByVersion(4), " v5=", HellosByVersion(5));
         m_legacyLogged = m_legacyHellos;
     }
     // Expire peers we haven't heard from in a while (NAT mapping likely gone).

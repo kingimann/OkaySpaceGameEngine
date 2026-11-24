@@ -19,6 +19,7 @@
 //   okay       net.relay, net.host_online, net.join_code, net.room_code, net.path in an .okay script
 //   errors     no relay set, a GitHub relay refused, a bad code, an unreachable relay, a code nobody hosts
 #include "test_framework.hpp"
+#include "net_test_util.hpp"
 #include <Okay.hpp>
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Net/Net.hpp"
@@ -35,6 +36,9 @@
 #include <vector>
 
 using namespace okay;
+using nettest::ScriptVar;
+using nettest::GraphVar;
+using nettest::HasLine;
 
 namespace {
 constexpr float kFrame = 0.02f;
@@ -74,18 +78,6 @@ struct Rig {
     }
 };
 
-bool HasLine(const std::vector<std::string>& lines, const std::string& part) {
-    for (const auto& l : lines) if (l.find(part) != std::string::npos) return true;
-    return false;
-}
-std::string ScriptVar(GameObject* go, const char* name) {
-    auto* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
-    return sc && sc->VM() ? sc->VM()->GetGlobal(name).AsString() : std::string();
-}
-std::string GraphVar(GameObject* go, const char* name) {
-    auto* v = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
-    return v ? v->GetVariable(name).AsString() : std::string();
-}
 } // namespace
 
 int main() {
@@ -364,8 +356,8 @@ int main() {
             "var code = \"\"; var relay = \"\";\n"
             "function start() { relay = net.relay(" + relay + "); code = net.host_online(\"okay42\"); }\n");
         co->AddComponent<ScriptComponent>("okayscript")->LoadSource(
-            "var ok = false; var path = \"\"; var room = \"\";\n"
-            "function start() { net.relay(" + relay + "); ok = net.join_code(\"OKAY42\"); }\n"
+            "var ok = 0; var path = \"\"; var room = \"\";\n"
+            "function start() { net.relay(" + relay + "); if (net.join_code(\"OKAY42\")) { ok = 1; } }\n"
             "function update(dt) { if (net.connected()) { path = net.path(); room = net.room_code(); } }\n");
         hs.Start();
         cs.Start();
@@ -384,7 +376,7 @@ int main() {
         CHECK(joined);
         CHECK(ScriptVar(ho, "code") == "OKAY42");
         CHECK(ScriptVar(ho, "relay") == rig.Addr());
-        CHECK(ScriptVar(co, "ok") == "true");
+        CHECK(ScriptVar(co, "ok") == "1");
         CHECK(ScriptVar(co, "room") == "OKAY42");
         CHECK(ScriptVar(co, "path").compare(0, 6, "direct") == 0 || ScriptVar(co, "path").compare(0, 7, "relayed") == 0);
         if (hn) hn->Stop();

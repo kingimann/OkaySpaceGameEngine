@@ -177,6 +177,20 @@ struct Out {
     void Finish() { LinkTree(d); }
 };
 
+/// A layer value (stored as a double) as an object index: false when it is not a finite whole number in int64 range,
+/// checked before the cast (a cast of NaN or of a value out of range is undefined).
+inline bool IdOf(double v, std::int64_t& out) {
+    if (!std::isfinite(v) || v != std::floor(v) || v < -9.0e18 || v > 9.0e18) return false;
+    out = (std::int64_t)v;
+    return true;
+}
+/// A layer material index as a slot below `n`.
+inline bool SlotOf(double v, std::size_t n, std::size_t& out) {
+    if (!std::isfinite(v) || v < 0 || v != std::floor(v) || v >= (double)n) return false;
+    out = (std::size_t)v;
+    return true;
+}
+
 struct Key6 { double t, v; char interp; };
 
 /// The keys of one 6.x channel ("Key" lists). Times as stored (KTime).
@@ -364,21 +378,42 @@ inline bool Upgrade(const Document& in, Document* steal, Document& out, std::str
             const std::string_view tmap = mapping(lt), mmap = mapping(lm);
             std::size_t polys = 0;
             for (double v : pvi) if (v < 0) ++polys;
-            for (std::size_t slot = 0; slot < mats->second.size(); ++slot) {
+            // A model's material slots, each material once (a repeated "Connect" adds no slot), in connection order.
+            std::vector<std::int64_t>& slots = mats->second;
+            {
+                std::unordered_map<std::int64_t, bool> seen;
+                std::size_t w = 0;
+                for (std::int64_t m : slots) if (!seen[m]) { seen[m] = true; slots[w++] = m; }
+                slots.resize(w);
+            }
+            const std::size_t nslots = slots.size();
+            // ByPolygon: the votes of every slot, counted in ONE pass over the polygons (not once per slot).
+            std::vector<std::unordered_map<std::int64_t, std::size_t>> votes;
+            if (lt && tmap == "ByPolygon") {
+                votes.resize(nslots);
+                std::vector<char> done(nslots);   // slots whose material already has a texture take no votes
+                for (std::size_t k = 0; k < nslots; ++k) done[k] = textured[slots[k]];
+                const bool perPoly = mmap == "ByPolygon";
+                std::size_t fixedSlot = 0;
+                const bool fixedOk = perPoly || SlotOf(mid.empty() ? 0.0 : mid[0], nslots, fixedSlot);
+                if (fixedOk) for (std::size_t p = 0; p < polys && p < tid.size(); ++p) {
+                    std::size_t s = fixedSlot;
+                    if (perPoly && (p >= mid.size() || !SlotOf(mid[p], nslots, s))) continue;
+                    if (done[s]) continue;
+                    std::int64_t t = 0;
+                    if (IdOf(tid[p], t)) ++votes[s][t];
+                }
+            }
+            for (std::size_t slot = 0; slot < nslots; ++slot) {
+                const std::int64_t mat = slots[slot];
+                if (textured[mat]) continue;
                 std::int64_t pick = -1;
-                if (lt && tmap == "AllSame" && !tid.empty()) pick = (std::int64_t)tid[0];
+                if (lt && tmap == "AllSame" && !tid.empty()) { if (!IdOf(tid[0], pick)) pick = -1; }
                 else if (lt && tmap == "ByPolygon") {
-                    std::unordered_map<std::int64_t, std::size_t> votes;
-                    for (std::size_t p = 0; p < polys && p < tid.size(); ++p) {
-                        const double ms = mmap == "ByPolygon" ? (p < mid.size() ? mid[p] : -1) : (mid.empty() ? 0 : mid[0]);
-                        if (ms == (double)slot) ++votes[(std::int64_t)tid[p]];
-                    }
                     std::size_t best = 0;
-                    for (auto& [t, n] : votes) if (n > best || (n == best && t < pick)) { best = n; pick = t; }
+                    for (auto& [t, n] : votes[slot]) if (n > best || (n == best && t < pick)) { best = n; pick = t; }
                 } else pick = slot < texs.size() ? (std::int64_t)slot : 0;
                 if (pick < 0 || pick >= (std::int64_t)texs.size()) continue;
-                const std::int64_t mat = mats->second[slot];
-                if (textured[mat]) continue;
                 textured[mat] = true;
                 conns.push_back({"OP", texs[(std::size_t)pick], mat, "DiffuseColor"});
             }

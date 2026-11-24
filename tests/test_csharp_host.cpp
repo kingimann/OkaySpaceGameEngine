@@ -330,7 +330,8 @@ int main() {
         CHECK(!r.ok && r.diags.empty());
         if (DotnetRuntime::CompiledIn()) CHECK(r.message == SdkNotFoundMessage());
         else CHECK(r.message == NotEnabledMessage());
-        CHECK(r.message.find("dotnet.microsoft.com") != std::string::npos);
+        if (DotnetRuntime::CompiledIn()) CHECK(r.message.find("dotnet.microsoft.com") != std::string::npos);   // where to get the SDK
+        else CHECK(r.message.find("OKAY_WITH_CSHARP") != std::string::npos);                                 // how to turn C# on
         std::string err;
         CHECK(EnsureApiAssembly(ApiSourceDir(), cache.string(), none, &err).empty());
         CHECK(err.find(DotnetRuntime::CompiledIn() ? "SDK" : "SDK") != std::string::npos);

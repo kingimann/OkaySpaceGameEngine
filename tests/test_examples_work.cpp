@@ -25,6 +25,7 @@
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include "play_smoke.hpp"
+#include "okay/Scripting/CSharpHost.hpp"   // DotnetRuntime::CompiledIn: C# scenes need a .NET build
 #include "EditorState.hpp"
 #include "ExampleScenes.hpp"
 #include "NodePlayground.hpp"
@@ -107,6 +108,12 @@ std::vector<std::string> PlayFrames(EditorState& ed, int frames, LogCatch& logs,
 void RunScene(const fs::path& copyRoot, const fs::path& scene, Result& r) {
     r.rel = scene.lexically_relative(copyRoot).generic_string();
     for (const Skip& s : kSkips) if (r.rel == s.path) { r.skipped = true; r.skipWhy = s.why; return; }
+    // A C# scene runs only where the build hosts .NET (OKAY_WITH_CSHARP, off by default; rule 24c).
+    if (!okay::csharp::DotnetRuntime::CompiledIn() && ReadAll(scene).find("script \"csharp\"") != std::string::npos) {
+        r.skipped = true;
+        r.skipWhy = "a C# scene: this build does not host .NET (OKAY_WITH_CSHARP is OFF)";
+        return;
+    }
     LogCatch logs;
 
     // load: the engine's loader on its own (to see skipped records), then the editor

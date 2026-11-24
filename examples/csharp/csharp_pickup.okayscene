@@ -10,12 +10,16 @@ gameobject 0 "Player"
   active 1
   parent -1
   transform -4 0 0 0 0 0 1 1 1 1
+  mesh "Capsule" 0.2 0.6 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 1 "Pickup"
   guid "395e3ab81111fb0b84c847a354979f79"
   active 1
   parent -1
-  transform 3 1 0 0 0 0 1 1 1 1
+  transform 3 1 0 0 0 0 1 0.5 0.5 0.5
+  mesh "Cube" 1 0.85 0.2 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
   script "csharp" "// C# example: a pickup that bobs up and down, spins, and is collected when the Player gets close.
 // Public fields show in the Inspector and are kept by a saved scene or save game.
 // Needs the .NET 8 SDK installed and an engine built with OKAY_WITH_CSHARP=ON (Windows).
@@ -56,4 +60,26 @@ public class Pickup : Behaviour
     }
 }
 " "" 0
+end
+gameobject 2 "Main Camera"
+  guid "6b1c0e7a4f2d4c9e8a3b5d7f9e1c2a40"
+  active 1
+  parent -1
+  transform 0 3 12 -0.12186934 0 0 0.99254615 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 3 "Sun"
+  guid "3d9f2b7c1e5a4f6b8c0d2e4f6a8b0c1d"
+  active 1
+  parent -1
+  transform 0 10 0 0.5501483 0.23712613 -0.1665715 0.7831744 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 4 "Ground"
+  guid "9a7e5c3b1d2f4e6a8b0c2d4e6f8a0b1c"
+  active 1
+  parent -1
+  transform 0 -1.1 0 0 0 0 1 20 0.2 20
+  mesh "Cube" 0.4 0.6 0.4 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
 end

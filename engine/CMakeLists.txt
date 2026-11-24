@@ -911,6 +911,8 @@ get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
 target_sources(okay_engine PRIVATE
     src/Modules/ModuleManifest.cpp
     src/Modules/ModuleRegistry.cpp
+    src/Modules/ModuleMenus.cpp
+    src/Render/RenderContributions.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
     ${_okay_mod_register})
 

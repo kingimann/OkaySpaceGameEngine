@@ -34,6 +34,10 @@ public:
         /// to its warnings. `in` holds the rest of the record, which may run over
         /// several lines while a quoted value is open.
         std::function<void(GameObject& go, std::istream& in, std::vector<std::string>& notes)> readWithNotes;
+        /// The scene chain already writes this record at its old place and calls `write`
+        /// itself. WriteAll skips it, so the line is not written twice and the file stays
+        /// byte-identical.
+        bool inChain = false;
     };
 
     /// Add (or replace) an entry. Safe to call from any thread. Needs a name, a

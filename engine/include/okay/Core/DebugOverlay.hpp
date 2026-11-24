@@ -34,7 +34,9 @@ public:
     /// "FPS: 60.0 (16.7 ms)", "Objects: 42", plus any extra lines. With `detailed`, also the
     /// frame number, time scale and build summary. Empty when the overlay is off and
     /// `ignoreEnabled` is false.
-    static std::vector<std::string> BuildLines(const Stats& stats, bool detailed = false, bool ignoreEnabled = true);
+    /// `scene` is passed to module overlay lines (a particle count, for example).
+    static std::vector<std::string> BuildLines(const Stats& stats, bool detailed = false, bool ignoreEnabled = true,
+                                               const Scene* scene = nullptr);
 
     /// The on/off switch (the "debug.overlay" cvar, default off).
     static bool Enabled();

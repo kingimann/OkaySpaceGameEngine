@@ -21,7 +21,7 @@
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NoCode.hpp"
-#include "okay/Components/ParticleSystem.hpp"
+#include "okay/Modules/ModuleMenus.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/SequencePlayer.hpp"
@@ -205,7 +205,11 @@ std::vector<AssetRef> SceneValidator::AssetReferences(const GameObject& go) {
         add("Foliage", "prefabPath", "prefab", c->prefabPath);
     }
     for (auto* c : go.GetComponents<VoxelTerrain>()) add("VoxelTerrain", "texture", "texture", c->texture);
-    for (auto* c : go.GetComponents<ParticleSystem>()) add("ParticleSystem", "texture", "texture", c->texture);
+    {
+        std::vector<ModuleAssetNote> extra;
+        CollectModuleAssets(go, extra);
+        for (const okay::ModuleAssetNote& n : extra) add(n.component.c_str(), n.field.c_str(), n.kind.c_str(), n.path);
+    }
     for (auto* c : go.GetComponents<UIImage>()) add("UIImage", "texture", "texture", c->texture);
     for (auto* c : go.GetComponents<UIRawImage>()) add("UIRawImage", "texture", "texture", c->texture);
     for (auto* c : go.GetComponents<UIButton>()) {

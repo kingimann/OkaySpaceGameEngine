@@ -13,4 +13,4 @@ vs_group=weapons
 vs_nodes=SwingWeapon,FireWeapon,ReloadWeapon,WeaponAmmo,SetWeapon
 editor=
 sources=include/okay/Components/RangedWeapon.hpp include/okay/Components/Projectile3D.hpp include/okay/Components/MeleeAttacker.hpp include/okay/Components/Crosshair.hpp src/Components/RangedWeapon.cpp src/Components/MeleeAttacker.cpp include/okay/Combat/* src/Combat/*
-tests=weapons module_vs_weapons
+tests=weapons module_vs_weapons module_weapons_save module_weapons_script module_weapons_menu

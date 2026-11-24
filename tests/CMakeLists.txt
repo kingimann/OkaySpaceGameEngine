@@ -19,6 +19,30 @@ add_test(NAME module_vs_weapons COMMAND test_module_vs_weapons)
 add_executable(test_module_props_sky test_module_props_sky.cpp)
 target_link_libraries(test_module_props_sky PRIVATE okay::engine)
 add_test(NAME module_props_sky COMMAND test_module_props_sky)
+
+add_executable(test_module_weapons_save test_module_weapons_save.cpp)
+target_link_libraries(test_module_weapons_save PRIVATE okay::engine)
+add_test(NAME module_weapons_save COMMAND test_module_weapons_save)
+
+add_executable(test_module_weapons_script test_module_weapons_script.cpp)
+target_link_libraries(test_module_weapons_script PRIVATE okay::engine)
+add_test(NAME module_weapons_script COMMAND test_module_weapons_script)
+
+add_executable(test_module_weapons_menu test_module_weapons_menu.cpp)
+target_link_libraries(test_module_weapons_menu PRIVATE okay::engine)
+add_test(NAME module_weapons_menu COMMAND test_module_weapons_menu)
+
+add_executable(test_particles_module_overlay test_particles_module_overlay.cpp)
+target_link_libraries(test_particles_module_overlay PRIVATE okay::engine)
+add_test(NAME particles_module_overlay COMMAND test_particles_module_overlay)
+
+add_executable(test_module_vehicles_save test_module_vehicles_save.cpp)
+target_link_libraries(test_module_vehicles_save PRIVATE okay::engine)
+add_test(NAME module_vehicles_save COMMAND test_module_vehicles_save)
+
+add_executable(test_module_survival_save test_module_survival_save.cpp)
+target_link_libraries(test_module_survival_save PRIVATE okay::engine)
+add_test(NAME module_survival_save COMMAND test_module_survival_save)
 # Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)

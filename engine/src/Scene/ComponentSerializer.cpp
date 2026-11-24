@@ -55,7 +55,7 @@ void ComponentSerializerRegistry::WriteAll(const GameObject& go, std::ostream& o
     EnsureBuiltins(t);
     std::vector<std::shared_ptr<const Entry>> copy;
     { debugutil::SpinGuard lock(t.mutex); copy = t.entries; }
-    for (auto& e : copy) e->write(go, out);
+    for (auto& e : copy) if (!e->inChain) e->write(go, out);
 }
 
 namespace detail {

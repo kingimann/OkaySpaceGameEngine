@@ -98,7 +98,7 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c, V* const slots
                     case Op::Pop: --sp; break;
                     case Op::Load: {
                         NameCache& nc = caches[in.b];
-                        if (nc.epoch == varEpoch) { detail::CopyValue(bp[sp++], *static_cast<const V*>(nc.value)); break; }
+                        if (CacheGood(nc)) { detail::CopyValue(bp[sp++], *static_cast<const V*>(nc.value)); break; }
                         LoadName(*static_cast<const std::string*>(in.p), &nc, bp[sp++]);
                         break;
                     }
@@ -110,7 +110,7 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c, V* const slots
                     case Op::StorePop: {
                         NameCache& nc = caches[in.b];
                         V& v = bp[sp - 1];
-                        if (nc.epoch == varEpoch && nc.writable) {
+                        if (CacheGood(nc) && nc.writable) {
                             V& to = *static_cast<V*>(nc.value);
                             if (const auto* f = v.NumberPtr()) to.SetNumber(*f);
                             else if (in.op == Op::StorePop) to = std::move(v);

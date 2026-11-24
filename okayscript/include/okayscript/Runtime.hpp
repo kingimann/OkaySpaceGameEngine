@@ -207,6 +207,14 @@ public:
     /// Code that pushes, pops or moves scopes itself (a host parking a coroutine) calls BumpVars.
     unsigned long long varEpoch = NextVarEpoch();
     void BumpVars() { varEpoch = NextVarEpoch(); }
+    /// Like varEpoch, for cached globals no local can hide (a name not in localNames): those stay good across calls.
+    /// Changes when a type rule may change, a static is set, a name becomes a local, or the functions are (re)loaded.
+    unsigned long long globalEpoch = NextVarEpoch();
+    void BumpGlobals() { globalEpoch = NextVarEpoch(); }
+    /// The epoch a cache of the global `n` uses.
+    unsigned long long GlobalEpochFor(const std::string& n) const { return localNames.count(n) ? varEpoch : globalEpoch; }
+    /// A by-name cache is still good (epoch numbers are never reused, so the two can't be confused).
+    bool CacheGood(const NameCache& c) const { return c.epoch == varEpoch || c.epoch == globalEpoch; }
     /// Names that can be locals (Program::localNames of every loaded source, plus any defined in a call's scope at
     /// run time). Lookup only walks the call stack for these; any other name is a global or a static.
     std::unordered_set<std::string> localNames;
@@ -259,7 +267,7 @@ public:
     V Invoke(const FunctionDecl& fn, const V* args, std::size_t argc, const std::vector<std::string>* names);
     /// Changes whenever the script functions are (re)defined: cached call targets are then stale (Chunk::calls).
     unsigned long long callEpoch = NextVarEpoch();
-    void BumpCalls() { callEpoch = NextVarEpoch(); }
+    void BumpCalls() { callEpoch = NextVarEpoch(); BumpGlobals(); }
 
 private:
     V Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names);

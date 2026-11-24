@@ -136,7 +136,7 @@ template <class V> void StoreTypedSlot(V& slot, unsigned char state, const V& v,
 
 // ---- Scopes ------------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v) {
-    if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);   // keeps Lookup's shortcut true
+    if (scopes.size() > 1 && !localNames.count(n)) { localNames.insert(n); BumpGlobals(); }   // keeps Lookup's shortcut true
     Env& e = scopes.back();
     const int slot = e.SlotOf(n);
     if (slot >= 0) {   // a local of the running function: its slot
@@ -148,10 +148,12 @@ template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v
     ins.first->second = v;
     // A new name may hide one further out, and a dropped type rule changes how it is written: places cached by
     // bytecode are stale. Setting a name this scope already has changes nothing they rely on.
-    if (ins.second || (!e.kinds.empty() && e.kinds.erase(n))) BumpVars();
+    if (ins.second) BumpVars();
+    else if (!e.kinds.empty() && e.kinds.erase(n)) { BumpVars(); BumpGlobals(); }
 }
 template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const V& v, unsigned char kind) {
     if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);
+    BumpGlobals();   // a type rule may change on a global
     Env& e = scopes.back();
     const int slot = e.SlotOf(n);
     if (slot >= 0) {
@@ -222,20 +224,20 @@ template <class V> void BasicRuntime<V>::AssignCached(const std::string& n, cons
         if (!detail::AssignIn(*it, n, v)) continue;
         const int i = it->chunk ? detail::DeclaredSlot(*it, n) : -1;
         if (i >= 0) detail::FillCache(&cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch);
-        else detail::FillCache(&cache, *it, n, &it->vars.find(n)->second, varEpoch);
+        else detail::FillCache(&cache, *it, n, &it->vars.find(n)->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
         return;
     }
     if (statics && detail::AssignIn(*statics, n, v)) return;
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
     auto& slot = Global().vars[n];   // a new name becomes a global
     slot = v;
-    detail::FillCache(&cache, Global(), n, &slot, varEpoch);
+    detail::FillCache(&cache, Global(), n, &slot, GlobalEpochFor(n));
 }
 template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n, NameCache* cache) const {
     if (scopes.size() > 1 && !localNames.count(n)) {
         // Not a local anywhere: only the globals (scopes[0]) and the statics can hold it.
         auto f = scopes.front().vars.find(n);
-        if (f != scopes.front().vars.end()) { detail::FillCache(cache, scopes.front(), n, &f->second, varEpoch); return &f->second; }
+        if (f != scopes.front().vars.end()) { detail::FillCache(cache, scopes.front(), n, &f->second, globalEpoch); return &f->second; }
         if (statics && !statics->vars.empty()) { auto g = statics->vars.find(n); if (g != statics->vars.end()) return &g->second; }
         return nullptr;
     }
@@ -246,7 +248,10 @@ template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n, NameCa
         }
         if (it->vars.empty()) continue;
         auto f = it->vars.find(n);
-        if (f != it->vars.end()) { detail::FillCache(cache, *it, n, &f->second, varEpoch); return &f->second; }
+        if (f != it->vars.end()) {
+            detail::FillCache(cache, *it, n, &f->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+            return &f->second;
+        }
     }
     if (statics && !statics->vars.empty()) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return &f->second; }
     return nullptr;
@@ -269,6 +274,7 @@ template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
 // ---- Statics -----------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::DefineStatic(const std::string& n, const V& v, unsigned char kind) {
     BumpVars();
+    BumpGlobals();
     if (!statics) statics = std::make_shared<Env>();
     if (statics->vars.count(n)) return;   // only the first run sets it
     statics->vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;

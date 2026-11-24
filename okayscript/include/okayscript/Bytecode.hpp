@@ -99,7 +99,8 @@ struct Instr {
     const void* p = nullptr;
 };
 
-/// Where a Load/Store found its variable, valid while the runtime's varEpoch is the same.
+/// Where a Load/Store found its variable, valid while the runtime's varEpoch (or, for a global no local can hide,
+/// its globalEpoch) is the same.
 struct NameCache {
     unsigned long long epoch = 0;
     void* value = nullptr;   ///< the variable's value (a V in one of the scopes)

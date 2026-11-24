@@ -5170,3 +5170,8 @@ add_test(NAME job_steal COMMAND test_job_steal)
 add_executable(test_dir_watch test_dir_watch.cpp)
 target_link_libraries(test_dir_watch PRIVATE okay::engine)
 add_test(NAME dir_watch COMMAND test_dir_watch)
+
+# grok/core-2: scene files keep an asset GUID beside the path.
+add_executable(test_scene_asset_guid test_scene_asset_guid.cpp)
+target_link_libraries(test_scene_asset_guid PRIVATE okay::engine)
+add_test(NAME scene_asset_guid COMMAND test_scene_asset_guid)

@@ -237,6 +237,31 @@ std::string Guid::ToString() const {
     return b;
 }
 
+namespace {
+std::atomic<const AssetDatabase*> g_sceneIndex{nullptr};
+}
+
+void SetSceneAssetIndex(const AssetDatabase* db) { g_sceneIndex.store(db, std::memory_order_release); }
+
+std::string SceneAssetGuid(const std::string& path) {
+    const AssetDatabase* db = g_sceneIndex.load(std::memory_order_acquire);
+    if (!db || path.empty()) return {};
+    const Guid g = db->PathToGuid(path);
+    return g ? g.ToString() : std::string();
+}
+
+std::string ResolveSceneAssetPath(const std::string& storedPath, const std::string& guidText) {
+    const AssetDatabase* db = g_sceneIndex.load(std::memory_order_acquire);
+    if (db && !guidText.empty()) {
+        Guid g;
+        if (Guid::Parse(guidText, g)) {
+            const std::string now = db->GuidToPath(g);
+            if (!now.empty()) return now;
+        }
+    }
+    return storedPath;
+}
+
 bool Guid::Parse(const std::string& text, Guid& out) {
     std::string s = Trim(text);
     if (s.size() >= 2 && s.front() == '{' && s.back() == '}') s = s.substr(1, s.size() - 2);

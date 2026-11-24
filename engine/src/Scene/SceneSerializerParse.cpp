@@ -6,6 +6,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
+#include "okay/Core/AssetDatabase.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -570,8 +571,22 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     sr->glyph = static_cast<char>(glyph);
                     sr->color = c;
                     sr->size = size;
-                    in >> std::ws; // optional texture path (quoted)
+                    in >> std::ws; // optional texture path (quoted), then an optional "guid <id>"
                     if (in.peek() == '"') sr->texture = ReadQuoted(in);
+                    in >> std::ws;
+                    if (in.peek() == 'g') {
+                        const auto mark = in.tellg();
+                        std::string word;
+                        in >> word;
+                        if (word == "guid") {
+                            std::string id;
+                            in >> id;
+                            sr->texture = ResolveSceneAssetPath(sr->texture, id);
+                        } else if (mark != std::streampos(-1)) {
+                            in.clear();
+                            in.seekg(mark);
+                        }
+                    }
                     // Optional uv sub-region (4 floats) for sprite sheets.
                     in >> std::ws;
                     int pk = in.peek();

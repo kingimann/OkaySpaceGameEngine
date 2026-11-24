@@ -6,6 +6,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
+#include "okay/Core/AssetDatabase.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -251,8 +252,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  sprite " << static_cast<int>(sr->glyph) << " "
             << sr->color.r << " " << sr->color.g << " " << sr->color.b << " "
             << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
-            << Quote(sr->texture)
-            << " " << sr->uvMin.x << " " << sr->uvMin.y
+            << Quote(sr->texture);
+        {
+            const std::string gid = SceneAssetGuid(sr->texture);
+            if (!gid.empty()) out << " guid " << gid;
+        }
+        out << " " << sr->uvMin.x << " " << sr->uvMin.y
             << " " << sr->uvMax.x << " " << sr->uvMax.y
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)

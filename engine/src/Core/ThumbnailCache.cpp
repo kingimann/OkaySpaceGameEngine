@@ -221,6 +221,52 @@ public:
     }
 };
 
+// A picture of a font file: the first letters of its name, sized to the preview.
+class FontThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    bool Handles(const std::string& e) const override { return e == "ttf" || e == "otf"; }
+    Image Render(const std::string& absolutePath, std::string*) override {
+        const int side = PreviewSize();
+        Image img(side, side);
+        img.Fill(Color(0.16f, 0.16f, 0.22f, 1.0f));
+        std::string name = absolutePath;
+        const auto slash = name.find_last_of("/\\");
+        if (slash != std::string::npos) name = name.substr(slash + 1);
+        const auto dot = name.rfind('.');
+        if (dot != std::string::npos) name = name.substr(0, dot);
+        std::string text;
+        for (unsigned char ch : name) {
+            if (text.size() >= 4) break;
+            char c = static_cast<char>(ch);
+            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) text.push_back(c);
+        }
+        if (text.empty()) text = "FONT";
+        const int glyphs = static_cast<int>(text.size());
+        const int gap = 1;
+        int scale = (side * 3 / 4) / (glyphs * 8 + (glyphs - 1) * gap);
+        if (scale < 1) scale = 1;
+        const int blockW = glyphs * 8 * scale + (glyphs - 1) * gap * scale;
+        const int blockH = 8 * scale;
+        const int ox = (side - blockW) / 2;
+        const int oy = (side - blockH) / 2;
+        const Color ink(0.92f, 0.93f, 0.96f, 1.0f);
+        for (int i = 0; i < glyphs; ++i) {
+            for (int gy = 0; gy < 8; ++gy)
+                for (int gx = 0; gx < 8; ++gx) {
+                    if (!Font8x8::Pixel(text[static_cast<std::size_t>(i)], gx, gy)) continue;
+                    for (int sy = 0; sy < scale; ++sy)
+                        for (int sx = 0; sx < scale; ++sx) {
+                            const int x = ox + i * (8 + gap) * scale + gx * scale + sx;
+                            const int y = oy + gy * scale + sy;
+                            img.SetPixel(x, y, ink);
+                        }
+                }
+        }
+        return img;
+    }
+};
+
 } // namespace
 
 // --- Cache -------------------------------------------------------------------------------------------
@@ -230,6 +276,7 @@ ThumbnailCache::ThumbnailCache(Options options) : m_opt(std::move(options)) {
     if (m_opt.imageGenerator) m_generators.push_back(std::make_shared<ImageThumbnailGenerator>());
     if (m_opt.audioGenerator) m_generators.push_back(std::make_shared<WaveformThumbnailGenerator>());
     if (m_opt.dataGenerator) m_generators.push_back(std::make_shared<DataThumbnailGenerator>());
+    if (m_opt.dataGenerator) m_generators.push_back(std::make_shared<FontThumbnailGenerator>());
 }
 
 void ThumbnailCache::AddGenerator(std::shared_ptr<ThumbnailGenerator> generator) {

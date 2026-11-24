@@ -8509,7 +8509,8 @@ static void ProjectRegisterThumbGenerators() {
 static bool ProjectHasThumb(const std::string& ext) {
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
-        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab: return true;
+        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab:
+        case okay::AssetType::Data: case okay::AssetType::Font: return true;
         default: return false;
     }
 }
@@ -51981,6 +51982,9 @@ void DrawProfiler(EditorState& ed) {
     bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
     bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
     bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
+    double cJobs = 0.0;
+    for (const auto& b : F.buckets) if (b.name == "Jobs") cJobs = b.self;
+    bar("Jobs", cJobs, ImVec4(0.75f,0.65f,1.0f,1));
     bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
 
     // Plain-language diagnosis: tell the user what to look at, so the profiler is
@@ -54192,6 +54196,11 @@ int main(int argc, char** argv) {
         // The slow-frame log (okay_editor_perf.log) reads the profiler's scopes, so the timers stay on while it is (the default).
         static okay::editor::perf::SlowFrameLog s_slowLog = [] {
             okay::editor::perf::SlowFrameLog l; l.thresholdMs = okay::editor::perf::SlowFrameLog::ThresholdFrom(std::getenv("OKAY_SLOW_FRAME_MS")); return l; }();
+        {   // one job system for the editor, so the profiler can show the Jobs row (0 workers: jobs run on this thread)
+            static okay::JobSystem editorJobs(0);
+            static bool jobsSet = false;
+            if (!jobsSet) { okay::SetEngineJobs(&editorJobs); jobsSet = true; }
+        }
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying()) || s_slowLog.thresholdMs > 0.0;   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
@@ -55081,6 +55090,10 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            if (std::getenv("OKAY_UI_PROFILER")) {
+                g_showProfiler = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Profiler");
+            }
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY / OKAY_UI_LOCIMPORT

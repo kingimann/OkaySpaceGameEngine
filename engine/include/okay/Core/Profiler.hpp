@@ -150,8 +150,8 @@ public:
                 calls = static_cast<int>(jobs.completed - m_prevJobDone);
             m_prevJobBusy = jobs.busyMs;
             m_prevJobDone = jobs.completed;
-            if (busy > 0.0 || calls > 0)
-                m_build.push_back(Bucket{"Jobs", busy, busy, calls, 0, 0.0});
+            // Always named, including a quiet frame, so the profiler window can show the row at zero.
+            m_build.push_back(Bucket{"Jobs", busy, busy, calls, 0, 0.0});
         }
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;

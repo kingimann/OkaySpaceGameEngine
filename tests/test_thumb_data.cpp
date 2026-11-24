@@ -65,6 +65,22 @@ int main() {
     const auto c = small.Get(id, 1, file.string(), AssetType::Data);
     CHECK(!c.placeholder && c.image && c.image->Width() == 96);
     CHECK(c.image->Width() != a.image->Width());
+
+    // A font file gets its own picture (the file name), not the plain placeholder tile.
+    const fs::path font = dir / "Body.ttf";
+    { std::ofstream o(font); o << "not-a-font"; }
+    ThumbnailCache::Options fontOpt = smallOpt;
+    fontOpt.size = 64;
+    ThumbnailCache fonts(fontOpt);
+    const auto f = fonts.Get(Guid::Generate(), 3, font.string(), AssetType::Font);
+    CHECK(!f.placeholder && !f.failed && f.image && f.image->Width() == 64 && f.image->Height() == 64);
+    int ink = 0;
+    for (int y = 0; y < f.image->Height(); ++y)
+        for (int x = 0; x < f.image->Width(); ++x) {
+            const Color px = f.image->GetPixel(x, y);
+            if (px.r > 0.8f && px.g > 0.8f) ++ink;
+        }
+    CHECK(ink > 8);
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

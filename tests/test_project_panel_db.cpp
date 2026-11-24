@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <thread>
 #include <map>
 #include <set>
 
@@ -447,6 +448,27 @@ int main() {
         CHECK(idleMs < 400.0);       // budget: an unchanged project re-checks 5,000 assets in well under half a second
         CHECK(editMs < 600.0);       // and picks up a few edits (re-reading only the changed files) within 600 ms
         CHECK(searchMs < 200.0 && listMs < 50.0);
+    }
+
+    // A file that appears on disk shows up before the 2-second poll, via the operating-system watch.
+    {
+        RUN_SUITE("project_watch");
+        TempDir td;
+        WriteFile(td.at("a.okaydata"), "name = A\n");
+        Browser b(td.assets());
+        CHECK(b.Sync());
+        CHECK(b.AssetCount() == 1);
+        const std::uint64_t rev = b.Revision();
+        b.Poll(1000);                        // first poll also arms the watch; it may find nothing new
+        WriteFile(td.at("b.okaydata"), "name = B\n");
+        bool saw = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline && !saw) {
+            if (b.Poll(1000) && b.AssetCount() >= 2) saw = true;
+            else std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        CHECK(saw);
+        CHECK(b.Revision() > rev);
     }
 
     TEST_MAIN_RESULT();

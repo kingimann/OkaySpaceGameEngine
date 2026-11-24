@@ -535,7 +535,14 @@ bool Browser::DoScan() {
 bool Browser::Sync() { return DoScan(); }
 
 bool Browser::Poll(std::uint64_t nowMs) {
-    if (!m_indexed || nowMs < m_nextPoll) return false;
+    if (!m_indexed) return false;
+    if (!m_watchStarted) {
+        std::string err;
+        m_watchStarted = m_db.StartWatch(&err);   // the operating-system watch; the timer below stays as a fallback
+    }
+    bool fromWatch = false;
+    if (m_watchStarted) fromWatch = !m_db.PollWatch().empty();
+    if (!fromWatch && nowMs < m_nextPoll) return false;
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }

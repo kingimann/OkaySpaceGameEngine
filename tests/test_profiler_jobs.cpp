@@ -15,12 +15,20 @@ int main() {
     p.paused = false;
     p.BeginFrame();
     p.EndFrame(16.0);
-    p.enabled = false;
-    SetEngineJobs(nullptr);
     bool found = false;
     const Profiler::Frame& frame = p.FrameAt(p.Count() - 1);
     for (const auto& b : frame.buckets)
         if (b.name == "Jobs" && b.calls >= 1) found = true;
     CHECK(found);
+    // A quiet frame still names the Jobs row, so the profiler can show it at zero.
+    p.BeginFrame();
+    p.EndFrame(16.0);
+    p.enabled = false;
+    bool quiet = false;
+    const Profiler::Frame& q = p.FrameAt(p.Count() - 1);
+    for (const auto& b : q.buckets)
+        if (b.name == "Jobs") quiet = true;
+    CHECK(quiet);
+    SetEngineJobs(nullptr);
     TEST_MAIN_RESULT();
 }

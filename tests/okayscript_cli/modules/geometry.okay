@@ -1,0 +1,8 @@
+// A module for the imports case: its globals and functions are its own namespace.
+import "shapes/unit.okay" as unit
+var PI2 = 6.28
+var calls = 0
+function area(w, h) { calls += 1; return w * h * unit.scale(); }
+function calls_so_far() { return calls; }
+function scaler(k) { return x => x * k; }
+print("geometry loaded")

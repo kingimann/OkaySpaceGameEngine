@@ -156,7 +156,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_MS3D");
         SetImportBackend(".ms3d", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".ms3d") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".ms3d") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "rig.ms3d", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_MS3D") != std::string::npos);
             CHECK(ImportableExtensions().find(".ms3d") == std::string::npos);

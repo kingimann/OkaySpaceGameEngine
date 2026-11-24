@@ -1,0 +1,13 @@
+// import "file.okay": its own namespace, loaded once (cached), found next to the importing file, cycles refused.
+import "modules/geometry.okay"
+import "modules/geometry.okay" as again
+print(geometry.area(2, 3), geometry.PI2, geometry.calls_so_far(), again.calls_so_far())
+var triple = geometry.scaler(3)
+print(triple(5), geometry.area == again.area)
+function area(w, h) { return "the main program's own area"; }
+print(area(1, 1), geometry.area(1, 1))
+try { import "modules/cycle_a.okay" } catch (e) { print(e) }
+try { import "modules/missing.okay" } catch (e) { print(e) }
+try { import "modules/broken.okay" } catch (e) { print(e) }
+function inner() { import "modules/shapes/unit.okay" as u; return u.scale() + 1; }
+print(inner(), calls)

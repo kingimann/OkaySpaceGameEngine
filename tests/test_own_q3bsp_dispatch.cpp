@@ -2,7 +2,7 @@
 // defines OKAY_EXPECT_OWN_Q3BSP) the reader is the default with nothing set at run time. SYNTHETIC maps (tests/q3bsp_fixtures.hpp).
 // Checked: the model says backend "own" and equals what ReadQ3bspFile gives directly; the environment variable OKAY_OWN_Q3BSP and
 // SetImportBackend switch the format on and off; ImportableExtensions follows; flatten bakes the node tree (Z up to Y up) into
-// the vertices; the format is off by default (the message names the switch when the build has no Assimp); a Quake 1 / Half-Life
+// the vertices; the format is off by default (switched off, the message names the switch); a Quake 1 / Half-Life
 // style .bsp (other magic) is refused with its own message.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
@@ -44,10 +44,10 @@ int main() {
         std::string err;
         CHECK(HasOwnReader(c.ext));
         if (!kOnByDefault) {
-            // nothing chosen, nothing set: not ours (when the build has no Assimp the file cannot be read at all and the message names the switch)
+            // nothing chosen, nothing set: not ours (the file cannot be read at all and the message names the switch)
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-            CHECK(!seam::Listed(c.ext) || AssimpAvailable());
-            if (!AssimpAvailable()) {
+            CHECK(!seam::Listed(c.ext));
+            {
                 ImportedModel d; std::string e2;
                 CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find("OKAY_OWN_Q3BSP") != std::string::npos);
             }

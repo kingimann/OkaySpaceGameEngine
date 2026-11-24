@@ -281,11 +281,12 @@ void OkayScriptVM::Impl::RegisterInputBuiltins(BuiltinCtx& c) {
         b["gamepad_down"] = [](std::vector<Value>& a) {
             return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
-        b["rand"] = [](std::vector<Value>& a) {
-            float lo = a.size() > 0 ? a[0].AsFloat() : 0.0f;
-            float hi = a.size() > 1 ? a[1].AsFloat() : 1.0f;
-            return Value{Random::Shared().Range(lo, hi)};
-        };
+        // rand, randi, chance, choose, shuffle and rand_seed: the language core's (CoreBuiltins.hpp), drawing from
+        // the engine's shared generator.
+        okayscript::InstallRandomBuiltins<Value>(b, okayscript::RandomSource{
+            [](float lo, float hi) { return Random::Shared().Range(lo, hi); },
+            [](int lo, int hi) { return Random::Shared().Range(lo, hi); },
+            [](std::uint64_t s) { Random::Shared().Seed(s); }});
         b["dist"] = [](std::vector<Value>& a) {
             if (a.size() < 4) return Value{0.0f};
             float dx = a[2].AsFloat() - a[0].AsFloat(), dy = a[3].AsFloat() - a[1].AsFloat();

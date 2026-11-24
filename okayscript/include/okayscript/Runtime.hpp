@@ -12,6 +12,7 @@
 #include "okayscript/Error.hpp"
 #include "okayscript/Native.hpp"
 #include <atomic>
+#include <exception>
 #include <functional>
 #include <iosfwd>
 #include <type_traits>
@@ -43,6 +44,10 @@ template <class V> struct BasicEnvironment {
     const Chunk* chunk = nullptr;           ///< the running body's code, when it has slots
     V* slots = nullptr;                     ///< its slot values
     unsigned char* slotState = nullptr;     ///< 0 = not declared yet, else kDeclared | kind
+    /// Closures: a map of the variables a lambda made here keeps (the body's Chunk::boxNames, declared into it), whose
+    /// "__up" entry is the box of the code the running lambda was made in, and so on outwards. Not a map: none.
+    V env;
+    const std::vector<std::string>* boxed = nullptr;   ///< the names this scope declares into `env`
     /// The slot named n, or -1.
     int SlotOf(const std::string& n) const {
         if (!chunk) return -1;
@@ -86,6 +91,68 @@ struct Limits {
 
 /// `exit(code)` from a script: stops the program; Run lets it through so the host can end with that code.
 struct ExitRequest { int code = 0; };
+
+/// `throw value`: a RuntimeError whose message is the value as text, carrying the value itself for the catch.
+template <class V> struct ThrownError : RuntimeError {
+    V value;
+    ThrownError(const V& v, int line) : RuntimeError(v.AsString(), line), value(v) {}
+};
+
+/// A try handler in a running chunk: where its catch starts, the stack depth to go back to, what it pushes (TryBegin b).
+struct TryHandler { int pc, sp, mode; };
+
+/// One running foreach: the collection, where it is, and a map's keys. kind 1: a generator; 2: an iterator object
+/// (MoveNext / Current).
+template <class V> struct ForEachState {
+    V coll;
+    std::size_t i = 0, n = 0;
+    std::vector<std::string> keys;
+    int kind = 0;
+};
+
+/// A paused generator body: its frame and everything RunChunk had in flight at the `yield` (detail/Vm.ipp).
+template <class V> struct GenRun {
+    bool started = false;
+    int pc = 0, sp = 0;
+    std::vector<V> stack;
+    std::vector<TryHandler> handlers;
+    std::vector<ForEachState<V>> iters;
+    std::vector<long long> counters;
+    std::vector<std::exception_ptr> pending;
+    V value;   ///< what the last `yield` handed back
+};
+template <class V> struct Generator {
+    ChunkPtr code;                     ///< keeps the compiled body alive
+    std::vector<V> slots;
+    std::vector<unsigned char> state;
+    V env;                             ///< its closure box, if any
+    const std::vector<std::string>* boxed = nullptr;
+    V self;                            ///< a generator method's object
+    std::string selfClass;
+    const UserClass* methodClass = nullptr;
+    GenRun<V> run;
+    bool done = false, running = false;
+};
+
+/// The modules a program imported (import "file.okay"), shared by the program and every module it loads: each
+/// module runs in its own runtime, so its globals and functions are its own namespace.
+template <class V> struct ModuleSystem {
+    /// Find `path` as written in the file `from` ("" = the main program): set the resolved path and the source.
+    /// False with `error` set when it cannot be read. Unset: import is an error (the engine sets none).
+    std::function<bool(const std::string& path, const std::string& from, std::string& resolved, std::string& source,
+                       std::string& error)> load;
+    struct Module {
+        std::unique_ptr<BasicRuntime<V>> rt;
+        std::unique_ptr<Program> prog;
+        V exports;
+        bool done = false;
+        std::string path;
+    };
+    std::unordered_map<std::string, std::unique_ptr<Module>> byPath;
+    std::vector<BasicRuntime<V>*> byId;    ///< 0 = the main program's runtime
+    std::vector<std::string> loading;       ///< the import chain being loaded (resolved paths, for the cycle check)
+    std::vector<std::string> loadingNames;  ///< the same as written in the imports (for messages)
+};
 
 /// The arguments of one native call.
 template <class V> class BasicArgs {
@@ -133,6 +200,17 @@ template <class V> struct BasicNative {
 template <class V> class BasicRuntime {
 public:
     using Env = BasicEnvironment<V>;
+    BasicRuntime() = default;
+    BasicRuntime(const BasicRuntime&) = delete;
+    BasicRuntime& operator=(const BasicRuntime&) = delete;
+    /// The main program's runtime frees the modules it imported (they hold the module system too).
+    ~BasicRuntime() {
+        if (modules && moduleId == 0) {
+            auto keep = modules;
+            keep->byId.clear();
+            keep->byPath.clear();
+        }
+    }
     std::vector<Env> scopes{1};                                ///< scopes[0] = global; one more per running call
     std::unordered_map<std::string, const FunctionDecl*> functions;
     std::unordered_map<std::string, BasicNative<V>> natives;
@@ -147,6 +225,10 @@ public:
     /// (the engine registers its several hundred commands this way). Named arguments are refused unless the name is
     /// in namedArgBuiltins; while one runs, activeArgNames holds the names it was given.
     std::unordered_map<std::string, std::function<V(std::vector<V>&)>> builtins;
+    /// A call by name finds the script's own functions before the builtins (the standalone interpreter, so a
+    /// program's own `sum` or `map` is not hidden by the library's); natives, the embedder's, still come first. Off in
+    /// the engine: its builtins come first, as they always did.
+    bool scriptFunctionsFirst = false;
     std::unordered_set<std::string> namedArgBuiltins;
     const std::vector<std::string>* activeArgNames = nullptr;
 
@@ -166,6 +248,26 @@ public:
     std::unordered_map<std::string, const UserClass*> classes;
     V self;                    ///< the class object a method or constructor is running on
     std::string selfClass;
+    const UserClass* methodClass = nullptr;   ///< the class the running method is written in (for `super`)
+    /// A class's own static fields (`static int count`), made the first time the class is used: ClassName.count.
+    std::unordered_map<std::string, V> classStatics;
+    const UserClass* FindClass(const std::string& name) const;
+    const UserClass* BaseOf(const UserClass& c) const;
+    /// The method `name` of class c or a class it extends; `owner` is the class that has it.
+    const MethodDef* FindMethod(const UserClass* c, const std::string& name, const UserClass** owner = nullptr) const;
+    const FieldDef* FindField(const UserClass* c, const std::string& name) const;
+    /// The static field `name` of class c or a base: its value's place (made on first use), or nullptr.
+    V* StaticField(const UserClass* c, const std::string& name);
+    /// ClassName.Method(args): a static method. False when `cls` is no class or has no such static method.
+    bool CallStatic(const std::string& cls, const std::string& method, std::vector<V>& args, V& out);
+    /// `a op b` with a class object on either side that defines `operator op`: true with out set.
+    bool ClassOperator(Tok op, const V& a, const V& b, V& out);
+    /// A binary operator off the number fast path: class operators, then the language's rules (detail::Arith).
+    V BinarySlow(Tok op, const V& a, const V& b);
+    /// v as text: a class object with a ToString() method prints what it returns.
+    std::string Text(const V& v);
+    /// super(args) / super.Method(args) inside a method or constructor.
+    V CallSuper(const std::string& name, std::vector<V>& args, int line);
     UserClass* ClassOf(const V& inst);
     bool SameInstance(const V& inst) const;
     bool HasMethod(const std::string& name);
@@ -238,8 +340,42 @@ public:
 
     /// Run top-level code (compiled into `code` the first time).
     Flow RunBody(const StmtList& body, ChunkPtr& code) { return RunChunk(CodeFor(body, code)); }
-    /// Run compiled code. A function's or lambda's code gets its frame's slots and their states.
-    Flow RunChunk(const Chunk& c, V* slots = nullptr, unsigned char* slotState = nullptr);
+    /// Run compiled code. A function's or lambda's code gets its frame's slots and their states. A generator's body
+    /// runs with its GenRun: it starts or goes on where it stopped, and ends with Flow::Yield at a `yield value`.
+    Flow RunChunk(const Chunk& c, V* slots = nullptr, unsigned char* slotState = nullptr, GenRun<V>* gen = nullptr);
+
+    // ---- Closures: the box each lambda keeps (MakeLambda), by the lambda value's map ----
+    struct ClosureRef { std::weak_ptr<const void> fn; V env; };
+    std::unordered_map<const void*, ClosureRef> closures;
+    std::size_t closureSweepAt = 64;
+    /// The box the lambda f keeps, or 0 when it keeps none.
+    V ClosureOf(const V& f) const;
+
+    // ---- Generators: a call of a function with a `yield value` returns {"__gen": id} ----
+    struct GenEntry { std::weak_ptr<const void> owner; std::unique_ptr<Generator<V>> gen; };
+    std::unordered_map<long long, GenEntry> generators;
+    long long nextGenerator = 1;
+    std::size_t genSweepAt = 64;
+    /// Make a generator for a body whose frame is ready (its arguments bound).
+    V MakeGenerator(ChunkPtr code, V* slots, unsigned char* state, std::size_t n, const V& env,
+                    const std::vector<std::string>* boxed);
+    /// The generator a value is, or nullptr.
+    Generator<V>* GeneratorOf(const V& v);
+    /// Run the generator to its next `yield`: true with `out` set, false once it has finished.
+    bool Resume(Generator<V>& g, V& out);
+    /// g.next(), g.done(), g.to_list() on a generator; iterator objects in foreach. True when answered.
+    bool GeneratorMethod(const V& v, const std::string& name, std::vector<V>& args, V& out);
+
+    // ---- Modules (import "file.okay") ----
+    std::shared_ptr<ModuleSystem<V>> modules;
+    int moduleId = 0;          ///< 0: the main program; else its index in modules->byId
+    std::string currentFile;   ///< the file this runtime's program came from (imports are found from it)
+    /// Load (once) and return the module `path`'s exports: a map of its globals and functions.
+    V Import(const std::string& path, int line);
+    /// Add a parsed program's functions, classes and local names (Interpreter::Run and modules).
+    void AddProgram(const Program& prog, const std::string& source);
+    /// A function value {"__fn", "__mod"} or lambda of another module: run it in that module's runtime.
+    BasicRuntime* ModuleOf(const V& fn);
     /// The value of one expression outside any body (a default argument, a field's starting value).
     V EvalCode(const Expr& e, ChunkPtr& code);
     V IndexRead(const V& a, const V& index);

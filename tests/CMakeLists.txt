@@ -2414,7 +2414,21 @@ add_executable(test_launcher_versions test_launcher_versions.cpp
 target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
+if(WIN32)
+    target_link_libraries(test_launcher_versions PRIVATE winhttp)   # VersionsNet.cpp downloads through the HTTP seam (WinHTTP)
+endif()
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
+
+# The HTTP seam (NativeFetch.hpp) on WinHTTP against a loopback server, with the curl fallback off: downloads, retries, a size
+# cap, cancel, resume with Range, HEAD, a prefix fetch, a POST. Windows only (the Windows test job runs it).
+if(WIN32)
+    add_executable(test_winhttp_loopback test_winhttp_loopback.cpp)
+    target_compile_features(test_winhttp_loopback PRIVATE cxx_std_17)
+    target_include_directories(test_winhttp_loopback PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_winhttp_loopback PRIVATE winhttp ws2_32)
+    add_test(NAME winhttp_loopback COMMAND test_winhttp_loopback)
+    set_tests_properties(winhttp_loopback PROPERTIES TIMEOUT 120)
+endif()
 
 # The same download through our own HTTP client (docs/platform/own_http.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
@@ -3770,11 +3784,20 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     set_tests_properties(platform_default_env_own_short PROPERTIES
         ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
     # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
-    if(TARGET okay-platform-selftest)
+    # Not in a Windows build: there it runs as its own step of .github/workflows/windows-tests.yml (`--ci`), on
+    # the runner's real desktop, with its report in the job summary.
+    if(TARGET okay-platform-selftest AND NOT WIN32)
         add_test(NAME platform_selftest_auto
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
         set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+        # The --ci mode the Windows workflow uses, here with no sound device at all: audio is NOT TESTED, not FAIL,
+        # and the event pump check (pushed event, resize through the X server) must pass.
+        add_test(NAME platform_selftest_ci
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --ci)
+        set_tests_properties(platform_selftest_ci PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=okay-no-such-device"
+                             PASS_REGULAR_EXPRESSION "\\[PASS\\] event pump.*RESULT: nothing failed")
     endif()
 endif()
 
@@ -4391,6 +4414,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
+# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
+add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
@@ -4652,7 +4678,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers.md): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB has its own tests below, sib_reader and sib_import): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -5092,6 +5118,16 @@ function(okay_e4_reader_test name src)
 endfunction()
 okay_e4_reader_test(ogex_reader OgexReader.cpp)
 okay_e4_reader_test(mdl_reader MdlReader.cpp)
+# Our own SIB (Silo) reader (docs/content/model_readers.md, section SIB): synthetic files with hand-computed values, instances, every
+# truncation, a mutation sweep and budgets (sib_reader), and the import seam plus, with OKAY_MODEL_CORPUS set, the one real file (sib_import).
+okay_e4_reader_test(sib_reader SibReader.cpp)   # reader source only, so it can also be built by hand under the sanitizers
+set_tests_properties(sib_reader PROPERTIES TIMEOUT 600)
+add_executable(test_sib_import test_sib_import.cpp)
+target_link_libraries(test_sib_import PRIVATE okay::engine)
+if(OKAY_OWN_SIB)
+    target_compile_definitions(test_sib_import PRIVATE OKAY_EXPECT_OWN_SIB)
+endif()
+add_test(NAME sib_import COMMAND test_sib_import WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_e4_hostile test_e4_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)

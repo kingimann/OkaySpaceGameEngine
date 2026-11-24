@@ -19,7 +19,7 @@
     "grok": {
       "prefix": "grok/",
       "name": "Grok",
-      "description": "Grok (branches grok/*; owner 2026-11-23, 'agree with grok on 422'): feature-map areas 1 to 4 (docs/feature_map/01-core-scene.md, 02-rendering-world.md, 03-modeling-import.md, 04-characters-cameras.md): improvements, new features and bug fixes (Kind: bug with a failing test first). Each piece is claimed on #422 first; files another lane owns or has an open claim on need an Agree: reply. Our own build tool and compilers (tools/okaybuild, tools/okaycc, tools/okayms) moved to the coordinator's third-party work on 2026-11-23."
+      "description": "Closed 2026-11-24 (owner: \"Continue groks work, I don't like how he works\"): Grok writes no code; its open PRs were taken over on claude/* branches and areas 1 to 4 are the coordinator's again. Grok only reports bugs on #888 (CLAUDE.md rule 24). Kept so old grok/* branches still check."
     }
   },
   "rules": [
@@ -192,7 +192,6 @@
         "editor/ScriptEditorCodeEdit.*",
         "editor/ScriptEditorWidget.hpp",
         "editor/ScriptText.hpp",
-        "editor/vendor/**",
         "docs/**/own_*.md",
         "docs/content/model_readers.md",
         "docs/platform/crypto*.md",

@@ -240,6 +240,12 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
         }
         return;
     }
+    if (in.fp && in.op == Inst::Op::Sqrt) {
+        loadXmm(s, in.a, 1, in.extra);
+        s += in.extra <= 4 ? "  sqrtss %xmm1, %xmm0\n" : "  sqrtsd %xmm1, %xmm0\n";
+        storeXmm(s, 0, in.dst, in.extra);
+        return;
+    }
     if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
         loadXmm(s, in.a, 0, in.extra);
         loadXmm(s, in.b, 1, in.extra);
@@ -320,15 +326,15 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::Shr:
         load(s, in.a, "%rax");
         load(s, in.b, "%rcx");
-        s += "  shrq %cl, %rax\n";
+        s += in.arith ? "  sarq %cl, %rax\n" : "  shrq %cl, %rax\n";
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Div:
     case Inst::Op::Mod:
         load(s, in.a, "%rax");
-        s += "  cqto\n";
+        s += in.uns ? "  xorl %edx, %edx\n" : "  cqto\n";
         load(s, in.b, "%rcx");
-        s += "  idivq %rcx\n";
+        s += in.uns ? "  divq %rcx\n" : "  idivq %rcx\n";
         store(s, in.op == Inst::Op::Div ? "%rax" : "%rdx", in.dst);
         break;
     case Inst::Op::Neg:
@@ -466,6 +472,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
     case Inst::Op::GLoad:
     case Inst::Op::GStore:
     case Inst::Op::Cvt:
+    case Inst::Op::Sqrt:
         break;
     }
 }

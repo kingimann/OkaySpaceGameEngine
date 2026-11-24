@@ -1,6 +1,6 @@
 #pragma once
-// The real download behind the Versions page: a cancellable curl child process (no shell: the arguments go straight to
-// the program, so paths and addresses with spaces, quotes or unicode stay one argument each). No SDL or ImGui.
+// The real download behind the Versions page, through the HTTP seam (okay/Platform/NativeFetch.hpp: WinHTTP on Windows,
+// our own client on Linux when on, curl only as the last fallback), plus a cancellable child-process runner. No SDL or ImGui.
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -21,7 +21,7 @@ struct RunResult {
 /// a false answer ends the program (stopped = true). Blocks until the program has ended.
 RunResult RunProcess(const std::vector<std::string>& args, const std::function<bool()>& keepGoing, int pollMs = 100);
 
-/// Download `url` to `dest` with curl: progress is the growing file's size, `cancelled()` stops it, a body bigger than
+/// Download `url` to `dest` through the HTTP seam: progress in bytes, `cancelled()` stops it, a body bigger than
 /// `maxBytes` is a failure, a full disk is DiskFull. Only addresses that IsAcceptableUrl allows are fetched.
 DownloadResult DownloadFile(const std::string& url, const std::filesystem::path& dest, std::uint64_t maxBytes,
                             const std::function<void(std::uint64_t)>& onBytes, const std::function<bool()>& cancelled);

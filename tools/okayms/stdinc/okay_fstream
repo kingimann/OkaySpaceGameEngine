@@ -1,0 +1,135 @@
+// okay-ms own standard library: the file streams of <fstream> ([fstreams]). See okay_iostream for what this version
+// does and does not do; the file operations below are declared only.
+#pragma once
+#include <okay_iostream>
+namespace std {
+// <fstream>: a device over a file. The file operations are declared only (see the top of this header).
+extern "C" {
+void* __okay_file_open(const char* path, unsigned mode);
+long long __okay_file_read(void* file, char* out, long long n);
+long long __okay_file_write(void* file, const char* data, long long n);
+long long __okay_file_seek(void* file, long long off, int dir);
+void __okay_file_close(void* file);
+}
+class filebuf : public streambuf {
+    void* file_;
+    int ahead_;  // a byte read by peek and not yet taken, or -1
+
+public:
+    filebuf() : file_(nullptr), ahead_(-1) {}
+    ~filebuf() { close(); }
+    filebuf(const filebuf&) = delete;
+    bool is_open() const { return file_ != nullptr; }
+    filebuf* open(const char* path, unsigned mode) {
+        close();
+        file_ = __okay_file_open(path, mode);
+        return file_ != nullptr ? this : nullptr;
+    }
+    filebuf* close() {
+        if (file_ == nullptr) return nullptr;
+        __okay_file_close(file_);
+        file_ = nullptr;
+        ahead_ = -1;
+        return this;
+    }
+    size_t put(const char* s, size_t n) {
+        if (file_ == nullptr) return 0;
+        const long long done = __okay_file_write(file_, s, (long long)n);
+        return done < 0 ? 0 : (size_t)done;
+    }
+    int get() {
+        if (ahead_ >= 0) {
+            const int c = ahead_;
+            ahead_ = -1;
+            return c;
+        }
+        char c = 0;
+        return file_ != nullptr && __okay_file_read(file_, &c, 1) == 1 ? (int)(unsigned char)c : -1;
+    }
+    int peek() {
+        if (ahead_ < 0) ahead_ = get();
+        return ahead_;
+    }
+    streampos seek(streamoff off, int dir, unsigned which) {
+        (void)which;
+        if (file_ == nullptr) return -1;
+        if (ahead_ >= 0 && dir == ios_base::cur) --off;
+        ahead_ = -1;
+        return __okay_file_seek(file_, off, dir);
+    }
+    streampos tell(unsigned which) {
+        (void)which;
+        if (file_ == nullptr) return -1;
+        const long long at = __okay_file_seek(file_, 0, ios_base::cur);
+        return ahead_ >= 0 && at > 0 ? at - 1 : at;
+    }
+};
+class ifstream : public iostream {
+    filebuf fb_;
+
+public:
+    ifstream() { buf_ = &fb_; }
+    explicit ifstream(const string& path, unsigned mode = ios_base::in) {
+        buf_ = &fb_;
+        open(path, mode);
+    }
+    explicit ifstream(const char* path, unsigned mode = ios_base::in) {
+        buf_ = &fb_;
+        open(string(path), mode);
+    }
+    ifstream(const ifstream&) = delete;
+    void open(const string& path, unsigned mode = ios_base::in) {
+        if (fb_.open(path.c_str(), mode | ios_base::in) == nullptr) setstate(failbit);
+        else clear();
+    }
+    bool is_open() const { return fb_.is_open(); }
+    void close() {
+        if (fb_.close() == nullptr) setstate(failbit);
+    }
+    filebuf* rdbuf() { return &fb_; }
+};
+class ofstream : public iostream {
+    filebuf fb_;
+
+public:
+    ofstream() { buf_ = &fb_; }
+    explicit ofstream(const string& path, unsigned mode = ios_base::out) {
+        buf_ = &fb_;
+        open(path, mode);
+    }
+    explicit ofstream(const char* path, unsigned mode = ios_base::out) {
+        buf_ = &fb_;
+        open(string(path), mode);
+    }
+    ofstream(const ofstream&) = delete;
+    void open(const string& path, unsigned mode = ios_base::out) {
+        if (fb_.open(path.c_str(), mode | ios_base::out) == nullptr) setstate(failbit);
+        else clear();
+    }
+    bool is_open() const { return fb_.is_open(); }
+    void close() {
+        if (fb_.close() == nullptr) setstate(failbit);
+    }
+    filebuf* rdbuf() { return &fb_; }
+};
+class fstream : public iostream {
+    filebuf fb_;
+
+public:
+    fstream() { buf_ = &fb_; }
+    explicit fstream(const string& path, unsigned mode = ios_base::in | ios_base::out) {
+        buf_ = &fb_;
+        open(path, mode);
+    }
+    fstream(const fstream&) = delete;
+    void open(const string& path, unsigned mode = ios_base::in | ios_base::out) {
+        if (fb_.open(path.c_str(), mode) == nullptr) setstate(failbit);
+        else clear();
+    }
+    bool is_open() const { return fb_.is_open(); }
+    void close() {
+        if (fb_.close() == nullptr) setstate(failbit);
+    }
+    filebuf* rdbuf() { return &fb_; }
+};
+}  // namespace std

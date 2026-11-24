@@ -143,7 +143,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_OFF");
         SetImportBackend(".off", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".off") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".off") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "cube.off", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_OFF") != std::string::npos);
             CHECK(ImportableExtensions().find(".off") == std::string::npos);

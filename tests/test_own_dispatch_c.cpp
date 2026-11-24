@@ -89,12 +89,12 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         { ImportedModel e0; CHECK(ImportModelData(path, e0, ImportBackend::Default, false, &err) && e0.backend == "own"); }
         TestSetEnv("OKAY_THIRD_PARTY", "1");
-        CHECK(EffectiveImportBackend(c.ext) == (AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own));
+        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestUnsetEnv("OKAY_THIRD_PARTY");
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestSetEnv(c.env, "0");
 #endif
-        if (!AssimpAvailable()) {
+        {
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);
         }

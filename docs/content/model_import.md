@@ -6,6 +6,10 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`; ufbx was deleted on 2026-11-23). Our own readers are the only
+> model readers; a file one refuses fails the import (no fallback). Nendo `.ndo` is the one extension dropped
+> (`docs/content/model_readers.md`, section NDO). Text below that describes Assimp as a fallback or backend is history.
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
 > OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,

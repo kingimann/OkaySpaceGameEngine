@@ -165,4 +165,32 @@ private:
     std::vector<Step> m_steps;
 };
 
+// ---- CI mode -------------------------------------------------------------------------------
+/// A step that needs hardware a build machine may not have (an OpenGL driver, a sound card). On a person's PC a
+/// failure is a FAIL. With --ci (a cloud runner: no GPU driver, no audio device) it is NOT TESTED, so the run says
+/// honestly that the machine could not show it, and never a PASS. A success is a PASS either way.
+inline Status HardwareStatus(bool ok, bool ci) { return ok ? Status::Pass : (ci ? Status::Skip : Status::Fail); }
+/// The detail text for such a step: the reason, plus why it was not counted as a failure under --ci.
+inline std::string HardwareDetail(const std::string& why, bool ci) {
+    return ci ? why + " (counted as not tested: --ci, this machine may have none)" : why;
+}
+
+/// The event pump check: `pushedBack` = an event given to Backend::PushEvent came back through PollEvent;
+/// `sawResize` / `evW` x `evH` = the last WindowResized event that arrived after Window::SetSize(askW, askH) (that one
+/// goes through the operating system's own message queue); `nowW` x `nowH` = the size the window reports afterwards;
+/// `beforeW` x `beforeH` = its size before. Pass when the pushed event came back, a resize event arrived, it carries
+/// the size the window reports, and that size changed. The exact size asked for is not required: DPI scaling, a
+/// window manager or a small screen can give another one.
+inline Status PumpVerdict(bool pushedBack, bool sawResize, int evW, int evH, int nowW, int nowH, int beforeW, int beforeH,
+                          int askW, int askH, std::string& detail) {
+    auto sz = [](int w, int h) { return std::to_string(w) + "x" + std::to_string(h); };
+    detail = pushedBack ? "a pushed event came back" : "the pushed event did not come back";
+    detail += "; asked for " + sz(askW, askH) + ", the window reports " + sz(nowW, nowH);
+    const bool changed = nowW != beforeW || nowH != beforeH;
+    if (!sawResize) detail += ": no resize event arrived";
+    else detail += " and the resize event said " + sz(evW, evH);
+    if (!changed) detail += "; the size did not change from " + sz(beforeW, beforeH);
+    return pushedBack && sawResize && changed && evW == nowW && evH == nowH ? Status::Pass : Status::Fail;
+}
+
 } // namespace okay::selftest

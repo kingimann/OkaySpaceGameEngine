@@ -1,0 +1,83 @@
+// <queue> for okay-cc (ISO/IEC 14882 [queue], [priority.queue]). Our own header. queue keeps its
+// elements in a vector and a front index; priority_queue is a binary heap in its container with the
+// comparison object (the top is the element no other is "less" than).
+#pragma once
+#include <functional>
+#include <utility>
+#include <vector>
+namespace std {
+template <typename T>
+class queue {
+public:
+    queue() : head_(0) {}
+    bool empty() const { return head_ == items_.size(); }
+    unsigned long size() const { return items_.size() - head_; }
+    T &front() { return items_[head_]; }
+    T &back() { return items_.back(); }
+    void push(const T &v) { items_.push_back(v); }
+    // The popped front is given back: when it is empty, or when half the storage is popped, the
+    // rest moves into fresh storage so a queue that never empties stays bounded.
+    void pop() {
+        ++head_;
+        if (head_ == items_.size()) {
+            vector<T> none;
+            items_.swap(none);
+            head_ = 0;
+        } else if (head_ >= 16 && head_ * 2 >= items_.size()) {
+            vector<T> rest;
+            rest.reserve(items_.size() - head_);
+            for (unsigned long i = head_; i < items_.size(); ++i) rest.push_back(items_[i]);
+            items_.swap(rest);
+            head_ = 0;
+        }
+    }
+
+private:
+    vector<T> items_;
+    unsigned long head_;
+};
+
+template <typename T, typename C = vector<T>, typename Less = less<T> >
+class priority_queue {
+public:
+    bool empty() const { return c_.empty(); }
+    unsigned long size() const { return c_.size(); }
+    T &top() { return c_.front(); }
+    void push(const T &v) {
+        c_.push_back(v);
+        unsigned long i = c_.size() - 1;
+        while (i > 0) {
+            unsigned long parent = (i - 1) / 2;
+            if (!less_(c_[parent], c_[i])) break;
+            T t = c_[parent];
+            c_[parent] = c_[i];
+            c_[i] = t;
+            i = parent;
+        }
+    }
+    void pop() {
+        unsigned long n = c_.size();
+        if (n == 0) return;
+        c_[0] = c_[n - 1];
+        c_.pop_back();
+        n = n - 1;
+        unsigned long i = 0;
+        for (;;) {
+            unsigned long l = 2 * i + 1;
+            unsigned long r = l + 1;
+            unsigned long big = i;
+            if (l < n && less_(c_[big], c_[l])) big = l;
+            if (r < n && less_(c_[big], c_[r])) big = r;
+            if (big == i) break;
+            T t = c_[i];
+            c_[i] = c_[big];
+            c_[big] = t;
+            i = big;
+        }
+    }
+
+private:
+    C c_;
+    Less less_;
+};
+}  // namespace std

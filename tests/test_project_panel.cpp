@@ -616,6 +616,13 @@ int main() {
         std::string fbx = std::string("Kaydara FBX Binary ") + '\0' + "mtllib tex/hero.mtl\n";
         out = RewriteReferences(fbx, td.at("models/hero.fbx"), td.at("models/hero.fbx"), mats, td.assets(), &n);
         CHECK(n == 0 && out == fbx);
+        // An ASCII .fbx and a .dae are text: their texture strings are rewritten in place.
+        const std::string afbx = "; FBX 7.4.0 project file\n    RelativeFilename: \"tex/hero.mtl\"\n";
+        out = RewriteReferences(afbx, td.at("models/hero.fbx"), td.at("models/hero.fbx"), mats, td.assets(), &n);
+        CHECK(n == 1 && Has(out, "RelativeFilename: \"tex/new.mtl\""));
+        const std::string dae = "<COLLADA><image><init_from>tex/hero.mtl</init_from></image></COLLADA>\n";
+        out = RewriteReferences(dae, td.at("models/hero.dae"), td.at("models/hero.dae"), mats, td.assets(), &n);
+        CHECK(n == 1 && Has(out, "<init_from>tex/new.mtl</init_from>"));
     }
 
     RUN_SUITE("nothing outside the project");

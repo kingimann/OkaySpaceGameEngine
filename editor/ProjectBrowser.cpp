@@ -310,10 +310,7 @@ std::vector<okay::FoundRef> ExtractFor(const std::string& referrerName, const st
     const std::string e = Lower(ExtOf(referrerName));
     if (e == ".okayscene" || e == ".okayprefab") return okay::ExtractSceneRefs(text);
     if (e == ".okaymat") return okay::ExtractMaterialRefs(text);
-    if (e == ".obj" || e == ".mtl" || e == ".dae" || e == ".fbx") {
-        if (text.find('\0') != std::string::npos) return {};
-        return okay::ExtractModelRefs(text);
-    }
+    if (e == ".obj" || e == ".mtl" || e == ".dae" || e == ".fbx") return okay::ExtractModelRefs(text);   // nothing from a binary .fbx
     return okay::ExtractTextRefs(text);
 }
 

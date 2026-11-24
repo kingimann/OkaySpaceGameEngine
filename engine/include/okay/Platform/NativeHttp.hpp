@@ -234,11 +234,23 @@ inline bool ParseU64(const std::string& t, uint64_t& v) {
 /// `state` hands the request back and forth, so the cancel callback and the handle are only touched by one thread at a time:
 /// 0 = the calling thread is running (it may call cancel/progress), 1 = it is blocked in WinHTTP (the watcher may poll),
 /// 2 = the watcher is polling right now.
+///
+/// A closed handle is never used by a new request (PR #1186 review). The calling thread sets state 1 just BEFORE it enters
+/// the WinHTTP call, so the watcher can close `req` in the short gap before the call really starts; the call then runs on
+/// a closed handle value, and WinHTTP could have given that value to a new handle opened meanwhile on another thread. Two
+/// things stop that: Block() looks at `closed` after it sets state 1 and does not make the call when the watcher has
+/// already closed the handle; and while any closed handle has not yet been taken back by its calling thread (Unblock()),
+/// StaleHandles() is above 0 and every WinHttpConnect / WinHttpOpenRequest in this file waits (WaitNoStaleHandles), so no
+/// handle of ours can be given the old value while a caller may still pass it to WinHTTP. A call on the closed value then
+/// fails at once with ERROR_INVALID_HANDLE, and Unblock() reports the watcher's reason as before.
+inline std::atomic<int>& StaleHandles() { static std::atomic<int> n{0}; return n; }
+inline void WaitNoStaleHandles() { while (StaleHandles().load() > 0) Sleep(1); }
 struct WinWatch {
     std::atomic<int> state{0};
     std::atomic<int> stop{0};
     std::atomic<int> closed{0};    ///< 1 = the watcher closed `req` (do not use or close it again)
     std::atomic<int> why{0};       ///< 1 = cancelled, 2 = the whole call took too long
+    std::atomic<int> released{0};  ///< 1 = this watch's StaleHandles() count was given back
     HINTERNET req = nullptr;
     const std::function<bool()>* cancel = nullptr;
     DWORD t0 = 0, totalMs = 0;
@@ -257,6 +269,7 @@ struct WinWatch {
             if (why) {
                 w->why.store(why);
                 w->closed.store(1);
+                StaleHandles().fetch_add(1);   // before the close: no new handle may take this value until Unblock()
                 WinHttpCloseHandle(w->req);
                 w->state.store(1);
                 return 0;
@@ -269,18 +282,29 @@ struct WinWatch {
         wake = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (wake) thread = CreateThread(nullptr, 0, &WinWatch::Main, this, 0, nullptr);
     }
-    /// Before a blocking WinHTTP call.
-    void Block() { state.store(1); }
+    /// Before a blocking WinHTTP call. False = the watcher has already closed the request: do not make the call
+    /// (the request is taken back; the caller returns with the watcher's reason).
+    bool Block() {
+        state.store(1);
+        if (closed.load() == 0) return true;
+        Unblock();
+        return false;
+    }
     /// After it: waits while the watcher is polling, then takes the request back. True = the watcher closed it.
     bool Unblock() {
         for (;;) { int expect = 1; if (state.compare_exchange_strong(expect, 0)) break; Sleep(1); }
-        return closed.load() != 0;
+        if (closed.load() == 0) return false;
+        Release();
+        return true;
     }
+    /// The calling thread no longer passes the closed value to WinHTTP: new handles may be opened again.
+    void Release() { if (closed.load() != 0 && released.exchange(1) == 0) StaleHandles().fetch_sub(1); }
     ~WinWatch() {
         stop.store(1);
         if (wake) SetEvent(wake);
         if (thread) { WaitForSingleObject(thread, INFINITE); CloseHandle(thread); }
         if (wake) CloseHandle(wake);
+        Release();   // (the thread has ended: `closed` is final)
     }
 };
 
@@ -318,9 +342,11 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
         std::stringstream ss; ss << f.rdbuf(); payload = ss.str();
         if (f.bad()) { r.error = "cannot read the body file"; return r; }
     }
+    WaitNoStaleHandles();   // (see WinWatch: never reuse a handle value a caller may still pass to WinHTTP)
     HINTERNET con = WinHttpConnect(ses, host.c_str(), uc.nPort, 0);
     if (!con) { r.error = "connect: winhttp error " + std::to_string((unsigned long)GetLastError()); return r; }
     const std::wstring wmethod = Widen(method);
+    WaitNoStaleHandles();
     HINTERNET req = WinHttpOpenRequest(con, wmethod.c_str(), object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                        WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
     if (!req) { WinHttpCloseHandle(con); r.error = "open: winhttp error " + std::to_string((unsigned long)GetLastError()); return r; }
@@ -361,14 +387,14 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
         return done(watch.why.load() == 1 ? "cancelled" : "timeout: the whole call took too long", maybeSent);
     };
     if (ro.cancel && ro.cancel()) return done("cancelled", false);
-    watch.Block();
+    if (!watch.Block()) return stopped(false);   // closed before the call started: nothing was sent
     BOOL ok = WinHttpSendRequest(req, hdrs.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : hdrs.c_str(), hdrs.empty() ? 0 : (DWORD)-1L,
                                  payload.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)payload.data(),
                                  (DWORD)payload.size(), (DWORD)payload.size(), 0);
     DWORD e = ok ? 0 : GetLastError();
     if (watch.Unblock()) return stopped(true);   // (bytes may have gone out: never re-send a POST by curl)
     if (!ok) return done((e == ERROR_WINHTTP_TIMEOUT ? "timeout: winhttp error " : "connect: winhttp error ") + std::to_string((unsigned long)e), false);
-    watch.Block();
+    if (!watch.Block()) return stopped(true);
     ok = WinHttpReceiveResponse(req, nullptr);
     e = ok ? 0 : GetLastError();
     if (watch.Unblock()) return stopped(true);
@@ -421,7 +447,7 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
             if (ro.cancel && ro.cancel()) return done("cancelled", true);
             if ((DWORD)(GetTickCount() - t0) > totalMs) return done("timeout: the whole call took too long", true);
             DWORD avail = 0;
-            watch.Block();
+            if (!watch.Block()) return stopped(true);
             ok = WinHttpQueryDataAvailable(req, &avail);
             e = ok ? 0 : GetLastError();
             if (watch.Unblock()) return stopped(true);
@@ -429,7 +455,7 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
             if (avail == 0) break;
             if (avail > buf.size()) buf.resize(avail);
             DWORD n = 0;
-            watch.Block();
+            if (!watch.Block()) return stopped(true);
             ok = WinHttpReadData(req, buf.data(), avail, &n);
             e = ok ? 0 : GetLastError();
             if (watch.Unblock()) return stopped(true);

@@ -410,6 +410,68 @@ static void TestReviewFixes() {
     }
 }
 
+// PR #1186 review follow-up: a download with an expected SHA-256 but no validator (no ETag, no Last-Modified) is dropped,
+// and the resume (sent without If-Range, since there is nothing to send) gets the tail of a file that changed on the
+// server. The glued file fails the checksum; the download must then fetch the file once more from byte 0 instead of
+// ending as ChecksumMismatch. A server whose file really does not match still ends as ChecksumMismatch, after that one
+// extra try (and a download that was never resumed is not tried again).
+static void TestChecksumAfterResume() {
+    const std::string a(6000, 'a'), b(6000, 'b');
+    std::atomic<int> fulls{0}, ranges{0};
+    Srv s;
+    s.handler = [&](int, int, const std::string& h, int c) {
+        const std::string path = PathOf(h);
+        const std::string& now = path == "/bad" ? a : (fulls.load() == 0 ? a : b);   // /changes: A first, then B
+        const size_t rp = h.find("Range: bytes=");
+        if (rp != std::string::npos) {
+            ++ranges;
+            const size_t from = (size_t)std::strtoull(h.c_str() + rp + 13, nullptr, 10);
+            const std::string& tail = path == "/bad" ? a : b;
+            SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Length: " + std::to_string(tail.size() - from) + "\r\nContent-Range: bytes " +
+                       std::to_string(from) + "-" + std::to_string(tail.size() - 1) + "/" + std::to_string(tail.size()) + "\r\n\r\n" + tail.substr(from));
+            return true;
+        }
+        const int n = fulls++;
+        if (n == 0) {   // the first answer is cut in the middle: the client resumes with Range on its next try
+            SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(now.size()) + "\r\n\r\n" + now.substr(0, 2500));
+            return false;
+        }
+        SendAll(c, Ok(now));
+        return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    const fs::path dir = fs::temp_directory_path() / ("okay_nf_sha_" + std::to_string(::getpid()));
+    std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+    const fs::path want = dir / "want.bin";
+    { std::ofstream o(want, std::ios::binary); o << b; }
+    const std::string shaB = fetch_detail::Sha256File(want);
+    {
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/changes", dir / "out.bin", sp);
+        CHECK(r.outcome == OwnOutcome::Ok);
+        CHECK(ranges.load() == 1 && fulls.load() == 2);   // cut, resumed onto the new file, then fetched again from byte 0
+        CHECK(Slurp((dir / "out.bin").string()) == b);
+        if (r.outcome != OwnOutcome::Ok) std::printf("  outcome %d, attempts %d, error %s\n", (int)r.outcome, r.attempts, r.error.c_str());
+    }
+    {   // the server's file never matches: still ChecksumMismatch (one extra try from byte 0, not a loop), nothing kept
+        fulls = 0; ranges = 0;
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/bad", dir / "bad.bin", sp);
+        CHECK(r.outcome == OwnOutcome::ChecksumMismatch);
+        CHECK(ranges.load() == 1 && fulls.load() == 2);
+        CHECK(!fs::exists(dir / "bad.bin"));
+    }
+    {   // never resumed (the first answer is whole): a mismatch is final at once
+        fulls = 1; ranges = 0;
+        OwnDownloadSpec sp; sp.retries = 1; sp.retryDelayMs = 10; sp.expectedSha256 = shaB;
+        const OwnDownloadResult r = FetchToFile(base + "/bad", dir / "bad.bin", sp);
+        CHECK(r.outcome == OwnOutcome::ChecksumMismatch && fulls.load() == 2 && ranges.load() == 0);
+    }
+    s.Stop();
+    fs::remove_all(dir, ec);
+}
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
@@ -420,6 +482,7 @@ int main() {
     TestProxyRefusal();
     TestSeam();
     TestReviewFixes();
+    TestChecksumAfterResume();
     std::printf("native_fetch: %d checks, %d failed, %d skipped\n", g_checks, g_fail, g_skips);
     return g_fail ? 1 : 0;
 }

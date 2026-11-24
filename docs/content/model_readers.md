@@ -786,7 +786,7 @@ Not verified on real files: `MESH` (no real file has one; synthetic only), polyg
 
 *Was `docs/own_fbx_reader.md` until 2026-11-20.*
 
-Status: **the default FBX reader since 2026-11-18 (#982), with ufbx as the fallback.** ufbx (`engine/third_party/ufbx`) is still compiled in and reads any file ours refuses; `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` sends every file to ufbx. Nothing has been removed. (This page said "off by default" until 2026-11-21; the CMake option has been `ON` since #982.) This follows stage 2 of `docs/status/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
+Status: **the only FBX reader since 2026-11-23.** ufbx (`engine/third_party/ufbx`), its import path and the `OKAY_OWN_FBX` switch are deleted. A file this reader refuses fails the import with the reader's reason; no other reader is asked. (It was the default from 2026-11-18, #982, with ufbx as the fallback.)
 
 ### What it is
 
@@ -794,20 +794,18 @@ Written from the public description of the FBX format, with no code from ufbx, t
 
 | File | What |
 |---|---|
-| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs, the on/off switch |
-| `engine/src/Render/FbxReader.cpp` | Our own zlib/deflate decoder, binary FBX 7.x reader (32-bit and 64-bit record offsets), ASCII FBX reader |
+| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs |
+| `engine/src/Render/FbxReader.cpp` | Binary FBX reader, 6.0 to 7.x (32-bit and 64-bit record offsets), ASCII FBX reader, the version message; zlib arrays through the engine inflate |
 | `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes, skins, blend shapes, materials, textures, baked animation |
 | `engine/src/Render/FbxLegacy.hpp` | FBX 6.0 / 6.1 element tree rewritten in the 7.x layout before the scene is built (section "FBX 6.x and 7.0") |
-| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the same GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips the ufbx path builds |
+| `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips |
 | `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) and `tests/assets/fbx/legacy/` (6.0, 6.1, 7.0, and two 5.0 files that must be refused) |
 
 The reader files use the standard library and one header-only file of our own, `engine/include/okay/Core/Inflate.hpp` (the engine's shared inflate; no `<mutex>`/`<thread>`, no engine library), so the hostile-input test still builds them on their own under sanitizers (it only needs `engine/include` on the include path).
 
 ### Turning it on
 
-- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `ON` since #982; `OFF` makes ufbx the default).
-- Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
-- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
+Always on: there is no CMake option or environment variable for it any more. A leftover `OKAY_OWN_FBX=0` or `OKAY_THIRD_PARTY=1` changes nothing for FBX.
 
 ### What it handles
 

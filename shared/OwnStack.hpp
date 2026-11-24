@@ -7,7 +7,7 @@
 //     run-time switches of every own backend that can be chosen without rebuilding (kRuntimeSettings below), each only
 //     when that variable is not already set, so a developer's own OKAY_OWN_3DS=0 still wins. Then it writes ONE line
 //     to stderr saying which parts are ours and which are third-party:
-//         [okay] stack: platform=sdl2 http=curl readers=own(fbx,dae,...)+assimp crypto=libsodium ui=imgui
+//         [okay] stack: platform=sdl2 http=curl readers=own(fbx,dae,...) crypto=libsodium ui=imgui
 //  2. Describe(): the same line as a string (the editor's About popup shows it; the tests check its text).
 //
 // Cryptography is NEVER switched on here (owner rule: it needs an outside review first). It is chosen at build time only
@@ -96,13 +96,12 @@ struct Info {
     std::string platform;               // "sdl2" / "own"
     std::string http;                   // "curl" / "own" / "winhttp"
     std::vector<std::string> ownReaders;   // short names of the opt-in formats read by our own reader
-    bool assimp = false;                // Assimp is compiled in (the fallback, and the reader of the formats not listed)
     std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
     std::string ui;                     // "imgui" / "okayui" / "none"
     std::string switches;               // ids turned on from the Settings screen (OwnSwitches.hpp), "" = none
 };
 
-/// Pure text: `[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui`.
+/// Pure text: `[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui`.
 inline std::string FormatLine(const Info& i) {
     std::string readers;
     auto add = [&](const std::string& part) { if (!readers.empty()) readers += '+'; readers += part; };
@@ -111,7 +110,6 @@ inline std::string FormatLine(const Info& i) {
         for (std::size_t k = 0; k < i.ownReaders.size(); ++k) { if (k) l += ','; l += i.ownReaders[k]; }
         add(l + ")");
     }
-    if (i.assimp) add("assimp");
     if (readers.empty()) readers = "none";
     return "[okay] stack: platform=" + i.platform + " http=" + i.http + " readers=" + readers + " crypto=" + i.crypto + " ui=" + i.ui +
            (i.switches.empty() ? std::string() : " switches=" + i.switches);
@@ -152,9 +150,6 @@ inline Info Gather(const char* ui = nullptr) {
     i.ownReaders.push_back("fbx");   // the only FBX reader
     for (const ReaderSwitch& r : Readers())
         if (okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own) i.ownReaders.push_back(r.label);
-#ifdef OKAY_HAVE_ASSIMP
-    i.assimp = true;
-#endif
 
 #if defined(OKAY_OWN_CRYPTO)
     i.crypto = CryptoLabel(true,

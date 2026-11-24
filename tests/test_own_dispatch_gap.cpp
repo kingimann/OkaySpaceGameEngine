@@ -91,13 +91,13 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         { ImportedModel e0; CHECK(ImportModelData(path, e0, ImportBackend::Default, false, &err) && e0.backend == "own"); }
         TestSetEnv("OKAY_THIRD_PARTY", "1");
-        CHECK(EffectiveImportBackend(c.ext) == (AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own));
+        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestUnsetEnv("OKAY_THIRD_PARTY");
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         TestSetEnv(c.env, "0");
 #endif
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-        if (!AssimpAvailable()) {
+        {
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);

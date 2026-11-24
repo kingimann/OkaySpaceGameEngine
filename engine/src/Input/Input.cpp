@@ -202,6 +202,7 @@ float Ramp(float mag, float dead, float outer) {
 } // namespace
 
 Vec2 Input::ProcessStick(const Vec2& raw, const StickSettings& s) {
+    if (!std::isfinite(raw.x) || !std::isfinite(raw.y)) return {0.0f, 0.0f};
     if (s.shape == StickSettings::Shape::Axial) {
         auto axis = [&](float v) {
             const float t = Curve(Ramp(std::fabs(v), s.deadZone, s.outerZone), s.curve);
@@ -244,6 +245,7 @@ void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, floa
     p.trigger[1] = Clamp01(rt);
     p.connected = connected;
 }
+
 void Input::FeedGamepadRaw(int player, const Vec2& rawLeft, const Vec2& rawRight, float rawLT, float rawRT,
                            unsigned buttonMask, bool connected) {
     const int i = PadIndex(player);
@@ -348,8 +350,12 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
     if (!t) return;
     t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
     t->position = position;
-    if (state == 2) t->phase = Touch::Phase::Ended;     // t->began stays true when it went down this frame
-    else if (t->phase != Touch::Phase::Began) t->phase = Touch::Phase::Moved;
+    if (state == 2) t->phase = Touch::Phase::Ended;
+    else if (state == 1) {
+        // A press and a move in the same frame still report Began. The next sample,
+        // after that Began has been released, is the move.
+        if (!(t->phase == Touch::Phase::Began && t->began)) t->phase = Touch::Phase::Moved;
+    }
 }
 
 float Input::MouseWheel() { return s_mouseWheel; }

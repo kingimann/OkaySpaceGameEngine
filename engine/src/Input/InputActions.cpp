@@ -676,34 +676,15 @@ bool InputActions::Up(const std::string& name, int p) { float t = 0.5f; const au
 float InputActions::Value(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s ? s->value : 0.0f; }
 Vec2 InputActions::Vector(const std::string& name, int p) { float t = 0.5f; const auto* s = PadOf(name, p, t); return s ? s->vector : Vec2{0.0f, 0.0f}; }
 
-bool InputActions::Buffered(const std::string& name, float window) {
-    const ActionDef* a = Def(name);
-    return a && !a->pressConsumed && a->pressedAt > -1.0e8 && T().Time() - a->pressedAt <= (double)window;
-}
-bool InputActions::Consume(const std::string& name) {
-    ActionDef* a = T().FindNoCase(name);
-    if (!a || a->pressConsumed || a->pressedAt < -1.0e8) return false;
-    a->pressConsumed = true;
-    return true;
-}
-bool InputActions::DoubleTap(const std::string& name, float window) {
-    const ActionDef* a = Def(name);
-    return a && a->pressed && a->prevPressedAt > -1.0e8 && a->pressedAt - a->prevPressedAt <= (double)window;
-}
-float InputActions::HeldFor(const std::string& name) {
-    const ActionDef* a = Def(name);
-    return a && a->heldSince >= 0.0 ? (float)(T().Time() - a->heldSince) : 0.0f;
-}
+bool InputActions::Buffered(const std::string& name, float window) { return T().Buffered(name, window); }
+bool InputActions::Consume(const std::string& name) { return T().ConsumeAny(name); }
+bool InputActions::DoubleTap(const std::string& name, float window) { return T().DoubleTap(name, window); }
+float InputActions::HeldFor(const std::string& name) { return T().HeldFor(name); }
 float InputActions::HoldProgress(const std::string& name, float seconds) {
     if (!(seconds > 0.0f)) return 0.0f;
     return std::min(1.0f, HeldFor(name) / seconds);
 }
-bool InputActions::HoldReached(const std::string& name, float seconds) {
-    const ActionDef* a = Def(name);
-    if (!a || a->heldSince < 0.0 || !(seconds > 0.0f)) return false;
-    const double held = T().Time() - a->heldSince;
-    return held >= (double)seconds && held - T().LastDt() < (double)seconds;   // crossed the line during this very frame
-}
+bool InputActions::HoldReached(const std::string& name, float seconds) { return T().HoldReached(name, seconds); }
 
 const InputBinding* InputActions::Current(const std::string& name, bool gamepad) {
     const Action* a = Find(name);

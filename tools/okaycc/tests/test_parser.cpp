@@ -256,7 +256,7 @@ int main() {
              ")\n");
 
     checkBounded("cpp bail",
-                 "namespace N {\nusing namespace std;\n}\n",
+                 "namespace N {\n123;\n}\n",  // (using namespace is supported since round 19)
                  "expected a declaration");
     {
         std::string deep = "int f(){return ";

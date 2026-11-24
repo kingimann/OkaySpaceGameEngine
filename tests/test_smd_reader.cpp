@@ -167,7 +167,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_SMD");
         SetImportBackend(".smd", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable() && EffectiveImportBackend(".smd") == ImportBackend::Default) {
+        if (EffectiveImportBackend(".smd") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "arm.smd", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_SMD") != std::string::npos);
             CHECK(ImportableExtensions().find(".smd") == std::string::npos);

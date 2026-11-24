@@ -162,7 +162,7 @@ one release later. The full plan: [docs/status/own_code_roadmap.md](docs/status/
 what is still outside code: [docs/status/THIRD_PARTY.md](docs/status/THIRD_PARTY.md).
 
 **Ours and on by default:** the engine core, physics, our glTF and OBJ readers, our own readers for many other model
-formats (switched on 2026-11-17; Assimp stays as the fallback where it is built), our own FBX reader (the only FBX
+formats (switched on 2026-11-17, and the only model readers since Assimp was removed on 2026-11-24), our own FBX reader (the only FBX
 reader since ufbx was deleted; it reads FBX 6.0 to 7.x), the texture library, and since 2.903.3 the OkayUI screens
 and Inspector, the OkayUI renderer and our own WAV reader (Settings > Experimental starts with every box ticked; untick one to go back).
 
@@ -170,7 +170,7 @@ and Inspector, the OkayUI renderer and our own WAV reader (Settings > Experiment
 is not yet), our own HTTP client (replaces curl), our own build tool `okay-build` (replaces CMake) and our own
 compiler work.
 
-**Outside code still in use:** SDL2, Dear ImGui, Assimp (on in the Windows release build), curl, libsodium and a
+**Outside code still in use:** SDL2, Dear ImGui, curl, libsodium and a
 vendored text editor widget. No new outside libraries or SDKs may be added.
 
 **The crypto exception.** Encryption cannot be replaced on our word: it needs an outside review first, and the owner
@@ -250,7 +250,6 @@ header lists its other settings.
 | `OKAY_BUILD_PLAYER` | OFF | The game player runtime (needs SDL2). |
 | `OKAY_USE_SODIUM` | ON | Packet encryption with libsodium. |
 | `OKAY_OWN_CRYPTO` | OFF | Our own crypto instead of libsodium. Unreviewed; keep off. |
-| `OKAY_USE_ASSIMP` | OFF | Assimp as a fallback for model formats (on in the Windows release script). |
 | `OKAY_OWN_<FORMAT>` | mostly ON | Our own reader for one model or sound format. |
 
 `./launch.sh` (Linux) builds the launcher once and hands off to it. The other build scripts are in `scripts/`

@@ -407,6 +407,21 @@ void TestGit(const fs::path& tmp) {
     Write(root / "Assets" / "Never.okayscene", LevelText("1", "1"));
     CHECK(Cli({"--project", P, "vc", "undo", (root / "Assets" / "Never.okayscene").string()}, s) == 1 && Has(s.err, "was never saved"));
     fs::remove(root / "Assets" / "Never.okayscene");
+    // A file named relative to --project, from another folder (this program runs in the build folder).
+    Write(scene, LevelText("6", "0"));
+    CHECK(Cli({"--project", P, "vc", "history", "Assets/Level.okayscene"}, s) == 0 && Has(s.out, "Moved A"));
+    CHECK(Cli({"--project", P, "vc", "undo", "Assets/Level.okayscene"}, s) == 0 && Has(s.out, "is back to how it was"));
+    CHECK(PositionOf(Read(scene), "A", a) && a.x == 4.0f);
+    // File names are not patterns: [x] names the file "[x].okayscene", not x.okayscene, and * is just a letter.
+    const fs::path gx = root / "Assets" / "G" / "x.okayscene", gb = root / "Assets" / "G" / "[x].okayscene";
+    Write(gx, LevelText("1", "0"));
+    Write(gb, LevelText("2", "0"));
+    CHECK(Cli({"--project", P, "vc", "save", "glob names"}, s) == 0);
+    Write(gx, LevelText("3", "0"));   // only x.okayscene changes
+    CHECK(Cli({"--project", P, "vc", "undo", "Assets/G/[x].okayscene"}, s) == 0 && Has(s.out, "no changes since the last save"));
+    CHECK(PositionOf(Read(gx), "A", a) && a.x == 3.0f);   // the other file was not put back
+    CHECK(Cli({"--project", P, "vc", "history", "Assets/G/*.okayscene"}, s) == 0 && Has(s.out, "has never been saved"));
+    CHECK(Cli({"--project", P, "vc", "undo", "Assets/G/x.okayscene"}, s) == 0 && Has(s.out, "is back to how it was"));
 
     // Branches: a clean three-way scene merge through git's merge driver.
     CHECK(Cli({"--project", P, "vc", "branch"}, s) == 0 && Has(s.out, "* main"));
@@ -765,6 +780,39 @@ void TestEnginePlan(const fs::path& tmp) {
     CHECK(Has(ps1, "okay engine build"));   // and it points at the C++ copy
 }
 
+/// What okay engine build --clean may delete, and paths compared with and without case.
+void TestEngineClean(const fs::path& tmp) {
+    RUN_SUITE("okay engine: --clean deletes only a build folder of this checkout");
+    using okaycli::engine::CleanRefusal;
+    using okaycli::engine::PathWithin;
+    const fs::path src = tmp / "clean-src", b = tmp / "clean-build";
+    fs::create_directories(src);
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "no CMakeCache.txt"));
+    Write(b / "CMakeCache.txt", "# a cache\nCMAKE_HOME_DIRECTORY:INTERNAL=" + src.string() + "\nOTHER:STRING=x\n");
+    CHECK(CleanRefusal(b.string(), src.string(), false).empty());
+    CHECK(CleanRefusal((b / ".").string() + "/", src.string() + "/", false).empty());   // spelled differently, same folders
+    Write(b / "CMakeLists.txt", "project(Game)\n");
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "CMakeLists.txt"));
+    fs::remove(b / "CMakeLists.txt");
+    Write(b / "project.okayproj", "name Game\n");
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "project.okayproj"));
+    fs::remove(b / "project.okayproj");
+    fs::create_directories(b / "Assets");
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "Assets"));
+    fs::remove(b / "Assets");
+    Write(b / "CMakeCache.txt", "CMAKE_BUILD_TYPE:STRING=Release\n");   // no source folder named
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "does not say"));
+    Write(b / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + (tmp / "elsewhere").string() + "\n");
+    CHECK(Has(CleanRefusal(b.string(), src.string(), false), "was made from"));
+    // Windows compares without case: a cache that names the checkout in other letters is the same checkout there only.
+    Write(b / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=/No/Such/Engine\n");
+    CHECK(CleanRefusal(b.string(), "/no/such/ENGINE", true).empty());
+    CHECK(!CleanRefusal(b.string(), "/no/such/ENGINE", false).empty());
+    CHECK(PathWithin("/no/Such/engine/x", "/NO/such", true) && !PathWithin("/no/Such/engine/x", "/NO/such", false));
+    CHECK(PathWithin("/a/b", "/a/b", false) && PathWithin("/a/b/c", "/a/b/", false));
+    CHECK(!PathWithin("/a/bc", "/a/b", false) && !PathWithin("/a", "/a/b", false));
+}
+
 #if !defined(_WIN32)
 /// The whole of okay engine build against a fake cmake that writes down what it was given.
 void TestEngineBuildRun(const fs::path& tmp) {
@@ -773,7 +821,7 @@ void TestEngineBuildRun(const fs::path& tmp) {
     const fs::path bin = tmp / "fakebin2";
     const fs::path log = tmp / "cmake-log.txt";
     Write(bin / "cmake", "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> '" + log.string() + "'\necho '--' >> '" + log.string() +
-                         "'\nif [ \"$1\" = \"--build\" ]; then /bin/mkdir -p \"$2/bin\"; : > \"$2/bin/OkayEngine\"; : > \"$2/CMakeCache.txt\"; fi\nexit 0\n");
+                         "'\nif [ \"$1\" = \"--build\" ]; then /bin/mkdir -p \"$2/bin\"; : > \"$2/bin/OkayEngine\"; printf 'CMAKE_HOME_DIRECTORY:INTERNAL=%s\\n' '" + src.string() + "' > \"$2/CMakeCache.txt\"; fi\nexit 0\n");
     fs::permissions(bin / "cmake", fs::perms::owner_all);
     Write(bin / "ninja", "#!/bin/sh\nexit 0\n");
     fs::permissions(bin / "ninja", fs::perms::owner_all);
@@ -799,8 +847,17 @@ void TestEngineBuildRun(const fs::path& tmp) {
     CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--dir", "notabuild", "--clean"}, s) == 1 && Has(s.err, "not a CMake build folder"));
     CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--clean"}, s) == 0 && Has(s.out, "Removing"));
     CHECK(Cli({"engine", "build", "--source", (tmp / "nocmake").string()}, s) == 1 && Has(s.err, "not an engine checkout"));
+    // --clean never deletes a game project that has a CMakeCache.txt in it, nor a build of another checkout.
+    const fs::path game = tmp / "a-game";
+    Write(game / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + src.string() + "\n");
+    Write(game / "Assets" / "Level.okayscene", "mine");
+    CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--dir", game.string(), "--clean"}, s) == 1 && Has(s.err, "Assets folder"));
+    const fs::path other = tmp / "other-build";
+    Write(other / "CMakeCache.txt", "CMAKE_HOME_DIRECTORY:INTERNAL=" + (tmp / "another-engine").string() + "\n");
+    CHECK(Cli({"engine", "build", "editor", "--source", src.string(), "--dir", other.string(), "--clean"}, s) == 1 && Has(s.err, "was made from"));
     SetEnv("PATH", saved);
     CHECK(fs::exists(src / "notabuild" / "keep.txt"));
+    CHECK(fs::exists(game / "Assets" / "Level.okayscene") && fs::exists(other / "CMakeCache.txt"));
 }
 #endif
 
@@ -1045,6 +1102,7 @@ int main(int argc, char** argv) {
     TestEngineArgs();
     TestEngineDetect(tmp);
     TestEnginePlan(tmp);
+    TestEngineClean(tmp);
 #if !defined(_WIN32)
     TestEngineBuildRun(tmp);
 #endif

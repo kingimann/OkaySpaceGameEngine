@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <system_error>
 
@@ -63,13 +64,60 @@ std::string Abs(const std::string& p) {
     return (ec ? fs::path(p) : a).lexically_normal().string();
 }
 
-/// `inner` is `outer` or inside it (both absolute and normal).
-bool Within(const fs::path& inner, const fs::path& outer) {
-    const fs::path r = inner.lexically_relative(outer);
-    if (r.empty()) return false;
-    const std::string s = r.generic_string();
-    return s == "." || (s.rfind("..", 0) != 0);
+/// A path for comparing: absolute, with links resolved where the folders exist, normal, '/' separators, no trailing
+/// '/', and in lower case when the file system ignores case (Windows: "C:\\Games" and "c:/games" are one folder).
+std::string PathKey(const fs::path& p, bool ignoreCase) {
+    std::error_code ec;
+    fs::path a = fs::absolute(p, ec);
+    if (ec) a = p;
+    const fs::path c = fs::weakly_canonical(a, ec);
+    std::string s = (ec ? a : c).lexically_normal().generic_string();
+    while (s.size() > 1 && s.back() == '/' && !(s.size() == 3 && s[1] == ':')) s.pop_back();
+    return ignoreCase ? okay::str::LowerAscii(s) : s;
 }
+
+} // namespace
+
+bool PathWithin(const std::string& inner, const std::string& outer, bool ignoreCase) {
+    const std::string i = PathKey(inner, ignoreCase), o = PathKey(outer, ignoreCase);
+    if (i.empty() || o.empty()) return false;
+    if (i == o) return true;
+    const std::string prefix = o.back() == '/' ? o : o + "/";
+    return i.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::string CleanRefusal(const std::string& buildDir, const std::string& source, bool ignoreCase) {
+    const fs::path b(buildDir);
+    if (!IsFile(b / "CMakeCache.txt")) return buildDir + " is not a CMake build folder (no CMakeCache.txt), so --clean did not delete it.";
+    // A folder that holds a project or sources is never a build folder, whatever cache file is in it.
+    for (const char* f : {"CMakeLists.txt", "project.okayproj"})
+        if (fs::exists(b / f)) return buildDir + " holds " + f + ", so it is not only a build folder; --clean did not delete it.";
+    if (IsDir(b / "Assets")) return buildDir + " holds an Assets folder (a game project?), so --clean did not delete it.";
+    // The cache must be one this engine checkout made: CMake writes the source folder as CMAKE_HOME_DIRECTORY.
+    std::ifstream f(b / "CMakeCache.txt", std::ios::binary);
+    std::string line, home;
+    bool found = false;
+    while (std::getline(f, line)) {
+        if (line.rfind("CMAKE_HOME_DIRECTORY:", 0) != 0) continue;
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        home = Trim(line.substr(eq + 1));
+        found = true;
+        break;
+    }
+    if (!found || home.empty())
+        return buildDir + "'s CMakeCache.txt does not say which source folder it was made from, so --clean did not delete it.";
+    if (PathKey(home, ignoreCase) != PathKey(source, ignoreCase))
+        return buildDir + " was made from " + home + ", not from this engine checkout (" + source + "), so --clean did not delete it.";
+    return "";
+}
+
+std::string CleanRefusal(const std::string& buildDir, const std::string& source) { return CleanRefusal(buildDir, source, kWindows); }
+
+namespace {
+
+/// `inner` is `outer` or inside it, by the file system's case rule.
+bool Within(const fs::path& inner, const fs::path& outer) { return PathWithin(inner.string(), outer.string(), kWindows); }
 
 std::string ExeName(const std::string& base, bool windows) { return windows ? base + ".exe" : base; }
 
@@ -411,11 +459,9 @@ int Build(const std::vector<std::string>& args, const Io& io) {
     if (p.sdl2.empty()) io.Say("Note: no SDL2 download was found; CMake will look for the system's SDL2.");
     std::error_code ec;
     if (o.clean && fs::exists(p.buildDir, ec)) {
-        // Only a CMake build folder is ever deleted, never a folder of other files given by mistake.
-        if (!IsFile(fs::path(p.buildDir) / "CMakeCache.txt")) {
-            io.Warn(p.buildDir + " is not a CMake build folder (no CMakeCache.txt), so --clean did not delete it.");
-            return 1;
-        }
+        // Only a CMake build folder of THIS checkout is ever deleted, never a project or other files given by mistake.
+        const std::string refusal = CleanRefusal(p.buildDir, source);
+        if (!refusal.empty()) { io.Warn(refusal); return 1; }
         io.Say("Removing " + p.buildDir);
         fs::remove_all(p.buildDir, ec);
         if (ec) { io.Warn("Couldn't delete " + p.buildDir + ": " + ec.message()); return 1; }

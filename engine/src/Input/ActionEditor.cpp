@@ -126,44 +126,6 @@ std::vector<std::string> ActionEditor::Outline() const {
     return out;
 }
 
-std::vector<ActionEditor::ControlRow> ActionEditor::ControlRows() const {
-    std::vector<ControlRow> rows;
-    for (const ActionDef& a : set.Actions()) {
-        ControlRow row;
-        row.action = a.name;
-        row.type = ValueTypeName(a.type);
-        auto take = [](std::string& dest, const std::string& text) {
-            if (text.empty()) return;
-            if (!dest.empty()) dest += "  ";
-            dest += text;
-        };
-        for (const BindingSpec& b : a.bindings) {
-            bool pad = false, other = false, named = false, padScheme = false;
-            if (!b.group.empty()) {
-                for (const ControlScheme& c : set.Schemes())
-                    if (c.name == b.group) { named = true; padScheme = c.gamepad; break; }
-            }
-            std::string label;
-            const char* kind = b.kind == BindingSpec::Kind::Vector2 ? "vector " : b.kind == BindingSpec::Kind::Vector3 ? "vector3 " :
-                               b.kind == BindingSpec::Kind::Axis1D ? "axis " : b.kind == BindingSpec::Kind::Chord ? "chord " : "";
-            for (std::size_t i = 0; i < b.parts.size(); ++i) {
-                const InputBinding leaf = InputBinding::Parse(b.parts[i]);
-                if (leaf.kind == InputBinding::Kind::None) continue;
-                if (leaf.IsGamepad()) pad = true; else other = true;
-                if (!label.empty()) label += " / ";
-                label += leaf.Label();
-            }
-            if (label.empty()) continue;
-            label = kind + label;
-            const bool gamepad = named ? padScheme : (pad && !other);
-            if (gamepad) take(row.gamepad, label);
-            else take(row.keyboard, label);
-        }
-        rows.push_back(std::move(row));
-    }
-    return rows;
-}
-
 std::vector<std::string> ActionEditor::Describe(const std::string& action) const {
     std::vector<std::string> out;
     const ActionDef* a = set.Find(action);

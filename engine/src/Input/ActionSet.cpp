@@ -947,10 +947,14 @@ int ActionSet::ImportOverrides(const std::string& text) {
             continue;
         }
         if (line.rfind("ovresp ", 0) == 0) {
-            char name[128];
+            // "ovresp <name> dz curve sens invertX invertY": the five numbers are the last five words, so a name may hold spaces.
             float dz = 0, curve = 1, sens = 1;
             int ix = 0, iy = 0;
-            if (std::sscanf(line.c_str(), "ovresp %127s %f %f %f %d %d", name, &dz, &curve, &sens, &ix, &iy) != 6) continue;
+            std::size_t cut = line.size();
+            for (int w = 0; w < 5 && cut != std::string::npos; ++w) cut = cut > 0 ? line.rfind(' ', cut - 1) : std::string::npos;
+            if (cut == std::string::npos || cut <= 7) continue;
+            if (std::sscanf(line.c_str() + cut, "%f %f %f %d %d", &dz, &curve, &sens, &ix, &iy) != 5) continue;
+            const std::string name = line.substr(7, cut - 7);
             ActionDef* a = Find(name);
             if (!a) {
                 if (std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line);

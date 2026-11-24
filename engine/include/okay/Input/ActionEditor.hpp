@@ -42,15 +42,6 @@ public:
     std::vector<std::string> Outline() const;
     /// The selected action in full: each binding with kind, inputs, group and processors, then interactions and action processors.
     std::vector<std::string> Describe(const std::string& action) const;
-    /// One row of a Controls screen built from this set. A 1D axis, a 3D vector and a pad button inside a
-    /// direction are shown by name. `keyboard` or `gamepad` is empty only when that device has no binding.
-    struct ControlRow {
-        std::string action;
-        std::string type;
-        std::string keyboard;
-        std::string gamepad;
-    };
-    std::vector<ControlRow> ControlRows() const;
 private:
     bool Touch(bool changed) { if (changed) dirty = true; return changed; }
 };

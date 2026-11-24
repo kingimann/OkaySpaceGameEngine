@@ -149,12 +149,6 @@ public:
     static float GamepadTrigger(int side, int player = 0);
     /// True while that controller is plugged in.
     static bool GamepadConnected(int player = 0);
-    /// The next controller connect or disconnect since the last take. FeedGamepadRaw and
-    /// FeedGamepadExtraAt both record it. False when nothing changed.
-    static bool TakePadEdge(int& player, bool& connected);
-    /// Forget notes that were not taken. Poll() calls this every frame, so the 8 slots
-    /// hold one frame of edges, not a backlog.
-    static void DropPadEdges();
     /// How many controllers are plugged in.
     static int GamepadCount();
 
@@ -279,8 +273,6 @@ public:
     /// Report a finger event: `state` 0 = down, 1 = moved, 2 = up.
     /// A finger marks this machine as a touch screen (see TouchScreen).
     static void FeedTouch(long long id, int state, const Vec2& position);
-    /// A Began touch has been seen for this frame, so the next move sample may become Moved.
-    static void ReleaseTouchBegins();
     /// True once a touch screen has been reported (SDL_GetNumTouchDevices, or any
     /// finger). On-screen controls with "only on touch devices" wait for this.
     static bool TouchScreen();

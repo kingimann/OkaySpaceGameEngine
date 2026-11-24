@@ -24,7 +24,6 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Input/InputAsset.hpp"
-#include "okay/Input/ActionEditor.hpp"
 #include <algorithm>
 #include <string>
 
@@ -167,14 +166,6 @@ inline GameObject* AddDialogueScreen(Scene& scene) {
 inline GameObject* AddControlsScreen(Scene& scene, const ActionSet* asset = nullptr, int player = 0) {
     const ActionSet defaults = asset ? ActionSet() : DefaultInputAsset();
     const ActionSet& set = asset ? *asset : defaults;
-    ActionEditor listed;
-    listed.set = set;
-    const std::vector<ActionEditor::ControlRow> controls = listed.ControlRows();
-    auto onPad = [&](const std::string& action) {
-        for (const ActionEditor::ControlRow& r : controls)
-            if (r.action == action) return !r.gamepad.empty();
-        return false;
-    };
     GameObject* canvas = EnsureCanvas(scene);
     struct Row { std::string label, action; int part; bool pad; };
     std::vector<Row> rows;
@@ -185,7 +176,7 @@ inline GameObject* AddControlsScreen(Scene& scene, const ActionSet* asset = null
         bool kbDone = false, padDone = false;
         for (const BindingSpec& b : a.bindings) {
             const bool padGroup = [&] { for (const ControlScheme& c : set.Schemes()) if (c.name == b.group) return c.gamepad; return false; }();
-            if (padGroup && onPad(a.name) && !padDone && b.kind == BindingSpec::Kind::Single && b.parts[0].rfind("pad:", 0) == 0) { rows.push_back({a.name, a.name, 0, true}); padDone = true; }
+            if (padGroup && !padDone && b.kind == BindingSpec::Kind::Single && b.parts[0].rfind("pad:", 0) == 0) { rows.push_back({a.name, a.name, 0, true}); padDone = true; }
             if (!padGroup && !kbDone) {
                 bool allKeys = !b.parts.empty();
                 for (const std::string& p : b.parts) allKeys = allKeys && (isKeyPath(p) || p.rfind("mouse:", 0) == 0) && p != "mouse:delta";

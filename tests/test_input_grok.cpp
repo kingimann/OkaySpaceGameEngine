@@ -1,4 +1,4 @@
-// ActionSet: per-axis dead zone, press buffer on a local player's own set, Controls rows for composites, smooth per controller.
+// ActionSet: per-axis dead zone, press buffer on a local player's own set, smooth per controller.
 #include "test_framework.hpp"
 #include <limits>
 #include "okay/Input/ActionSet.hpp"
@@ -101,40 +101,6 @@ int main() {
         Input::FeedKeys({});
     }
 
-    RUN_SUITE("control rows for composites");
-    {
-        ActionEditor ed;
-        ed.set.Add("Move", ValueType::Vector2).AddVector2("pad:up", "pad:down", "pad:left", "pad:right");
-        ed.set.Add("Throttle", ValueType::Axis1D).AddAxis("pad:lt", "pad:rt");
-        ed.set.Add("Fly", ValueType::Vector3).AddVector3("key:w", "key:s", "key:a", "key:d", "key:e", "key:q");
-        const std::vector<ActionEditor::ControlRow> rows = ed.ControlRows();
-        CHECK(rows.size() == 3);
-        CHECK(rows[0].gamepad.find("None") == std::string::npos);
-        CHECK(rows[0].gamepad.find("D-pad Up") != std::string::npos);
-        CHECK(rows[0].gamepad.find("D-pad Right") != std::string::npos);
-        CHECK(rows[0].keyboard.empty());
-        CHECK(rows[1].type == "axis");
-        CHECK(rows[1].gamepad.find("LT") != std::string::npos);
-        CHECK(rows[1].gamepad.find("RT") != std::string::npos);
-        CHECK(rows[1].gamepad.find("None") == std::string::npos);
-        CHECK(rows[2].keyboard.find("W") != std::string::npos);
-        CHECK(rows[2].keyboard.find("E") != std::string::npos);
-        CHECK(rows[2].keyboard.find("None") == std::string::npos);
-
-        ActionEditor schemes;
-        schemes.set.AddScheme(ControlScheme{"Keys", true, true, false, false});
-        schemes.set.AddScheme(ControlScheme{"Pad", false, false, true, false});
-        schemes.set.Add("Jump", ValueType::Button).AddBinding("key:space", "Keys");
-        schemes.set.Find("Jump")->AddBinding("pad:a", "Pad");
-        schemes.set.Add("Trick", ValueType::Button).AddBinding("pad:b", "Keys");
-        const std::vector<ActionEditor::ControlRow> byScheme = schemes.ControlRows();
-        CHECK(byScheme.size() == 2);
-        CHECK(byScheme[0].keyboard.find("Space") != std::string::npos);
-        CHECK(byScheme[0].gamepad.find("A") != std::string::npos);
-        CHECK(byScheme[1].keyboard.find("B") != std::string::npos);
-        CHECK(byScheme[1].gamepad.empty());
-    }
-
     RUN_SUITE("smooth per controller");
     {
         for (int p = 0; p < Input::kMaxGamepads; ++p) Input::FeedGamepadAt(p, {0, 0}, 0);
@@ -179,21 +145,6 @@ int main() {
         CHECK(!back->response.invertX);
     }
 
-    RUN_SUITE("controller hot-plug edges");
-    {
-        int who = -1; bool on = false;
-        while (Input::TakePadEdge(who, on)) {}
-        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, false);
-        CHECK(!Input::TakePadEdge(who, on));
-        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, true);
-        CHECK(Input::TakePadEdge(who, on) && who == 1 && on);
-        CHECK(Input::GamepadConnected(1));
-        CHECK(!Input::TakePadEdge(who, on));
-        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, false);
-        CHECK(Input::TakePadEdge(who, on) && who == 1 && !on);
-        CHECK(!Input::GamepadConnected(1));
-    }
-
     RUN_SUITE("gesture drives an action");
     {
         Gestures::Reset();
@@ -228,19 +179,6 @@ int main() {
         CHECK(Gestures::SwipeDirection() == "up");
         Input::ClearTypedText();
         Gestures::Reset();
-    }
-
-    RUN_SUITE("raw feed records a controller edge");
-    {
-        int who = -1; bool on = false;
-        while (Input::TakePadEdge(who, on)) {}
-        Input::FeedGamepadRaw(3, {}, {}, 0, 0, 0, false);
-        Input::DropPadEdges();
-        Input::FeedGamepadRaw(3, {}, {}, 0, 0, 0, true);
-        CHECK(Input::TakePadEdge(who, on) && who == 3 && on);
-        Input::FeedGamepadRaw(2, {}, {}, 0, 0, 0, true);
-        Input::DropPadEdges();
-        CHECK(!Input::TakePadEdge(who, on));
     }
 
     RUN_SUITE("press and move in one frame still began");
@@ -294,16 +232,6 @@ int main() {
         c.Add("Look", ValueType::Vector2);
         CHECK(c.ImportOverrides(text) == 1);
         CHECK(c.ExportOverrides().find("Fire Gun") != std::string::npos);
-    }
-
-    RUN_SUITE("TEMP repro: ten edges in, ten out");
-    {
-        int who = -1; bool on = false;
-        while (Input::TakePadEdge(who, on)) {}
-        int out = 0;
-        for (int k = 0; k < 10; ++k) Input::FeedGamepadRaw(0, {}, {}, 0, 0, 0, (k % 2) == 0);
-        while (Input::TakePadEdge(who, on)) ++out;
-        CHECK(out == 10);
     }
 
     RUN_SUITE("one row model and one connect detector, no second copies");

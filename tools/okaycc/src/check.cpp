@@ -256,7 +256,11 @@ private:
         case Expr::Kind::Float:
             return true;
         case Expr::Kind::Unary:
+            if (e.text == "sizeof" && e.ty) return true;
             return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
+        case Expr::Kind::Cond:
+            return e.kids.size() == 3 && e.kids[0] && e.kids[1] && e.kids[2] && isConst(*e.kids[0]) &&
+                   isConst(*e.kids[1]) && isConst(*e.kids[2]);
         case Expr::Kind::Bin:
             return e.kids.size() == 2 && e.kids[0] && e.kids[1] && isConst(*e.kids[0]) && isConst(*e.kids[1]);
         case Expr::Kind::Cast:
@@ -2731,7 +2735,8 @@ private:
             if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
             else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
                 err(d.line, d.col, "initializer is not a constant");
-            if (!src.bad && scopes_.size() == 1 && isConst(*d.init) && isScalarConst(*d.type))
+            if (!src.bad && scopes_.size() == 1 && isConst(*d.init) && isScalarConst(*d.type) &&
+                (d.type->cnst || d.name.find("::") != std::string::npos))
                 constInits_[d.name] = cloneExpr(*d.init);
         }
         add(d.name, cloneType(*d.type), false, d.line, d.col);

@@ -76,7 +76,7 @@ int main() {
     r = run("function g() { yield 1; yield 2; }\nvar s = 0\nforeach (var x in g()) { s += x; }\n"
             "function f() { try { return 1; } finally { s += 10; } }\nf()\nprint(s)");
     Check(r == "13\n", "generators and finally on VsValue", r);
-    r = run("class A { public int v = 1; public int Get() { return v; } }\nclass B : A { public int Get() { return super.Get() + 10; } }\n"
+    r = run("class A { public int val = 1; public int Get() { return val; } }\nclass B : A { public int Get() { return super.Get() + 10; } }\n"
             "print(new B().Get())");
     Check(r == "11\n", "class inheritance and super on VsValue", r);
     std::cout << g_checks << " checks, " << g_fail << " failures\n";

@@ -121,6 +121,75 @@ std::string MultiStmt::Dump() const {
 
 // ---- Local names -------------------------------------------------------------------------------------------------
 namespace {
+// The parts a node is made of, for the walkers below: a statement's expressions, its statement lists and a for
+// loop's first statement; an expression's sub-expressions (a lambda's defaults, not its body: each walker decides
+// what a lambda means). One traversal, so the walkers only say what they do with names.
+template <class FE, class FL, class FS> void StmtChildren(const Stmt& st, FE expr, FL list, FS stmt) {
+    switch (st.kind) {
+        case StmtKind::Expr: expr(*static_cast<const ExprStmt&>(st).e); break;
+        case StmtKind::VarDecl: { auto& s = static_cast<const VarDeclStmt&>(st); if (s.init) expr(*s.init); break; }
+        case StmtKind::Return: { auto& s = static_cast<const ReturnStmt&>(st); if (s.e) expr(*s.e); break; }
+        case StmtKind::Throw: { auto& s = static_cast<const ThrowStmt&>(st); if (s.e) expr(*s.e); break; }
+        case StmtKind::Yield: { auto& s = static_cast<const YieldStmt&>(st); if (s.e) expr(*s.e); break; }
+        case StmtKind::Try: { auto& s = static_cast<const TryStmt&>(st); list(s.body); list(s.catchB); list(s.finallyB); break; }
+        case StmtKind::Block: list(static_cast<const BlockStmt&>(st).body); break;
+        case StmtKind::If: { auto& s = static_cast<const IfStmt&>(st); expr(*s.cond); list(s.thenB); list(s.elseB); break; }
+        case StmtKind::While: { auto& s = static_cast<const WhileStmt&>(st); expr(*s.cond); list(s.body); break; }
+        case StmtKind::DoWhile: { auto& s = static_cast<const DoWhileStmt&>(st); expr(*s.cond); list(s.body); break; }
+        case StmtKind::Switch: {
+            auto& s = static_cast<const SwitchStmt&>(st);
+            expr(*s.subject);
+            for (auto& c : s.cases) { if (c.match) expr(*c.match); list(c.body); }
+            break;
+        }
+        case StmtKind::For: {
+            auto& s = static_cast<const ForStmt&>(st);
+            if (s.init) stmt(*s.init);
+            if (s.cond) expr(*s.cond);
+            if (s.step) expr(*s.step);
+            list(s.body);
+            break;
+        }
+        case StmtKind::ForEach: { auto& s = static_cast<const ForEachStmt&>(st); expr(*s.iterable); list(s.body); break; }
+        case StmtKind::Multi: list(static_cast<const MultiStmt&>(st).list); break;
+        case StmtKind::Destructure: expr(*static_cast<const DestructureStmt&>(st).init); break;
+        case StmtKind::Import: case StmtKind::Break: case StmtKind::Continue: break;
+    }
+}
+template <class FE> void ExprChildren(const Expr& ex, FE expr) {
+    auto all = [&](const std::vector<ExprPtr>& a) { for (auto& e : a) expr(*e); };
+    switch (ex.kind) {
+        case ExprKind::Number: case ExprKind::String: case ExprKind::Bool: case ExprKind::Var: break;
+        case ExprKind::InterpString:
+            for (auto& g : static_cast<const InterpStringExpr&>(ex).segs) if (g.isExpr) expr(*g.expr);
+            break;
+        case ExprKind::Assign: expr(*static_cast<const AssignExpr&>(ex).value); break;
+        case ExprKind::Unary: expr(*static_cast<const UnaryExpr&>(ex).e); break;
+        case ExprKind::Logical: { auto& e = static_cast<const LogicalExpr&>(ex); expr(*e.l); expr(*e.r); break; }
+        case ExprKind::Coalesce: { auto& e = static_cast<const CoalesceExpr&>(ex); expr(*e.l); expr(*e.r); break; }
+        case ExprKind::NullishAssign: expr(*static_cast<const NullishAssignExpr&>(ex).value); break;
+        case ExprKind::Binary: { auto& e = static_cast<const BinaryExpr&>(ex); expr(*e.l); expr(*e.r); break; }
+        case ExprKind::Member: expr(*static_cast<const MemberExpr&>(ex).obj); break;
+        case ExprKind::MemberAssign: { auto& e = static_cast<const MemberAssignExpr&>(ex); expr(*e.obj); expr(*e.value); break; }
+        case ExprKind::Cast: expr(*static_cast<const CastExpr&>(ex).e); break;
+        case ExprKind::MethodCall: { auto& e = static_cast<const MethodCallExpr&>(ex); expr(*e.obj); all(e.args); break; }
+        case ExprKind::Call: all(static_cast<const CallExpr&>(ex).args); break;
+        case ExprKind::Ternary: { auto& e = static_cast<const TernaryExpr&>(ex); expr(*e.cond); expr(*e.a); expr(*e.b); break; }
+        case ExprKind::Array: all(static_cast<const ArrayExpr&>(ex).elems); break;
+        case ExprKind::Map: all(static_cast<const MapExpr&>(ex).values); break;
+        case ExprKind::Index: { auto& e = static_cast<const IndexExpr&>(ex); expr(*e.arr); expr(*e.index); break; }
+        case ExprKind::IndexAssign: { auto& e = static_cast<const IndexAssignExpr&>(ex); expr(*e.arr); expr(*e.index); expr(*e.value); break; }
+        case ExprKind::IndexCompoundAssign: {
+            auto& e = static_cast<const IndexCompoundAssignExpr&>(ex);
+            expr(*e.arr); expr(*e.index); expr(*e.value);
+            break;
+        }
+        case ExprKind::Lambda: for (auto& d : static_cast<const LambdaExpr&>(ex).defaults) if (d) expr(*d); break;
+        case ExprKind::New: all(static_cast<const NewExpr&>(ex).args); break;
+        case ExprKind::EventOrCompound: expr(*static_cast<const EventOrCompoundExpr&>(ex).rhs); break;
+    }
+}
+
 struct LocalNameWalker {
     std::unordered_set<std::string>& out;
     std::vector<std::string>* order = nullptr;            ///< CollectBodyLocals: first-seen order
@@ -134,104 +203,36 @@ struct LocalNameWalker {
     }
     void List(const StmtList& l, bool local) { for (auto& s : l) S(*s, local); }
     void S(const Stmt& st, bool local) {
-        switch (st.kind) {
-            case StmtKind::Expr: E(*static_cast<const ExprStmt&>(st).e); break;
-            case StmtKind::VarDecl: {
-                auto& s = static_cast<const VarDeclStmt&>(st);
-                if (local) {
+        if (local) {   // the names a statement declares
+            switch (st.kind) {
+                case StmtKind::VarDecl: {
+                    auto& s = static_cast<const VarDeclStmt&>(st);
                     if ((s.kind & KStatic) && statics) statics->insert(s.n);
                     else Add(s.n);
+                    break;
                 }
-                if (s.init) E(*s.init);
-                break;
+                case StmtKind::Try: { auto& s = static_cast<const TryStmt&>(st); if (!s.catchVar.empty()) Add(s.catchVar); break; }
+                case StmtKind::ForEach: Add(static_cast<const ForEachStmt&>(st).var); break;
+                case StmtKind::Destructure: {
+                    auto& s = static_cast<const DestructureStmt&>(st);
+                    if (s.declare) for (auto& n : s.names) if (!n.empty()) Add(n);
+                    break;
+                }
+                case StmtKind::Import: Add(static_cast<const ImportStmt&>(st).alias); break;
+                default: break;
             }
-            case StmtKind::Return: { auto& s = static_cast<const ReturnStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Throw: { auto& s = static_cast<const ThrowStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Yield: { auto& s = static_cast<const YieldStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Try: {
-                auto& s = static_cast<const TryStmt&>(st);
-                if (local && !s.catchVar.empty()) Add(s.catchVar);
-                List(s.body, local); List(s.catchB, local); List(s.finallyB, local);
-                break;
-            }
-            case StmtKind::Destructure: {
-                auto& s = static_cast<const DestructureStmt&>(st);
-                if (local && s.declare) for (auto& n : s.names) if (!n.empty()) Add(n);
-                E(*s.init);
-                break;
-            }
-            case StmtKind::Import: {
-                auto& s = static_cast<const ImportStmt&>(st);
-                if (local) Add(s.alias);
-                break;
-            }
-            case StmtKind::Block: List(static_cast<const BlockStmt&>(st).body, local); break;
-            case StmtKind::If: { auto& s = static_cast<const IfStmt&>(st); E(*s.cond); List(s.thenB, local); List(s.elseB, local); break; }
-            case StmtKind::While: { auto& s = static_cast<const WhileStmt&>(st); E(*s.cond); List(s.body, local); break; }
-            case StmtKind::DoWhile: { auto& s = static_cast<const DoWhileStmt&>(st); E(*s.cond); List(s.body, local); break; }
-            case StmtKind::Switch: {
-                auto& s = static_cast<const SwitchStmt&>(st);
-                E(*s.subject);
-                for (auto& c : s.cases) { if (c.match) E(*c.match); List(c.body, local); }
-                break;
-            }
-            case StmtKind::For: {
-                auto& s = static_cast<const ForStmt&>(st);
-                if (s.init) S(*s.init, local);
-                if (s.cond) E(*s.cond);
-                if (s.step) E(*s.step);
-                List(s.body, local);
-                break;
-            }
-            case StmtKind::ForEach: {
-                auto& s = static_cast<const ForEachStmt&>(st);
-                if (local) Add(s.var);
-                E(*s.iterable); List(s.body, local);
-                break;
-            }
-            case StmtKind::Multi: List(static_cast<const MultiStmt&>(st).list, local); break;
-            case StmtKind::Break: case StmtKind::Continue: break;
         }
+        StmtChildren(st, [&](const Expr& e) { E(e); }, [&](const StmtList& l) { List(l, local); },
+                     [&](const Stmt& s) { S(s, local); });
     }
-    void Args(const std::vector<ExprPtr>& a) { for (auto& e : a) E(*e); }
     void E(const Expr& ex) {
         if (!lambdas) return;
-        switch (ex.kind) {
-            case ExprKind::Number: case ExprKind::String: case ExprKind::Bool: case ExprKind::Var: break;
-            case ExprKind::InterpString:
-                for (auto& g : static_cast<const InterpStringExpr&>(ex).segs) if (g.isExpr) E(*g.expr);
-                break;
-            case ExprKind::Assign: E(*static_cast<const AssignExpr&>(ex).value); break;
-            case ExprKind::Unary: E(*static_cast<const UnaryExpr&>(ex).e); break;
-            case ExprKind::Logical: { auto& e = static_cast<const LogicalExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::Coalesce: { auto& e = static_cast<const CoalesceExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::NullishAssign: E(*static_cast<const NullishAssignExpr&>(ex).value); break;
-            case ExprKind::Binary: { auto& e = static_cast<const BinaryExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::Member: E(*static_cast<const MemberExpr&>(ex).obj); break;
-            case ExprKind::MemberAssign: { auto& e = static_cast<const MemberAssignExpr&>(ex); E(*e.obj); E(*e.value); break; }
-            case ExprKind::Cast: E(*static_cast<const CastExpr&>(ex).e); break;
-            case ExprKind::MethodCall: { auto& e = static_cast<const MethodCallExpr&>(ex); E(*e.obj); Args(e.args); break; }
-            case ExprKind::Call: Args(static_cast<const CallExpr&>(ex).args); break;
-            case ExprKind::Ternary: { auto& e = static_cast<const TernaryExpr&>(ex); E(*e.cond); E(*e.a); E(*e.b); break; }
-            case ExprKind::Array: Args(static_cast<const ArrayExpr&>(ex).elems); break;
-            case ExprKind::Map: Args(static_cast<const MapExpr&>(ex).values); break;
-            case ExprKind::Index: { auto& e = static_cast<const IndexExpr&>(ex); E(*e.arr); E(*e.index); break; }
-            case ExprKind::IndexAssign: { auto& e = static_cast<const IndexAssignExpr&>(ex); E(*e.arr); E(*e.index); E(*e.value); break; }
-            case ExprKind::IndexCompoundAssign: {
-                auto& e = static_cast<const IndexCompoundAssignExpr&>(ex);
-                E(*e.arr); E(*e.index); E(*e.value);
-                break;
-            }
-            case ExprKind::Lambda: {   // a lambda's parameters and declarations are locals of the lambda's own scope
-                auto& e = static_cast<const LambdaExpr&>(ex);
-                for (auto& p : e.params) Add(p);
-                for (auto& d : e.defaults) if (d) E(*d);
-                List(e.body, true);
-                break;
-            }
-            case ExprKind::New: Args(static_cast<const NewExpr&>(ex).args); break;
-            case ExprKind::EventOrCompound: E(*static_cast<const EventOrCompoundExpr&>(ex).rhs); break;
+        if (ex.kind == ExprKind::Lambda) {   // a lambda's parameters and declarations are locals of its own scope
+            auto& e = static_cast<const LambdaExpr&>(ex);
+            for (auto& p : e.params) Add(p);
+            List(e.body, true);
         }
+        ExprChildren(ex, [&](const Expr& e) { E(e); });
     }
 };
 } // namespace
@@ -258,6 +259,7 @@ void CollectLocalNames(Program& prog) {
     }
 }
 
+
 // ---- Closures: which locals a lambda inside a body uses ----------------------------------------------------------
 namespace {
 /// The name a use refers to: the variable before the first '.', without a "this." in front of it.
@@ -277,77 +279,25 @@ struct UseWalker {
     }
     void List(const StmtList& l) { for (auto& s : l) S(*s); }
     void S(const Stmt& st) {
-        switch (st.kind) {
-            case StmtKind::Expr: E(*static_cast<const ExprStmt&>(st).e); break;
-            case StmtKind::VarDecl: { auto& s = static_cast<const VarDeclStmt&>(st); Use(s.n); if (s.init) E(*s.init); break; }
-            case StmtKind::Return: { auto& s = static_cast<const ReturnStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Throw: { auto& s = static_cast<const ThrowStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Yield: { auto& s = static_cast<const YieldStmt&>(st); if (s.e) E(*s.e); break; }
-            case StmtKind::Try: {
-                auto& s = static_cast<const TryStmt&>(st);
-                if (!s.catchVar.empty()) Use(s.catchVar);
-                List(s.body); List(s.catchB); List(s.finallyB);
+        switch (st.kind) {   // the names a statement writes
+            case StmtKind::VarDecl: Use(static_cast<const VarDeclStmt&>(st).n); break;
+            case StmtKind::Try: { auto& s = static_cast<const TryStmt&>(st); if (!s.catchVar.empty()) Use(s.catchVar); break; }
+            case StmtKind::ForEach: Use(static_cast<const ForEachStmt&>(st).var); break;
+            case StmtKind::Destructure:
+                for (auto& n : static_cast<const DestructureStmt&>(st).names) if (!n.empty()) Use(n);
                 break;
-            }
-            case StmtKind::Block: List(static_cast<const BlockStmt&>(st).body); break;
-            case StmtKind::If: { auto& s = static_cast<const IfStmt&>(st); E(*s.cond); List(s.thenB); List(s.elseB); break; }
-            case StmtKind::While: { auto& s = static_cast<const WhileStmt&>(st); E(*s.cond); List(s.body); break; }
-            case StmtKind::DoWhile: { auto& s = static_cast<const DoWhileStmt&>(st); E(*s.cond); List(s.body); break; }
-            case StmtKind::Switch: {
-                auto& s = static_cast<const SwitchStmt&>(st);
-                E(*s.subject);
-                for (auto& c : s.cases) { if (c.match) E(*c.match); List(c.body); }
-                break;
-            }
-            case StmtKind::For: {
-                auto& s = static_cast<const ForStmt&>(st);
-                if (s.init) S(*s.init);
-                if (s.cond) E(*s.cond);
-                if (s.step) E(*s.step);
-                List(s.body);
-                break;
-            }
-            case StmtKind::ForEach: { auto& s = static_cast<const ForEachStmt&>(st); Use(s.var); E(*s.iterable); List(s.body); break; }
-            case StmtKind::Multi: List(static_cast<const MultiStmt&>(st).list); break;
-            case StmtKind::Destructure: {
-                auto& s = static_cast<const DestructureStmt&>(st);
-                for (auto& n : s.names) if (!n.empty()) Use(n);
-                E(*s.init);
-                break;
-            }
             case StmtKind::Import: Use(static_cast<const ImportStmt&>(st).alias); break;
-            case StmtKind::Break: case StmtKind::Continue: break;
+            default: break;
         }
+        StmtChildren(st, [&](const Expr& e) { E(e); }, [&](const StmtList& l) { List(l); }, [&](const Stmt& s) { S(s); });
     }
-    void Args(const std::vector<ExprPtr>& a) { for (auto& e : a) E(*e); }
     void E(const Expr& ex) {
-        switch (ex.kind) {
-            case ExprKind::Number: case ExprKind::String: case ExprKind::Bool: break;
+        switch (ex.kind) {   // the names an expression reads or writes
             case ExprKind::Var: Use(static_cast<const VarExpr&>(ex).n); break;
-            case ExprKind::InterpString:
-                for (auto& g : static_cast<const InterpStringExpr&>(ex).segs) if (g.isExpr) E(*g.expr);
-                break;
-            case ExprKind::Assign: { auto& e = static_cast<const AssignExpr&>(ex); Use(e.n); E(*e.value); break; }
-            case ExprKind::Unary: E(*static_cast<const UnaryExpr&>(ex).e); break;
-            case ExprKind::Logical: { auto& e = static_cast<const LogicalExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::Coalesce: { auto& e = static_cast<const CoalesceExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::NullishAssign: { auto& e = static_cast<const NullishAssignExpr&>(ex); Use(e.n); E(*e.value); break; }
-            case ExprKind::Binary: { auto& e = static_cast<const BinaryExpr&>(ex); E(*e.l); E(*e.r); break; }
-            case ExprKind::Member: E(*static_cast<const MemberExpr&>(ex).obj); break;
-            case ExprKind::MemberAssign: { auto& e = static_cast<const MemberAssignExpr&>(ex); E(*e.obj); E(*e.value); break; }
-            case ExprKind::Cast: E(*static_cast<const CastExpr&>(ex).e); break;
-            case ExprKind::MethodCall: { auto& e = static_cast<const MethodCallExpr&>(ex); E(*e.obj); Args(e.args); break; }
-            case ExprKind::Call: { auto& e = static_cast<const CallExpr&>(ex); Use(e.name); Args(e.args); break; }
-            case ExprKind::Ternary: { auto& e = static_cast<const TernaryExpr&>(ex); E(*e.cond); E(*e.a); E(*e.b); break; }
-            case ExprKind::Array: Args(static_cast<const ArrayExpr&>(ex).elems); break;
-            case ExprKind::Map: Args(static_cast<const MapExpr&>(ex).values); break;
-            case ExprKind::Index: { auto& e = static_cast<const IndexExpr&>(ex); E(*e.arr); E(*e.index); break; }
-            case ExprKind::IndexAssign: { auto& e = static_cast<const IndexAssignExpr&>(ex); E(*e.arr); E(*e.index); E(*e.value); break; }
-            case ExprKind::IndexCompoundAssign: {
-                auto& e = static_cast<const IndexCompoundAssignExpr&>(ex);
-                E(*e.arr); E(*e.index); E(*e.value);
-                break;
-            }
+            case ExprKind::Assign: Use(static_cast<const AssignExpr&>(ex).n); break;
+            case ExprKind::NullishAssign: Use(static_cast<const NullishAssignExpr&>(ex).n); break;
+            case ExprKind::Call: Use(static_cast<const CallExpr&>(ex).name); break;
+            case ExprKind::EventOrCompound: Use(static_cast<const EventOrCompoundExpr&>(ex).name); break;
             case ExprKind::Lambda: {
                 // What the lambda uses minus what it declares itself is free in it: a capture of the code around it.
                 auto& e = static_cast<const LambdaExpr&>(ex);
@@ -365,16 +315,11 @@ struct UseWalker {
                         if (inLambdas) inLambdas->insert(n);
                         if (uses) uses->insert(n);
                     }
-                break;
+                return;   // its defaults were walked above, in its own walker
             }
-            case ExprKind::New: Args(static_cast<const NewExpr&>(ex).args); break;
-            case ExprKind::EventOrCompound: {
-                auto& e = static_cast<const EventOrCompoundExpr&>(ex);
-                Use(e.name);
-                E(*e.rhs);
-                break;
-            }
+            default: break;
         }
+        ExprChildren(ex, [&](const Expr& e) { E(e); });
     }
 };
 } // namespace

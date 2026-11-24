@@ -138,14 +138,12 @@ template <class V> std::string FormatTemplate(const std::string& tmpl, const V* 
 /// The UTF-8 bytes of a code point (U+FFFD for one that is not a character).
 inline std::string Utf8Encode(std::uint32_t cp) {
     if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
-    std::string s;
-    if (cp < 0x80) s += (char)cp;
-    else if (cp < 0x800) { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }
-    else if (cp < 0x10000) { s += (char)(0xE0 | (cp >> 12)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
-    else {
-        s += (char)(0xF0 | (cp >> 18)); s += (char)(0x80 | ((cp >> 12) & 0x3F));
-        s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F));
-    }
+    if (cp < 0x80) return std::string(1, (char)cp);
+    // n bytes: a lead byte with n high bits set, then n - 1 bytes of 6 bits each, filled from the last one back.
+    const int n = cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    std::string s((std::size_t)n, '\0');
+    for (int k = n - 1; k > 0; --k) { s[(std::size_t)k] = (char)(0x80 | (cp & 0x3F)); cp >>= 6; }
+    s[0] = (char)((0xF00u >> n) | cp);   // 2: 0xC0, 3: 0xE0, 4: 0xF0
     return s;
 }
 /// The code points of UTF-8 text; a byte that does not start a valid sequence reads as U+FFFD.
@@ -172,7 +170,7 @@ inline std::vector<std::uint32_t> Utf8Decode(const std::string& s) {
 }
 
 inline std::string Base64Encode(const std::string& in) {
-    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";   // dup-allow: okayscript_lang may not depend on the engine (okayscript_no_engine), so it cannot use the engine's copy
     std::string out;
     std::size_t i = 0;
     for (; i + 2 < in.size(); i += 3) {
@@ -191,7 +189,7 @@ inline std::string Base64Encode(const std::string& in) {
 /// False when `in` is not base64 (spaces and line breaks are skipped).
 inline bool Base64Decode(const std::string& in, std::string& out) {
     auto val = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'A' && c <= 'Z') return c - 'A';   // dup-allow: okayscript_lang may not depend on the engine (okayscript_no_engine), so it cannot use the engine's copy
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
         if (c >= '0' && c <= '9') return c - '0' + 52;
         if (c == '+' || c == '-') return 62;   // '-' and '_': the URL-safe alphabet (RFC 4648 section 5)

@@ -822,6 +822,7 @@ template <class V, class Table> void InstallCollectionBuiltins(Table& b, Builtin
 // Moved from the engine (OkayScriptVMInternal.hpp ToJson / JsonReader) and made a template; now it also writes and
 // reads \uXXXX escapes (RFC 8259 section 7), writes whole numbers exactly, and can indent.
 namespace detail {
+// dup-allow: okayscript_lang may not depend on the engine (okayscript_no_engine), so it cannot use the engine's copy (the engine's own copy moved here)
 inline void JsonEscape(const std::string& s, std::string& out) {
     out += '"';
     for (char c : s) {
@@ -1006,8 +1007,8 @@ namespace detail {
 struct Rng {
     std::uint64_t state = 0x853C49E6748FEA9Bull;
     std::uint64_t Next() {
-        std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);   // dup-allow: okayscript_lang may not depend on the engine (okayscript_no_engine), so it cannot use the engine's copy (okay::Random)
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;   // dup-allow: okayscript_lang may not depend on the engine (okayscript_no_engine), so it cannot use the engine's copy
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
         return z ^ (z >> 31);
     }

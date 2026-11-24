@@ -33,11 +33,36 @@ public:
             if (d && d->function && d->type) addFunction(*d);
             else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
         }
+        for (auto& d : tu.decls)
+            if (d && !d->vt.empty())
+                for (const std::string& sym : d->vt) usedFns_.insert(sym);  // a vtable uses its slots
+        std::vector<Decl*> waiting;
         for (auto& d : tu.decls) {
             if (!d) continue;
+            if (d->function && d->fromInstance) {
+                waiting.push_back(d.get());
+                continue;
+            }
             if (d->function) checkFunction(*d);
             else checkVar(*d);
         }
+        // Members of class template instances: checked once something refers to them (their own
+        // bodies may refer to more), the others are dropped ([temp.inst] p4).
+        std::set<Decl*> done;
+        for (bool more = true; more;) {
+            more = false;
+            for (Decl* d : waiting) {
+                if (done.count(d)) continue;
+                if (!usedFns_.count(d->name) && !(d->asmName.size() && usedFns_.count(d->asmName))) continue;
+                done.insert(d);
+                checkFunction(*d);
+                more = true;
+            }
+        }
+        std::vector<std::unique_ptr<Decl>> kept;
+        for (auto& d : tu.decls)
+            if (d && (!d->fromInstance || done.count(d.get()))) kept.push_back(std::move(d));
+        tu.decls = std::move(kept);
         for (auto& d : lambdaDecls_) tu.decls.push_back(std::move(d));
         lambdaDecls_.clear();
         scopes_.pop_back();
@@ -104,10 +129,12 @@ private:
         sc.emplace(name, std::move(s));
     }
 
+    std::set<std::string> usedFns_;  // functions some checked code refers to
     ET lookup(const std::string& name, int line, int col, bool quiet = false) {
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[static_cast<std::size_t>(i)].find(name);
             if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
+            if (it->second.func) usedFns_.insert(name);
             ET e;
             e.type = cloneType(*it->second.type);
             e.line = line;
@@ -250,7 +277,9 @@ private:
             }
             ET hit = lookup(e.text, e.line, e.col, true);
             if (!hit.bad) return hit;
-            if (e.text.find("::") == std::string::npos) {
+            {
+                // The enclosing namespaces and classes, innermost first; for N::x too (the first
+                // part of a qualified name is looked up the same way, [basic.lookup.qual]).
                 std::string scope = inNs_;
                 while (!scope.empty()) {
                     std::string q = scope + "::" + e.text;
@@ -262,6 +291,35 @@ private:
                     std::size_t cut = scope.rfind("::");
                     if (cut == std::string::npos) break;
                     scope = scope.substr(0, cut);
+                }
+            }
+            if (tu_) {
+                // using N::name; and using namespace N; (searched after the enclosing scopes;
+                // a qualified name is tried inside each used namespace as well)
+                auto ud = tu_->usingDecl.find(e.text);
+                if (ud != tu_->usingDecl.end()) {
+                    std::string base = ud->second;
+                    std::vector<std::string> tries = {base};
+                    for (std::string sc = inNs_; !sc.empty();) {
+                        tries.push_back(sc + "::" + base);
+                        std::size_t cut = sc.rfind("::");
+                        if (cut == std::string::npos) break;
+                        sc = sc.substr(0, cut);
+                    }
+                    for (const std::string& q : tries) {
+                        ET hit2 = lookup(q, e.line, e.col, true);
+                        if (!hit2.bad) {
+                            e.text = q;
+                            return hit2;
+                        }
+                    }
+                }
+                for (const std::string& u : tu_->usingNs) {
+                    ET hit2 = lookup(u + "::" + e.text, e.line, e.col, true);
+                    if (!hit2.bad) {
+                        e.text = u + "::" + e.text;
+                        return hit2;
+                    }
                 }
             }
             if (e.text == "__builtin_sqrt" || e.text == "__builtin_sqrtf") {
@@ -359,7 +417,9 @@ private:
                 err(e.line, e.col, "operand is not an integer");
                 return bad(e.line, e.col);
             }
-            r.type = prim(Type::Kind::Int);
+            // -x, +x and ~x have the promoted type of x (ISO C 6.5.3.3): a long stays long.
+            r.type = prim(inner.type->kind == Type::Kind::Long ? Type::Kind::Long : Type::Kind::Int);
+            r.type->unsign = (inner.type->kind == Type::Kind::Long || inner.type->kind == Type::Kind::Int) && inner.type->unsign;
             return r;
         }
         case Expr::Kind::Pre:
@@ -1444,11 +1504,23 @@ private:
             e.kids.clear();
             e.kids.push_back(std::move(mem));
         }
-        if (e.kids[0]->kind == Expr::Kind::Name && !closureFn_.empty() && !e.kids[0]->text.empty() &&
-            e.kids[0]->text[0] != '\x01') {
-            // f(args) with f a closure object: its function, with &f first.
-            int at = scopeOf(e.kids[0]->text);
-            const Type* ft = at >= 0 ? scopes_[static_cast<std::size_t>(at)][e.kids[0]->text].type.get() : nullptr;
+        if (!closureFn_.empty() && !(e.kids[0]->kind == Expr::Kind::Name &&
+                                     (e.kids[0]->text.empty() || e.kids[0]->text[0] == '\x01'))) {
+            // f(args) with f a closure object (a name, or a captured one: *__self->f): its
+            // function, with &f first. The type decides, so a callee already rewritten counts.
+            const Type* ft = nullptr;
+            std::unique_ptr<Type> probed;
+            if (e.kids[0]->kind == Expr::Kind::Name) {
+                int at = scopeOf(e.kids[0]->text);
+                if (at >= 0) ft = scopes_[static_cast<std::size_t>(at)][e.kids[0]->text].type.get();
+                else if (!lamStack_.empty()) ft = nullptr;
+            } else if (e.kids[0]->kind == Expr::Kind::Unary || e.kids[0]->kind == Expr::Kind::Member) {
+                ++quiet_;
+                ET t = checkExpr(*e.kids[0]);
+                --quiet_;
+                if (!t.bad && t.type) probed = cloneType(*t.type);
+                ft = probed.get();
+            }
             if (ft && ft->kind == Type::Kind::Reference && ft->inner) ft = ft->inner.get();
             if (ft && ft->kind == Type::Kind::Struct && closureFn_.count(ft->tag)) {
                 std::string fname = closureFn_[ft->tag];
@@ -2068,6 +2140,12 @@ private:
                 scope = scope.substr(0, cut);
             }
         }
+        if (it == overloads_.end() && tu_ && name.find("::") == std::string::npos && scopeOf(name) < 0) {
+            auto ud = tu_->usingDecl.find(name);
+            if (ud != tu_->usingDecl.end()) it = overloads_.find(ud->second);
+            for (std::size_t k = 0; it == overloads_.end() && k < tu_->usingNs.size(); ++k)
+                it = overloads_.find(tu_->usingNs[k] + "::" + name);
+        }
         if (it == overloads_.end()) return;
         if (scopeOf(name) > 0) return;  // a local of that name hides the functions
         std::vector<const Param*> cands;
@@ -2084,7 +2162,7 @@ private:
         LambdaInfo* li;
         std::size_t fnBase;   // the enclosing function's outermost scope
         std::size_t lamBase;  // the lambda's own outermost scope
-        std::vector<std::pair<std::string, bool>> used;  // captures made: name, by reference
+        std::vector<std::pair<std::string, int>> used;  // captures made: name, 0 copy 1 reference 2 array
     };
     std::vector<LamCtx> lamStack_;
     std::vector<std::unique_ptr<Decl>> lambdaDecls_;
@@ -2102,7 +2180,11 @@ private:
         if (lamStack_.empty() || e.text.empty() || e.text.find("::") != std::string::npos) return false;
         LamCtx& lc = lamStack_.back();
         int at = scopeOf(e.text);
-        if (at < static_cast<int>(lc.fnBase) || at >= static_cast<int>(lc.lamBase)) return false;
+        // A local of the function around the outermost lambda, of an enclosing lambda, or of the
+        // function this lambda is in. A capture from further out is taken by this lambda, and its
+        // closure is filled in the enclosing lambda, which then captures the name itself.
+        const std::size_t root = lamStack_.front().fnBase;
+        if (at < static_cast<int>(root) || at >= static_cast<int>(lc.lamBase)) return false;
         const Sym& sym = scopes_[static_cast<std::size_t>(at)].at(e.text);
         if (sym.func || !sym.type) return false;
         int how = -1;
@@ -2120,6 +2202,9 @@ private:
             err(e.line, e.col, "capturing a class with a destructor by copy is not supported");
             return false;
         }
+        // An array is held as a pointer to its first element (indexing it is the same); a copy
+        // of an array is not made (it is taken by reference: see the plan).
+        if (referent->kind == Type::Kind::Array && referent->inner) how = 2;
         auto cit = canonStructs().find(lc.li->tag);
         bool have = false;
         for (const auto& u : lc.used)
@@ -2127,9 +2212,10 @@ private:
         if (!have && cit != canonStructs().end() && cit->second) {
             Param f;
             f.name = e.text;
-            f.type = how == 1 ? ptrTo(cloneType(*referent)) : cloneType(*referent);
+            if (how == 2) f.type = ptrTo(cloneType(*referent->inner));
+            else f.type = how == 1 ? ptrTo(cloneType(*referent)) : cloneType(*referent);
             cit->second->params.push_back(std::move(f));
-            lc.used.emplace_back(e.text, how == 1);
+            lc.used.emplace_back(e.text, how);
         }
         std::string name = e.text;
         auto mem = mkE(Expr::Kind::Member, e);
@@ -2191,7 +2277,7 @@ private:
         if (isAuto(d.type->inner.get())) d.type->inner = prim(Type::Kind::Void);
         scopes_.front()[d.name].type = cloneType(*d.type);
         scopes_.pop_back();
-        std::vector<std::pair<std::string, bool>> used = std::move(lamStack_.back().used);
+        std::vector<std::pair<std::string, int>> used = std::move(lamStack_.back().used);
         lamStack_.pop_back();
         ret_ = savedRet;
         method_ = savedMethod;
@@ -2210,7 +2296,7 @@ private:
             field->text = ".";
             field->kids.push_back(mkName(tmp, e));
             field->kids.push_back(mkName(u.first, e));
-            auto val = u.second ? eUnary("&", mkName(u.first, e), e) : mkName(u.first, e);
+            auto val = u.second == 1 ? eUnary("&", mkName(u.first, e), e) : mkName(u.first, e);
             auto as = eAssignNode(std::move(field), std::move(val), e);
             seq = seq ? eCommaNode(std::move(seq), std::move(as), e) : std::move(as);
         }

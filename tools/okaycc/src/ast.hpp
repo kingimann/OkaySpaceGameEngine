@@ -96,6 +96,7 @@ struct Decl {
     bool isStatic = false;
     bool staticMember = false;  // a static member function: no 'this'
     bool isInline = false;      // inline function or class-generated code: emitted as a weak symbol
+    bool fromInstance = false;  // a member function of a class template instance: checked and kept only if used
     std::string asmName;
     std::string methodTag;
     std::vector<std::string> vt;  // vtable image: symbol per 8-byte slot ("" = zero)
@@ -140,6 +141,8 @@ struct LambdaInfo {
 struct Tu {
     std::vector<std::unique_ptr<Decl>> decls;
     std::vector<LambdaInfo> lambdas;
+    std::vector<std::string> usingNs;                 // using namespace N; (qualified names)
+    std::map<std::string, std::string> usingDecl;     // using N::f;  f -> N::f
 };
 
 std::unique_ptr<Type> cloneType(const Type& t);

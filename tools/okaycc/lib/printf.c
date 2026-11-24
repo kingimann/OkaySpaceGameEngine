@@ -102,6 +102,224 @@ int p_fixed(double v) {
     }
     return n;
 }
+/* Exact decimal digits of a double (ISO C 7.21.6.1 %f and %e, rounded as IEEE 754 round to
+ * nearest, ties to even: the result glibc gives). A finite double is M * 2^E with M < 2^53, so its
+ * decimal expansion is finite: the integer part is M << E written out by dividing by 10, the
+ * fraction (when E < 0) is a fixed-point number of -E bits multiplied by 10 one digit at a time.
+ * The value is 0.d1 d2 d3 ... times 10^dp. */
+static char gDig[1200];
+static int gLen;
+static int gDp;
+static void expandDouble(double v) {
+    unsigned long bits = *(unsigned long *)&v;
+    unsigned long m = bits & 4503599627370495ul;
+    int e = (int)((bits >> 52) & 2047);
+    unsigned int w[40];
+    char ib[400];
+    int ni;
+    int k;
+    gLen = 0;
+    gDp = 0;
+    if (e == 0) e = 1; /* subnormal */
+    else m = m | 4503599627370496ul;
+    e = e - 1075;
+    if (m == 0) return;
+    for (k = 0; k < 40; k = k + 1) w[k] = 0;
+    ni = 0;
+    if (e >= 0) {
+        /* the integer M << e, then its digits from the right */
+        int sh = e;
+        int word = sh / 32;
+        int bit = sh % 32;
+        unsigned long lo = m << bit;
+        unsigned long hi = bit == 0 ? 0 : (m >> (64 - bit));
+        int top = 39;
+        w[word] = (unsigned int)(lo & 4294967295ul);
+        if (word + 1 < 40) w[word + 1] = (unsigned int)(lo >> 32);
+        if (word + 2 < 40) w[word + 2] = (unsigned int)(hi & 4294967295ul);
+        for (;;) {
+            unsigned long rem = 0;
+            int any = 0;
+            for (k = top; k >= 0; k = k - 1) {
+                unsigned long cur = (rem << 32) | (unsigned long)w[k];
+                w[k] = (unsigned int)(cur / 10ul);
+                rem = cur % 10ul;
+                if (w[k] != 0) any = 1;
+            }
+            ib[ni] = (char)('0' + (int)rem);
+            ni = ni + 1;
+            if (!any) break;
+        }
+        for (k = 0; k < ni; k = k + 1) gDig[k] = ib[ni - 1 - k];
+        gLen = ni;
+        gDp = ni;
+        return;
+    }
+    {
+        /* integer part (fits in 64 bits since -e >= 1) and the fraction bits */
+        int fb = -e;
+        unsigned long ip = fb >= 64 ? 0 : (m >> fb);
+        int nw = (fb + 31) / 32 + 1;
+        int lead = 1;
+        if (ip != 0) {
+            unsigned long t = ip;
+            while (t != 0) {
+                ib[ni] = (char)('0' + (int)(t % 10ul));
+                ni = ni + 1;
+                t = t / 10ul;
+            }
+            for (k = 0; k < ni; k = k + 1) gDig[k] = ib[ni - 1 - k];
+            gLen = ni;
+            gDp = ni;
+            lead = 0;
+        }
+        /* fraction = m mod 2^fb, as fb bits in w[] */
+        if (fb < 64) m = m & ((1ul << fb) - 1ul);
+        {
+            int word = 0;
+            while (m != 0) {
+                w[word] = (unsigned int)(m & 4294967295ul);
+                m = m >> 32;
+                word = word + 1;
+            }
+        }
+        for (;;) {
+            unsigned long carry = 0;
+            int any = 0;
+            int d;
+            for (k = 0; k < nw; k = k + 1) {
+                unsigned long cur = (unsigned long)w[k] * 10ul + carry;
+                w[k] = (unsigned int)(cur & 4294967295ul);
+                carry = cur >> 32;
+            }
+            /* the digit is the part at and above bit fb */
+            {
+                int word = fb / 32;
+                int bit = fb % 32;
+                unsigned long above = (unsigned long)w[word] >> bit;
+                for (k = word + 1; k < nw; k = k + 1) above = above + ((unsigned long)w[k] << (32 - bit + 32 * (k - word - 1)));
+                d = (int)above;
+                w[word] = bit == 0 ? 0 : (w[word] & (unsigned int)((1ul << bit) - 1ul));
+                for (k = word + 1; k < nw; k = k + 1) w[k] = 0;
+            }
+            for (k = 0; k < nw; k = k + 1)
+                if (w[k] != 0) any = 1;
+            if (lead && d == 0) {
+                gDp = gDp - 1; /* a leading zero after the point */
+            } else {
+                lead = 0;
+                gDig[gLen] = (char)('0' + d);
+                gLen = gLen + 1;
+            }
+            if (!any || gLen >= 1190) break;
+        }
+    }
+}
+/* Keep n digits of gDig, rounding half to even on everything after them. Returns 1 when the
+ * rounding carried into a new leading digit (gDp moved). */
+static int roundDigits(int n) {
+    int up;
+    int k;
+    if (n < 0) {
+        gLen = 0;
+        return 0;
+    }
+    if (n >= gLen) {
+        while (gLen < n) {
+            gDig[gLen] = '0';
+            gLen = gLen + 1;
+        }
+        return 0;
+    }
+    up = 0;
+    if (gDig[n] > '5') up = 1;
+    else if (gDig[n] == '5') {
+        int rest = 0;
+        for (k = n + 1; k < gLen; k = k + 1)
+            if (gDig[k] != '0') rest = 1;
+        if (rest) up = 1;
+        else up = n > 0 ? ((gDig[n - 1] - '0') & 1) : 0; /* a tie: to even (0 counts as even) */
+    }
+    gLen = n;
+    if (!up) return 0;
+    k = n - 1;
+    while (k >= 0 && gDig[k] == '9') {
+        gDig[k] = '0';
+        k = k - 1;
+    }
+    if (k >= 0) {
+        gDig[k] = (char)(gDig[k] + 1);
+        return 0;
+    }
+    /* all nines: 1 followed by zeros */
+    for (k = gLen; k > 0; k = k - 1) gDig[k] = gDig[k - 1];
+    gDig[0] = '1';
+    gLen = gLen + 1;
+    gDp = gDp + 1;
+    return 1;
+}
+/* %f or %e of v with prec digits, into out (no padding). Returns the length. */
+static int fmtDouble(double v, int conv, int prec, int plus, char *out) {
+    int n = 0;
+    int k;
+    unsigned long bits = *(unsigned long *)&v;
+    int neg = (bits >> 63) != 0;
+    int e = (int)((bits >> 52) & 2047);
+    if (neg) out[n++] = '-';
+    else if (plus) out[n++] = '+';
+    if (e == 2047) {
+        char *t = (bits & 4503599627370495ul) ? "nan" : "inf";
+        if (conv == 'E' || conv == 'F') t = (bits & 4503599627370495ul) ? "NAN" : "INF";
+        for (k = 0; t[k]; k = k + 1) out[n++] = t[k];
+        return n;
+    }
+    expandDouble(v);
+    if (conv == 'f' || conv == 'F') {
+        int ip;
+        if (gLen == 0) gDp = 1;
+        roundDigits(gDp + prec);
+        if (gLen == 0) {
+            /* rounded to nothing: zero */
+            out[n++] = '0';
+            if (prec > 0) out[n++] = '.';
+            for (k = 0; k < prec; k = k + 1) out[n++] = '0';
+            return n;
+        }
+        if (gDp <= 0) out[n++] = '0';
+        for (ip = 0; ip < gDp; ip = ip + 1) out[n++] = ip < gLen ? gDig[ip] : '0';
+        if (prec > 0) out[n++] = '.';
+        for (k = 0; k < prec; k = k + 1) {
+            int at = gDp + k;
+            out[n++] = (at >= 0 && at < gLen) ? gDig[at] : '0';
+        }
+        return n;
+    }
+    {
+        int ex;
+        if (gLen == 0) {
+            gDig[0] = '0';
+            gLen = 1;
+            gDp = 1;
+        }
+        roundDigits(prec + 1);
+        ex = gDig[0] == '0' ? 0 : gDp - 1;
+        out[n++] = gDig[0];
+        if (prec > 0) out[n++] = '.';
+        for (k = 1; k <= prec; k = k + 1) out[n++] = k < gLen ? gDig[k] : '0';
+        out[n++] = conv == 'E' ? 'E' : 'e';
+        if (ex < 0) {
+            out[n++] = '-';
+            ex = -ex;
+        } else {
+            out[n++] = '+';
+        }
+        if (ex >= 100) out[n++] = (char)('0' + ex / 100);
+        out[n++] = (char)('0' + (ex / 10) % 10);
+        out[n++] = (char)('0' + ex % 10);
+        return n;
+    }
+}
+
 int printf(char *fmt, ...) {
     va_list ap;
     int i;
@@ -124,19 +342,29 @@ int printf(char *fmt, ...) {
                 zero = 0;
                 width = 0;
                 islong = 0;
-                if (fmt[i] == '-') {
-                    left = 1;
-                    i = i + 1;
-                }
-                if (fmt[i] == '0') {
-                    zero = 1;
+                int plus;
+                int prec;
+                plus = 0;
+                prec = -1;
+                while (fmt[i] == '-' || fmt[i] == '0' || fmt[i] == '+' || fmt[i] == ' ') {
+                    if (fmt[i] == '-') left = 1;
+                    if (fmt[i] == '0') zero = 1;
+                    if (fmt[i] == '+') plus = 1;
                     i = i + 1;
                 }
                 while (fmt[i] >= '0' && fmt[i] <= '9') {
                     width = width * 10 + (fmt[i] - '0');
                     i = i + 1;
                 }
-                if (fmt[i] == 'l') {
+                if (fmt[i] == '.') {
+                    i = i + 1;
+                    prec = 0;
+                    while (fmt[i] >= '0' && fmt[i] <= '9') {
+                        prec = prec * 10 + (fmt[i] - '0');
+                        i = i + 1;
+                    }
+                }
+                while (fmt[i] == 'l' || fmt[i] == 'z') {
                     islong = 1;
                     i = i + 1;
                 }
@@ -176,6 +404,10 @@ int printf(char *fmt, ...) {
                         buf[len] = digits[u % (unsigned long)base];
                         len = len + 1;
                         u = u / (unsigned long)base;
+                    }
+                    if (!neg && plus && fmt[i] == 'd') {
+                        n = n + p_char('+');
+                        width = width - 1;
                     }
                     if (neg) {
                         n = n + p_char('-');
@@ -224,8 +456,35 @@ int printf(char *fmt, ...) {
                         }
                     }
                     i = i + 1;
-                } else if (fmt[i] == 'f') {
-                    n = n + p_fixed(va_arg(ap, double));
+                } else if (fmt[i] == 'f' || fmt[i] == 'F' || fmt[i] == 'e' || fmt[i] == 'E') {
+                    char nb[1300];
+                    int len;
+                    int k;
+                    int start;
+                    len = fmtDouble(va_arg(ap, double), fmt[i], prec < 0 ? 6 : prec, plus, nb);
+                    if (len > 0 && (nb[len - 1] == 'n' || nb[len - 1] == 'f' || nb[len - 1] == 'N' || nb[len - 1] == 'F'))
+                        zero = 0; /* inf and nan are padded with spaces */
+                    k = width - len;
+                    if (k < 0) k = 0;
+                    start = 0;
+                    if (zero && !left && len > 0 && (nb[0] == '-' || nb[0] == '+')) {
+                        n = n + p_char(nb[0]);
+                        start = 1;
+                    }
+                    if (!left)
+                        while (k > 0) {
+                            n = n + p_char(zero ? '0' : ' ');
+                            k = k - 1;
+                        }
+                    while (start < len) {
+                        n = n + p_char(nb[start]);
+                        start = start + 1;
+                    }
+                    if (left)
+                        while (k > 0) {
+                            n = n + p_char(' ');
+                            k = k - 1;
+                        }
                     i = i + 1;
                 } else if (fmt[i] == 'c') {
                 n = n + p_char(va_arg(ap, int));

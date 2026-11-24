@@ -2124,7 +2124,9 @@ private:
             if (fnty && argi < static_cast<int>(fnty->params.size())) declared = fnty->params[static_cast<std::size_t>(argi)].type.get();
             int want = declared ? fpWidthOf(declared) : 0;
             if (varExtra && (v.fpw || fpWidthOf(t))) want = 8;
-            if (!declared && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
+            // A float passed to "..." becomes a double (the default argument promotions, ISO C
+            // 6.5.2.2 p7); without a prototype it goes as it is.
+            if (!declared && !varExtra && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
             if (want) {
                 int src = v.fpw ? v.fpw : fpWidthOf(t);
                 if (src != want) v = cvtFp(v, src, want);

@@ -30,7 +30,9 @@ public:
     static constexpr std::uint64_t kDefaultBudget = 20'000'000;
 
     LuaScriptVM();
-    ~LuaScriptVM() override;   // dup-allow: the IScriptVM overrides every script backend declares (NextScriptVM has the same list)
+    ~LuaScriptVM() override;
+
+    // dup-allow-begin: the IScriptVM overrides every script backend declares (OkayScriptVM and NextScriptVM list the same)
 
     const char* Language() const override { return kLanguage; }
     std::vector<std::string> BuiltinNames() const override;
@@ -51,6 +53,7 @@ public:
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
     std::vector<std::string> GlobalNames() const override;
+    // dup-allow-end
 
     /// The last runtime error ("script:12: message"), empty if none.
     const std::string& LastError() const { return m_lastError; }

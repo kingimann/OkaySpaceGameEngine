@@ -355,4 +355,10 @@ private:
     unsigned bVersion_ = 0; CodePos bCaret_{-1, -1}; bool bOk_ = false; CodePos bA_, bB_;
 };
 
+/// The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
+/// gutter colours, no current-line wash. Read the theme at the time of the call.
+CodePalette TextBoxPalette();
+/// Make `ed` a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
+void MakeTextBox(CodeEdit& ed);
+
 } // namespace OkayUI

@@ -4,9 +4,11 @@
 // OkayUIScreens.hpp: a plain function takes the data to show (or pointers to the host's own values) and a rectangle, draws into a
 // bare OkayUI window that fills it, and reports what the person did through callbacks or the result. No SDL, no Dear ImGui.
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,12 +64,12 @@ struct CrashLogHost {
 
 struct CrashLogState {
     bool confirming = false;             // the "Clear crash reports?" dialog is open
-    // Caches the page keeps between frames (the text split into lines, and the revision it was split at).
-    std::uint64_t seenRevision = ~0ull;
-    std::vector<std::pair<std::size_t, std::size_t>> lines;   // (offset, length) of each line in the model's text
-    bool scrollToEnd = true;             // the newest report is at the bottom: start there, and again after each reload
-    float pitch = 0.0f, gap = 0.0f;      // measured row spacing and the gap an item leaves below itself (0 = not measured yet)
-    int settle = 0;                      // frames spent on it (the content is measured one frame late, so it takes a few)
+    std::uint64_t seenRevision = ~0ull;  // the model revision the body holds
+    int lineCount = 0;                   // lines in that text (a final newline does not start one)
+    /// The reports: a read-only text box (OkayUI::CodeEdit made a text box, as InputTextMultiline's): select with the mouse and keys,
+    /// copy with Ctrl+C through the host. Made on first use; it opens at the newest line, and again after each reload.
+    std::shared_ptr<OkayUI::CodeEdit> body;
+    int revealFrames = 0;                // frames left to keep the newest line in view (the view's size is known from the 2nd frame)
 };
 
 struct CrashLogResult {

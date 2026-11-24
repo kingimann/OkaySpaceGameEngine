@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <cstring>
 #include <random>
 #include <thread>
 
@@ -263,9 +264,11 @@ int main() {
         CHECK(hd->Has("mp"));
     }
 
-    // Image::Load, Material::LoadFromFile and the shader file loader go through the process-wide manager.
+    // Image::Load and Material::LoadFromFile read the file directly and never call back into the
+    // manager. Routing them through it deadlocked Get<Image> on its own thread, kept LoadAsync
+    // from finishing, returned stale data after a save and broke the Xbox export link.
     {
-        RUN_SUITE("built-in loads use AssetManager");
+        RUN_SUITE("built-in loads stay direct");
         const fs::path bmp = dir / "one.bmp";
         const unsigned char bytes[] = {
             0x42,0x4D, 0x3A,0,0,0, 0,0,0,0, 0x36,0,0,0,
@@ -279,8 +282,6 @@ int main() {
         Image first, second;
         CHECK(first.Load(path) && first.Width() == 1 && first.Height() == 1);
         CHECK(second.Load(path));
-        // Image::Load and Material::LoadFromFile stay direct. Routing them through the
-        // manager returned stale bytes and left the Xbox build without a symbol.
         CHECK(AssetManager::Instance().CachedCount() == before);
         CHECK(!AssetManager::Instance().Find<Image>(path).Ready());
         auto held = AssetManager::Instance().Get<Image>(path);
@@ -291,6 +292,32 @@ int main() {
         Material loaded;
         CHECK(Material::LoadFromFile((dir / "box.okaymat").string(), loaded));
         CHECK(!AssetManager::Instance().Find<Material>((dir / "box.okaymat").string()).Ready());
+        // Save then reopen gives the new values, not a cached copy.
+        mat.shininess = 20.0f;
+        CHECK(mat.SaveToFile((dir / "box.okaymat").string()));
+        CHECK(Material::LoadFromFile((dir / "box.okaymat").string(), loaded) && loaded.shininess == 20.0f);
+        mat.shininess = 40.0f;
+        CHECK(mat.SaveToFile((dir / "box.okaymat").string()));
+        CHECK(Material::LoadFromFile((dir / "box.okaymat").string(), loaded) && loaded.shininess == 40.0f);
+        // An async image load through a fresh manager finishes (its loader does not wait on itself).
+        AssetManager am;
+        am.RegisterDefaultLoaders();
+        bool done = false, ok = false;
+        am.LoadAsync<Image>(path, [&](AssetHandle<Image> h, const std::string&) { done = true; ok = h.Ready(); });
+        CHECK(PumpUntil(am, [&] { return done; }));
+        CHECK(ok);
+        // A rewritten image reads back with the new pixels.
+        const fs::path bmp2 = dir / "two.bmp";
+        std::ofstream(bmp2, std::ios::binary).write(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+        Image a;
+        CHECK(a.Load(bmp2.string()) && a.Pixels().size() >= 4);
+        unsigned char changed[sizeof(bytes)];
+        std::memcpy(changed, bytes, sizeof(bytes));
+        changed[54] = 255; changed[55] = 255; changed[56] = 255;   // white instead of red
+        std::ofstream(bmp2, std::ios::binary | std::ios::trunc).write(reinterpret_cast<const char*>(changed), sizeof(changed));
+        Image b;
+        CHECK(b.Load(bmp2.string()) && b.Pixels().size() >= 4);
+        CHECK(b.Pixels()[1] == 255 && b.Pixels()[1] != a.Pixels()[1]);
     }
 
     std::error_code ec; fs::remove_all(dir, ec);

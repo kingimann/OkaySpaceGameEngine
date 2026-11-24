@@ -8,10 +8,7 @@
 // emitters, a linear register code with forward jumps and counted loops). No code taken from
 // any other shading language, compiler or engine.
 #include "okay/Render/OkayShader.hpp"
-#include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
-#include "okay/Debug/DebugUtil.hpp"
-#include <map>
 #include "okay/Debug/DebugUtil.hpp"
 
 #include <atomic>

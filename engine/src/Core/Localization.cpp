@@ -1295,7 +1295,17 @@ const Arab* ArabOf(std::uint32_t cp) {
 bool JoinsNext(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join == 1; }
 bool JoinsPrev(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join != 0; }
 
-void ReverseRun(std::vector<std::uint32_t>& s, std::vector<int>& level, int least) {
+// Arabic marks that sit on the letter before them (Unicode joining type T, "transparent"):
+// they neither join nor break a join, and they stay with their letter when a run is reversed.
+bool Transparent(std::uint32_t cp) {
+    return (cp >= 0x0610 && cp <= 0x061A) || (cp >= 0x064B && cp <= 0x065F) || cp == 0x0670 ||
+           (cp >= 0x06D6 && cp <= 0x06DC) || (cp >= 0x06DF && cp <= 0x06E4) || (cp >= 0x06E7 && cp <= 0x06E8) ||
+           (cp >= 0x06EA && cp <= 0x06ED) || (cp >= 0x0591 && cp <= 0x05BD) || cp == 0x05BF ||
+           (cp >= 0x05C1 && cp <= 0x05C2) || (cp >= 0x05C4 && cp <= 0x05C5) || cp == 0x05C7;
+}
+
+template <class T>
+void ReverseRun(std::vector<T>& s, std::vector<int>& level, int least) {
     std::size_t i = 0;
     while (i < s.size()) {
         if (level[i] < least) { ++i; continue; }
@@ -1307,8 +1317,8 @@ void ReverseRun(std::vector<std::uint32_t>& s, std::vector<int>& level, int leas
     }
 }
 
-}
-
+// One line: joining forms first (in reading order), then the right-to-left runs are reversed.
+// A letter and the marks on it move as one cluster, so a mark is still drawn after its letter.
 std::string ShapeLine(const std::string& text) {
     std::vector<std::uint32_t> cps;
     for (std::size_t i = 0; i < text.size();) cps.push_back(utf8::Next(text, i));
@@ -1317,17 +1327,15 @@ std::string ShapeLine(const std::string& text) {
     for (std::size_t i = 0; i < cps.size(); ++i) {
         const Arab* a = ArabOf(cps[i]);
         if (!a) continue;
-        auto gap = [](std::uint32_t cp) {
-            return KindOf(cp) == Dir::N || (cp >= 0x064B && cp <= 0x0652);   // short vowels sit on a letter, they don't break its join
-        };
+        // Only transparent marks are skipped. A space or any other letter ends the join.
         bool prev = false, next = false;
         for (std::size_t p = i; p-- > 0;) {
-            if (gap(cps[p])) continue;
+            if (Transparent(cps[p])) continue;
             prev = JoinsNext(cps[p]);
             break;
         }
         for (std::size_t n = i + 1; n < cps.size(); ++n) {
-            if (gap(cps[n])) continue;
+            if (Transparent(cps[n])) continue;
             next = JoinsPrev(cps[n]) && JoinsNext(cps[i]);
             break;
         }
@@ -1337,17 +1345,20 @@ std::string ShapeLine(const std::string& text) {
         else if (next) form = a->ini;
         shaped[i] = form;
     }
-    int base = 0;
+    // Clusters: a base character and the transparent marks after it.
+    std::vector<std::vector<std::uint32_t>> clusters;
     for (std::uint32_t cp : shaped) {
-        const Dir d = KindOf(cp);
+        if (Transparent(cp) && !clusters.empty()) clusters.back().push_back(cp);
+        else clusters.push_back({cp});
+    }
+    int base = 0;
+    for (const auto& c : clusters) {
+        const Dir d = KindOf(c[0]);
         if (d == Dir::R) { base = 1; break; }
         if (d == Dir::L) break;
     }
-    std::vector<Dir> dir(shaped.size(), Dir::N);
-    for (std::size_t i = 0; i < shaped.size(); ++i) {
-        const Dir d = KindOf(shaped[i]);
-        dir[i] = d == Dir::N ? Dir::N : d;
-    }
+    std::vector<Dir> dir(clusters.size(), Dir::N);
+    for (std::size_t i = 0; i < clusters.size(); ++i) dir[i] = KindOf(clusters[i][0]);
     for (std::size_t i = 0; i < dir.size(); ++i) {
         if (dir[i] != Dir::N) continue;
         Dir left = Dir::N, right = Dir::N;
@@ -1355,18 +1366,20 @@ std::string ShapeLine(const std::string& text) {
         for (std::size_t n = i + 1; n < dir.size(); ++n) if (dir[n] == Dir::L || dir[n] == Dir::R) { right = dir[n]; break; }
         dir[i] = (left == right && left != Dir::N) ? left : (base ? Dir::R : Dir::L);
     }
-    std::vector<int> level(shaped.size(), base);
-    for (std::size_t i = 0; i < shaped.size(); ++i) {
+    std::vector<int> level(clusters.size(), base);
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
         if (base == 0) level[i] = dir[i] == Dir::R ? 1 : 0;
         else level[i] = (dir[i] == Dir::L || dir[i] == Dir::EN) ? 2 : 1;
     }
     int top = 0;
     for (int lv : level) if (lv > top) top = lv;
-    for (int lv = top; lv >= 1; --lv) ReverseRun(shaped, level, lv);
+    for (int lv = top; lv >= 1; --lv) ReverseRun(clusters, level, lv);
     std::string out;
-    for (std::uint32_t cp : shaped) utf8::Append(out, cp);
+    for (const auto& c : clusters) for (std::uint32_t cp : c) utf8::Append(out, cp);
     return out;
 }
+
+} // namespace
 
 std::string ShapeForDisplay(const std::string& text) {
     // One line at a time. A newline inside one reverse run swapped the lines.

@@ -35,6 +35,25 @@ int main() {
         CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
     }
 
+    // An older scene with an animator and no sprite loads as it was saved: no default sprite appears.
+    {
+        const char* text =
+            "okayscene 3\n"
+            "gameobject 0 \"Lone\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "end\n";
+        Scene loaded("Old");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        GameObject* go = loaded.Find("Lone");
+        CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+        CHECK(go && go->GetComponent<SpriteRenderer>() == nullptr);
+        // A copy of it (Instantiate goes through the same reader) does not gain one either.
+        GameObject* copy = go ? loaded.Instantiate(*go) : nullptr;
+        CHECK(copy && copy->GetComponent<SpriteRenderer>() == nullptr);
+    }
+
     // --- Animator drives the SpriteRenderer's texture over time ---
     {
         Scene scene("Anim");

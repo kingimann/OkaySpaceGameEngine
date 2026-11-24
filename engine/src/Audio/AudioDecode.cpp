@@ -4,7 +4,6 @@
 // incrementally through VorbisStream); MP3 through Mp3Decoder.cpp; FLAC through
 // FlacDecoder.cpp.
 #include "okay/Audio/AudioClip.hpp"
-#include <map>
 #include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
@@ -150,7 +149,6 @@ std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.si
 
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
-    // Streaming reads the file itself (AudioStream). This cache is the one LoadCached already had.
     const auto key = std::make_pair(CacheName(path) + (mono ? "\n:mono" : ""), rate);
     std::uintmax_t size = 0; std::int64_t time = 0;
     FileStamp(path, size, time);

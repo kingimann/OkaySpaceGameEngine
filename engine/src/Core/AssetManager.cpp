@@ -7,26 +7,13 @@
 #include "okay/Render/Material.hpp"
 #include "okay/Render/Mesh.hpp"
 #include <algorithm>
-#include <map>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 #include "CoreThreads.hpp"   // our own Mutex/CondVar (no <mutex> under MinGW win32 threads)
 
 namespace okay {
-
-bool Material::LoadFromFile(const std::string& path, Material& out) {
-    // Direct read. Routing this through AssetManager made a save-then-reopen return the
-    // old material, and the loader called Get on itself from a worker thread.
-    std::ifstream f(path);
-    if (!f) return false;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    out = FromText(ss.str());
-    return true;
-}
 
 struct AssetManager::Sync {
     corethreads::Mutex mutex;
@@ -176,7 +163,6 @@ void AssetManager::RegisterDefaultLoaders() {
     RegisterLoader<Image>("Image",
         [](const std::string& p, std::string& e) -> std::shared_ptr<Image> {
             auto a = std::make_shared<Image>();
-            // Image::Load asks the manager unless a load is already in progress (this call).
             return a->Load(p, &e) ? a : nullptr;
         },
         [](const Image& a) { return a.Pixels().size(); });

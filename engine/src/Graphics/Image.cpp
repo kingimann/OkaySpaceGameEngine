@@ -6,27 +6,22 @@
 
 namespace okay {
 
-namespace {
-// A direct decode. Image::Load does not go through AssetManager: that route pinned every
-// image for the process, handed back the old pixels after a rewrite, and the Xbox export
-// (which links this file and not the manager) failed to link.
-bool LoadImageFile(Image& img, const std::string& path, std::string* error) {
-    DecodedImage dec;
+bool Image::Load(const std::string& path, std::string* error) {
+    // Our own decoder (Core/ImageDecode): PNG, JPG, BMP, TGA, GIF (first frame), HDR (tone-mapped), PSD.
+    // It refuses absurd sizes and headers that claim far more pixels than the file could hold.
+    // The buffer is always RGBA8.
+    DecodedImage img;
     std::string why;
-    if (!DecodeImageFile(path, dec, &why)) {
+    if (!DecodeImageFile(path, img, &why)) {
         if (why.empty()) why = "load failed";
         if (error) *error = why;
         Log::Warning("[asset] cannot load image '", path, "': ", why);
-        img = Image();
+        m_w = m_h = 0; m_pixels.clear();
         return false;
     }
-    img.Set(dec.width, dec.height, std::move(dec.rgba));
+    m_w = img.width; m_h = img.height;
+    m_pixels = std::move(img.rgba);
     return true;
-}
-}
-
-bool Image::Load(const std::string& path, std::string* error) {
-    return LoadImageFile(*this, path, error);
 }
 
 bool Image::SavePNG(const std::string& path) const {

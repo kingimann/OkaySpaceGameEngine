@@ -4,6 +4,7 @@
 #include "okay/Core/Utf8.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <string>
+#include <vector>
 
 using namespace okay;
 
@@ -40,6 +41,36 @@ int main() {
     CHECK(HasCp(vowelled, 0xFE91));
     CHECK(HasCp(vowelled, 0xFE90));
 
+    // The mark stays right after its letter once the run is reversed (a left-to-right renderer
+    // draws a mark on the glyph before it).
+    {
+        std::vector<std::uint32_t> cps;
+        for (std::size_t i = 0; i < vowelled.size();) cps.push_back(utf8::Next(vowelled, i));
+        CHECK(cps.size() == 3);
+        if (cps.size() == 3) {
+            CHECK(cps[0] == 0xFE90);      // the second beh, final form, is drawn first
+            CHECK(cps[1] == 0xFE91);      // then the first beh, initial form ...
+            CHECK(cps[2] == 0x064E);      // ... with its fatha after it
+        }
+    }
+    // Several marks, and a Hebrew point, stay with their letter too.
+    {
+        const std::string marks = ShapeForDisplay("\u0628\u064E\u0651\u0628");
+        std::vector<std::uint32_t> cps;
+        for (std::size_t i = 0; i < marks.size();) cps.push_back(utf8::Next(marks, i));
+        CHECK(cps.size() == 4 && cps[0] == 0xFE90 && cps[1] == 0xFE91 && cps[2] == 0x064E && cps[3] == 0x0651);
+        const std::string pointed = ShapeForDisplay("\u05E9\u05BC\u05DC");
+        std::vector<std::uint32_t> h;
+        for (std::size_t i = 0; i < pointed.size();) h.push_back(utf8::Next(pointed, i));
+        CHECK(h.size() == 3 && h[0] == 0x05DC && h[1] == 0x05E9 && h[2] == 0x05BC);
+    }
+    // A space ends the join: two words of one beh each stay isolated.
+    {
+        const std::string words = ShapeForDisplay("\u0628 \u0628");
+        CHECK(HasCp(words, 0xFE8F));
+        CHECK(!HasCp(words, 0xFE90) && !HasCp(words, 0xFE91));
+    }
+
     // Each line keeps its own order. One reverse of the whole string swapped the lines.
     const std::string two = ShapeForDisplay(hebrew + "\n" + hebrew);
     const std::size_t nl = two.find('\n');
@@ -62,5 +93,9 @@ int main() {
     tall.LoadFromFile(face, 360.0f);
     CHECK(tall.Atlas().Width() <= 8192);
     CHECK(tall.Atlas().Height() <= 8192);
+    // A bake that needs more than 8192 (but fits 16384) is refused instead of making a 1 GB atlas.
+    TtfFont huge;
+    const bool hugeOk = huge.LoadFromFile(face, 1500.0f);
+    CHECK(!hugeOk || (huge.Atlas().Width() <= 8192 && huge.Atlas().Height() <= 8192));
     TEST_MAIN_RESULT();
 }

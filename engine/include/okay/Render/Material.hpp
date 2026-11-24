@@ -197,7 +197,13 @@ struct Material {
         f << ToText();
         return true;
     }
-    static bool LoadFromFile(const std::string& path, Material& out);
+    static bool LoadFromFile(const std::string& path, Material& out) {
+        std::ifstream f(path);
+        if (!f) return false;
+        std::stringstream ss; ss << f.rdbuf();
+        out = FromText(ss.str());
+        return true;
+    }
 };
 
 } // namespace okay

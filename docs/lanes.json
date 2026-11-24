@@ -191,7 +191,6 @@
         "editor/ScriptEditorCodeEdit.*",
         "editor/ScriptEditorWidget.hpp",
         "editor/ScriptText.hpp",
-        "editor/vendor/**",
         "docs/**/own_*.md",
         "docs/content/model_readers.md",
         "docs/platform/crypto*.md",

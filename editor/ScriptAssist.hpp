@@ -3,7 +3,7 @@
 // hover docs, C# members, help card, snippet painter, palette and language definition. Called by the Script Editor
 // (DrawScriptEditor, main.cpp) and the Help menu. Moved out of main.cpp unchanged (docs/editor/main_split_plan.md, move 3).
 #include "imgui.h"
-#include "TextEditor.h"        // ImGuiColorTextEdit: TextEditor::Palette, TextEditor::LanguageDefinition (editor/vendor)
+#include "ScriptEditorCodeEdit.hpp" // scripteditor::ScriptPalette, scripteditor::LanguageWords (our code widget's types)
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -56,8 +56,8 @@ const ScriptHelp* ScriptHelpFor(const std::string& key);
 std::string ScriptExampleFromSignature(const std::string& sig);
 // A code snippet coloured with the editor's palette, in the code font.
 void DrawCodeSnippet(const std::string& code);
-// The OkayScript palette and language definition the code widget uses.
-const TextEditor::Palette& OkayScriptPalette();
-const TextEditor::LanguageDefinition& OkayScriptLangDef();
+// The OkayScript palette and language words (keywords, types, built-ins with their hover docs) the code widget uses.
+const scripteditor::ScriptPalette& OkayScriptPalette();
+const scripteditor::LanguageWords& OkayScriptLanguageWords();
 
 } // namespace oked

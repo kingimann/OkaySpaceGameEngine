@@ -17,7 +17,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
   - 7.1.3 Ducking - `Audio/AudioMixer` - Music dips while a Voice source plays (level, attack, release)
   - 7.1.4 Spatial listener - `Audio/AudioMixer` - `SetListener` set from the main camera each audio refill; `Attenuation` and `PanGains`; doppler from the listener and source motion between refills
   - 7.1.7 Reverb bus - `Audio/SpatialFx` (`RoomReverb`, old name `SchroederReverb`) - our own feedback delay network (eight prime-length lines, Hadamard mix, decay-time loss and low-pass per line, two input diffusers; written from the papers, numbers our own), fed by 3D sources while the listener is inside a Reverb volume; skipped entirely when dry so an old mix is unchanged
-  - 7.1.5 Audio Mixer panel - `editor/main.cpp` - master and group sliders, mutes, output meters, ducking controls
+  - 7.1.5 Audio Mixer panel - `editor/main.cpp`, `editor/AudioMixerModel.hpp`, `okayui/screens/OkayUIPanels.cpp` (drawn by OkayUI only) - master and group sliders, mutes, output meters, ducking controls
   - 7.1.6 Device feed - `player/main.cpp`, `editor/main.cpp` - open the audio device through `okay::platform` (SDL2 by default, our own ALSA backend with `-DOKAY_PLATFORM_BACKEND=own`) and keep about 70 ms queued from `RenderStereo`
 - **Code:** `Audio/AudioMixer`, `editor/main.cpp` (Audio Mixer panel), `player/main.cpp` (audio device loop)
 - **API:** `AudioMixer::masterVolume`, `AudioMixer::groupVolume`, `AudioMixer::groupMuted`, `AudioMixer::duckMusicUnderVoice`, `AudioMixer::SetListener`, `AudioMixer::peak`, script `Audio.SetGroupVolume`, `set_group_volume`, `set_ducking`

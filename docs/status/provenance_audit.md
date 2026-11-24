@@ -27,7 +27,7 @@ that nothing else was copied; see "Method and limits".
 | 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | ~~Probable copy of public-domain constants (not listed)~~ **CLOSED: replaced** | was `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Done: the owner said nothing may be copied; the whole reverb was rewritten as our own feedback delay network from the papers (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
-| 5 | Vendored third-party code (allowed, listed) | `editor/vendor/TextEditor.*` | ImGuiColorTextEdit (MIT) | Keep until replaced. (ufbx, `engine/third_party/ufbx/`, was deleted on 2026-11-23; F5 is moot) |
+| 5 | Vendored third-party code (allowed, listed) | none left: ImGuiColorTextEdit (`editor/vendor/`) was deleted 2026-11-23, replaced by `OkayUI::CodeEdit`; ufbx (`engine/third_party/ufbx/`) was deleted 2026-11-23 | - | Nothing to keep; F5 is moot |
 | 6 | Notice or licence gap | Roboto Medium (no licence file); no packaging step copies any notice file | Roboto: Apache 2.0 (per the font's own name table) | Owner must supply the licence; add notices to release archives (F6) |
 | 7 | Behaviour copied, code not (judgement call) | Own model readers, comments such as "as Assimp does", "imports like Assimp" | Assimp, BSD 3-clause | Rule 19a does not forbid matching behaviour; ask the owner to confirm (F7) |
 | 8 | Standard table / standard algorithm | MP3 Huffman tables and window, SHA-2 constants, CRC-32, inflate tables, JPEG tables, Ed25519 constants | ISO, FIPS, RFC, ITU specs | Keep; say so in the file headers (F8) |
@@ -52,7 +52,6 @@ All of these are in `docs/status/THIRD_PARTY.md`. Notice files were checked by l
 |---|---|---|---|
 | SDL2 | system package, `SDL2.dll` bundled in Windows builds | zlib | No file in the repository (not vendored). The Windows distribution ships the DLL; whether it ships `COPYING.txt` is **unverified** |
 | Dear ImGui | downloaded at configure time (`editor/CMakeLists.txt`, `launcher/CMakeLists.txt`, `tests/CMakeLists.txt`) | MIT | Not vendored. A binary that contains ImGui needs its MIT notice; none is shipped by any script (F6) |
-| ImGuiColorTextEdit | `editor/vendor/TextEditor.*` | MIT, "Copyright (c) 2017 BalazsJako" | Yes: `editor/vendor/TextEditor.LICENSE` |
 | ufbx | deleted 2026-11-23 (was `engine/third_party/ufbx/`) | MIT or public domain, both offered | No longer in the repository |
 | Assimp 5.4.3 | downloaded at configure time (`engine/CMakeLists.txt`, optional) | BSD 3-clause | Not vendored. A binary that links it needs its notice (F6) |
 | libsodium | system package, optional | ISC | Not vendored |
@@ -117,9 +116,9 @@ What follows is the original finding.
 
 ### F5. Vendored libraries (allowed, listed)
 
-- `editor/vendor/TextEditor.cpp` and `.h` (ImGuiColorTextEdit, MIT, notice present). Not scanned for modifications.
+- ImGuiColorTextEdit (`editor/vendor/TextEditor.*`) was deleted on 2026-11-23; the script editor uses our own `OkayUI::CodeEdit`.
 - (deleted 2026-11-23) `engine/third_party/ufbx/ufbx.c` and `.h` (MIT or public domain; the file offered a choice of two licences). To stay clear of rule 19a's "public-domain needs approval", the MIT option is the one to choose; the owner should record that (question 5).
-- Both are on the removal plan in `docs/status/own_code_roadmap.md`. The own FBX reader (`FbxReader.cpp`, `FbxScene.cpp`) says "no third-party code". An overlap run of our sources against `ufbx` found no matching runs of 3 or more lines.
+- Both are gone. The own FBX reader (`FbxReader.cpp`, `FbxScene.cpp`) says "no third-party code". An overlap run of our sources against `ufbx` found no matching runs of 3 or more lines.
 
 ### F6. Notice gaps
 
@@ -175,7 +174,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 ## Method and limits
 
 1. **Known pieces.** Read `CLAUDE.md` and `docs/status/THIRD_PARTY.md`; looked for each piece and its notice file in the repository.
-2. **Marker scan.** `python3 scripts/provenance_scan.py markers` lists comment lines in `engine/ shared/ editor/ launcher/ player/ okayui/ relay/ tools/ scripts/ tests/` (skipping `editor/vendor`, `engine/third_party`, `tests/wycheproof`, `tests/data`) that contain porting words ("ported from", "based on", "adapted from", "taken from", "translated from", "copied from", "à la", "the way X does") or names of other projects and libraries. It printed 527 lines. I read the ones not about Assimp, Dear ImGui, SDL or Blender by eye; the rest are counted above.
+2. **Marker scan.** `python3 scripts/provenance_scan.py markers` lists comment lines in `engine/ shared/ editor/ launcher/ player/ okayui/ relay/ tools/ scripts/ tests/` (skipping `engine/third_party`, `tests/wycheproof`, `tests/data`) that contain porting words ("ported from", "based on", "adapted from", "taken from", "translated from", "copied from", "à la", "the way X does") or names of other projects and libraries. It printed 527 lines. I read the ones not about Assimp, Dear ImGui, SDL or Blender by eye; the rest are counted above.
 3. **Line overlap.** `python3 scripts/provenance_scan.py overlap <reference folders>` compares our own C and C++ files with a local source tree of another project. It ignores whitespace, comments and preprocessor lines and reports runs of consecutive matching lines. It was run against: the Assimp 5.4.3 source (`code/` and `contrib/`), a Dear ImGui source tree, and the vendored ufbx. Results: one false-alarm hit in `FbxReader.hpp`; start-up boilerplate hits in `editor/VsGraphShot.cpp` and `launcher/main.cpp`; nothing for ufbx. It prints file names and line numbers only, never the other code.
 4. **History.** `git log -S` and message searches for "port", "ported from", "copied from", "stb", "Assimp", "vendored". They show the removed libraries listed above and the Assimp-comparison work; no message says that code was ported from a named library except the LWO change (#835, "the way Assimp's GenUVCoords step does").
 5. **Reading.** The LWO function was compared with the Assimp source by eye (F1). Headers of every own model reader, every decoder, `okay::crypto`, the TTF rasteriser and image decoders were read for stated sources.

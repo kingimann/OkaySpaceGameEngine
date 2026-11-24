@@ -185,6 +185,7 @@ int main() {
         CHECK(c.res.linesDrawn > 5 && c.res.linesDrawn < 60);       // only the visible rows are laid out
         c.Frames(2);
         CHECK(c.res.linesDrawn > 5 && c.res.linesDrawn < 60);
+        std::printf("  crash log: lines %d, drawn %d..%d\n", c.res.lineCount, c.res.firstDrawn, c.res.lastDrawn);
         CHECK(c.res.lastDrawn == 400 && c.res.firstDrawn > 340);          // it opened at the newest line, the last one is on screen
         c.Click(c.res.refreshButton); CHECK(c.refreshed == 1);
         c.Click(c.res.openFolderButton); CHECK(c.opened == 1);
@@ -213,13 +214,34 @@ int main() {
         c.Click(c.res.confirmDelete); c.Frames(3);
         CHECK(c.cleared == 1 && c.res.empty && !c.st.confirming);
     }
+    {   // the reports are selectable text, read only (as the Dear ImGui window's read-only text box): a drag selects, Ctrl+C copies the
+        // selection through the host, typing changes nothing
+        CrashRig c;
+        for (int i = 0; i < 40; ++i) c.model.text += "frame " + std::to_string(i) + " at Foo::Bar\n";
+        c.model.revision = 1; c.Frames(5);
+        const UI::Rect b = c.res.body;
+        CHECK(b.w > 0.0f && c.st.body != nullptr);
+        const float y = b.y + b.h - 40.0f;
+        c.sim.Move(b.x + 12.0f, y); c.Frame(); c.sim.Down(); c.Frame();
+        c.sim.Move(b.x + 140.0f, y); c.Frame(); c.Frame(); c.sim.Up(); c.Frame();
+        CHECK(c.st.body->HasSelection());
+        const std::string sel = c.st.body->SelectedText();
+        c.sim.edge[Key_Copy] = true; c.Frame(); c.sim.edge[Key_Copy] = false; c.Frame();
+        CHECK(!sel.empty() && !c.copied.empty() && c.copied.back() == sel && c.model.text.find(sel) != std::string::npos);
+        const std::string before = c.st.body->GetText();
+        c.sim.text = "zzz"; c.Frame(); c.sim.text.clear();
+        c.sim.edge[Key_Backspace] = true; c.Frame(); c.sim.edge[Key_Backspace] = false; c.Frame();
+        CHECK(c.st.body->GetText() == before);                        // read only
+        c.model.text += "newer line\n"; ++c.model.revision; c.Frames(4);   // a reload: the new text, shown from the end again
+        CHECK(c.st.body->GetText().find("newer line") != std::string::npos && c.res.lastDrawn == c.res.lineCount - 1);
+    }
     {   // odd text: blank lines, no trailing newline, a lone CR, a very long line, invalid bytes
         CrashRig c; c.model.text = std::string("a\n\n\nb\r\nc") + std::string(5000, 'x') + "\n\xff\xfe\n"; c.model.revision = 1;
         c.Frames(4);
         CHECK(c.res.lineCount == 6 && UI::DroppedGeometry() == 0);
     }
 
-    {   // ListClipper body: a long report with blank lines lays out few rows, the wheel reaches the oldest line, nothing drops
+    {   // a long report with blank lines lays out only the visible rows, the wheel reaches the oldest line, nothing drops
         CrashRig c;
         for (int i = 0; i < 5000; ++i) c.model.text += (i % 7 == 3) ? std::string("\n") : "row " + std::to_string(i) + " at Foo::Bar\n";
         c.model.revision = 1; c.Frames(6);

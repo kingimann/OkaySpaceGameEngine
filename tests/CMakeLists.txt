@@ -430,6 +430,16 @@ add_test(NAME script_spawn_path_guard COMMAND test_script_spawn_path_guard)
 add_executable(test_script_components test_script_components.cpp)
 target_link_libraries(test_script_components PRIVATE okay::engine)
 add_test(NAME script_components COMMAND test_script_components)
+add_executable(test_script_bindings test_script_bindings.cpp)
+target_link_libraries(test_script_bindings PRIVATE okay::engine)
+add_test(NAME script_bindings COMMAND test_script_bindings)
+if(OKAY_PYTHON)
+    # The generated script bindings (engine/src/Scripting/ScriptBindingsGenerated.cpp) match the headers.
+    add_test(NAME script_bindings_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_script_bindings.py --check)
+    # No bound method reaches files, sockets, platform services or the clipboard; enum and count arguments are
+    # range-checked (docs/scripting/script_bindings.md "Side effects scripts cannot reach").
+    add_test(NAME script_bindings_rules COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_gen_script_bindings.py)
+endif()
 
 add_executable(test_scene_load test_scene_load.cpp)
 target_link_libraries(test_scene_load PRIVATE okay::engine)
@@ -1048,11 +1058,14 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
 # OkayScript, the standalone language (okayscript/, docs/scripting/scripting.md "Standalone OkayScript"): its tests link
 # only okayscript_lang, never the engine. Lexer, parser, interpreter, natives and errors run real code and check output.
-foreach(_oks lexer parser interpreter native errors classes)
+foreach(_oks lexer parser interpreter native errors classes vm)
     add_executable(test_okayscript_lang_${_oks} ${PROJECT_SOURCE_DIR}/okayscript/tests/test_${_oks}.cpp)
     target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
     add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
 endforeach()
+# vm: the bytecode machine gives the recorded output, errors and lines (vm_expected.txt; every CLI case script too).
+target_compile_definitions(test_okayscript_lang_vm PRIVATE OKS_CLI_CASES="${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli"
+                           OKS_VM_EXPECTED="${PROJECT_SOURCE_DIR}/okayscript/tests/vm_expected.txt")
 # The same core instantiated for the engine's own value (vs::VsValue), as the engine's OkayScriptVM runs it.
 add_executable(test_okayscript_engine_value test_okayscript_engine_value.cpp)
 target_link_libraries(test_okayscript_engine_value PRIVATE okay::engine okayscript::lang)

@@ -4,12 +4,14 @@
 // It is a template over the value type V, so one core runs both the standalone okayscript::Value (Value.hpp) and the
 // engine's vs::VsValue. V must have the script-value interface: constructors from float, bool, std::string and its
 // vector type; MakeArray/MakeMap; IsNumber/IsBool/IsString/IsVec3/IsArray/IsMap/IsObject; AsFloat/AsBool/AsString/
-// AsVec3/AsArray/AsMap/AsObjectId. The definitions are in detail/Runtime.ipp and detail/Eval.ipp; the standalone value
+// AsVec3/AsArray/AsMap/AsObjectId; NumberPtr (the number, or nullptr), SetNumber, SetBool, StringPtr. The definitions are in detail/Runtime.ipp, detail/Eval.ipp and detail/Vm.ipp; the standalone value
 // is instantiated in src/Instantiate.cpp, another value type where its program includes those files once.
 #include "okayscript/Ast.hpp"
+#include "okayscript/Bytecode.hpp"
 #include "okayscript/Environment.hpp"
 #include "okayscript/Error.hpp"
 #include "okayscript/Native.hpp"
+#include <atomic>
 #include <functional>
 #include <iosfwd>
 #include <type_traits>
@@ -23,9 +25,31 @@ namespace okayscript {
 
 template <class V> class BasicRuntime;
 
+/// A number no runtime has used before: BasicRuntime::varEpoch takes a new one whenever cached variable places may
+/// have gone stale, so a cache filled by one runtime (or before a change) never matches.
+inline unsigned long long NextVarEpoch() {
+    static std::atomic<unsigned long long> next{0};
+    return ++next;
+}
+
+/// A slot's state byte: 0 while its declaration has not run, else kDeclared with the variable's kind (VarKind).
+constexpr unsigned char kDeclared = 0x80;
+
+/// One scope. A function's or lambda's locals are slots in its frame (`slots`, named by `chunk`->slotNames); names
+/// declared any other way (top-level code, a host) are in `vars`.
 template <class V> struct BasicEnvironment {
     std::unordered_map<std::string, V> vars;
     std::unordered_map<std::string, unsigned char> kinds;   ///< typed / const variables only
+    const Chunk* chunk = nullptr;           ///< the running body's code, when it has slots
+    V* slots = nullptr;                     ///< its slot values
+    unsigned char* slotState = nullptr;     ///< 0 = not declared yet, else kDeclared | kind
+    /// The slot named n, or -1.
+    int SlotOf(const std::string& n) const {
+        if (!chunk) return -1;
+        const auto& names = chunk->slotNames;
+        for (std::size_t i = 0; i < names.size(); ++i) if (names[i] == n) return (int)i;
+        return -1;
+    }
 };
 
 /// What the program running the interpreter adds to the language. Every hook is optional (return false = "not mine").
@@ -133,6 +157,8 @@ public:
         const std::vector<std::string>* params;
         const StmtList* body;
         const std::vector<ExprPtr>* defaults;
+        ChunkPtr* code;   ///< the lambda's compiled body (LambdaExpr::code)
+        std::vector<ChunkPtr>* defaultCode;   ///< its compiled defaults (LambdaExpr::defaultCode)
     };
     std::unordered_map<int, LambdaBody> lambdas;
 
@@ -172,14 +198,32 @@ public:
     void Assign(const std::string& n, const V& v);
     V Get(const std::string& n) const;
     bool Has(const std::string& n) const;
-    /// The variable `n` in the scopes or the statics (one search), or nullptr. Not a class field.
-    const V* Lookup(const std::string& n) const;
+    /// The variable `n` in the scopes or the statics (one search), or nullptr. Not a class field. When it is found in
+    /// a scope and `cache` is given, the cache is filled in (bytecode Load and Store).
+    const V* Lookup(const std::string& n, NameCache* cache = nullptr) const;
+    /// Assign, and fill `cache` in when the value landed in a scope with no type or const rule on it.
+    void AssignCached(const std::string& n, const V& v, NameCache& cache);
+    /// Changes whenever a scope opens or closes or a variable is declared: cached variable places are then stale.
+    /// Code that pushes, pops or moves scopes itself (a host parking a coroutine) calls BumpVars.
+    unsigned long long varEpoch = NextVarEpoch();
+    void BumpVars() { varEpoch = NextVarEpoch(); }
+    /// Like varEpoch, for cached globals no local can hide (a name not in localNames): those stay good across calls.
+    /// Changes when a type rule may change, a static is set, a name becomes a local, or the functions are (re)loaded.
+    unsigned long long globalEpoch = NextVarEpoch();
+    void BumpGlobals() { globalEpoch = NextVarEpoch(); }
+    /// The epoch a cache of the global `n` uses.
+    unsigned long long GlobalEpochFor(const std::string& n) const { return localNames.count(n) ? varEpoch : globalEpoch; }
+    /// A by-name cache is still good (epoch numbers are never reused, so the two can't be confused).
+    bool CacheGood(const NameCache& c) const { return c.epoch == varEpoch || c.epoch == globalEpoch; }
     /// Names that can be locals (Program::localNames of every loaded source, plus any defined in a call's scope at
     /// run time). Lookup only walks the call stack for these; any other name is a global or a static.
     std::unordered_set<std::string> localNames;
 
     /// Call a native, a script function, `var.Method(...)`, or a variable holding a lambda, by name.
     V Call(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names = nullptr, int line = 0);
+    /// Call the script's own function `name` when it defines one, even when a builtin or native has the same name
+    /// (the host calling an event handler such as `shake`); else as Call.
+    V CallFunction(const std::string& name, std::vector<V>& args, const std::vector<std::string>* names = nullptr);
     /// Call a function value: a lambda, {"__fn": name}, or a function's name as text.
     V CallValue(const V& fn, std::vector<V>& args, const std::vector<std::string>* names = nullptr);
     V CallLambda(const V& f, std::vector<V>& args, const std::vector<std::string>* names = nullptr);
@@ -192,17 +236,38 @@ public:
     /// Count one loop iteration against Limits::maxLoopIterations (`what` names the loop in the error).
     void CountIteration(long long& n, const char* what) const;
 
-    /// Work out an expression / run a statement. Run also records the statement's line in curLine, which a runtime
-    /// error without a line of its own gets where it is caught (Stamp).
-    V Eval(const Expr& e);
-    Flow Exec(const Stmt& s);
-    Flow Run(const Stmt& s) { curLine = s.line; return Exec(s); }
-    Flow RunList(const StmtList& list);
+    /// Run top-level code (compiled into `code` the first time).
+    Flow RunBody(const StmtList& body, ChunkPtr& code) { return RunChunk(CodeFor(body, code)); }
+    /// Run compiled code. A function's or lambda's code gets its frame's slots and their states.
+    Flow RunChunk(const Chunk& c, V* slots = nullptr, unsigned char* slotState = nullptr);
+    /// The value of one expression outside any body (a default argument, a field's starting value).
+    V EvalCode(const Expr& e, ChunkPtr& code);
+    V IndexRead(const V& a, const V& index);
+    void IndexWrite(const V& a, const V& val, const V& index);
+    V CallMethodOn(const V& v, const MethodCallExpr& e, std::vector<V>& vals);
+    // What the nodes do once their operands are worked out (detail/Eval.ipp); the instructions call these.
+    void LoadName(const std::string& n, NameCache* cache, V& out);
+    V ReadQualified(const VarExpr& e);
+    void WriteQualified(const std::string& n, const V& v);
+    V ReadMember(const V& v, const MemberExpr& e);
+    void WriteMember(const V& target, const MemberAssignExpr& e, const V& v);
+    static V CastValue(const std::string& type, const V& v);
+    V MakeLambda(const LambdaExpr& e);
+    V IndexCompound(const V& a, const V& rhs, const V& index, const IndexCompoundAssignExpr& e);
+    V Subscribe(const EventOrCompoundExpr& e, const V& fn);
+    bool SubscribeByName(const EventOrCompoundExpr& e, V& out);
+    V CompoundCurrent(const EventOrCompoundExpr& e);
     /// The line of the statement running now, and the value a `return` is carrying.
     int curLine = 0;
     V retVal;
     /// Give `e` the line of the statement that was running when it was raised, when it has none (and lines are on).
     void Stamp(ScriptError& e) const { if (e.line == 0) e.line = Ln(curLine); }
+
+    /// Call the script function fn with argc arguments (the bytecode Call's fast path: no argument list made).
+    V Invoke(const FunctionDecl& fn, const V* args, std::size_t argc, const std::vector<std::string>* names);
+    /// Changes whenever the script functions are (re)defined: cached call targets are then stale (Chunk::calls).
+    unsigned long long callEpoch = NextVarEpoch();
+    void BumpCalls() { callEpoch = NextVarEpoch(); BumpGlobals(); }
 
 private:
     V Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names);

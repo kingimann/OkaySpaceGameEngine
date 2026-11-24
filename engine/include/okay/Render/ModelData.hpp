@@ -388,6 +388,12 @@ bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadIqmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadNdoFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Silo models (`.sib`, Nevercenter), worked out from the one sample file (no public description exists): shapes (positions,
+/// n-gon faces, texture coordinates per corner, a material per face run), materials (diffuse colour, texture file inside the
+/// model's folder) and instances (copies of a shape in their own frame). Lights, groups, mirrors and texture previews are not
+/// read (reported in `out.notes`). See docs/content/model_readers.md (section SIB) for what is an assumption.
+bool ReadSibFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSibBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdcFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadHmpFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);

@@ -2572,8 +2572,8 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
         for (auto* n : ofType("OnNetworkEvent")) byName[n->arg.empty() ? std::string("event") : n->arg].push_back(n);
         open("void on_network_event(event_name, data, sender)");
         for (auto& kv : byName) {
-            std::string nm = kv.first;
-            nm.erase(std::remove(nm.begin(), nm.end(), '"'), nm.end());
+            std::string nm;   // the name as a string literal
+            for (char c : kv.first) { if (c == '"' || c == '\\') nm += '\\'; nm += c; }
             out += "        if (event_name == \"" + nm + "\") {\n";
             for (auto* n : kv.second) chain(n->id, "            ");
             out += "        }\n";

@@ -928,6 +928,7 @@ inline const VsRule kBuiltinRules[] = {
     {"net_browser_*", "Multiplayer", "Server Browser"}, {"net_queue_*", "Multiplayer", "Matchmaking & Relay"},
     {"net_host_relay", "Multiplayer", "Matchmaking & Relay"}, {"net_join_relay", "Multiplayer", "Matchmaking & Relay"},
     {"net_relay_ready", "Multiplayer", "Matchmaking & Relay"}, {"mm_*", "Multiplayer", "Matchmaking & Relay"},
+    {"net.*", "Multiplayer", "Hosting & Joining"},   // the easy layer: net.host, net.join, net.on, net.send ...
     {"net_host", "Multiplayer", "Hosting & Joining"}, {"net_join", "Multiplayer", "Hosting & Joining"},
     {"net_join_link", "Multiplayer", "Hosting & Joining"}, {"net_pin_host", "Multiplayer", "Hosting & Joining"},
     {"net_disconnect", "Multiplayer", "Hosting & Joining"}, {"net_connected", "Multiplayer", "Hosting & Joining"},

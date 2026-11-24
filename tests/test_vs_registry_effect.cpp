@@ -595,7 +595,8 @@ static std::vector<Ev> BuildEvents() {
         sp->Play();
         for (int i = 0; i < 6; ++i) s.Update(0.1f);
     }});
-    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
+    for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged",
+                          "OnPlayerJoined", "OnPlayerLeft"})   // the real two-peer dispatch is in net_easy
         e.push_back({t, "", "bus", "Me", raise(t, "")});
     // A finger stream the recogniser turns into one gesture, then one scene update so the
     // graph's event runs. The clock starts far from any earlier sample.

@@ -4,7 +4,7 @@ row: | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameO
 ---
 ## 16. Main menu bar (cleaned up)
 
-What changed and why: [editor_menus.md](editor/editor_menus.md) (the map, and a table of every old item and where it went).
+What changed and why: [editor_menus.md](../editor/editor_menus.md) (the map, and a table of every old item and where it went).
 Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
 
 1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
@@ -31,4 +31,4 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 
 Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
-was not clicked is listed in [editor_menus.md](editor/editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
+was not clicked is listed in [editor_menus.md](../editor/editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.

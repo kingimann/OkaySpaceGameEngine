@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 965 names.
+Back to the [code index](../code_index.md). 67 headers, 967 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -751,19 +751,21 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 - `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
 - `Region` class, line 287: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `WantsKeyboard` function, line 327: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 351: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 378: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 456: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `HostedInputWanted` function, line 342: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `WantsKeyboard` function, line 345: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 369: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 396: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 474: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
-- `PopupCoversRect` function, line 16: True when an open ImGui popup covers any part of the screen rectangle (x, y, w, h), or is a modal (which dims the whole view).
-- `WindowInFrontCovers` function, line 36: True when another ImGui window that Dear ImGui draws in front of 'win' overlaps the rectangle (x, y, w, h) (ImGui coordinates).
-- `CoveredInImGui` function, line 60: Popups and windows in front together: while this is true a host draws the Dear ImGui version, which ImGui layers correctly.
-- `ToMainWindowPixels` function, line 67: ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
-- `OutsideMainWindow` function, line 73: True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
-- `HiddenInImGui` function, line 81: True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
+- `PopupCoversRect` function, line 17: True when an open ImGui popup covers any part of the screen rectangle (x, y, w, h), or is a modal (which dims the whole view).
+- `WindowInFrontCovers` function, line 37: True when another ImGui window that Dear ImGui draws in front of 'win' overlaps the rectangle (x, y, w, h) (ImGui coordinates).
+- `CoveredInImGui` function, line 61: Popups and windows in front together: while this is true a host draws the Dear ImGui version, which ImGui layers correctly.
+- `ToMainWindowPixels` function, line 68: ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
+- `MouseInOtherViewport` function, line 76: Where OkayUI's mouse is while it is over another OS window of Dear ImGui's (a panel dragged out of the editor, or docked into a
+- `OutsideMainWindow` function, line 86: True when the ImGui window was dragged out into another OS window (a hosted panel then draws there and maps the mouse with
+- `HiddenInImGui` function, line 94: True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while
 
 ## `shared/OkayUIHostMode.hpp`
 
@@ -790,8 +792,8 @@ Back to the [code index](../code_index.md). 67 headers, 965 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 26
-- `SharedImGuiEmbed` function, line 130: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `ImGuiEmbed` class, line 30
+- `SharedImGuiEmbed` function, line 137: The one embed the editor's hosted OkayUI widgets share (one set of textures).
 
 ## `shared/OkayUIImGuiMap.hpp`
 

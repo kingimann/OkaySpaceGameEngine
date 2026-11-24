@@ -5,7 +5,8 @@
 // OkayUI is flushed after ImGui's draw data, so it draws over every ImGui window. A modal dialog or a menu that opens above a
 // hosted screen would be painted over by it. Hosts therefore ask this first, and while it answers true they draw the screen's
 // Dear ImGui version instead (the launcher's What's New page, the editor's Console panel keep one): the popup is then layered
-// correctly and the screen comes back to OkayUI when the popup closes.
+// correctly and the screen comes back to OkayUI when the popup closes. A panel with no Dear ImGui version is hosted instead by
+// okayuihost::HostPanelWindow (OkayUIImGuiEmbed.hpp), which draws it in Dear ImGui's own order and needs none of this.
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -69,7 +70,19 @@ inline ImVec2 ToMainWindowPixels(ImVec2 p) {
     return ImVec2(p.x - o.x, p.y - o.y);
 }
 
-/// True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
+/// Where OkayUI's mouse is while it is over another OS window of Dear ImGui's (a panel dragged out of the editor, or docked into a
+/// node that was): Dear ImGui's desktop position, moved into the main window's pixels like every hosted rectangle (ToMainWindowPixels).
+/// False while the mouse is over the main window, or nowhere ImGui knows: the host keeps the platform's own position then.
+inline bool MouseInOtherViewport(ImVec2& out) {
+    ImGuiContext& g = *GImGui;
+    if (!(g.IO.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) || !g.MouseViewport || g.MouseViewport == ImGui::GetMainViewport()) return false;
+    if (!ImGui::IsMousePosValid(&g.IO.MousePos)) return false;
+    out = ToMainWindowPixels(g.IO.MousePos);
+    return true;
+}
+
+/// True when the ImGui window was dragged out into another OS window (a hosted panel then draws there and maps the mouse with
+/// MouseInOtherViewport).
 inline bool OutsideMainWindow(const ImGuiWindow* w) { return w && w->Viewport && w->Viewport != ImGui::GetMainViewport(); }
 
 /// True when Dear ImGui shows nothing of the window this frame: a docked panel whose tab is not the selected one (the Inspector while

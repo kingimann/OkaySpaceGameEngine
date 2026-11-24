@@ -1712,6 +1712,10 @@ add_executable(test_angular2d test_angular2d.cpp)
 target_link_libraries(test_angular2d PRIVATE okay::engine)
 add_test(NAME angular2d COMMAND test_angular2d)
 
+add_executable(test_physics2d_core test_physics2d_core.cpp)
+target_link_libraries(test_physics2d_core PRIVATE okay::engine)
+add_test(NAME physics2d_core COMMAND test_physics2d_core)
+
 add_executable(test_angular3d test_angular3d.cpp)
 target_link_libraries(test_angular3d PRIVATE okay::engine)
 add_test(NAME angular3d COMMAND test_angular3d)

@@ -631,7 +631,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ls ~/apt-cache/*.deb 2>/dev/null | xargs -r -n1 basename | sort | md5sum > ~/apt-debs-before
-          bash scripts/ci-install-mingw.sh
+          OKAY_APT_ARCHIVES="$RUNNER_TEMP/apt-cold" bash scripts/ci-install-mingw.sh   # TEMP measurement: cold download
 
       - name: Check for newly downloaded apt packages
         id: apt-new
@@ -730,7 +730,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && (((github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main') || github.ref == 'refs/heads/claude/ci-speed-2') }}   # TEMP measurement
         uses: actions/cache/save@v5
         with:
           path: .ccache

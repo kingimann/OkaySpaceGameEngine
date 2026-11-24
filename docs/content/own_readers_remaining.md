@@ -6,6 +6,10 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`; ufbx was deleted on 2026-11-23). Our own readers are the only
+> model readers; a file one refuses fails the import (no fallback). Nendo `.ndo` is the one extension dropped
+> (`docs/content/model_readers.md`, section NDO). Text below that describes Assimp as a fallback or backend is history.
+
 Goal (owner): no third-party dependency. Assimp v5.4.3 is the last big one on the model-import side. This page lists every
 format it can read that we cannot yet read ourselves, says how hard each one is, whether Assimp's own test directory has real
 files for it, and in what order to write them. The rule in `docs/status/own_code_roadmap.md` stays: a format is **not dropped

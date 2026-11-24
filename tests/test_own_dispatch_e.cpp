@@ -113,8 +113,8 @@ int main() {
         TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
-        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable() && !c.expectOwn) {
+        // off by default (the format cannot be read at all, and the message names the switch)
+        if (!c.expectOwn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

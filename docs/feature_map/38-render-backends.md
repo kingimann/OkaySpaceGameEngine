@@ -138,7 +138,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **System:** Web, Mobile and Console Export
 - **What:** How the player runs in a browser: the player is compiled to WebAssembly and uses the software path for 3D; there is no engine WebGL renderer class.
 - **Parts:**
-  - 38.7.1 Web build - `scripts/build-web.sh` - Emscripten, SDL2 from Emscripten's port, scene preloaded as `game.okayscene`; Assimp, libsodium and the relay are off
+  - 38.7.1 Web build - `scripts/build-web.sh` - Emscripten, SDL2 from Emscripten's port, scene preloaded as `game.okayscene`; libsodium and the relay are off
   - 38.7.2 Renderer in the browser - `player/main.cpp` - GPU backend creation is compiled out under `__EMSCRIPTEN__`, so frames use `RenderMeshesSS`; the 2D and UI drawing go through SDL
   - 38.7.3 CI job - `.github/workflows/ci.yml` - the "WebGL build (Emscripten)" job builds the player with that script
 - **Code:** `scripts/build-web.sh`, `player/main.cpp`

@@ -375,14 +375,12 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
-  # The model readers with Assimp compiled in (OKAY_USE_ASSIMP=ON), which no other job
-  # builds: ModelImportAssimp.cpp is compiled and the reader tests that compare the
-  # built-in readers with Assimp's run. Only the model test targets are built. Assimp's
-  # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
-  # and its objects come from ccache. The built-in-reader switches stay at their defaults.
-  assimp-models:
+  # The model readers on real files (docs/content/model_corpus.md). Assimp itself was removed from the engine on 2026-11-24;
+  # its source tree is still fetched here, as DATA only: its test folder holds the real model files the corpus manifest
+  # (tests/data/model_corpus_manifest.tsv) was recorded from. Nothing from it is compiled. Only the model test targets are built.
+  model-corpus:
     if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
-    name: Model readers with Assimp
+    name: Model readers on the real-file corpus
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -390,6 +388,7 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 1G
+      CORPUS_TAG: v5.4.3   # the Assimp release whose test folder the corpus manifest was recorded from
     steps:
       - uses: actions/checkout@v6
 
@@ -398,46 +397,42 @@ jobs:
           bash scripts/ci-apt-mirror.sh
           sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
 
-      - name: Find the Assimp version
-        run: echo "ASSIMP_TAG=$(grep -oE 'GIT_TAG +v[0-9.]+' engine/CMakeLists.txt | head -n1 | awk '{print $2}')" >> "$GITHUB_ENV"
-
-      - name: Restore the Assimp source
-        id: assimp-src
+      - name: Restore the corpus files
+        id: corpus-src
         uses: actions/cache@v5
         with:
           path: ~/assimp-src
-          key: assimp-src-${{ env.ASSIMP_TAG }}
+          key: assimp-src-${{ env.CORPUS_TAG }}
 
-      - name: Fetch Assimp
-        if: steps.assimp-src.outputs.cache-hit != 'true'
-        run: git clone --depth 1 --branch "$ASSIMP_TAG" https://github.com/assimp/assimp.git "$HOME/assimp-src"
+      - name: Fetch the corpus files
+        if: steps.corpus-src.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "$CORPUS_TAG" https://github.com/assimp/assimp.git "$HOME/assimp-src"
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
         with:
           path: .ccache
-          key: ccache-assimp-${{ github.sha }}
-          restore-keys: ccache-assimp-
+          key: ccache-corpus-${{ github.sha }}
+          restore-keys: ccache-corpus-
 
       - name: Configure
         run: |
-          cmake -S . -B build-assimp -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_USE_ASSIMP=ON \
-            -DFETCHCONTENT_SOURCE_DIR_ASSIMP="$HOME/assimp-src" -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          cmake -S . -B build-corpus -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF \
             -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
 
       - name: Build
         run: |
-          cmake --build build-assimp -j "$(bash scripts/ci_jobs.sh 4)" --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
+          cmake --build build-corpus -j "$(bash scripts/ci_jobs.sh 4)" --target test_model_readers test_model_readers_fuzz test_collada_reader \
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus test_own_dispatch_e2
 
       - name: Test
-        run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
+        run: ctest --test-dir build-corpus --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
 
-      # The real-file corpus (docs/content/model_corpus.md): every row of tests/data/model_corpus_manifest.tsv re-read from
-      # the test folder of the Assimp checkout above, so a reader change that alters a real file's counts fails here.
+      # Every row of tests/data/model_corpus_manifest.tsv re-read from the corpus folder above, so a reader change that alters a
+      # real file's counts fails here; own_dispatch_e2 also reads the three real RAW files.
       - name: Test the real-file corpus
-        run: OKAY_MODEL_CORPUS="$HOME/assimp-src/test" ctest --test-dir build-assimp --output-on-failure -R '^model_corpus$'
+        run: OKAY_MODEL_CORPUS="$HOME/assimp-src/test" ctest --test-dir build-corpus --output-on-failure -R '^(model_corpus|own_dispatch_e2)$'
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
@@ -446,7 +441,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .ccache
-          key: ccache-assimp-${{ github.sha }}
+          key: ccache-corpus-${{ github.sha }}
 
   # Our own HTTP client (docs/platform/own_http.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client

@@ -7,6 +7,7 @@
 // Dump() prints a node as a small S-expression, e.g. `1 + 2 * 3` -> "(+ 1 (* 2 3))", so tests can check the tree's shape.
 #include "okayscript/Environment.hpp"
 #include "okayscript/Token.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -39,7 +40,8 @@ enum class ExprKind {
     IndexCompoundAssign,
     Lambda,
     New,
-    EventOrCompound
+    EventOrCompound,
+    Map
 };
 enum class StmtKind {
     Expr,
@@ -57,7 +59,9 @@ enum class StmtKind {
     For,
     ForEach,
     Multi,
-    Yield
+    Yield,
+    Destructure,
+    Import
 };
 
 struct Expr {
@@ -82,7 +86,8 @@ using StmtList = std::vector<StmtPtr>;
 
 /// How a statement ended: normally, or by return / break / continue. Control flow is a returned status, not an
 /// exception, so it costs nothing on the hot path (a `return` value waits in BasicRuntime::retVal).
-enum class Flow : unsigned char { Normal, Return, Break, Continue };
+/// Yield: a generator handed back a value and waits to be resumed (detail/Vm.ipp, only with a generator's state).
+enum class Flow : unsigned char { Normal, Return, Break, Continue, Yield };
 
 /// A body compiled to bytecode (Bytecode.hpp), made the first time the body runs and kept with the syntax tree.
 struct Chunk;
@@ -115,9 +120,12 @@ struct MethodDef {
 };
 struct UserClass {
     std::string name;
+    std::string base;                           ///< `class Dog : Animal`: the plain class it extends ("" = none)
     std::vector<FieldDef> fields;
-    std::unordered_map<std::string, MethodDef> methods;
+    std::unordered_map<std::string, MethodDef> methods;   ///< also properties: get_Name / set_Name (parameter `value`)
     std::unordered_map<int, MethodDef> ctors;   ///< one constructor per number of arguments
+    std::unordered_map<std::string, MethodDef> staticMethods;   ///< `static` methods and `operator +` (named "operator+")
+    std::vector<FieldDef> staticFields;         ///< `static` fields: one copy per class (ClassName.field)
 };
 
 /// A parsed source file: its top-level statements, its functions (hoisted: callable before their definition) and
@@ -137,9 +145,18 @@ void CollectLocalNames(Program& prog);
 /// The names a function or lambda body declares (var, typed declarations, foreach, catch), in the order they first
 /// appear, not looking into lambdas; `statics` gets the ones declared `static`. The compiler gives these slots.
 void CollectBodyLocals(const StmtList& body, std::vector<std::string>& names, std::unordered_set<std::string>& statics);
+/// The locals of a function or lambda (its parameters and the names its body declares) that a lambda inside it uses:
+/// they live in a shared box, so the lambda still has them after the function returns (closures, by reference).
+void CollectCapturedNames(const std::vector<std::string>& params, const StmtList& body, std::unordered_set<std::string>& out);
 
 // ---- Expressions -------------------------------------------------------------------------------------------------
-struct NumberExpr : ExprOf<ExprKind::Number> { double v; explicit NumberExpr(double x) : v(x) {} std::string Dump() const override; };
+struct NumberExpr : ExprOf<ExprKind::Number> {
+    double v;
+    bool isInt = false;     ///< written 123L: a 64-bit whole number (iv)
+    std::int64_t iv = 0;
+    explicit NumberExpr(double x) : v(x) {}
+    std::string Dump() const override;
+};
 struct StringExpr : ExprOf<ExprKind::String> { std::string v; explicit StringExpr(std::string s) : v(std::move(s)) {} std::string Dump() const override; };
 struct BoolExpr : ExprOf<ExprKind::Bool> { bool v; explicit BoolExpr(bool b) : v(b) {} std::string Dump() const override; };
 /// $"text {expr} more"
@@ -235,6 +252,12 @@ struct TernaryExpr : ExprOf<ExprKind::Ternary> {
 };
 /// [a, b, c] and { a, b, c }
 struct ArrayExpr : ExprOf<ExprKind::Array> { std::vector<ExprPtr> elems; std::string Dump() const override; };
+/// {"key": value, name: value}: a new map (a bare name before ':' is the key as text). `{}` stays an empty list.
+struct MapExpr : ExprOf<ExprKind::Map> {
+    std::vector<std::string> keys;
+    std::vector<ExprPtr> values;
+    std::string Dump() const override;
+};
 /// list[i], map["key"]
 struct IndexExpr : ExprOf<ExprKind::Index> {
     ExprPtr arr, index; bool safe = false;
@@ -289,9 +312,13 @@ struct ReturnStmt : StmtOf<StmtKind::Return> { ExprPtr e; explicit ReturnStmt(Ex
 struct BreakStmt : StmtOf<StmtKind::Break> { std::string Dump() const override; };
 struct ContinueStmt : StmtOf<StmtKind::Continue> { std::string Dump() const override; };
 struct ThrowStmt : StmtOf<StmtKind::Throw> { ExprPtr e; explicit ThrowStmt(ExprPtr x) : e(std::move(x)) {} std::string Dump() const override; };
-/// try { ... } catch (e) { ... }: the catch variable holds the error's message.
+/// try { ... } catch (e) { ... } finally { ... }. The catch variable holds the error's message, or the value a script
+/// threw when that is not text; `catch (Error e)` (any type word) holds an error object {message, line, value}.
+/// `finally` runs however the body is left (normally, by an error, return, break or continue).
 struct TryStmt : StmtOf<StmtKind::Try> {
-    StmtList body, catchB; std::string catchVar; bool hasCatch = false;
+    StmtList body, catchB, finallyB; std::string catchVar; bool hasCatch = false;
+    bool typedCatch = false;   ///< `catch (Exception e)`: e is an error object
+    bool hasFinally = false;
     std::string Dump() const override;
 };
 struct BlockStmt : StmtOf<StmtKind::Block> { StmtList body; std::string Dump() const override; };
@@ -314,8 +341,24 @@ struct ForEachStmt : StmtOf<StmtKind::ForEach> {
 /// int a = 1, b = 2;
 struct MultiStmt : StmtOf<StmtKind::Multi> { StmtList list; std::string Dump() const override; };
 
-/// yield return <wait>; (a coroutine hands control back to its host)
-struct YieldStmt : StmtOf<StmtKind::Yield> { ExprPtr e; std::string Dump() const override; };
+/// yield return <wait>; (a coroutine hands control back to its host), or `yield <value>;` in a generator: a function
+/// with a `yield <value>` returns a generator that runs its body a step at a time (for x in gen(), g.next()).
+struct YieldStmt : StmtOf<StmtKind::Yield> { ExprPtr e; bool generator = false; std::string Dump() const override; };
+/// var [a, b] = list / var {x, y} = map / var {x: px} = map, and without `var` the same as assignments ([a, b] = [b, a]).
+struct DestructureStmt : StmtOf<StmtKind::Destructure> {
+    std::vector<std::string> names;   ///< the variables, in order ("" = skip this item: `_`)
+    std::vector<std::string> keys;    ///< map pattern: the key each name reads (else empty)
+    bool isMap = false;
+    bool declare = true;              ///< `var [...] =` declares; `[...] =` assigns
+    ExprPtr init;
+    std::string Dump() const override;
+};
+/// import "file.okay" [as name]: runs the file once in its own namespace and binds name (default: the file's stem)
+/// to a map of its globals and functions.
+struct ImportStmt : StmtOf<StmtKind::Import> {
+    std::string path, alias;
+    std::string Dump() const override;
+};
 /// The S-expression of a statement list: "(block s1 s2 ...)".
 std::string DumpList(const StmtList& list);
 

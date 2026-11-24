@@ -99,6 +99,51 @@ std::string RelTo(const std::string& path, const std::string& root) {
     return ec || r.empty() ? path : r.generic_string();
 }
 
+std::string LongPath(const std::string& p) {
+    std::error_code ec;
+    fs::path a = fs::absolute(p.empty() ? std::string(".") : p, ec);
+    if (ec) a = fs::path(p);
+    a = fs::weakly_canonical(a, ec).lexically_normal();
+#if defined(_WIN32)
+    // Windows can name a folder by its short 8.3 name (C:\Users\RUNNER~1, from GetTempPath), while git prints the long
+    // one (C:/Users/runneradmin). Expand the part of the path that exists with GetLongPathNameW (the Win32 API docs).
+    std::vector<fs::path> rest;
+    fs::path head = a;
+    while (!head.empty() && !fs::exists(head, ec)) {
+        if (head == head.parent_path()) break;
+        rest.push_back(head.filename());
+        head = head.parent_path();
+    }
+    const std::wstring w = head.wstring();
+    const DWORD need = GetLongPathNameW(w.c_str(), nullptr, 0);
+    if (need > 0) {
+        std::wstring out(need, L'\0');
+        const DWORD got = GetLongPathNameW(w.c_str(), &out[0], need);
+        if (got > 0 && got < need) {
+            out.resize(got);
+            a = fs::path(out);
+            for (auto it = rest.rbegin(); it != rest.rend(); ++it) a /= *it;
+        }
+    }
+#endif
+    std::string s = a.generic_string();
+    while (s.size() > 1 && s.back() == '/' && !(s.size() == 3 && s[1] == ':')) s.pop_back();
+    return s;
+}
+
+std::string RelInside(const std::string& path, const std::string& root) {
+    if (path.empty() || root.empty()) return "";
+    const std::string a = LongPath(path);
+    std::string r = LongPath(root);
+    if (!r.empty() && r.back() != '/') r += '/';
+#if defined(_WIN32)
+    const bool inside = a.size() > r.size() && okay::str::LowerAscii(a.substr(0, r.size())) == okay::str::LowerAscii(r);
+#else
+    const bool inside = a.size() > r.size() && a.compare(0, r.size(), r) == 0;
+#endif
+    return inside ? a.substr(r.size()) : std::string();
+}
+
 bool HasClashMarks(const std::string& text) {
     std::istringstream in(text);
     for (std::string line; std::getline(in, line);)

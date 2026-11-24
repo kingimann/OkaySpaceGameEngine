@@ -4,9 +4,7 @@
 #include <ctime>
 
 #include "AppRestart.hpp"   // Utf8, QuoteWindowsArg, the posix_spawn headers
-#if !defined(_WIN32)
-#  include "okay/Platform/NativeFetch.hpp"   // our own HTTP client, only when built with OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1
-#endif
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
 
 // (No std::thread / std::mutex here: the launcher is built with the MinGW win32 thread model. A native sleep is all this file needs.)
 
@@ -105,72 +103,36 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
     fs::remove(dest, ec);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    // Our own client first (opt-in, docs/platform/own_http.md). Anything that is not a clear answer (libssl missing,
-    // certificate refused, proxy trouble, a malformed reply) falls through to curl below, as before.
-    // The file goes to a temporary "<dest>.<key>.<pid>-<random>.part" first and is renamed when complete; a dropped connection is resumed with Range
-    // (two more tries, with backoff); SHA-256 is computed on the way (the caller still checks it against versions.json).
-    if (okay::http::NativeAvailable()) {
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher";
-        sp.maxBytes = maxBytes;
-        sp.maxRedirects = 5;
-        sp.connectMs = 20000;
-        sp.ioMs = 60000;
-        sp.totalMs = 6 * 60 * 60 * 1000;
-        sp.retries = 2;
-        sp.onBytes = onBytes;
-        sp.cancelled = cancelled;
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(url, okay::restart::Utf8(dest), sp);
-        switch (r.outcome) {
-        case okay::http::OwnOutcome::Ok: out.status = DownloadStatus::Ok; return out;
-        case okay::http::OwnOutcome::Cancelled: out.status = DownloadStatus::Cancelled; out.error = "Cancelled."; return out;
-        case okay::http::OwnOutcome::TooBig: out.error = "The server sent more data than the file should have."; return out;
-        case okay::http::OwnOutcome::DiskFull: out.status = DownloadStatus::DiskFull; out.error = "The disk is full."; return out;
-        case okay::http::OwnOutcome::ChecksumMismatch: out.error = "The download is damaged (its checksum is wrong)."; return out;
-        case okay::http::OwnOutcome::HttpError:
-            out.error = r.status >= 400 ? "The download failed (the server does not have that file)."
-                                        : "The download failed (the server answered " + std::to_string(r.status) + ").";
-            return out;
-        case okay::http::OwnOutcome::NotHandled: break;
-        }
-        // otherwise: no usable answer; try curl
-    }
-#endif
-    std::vector<std::string> args = {"curl", "-L", "-s", "-f", "--connect-timeout", "20", "--max-redirs", "5",
-                                     "--speed-limit", "1024", "--speed-time", "60", "-A", "OkaySpace-Launcher"};
-    if (url.compare(0, 8, "https://") == 0) { args.push_back("--proto-redir"); args.push_back("=https"); }
-    args.push_back("-o");
-    args.push_back(okay::restart::Utf8(dest));
-    args.push_back(url);
-
-    enum class Why { None, Cancelled, TooBig } why = Why::None;
-    std::uint64_t last = 0;
-    const RunResult run = RunProcess(args, [&]() {
-        std::error_code e;
-        const std::uintmax_t sz = fs::exists(dest, e) ? fs::file_size(dest, e) : 0;
-        const std::uint64_t now = e ? 0 : (std::uint64_t)sz;
-        if (now != last) { last = now; if (onBytes) onBytes(now); }
-        if (cancelled && cancelled()) { why = Why::Cancelled; return false; }
-        if (maxBytes > 0 && now > maxBytes) { why = Why::TooBig; return false; }
-        return true;
-    });
-    if (!run.started) { out.error = "The download program (curl) could not be started."; return out; }
-    if (run.stopped) {
-        fs::remove(dest, ec);
-        if (why == Why::Cancelled) { out.status = DownloadStatus::Cancelled; out.error = "Cancelled."; }
-        else out.error = "The server sent more data than the file should have.";
-        return out;
-    }
-    if (run.exitCode == 0 && fs::is_regular_file(dest, ec)) {
-        const std::uintmax_t sz = fs::file_size(dest, ec);
-        if (onBytes && !ec) onBytes((std::uint64_t)sz);
-        out.status = DownloadStatus::Ok;
-        return out;
+    // The HTTP seam (NativeFetch.hpp): WinHTTP on Windows, our own client on Linux when it is on, curl only as the last
+    // fallback. The file goes to a temporary "<dest>.<...>.part" first and is renamed when complete; a dropped connection
+    // is resumed with Range (two more tries, with backoff). The caller still checks the SHA-256 against versions.json.
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = "OkaySpace-Launcher";
+    sp.maxBytes = maxBytes;
+    sp.maxRedirects = 5;
+    sp.httpsOnlyRedirects = true;
+    sp.connectMs = 20000;
+    sp.ioMs = 60000;
+    sp.totalMs = 6 * 60 * 60 * 1000;
+    sp.retries = 2;
+    sp.onBytes = onBytes;
+    sp.cancelled = cancelled;
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(url, dest, sp);
+    switch (r.outcome) {
+    case okay::http::OwnOutcome::Ok: out.status = DownloadStatus::Ok; return out;
+    case okay::http::OwnOutcome::Cancelled: out.status = DownloadStatus::Cancelled; out.error = "Cancelled."; break;
+    case okay::http::OwnOutcome::TooBig: out.error = "The server sent more data than the file should have."; break;
+    case okay::http::OwnOutcome::DiskFull: out.status = DownloadStatus::DiskFull; out.error = "The disk is full."; break;
+    case okay::http::OwnOutcome::ChecksumMismatch: out.error = "The download is damaged (its checksum is wrong)."; break;
+    case okay::http::OwnOutcome::HttpError:
+        out.error = r.status >= 400 || r.viaCurl ? "The download failed (the server does not have that file)."
+                                                 : "The download failed (the server answered " + std::to_string(r.status) + ").";
+        break;
+    case okay::http::OwnOutcome::NotHandled:
+        out.error = "The download failed (" + (r.error.empty() ? std::string("no answer from the server") : r.error) + ").";
+        break;
     }
     fs::remove(dest, ec);
-    if (run.exitCode == 23) { out.status = DownloadStatus::DiskFull; out.error = "The disk is full."; }
-    else out.error = "The download failed (" + std::string(run.exitCode == 22 ? "the server does not have that file" : "curl exit code " + std::to_string(run.exitCode)) + ").";
     return out;
 }
 

@@ -2414,7 +2414,21 @@ add_executable(test_launcher_versions test_launcher_versions.cpp
 target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
+if(WIN32)
+    target_link_libraries(test_launcher_versions PRIVATE winhttp)   # VersionsNet.cpp downloads through the HTTP seam (WinHTTP)
+endif()
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
+
+# The HTTP seam (NativeFetch.hpp) on WinHTTP against a loopback server, with the curl fallback off: downloads, retries, a size
+# cap, cancel, resume with Range, HEAD, a prefix fetch, a POST. Windows only (the Windows test job runs it).
+if(WIN32)
+    add_executable(test_winhttp_loopback test_winhttp_loopback.cpp)
+    target_compile_features(test_winhttp_loopback PRIVATE cxx_std_17)
+    target_include_directories(test_winhttp_loopback PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_winhttp_loopback PRIVATE winhttp ws2_32)
+    add_test(NAME winhttp_loopback COMMAND test_winhttp_loopback)
+    set_tests_properties(winhttp_loopback PROPERTIES TIMEOUT 120)
+endif()
 
 # The same download through our own HTTP client (docs/platform/own_http.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
@@ -4390,6 +4404,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
+# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
+add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt

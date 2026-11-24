@@ -11,6 +11,7 @@
 // gray stack marking) are textbook ones; nothing was taken from other
 // interpreters.
 #include "LuaCode.hpp"
+#include "okay/Core/StringId.hpp"   // HashBytes: the engine's one string hash
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -46,10 +47,9 @@ struct DepthGuard {
 } // namespace
 
 std::uint32_t HashBytes(const char* s, std::size_t n) {
-    // FNV-1a (a public, well-known hash function)
-    std::uint32_t h = 2166136261u;
-    for (std::size_t i = 0; i < n; ++i) { h ^= (unsigned char)s[i]; h *= 16777619u; }
-    return h;
+    // the engine's one string hash (Core/StringId.hpp, FNV-1a 64 bit), folded to 32 bits
+    const std::uint64_t h = okay::StringId::HashOf(std::string_view(s, n));
+    return (std::uint32_t)(h ^ (h >> 32));
 }
 
 // ------------------------------------------------------------------ values

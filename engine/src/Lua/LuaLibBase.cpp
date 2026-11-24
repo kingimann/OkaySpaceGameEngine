@@ -4,9 +4,8 @@
 // functions), 6.2 (coroutine manipulation), 6.7 (mathematical functions) and
 // 6.9 (operating system facilities, only clock / time / date / difftime).
 // Sandboxed on purpose: no dofile, loadfile, require, io, os.execute, os.exit,
-// os.getenv, os.remove, package.loadlib or debug. math.random uses the
-// xoshiro256** generator (Blackman and Vigna's published algorithm) seeded
-// through splitmix64; both written here from the algorithm descriptions.
+// os.getenv, os.remove, package.loadlib or debug. math.random draws from the
+// engine's okay::Random (Core/Random.hpp).
 #include "LuaCode.hpp"
 #include <cmath>
 #include <cstring>
@@ -556,33 +555,12 @@ int MinMax(State& L, int n, bool isMax, const char* name) {
 int M_max(State& L, int n) { return MinMax(L, n, true, "max"); }
 int M_min(State& L, int n) { return MinMax(L, n, false, "min"); }
 
-std::uint64_t Rotl(std::uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
-std::uint64_t NextRand(std::uint64_t* s) {
-    std::uint64_t result = Rotl(s[1] * 5, 7) * 9;
-    std::uint64_t t = s[1] << 17;
-    s[2] ^= s[0];
-    s[3] ^= s[1];
-    s[1] ^= s[2];
-    s[0] ^= s[3];
-    s[2] ^= t;
-    s[3] = Rotl(s[3], 45);
-    return result;
-}
-void SeedRand(std::uint64_t* s, std::uint64_t a, std::uint64_t b) {
-    std::uint64_t x = a ^ (b * 0x9E3779B97F4A7C15ull);
-    for (int i = 0; i < 4; ++i) {   // splitmix64 steps
-        x += 0x9E3779B97F4A7C15ull;
-        std::uint64_t z = x;
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        s[i] = z ^ (z >> 31);
-    }
-    if (!(s[0] | s[1] | s[2] | s[3])) s[0] = 1;
-    for (int i = 0; i < 16; ++i) NextRand(s);
-}
+// math.random draws from okay::Random (Core/Random.hpp), the engine's shared generator type; the manual
+// (6.7) leaves the algorithm open. Two seed words are folded into its one 64-bit seed.
+void SeedRand(okay::Random& r, std::uint64_t a, std::uint64_t b) { r.Seed(a ^ ((b << 32) | (b >> 32))); }
 
 int M_random(State& L, int n) {
-    std::uint64_t r = NextRand(L.rng);
+    std::uint64_t r = L.rng.NextUInt64();
     std::int64_t lo, hi;
     if (n == 0) {
         L.Push(Value::Num((double)(r >> 11) * (1.0 / 9007199254740992.0)));
@@ -602,7 +580,7 @@ int M_random(State& L, int n) {
     std::uint64_t lim = (std::uint64_t)hi - (std::uint64_t)lo;
     std::uint64_t mask = lim;
     mask |= mask >> 1; mask |= mask >> 2; mask |= mask >> 4; mask |= mask >> 8; mask |= mask >> 16; mask |= mask >> 32;
-    while ((r & mask) > lim) r = NextRand(L.rng);   // fewer than two tries on average
+    while ((r & mask) > lim) r = L.rng.NextUInt64();   // fewer than two tries on average
     L.Push(Value::Int((std::int64_t)((std::uint64_t)lo + (r & mask))));
     return 1;
 }

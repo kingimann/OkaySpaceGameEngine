@@ -9,6 +9,22 @@
 
 namespace okay::lua {
 
+void AppendUtf8(std::string& out, std::uint32_t cp) {
+    // The manual allows code points up to 2^31 using the original UTF-8 scheme (up to 6 bytes).
+    if (cp < 0x80) { out += (char)cp; return; }
+    int n;
+    if (cp < 0x800) n = 2;
+    else if (cp < 0x10000) n = 3;
+    else if (cp < 0x200000) n = 4;
+    else if (cp < 0x4000000) n = 5;
+    else n = 6;
+    static const unsigned char first[] = {0, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC};
+    char buf[6];
+    for (int i = n - 1; i > 0; --i) { buf[i] = (char)(0x80 | (cp & 0x3F)); cp >>= 6; }
+    buf[0] = (char)(first[n] | cp);
+    out.append(buf, (std::size_t)n);
+}
+
 namespace {
 
 // Decode one character at s[0..n): its length, or 0 when the bytes are not valid UTF-8.
@@ -36,16 +52,6 @@ int Decode(const unsigned char* s, std::size_t n, std::uint32_t& cp, bool strict
     return len;
 }
 
-void Encode(std::string& out, std::uint32_t cp) {
-    if (cp < 0x80) { out += (char)cp; return; }
-    int n = cp < 0x800 ? 2 : cp < 0x10000 ? 3 : cp < 0x200000 ? 4 : cp < 0x4000000 ? 5 : 6;
-    static const unsigned char first[] = {0, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC};
-    char buf[6];
-    for (int i = n - 1; i > 0; --i) { buf[i] = (char)(0x80 | (cp & 0x3F)); cp >>= 6; }
-    buf[0] = (char)(first[n] | cp);
-    out.append(buf, (std::size_t)n);
-}
-
 std::int64_t Rel(std::int64_t pos, std::size_t len) {
     if (pos >= 0) return pos;
     if ((std::size_t)(-pos) > len) return 0;
@@ -59,7 +65,7 @@ int U_char(State& L, int n) {
     for (int i = 0; i < n; ++i) {
         std::int64_t c = L.CheckInt(i, "char");
         if (c < 0 || c > 0x7FFFFFFF) L.ArgError(i, "char", "value out of range");
-        Encode(out, (std::uint32_t)c);
+        AppendUtf8(out, (std::uint32_t)c);
     }
     L.PushString(out);
     return 1;

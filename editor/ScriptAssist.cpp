@@ -7,6 +7,7 @@
 #include "ScriptAssist.hpp"
 #include "MainShared.hpp"          // g_showScriptDocs, g_codeFont, SectionHeader (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
+#include "okay/Lua/Lua.hpp"         // okay::lua::kKeywords
 #include "okay/Lua/LuaScriptVM.hpp" // LuaLanguageWords: the bound engine names and their docs for Lua scripts
 
 namespace oked {
@@ -1964,10 +1965,8 @@ const scripteditor::LanguageWords& LuaLanguageWords() {
     static bool inited = false;
     static scripteditor::LanguageWords d;
     if (!inited) {
-        for (const char* k : {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
-                              "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
-                              "self"})
-            d.keywords.push_back(k);
+        for (const char* k : okay::lua::kKeywords) d.keywords.push_back(k);
+        d.keywords.push_back("self");
         for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})
             d.types.push_back(t);
         for (const auto& name : okay::LuaScriptVM::CompletionNames()) {

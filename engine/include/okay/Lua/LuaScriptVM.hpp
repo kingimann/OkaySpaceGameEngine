@@ -30,7 +30,7 @@ public:
     static constexpr std::uint64_t kDefaultBudget = 20'000'000;
 
     LuaScriptVM();
-    ~LuaScriptVM() override;
+    ~LuaScriptVM() override;   // dup-allow: the IScriptVM overrides every script backend declares (NextScriptVM has the same list)
 
     const char* Language() const override { return kLanguage; }
     std::vector<std::string> BuiltinNames() const override;

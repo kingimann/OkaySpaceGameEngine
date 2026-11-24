@@ -19,11 +19,18 @@
 // ---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>
+#include "okay/Core/Random.hpp"   // math.random: the engine's one seedable generator
 #include <functional>
 #include <string>
 #include <vector>
 
 namespace okay::lua {
+
+/// The reserved words of Lua 5.4 (manual 3.1), in the compiler's token order. Shared by the compiler, the engine
+/// glue (completion, lint) and the Script Editor's colours.
+inline constexpr const char* kKeywords[] = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function",
+                                            "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then",
+                                            "true", "until", "while"};
 
 enum class Type : std::uint8_t {
     Nil, Bool, Int, Float, String, Table, LFunc, NFunc, Thread, Userdata,
@@ -332,7 +339,7 @@ public:
     void CloseCoroutine(Coroutine* co);
 
     // ---- internals shared by the library files ----
-    std::uint64_t rng[4] = {0x9E3779B97F4A7C15ull, 0xBF58476D1CE4E5B9ull, 0x94D049BB133111EBull, 0x2545F4914F6CDD1Dull};
+    okay::Random rng;               ///< math.random / math.randomseed (Core/Random.hpp)
     LString* tmName[32] = {};       ///< metamethod names, by TM index (LuaCode.hpp)
     Table* stringMeta = nullptr;    ///< metatable of strings (__index = string)
     Table* registry = nullptr;

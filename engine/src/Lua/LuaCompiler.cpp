@@ -27,9 +27,7 @@ enum Tok : int {
     // multi-char symbols
     T_IDIV, T_CONCAT, T_DOTS, T_EQ, T_GE, T_LE, T_NE, T_SHL, T_SHR, T_DBCOLON,
 };
-const char* const kKeywords[] = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function",
-                                 "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then",
-                                 "true", "until", "while"};
+// kKeywords (Lua.hpp) is in the order of T_AND .. T_WHILE.
 
 struct Token {
     int t = T_EOF;
@@ -136,22 +134,6 @@ std::string Lexer::ReadLong(int level, bool isComment, int line0, int col0) {
             Adv();
         }
     }
-}
-
-void AppendUtf8(std::string& out, std::uint32_t cp) {
-    // The manual allows code points up to 2^31 using the original UTF-8 scheme (up to 6 bytes).
-    if (cp < 0x80) { out += (char)cp; return; }
-    int n;
-    if (cp < 0x800) n = 2;
-    else if (cp < 0x10000) n = 3;
-    else if (cp < 0x200000) n = 4;
-    else if (cp < 0x4000000) n = 5;
-    else n = 6;
-    static const unsigned char first[] = {0, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC};
-    char buf[6];
-    for (int i = n - 1; i > 0; --i) { buf[i] = (char)(0x80 | (cp & 0x3F)); cp >>= 6; }
-    buf[0] = (char)(first[n] | cp);
-    out.append(buf, (std::size_t)n);
 }
 
 int HexVal(int c) {

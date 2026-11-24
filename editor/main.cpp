@@ -12942,25 +12942,15 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == okay::NextScriptVM::kLanguage) {
-                    // The new language's own checker: every error and "does nothing"
-                    // warning comes from the compiler that runs the script.
+                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage) {
+                    // The language's own checker: every error and warning comes from the compiler that runs
+                    // the script (the new language: "does nothing" warnings; Lua: syntax errors with line and
+                    // column, engine names that do not exist and misspelled handlers).
                     static okay::NextScriptVM s_nextCheck;
-                    for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
-                        if (d.severity == 0) s_diags.push_back(d);
-                        else s_warns.push_back({d.line, d.message, {}, {}, d.column});
-                    }
-                    if (!s_diags.empty()) {
-                        const auto& d0 = s_diags[0];
-                        s_error = d0.line > 0 ? "line " + std::to_string(d0.line) +
-                            (d0.column > 0 ? ", column " + std::to_string(d0.column) : std::string()) + ": " : std::string();
-                        s_error += d0.message;
-                    }
-                } else if (sc->Language() == okay::LuaScriptVM::kLanguage) {
-                    // Lua: syntax errors with line and column from our own compiler, plus
-                    // warnings for engine names that do not exist and misspelled handlers.
                     static okay::LuaScriptVM s_luaCheck;
-                    for (auto& d : s_luaCheck.ValidateAll(buf.data())) {
+                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage
+                        ? static_cast<okay::IScriptVM&>(s_luaCheck) : static_cast<okay::IScriptVM&>(s_nextCheck);
+                    for (auto& d : checker.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
                     }

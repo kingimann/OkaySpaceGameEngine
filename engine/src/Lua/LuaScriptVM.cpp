@@ -13,6 +13,7 @@
 #include "okay/Lua/Lua.hpp"
 #include "okay/Scripting/ScriptBindings.hpp"   // the generated binding layer: every component, property and method
 #include "../Script/ScriptInternal.hpp"
+#include "../Script/CheckerInternal.hpp"   // EditDistance for the lint's "did you mean"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -30,9 +31,6 @@ namespace sc = script;
 namespace {
 enum UdTag { kObjTag = 1, kVecTag = 2, kCompTag = 3 };   // kCompTag: a scriptbind component handle
 
-const char* const kLuaKeywords[] = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function",
-                                    "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then",
-                                    "true", "until", "while"};
 // names the engine sets on a script that are not the script's own settings
 const char* const kEngineSet[] = {"other", "contact_point", "contact_normal", "contact_x", "contact_y", "contact_z",
                                   "contact_nx", "contact_ny", "contact_nz", "impact_speed", "other_tag",
@@ -879,7 +877,7 @@ LuaScriptVM::~LuaScriptVM() = default;
 
 std::vector<std::string> LuaScriptVM::CompletionNames() {
     std::set<std::string> names;
-    for (const char* k : kLuaKeywords) names.insert(k);
+    for (const char* k : lua::kKeywords) names.insert(k);
     for (const char* n : {"print", "pairs", "ipairs", "next", "select", "type", "tostring", "tonumber", "pcall", "xpcall",
                           "error", "assert", "setmetatable", "getmetatable", "rawget", "rawset", "rawequal", "rawlen",
                           "load", "string", "table", "math", "coroutine", "os", "self", "GetComponent", "Destroy",
@@ -939,17 +937,8 @@ void AddTypeMembers(const sc::ApiType& t, bool statics, std::set<std::string>& o
     }
 }
 
-int EditDistance(const std::string& a, const std::string& b) {
-    std::vector<int> prev(b.size() + 1), cur(b.size() + 1);
-    for (std::size_t j = 0; j <= b.size(); ++j) prev[j] = (int)j;
-    for (std::size_t i = 1; i <= a.size(); ++i) {
-        cur[0] = (int)i;
-        for (std::size_t j = 1; j <= b.size(); ++j)
-            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)});
-        std::swap(prev, cur);
-    }
-    return prev[b.size()];
-}
+// Single-letter edits between two names (any case): the typed checker's helper, so "did you mean" works alike.
+using script::checker_detail::EditDistance;
 
 struct LintTok { std::string text; int line, col; };
 
@@ -1015,7 +1004,7 @@ std::string Signature(const std::string& owner, const char* sep, const sc::ApiMe
 } // namespace
 
 std::string LuaScriptVM::CompletionDoc(const std::string& name) {
-    for (const char* k : kLuaKeywords) if (name == k) return "Lua keyword";
+    for (const char* k : lua::kKeywords) if (name == k) return "Lua keyword";
     for (const auto& lib : kLibMembers) if (name == lib[0]) return std::string("Lua library ") + lib[0] + ": " + lib[1];
     static const struct { const char* n; const char* d; } kHandlerDocs[] = {
         {"Awake", "called once when the scene starts, before Start"}, {"Start", "called once before the first Update"},

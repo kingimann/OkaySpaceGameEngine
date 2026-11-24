@@ -122,4 +122,8 @@ void OpenUtf8(State& L);
 /// Lua string pattern matching (LuaLibString.cpp), shared with the tests.
 struct PatternCapture { std::ptrdiff_t start = 0, len = 0; bool position = false; };
 
+/// Append code point `cp` as UTF-8, with the original 5- and 6-byte forms the manual allows up to 2^31
+/// (3.1 "\u{XXX}", 6.5 utf8.char). LuaLibUtf8.cpp; the compiler uses it for string escapes.
+void AppendUtf8(std::string& out, std::uint32_t cp);
+
 } // namespace okay::lua

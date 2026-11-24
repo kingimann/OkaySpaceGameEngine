@@ -17,6 +17,8 @@ using namespace okay;
 static std::vector<std::string> g_errs, g_logs;
 static const float kDt = 1.0f / 60.0f;
 
+// dup-allow-begin: the same log capture and one-object World as the OkayScript-next and C# script tests; a shared
+// test header would edit those tests (the C# lane's files), so it is left for a follow-up agreed on #422
 static bool ErrHas(const std::string& s) {
     return std::any_of(g_errs.begin(), g_errs.end(), [&](const std::string& l) { return l.find(s) != std::string::npos; });
 }
@@ -41,6 +43,7 @@ struct World {
     }
     vs::VsValue Get(const char* n) { return sc->VM()->GetGlobal(n); }
 };
+// dup-allow-end
 
 int main() {
     RUN_SUITE("lua_script");

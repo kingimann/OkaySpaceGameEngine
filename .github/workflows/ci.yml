@@ -631,7 +631,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ls ~/apt-cache/*.deb 2>/dev/null | xargs -r -n1 basename | sort | md5sum > ~/apt-debs-before
-          OKAY_APT_ARCHIVES="$RUNNER_TEMP/apt-cold" bash scripts/ci-install-mingw.sh   # TEMP measurement: cold download
+          bash scripts/ci-install-mingw.sh
 
       - name: Check for newly downloaded apt packages
         id: apt-new

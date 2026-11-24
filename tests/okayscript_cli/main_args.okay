@@ -1,0 +1,7 @@
+// main() runs after the top level; its parameter is the list of command-line arguments.
+print("top level first, args:", args.Count)
+function main(argv) {
+    var total = 0
+    foreach (var a in argv) total += num(a)
+    print("sum of", argv, "=", total)
+}

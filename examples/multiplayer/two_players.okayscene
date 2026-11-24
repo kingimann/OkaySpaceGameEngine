@@ -1,0 +1,79 @@
+okayscene 3
+name "Two players (LAN test)"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "1fefc1b264ef138f392ee552c4e5b206"
+  active 1
+  parent -1
+  transform 0 14 -12 0.41785684 0 0 0.90851295 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Sun"
+  guid "0021640dfdda8f124f52fadf0d2a0638"
+  active 1
+  parent -1
+  transform 0 10 0 0.5501483 0.23712613 -0.1665715 0.7831744 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 2 "Ground"
+  guid "e30e2a1619848f7da37038f1d7ae5bfe"
+  active 1
+  parent -1
+  transform 0 -0.6 0 0 0 0 1 20 0.2 20
+  mesh "Cube" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "PlayerTemplate"
+  guid "b1a59c63a6e4509090cfd762755f5a81"
+  active 0
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Cube" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  tdctrl 5 8 - 1 1 14 60 55 0 12 60 0 0.6 12 0
+  tdstance crouchKey=17 proneKey=122 toggle=1 prone=0 resize=1 crouchSpeed=2.2 proneSpeed=1.1 crouchH=0.65 proneH=0.33 dive=1 diveHop=0.25 diveSlide=0.45
+end
+gameobject 4 "Network"
+  guid "5d1fff70ae7a8e4ce71438c143998dbf"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  npspawner "PlayerTemplate" "" 0 0 0 1.5 1 64
+  network 3 45000 "127.0.0.1" "" "" 8 20 "" ""
+  comporder "NetworkManager" "NetworkPlayerSpawner"
+end
+gameobject 5 "Ball"
+  guid "7fffb9c707d635dd4b8d263ce7d3ac9c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Sphere" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  netsync 0 1 1 ""
+  script "okayscript" "var t = 0;
+function update(dt) {
+  if (net.is_host()) { t = t + dt; set_pos3(cos(t) * 4, 0, sin(t) * 4); }
+}
+" "" 0
+end
+gameobject 6 "Game"
+  guid "73b20f9a88cea4bad3e114d72a8a713b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// Press Play in two copies of the game on one PC: the first hosts, the second joins.
+// Move with WASD; press Space to wave to everyone.
+function start() { net.on(\"wave\", \"on_wave\"); }
+function on_player_joined(id, name) { print(name + \" joined: \" + net.player_count() + \" players\"); }
+function on_player_left(id) { print(\"player \" + id + \" left\"); }
+function on_wave(data, from) { print(\"player \" + from + \" waved\"); }
+function update(dt) {
+  if (key_down(\"space\")) { net.send(\"wave\", \"\"); }
+  if (net.error() != \"\" && timer(\"err\", 5)) { print(net.error()); }
+}
+" "" 0
+end

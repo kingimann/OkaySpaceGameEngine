@@ -327,26 +327,27 @@ static bool ReadFile(const std::string& p, Bytes& out) {
 
 #ifndef OWN_WAV_STANDALONE
 static void TestLoadWavSwitch() {
+    // AudioClip::LoadWAV goes through our own decoder (the only WAV reader since the OKAY_OWN_WAV switch and the older
+    // parser path were deleted). The expected values were what the old path and the own path both gave when they were
+    // still compared here; they are now fixed numbers.
     const char* path = "own_wav_switch.wav";
-    // 6 channels, one frame: 6 * 16 bit. The old path and the own path must agree (both keep 6 > 2 channels as a mono average).
+    // 6 channels, two frames: 6 * 16 bit each, kept as a mono average (more than 2 channels always downmix).
     Bytes d; for (int i = 0; i < 12; ++i) { P16(d, unsigned((i * 1000) & 0xFFFF)); }
     Bytes w = Wav(Fmt(1, 6, 8000, 12, 16), d);
     { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(w.data()), long(w.size())); }
-    setenv("OKAY_OWN_WAV", "0", 1);
-    CHECK(!wav::OwnWavEnabled());
-    AudioClip oldC; CHECK(oldC.LoadWAV(path));
-    setenv("OKAY_OWN_WAV", "1", 1);
-    CHECK(wav::OwnWavEnabled());
-    AudioClip newC; CHECK(newC.LoadWAV(path));
-    CHECK(oldC.channels == newC.channels && oldC.sampleRate == newC.sampleRate && oldC.samples.size() == newC.samples.size());
-    for (std::size_t i = 0; i < oldC.samples.size() && i < newC.samples.size(); ++i) CHECK_NEAR(oldC.samples[i], newC.samples[i], 1e-6);
+    AudioClip c6; CHECK(c6.LoadWAV(path));
+    CHECK(c6.channels == 1 && c6.sampleRate == 8000 && c6.samples.size() == 2);
+    if (c6.samples.size() == 2) {
+        CHECK_NEAR(c6.samples[0], 2500.0f / 32768.0f, 1e-6);    // (0 + 1000 + ... + 5000) / 6
+        CHECK_NEAR(c6.samples[1], 8500.0f / 32768.0f, 1e-6);    // (6000 + ... + 11000) / 6
+    }
     // stereo kept as stereo, downmix flag halves it
     Bytes ds; P16(ds, 16384); P16(ds, 0);
     Bytes ws = Wav(Fmt(1, 2, 8000, 4, 16), ds);
     { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(ws.data()), long(ws.size())); }
     AudioClip st; CHECK(st.LoadWAV(path) && st.channels == 2 && st.samples.size() == 2);
     AudioClip mo; CHECK(mo.LoadWAV(path, nullptr, true) && mo.channels == 1 && mo.samples.size() == 1 && mo.samples[0] == 0.25f);
-    // only the own decoder reads ADPCM: with the switch on it loads, with it off it must not claim the right samples
+    // IMA ADPCM loads (the deleted older path could not read it)
     Bytes blk; P16(blk, 0); blk.push_back(0); blk.push_back(0); blk.push_back(0x07); blk.push_back(0x8F); blk.push_back(0); blk.push_back(0);
     Bytes wa = Wav(Fmt(0x11, 1, 8000, 8, 4), blk);
     { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(wa.data()), long(wa.size())); }
@@ -354,6 +355,10 @@ static void TestLoadWavSwitch() {
     // errors come through
     std::string err; AudioClip bad; { std::ofstream f(path, std::ios::binary); f << "RIFFxxxxWAVEjunk"; }
     CHECK(!bad.LoadWAV(path, &err) && !err.empty());
+    // an environment variable left over from the old switch changes nothing
+    setenv("OKAY_OWN_WAV", "0", 1);
+    { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(wa.data()), long(wa.size())); }
+    AudioClip ad0; CHECK(ad0.LoadWAV(path) && ad0.samples.size() == 9);
     unsetenv("OKAY_OWN_WAV");
     std::remove(path);
 }

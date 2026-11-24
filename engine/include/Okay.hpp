@@ -360,6 +360,7 @@
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/Net.hpp"
 #include "okay/Net/NetTransport.hpp"
 #include "okay/Net/NetBackend.hpp"
 

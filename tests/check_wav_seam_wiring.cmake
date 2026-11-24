@@ -1,40 +1,43 @@
 # Run with: cmake -DSOURCE_ROOT=<repo root> -P check_wav_seam_wiring.cmake
 #
-# SDL_LoadWAV may only be called from shared/WavPlayback.hpp (the WAV playback seam: SDL_LoadWAV while the own
-# decoder is off, okay::wav when it is on). A raw call anywhere else in launcher/, shared/, editor/, player/,
-# engine/ or tools/ would skip OKAY_OWN_WAV, so this fails and names the file. Comments are not counted.
+# Our own WAV decoder (okay::wav) is the only WAV reader. SDL_LoadWAV / SDL_FreeWAV and the old OKAY_OWN_WAV switch
+# (okay::wav::OwnWavEnabled) were deleted (rule 17: the replacement is the path and the old code goes in the same change).
+# This fails and names the file if any of them comes back anywhere in shipped code (launcher/, shared/, editor/,
+# player/, engine/, tools/, okayui/, platform/ and the top CMakeLists.txt). Comments are not counted. It also checks
+# that the launcher's seam, shared/WavPlayback.hpp, still loads through okay::wav::LoadForPlayback.
 cmake_minimum_required(VERSION 3.16)
 if(NOT IS_DIRECTORY "${SOURCE_ROOT}")
     message(FATAL_ERROR "check_wav_seam_wiring: SOURCE_ROOT (${SOURCE_ROOT}) is not a directory")
 endif()
+set(_files "${SOURCE_ROOT}/CMakeLists.txt")
+foreach(_d launcher shared editor player engine tools okayui platform)
+    if(IS_DIRECTORY "${SOURCE_ROOT}/${_d}")
+        file(GLOB_RECURSE _more "${SOURCE_ROOT}/${_d}/*.cpp" "${SOURCE_ROOT}/${_d}/*.hpp" "${SOURCE_ROOT}/${_d}/*.h"
+                                "${SOURCE_ROOT}/${_d}/*.c" "${SOURCE_ROOT}/${_d}/*.mm" "${SOURCE_ROOT}/${_d}/CMakeLists.txt")
+        list(APPEND _files ${_more})
+    endif()
+endforeach()
 set(_bad "")
-set(_seam_ok FALSE)
-foreach(_d launcher shared editor player engine tools)
-    if(NOT IS_DIRECTORY "${SOURCE_ROOT}/${_d}")
+foreach(_f IN LISTS _files)
+    if(NOT EXISTS "${_f}" OR _f MATCHES "/(third_party|_deps|build[^/]*)/")
         continue()
     endif()
-    file(GLOB_RECURSE _files "${SOURCE_ROOT}/${_d}/*.cpp" "${SOURCE_ROOT}/${_d}/*.hpp" "${SOURCE_ROOT}/${_d}/*.h" "${SOURCE_ROOT}/${_d}/*.mm")
-    foreach(_f IN LISTS _files)
-        if(_f MATCHES "/(third_party|_deps|build[^/]*)/")
-            continue()
-        endif()
-        file(READ "${_f}" _text)
-        # drop // comments so a mention in prose is fine
-        string(REGEX REPLACE "//[^\n]*" "" _code "${_text}")
-        if(_code MATCHES "SDL_LoadWAV")
-            if(_f STREQUAL "${SOURCE_ROOT}/shared/WavPlayback.hpp")
-                set(_seam_ok TRUE)
-            else()
-                list(APPEND _bad "${_f}")
-            endif()
-        endif()
-    endforeach()
+    file(READ "${_f}" _code)
+    if(_f MATCHES "CMakeLists\\.txt$")
+        string(REGEX REPLACE "#[^\n]*" "" _code "${_code}")      # CMake comments
+    else()
+        string(REGEX REPLACE "//[^\n]*" "" _code "${_code}")     # C++ line comments
+    endif()
+    if(_code MATCHES "SDL_LoadWAV|SDL_FreeWAV|OwnWavEnabled|OKAY_OWN_WAV")
+        list(APPEND _bad "${_f}")
+    endif()
 endforeach()
-if(NOT _seam_ok)
-    message(FATAL_ERROR "check_wav_seam_wiring: shared/WavPlayback.hpp no longer calls SDL_LoadWAV (the off path is gone)")
-endif()
 if(_bad)
     string(REPLACE ";" "\n  " _list "${_bad}")
-    message(FATAL_ERROR "check_wav_seam_wiring: raw SDL_LoadWAV outside shared/WavPlayback.hpp:\n  ${_list}\nCall okay::wav::LoadWavForSdl instead.")
+    message(FATAL_ERROR "check_wav_seam_wiring: SDL_LoadWAV / SDL_FreeWAV / the old OKAY_OWN_WAV switch found in:\n  ${_list}\nUse okay::wav (LoadForPlayback, DecodeWav); there is no other WAV reader.")
+endif()
+file(READ "${SOURCE_ROOT}/shared/WavPlayback.hpp" _seam)
+if(NOT _seam MATCHES "LoadForPlayback")
+    message(FATAL_ERROR "check_wav_seam_wiring: shared/WavPlayback.hpp no longer loads through okay::wav::LoadForPlayback")
 endif()
 message(STATUS "check_wav_seam_wiring: ok")

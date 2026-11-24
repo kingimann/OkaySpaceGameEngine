@@ -84,7 +84,7 @@ PowerShell, batch, NSIS, YAML workflows, CMake, SQL, Lua, HTML and the engine's 
 Tests are included: test harness code is shared through a helper header, not pasted. Markdown is not code and is not
 searched for copies.
 
-Left out, with the reason (the `EXCLUDE` list in the script): `engine/third_party/` and `editor/vendor/` (vendored
+Left out, with the reason (the `EXCLUDE` list in the script): `engine/third_party/` (vendored
 code), `okayui/probe/` (copies of Dear ImGui headers kept only to compare against), `editor/generated/` (written by a
 script), `tests/wycheproof/` (third-party test vectors), `tests/data/`, `tests/golden/`, `tests/assets/`,
 `tests/export/` (fixtures and golden data), `tools/okaycc/tests/progs*` (programs the compiler compiles),

@@ -2,11 +2,16 @@
 // Half-Life 1 "studio" model ("IDST", version 10). Written from memory of the two structures (header, bones, body parts, models,
 // meshes, triangle command lists, texture table, skin families, sequences, run-length coded animation values); no document was
 // consulted, so the layouts are unverified against any real file. No code from any other importer was read, copied or ported.
-// The 3D GameStudio formats (MDL3, MDL4, MDL5, MDL7) are NOT read: they are refused with a message that says so.
+// The 3D GameStudio models are read too: MDL3, MDL4 and MDL5 from Conitec's published descriptions (the "3D GameStudio
+// Programmer's Manual" of May 2001 and the "Gamestudio file formats" page of the Gamestudio manual), and MDL7, which is not
+// publicly documented, from our own byte-by-byte analysis of three real files (docs/content/model_readers.md says which field
+// was seen where and what is a guess). For those no SDK, header or importer source of any project was read.
 // Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md (section MDL).
 #include "AffineInverse.hpp"
 #include "BinReader.hpp"
+#include "GameStudioSkin.hpp"
 #include "ReaderCommon.hpp"
+#include "SceneRefPath.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -40,6 +45,33 @@ constexpr std::size_t kMaxWork = 16000000, kMaxFileMeshes = 4096, kMaxPartBones 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "MDL: " + m; return false; }
 
 bool Reasonable(float v) { return std::isfinite(v) && std::fabs(v) <= 1e9f; }
+
+// The three corners of a triangle name vertices in 0 .. n - 1.
+template <class T> bool CornersIn(const T (&v)[3], std::int32_t n) { return v[0] >= 0 && v[1] >= 0 && v[2] >= 0 && v[0] < n && v[1] < n && v[2] < n; }
+
+// Quake and GameStudio models: the first frame's soup becomes the one part of the model, on a root node "MDL" that turns Z-up
+// into Y-up, with one white material "MDL skin". Empty `why` on success.
+std::string OneFramePart(const rc::Soup& soup, const std::string& frameName, ImportedModel& out, rc::BuildStats& stats) {
+    ImportedPart part;
+    if (!rc::BuildMesh(soup, 180.0, part.mesh, &stats, kMaxOutVerts)) return "too many output vertices";
+    if (part.mesh.triangles.empty()) return "the file has no usable triangles";
+    part.mesh.name = frameName.empty() ? "MDL" : frameName;
+    if (!rc::PartInRange(part)) return "a vertex is out of range";
+    ImportedNode root;
+    root.name = "MDL";
+    out.nodes.push_back(root);
+    ImportedMaterial mat;
+    mat.name = "MDL skin";
+    mat.hasDiffuse = true;
+    mat.diffuse = Color{1, 1, 1, 1};
+    out.materials.push_back(mat);
+    part.node = 0;
+    part.material = 0;
+    out.parts.push_back(std::move(part));
+    rc::ApplyUpAxis(out, true, false);   // Quake and GameStudio are Z-up
+    out.backend = "own";
+    return std::string();
+}
 
 // ---- Quake 1 -----------------------------------------------------------------------------------------------------------
 bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::string* err) {
@@ -111,7 +143,7 @@ bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::strin
     soup.ci.reserve((std::size_t)numTris * 3);
     soup.cuv.reserve((std::size_t)numTris * 3);
     for (const Tr& t : tr) {
-        if (t.v[0] < 0 || t.v[1] < 0 || t.v[2] < 0 || t.v[0] >= numVerts || t.v[1] >= numVerts || t.v[2] >= numVerts) { ++badVert; continue; }
+        if (!CornersIn(t.v, numVerts)) { ++badVert; continue; }
         for (int k : {2, 1, 0}) {   // Quake winds clockwise: the order is reversed
             const St& v = st[(std::size_t)t.v[k]];
             // a vertex on the seam belongs to the back half of the skin when the triangle faces away
@@ -121,25 +153,8 @@ bool ReadQuake(Br& b, const std::string& baseDir, ImportedModel& out, std::strin
             soup.cuv.push_back(Vec2{(float)((s + 0.5) / (double)skinW), (float)(((double)v.t + 0.5) / (double)skinH)});
         }
     }
-    ImportedPart part;
     rc::BuildStats stats;
-    if (!rc::BuildMesh(soup, 180.0, part.mesh, &stats)) return Fail(err, "too many output vertices");
-    if (part.mesh.triangles.empty()) return Fail(err, "the file has no usable triangles");
-    part.mesh.name = frameName.empty() ? "MDL" : frameName;
-    if (!rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
-    ImportedNode root;
-    root.name = "MDL";
-    out.nodes.push_back(root);
-    ImportedMaterial mat;
-    mat.name = "MDL skin";
-    mat.hasDiffuse = true;
-    mat.diffuse = Color{1, 1, 1, 1};
-    out.materials.push_back(mat);
-    part.node = 0;
-    part.material = 0;
-    out.parts.push_back(std::move(part));
-    rc::ApplyUpAxis(out, true, false);   // Quake is Z-up
-    out.backend = "own";
+    if (const std::string why = OneFramePart(soup, frameName, out, stats); !why.empty()) return Fail(err, why);
     auto note = [&](const std::string& s) { out.notes.push_back("MDL (Quake): " + s); };
     if (numFrames > 1) note(std::to_string(numFrames) + " frames of vertex animation: only the first frame is read (the engine has no vertex animation)");
     if (numSkins > 0) note(std::to_string(numSkins) + " embedded skin(s), " + std::to_string(skinW) + " x " + std::to_string(skinH) + " 8-bit palette pictures, are not extracted: no texture");
@@ -510,6 +525,316 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
     return true;
 }
 
+// ---- 3D GameStudio MDL3 / MDL4 / MDL5 -------------------------------------------------------------------------------------
+// Conitec's published layout (docs/content/model_readers.md, section MDL): an 84-byte header (magic, an unused word, scale,
+// offset, an unused word and vector, skin count, skin width and height (MDL3 / MDL4), vertex, triangle, frame and skin-vertex
+// counts, flags, a last word), then the skins, the skin vertices (two shorts, pixels), the triangles (three vertex and three
+// skin-vertex shorts), the frames (a type word, a bounding box, a 16-byte name, packed positions: bytes for type 0, unsigned
+// shorts for type 2) and, in MDL4, bones that the manual calls "future expansion" (not read).
+constexpr std::int32_t kMaxGsVerts = 1000000, kMaxGsTris = 2000000, kMaxGsSkins = 4096, kMaxGsFrames = 100000, kMaxGsSkinVerts = 2000000;
+constexpr std::uint64_t kMaxGsSkinPixels = 64ull * 1024 * 1024;
+
+bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
+    const char ver = (char)b.d[3];
+    const std::string name = std::string("MDL") + ver;
+    auto fail = [&](const std::string& m) { return Fail(err, "(3D GameStudio " + name + ") " + m); };
+    b.pos = 4;
+    b.I32();                        // not used
+    float scale[3], offset[3];
+    for (float& f : scale) f = b.F32();
+    for (float& f : offset) f = b.F32();
+    b.Skip(16);                     // an unused word and an unused vector (the eye position of the Quake header)
+    const std::int32_t numSkins = b.I32(), hdrSkinW = b.I32(), hdrSkinH = b.I32(), numVerts = b.I32(), numTris = b.I32(), numFrames = b.I32(), numSkinVerts = b.I32();
+    b.Skip(8);                      // flags, numbones (MDL4) or unused
+    if (b.bad) return fail("file too short for the header");
+    for (int k = 0; k < 3; ++k) if (!Reasonable(scale[k]) || !Reasonable(offset[k])) return fail("the scale or offset is not finite or is out of range");
+    if (numVerts <= 0 || numVerts > kMaxGsVerts) return fail("bad vertex count " + std::to_string(numVerts));
+    if (numTris <= 0 || numTris > kMaxGsTris) return fail("bad triangle count " + std::to_string(numTris));
+    if (numFrames <= 0 || numFrames > kMaxGsFrames) return fail("bad frame count " + std::to_string(numFrames));
+    if (numSkins < 0 || numSkins > kMaxGsSkins) return fail("bad skin count " + std::to_string(numSkins));
+    if (numSkinVerts < 0 || numSkinVerts > kMaxGsSkinVerts) return fail("bad skin vertex count " + std::to_string(numSkinVerts));
+    const bool ownSkinSize = ver == '5';
+    if (!ownSkinSize && numSkins > 0 && (hdrSkinW <= 0 || hdrSkinH <= 0 || hdrSkinW > kMaxSkinDim || hdrSkinH > kMaxSkinDim))
+        return fail("bad skin size " + std::to_string(hdrSkinW) + " x " + std::to_string(hdrSkinH));
+    // skins: only their sizes matter (the pictures are not extracted); the first skin's size measures the skin vertices
+    std::int32_t uvW = ownSkinSize ? 0 : hdrSkinW, uvH = ownSkinSize ? 0 : hdrSkinH;
+    for (std::int32_t s = 0; s < numSkins; ++s) {
+        const std::int32_t type = b.I32();
+        std::int32_t w = hdrSkinW, h = hdrSkinH;
+        if (ownSkinSize) { w = b.I32(); h = b.I32(); }
+        if (b.bad) return fail("the file ends inside the skin list");
+        if (w <= 0 || h <= 0 || w > kMaxSkinDim || h > kMaxSkinDim || (std::uint64_t)w * (std::uint64_t)h > kMaxGsSkinPixels) return fail("skin " + std::to_string(s) + " has a bad size");
+        const std::uint64_t n = detail::gsskin::PixelBytes(type, w, h);
+        if (n == 0) return fail("skin " + std::to_string(s) + " has type " + std::to_string(type) + ", whose size is not known (types 0, 2, 3, 4 and 5, plus 8 with mipmaps, are)");
+        if (!b.Has(n)) return fail("the file ends inside skin " + std::to_string(s));
+        b.Skip(n);
+        if (s == 0 && ownSkinSize) { uvW = w; uvH = h; }
+    }
+    if (!b.Fits((std::uint64_t)numSkinVerts, 4)) return fail("the file ends inside the skin vertices");
+    std::vector<std::array<std::int16_t, 2>> st((std::size_t)numSkinVerts);
+    for (auto& v : st) { v[0] = b.I16(); v[1] = b.I16(); }
+    if (!b.Fits((std::uint64_t)numTris, 12)) return fail("the file ends inside the triangle list");
+    struct Tr { std::uint16_t v[3], t[3]; };   // unsigned: the format allows up to 65,535 vertices and skin vertices
+    std::vector<Tr> tr((std::size_t)numTris);
+    for (Tr& t : tr) { for (std::uint16_t& x : t.v) x = b.U16(); for (std::uint16_t& x : t.t) x = b.U16(); }
+    // the first frame
+    const std::int32_t ftype = b.I32();
+    if (b.bad) return fail("the file has no frames");
+    if (ftype != 0 && ftype != 2) return fail("frame type " + std::to_string(ftype) + " (0, bytes, and 2, words, are known)");
+    const std::uint64_t vsz = ftype == 0 ? 4 : 8;
+    b.Skip(2 * vsz);                // bounding box
+    const std::string frameName = b.Str(16);
+    if (b.bad || !b.Fits((std::uint64_t)numVerts, vsz)) return fail("the file ends inside the first frame");
+    rc::Soup soup;
+    soup.pos.resize((std::size_t)numVerts);
+    for (Vec3& p : soup.pos) {
+        float r[3];
+        for (float& x : r) x = ftype == 0 ? (float)b.U8() : (float)b.U16();
+        if (ftype == 0) b.U8(); else b.Skip(2);   // the normal index (and a spare byte): not read
+        p = Vec3{r[0] * scale[0] + offset[0], r[1] * scale[1] + offset[1], r[2] * scale[2] + offset[2]};
+    }
+    if (b.bad) return fail("the file ends inside the first frame");
+    const bool haveUv = uvW > 0 && uvH > 0;
+    int badVert = 0, badSt = 0;
+    soup.ci.reserve((std::size_t)numTris * 3);
+    if (haveUv) soup.cuv.reserve((std::size_t)numTris * 3);
+    for (const Tr& t : tr) {
+        if (!CornersIn(t.v, numVerts)) { ++badVert; continue; }
+        for (int k : {2, 1, 0}) {   // the files wind clockwise (all real files have a negative signed volume): reversed
+            soup.ci.push_back((std::uint32_t)t.v[k]);
+            if (!haveUv) continue;
+            Vec2 uv{0, 0};
+            if (t.t[k] < numSkinVerts) {
+                const auto& s = st[(std::size_t)t.t[k]];
+                uv = Vec2{(float)(((double)s[0] + 0.5) / (double)uvW), (float)(((double)s[1] + 0.5) / (double)uvH)};
+            } else ++badSt;
+            soup.cuv.push_back(uv);
+        }
+    }
+    rc::BuildStats stats;
+    if (const std::string why = OneFramePart(soup, frameName, out, stats); !why.empty()) return fail(why);
+    auto note = [&](const std::string& s) { out.notes.push_back("MDL (3D GameStudio " + name + "): " + s); };
+    if (numFrames > 1) note(std::to_string(numFrames) + " frames of vertex animation: only the first frame is read (the engine has no vertex animation)");
+    if (numSkins > 0) note(std::to_string(numSkins) + " embedded skin(s) are not extracted (a material names a texture file, it cannot carry pixels): no texture");
+    else note("no skin: the skin vertices cannot be measured, so there are no texture coordinates");
+    note("the stored vertex normals (an index into a table of directions) are not read: smooth normals were generated");
+    if (badVert) note(std::to_string(badVert) + " triangle(s) with an out-of-range vertex index skipped");
+    if (badSt) note(std::to_string(badSt) + " corner(s) with an out-of-range skin vertex index got the texture coordinate (0, 0)");
+    if (stats.degenerate) note(std::to_string(stats.degenerate) + " degenerate triangle(s) skipped");
+    return true;
+}
+
+// ---- 3D GameStudio MDL7 ----------------------------------------------------------------------------------------------------
+// NOT publicly documented (Conitec's manual says so and points to an SDK, which was not used). Only what three real files show
+// is used (docs/content/model_readers.md, section MDL, says which field was seen where, and which names came from memory):
+//   header (48 bytes): "MDL7", a word (0), a word that is 0 in every file (a non-zero value is refused: not understood), the
+//     group count, the data size (= the file size), two more words that are 0 in every file (noted when not 0), then ten 16-bit
+//     record sizes, of which these are checked against the records found: [1] skin 28, [3] material 68, [4] skin point 8,
+//     [5] triangle 16, [6] vertex 26, [9] frame 24 (the other four are never needed by the files and are not used);
+//   groups: type (1 = a mesh), the group's byte size (header included: it chains the groups), a 16-byte name, the counts of
+//     skins, skin points, triangles, vertices and frames, then the skins (type, width, height, a 16-byte name; type & 7 = 7:
+//     `width` bytes of a texture file name; type & 0x10: a material follows), the skin points (two floats), the triangles
+//     (three vertex shorts, three skin-point shorts (0xFFFF = none), a 32-bit skin index) and the vertices (three floats
+//     first); what follows the vertices (frame records) is not read: the group size says where the next group starts.
+// The skins of all groups form one list, which the triangles' skin indices point into.
+constexpr std::int32_t kMaxGsGroups = 65536;
+constexpr std::size_t kMaxGsRecord = 4096;
+
+bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    auto fail = [&](const std::string& m) { return Fail(err, "(3D GameStudio MDL7) " + m); };
+    if (b.n < 48) return fail("file too short for the header");
+    b.pos = 4;
+    b.I32();   // a word, 0 in every file seen
+    const std::uint32_t zeroWord = b.U32();   // 0 in every file seen; what a non-zero value means (and what it adds to the file) is not known
+    const std::int32_t numGroups = b.I32();
+    const std::uint32_t dataSize = b.U32();
+    const std::uint32_t zero2 = b.U32(), zero3 = b.U32();   // 0 in every file seen
+    std::uint16_t sz[10];
+    for (std::uint16_t& v : sz) v = b.U16();
+    const std::size_t skinSz = sz[1], matSz = sz[3], stSz = sz[4], triSz = sz[5], vertSz = sz[6], frameSz = sz[9];
+    if (zeroWord != 0) return fail("the header word at offset 8 is " + std::to_string(zeroWord) + ", not 0 as in every file the layout was worked out from (perhaps bones, which are not understood): refused");
+    if (numGroups <= 0 || numGroups > kMaxGsGroups) return fail("bad group count " + std::to_string(numGroups));
+    if (dataSize > b.n) return fail("the data size in the header (" + std::to_string(dataSize) + " bytes) is larger than the file");
+    if (dataSize != 0 && dataSize < 48) return fail("the data size in the header (" + std::to_string(dataSize) + " bytes) is smaller than the header");
+    if (skinSz < 12 || skinSz > kMaxGsRecord || stSz < 8 || stSz > kMaxGsRecord || triSz < 16 || triSz > kMaxGsRecord || vertSz < 12 || vertSz > kMaxGsRecord ||
+        frameSz < 24 || frameSz > kMaxGsRecord || matSz > kMaxGsRecord || (matSz != 0 && matSz < 68))
+        return fail("a record size in the header is out of range (skin " + std::to_string(skinSz) + ", skin point " + std::to_string(stSz) + ", triangle " +
+                    std::to_string(triSz) + ", vertex " + std::to_string(vertSz) + ", frame " + std::to_string(frameSz) + ")");
+    const std::size_t end = dataSize ? (std::size_t)dataSize : b.n;
+    std::uint64_t pos = 48;
+
+    ImportedNode root;
+    root.name = "MDL";
+    out.nodes.push_back(root);
+    std::vector<std::int32_t> skinMaterial;   // skin index -> material index
+    std::vector<std::int32_t> soupOf(kMaxGsSkins + 1, -1);   // material + 1 -> its soup in the current group (a table; reset after each group)
+    int badTri = 0, badSt = 0, badSkin = 0, otherGroups = 0, embedded = 0;
+    std::size_t framesSeen = 0;
+    std::size_t outVerts = 0, work = 0;
+    rc::BuildStats stats;
+    for (std::int32_t g = 0; g < numGroups; ++g) {
+        if (end - pos < 44) return fail("the file ends inside the header of group " + std::to_string(g));
+        Br gb(b.d, end);
+        gb.pos = (std::size_t)pos;
+        const std::int32_t type = gb.I32();
+        const std::uint32_t gsize = gb.U32();
+        const std::string gname = gb.Str(16);
+        const std::int32_t nSkins = gb.I32(), nSt = gb.I32(), nTri = gb.I32(), nVert = gb.I32(), nFrames = gb.I32();
+        if (gsize < 44 || gsize > end - pos) return fail("group " + std::to_string(g) + " has a bad byte size " + std::to_string(gsize));
+        const std::size_t gend = (std::size_t)pos + gsize;
+        pos += gsize;
+        Br c(b.d, gend);
+        c.pos = gb.pos;
+        if (nSkins < 0 || nSkins > kMaxGsSkins || nSt < 0 || nTri < 0 || nVert < 0 || nFrames < 0 || nVert > kMaxGsVerts || nTri > kMaxGsTris || nSt > kMaxGsSkinVerts || nFrames > kMaxGsFrames)
+            return fail("group " + std::to_string(g) + " has a bad count");
+        // skins (also for a group that is not a mesh: the list is shared)
+        for (std::int32_t s = 0; s < nSkins; ++s) {
+            if (skinMaterial.size() >= (std::size_t)kMaxGsSkins) return fail("more than " + std::to_string(kMaxGsSkins) + " skins");
+            const std::size_t at = c.pos;
+            const std::int32_t st = c.I32(), w = c.I32(), h = c.I32();
+            std::string sname;
+            if (skinSz >= 28) sname = c.Str(16);
+            c.pos = at;
+            c.Skip(skinSz);
+            if (c.bad) return fail("the file ends inside a skin of group " + std::to_string(g));
+            ImportedMaterial m;
+            m.name = sname.empty() ? "skin " + std::to_string(skinMaterial.size()) : sname;
+            m.hasDiffuse = true;
+            m.diffuse = Color{1, 1, 1, 1};
+            const std::int32_t base = st & 7;
+            if (st < 0 || st > 0x1F) return fail("skin " + std::to_string(skinMaterial.size()) + " has an unknown type " + std::to_string(st));
+            if (base == 7) {   // an external texture: `w` bytes of file name
+                if (w < 0 || (std::uint64_t)w > c.Left()) return fail("the file ends inside a texture file name");
+                std::string tex = c.Str((std::size_t)w);
+                if (!tex.empty()) {
+                    std::string resolved, why;
+                    if (detail::ResolveInsideDir(baseDir, tex, resolved, why)) m.texture = resolved;
+                    else out.notes.push_back("MDL (3D GameStudio MDL7): skin \"" + m.name + "\": texture \"" + tex + "\" not used: " + why);
+                }
+            } else if (base == 6) {   // a compressed DDS picture of `w` bytes (as in the WMB texture list): skipped
+                if (w < 0 || (std::uint64_t)w > c.Left()) return fail("the file ends inside a DDS skin");
+                c.Skip((std::uint64_t)w);
+                ++embedded;
+            } else if (w != 0 || h != 0) {   // embedded pixels: skipped
+                if (w <= 0 || h <= 0 || w > kMaxSkinDim || h > kMaxSkinDim) return fail("skin " + std::to_string(skinMaterial.size()) + " has a bad size");
+                const std::uint64_t n = detail::gsskin::PixelBytes(st & 0xF, w, h);
+                if (n == 0) return fail("skin " + std::to_string(skinMaterial.size()) + " has type " + std::to_string(st) + ", whose size is not known");
+                if (!c.Has(n)) return fail("the file ends inside a skin picture");
+                c.Skip(n);
+                ++embedded;
+            }
+            if (st & 0x10) {   // a material: diffuse, the second colour (its fourth value is the opacity), specular, emissive, power
+                if (matSz < 68 || !c.Has(matSz)) return fail("the file ends inside a material");
+                const std::size_t mat = c.pos;
+                float f[17];
+                for (float& x : f) { x = c.F32(); if (!std::isfinite(x) || std::fabs(x) > 1e6f) x = 0; }
+                c.pos = mat + matSz;
+                auto clamp01 = [](float x) { return x < 0 ? 0.0f : x > 1 ? 1.0f : x; };
+                const float alpha = f[7] > 0 && f[7] <= 1 ? f[7] : 1.0f;
+                m.diffuse = Color{clamp01(f[0]), clamp01(f[1]), clamp01(f[2]), alpha};
+                if (f[12] != 0 || f[13] != 0 || f[14] != 0) { m.hasEmissive = true; m.emissive = Color{clamp01(f[12]), clamp01(f[13]), clamp01(f[14]), 1}; }
+                if (f[16] > 0) m.shininess = std::min(f[16], 10000.0f);
+            }
+            skinMaterial.push_back((std::int32_t)out.materials.size());
+            out.materials.push_back(std::move(m));
+        }
+        if (type != 1) { ++otherGroups; continue; }
+        if (!c.Fits((std::uint64_t)nSt, stSz)) return fail("the file ends inside the skin points of group " + std::to_string(g));
+        const std::size_t stAt = c.pos;
+        c.Skip((std::uint64_t)nSt * stSz);
+        if (!c.Fits((std::uint64_t)nTri, triSz)) return fail("the file ends inside the triangles of group " + std::to_string(g));
+        const std::size_t triAt = c.pos;
+        c.Skip((std::uint64_t)nTri * triSz);
+        if (!c.Fits((std::uint64_t)nVert, vertSz)) return fail("the file ends inside the vertices of group " + std::to_string(g));
+        const std::size_t vertAt = c.pos;
+        c.Skip((std::uint64_t)nVert * vertSz);
+        // what follows the vertices (the frame records) is not read: the group size gives the next group
+        framesSeen += (std::size_t)nFrames;
+        work += (std::size_t)nTri + (std::size_t)nVert;
+        if (work > kMaxWork) return fail("over the work budget");
+        // positions
+        std::vector<Vec3> basePos((std::size_t)nVert);
+        Br v(b.d, gend);
+        v.pos = vertAt;
+        for (std::int32_t i = 0; i < nVert; ++i) {
+            const std::size_t at = v.pos;
+            float p[3];
+            for (float& x : p) { x = v.F32(); if (!Reasonable(x)) return fail("a vertex of group " + std::to_string(g) + " is not finite or is out of range"); }
+            v.pos = at + vertSz;
+            basePos[(std::size_t)i] = Vec3{p[0], p[1], p[2]};
+        }
+        // one soup per skin used
+        std::vector<std::int32_t> order;
+        std::vector<rc::Soup> soups;
+        std::vector<std::unordered_map<std::uint32_t, std::uint32_t>> remaps;   // group vertex -> position in that soup (only the used ones are copied)
+        std::vector<char> uvOk;
+        Br t(b.d, gend);
+        t.pos = triAt;
+        for (std::int32_t i = 0; i < nTri; ++i) {
+            const std::size_t at = t.pos;
+            std::uint16_t vi[3], si[3];   // unsigned 16-bit; a skin point of 0xFFFF is "none"
+            for (std::uint16_t& x : vi) x = t.U16();
+            for (std::uint16_t& x : si) x = t.U16();
+            const std::int32_t skin = t.I32();
+            t.pos = at + triSz;
+            if (!CornersIn(vi, nVert)) { ++badTri; continue; }
+            std::int32_t mat = -1;
+            if (skin >= 0 && (std::size_t)skin < skinMaterial.size()) mat = skinMaterial[(std::size_t)skin];
+            else if (!(skin == -1 && skinMaterial.empty())) ++badSkin;
+            std::int32_t& slot = soupOf[(std::size_t)(mat + 1)];
+            if (slot < 0) { slot = (std::int32_t)order.size(); order.push_back(mat); soups.emplace_back(); remaps.emplace_back(); uvOk.push_back(1); }
+            const std::size_t k = (std::size_t)slot;
+            rc::Soup& s = soups[k];
+            for (int corner : {2, 1, 0}) {   // the files wind clockwise (their stored normals agree with the reversed order): reversed
+                auto it = remaps[k].find((std::uint32_t)vi[corner]);
+                if (it == remaps[k].end()) { it = remaps[k].emplace((std::uint32_t)vi[corner], (std::uint32_t)s.pos.size()).first; s.pos.push_back(basePos[(std::size_t)vi[corner]]); }
+                s.ci.push_back(it->second);
+                Vec2 uv{0, 0};
+                if (si[corner] != 0xFFFF && si[corner] < nSt) {
+                    Br u(b.d, gend);
+                    u.pos = stAt + (std::size_t)si[corner] * stSz;
+                    const float uu = u.F32(), vv = u.F32();
+                    if (std::isfinite(uu) && std::isfinite(vv) && std::fabs(uu) < 1e8f && std::fabs(vv) < 1e8f) uv = Vec2{uu, vv};
+                    else ++badSt;
+                } else uvOk[k] = 0;
+                s.cuv.push_back(uv);
+            }
+        }
+        for (std::int32_t m : order) soupOf[(std::size_t)(m + 1)] = -1;
+        ImportedNode node;
+        node.name = gname.empty() ? "group " + std::to_string(g) : gname;
+        node.parent = 0;
+        out.nodes.push_back(node);
+        const int nodeIdx = (int)out.nodes.size() - 1;
+        for (std::size_t k = 0; k < soups.size(); ++k) {
+            if (!uvOk[k]) soups[k].cuv.clear();
+            ImportedPart part;
+            if (!rc::BuildMesh(soups[k], 180.0, part.mesh, &stats, kMaxOutVerts - std::min(outVerts, kMaxOutVerts))) return fail("over the budget of " + std::to_string(kMaxOutVerts) + " vertices");
+            if (part.mesh.triangles.empty()) continue;
+            outVerts += part.mesh.vertices.size();
+            if (!rc::PartInRange(part)) return fail("a vertex is out of range");
+            part.mesh.name = node.name;
+            part.node = nodeIdx;
+            part.material = order[k];
+            out.parts.push_back(std::move(part));
+        }
+    }
+    if (out.parts.empty()) return fail("the file has no usable triangles");
+    rc::ApplyUpAxis(out, true, false);   // GameStudio is Z-up
+    out.backend = "own";
+    auto note = [&](const std::string& s) { out.notes.push_back("MDL (3D GameStudio MDL7): " + s); };
+    note("the layout of MDL7 is not published: it was worked out from three real files (docs/content/model_readers.md); the stored normals are not read (smooth normals were generated), texture coordinates are used as stored");
+    if (framesSeen) note(std::to_string(framesSeen) + " frame record(s) not read (their layout is not known from the files): the base vertices are used");
+    if (embedded) note(std::to_string(embedded) + " embedded skin picture(s) not extracted (a material names a texture file, it cannot carry pixels)");
+    if (otherGroups) note(std::to_string(otherGroups) + " group(s) of a type other than 1 (a mesh) skipped");
+    if (zero2 || zero3) note("two header words that are 0 in every file the layout was worked out from are not 0 here: not understood, not read");
+    if (badTri) note(std::to_string(badTri) + " triangle(s) with an out-of-range vertex index skipped");
+    if (badSkin) note(std::to_string(badSkin) + " triangle(s) name a skin that does not exist: no material");
+    if (badSt) note(std::to_string(badSt) + " corner(s) with a bad texture coordinate got (0, 0)");
+    if (stats.degenerate) note(std::to_string(stats.degenerate) + " degenerate triangle(s) skipped");
+    return true;
+}
+
 } // namespace mdl
 } // namespace
 
@@ -521,7 +846,9 @@ bool ReadMdlBuffer(const std::string& bytes, const std::string& baseDir, Importe
     if (std::memcmp(b.d, "IDPO", 4) == 0) ok = mdl::ReadQuake(b, baseDir, out, err);
     else if (std::memcmp(b.d, "IDST", 4) == 0) ok = mdl::ReadHalfLife(b, baseDir, out, err);
     else if (std::memcmp(b.d, "IDSQ", 4) == 0) ok = mdl::Fail(err, "this is a Half-Life sequence group file (IDSQ): it holds animation only, open the model file it belongs to");
-    else if (std::memcmp(b.d, "MDL", 3) == 0 && b.d[3] >= '0' && b.d[3] <= '9') ok = mdl::Fail(err, std::string("3D GameStudio ") + std::string((const char*)b.d, 4) + " models are not supported by our reader (only the Quake 1 and Half-Life 1 MDL formats are)");
+    else if (std::memcmp(b.d, "MDL", 3) == 0 && (b.d[3] == '3' || b.d[3] == '4' || b.d[3] == '5')) ok = mdl::ReadGameStudio5(b, out, err);
+    else if (std::memcmp(b.d, "MDL7", 4) == 0) ok = mdl::ReadGameStudio7(b, baseDir, out, err);
+    else if (std::memcmp(b.d, "MDL", 3) == 0 && b.d[3] >= '0' && b.d[3] <= '9') ok = mdl::Fail(err, std::string("3D GameStudio ") + std::string((const char*)b.d, 4) + " models are not supported by our reader (MDL3, MDL4, MDL5 and MDL7 are)");
     else ok = mdl::Fail(err, "not a supported MDL file (the magic is neither IDPO, Quake 1, nor IDST, Half-Life 1)");
     if (!ok) out = ImportedModel{};
     return ok;

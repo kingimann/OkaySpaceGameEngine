@@ -66,17 +66,6 @@ struct Fmt {
 
 } // namespace
 
-bool OwnWavEnabled() {
-    bool v =
-#ifdef OKAY_OWN_WAV_DEFAULT
-        true;
-#else
-        false;
-#endif
-    if (const char* e = std::getenv("OKAY_OWN_WAV")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
-    return v;
-}
-
 bool DecodeWav(const unsigned char* data, std::size_t size, WavAudio& out, std::string* error, const Limits* lim) {
     const Limits L = lim ? *lim : Limits();
     out = WavAudio();

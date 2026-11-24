@@ -1,4 +1,6 @@
 #include "OkayScriptVMInternal.hpp"
+#include "okay/Net/ServerQuery.hpp"
+#include "okay/Net/Rollback.hpp"
 
 namespace okay {
 
@@ -90,6 +92,207 @@ void OkayScriptVM::Impl::RegisterNetworkBuiltins(BuiltinCtx& c) {
             const auto r = n->Roster(); const int i = SafeInt(a[0].AsFloat());
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
         };
+
+        // ---- net.*: the easy layer (NetworkManagerEvents.cpp), one call per action ----
+        //   net.host()  net.join("192.168.1.20")  net.host_or_join()  net.leave()
+        //   net.on("hit", "on_hit")  or  net.on("hit", (data, from) => { ... })
+        //   net.send("hit", "10")  net.send_to(id, "hit", "10")
+        //   net.on("player_joined", fn) / net.on("player_left", fn), or define
+        //   on_player_joined(id, name) / on_player_left(id) / on_network_event(name, data, from)
+        // A handler for a named event gets (data, from, name).
+        auto port0 = [](std::vector<Value>& a, std::size_t i) {
+            return (std::uint16_t)(a.size() > i ? SafeInt(a[i].AsFloat()) : (int)NetworkManager::kDefaultPort);
+        };
+        b["net.host"] = [this, port0](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            return Value{n && n->StartServer(port0(a, 0))};
+        };
+        b["net.join"] = [this](std::vector<Value>& a) {   // ("host" | "host:port" [, port])
+            NetworkManager* n = EnsureNet();
+            if (!n) return Value{false};
+            std::string host; std::uint16_t port = NetworkManager::kDefaultPort;
+            const std::string addr = a.empty() ? std::string("127.0.0.1") : a[0].AsString();
+            if (!SplitHostPort(addr, host, port, NetworkManager::kDefaultPort)) {
+                Log::Warning("OkayScript net.join: \"", addr, "\" is not an address (write 192.168.1.20 or 192.168.1.20:45000)");
+                return Value{false};
+            }
+            if (a.size() > 1) port = (std::uint16_t)SafeInt(a[1].AsFloat());
+            return Value{n->StartClient(host, port)};
+        };
+        b["net.host_or_join"] = [this, port0](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            return Value{n && n->HostOrJoin(port0(a, 0))};
+        };
+        b["net.join_lan"] = [this](std::vector<Value>& a) {   // join the first game on the local network
+            NetworkManager* n = EnsureNet();
+            if (!n) return Value{false};
+            for (const ServerInfo& s : QueryServers({}, a.empty() ? 1000 : SafeInt(a[0].AsFloat()), true))
+                if (s.responded) return Value{n->StartClient(s.host, s.port)};
+            return Value{false};
+        };
+        b["net.leave"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->Stop(); return Value{}; };
+        b["net.is_host"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->IsServer()}; };
+        b["net.connected"] = [this](std::vector<Value>&) {
+            NetworkManager* n = Net(); return Value{n && (n->IsServer() || (n->IsClient() && n->Joined()))};
+        };
+        b["net.id"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->LocalId() : 0.0f}; };
+        b["net.players"] = [this](std::vector<Value>&) {   // the ids of everyone in the game, you included
+            Value out = Value::MakeArray();
+            if (NetworkManager* n = Net())
+                for (const auto& p : n->Players()) out.AsArray()->push_back(Value{(float)p.id});
+            return out;
+        };
+        b["net.player_count"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->Players().size() : 0.0f}; };
+        b["net.player_name"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (n && !a.empty())
+                for (const auto& p : n->Players())
+                    if ((float)p.id == a[0].AsFloat()) return Value{p.name};
+            return Value{std::string{}};
+        };
+        b["net.send"] = [this](std::vector<Value>& a) {   // (event [, data]): every player, this one too
+            NetworkManager* n = Net();
+            if (!n) { Log::Warning("OkayScript net.send: not in a network game yet (net.host or net.join first)"); return Value{false}; }
+            return Value{!a.empty() && n->SendEvent(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string())};
+        };
+        b["net.send_to"] = [this](std::vector<Value>& a) {   // (player id, event [, data])
+            NetworkManager* n = Net();
+            if (!n || a.size() < 2) return Value{false};
+            return Value{n->SendEventTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a.size() > 2 ? a[2].AsString() : std::string())};
+        };
+        // net.on(event, fn): fn is a function's name ("on_hit") or a lambda. "player_joined" and
+        // "player_left" are the join / leave events; any other name is a network event.
+        auto netEventKey = [](const std::string& ev) {
+            if (ev == "player_joined" || ev == "player_left" || ev == "host_migrated") return "on_" + ev;
+            return "net_event:" + ev;
+        };
+        auto netHandler = [](const Value& f) {
+            if (f.IsString()) { Value fn = Value::MakeMap(); (*fn.AsMap())["__fn"] = f; return fn; }
+            return f;
+        };
+        b["net.on"] = [this, netEventKey, netHandler](std::vector<Value>& a) {
+            if (a.size() < 2) throw ScriptError("net.on needs an event name and a function: net.on(\"hit\", \"on_hit\")");
+            const Value fn = netHandler(a[1]);
+            if (fn.IsString() || !(Runtime::IsLambda(fn) || (fn.AsMap() && fn.AsMap()->count("__fn"))))
+                throw ScriptError("net.on(\"" + a[0].AsString() + "\", ...): the second value must be a function name in quotes or a lambda");
+            if (fn.AsMap()->count("__fn") && !rt.functions.count((*fn.AsMap())["__fn"].AsString()))
+                throw ScriptError("net.on(\"" + a[0].AsString() + "\", ...): there is no function named '" + (*fn.AsMap())["__fn"].AsString() + "' in this script");
+            rt.AddSub(netEventKey(a[0].AsString()), fn);
+            return Value{true};
+        };
+        b["net.off"] = [this, netEventKey, netHandler](std::vector<Value>& a) {
+            if (a.size() >= 2) rt.RemoveSub(netEventKey(a[0].AsString()), netHandler(a[1]));
+            return Value{};
+        };
+        // The same calls as the older names (one body each): net.spawn = net_spawn_owned, net.set = net_set, net.get = net_get.
+        auto forward = [this](const char* to) {
+            return [this, to](std::vector<Value>& a) { return rt.Call(to, a); };
+        };
+        b["net.spawn"] = forward("net_spawn_owned");   // (prefab [, x, y, z]) -> the object's network id
+        b["net.set"] = forward("net_set");
+        b["net.get"] = forward("net_get");
+        b["net.time"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->NetworkTime() : 0.0f}; };
+        b["net.ping"] = forward("net_ping");
+        b["net.error"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->LastError() : std::string{}}; };
+        // Ownership and prediction: netId defaults to this object's Network Sync id.
+        auto myNetId = [this](std::vector<Value>& a, std::size_t i) {
+            if (a.size() > i && !a[i].AsString().empty()) return a[i].AsString();
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            auto* ns = me ? me->GetComponent<NetworkSync>() : nullptr;
+            return ns ? (ns->netId.empty() ? me->name : ns->netId) : std::string();
+        };
+        b["net.is_mine"] = [this, myNetId](std::vector<Value>& a) {
+            NetworkManager* n = Net(); const std::string id = myNetId(a, 0);
+            return Value{!n || id.empty() || n->IsMine(id)};
+        };
+        b["net.is_predicted"] = [this, myNetId](std::vector<Value>& a) { NetworkManager* n = Net(); return Value{n && n->Predicted(myNetId(a, 0))}; };
+        b["net.give"] = [this, myNetId](std::vector<Value>& a) {   // (netId or "", player id): host
+            NetworkManager* n = Net();
+            return Value{n && a.size() >= 2 && n->GiveOwnership(myNetId(a, 0), SafeUInt32(a[1].AsFloat()))};
+        };
+        b["net.request"] = [this, myNetId](std::vector<Value>& a) { if (NetworkManager* n = Net()) n->RequestOwnership(myNetId(a, 0)); return Value{}; };
+        b["net.owner"] = [this, myNetId](std::vector<Value>& a) { NetworkManager* n = Net(); return Value{n ? (float)n->OwnerOf(myNetId(a, 0)) : -1.0f}; };
+        b["net.simulate"] = [this](std::vector<Value>& a) {   // (latency ms, jitter ms, loss %): all 0 = off
+            if (NetworkManager* n = EnsureNet()) {
+                n->simulateLatencyMs = a.size() > 0 ? a[0].AsFloat() : 0.0f;
+                n->simulateJitterMs = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+                n->simulateLossPercent = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            }
+            return Value{};
+        };
+        b["net.loss"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().lossPercent : 0.0f}; };
+        b["net.bytes_in"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesInPerSec : 0.0f}; };
+        b["net.bytes_out"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesOutPerSec : 0.0f}; };
+        // The in-game stats overlay: net.show_stats() / net.show_stats(false); net.stats_text() is its text.
+        b["net.show_stats"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (n) n->showStatsOverlay = a.empty() || a[0].AsBool();
+            return Value{n && n->showStatsOverlay};
+        };
+        b["net.stats_text"] = [this](std::vector<Value>&) {
+            std::string t;
+            if (NetworkManager* n = Net()) for (const std::string& l : n->StatsLines()) t += l + "\n";
+            return Value{t};
+        };
+        // Host migration: net.migration("off" | "lan" | "always") sets it; with no value it says which.
+        // on_host_migrated(previous_id), or net.on("host_migrated", fn), runs once there is a new host.
+        b["net.migration"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n) return Value{std::string()};
+            if (!a.empty()) {
+                const std::string m = a[0].IsString() ? a[0].AsString() : (a[0].AsBool() ? "lan" : "off");
+                if (m == "off") n->hostMigration = NetworkManager::HostMigration::Off;
+                else if (m == "lan") n->hostMigration = NetworkManager::HostMigration::Lan;
+                else if (m == "always") n->hostMigration = NetworkManager::HostMigration::Always;
+                else throw ScriptError("net.migration(\"" + m + "\"): use \"off\", \"lan\" or \"always\"");
+            }
+            const auto h = n->hostMigration;
+            return Value{std::string(h == NetworkManager::HostMigration::Off ? "off" : h == NetworkManager::HostMigration::Lan ? "lan" : "always")};
+        };
+        b["net.migrations"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->HostMigrations() : 0.0f}; };
+        b["net.migrating"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Migrating()}; };
+        // Rollback (deterministic games): net.rollback_start([input delay [, tick rate [, max predicted frames]]]).
+        // The script defines rollback_save() -> text, rollback_load(text), rollback_input() -> text and
+        // rollback_step(frame, inputs), where inputs is an array of every player's input in
+        // net.rollback_players() order. Every player calls it (after net.players() lists everyone).
+        b["net.rollback_start"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n) { Log::Warning("OkayScript net.rollback_start: not in a network game yet (net.host or net.join first)"); return Value{false}; }
+            for (const char* fn : {"rollback_save", "rollback_load", "rollback_input", "rollback_step"})
+                if (!rt.functions.count(fn))
+                    throw ScriptError(std::string("net.rollback_start needs a function ") + fn + " in this script");
+            net::Rollback::Settings st;
+            if (a.size() > 0) st.inputDelay = SafeInt(a[0].AsFloat());
+            if (a.size() > 1) st.tickRate = a[1].AsFloat();
+            if (a.size() > 2) st.maxPrediction = SafeInt(a[2].AsFloat());
+            std::weak_ptr<int> life = this->life;   // the callbacks do nothing once this script is gone
+            auto call = [this, life](const char* fn, std::vector<Value> args) -> Value {
+                if (life.expired()) return Value{};
+                try { return rt.Call(fn, args); }
+                catch (const std::exception& e) { Log::Error("OkayScript ", fn, "(): ", e.what()); return Value{}; }
+            };
+            const bool ok = n->Rollback().Start(st,
+                [call] { return call("rollback_save", {}).AsString(); },
+                [call](const std::string& state) { call("rollback_load", {Value{state}}); },
+                [call] { return call("rollback_input", {}).AsString(); },
+                [call](std::uint32_t frame, const std::vector<net::Rollback::FrameInput>& in) {
+                    Value arr = Value::MakeArray();
+                    for (const auto& i : in) arr.AsArray()->push_back(Value{i.input});
+                    call("rollback_step", {Value{(float)frame}, arr});
+                });
+            if (!ok) Log::Warning("OkayScript net.rollback_start: ", n->Rollback().LastError());
+            return Value{ok};
+        };
+        b["net.rollback_stop"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->Rollback().Stop(); return Value{}; };
+        b["net.rollback_frame"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->Rollback().Frame() : 0.0f}; };
+        b["net.rollback_confirmed"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->Rollback().ConfirmedFrame() : 0.0f}; };
+        b["net.rollback_resimulating"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Rollback().Resimulating()}; };
+        b["net.rollback_players"] = [this](std::vector<Value>&) {
+            Value out = Value::MakeArray();
+            if (NetworkManager* n = Net()) for (std::uint32_t id : n->Rollback().Players()) out.AsArray()->push_back(Value{(float)id});
+            return out;
+        };
+        b["net.rollback_running"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->Rollback().Running()}; };
 }
 
 void OkayScriptVM::Impl::RegisterMatchmakingQueueBuiltins(BuiltinCtx& c) {
@@ -963,70 +1166,9 @@ void OkayScriptVM::Impl::RegisterAccountBuiltins(BuiltinCtx& c) {
             const std::string file = saveFile(a, 0);
             return Value{!file.empty() && Save::DeleteFile(file)};
         };
-        // Math helpers
-        b["abs"]   = [](std::vector<Value>& a) { return Value{Mathf::Abs(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sin"]   = [](std::vector<Value>& a) { return Value{Mathf::Sin(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["cos"]   = [](std::vector<Value>& a) { return Value{Mathf::Cos(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sqrt"]  = [](std::vector<Value>& a) { return Value{Mathf::Sqrt(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["floor"] = [](std::vector<Value>& a) { return Value{Mathf::Floor(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["min"]   = [](std::vector<Value>& a) { return Value{Mathf::Min(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["max"]   = [](std::vector<Value>& a) { return Value{Mathf::Max(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["tan"]   = [](std::vector<Value>& a) { return Value{std::tan(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["pow"]   = [](std::vector<Value>& a) { return Value{std::pow(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 1)}; };
-        b["round"] = [](std::vector<Value>& a) { return Value{Mathf::Round(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["ceil"]  = [](std::vector<Value>& a) { return Value{Mathf::Ceil(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["sign"]  = [](std::vector<Value>& a) { float v = a.empty() ? 0 : a[0].AsFloat(); return Value{v > 0 ? 1.0f : v < 0 ? -1.0f : 0.0f}; };
-        b["atan2"] = [](std::vector<Value>& a) { return Value{std::atan2(a.size() > 0 ? a[0].AsFloat() : 0, a.size() > 1 ? a[1].AsFloat() : 0)}; };
-        b["clamp"] = [](std::vector<Value>& a) {
-            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
-            return Value{Mathf::Clamp(v, lo, hi)};
-        };
-        b["lerp"]  = [](std::vector<Value>& a) {
-            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0, t = a.size() > 2 ? a[2].AsFloat() : 0;
-            return Value{Mathf::Lerp(x, y, t)};
-        };
-        b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
-        b["hypot"] = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
-        b["atan"]  = [](std::vector<Value>& a) { return Value{std::atan(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["asin"]  = [](std::vector<Value>& a) { return Value{std::asin(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["acos"]  = [](std::vector<Value>& a) { return Value{std::acos(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["log"]   = [](std::vector<Value>& a) { return Value{std::log(a.empty() ? 1 : a[0].AsFloat())}; };
-        b["exp"]   = [](std::vector<Value>& a) { return Value{std::exp(a.empty() ? 0 : a[0].AsFloat())}; };
-        // Wrap a value into [lo, hi) — angles, looping indices, scrolling.
-        b["wrap"]  = [](std::vector<Value>& a) {
-            float v = a.size() > 0 ? a[0].AsFloat() : 0, lo = a.size() > 1 ? a[1].AsFloat() : 0, hi = a.size() > 2 ? a[2].AsFloat() : 1;
-            float span = hi - lo;
-            if (span <= 0.0f) return Value{lo};
-            float r = std::fmod(v - lo, span);
-            if (r < 0) r += span;
-            return Value{lo + r};
-        };
-        // Triangle wave 0..len..0 — patrols, breathing scale, bobbing.
-        b["ping_pong"] = [](std::vector<Value>& a) {
-            float t = a.size() > 0 ? a[0].AsFloat() : 0, len = a.size() > 1 ? a[1].AsFloat() : 1;
-            if (len <= 0.0f) return Value{0.0f};
-            float m = std::fmod(t, 2.0f * len);
-            if (m < 0) m += 2.0f * len;
-            return Value{m <= len ? m : 2.0f * len - m};
-        };
-        // Smooth (ease in/out) interpolation between a and b.
-        b["smoothstep"] = [](std::vector<Value>& a) {
-            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 1, t = a.size() > 2 ? a[2].AsFloat() : 0;
-            t = Mathf::Clamp01(t);
-            t = t * t * (3.0f - 2.0f * t);
-            return Value{Mathf::Lerp(x, y, t)};
-        };
-        // Clamp to [0,1] (Mathf.Clamp01).
-        b["clamp01"] = [](std::vector<Value>& a) {
-            return Value{Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat())};
-        };
-        // Where v lies between a and b, as 0..1 (Mathf.InverseLerp).
-        b["inverse_lerp"] = [](std::vector<Value>& a) {
-            float lo = a.size() > 0 ? a[0].AsFloat() : 0, hi = a.size() > 1 ? a[1].AsFloat() : 1,
-                  v  = a.size() > 2 ? a[2].AsFloat() : 0;
-            if (hi - lo == 0.0f) return Value{0.0f};
-            return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
-        };
+        // Math helpers: the language core's shared set (okayscript/include/okayscript/CoreBuiltins.hpp), the same
+        // functions and rules as in the okayscript CLI.
+        okayscript::InstallMathBuiltins<Value>(b);
 }
 
 } // namespace okay

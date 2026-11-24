@@ -193,10 +193,10 @@ self_test() {
     expect 0 "a longer name that only starts with OKAY_OWN_CRYPTO is not the switch" $cl --cache "$d/okname"
 
     # --- a built program: --binary
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=none"\n' > "$d/p_ok"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=own(no libsodium) ui=none"\n' > "$d/p_nosod"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=own(test) ui=none"\n' > "$d/p_own"
-    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium-not ui=none"\n' > "$d/p_fake"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=none"\n' > "$d/p_ok"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=own(no libsodium) ui=none"\n' > "$d/p_nosod"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=own(test) ui=none"\n' > "$d/p_own"
+    printf '#!/bin/sh\necho "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium-not ui=none"\n' > "$d/p_fake"
     printf '#!/bin/sh\necho hello\n' > "$d/p_none"
     printf '#!/bin/sh\n[ "$OKAY_PRINT_STACK_AND_EXIT" = 1 ] || exit 3\necho "[okay] stack: crypto=libsodium"\nexit 5\n' > "$d/p_badrc"
     chmod +x "$d"/p_*

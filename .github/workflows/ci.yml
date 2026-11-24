@@ -10,7 +10,14 @@ on:
   schedule:
     - cron: "23 6 * * *"   # nightly full suite on main
   # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
+  # With pr_check_only, only the jobs a pull request runs are run (the Windows cross-compile), to time or test that check
+  # on a branch without starting the whole suite.
   workflow_dispatch:
+    inputs:
+      pr_check_only:
+        description: "Run only the pull-request check (Cross-compile Windows build), not the full suite"
+        type: boolean
+        default: false
 
 # A new push cancels the older run of the same PR, or the older run of main, so stale runs don't hold the runners
 # (2026-11-23: seven old runs of main, about 110 jobs, were queued in front of every PR). The nightly run has its own group.
@@ -22,7 +29,7 @@ concurrency:
 # the short limits (15/20/30 minutes) were cancelling healthy jobs (PR #969: 'Anti-cheat tests with libsodium' hit 15 minutes).
 jobs:
   build-and-test:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
     # The compiler cache makes a warm run recompile only what changed. The player and
@@ -96,7 +103,7 @@ jobs:
   # jobs now, so the three builds run side by side and a run takes as long as the
   # slowest one. Each keeps its own compiler cache.
   player:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build player runtime (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -150,7 +157,7 @@ jobs:
           key: ccache-ubuntu-player-${{ github.sha }}
 
   editor:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Build & self-test editor (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -207,7 +214,7 @@ jobs:
   # jobs below run the same check on Windows. Runs once the player and editor
   # builds above have finished.
   export-check:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Export a game and check its visual scripts (Ubuntu)
     needs: [player, editor]
     runs-on: ubuntu-latest
@@ -242,7 +249,7 @@ jobs:
   # only catch their bug under a sanitizer. Only the listed test targets are built, to
   # keep it fast; this is deliberately not the whole ctest suite.
   sanitizers:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
     timeout-minutes: 75   # was 45: a cold-cache run on a pull request needs 41-45 min and was cancelled at the limit (PR #1088)
@@ -374,7 +381,7 @@ jobs:
   # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
   # and its objects come from ccache. The built-in-reader switches stay at their defaults.
   assimp-models:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Model readers with Assimp
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -447,7 +454,7 @@ jobs:
   # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests
   # under ASan and UBSan.
   own-http:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Own HTTP client (OKAY_OWN_HTTP=ON, TLS tests required)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -487,7 +494,7 @@ jobs:
   # (scripts/check_release_own_stack.sh). Not a required check: it tells us how ready the own stack is, it does not gate
   # merges. Only the test targets of the own pieces are built, and the compiler cache is reused.
   own-stack:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Own stack (OKAY_OWN_STACK=ON, no libsodium)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -521,7 +528,6 @@ jobs:
           # the switches must really reach the compiler, or this job would test the old stack
           grep -q 'OKAY_OWN_STACK_BUILD' build-own/build.ninja
           grep -q 'OKAY_OWN_HTTP_DEFAULT_ON' build-own/build.ninja
-          grep -q 'OKAY_OWN_FBX_DEFAULT' build-own/build.ninja
           grep -q 'OKAY_PLATFORM_DEFAULT_OWN' build-own/build.ninja
           grep -q 'OKAY_OWN_CRYPTO' build-own/build.ninja
 
@@ -561,7 +567,7 @@ jobs:
   # (our own Ed25519 and SHA-512; the TweetNaCl-derived port is deleted). These targets do not link the engine, so this is quick.
   # okay::crypto has not had its outside review yet (CLAUDE.md rule 18); libsodium stays the preferred path where it is built.
   anticheat-crypto-nosodium:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Anti-cheat crypto without libsodium (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -594,59 +600,48 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 2G
+      # No CCACHE_SLOPPINESS: the editor's __DATE__ " " __TIME__ lives in editor/BuildStamp.cpp (recompiled every run, under a
+      # second), so ccache can reuse editor/main.cpp (about 5 minutes) and every build stamp stays exact.
     steps:
       - uses: actions/checkout@v6
 
-      # The runner's Ubuntu mirror is sometimes slow enough that downloading the
-      # MinGW compiler outlasts the step timeout. Downloaded packages go in the
-      # Actions cache, saved even when the install times out, so each run starts
-      # from what earlier runs fetched instead of from the mirror.
-      - name: Note the runner image
-        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+      # The toolchain (.deb files) lives in the Actions cache, keyed on the Ubuntu release, not on the runner image version:
+      # two image versions were in use at once on 2026-11-24 and the one with no cache hit downloaded 161 MB at about
+      # 150 KB/s until the 25-minute limit failed the job. scripts/ci-install-mingw.sh installs from the cache with no
+      # network when it can, else downloads only what is missing (several files at once, retried), and checks that the
+      # compiler is the win32 thread model (rule 21a). The cache is saved only when its set of files changed.
+      - name: Note the Ubuntu release
+        run: echo "UBUNTU_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")" >> "$GITHUB_ENV"
 
       - name: Restore downloaded apt packages
         uses: actions/cache/restore@v5
         with:
           path: ~/apt-cache
-          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: apt-mingw-${{ env.RUNNER_IMAGE }}-
+          key: apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-
+            apt-mingw-
 
       - name: Install toolchain
-        timeout-minutes: 25
+        id: install
+        timeout-minutes: 20
         run: |
-          mkdir -p ~/apt-cache/partial
-          ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
-          bash scripts/ci-apt-mirror.sh
-          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
-          for i in 1 2 3; do
-            if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev ccache; then
-              exit 0
-            fi
-            echo "apt attempt $i failed or timed out; retrying"
-            sleep 10
-          done
-          exit 1
+          bash scripts/ci-apt-cache.sh before
+          bash scripts/ci-install-mingw.sh
 
       - name: Check for newly downloaded apt packages
         id: apt-new
         if: always()
-        run: |
-          [ -d ~/apt-cache ] || exit 0
-          # A timed-out install can leave apt-get still downloading.
-          sudo pkill -x apt-get || true
-          sudo chown -R "$USER" ~/apt-cache
-          rm -rf ~/apt-cache/partial ~/apt-cache/lock
-          if [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt "$(cat ~/apt-debs-before 2>/dev/null || echo 0)" ]; then
-            echo "save=1" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: bash scripts/ci-apt-cache.sh after "$INSTALL_OUTCOME"
 
       - name: Save downloaded apt packages
         if: always() && steps.apt-new.outputs.save == '1'
         uses: actions/cache/save@v5
         with:
           path: ~/apt-cache
-          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: apt-mingw-win32-${{ env.UBUNTU_CODENAME }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch SDL2 and libsodium (MinGW)
         run: |
@@ -667,7 +662,9 @@ jobs:
             ccache-mingw-
 
       - name: Build the Windows distribution
-        run: scripts/build-windows-dist.sh
+        run: |
+          ccache -z >/dev/null
+          scripts/build-windows-dist.sh
 
       - name: Build the visual-scripting and mesh file tests for Windows
         run: |
@@ -687,6 +684,17 @@ jobs:
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
              build-win-tests/okayui/test_okayui_render_sdlhost.exe \
              "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
+
+      # How well the compiler cache worked and which files took longest (read these to find what slows the job).
+      - name: Compiler cache and build time report
+        if: always()
+        run: |
+          ccache -s || true
+          for d in build-win build-win-tests; do
+            [ -f "$d/.ninja_log" ] || continue
+            echo "== $d: slowest 15 steps (seconds)"
+            awk -F'\t' '!/^#/ {t=($2-$1)/1000; if (!($4 in seen)) {seen[$4]=1; printf "%7.1f %s\n", t, $4}}' "$d/.ninja_log" | sort -rn | head -15
+          done
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v6
@@ -710,7 +718,7 @@ jobs:
   # Windows fiber the editor's debugger uses) and the mesh file tests, then
   # export a game with the Windows editor and check what its visual scripts print.
   windows-export:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Windows export check
     needs: windows-cross
     runs-on: windows-latest
@@ -749,7 +757,7 @@ jobs:
   # the verified restart (a new file that is the wrong version or cannot start is
   # rolled back and the previous program is started) and the self-update rules.
   windows-restart:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Windows updater restart
     runs-on: windows-latest
     timeout-minutes: 45
@@ -779,7 +787,7 @@ jobs:
     name: MSVC build and test (not required)
     # Not on pull requests yet: CLAUDE.md rule 6 needs every PR job green, and this job is new. It runs on pushes to
     # main so its results are visible without blocking merges; the owner decides later whether it becomes required.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -804,7 +812,7 @@ jobs:
         run: ctest --test-dir build-msvc -R "^(math|scene|serialize|material|actionlist|prefs|physics3d|core_features|charctrl|transform_input)$" --output-on-failure --timeout 150
 
   web-build:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest
     # The build takes 12 to 20 minutes with a warm cache. A run that is still going after 40 minutes is a stalled runner,
@@ -873,7 +881,7 @@ jobs:
   # service container is the target; each script makes and drops its own database and loads
   # docs/sql/*.sql into it twice (the files must be idempotent). A skip is a failure here.
   sql-tests:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: SQL row-level-security tests (Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -916,7 +924,7 @@ jobs:
   # a current Node, the signed-update tool (scripts/sign_index.py) with its guards, and the reference account server's
   # limits. They were run by hand before.
   ticket-and-script-tests:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Ticket function, update signing and account server tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -976,7 +984,7 @@ jobs:
   # them still prints that branch. The launcher-side ticket flow runs here end to end against a local
   # fake ticket service (curl is on the runner).
   anticheat-crypto:
-    if: github.event_name != 'pull_request'   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
+    if: github.event_name != 'pull_request' && !inputs.pr_check_only   # full suite: nightly and on main; PRs are checked before the push (CLAUDE.md rule 6)
     name: Anti-cheat tests with libsodium (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 40

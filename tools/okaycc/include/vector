@@ -10,6 +10,10 @@ class vector {
 public:
     vector() : data_(nullptr), size_(0), cap_(0) {}
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
+    vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {
+        reserve((unsigned long)(last - first));
+        for (const T *p = first; p != last; ++p) data_[size_++] = *p;
+    }
     vector(unsigned long n, const T &v) : data_(nullptr), size_(0), cap_(0) {
         reserve(n);
         for (unsigned long i = 0; i < n; ++i) data_[i] = v;
@@ -20,7 +24,23 @@ public:
         for (unsigned long i = 0; i < o.size_; ++i) data_[i] = o.data_[i];
         size_ = o.size_;
     }
+    vector(vector<T> &&o) : data_(o.data_), size_(o.size_), cap_(o.cap_) {
+        o.data_ = nullptr;
+        o.size_ = 0;
+        o.cap_ = 0;
+    }
     ~vector() { delete[] data_; }
+    vector<T> &operator=(vector<T> &&o) {
+        if (this == &o) return *this;
+        delete[] data_;
+        data_ = o.data_;
+        size_ = o.size_;
+        cap_ = o.cap_;
+        o.data_ = nullptr;
+        o.size_ = 0;
+        o.cap_ = 0;
+        return *this;
+    }
     vector<T> &operator=(const vector<T> &o) {
         if (this == &o) return *this;
         size_ = 0;
@@ -30,6 +50,17 @@ public:
         return *this;
     }
 
+    void swap(vector<T> &o) {
+        T *d = data_;
+        unsigned long s = size_;
+        unsigned long c = cap_;
+        data_ = o.data_;
+        size_ = o.size_;
+        cap_ = o.cap_;
+        o.data_ = d;
+        o.size_ = s;
+        o.cap_ = c;
+    }
     unsigned long size() const { return size_; }
     unsigned long capacity() const { return cap_; }
     bool empty() const { return size_ == 0; }
@@ -58,6 +89,25 @@ public:
             data_[size_] = v;
         }
         ++size_;
+    }
+    void push_back(T &&v) {
+        if (size_ == cap_) {
+            T keep = std::move(v);
+            reserve(cap_ == 0 ? 4 : cap_ * 2);
+            data_[size_] = std::move(keep);
+        } else {
+            data_[size_] = std::move(v);
+        }
+        ++size_;
+    }
+    // emplace_back with one or two constructor arguments (no variadic templates yet).
+    template <typename A>
+    void emplace_back(A a) {
+        push_back(T(a));
+    }
+    template <typename A, typename B>
+    void emplace_back(A a, B b) {
+        push_back(T(a, b));
     }
     void pop_back() { --size_; }
     void clear() { size_ = 0; }

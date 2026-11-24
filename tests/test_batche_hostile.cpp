@@ -9,6 +9,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batche_fixtures.hpp"
+#include "gs_fixtures.hpp"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -250,6 +251,8 @@ int main() {
     { fx::MdcSpec sp; sp.compFirst = true; sp.secondSurface = true; Sweep("mdc comp first, 2 surfaces", ReadMdc, fx::BuildMdc(sp), it, false); }
     Sweep("hmp", ReadHmp, fx::BuildHmp(), it, false);
     { fx::HmpSpec sp; sp.skin = true; sp.frames = 2; Sweep("hmp skin", ReadHmp, fx::BuildHmp(sp), it, false); }
+    Sweep("hmp5", ReadHmp, gs::Hmp45('5'), it, false);
+    Sweep("hmp4", ReadHmp, gs::Hmp45('4'), it, false);
     Sweep("csm", ReadCsm, fx::BuildCsm(), it, true);
     Sweep("csm crlf", ReadCsm, fx::BuildCsm("\r\n"), it / 2, true);
     MdcWorst();

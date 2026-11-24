@@ -8,6 +8,8 @@
 
 namespace okay {
 
+class ActionSet;
+
 class TouchClaims {
 public:
     static void Clear();
@@ -41,6 +43,12 @@ public:
     static float TwistDegrees();
     /// How many degrees the twist changed this frame.
     static float TwistDeltaDegrees();
+
+    /// When `gesture` happens ("tap", "swipe up", "pinch", ...), Apply adds 1 to that action.
+    static void Bind(const std::string& gesture, const std::string& action);
+    static void ClearBinds();
+    /// Push this frame's gestures into `set` (call after Tick, before the set's Update).
+    static void Apply(ActionSet& set);
 };
 
 } // namespace okay

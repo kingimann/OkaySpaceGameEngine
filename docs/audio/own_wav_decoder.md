@@ -1,12 +1,12 @@
 # Our own WAV decoder (`okay::wav`)
 
-> **What this is:** Status: **side by side, off by default.** Part of `docs/status/own_code_roadmap.md` (the SDL2 row: `SDL_LoadWAV` in the launcher is the last WAV use of a library; the engine already had its own, narrower, WAV reader).
+> **What this is:** Status: **the only WAV reader (2026-11-23).** `SDL_LoadWAV` / `SDL_FreeWAV`, the engine's older, narrower `AudioClip::LoadWAV` path and the `OKAY_OWN_WAV` switch were deleted. Part of `docs/status/own_code_roadmap.md`.
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
 > **Last checked:** 2026-11-20 (moved into `audio/`, paths and links checked; the text itself was not re-checked against the code).
 
-Status: **side by side, off by default.** Part of `docs/status/own_code_roadmap.md` (the SDL2 row: `SDL_LoadWAV` in the launcher is the last WAV use of a library; the engine already had its own, narrower, WAV reader).
+Status: **the only WAV reader (2026-11-23).** `SDL_LoadWAV` / `SDL_FreeWAV`, the engine's older, narrower `AudioClip::LoadWAV` path and the `OKAY_OWN_WAV` switch were deleted. Part of `docs/status/own_code_roadmap.md`.
 
 ## Why this one
 
@@ -17,14 +17,12 @@ It is small, it has a public specification, it is fully testable on Linux, and i
 | File | What |
 |---|---|
 | `engine/include/okay/Audio/WavDecoder.hpp`, `engine/src/Audio/WavDecoder.cpp` | `okay::wav::DecodeWav` (bytes in, interleaved float out, plus warnings), `ToS16`, `Limits`, `OwnWavEnabled` |
-| `engine/src/Audio/AudioClip.cpp` | The seam: `AudioClip::LoadWAV` calls the own decoder when `OwnWavEnabled()` is true; otherwise the old code runs unchanged |
+| `engine/src/Audio/AudioClip.cpp` | `AudioClip::LoadWAV` always calls the own decoder (the older path and `OwnWavEnabled()` were deleted) |
 | `tests/test_own_wav.cpp` | Test `own_wav` |
 
-## Turning it on
+## Switch
 
-- CMake: `-DOKAY_OWN_WAV=ON` makes it the default for that build (default `OFF`).
-- Run time: `OKAY_OWN_WAV=1` (or `0`) overrides the build default.
-- Not part of `OKAY_OWN_STACK` yet (not added on purpose: see "Not done").
+None. It was behind `OKAY_OWN_WAV` (CMake option, run-time variable, Settings > Experimental item) until 2026-11-23; that switch and the code it chose between were deleted.
 
 ## What it reads
 
@@ -36,7 +34,7 @@ Input over 1 GiB, more than 32 channels, a rate over 768,000 Hz or 0, more than 
 
 ## The playback seam (launcher voice clips)
 
-The launcher's only WAV load (`VoiceClipFor`, voice clips) goes through `okay::wav::LoadWavForSdl` in `shared/WavPlayback.hpp`. With the option off (default) it calls `SDL_LoadWAV` exactly as before and copies the samples out. With `-DOKAY_OWN_WAV=ON` or `OKAY_OWN_WAV=1` it calls `okay::wav::LoadForPlayback` (`engine/include/okay/Audio/WavPlayback.hpp`, no SDL in the header): `DecodeWav`, then our own conversion to the device format the call site plays: 32-bit float stays native float, every other encoding (PCM 8/24/32, A-law, mu-law, ADPCM) becomes native 16-bit via `ToS16`; channels and rate are kept. No `SDL_ConvertAudio`. PCM16 mono and stereo come out byte for byte the same as `SDL_LoadWAV`; 8-bit and 32-bit PCM arrive as 16-bit instead of U8/S32 (the call site converted them to 16-bit anyway). Failures (truncated, zero length, bad header, over budget, missing file) return false with a message and no samples. Written from the `okay::wav` output and the call site's needs only. `tests/check_wav_seam_wiring.cmake` (`ctest -R wav_seam_wiring`) fails if `SDL_LoadWAV` is called anywhere in launcher/, shared/, editor/, player/, engine/ or tools/ except that header. Tests: `ctest -R wav_playback` (own path, hostile and zero-length input, and with SDL2 present the option-off versus option-on equivalence). The test WAVs are built in memory (no WAV fixtures are checked in).
+The launcher's only WAV load (`VoiceClipFor`, voice clips) goes through `okay::wav::LoadWavForSdl` in `shared/WavPlayback.hpp`. It calls `okay::wav::LoadForPlayback` (`engine/include/okay/Audio/WavPlayback.hpp`, no SDL in the header): `DecodeWav`, then our own conversion to the device format the call site plays: 32-bit float stays native float, every other encoding (PCM 8/24/32, A-law, mu-law, ADPCM) becomes native 16-bit via `ToS16`; channels and rate are kept. No `SDL_ConvertAudio`. PCM16 mono and stereo come out byte for byte the same as `SDL_LoadWAV` did (checked side by side while both existed; now checked against the file's data bytes); 8-bit and 32-bit PCM arrive as 16-bit instead of U8/S32 (the call site converted them to 16-bit anyway). Failures (truncated, zero length, bad header, over budget, missing file) return false with a message and no samples. Written from the `okay::wav` output and the call site's needs only. `tests/check_wav_seam_wiring.cmake` (`ctest -R wav_seam_wiring`) fails if `SDL_LoadWAV`, `SDL_FreeWAV`, `OwnWavEnabled` or `OKAY_OWN_WAV` appears in code in launcher/, shared/, editor/, player/, engine/, tools/, okayui/, platform/ or the top CMakeLists.txt. Tests: `ctest -R wav_playback` (own path, hostile and zero-length input, and with SDL2 present the launcher seam against the file's bytes). The test WAVs are built in memory (no WAV fixtures are checked in).
 
 ## Specifications used (rule 19a)
 
@@ -44,19 +42,18 @@ Written from public format descriptions only: the Microsoft RIFF / WAVE format r
 
 ## Tests (`ctest -R own_wav`)
 
-Hand-computed expected values: every PCM width, left-justified 12-in-16, stereo order, float 32 and 64, extensible, chunk order, junk chunks, streaming-size data chunks; G.711 values (+8, -8, +-32256, +-32124, +264, +132); an IMA block worked by hand nibble by nibble (mono and stereo); an MS ADPCM mono and stereo block worked by hand with the standard coefficients, plus clamping; refusals (unknown tag, bad depth, bad channels, rate, bad GUID, bad block align, bad predictor index); budgets; every truncation of seven valid files and 21,000 random byte mutations (21,685 decodes in all) (no crash, no oversize output; recorded run: the decoder and test built standalone with ASan and UBSan, 22,642 checks, 0 failures; the full engine test was only compiled, not linked or run); the switch in `AudioClip::LoadWAV` (own and old paths agree on a 6-channel PCM file, stereo and mono downmix, ADPCM loads, errors come through); and a **differential run of IMA ADPCM against Python's `audioop`** at test time only (120 random mono, stereo and 3-channel files, exact equality; SKIPs when python3 or `audioop` is missing, `OKAY_REQUIRE_DIFFERENTIAL=1` makes the skip a failure; `audioop` is removed in Python 3.13, so on a newer Python this test skips).
+Hand-computed expected values: every PCM width, left-justified 12-in-16, stereo order, float 32 and 64, extensible, chunk order, junk chunks, streaming-size data chunks; G.711 values (+8, -8, +-32256, +-32124, +264, +132); an IMA block worked by hand nibble by nibble (mono and stereo); an MS ADPCM mono and stereo block worked by hand with the standard coefficients, plus clamping; refusals (unknown tag, bad depth, bad channels, rate, bad GUID, bad block align, bad predictor index); budgets; every truncation of seven valid files and 21,000 random byte mutations (21,685 decodes in all) (no crash, no oversize output; recorded run: the decoder and test built standalone with ASan and UBSan, 22,642 checks, 0 failures; the full engine test was only compiled, not linked or run); `AudioClip::LoadWAV` (a 6-channel PCM file gives the fixed mono averages the old and own paths both gave when they were compared, stereo and mono downmix, ADPCM loads, errors come through, a leftover `OKAY_OWN_WAV=0` changes nothing); and a **differential run of IMA ADPCM against Python's `audioop`** at test time only (120 random mono, stereo and 3-channel files, exact equality; SKIPs when python3 or `audioop` is missing, `OKAY_REQUIRE_DIFFERENTIAL=1` makes the skip a failure; `audioop` is removed in Python 3.13, so on a newer Python this test skips).
 
 ## Replacement criteria (from the roadmap) and honest state
 
 1. Real-file corpus: **partly done.** Files from an encoder we did not write are now in `tests/data/audio/wav_ffmpeg/` (test `wav_ffmpeg_diff`): our own synthetic signal encoded by ffmpeg 6.1.1 into MS ADPCM (mono and stereo, default, 256 and 2048 byte blocks), IMA ADPCM (mono, stereo), A-law, mu-law, unsigned 8-bit, 24-bit and float32, each compared with ffmpeg's own decode of the same file. MS ADPCM, A-law, mu-law, 8-bit, 24-bit and float match ffmpeg **bit for bit** (16-bit output). IMA ADPCM does **not**: most samples differ by a few steps (at most 29 of 32,768 in these files); our IMA matches Python's `audioop` exactly (above), so the two reference decoders disagree with each other in their arithmetic, and the test holds IMA to a bound of 32. Not yet: telephony-tool files, extensible multichannel files, files from a second encoder. ffmpeg is used as a program only (`scripts/gen_wav_ffmpeg_fixtures.py` records the commands); none of its code was read.
-2. Windows and Linux platform tests: Linux only so far. The tests (`own_wav`, `wav_ffmpeg_diff`, `wav_playback`, `wav_seam_wiring`) run on GitHub in job "Build & test (Ubuntu)" with the option off (they call the decoder directly). No CI job builds with `OKAY_OWN_WAV` on, and nothing ran on Windows (the Windows CI jobs do not include these tests).
+2. Windows and Linux platform tests: Linux only so far. The tests (`own_wav`, `wav_ffmpeg_diff`, `wav_playback`, `wav_seam_wiring`) run on GitHub in job "Build & test (Ubuntu)". Nothing ran on Windows (the Windows CI jobs do not include these tests).
 3. Fuzz under sanitizers: a deterministic mutation run is in the test; a long fuzz run is not done.
 4. No known bugs: none known. MS ADPCM was checked by hand, and is now also equal, sample for sample, to ffmpeg's decoder on files ffmpeg's encoder made (`wav_ffmpeg_diff`; three deliberate changes to the decoder, one adaptation-table entry, the predictor shift, the order of the two header samples, each make it fail).
 5. Owner approval: not asked.
 
 ## Not done
 
-- Deleting the `SDL_LoadWAV` call itself (in `shared/WavPlayback.hpp`) waits for the owner's approval of the default flip plus one release.
 - `AudioStream` (streamed WAV playback) still uses the old header parser; only whole-file loads (`AudioClip::LoadWAV`) use the own decoder. ADPCM streams are not supported there.
 - `RF64` / `BW64` (files over 4 GiB), `LIST` metadata, loop points (`smpl`) and cue points are not read. GSM, MP3-in-WAV and other tags are refused.
 - Not added to `OKAY_OWN_STACK`, so the startup line does not show it and no CI job runs with it on (Step 0.3 of `docs/status/own_flip_proposal.md` adds it). The default loader it would replace plays A-law and mu-law files as loud noise and 64-bit float as silence (Grok finding 19, issue #888).

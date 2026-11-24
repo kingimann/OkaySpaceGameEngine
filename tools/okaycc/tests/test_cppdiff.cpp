@@ -29,7 +29,7 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
     const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
-                           "lib/alloc.c", "lib/eh.c"};
+                           "lib/alloc.c", "lib/eh.c", "lib/m.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -158,8 +158,9 @@ static void linkTwo() {
 // both objects (a weak symbol).
 // Round 17 adds engine/src/UI/FocusGraph.cpp (std::vector, <algorithm>, lambdas, enum class,
 // default member initializers, default arguments, range-for, auto), with our own headers.
-static void engineDiff(const char* driver, const char* engineFile) {
-    const char* files[] = {driver, engineFile};
+static void engineDiff(const char* driver, const char* engineFile, const char* engineFile2 = nullptr) {
+    std::vector<const char*> files = {driver, engineFile};
+    if (engineFile2) files.push_back(engineFile2);
     std::vector<std::string> inc = {"../../engine/include", "include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -193,8 +194,9 @@ static void engineDiff(const char* driver, const char* engineFile) {
         out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
     }
     chmod((folder + "/ours").c_str(), 0755);
-    std::string gccCmd = "g++ -std=c++17 -O0 -w -I ../../engine/include -o " + folder + "/gccb " + files[0] + " " +
-                         files[1] + " >" + folder + "/gcc.txt 2>&1";
+    std::string gccCmd = "g++ -std=c++17 -O0 -w -I ../../engine/include -o " + folder + "/gccb";
+    for (const char* f : files) gccCmd += std::string(" ") + f;
+    gccCmd += " -lm >" + folder + "/gcc.txt 2>&1";
     if (std::system(gccCmd.c_str()) != 0) {
         std::fprintf(stderr, "FAIL engine gcc\n%s\n", readFile(folder + "/gcc.txt").c_str());
         std::system(("rm -rf " + folder).c_str());
@@ -261,6 +263,10 @@ int main() {
         expectNewArrayError();
         engineDiff("tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp");
         engineDiff("tests/progs_cpp_engine/focus_main.cpp", "../../engine/src/UI/FocusGraph.cpp");
+        // Round 18: Mip.cpp and the Texture.cpp it calls (vector<Surface>, member templates, our libm).
+        engineDiff("tests/progs_cpp_engine/mip_main.cpp", "../../engine/src/Texture/Mip.cpp",
+                   "../../engine/src/Texture/Texture.cpp");
+        engineDiff("tests/progs_cpp_engine/buildinfo_main.cpp", "../../engine/src/Core/BuildInfo.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

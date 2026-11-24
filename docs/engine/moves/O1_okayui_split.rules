@@ -248,3 +248,9 @@ add: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ c
 # ---- part 3: OkayUI_Trees.cpp (collapsing headers and tree nodes)
 
 # ---- part 3: OkayUI_DragDrop.cpp (drag and drop: sources, targets, payloads, the outside-drag hook)
+
+# ---- part 3: OkayUI_Toolkit.cpp (launcher-style building blocks: text scale, Heading, Caption, Badge, Avatar, cards, list items, key/value rows, Spinner)
+drop: ^\s*unsigned\ h\ =\ 2166136261u;$
+add: ^\s*unsigned\ h\ =\ 2166136261u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\),\ the\ avatar\ colour\ hash$
+drop: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;$
+add: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\)$

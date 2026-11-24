@@ -218,6 +218,26 @@ private:
             e.kids.push_back(std::move(val));
             return true;
         }
+        if (e.kind == Expr::Kind::Call && e.kids.size() == 1 && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name && tu_) {
+            // f() of a function whose body is return <constant>; (a constexpr function such as
+            // numeric_limits<float>::infinity(), [dcl.constexpr]): the constant, as (R)(value).
+            for (const auto& d : tu_->decls) {
+                if (!d || !d->function || !d->body || !d->type || !d->type->inner || !d->type->params.empty()) continue;
+                if (d->name != e.kids[0]->text && d->asmName != e.kids[0]->text) continue;
+                const Stmt* b = d->body.get();
+                if (b->kind == Stmt::Kind::Block && b->stmts.size() == 1 && b->stmts[0]) b = b->stmts[0].get();
+                if (b->kind != Stmt::Kind::Return || !b->expr || !isConst(*b->expr) || !isScalarConst(*d->type->inner))
+                    return false;
+                auto val = cloneExpr(*b->expr);
+                e.kind = Expr::Kind::Cast;
+                e.text.clear();
+                e.ty = cloneType(*d->type->inner);
+                e.kids.clear();
+                e.kids.push_back(std::move(val));
+                return true;
+            }
+            return false;
+        }
         bool any = false;
         for (auto& k : e.kids)
             if (k && foldConstNames(*k)) any = true;
@@ -284,7 +304,7 @@ private:
         case Expr::Kind::Name: {
             if (e.text.compare(0, 8, "\x01" "lambda:") == 0) return checkLambda(e);
             if (captureName(e)) return checkExprBody(e);
-            if (method_) {
+            if (method_ && scopeOf(e.text) <= 0) {  // a parameter or local hides a member ([basic.scope.block])
                 const Type* st = canonOf(method_);
                 if (st) {
                     for (const Param& f : st->params) {
@@ -401,7 +421,9 @@ private:
             return lookup(e.text, e.line, e.col);
         }
         case Expr::Kind::Unary: {
-            if (!need(0)) return bad(e.line, e.col);
+            // sizeof(type) has no operand: only its type (it was taken for an error that was not
+            // reported, which stopped the check of the arguments after it).
+            if (!need(0) && !(e.text == "sizeof" && e.ty)) return bad(e.line, e.col);
             if (e.text == "!" || e.text == "-" || e.text == "+" || e.text == "~") convertIfNeeded(*e.kids[0]);
             if (e.text == "sizeof") {
                 if (e.ty) {
@@ -1282,14 +1304,40 @@ private:
         for (auto& k : e.kids)
             if (k) freshTemps(*k);
     }
-    static void addDefaults(Expr& call, const Type& fn, std::size_t argsBefore) {
+    void addDefaults(Expr& call, const Type& fn, std::size_t argsBefore) {
         std::size_t nargs = call.kids.size() - 1 - argsBefore;
+        // A default argument's names are looked up where the function was declared
+        // ([dcl.fct.default]/5): in the namespaces of the callee's name, innermost first.
+        std::string ns;
+        if (call.kids[0] && call.kids[0]->kind == Expr::Kind::Name) {
+            const std::string& cn = call.kids[0]->text;
+            std::size_t cut = cn.rfind("::");
+            if (cut != std::string::npos && cn.compare(0, 2, "_Z") != 0) ns = cn.substr(0, cut);
+        }
         for (std::size_t i = nargs; i < fn.params.size(); ++i) {
             if (!fn.params[i].defArg) break;
             auto d = cloneExpr(*fn.params[i].defArg);
             freshTemps(*d);
+            if (!ns.empty()) qualifyNames(*d, ns);
             call.kids.push_back(std::move(d));
         }
+    }
+    void qualifyNames(Expr& e, const std::string& ns) {
+        if (e.kind == Expr::Kind::Name && !e.text.empty() && e.text[0] != '\x01' && e.text.find("::") == std::string::npos &&
+            scopeOf(e.text) < 0) {
+            for (std::string sc = ns; !sc.empty();) {
+                if (scopes_.front().count(sc + "::" + e.text)) {
+                    e.text = sc + "::" + e.text;
+                    return;
+                }
+                std::size_t cut = sc.rfind("::");
+                if (cut == std::string::npos) break;
+                sc = sc.substr(0, cut);
+            }
+            return;
+        }
+        for (auto& k : e.kids)
+            if (k) qualifyNames(*k, ns);
     }
 
     const Param* pickOverload(const std::vector<const Param*>& cands, Expr& call, std::size_t firstArg) {
@@ -2593,8 +2641,52 @@ private:
         return true;
     }
 
+    // An integer constant expression made of literals, casts and operators.
+    static bool evalInt(const Expr& e, std::int64_t& out) {
+        if (e.kind == Expr::Kind::Int || e.kind == Expr::Kind::Char) {
+            out = static_cast<std::int64_t>(e.ival);
+            return true;
+        }
+        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0]) return evalInt(*e.kids[0], out);
+        if (e.kind == Expr::Kind::Unary && e.text == "-" && !e.kids.empty() && e.kids[0]) {
+            if (!evalInt(*e.kids[0], out)) return false;
+            out = -out;
+            return true;
+        }
+        if (e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.kids[0] && e.kids[1]) {
+            std::int64_t a = 0, b = 0;
+            if (!evalInt(*e.kids[0], a) || !evalInt(*e.kids[1], b)) return false;
+            if (e.text == "+") out = a + b;
+            else if (e.text == "-") out = a - b;
+            else if (e.text == "*") out = a * b;
+            else if (e.text == "/" && b != 0) out = a / b;
+            else if (e.text == "%" && b != 0) out = a % b;
+            else if (e.text == "<<" && b >= 0 && b < 63) out = a << b;
+            else if (e.text == ">>" && b >= 0 && b < 63) out = a >> b;
+            else return false;
+            return true;
+        }
+        return false;
+    }
+    // T a[N] with N a named constant (a static constexpr member, a const global): the length.
+    void foldBound(Type& t) {
+        if (t.kind != Type::Kind::Array || !t.bound) return;
+        if (t.inner) foldBound(*t.inner);
+        if (t.bound->kind == Expr::Kind::Int) return;
+        ++quiet_;
+        checkExpr(*t.bound);
+        --quiet_;
+        foldConstNames(*t.bound);
+        std::int64_t n = 0;
+        if (!evalInt(*t.bound, n) || n <= 0) return;
+        auto lit = mkE(Expr::Kind::Int, *t.bound);
+        lit->ival = static_cast<std::uint64_t>(n);
+        t.bound = std::move(lit);
+    }
+
     void checkVar(Decl& d) {
         if (!d.type) return;
+        foldBound(*d.type);
         // A namespace-scope or static member variable N::C::x: its initializer looks up names in
         // N::C, then N ([basic.lookup.unqual]/13).
         std::string savedNs = inNs_;

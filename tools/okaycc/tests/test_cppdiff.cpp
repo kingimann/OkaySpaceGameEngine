@@ -271,6 +271,7 @@ int main() {
         // (lambdas in member functions, F&& member templates, initializer-list constructors).
         engineDiff("tests/progs_cpp_engine/mipbudget_main.cpp", "../../engine/src/Optimize/MipBudget.cpp");
         engineDiff("tests/progs_cpp_engine/dyntree_main.cpp", "../../engine/src/Physics/Core/DynamicTree.cpp");
+        engineDiff("tests/progs_cpp_engine/spatialfx_main.cpp", "../../engine/src/Audio/SpatialFx.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

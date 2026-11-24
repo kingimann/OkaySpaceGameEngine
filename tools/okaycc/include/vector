@@ -137,6 +137,13 @@ public:
         for (unsigned long i = 0; i < size_; ++i) (data_ + i)->~T();
         size_ = 0;
     }
+    void assign(unsigned long n, const T &v) {
+        T copy = v;  // v may be one of the elements
+        clear();
+        reserve(n);
+        for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(copy);
+        size_ = n;
+    }
     void resize(unsigned long n) {
         while (size_ > n) pop_back();
         reserve(n);

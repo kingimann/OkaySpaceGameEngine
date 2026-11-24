@@ -61,6 +61,29 @@ inline double fabs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
 inline float fabs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
 inline double abs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
 inline float abs(float x) { return x < 0 ? -x : (x == 0 ? 0.0f : x); }
+// trunc, round, lround, llround (C 7.12.9.8, 7.12.9.6, 7.12.9.7): toward zero, and to nearest
+// with halfway cases away from zero. Above 2^52 every double is an integer. x - trunc(x) is exact.
+inline double trunc(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    return t == 0 ? (x < 0 ? -0.0 : 0.0) : t;
+}
+inline float trunc(float x) { return (float)trunc((double)x); }
+inline double round(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = trunc(x);
+    double d = x - t;
+    if (d >= 0.5) return t + 1.0;
+    if (d <= -0.5) return t - 1.0;
+    return t;
+}
+inline float round(float x) { return (float)round((double)x); }
+inline long lround(double x) { return (long)round(x); }
+inline long lround(float x) { return (long)round((double)x); }
+inline long long llround(double x) { return (long long)round(x); }
+inline long long llround(float x) { return (long long)round((double)x); }
 inline double floor(double x) {
     if (!(x - x == 0) || x == 0) return x;  // infinity, NaN, and +-0 (the sign of zero is kept)
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;

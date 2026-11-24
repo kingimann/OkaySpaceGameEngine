@@ -1218,6 +1218,13 @@ private:
                     ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
                     ++ehHeld;
                 }
+            } else if (!mi && !dm && f.second && f.second->kind == Type::Kind::Array && arrayElemClass(f.second) &&
+                       classOf(arrayElemClass(f.second)->tag) && classOf(arrayElemClass(f.second)->tag)->needCtor) {
+                // Ring lines[8]: each element by its default constructor ([class.base.init]/9).
+                std::string et = arrayElemClass(f.second)->tag;
+                body->stmts.push_back(fieldLoop(f.first, f.second->bound->ival, false, p, [&](std::unique_ptr<Expr> at) {
+                    return ctorCall(et, std::move(at), {}, p);
+                }));
             } else if (mi && mi->args.size() == 1) {
                 body->stmts.push_back(
                     sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(mi->args[0]), p), p));
@@ -1294,6 +1301,13 @@ private:
         auto fields = ownFields(*T);
         for (int i = static_cast<int>(fields.size()) - 1; i >= 0; --i) {
             const Type* ft = fields[static_cast<std::size_t>(i)].second;
+            if (ft && ft->kind == Type::Kind::Array && arrayElemClass(ft) && classOf(arrayElemClass(ft)->tag) &&
+                classOf(arrayElemClass(ft)->tag)->needDtor) {
+                std::string et = arrayElemClass(ft)->tag;
+                body->stmts.push_back(fieldLoop(fields[static_cast<std::size_t>(i)].first, ft->bound->ival, true, p,
+                                                [&](std::unique_ptr<Expr> at) { return dtorCall(et, std::move(at), p); }));
+                continue;
+            }
             if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty()) {
                 Type* c = classOf(ft->tag);
                 if (c && c->needDtor) {
@@ -1477,6 +1491,48 @@ private:
         extras_.push_back(std::move(decl));
     }
 
+    // The class of a field: the field's own type, or the element type of a one-level array of a
+    // class with a known length (Ring lines[8]).
+    const Type* arrayElemClass(const Type* t) {
+        if (!t) return nullptr;
+        if (t->kind == Type::Kind::Struct && !t->tag.empty()) return t;
+        if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Struct && !t->inner->tag.empty() &&
+            t->bound && t->bound->kind == Expr::Kind::Int)
+            return t->inner.get();
+        return nullptr;
+    }
+    // for (i = 0; i < n; ++i) call(&this->field[i])  (from n - 1 down when reverse)
+    template <class F>
+    std::unique_ptr<Stmt> fieldLoop(const std::string& field, std::uint64_t n, bool reverse, const Pos& p, F call) {
+        auto blk = sBlock(p);
+        std::string iv = "__i" + std::to_string(newN_++);
+        auto decl = std::make_unique<Decl>();
+        decl->name = iv;
+        decl->line = p.line;
+        decl->col = p.col;
+        decl->file = p.file;
+        decl->type = ty(Type::Kind::Int);
+        blk->stmts.push_back(declStmt(std::move(decl)));
+        auto loop = std::make_unique<Stmt>();
+        loop->kind = Stmt::Kind::For;
+        loop->line = p.line;
+        loop->col = p.col;
+        loop->file = p.file;
+        loop->init = sExpr(eAssign(eName(iv, p), eInt(reverse ? n - 1 : 0, p), p), p);
+        loop->expr = reverse ? eBin(">=", eName(iv, p), eInt(0, p), p) : eBin("<", eName(iv, p), eInt(n, p), p);
+        loop->expr2 = eAssign(eName(iv, p), eBin(reverse ? "-" : "+", eName(iv, p), eInt(1, p), p), p);
+        auto idx = std::make_unique<Expr>();
+        idx->kind = Expr::Kind::Index;
+        idx->line = p.line;
+        idx->col = p.col;
+        idx->file = p.file;
+        idx->kids.push_back(eArrow(eName("this", p), field, p));
+        idx->kids.push_back(eName(iv, p));
+        loop->body = sExpr(call(eAddr(std::move(idx), p)), p);
+        blk->stmts.push_back(std::move(loop));
+        return blk;
+    }
+
     void finishClass(ClassCtx& c) {
         Type& T = *c.t;
         Type* B = T.base.empty() ? nullptr : classOf(T.base);
@@ -1484,8 +1540,9 @@ private:
         if (dmi_.count(c.tag) && !dmi_[c.tag].empty()) needCtor = true;
         bool needDtor = c.dtorDeclared || (B && B->needDtor);
         for (auto& f : ownFields(T)) {
-            if (f.second && f.second->kind == Type::Kind::Struct && !f.second->tag.empty()) {
-                Type* m = classOf(f.second->tag);
+            const Type* el = arrayElemClass(f.second);
+            if (el) {
+                Type* m = classOf(el->tag);
                 if (m && m->needCtor) needCtor = true;
                 if (m && m->needDtor) needDtor = true;
                 if (m && (m->nonpod || m->needCtor || m->needDtor)) T.nonpod = true;
@@ -1802,6 +1859,7 @@ private:
                 tag += cur().text;
                 advance();
             }
+            if (specSkipTo_ && i_ == specSkipFrom_) i_ = specSkipTo_;  // L<float> of a specialization
             if (tag.find("::") == std::string::npos) {
                 // A class defined in a class is a member of it ([class.nest]): Outer::Inner, so its
                 // member functions find the outer class's names.
@@ -2264,7 +2322,10 @@ private:
             if (eatP("[")) {
                 Mod m;
                 m.kind = Mod::Kind::Arr;
-                if (!isP("]")) m.bound = parseAssign();
+                if (!isP("]")) {
+                    m.bound = parseAssign();
+                    if (m.bound) boundConsts(*m.bound);  // T a[kLines] with kLines a class constant
+                }
                 else m.unsized = true;
                 expectP("]", "]");
                 d.mods.push_back(std::move(m));
@@ -2414,6 +2475,13 @@ private:
     std::string classPrefix(const std::string& prefix) {
         if (prefix.empty()) return {};
         if (classOf(qualify(prefix))) return qualify(prefix);
+        // A::B (a nested class) named inside namespaces: tried in each enclosing namespace,
+        // innermost first ([basic.lookup.qual]).
+        for (std::size_t n = ns_.size(); n > 0; --n) {
+            std::string q;
+            for (std::size_t k = 0; k < n; ++k) q += ns_[k] + "::";
+            if (classOf(q + prefix)) return q + prefix;
+        }
         if (classOf(prefix)) return prefix;
         if (const Type* td2 = findTypedef(prefix))
             if (!td2->tag.empty() && classOf(td2->tag)) return td2->tag;
@@ -2440,6 +2508,49 @@ private:
     // its own copy (see the plan).
     std::map<std::string, std::set<std::string>> staticFns_;
     std::vector<std::unique_ptr<Decl>> staticData_;
+    std::map<std::string, long> classConsts_;  // Class::N for static integer constants
+    std::string bodyClass_;                    // the class of the out-of-class member function being parsed
+    // N inside a class or one of its member functions: Class::N, then the enclosing classes.
+    bool classConst(const std::string& name, long& out) {
+        std::vector<std::string> tags;
+        for (auto it = classStack_.rbegin(); it != classStack_.rend(); ++it)
+            if (*it && !(*it)->tag.empty()) tags.push_back((*it)->tag);
+        for (std::string t = bodyClass_; !t.empty();) {
+            tags.push_back(t);
+            std::size_t cut = t.rfind("::");
+            if (cut == std::string::npos) break;
+            t = t.substr(0, cut);
+        }
+        for (const std::string& t : tags) {
+            auto it = classConsts_.find(t + "::" + name);
+            if (it != classConsts_.end()) {
+                out = it->second;
+                return true;
+            }
+        }
+        return false;
+    }
+    void boundConsts(Expr& e) {
+        long cv = 0;
+        if (e.kind == Expr::Kind::Name && e.text.find("::") == std::string::npos && classConst(e.text, cv)) {
+            e.kind = Expr::Kind::Int;
+            e.text.clear();
+            e.ival = static_cast<std::uint64_t>(cv);
+            return;
+        }
+        if (e.kind == Expr::Kind::Name) {
+            auto it = classConsts_.find(e.text);  // R::kLines written out
+            if (it == classConsts_.end()) it = classConsts_.find(qualify(e.text));
+            if (it != classConsts_.end()) {
+                e.kind = Expr::Kind::Int;
+                e.text.clear();
+                e.ival = static_cast<std::uint64_t>(it->second);
+            }
+            return;
+        }
+        for (auto& k : e.kids)
+            if (k) boundConsts(*k);
+    }
     void staticMember(const std::string& tag, Parsed& d, std::unique_ptr<Type> type) {
         if (!type || d.name.empty()) {
             syncSemi();
@@ -2475,6 +2586,17 @@ private:
         else if (isP("{")) decl->init = parseInitializer();
         if (decl->init) decl->isStatic = true;
         else decl->isExtern = true;
+        if (decl->init && decl->type && (decl->type->kind == Type::Kind::Int || decl->type->kind == Type::Kind::Long ||
+                                         decl->type->kind == Type::Kind::Short || decl->type->kind == Type::Kind::Char)) {
+            // static constexpr int N = 8;: an integer constant the class's own code (array
+            // lengths, case labels) can use as a constant expression ([expr.const]).
+            const Expr* v = decl->init.get();
+            if (v->kind == Expr::Kind::Brace && v->kids.size() == 1 && v->kids[0]) v = v->kids[0].get();
+            if (v->kind == Expr::Kind::Int) classConsts_[q] = static_cast<long>(v->ival);
+            else if (v->kind == Expr::Kind::Unary && v->text == "-" && !v->kids.empty() && v->kids[0] &&
+                     v->kids[0]->kind == Expr::Kind::Int)
+                classConsts_[q] = -static_cast<long>(v->kids[0]->ival);
+        }
         expectP(";", ";");
         // Before the function being parsed: a class template instance made inside a function body
         // has its static members declared ahead of that function.
@@ -2513,6 +2635,13 @@ private:
     };
     std::map<std::string, TDecl> ftmpl_;
     std::map<std::string, TDecl> ctmpl_;
+    struct Spec {
+        std::size_t start = 0;     // the 'struct' of template <> struct L<float> {
+        std::size_t skipFrom = 0;  // its '<'
+        std::size_t skipTo = 0;    // just after its '>'
+    };
+    std::map<std::string, Spec> specs_;  // explicit specializations by instance tag
+    std::size_t specSkipFrom_ = 0, specSkipTo_ = 0;
     std::vector<InstReq> work_;
     std::set<std::string> instDone_;
     std::set<std::string> instInProgress_;
@@ -2693,6 +2822,30 @@ private:
         expectP(">", ">");
         td.start = i_;
         td.end = skipDecl(i_);
+        if (td.params.empty() && (isKw("class") || isKw("struct")) && i_ + 2 < toks_.size() &&
+            toks_[i_ + 1].kind == Tok::Ident && isP(toks_[i_ + 2], "<") && ctmpl_.count(toks_[i_ + 1].text)) {
+            // template <> struct L<float> { ... }: an explicit specialization ([temp.expl.spec]). Its
+            // arguments are read as the primary template's; the instance with exactly these
+            // arguments is made from this body instead.
+            std::string name = toks_[i_ + 1].text;
+            TDecl primary = ctmpl_[name];
+            Spec sp;
+            sp.start = td.start;
+            i_ = td.start + 2;
+            sp.skipFrom = i_;
+            std::vector<TArg> args;
+            parseTemplateArgs(primary, args);
+            sp.skipTo = i_;
+            std::string tag = name + "<";
+            for (std::size_t k = 0; k < args.size(); ++k) {
+                if (k) tag += ",";
+                tag += argMangle(args[k]);
+            }
+            tag += ">";
+            specs_[tag] = sp;
+            i_ = td.end;
+            return;
+        }
         if (isKw("class") || isKw("struct")) {
             if (i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) ctmpl_[toks_[i_ + 1].text] = td;
             else err("expected a class template name");
@@ -2792,6 +2945,27 @@ private:
             auto self = ty(Type::Kind::Struct);
             self->tag = tag;
             return self;
+        }
+        if (!structs_.count(tag) && specs_.count(tag)) {
+            const Spec sp = specs_[tag];
+            instInProgress_.insert(tag);
+            std::size_t saved = i_;
+            auto savedPre = std::move(preStmts_);
+            preStmts_.clear();
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            instOverrideName_ = name;
+            instOverrideTag_ = tag;
+            specSkipFrom_ = sp.skipFrom;
+            specSkipTo_ = sp.skipTo;
+            i_ = sp.start;
+            parseBase();
+            instOverrideName_.clear();
+            specSkipFrom_ = specSkipTo_ = 0;
+            i_ = saved;
+            preStmts_ = std::move(savedPre);
+            halfGt_ = savedHalf;
+            instInProgress_.erase(tag);
         }
         if (!structs_.count(tag) && args.size() == td.params.size()) {
             instInProgress_.insert(tag);
@@ -3216,7 +3390,10 @@ private:
                 } else {
                     auto decl = newMethodDecl(clsTag, mangled, *type, type->params, Pos{d.line, d.col, d.file});
                     decl->isInline = inl;
+                    std::string savedBody = bodyClass_;
+                    bodyClass_ = clsTag;
                     decl->body = parseBody(type->inner.get());
+                    bodyClass_ = savedBody;
                     extras_.push_back(std::move(decl));
                 }
                 flushExtras(tu);
@@ -4882,6 +5059,7 @@ private:
                 advance();
                 return e;
             }
+
             if (nextIs("::")) {
                 // A qualified enumerator: E::e, N::E::e, N::e.
                 std::string chain = cur().text;

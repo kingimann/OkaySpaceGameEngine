@@ -1890,6 +1890,15 @@ private:
             if (s->boolean) rhs.op = asBool(rhs.op, rhs.fpw);
             if (s->fpw) {
                 if (rhs.fpw != s->fpw) rhs = cvtFp(rhs, rhs.fpw, s->fpw);
+                if (s->ref) {
+                    // float &r = ...; r = v: a store through the reference (the register holds the
+                    // address; moving v into it lost the store and the address).
+                    storeBits(Operand::vreg(s->reg), rhs.op, s->fpw);
+                    Val out;
+                    out.op = rhs.op;
+                    out.fpw = s->fpw;
+                    return out;
+                }
                 if (s->global) {
                     Inst in;
                     in.op = Inst::Op::GStore;

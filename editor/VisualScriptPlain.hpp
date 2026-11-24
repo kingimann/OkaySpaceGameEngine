@@ -102,6 +102,8 @@ inline const char* VsPlainTitleFor(const char* type) {
         {"Raycast", "Look In A Line 2D"}, {"Raycast3D", "Look In A Line 3D"}, {"RaycastAll3D", "Look Through Everything In A Line"},
         {"SphereCast3D", "Sweep A Ball"}, {"BoxCast2D", "Sweep A Box"}, {"CapsuleCast2D", "Sweep A Capsule"},
         {"NetRpc", "Call Players"}, {"NetObjRpc", "Call This Object On Players"}, {"OnNetRpc", "When Player Calls This Object"},
+        {"NetSendEvent", "Tell Every Player"}, {"OnNetworkEvent", "When Players Are Told"}, {"OnPlayerJoined", "When A Player Joins"},
+        {"OnPlayerLeft", "When A Player Leaves"},
         {"RejectRpc", "Refuse Call"}, {"FunctionStart", "Define Named Action"}, {"CallFunction", "Run Named Action"},
         {"Break", "Stop Repeating"}, {"Continue", "Next Repeat"}, {"StructNew", "Make New Bundle"},
         {"ToFixed", "Round To Decimals"}, {"GlFormatNumber", "Show Number Nicely"}, {"NetSend", "Send To Players"},

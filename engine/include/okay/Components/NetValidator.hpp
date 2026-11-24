@@ -4,6 +4,8 @@
 // RPC (needs an AntiCheatConfig in the scene, which turns anti-cheat on).
 //
 // Each NetValidator names one RPC ("*" = every RPC) and refuses a client's call
+// (a named network event, Send Network Event / net.send / SendEvent, counts as a
+// call by its event name, so rpc = "hit" covers the RPC "hit" and the event "hit")
 // when its payload is too long, it comes too often (calls/s, or sooner than its
 // cooldown after the last one: a fire rate), its budget is spent (a token
 // bucket: ammo, with an optional refill), or clients may not send it at all.

@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1588 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1630 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -773,6 +773,48 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `nav_stop` | `Fn.nav_stop` |
 | `nearest_tag` | `Fn.nearest_tag` |
 | `nearest_with_tag` | `Fn.nearest_with_tag` |
+| `net.bytes_in` | `Fn.net.bytes_in` |
+| `net.bytes_out` | `Fn.net.bytes_out` |
+| `net.connected` | `Fn.net.connected` |
+| `net.error` | `Fn.net.error` |
+| `net.get` | `Fn.net.get` |
+| `net.give` | `Fn.net.give` |
+| `net.host` | `Fn.net.host` |
+| `net.host_or_join` | `Fn.net.host_or_join` |
+| `net.id` | `Fn.net.id` |
+| `net.is_host` | `Fn.net.is_host` |
+| `net.is_mine` | `Fn.net.is_mine` |
+| `net.is_predicted` | `Fn.net.is_predicted` |
+| `net.join` | `Fn.net.join` |
+| `net.join_lan` | `Fn.net.join_lan` |
+| `net.leave` | `Fn.net.leave` |
+| `net.loss` | `Fn.net.loss` |
+| `net.migrating` | `Fn.net.migrating` |
+| `net.migration` | `Fn.net.migration` |
+| `net.migrations` | `Fn.net.migrations` |
+| `net.off` | `Fn.net.off` |
+| `net.on` | `Fn.net.on` |
+| `net.owner` | `Fn.net.owner` |
+| `net.ping` | `Fn.net.ping` |
+| `net.player_count` | `Fn.net.player_count` |
+| `net.player_name` | `Fn.net.player_name` |
+| `net.players` | `Fn.net.players` |
+| `net.request` | `Fn.net.request` |
+| `net.rollback_confirmed` | `Fn.net.rollback_confirmed` |
+| `net.rollback_frame` | `Fn.net.rollback_frame` |
+| `net.rollback_players` | `Fn.net.rollback_players` |
+| `net.rollback_resimulating` | `Fn.net.rollback_resimulating` |
+| `net.rollback_running` | `Fn.net.rollback_running` |
+| `net.rollback_start` | `Fn.net.rollback_start` |
+| `net.rollback_stop` | `Fn.net.rollback_stop` |
+| `net.send` | `Fn.net.send` |
+| `net.send_to` | `Fn.net.send_to` |
+| `net.set` | `Fn.net.set` |
+| `net.show_stats` | `Fn.net.show_stats` |
+| `net.simulate` | `Fn.net.simulate` |
+| `net.spawn` | `Fn.net.spawn` |
+| `net.stats_text` | `Fn.net.stats_text` |
+| `net.time` | `Fn.net.time` |
 | `net_all_ready` | `Fn.net_all_ready` |
 | `net_anticheat` | `Fn.net_anticheat` |
 | `net_anticheat_load` | `Fn.net_anticheat_load` |

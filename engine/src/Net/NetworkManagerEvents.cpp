@@ -15,6 +15,8 @@
 //                  clock in seconds. Clients add half the round trip.
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/NetworkSync.hpp"
+#include "okay/Net/NetSim.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -280,6 +282,14 @@ void NetworkManager::RaisePlayerEvent(bool joined, std::uint32_t id, const std::
 }
 
 void NetworkManager::PlayersTick(float dt) {
+    SimulatorTick();
+    if ((m_statTimer += dt) >= 1.0f) {
+        m_bytesInRate = (float)m_bytesInAcc / m_statTimer;
+        m_bytesOutRate = (float)m_bytesOutAcc / m_statTimer;
+        m_bytesInAcc = m_bytesOutAcc = 0;
+        m_statTimer = 0.0f;
+    }
+    for (auto& m : m_pingMarks) m.age += dt;
     const bool live = m_mode == Mode::Server || (m_mode == Mode::Client && m_joined);
     if (!live) {
         // A session that ended: the next one announces everybody again. (No leave
@@ -288,6 +298,8 @@ void NetworkManager::PlayersTick(float dt) {
         m_playersAnnounced = false;
         m_clientNetTime = -1.0;
         m_timeTimer = 0.0f;
+        m_netOwners.clear();
+        m_pingMarks.clear();
         return;
     }
     g_current = this;
@@ -312,7 +324,12 @@ void NetworkManager::PlayersTick(float dt) {
     for (const auto& [id, name] : m_knownPlayers) if (!now.count(id)) left.push_back(id);
     std::sort(joined.begin(), joined.end());
     std::sort(left.begin(), left.end());
-    for (std::uint32_t id : joined) { m_knownPlayers[id] = now[id]; RaisePlayerEvent(true, id, now[id]); }
+    for (std::uint32_t id : joined) {
+        m_knownPlayers[id] = now[id];
+        if (m_mode == Mode::Server)   // who holds what, for a player who just came in
+            for (const auto& [netId, owner] : m_netOwners) SendOrderedTo(id, "__own", std::to_string(owner) + "|" + netId);
+        RaisePlayerEvent(true, id, now[id]);
+    }
     for (std::uint32_t id : left) {
         // A client hears the roster unreliably: only a player missing from two
         // rosters in a row has left (as the stand-ins do, NetworkManagerClient).
@@ -320,9 +337,152 @@ void NetworkManager::PlayersTick(float dt) {
         if (m_mode == Mode::Client && m_remotes.count(id)) continue;
         const std::string name = m_knownPlayers[id];
         m_knownPlayers.erase(id);
+        if (m_mode == Mode::Server) {   // what the player held goes back to the host
+            std::vector<std::string> back;
+            for (const auto& [netId, owner] : m_netOwners) if (owner == id) back.push_back(netId);
+            for (const std::string& netId : back) GiveOwnership(netId, m_localId);
+        }
         RaisePlayerEvent(false, id, name);
     }
     m_playersAnnounced = true;
+}
+
+// ---- ownership handoff -----------------------------------------------------------------------------------------
+// The host decides. "__own" (ordered, host -> clients): "<owner>|<netId>". "__ownreq" (ordered,
+// client -> host): the netId. A late joiner gets the whole table when it is announced (PlayersTick).
+
+namespace {
+std::string SyncIdOf(const NetworkSync* ns) {
+    return ns && ns->gameObject ? (ns->netId.empty() ? ns->gameObject->name : ns->netId) : std::string();
+}
+} // namespace
+
+std::int64_t NetworkManager::OwnerOf(const std::string& netId) const {
+    auto it = m_netOwners.find(netId);
+    return it != m_netOwners.end() ? (std::int64_t)it->second : -1;
+}
+
+bool NetworkManager::IsMine(const std::string& netId) const {
+    if (m_mode == Mode::Offline) return true;
+    if (auto it = m_netOwners.find(netId); it != m_netOwners.end()) return it->second == m_localId;
+    auto s = m_syncObjs.find(netId);
+    return s != m_syncObjs.end() && s->second.owned;
+}
+
+int NetworkManager::OnOwnershipChanged(std::function<void(const std::string&, std::uint32_t)> f) {
+    Listener l; l.id = m_nextListener++; l.owner = std::move(f);
+    m_listeners.push_back(std::move(l));
+    return m_listeners.back().id;
+}
+
+void NetworkManager::ApplyOwner(const std::string& netId, std::uint32_t owner) {
+    const bool changed = OwnerOf(netId) != (std::int64_t)owner;
+    m_netOwners[netId] = owner;
+    if (m_mode == Mode::Server) anticheat.SetOwner(netId, owner);
+    const bool mine = owner == m_localId;
+    std::vector<GameObject*> objs;
+    if (Scene* sc = GetScene())
+        for (auto* ns : sc->FindObjectsOfType<NetworkSync>())
+            if (SyncIdOf(ns) == netId) {
+                ns->authority = NetworkSync::Authority::Manual;
+                ns->SetOwned(mine);
+                objs.push_back(ns->gameObject);
+            }
+    SetSyncOwned(netId, mine);
+    if (!changed) return;
+    const std::vector<Listener> snap = m_listeners;
+    for (const Listener& l : snap) if (l.owner) l.owner(netId, owner);
+    for (GameObject* go : objs) {
+        if (!go) continue;
+        for (auto* g : go->GetComponents<VisualScriptComponent>()) g->RaiseEvent("OnOwnershipChanged", nullptr, netId, vs::VsValue((float)owner));
+        for (auto* s : go->GetComponents<ScriptComponent>())
+            if (s->VM()) s->VM()->CallEventArgs("on_ownership_changed", {vs::VsValue((float)owner), vs::VsValue(netId)});
+    }
+}
+
+bool NetworkManager::GiveOwnership(const std::string& netId, std::uint32_t player) {
+    if (m_mode != Mode::Server) {
+        SetError("Only the host can give an object to a player (\"" + netId + "\"); a client asks with RequestOwnership.");
+        return false;
+    }
+    if (netId.empty() || netId.size() > kMaxVarKey || netId.find('|') != std::string::npos) {
+        SetError("Could not give \"" + netId.substr(0, 80) + "\": not a network id.");
+        return false;
+    }
+    bool known = player == 0;
+    for (auto& [ep, c] : m_clients) if (c.id == player) known = true;
+    if (!known) { SetError("Could not give \"" + netId + "\" to player " + std::to_string(player) + ": no such player."); return false; }
+    ApplyOwner(netId, player);
+    const std::string wire = std::to_string(player) + "|" + netId;
+    for (auto& [ep, c] : m_clients) SendOrderedTo(c.id, "__own", wire);
+    return true;
+}
+
+void NetworkManager::RequestOwnership(const std::string& netId) {
+    if (m_mode == Mode::Server) { GiveOwnership(netId, m_localId); return; }
+    if (m_mode == Mode::Client && m_joined && !netId.empty() && netId.size() <= kMaxVarKey)
+        SendOrderedTo(0, "__ownreq", netId);
+}
+
+void NetworkManager::OnOwnerRequest(std::uint32_t from, const std::string& netId) {
+    if (m_mode != Mode::Server || from == m_localId || netId.empty() || netId.size() > kMaxVarKey) return;
+    bool allowed;
+    if (allowOwnershipRequest) allowed = allowOwnershipRequest(from, netId);
+    else {
+        // The object's own rule: "Players can claim it", and no other client holds it now.
+        const std::int64_t cur = OwnerOf(netId);
+        allowed = anticheat.claimable && anticheat.claimable(netId) && (cur <= 0 || cur == (std::int64_t)from);
+    }
+    if (allowed) GiveOwnership(netId, from);
+    else OKAY_INFO("net: player ", from, " asked for '", netId, "', refused (not claimable, or someone holds it)");
+}
+
+void NetworkManager::OnOwnerWire(std::uint32_t from, const std::string& data) {
+    if (m_mode != Mode::Client || from != 0) return;   // the host's word only
+    std::uint32_t owner = 0; std::string netId;
+    if (!TakeId(data, 0, owner, netId) || netId.empty() || netId.size() > kMaxVarKey) return;
+    ApplyOwner(netId, owner);
+}
+
+// ---- stats -----------------------------------------------------------------------------------------------------
+
+void NetworkManager::NotePingSent(float stamp) {
+    if (m_pingMarks.size() >= 16) m_pingMarks.erase(m_pingMarks.begin());
+    m_pingMarks.push_back(PingMark{stamp, 0.0f, false});
+}
+void NetworkManager::NotePong(float stamp) {
+    for (auto& m : m_pingMarks) if (m.stamp == stamp) { m.answered = true; break; }
+}
+
+NetworkManager::NetStats NetworkManager::Stats() const {
+    NetStats st;
+    st.rttMs = m_mode == Mode::Client ? m_rtt : 0.0f;
+    int decided = 0, lost = 0;
+    for (const auto& m : m_pingMarks)
+        if (m.answered || m.age > 2.0f) { ++decided; if (!m.answered) ++lost; }   // still waiting: not counted yet
+    st.lossPercent = decided > 0 ? 100.0f * (float)lost / (float)decided : 0.0f;
+    st.bytesInPerSec = m_bytesInRate;
+    st.bytesOutPerSec = m_bytesOutRate;
+    st.players = (int)Players().size();
+    st.networkTime = NetworkTime();
+    return st;
+}
+
+// ---- bad-network testing -----------------------------------------------------------------------------------------
+
+void NetworkManager::SimulatorTick() {
+    const bool want = simulateLatencyMs > 0.0f || simulateJitterMs > 0.0f || simulateLossPercent > 0.0f;
+    net::SimSettings& sim = net::Simulator();
+    if (want) {
+        sim.enabled = true;
+        sim.latencyMs = std::max(0.0f, simulateLatencyMs);
+        sim.jitterMs = std::max(0.0f, simulateJitterMs);
+        sim.loss = std::min(1.0f, std::max(0.0f, simulateLossPercent / 100.0f));
+        m_simApplied = true;
+    } else if (m_simApplied) {
+        sim.enabled = false;   // this manager turned it on: it turns it off
+        m_simApplied = false;
+    }
 }
 
 // ---- errors in plain words -----------------------------------------------------------------------------------

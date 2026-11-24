@@ -193,6 +193,35 @@ void OkayScriptVM::Impl::RegisterNetworkBuiltins(BuiltinCtx& c) {
         b["net.time"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->NetworkTime() : 0.0f}; };
         b["net.ping"] = forward("net_ping");
         b["net.error"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->LastError() : std::string{}}; };
+        // Ownership and prediction: netId defaults to this object's Network Sync id.
+        auto myNetId = [this](std::vector<Value>& a, std::size_t i) {
+            if (a.size() > i && !a[i].AsString().empty()) return a[i].AsString();
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            auto* ns = me ? me->GetComponent<NetworkSync>() : nullptr;
+            return ns ? (ns->netId.empty() ? me->name : ns->netId) : std::string();
+        };
+        b["net.is_mine"] = [this, myNetId](std::vector<Value>& a) {
+            NetworkManager* n = Net(); const std::string id = myNetId(a, 0);
+            return Value{!n || id.empty() || n->IsMine(id)};
+        };
+        b["net.is_predicted"] = [this, myNetId](std::vector<Value>& a) { NetworkManager* n = Net(); return Value{n && n->Predicted(myNetId(a, 0))}; };
+        b["net.give"] = [this, myNetId](std::vector<Value>& a) {   // (netId or "", player id): host
+            NetworkManager* n = Net();
+            return Value{n && a.size() >= 2 && n->GiveOwnership(myNetId(a, 0), SafeUInt32(a[1].AsFloat()))};
+        };
+        b["net.request"] = [this, myNetId](std::vector<Value>& a) { if (NetworkManager* n = Net()) n->RequestOwnership(myNetId(a, 0)); return Value{}; };
+        b["net.owner"] = [this, myNetId](std::vector<Value>& a) { NetworkManager* n = Net(); return Value{n ? (float)n->OwnerOf(myNetId(a, 0)) : -1.0f}; };
+        b["net.simulate"] = [this](std::vector<Value>& a) {   // (latency ms, jitter ms, loss %): all 0 = off
+            if (NetworkManager* n = EnsureNet()) {
+                n->simulateLatencyMs = a.size() > 0 ? a[0].AsFloat() : 0.0f;
+                n->simulateJitterMs = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+                n->simulateLossPercent = a.size() > 2 ? a[2].AsFloat() : 0.0f;
+            }
+            return Value{};
+        };
+        b["net.loss"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().lossPercent : 0.0f}; };
+        b["net.bytes_in"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesInPerSec : 0.0f}; };
+        b["net.bytes_out"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->Stats().bytesOutPerSec : 0.0f}; };
 }
 
 void OkayScriptVM::Impl::RegisterMatchmakingQueueBuiltins(BuiltinCtx& c) {

@@ -654,6 +654,14 @@ inline const std::vector<VsDef>& Registry() {
         {"NetLastError",   "Network Error",  CAT_NET, false, {}, {}, {"Text"}, 0, nullptr},
         {"NetTime",        "Network Time",   CAT_NET, false, {}, {}, {"Seconds"}, 0, nullptr},
         {"NetPing",        "Ping",           CAT_NET, false, {}, {}, {"Ms"}, 0, nullptr},
+        {"NetIsMine",      "Is Mine",        CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetIsPredicted", "Is Locally Predicted", CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetGiveOwnership", "Give Ownership", CAT_NET, true, {""}, {"Player Id"}, {}, 0, nullptr},
+        {"NetRequestOwnership", "Request Ownership", CAT_NET, true, {""}, {}, {}, 0, nullptr},
+        {"NetOwner",       "Owner",          CAT_NET, false, {}, {}, {"Player Id"}, 0, nullptr},
+        {"NetStats",       "Network Stats",  CAT_NET, false, {}, {}, {"Ping ms", "Loss %", "In B/s", "Out B/s"}, 0, nullptr},
+        {"OnOwnershipChanged", "On Ownership Changed", CAT_NET, false, {""}, {}, {}, 0, nullptr},
+        {"NetSimulate",    "Simulate Bad Network", CAT_NET, true, {""}, {"Latency ms", "Jitter ms", "Loss %"}, {}, 0, nullptr},
         {"SteamName",      "Steam Name",     CAT_NET, false, {}, {}, {"Name"}, 0, nullptr},
         {"SteamIsUnlocked","Achievement Unlocked", CAT_NET, false, {}, {}, {"Bool"}, 1, "achievement id"},
         {"SteamUnlock",    "Unlock Achievement",   CAT_NET, true, {""}, {}, {}, 1, "achievement id"},
@@ -1038,7 +1046,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" ||
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" || type == "OnQuestCompleted" ||
         type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent" ||
-        type == "OnPlayerJoined" || type == "OnPlayerLeft") return type;
+        type == "OnPlayerJoined" || type == "OnPlayerLeft" || type == "OnOwnershipChanged") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnSequenceEvent") return arg.empty() ? std::string("OnSequenceEvent") : "OnSequenceEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
@@ -1925,6 +1933,9 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetLastError")  return "net.error()";
     if (t == "NetTime")       return "net.time()";
     if (t == "NetPing")       return "net.ping()";
+    if (t == "NetIsMine")     return "net.is_mine()";
+    if (t == "NetIsPredicted") return "net.is_predicted()";
+    if (t == "NetOwner")      return "net.owner()";
     if (t == "NetMatchStarted") return "net_match_started()";
     if (t == "NetAllReady")   return "net_all_ready()";
     if (t == "SteamName")     return "steam_name()";
@@ -2251,6 +2262,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     }
     else if (t=="NetDisconnect") out += ind + "net_disconnect()\n";
     else if (t=="NetHostOrJoin") out += ind + "net.host_or_join(" + VsNum(arg("45000"), "45000") + ")\n";
+    else if (t=="NetGiveOwnership") out += ind + "net.give(\"\", " + in(0, "0") + ")\n";
+    else if (t=="NetRequestOwnership") out += ind + "net.request()\n";
+    else if (t=="NetSimulate")   out += ind + "net.simulate(" + in(0, "0") + ", " + in(1, "0") + ", " + in(2, "0") + ")\n";
     else if (t=="NetSendEvent")  out += ind + "net.send(" + q(arg("event")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="NetSend")       out += ind + "net_send(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetSetVar")     out += ind + "net_set(" + q(arg("x")) + ", str(" + in(0, "\"\"") + "))\n";

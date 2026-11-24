@@ -42265,6 +42265,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             oked::FieldTip("Room (lobby)##nm");
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
+            if (ImGui::TreeNode("Test a bad network##nm")) {
+                ImGui::SliderFloat("Added delay##nm", &nm->simulateLatencyMs, 0.0f, 500.0f, "%.0f ms");
+                ImGui::SliderFloat("Random extra delay##nm", &nm->simulateJitterMs, 0.0f, 200.0f, "%.0f ms");
+                ImGui::SliderFloat("Packets lost##nm", &nm->simulateLossPercent, 0.0f, 50.0f, "%.0f %%");
+                ImGui::TreePop();
+            }
 
             SectionHeader("Host settings");
             static char srvBuf[64]; static NetworkManager* sbound = nullptr;

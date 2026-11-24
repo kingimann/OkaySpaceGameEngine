@@ -579,6 +579,8 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     }
     // Named network events (the easy layer, NetworkManagerEvents.cpp) and the host's clock.
     if (channel == "__ev") { OnEventWire(from, data); return; }
+    if (channel == "__own") { OnOwnerWire(from, data); return; }
+    if (channel == "__ownreq") { OnOwnerRequest(from, data); return; }
     if (channel == "__time") { if (m_mode == Mode::Client && from == 0) OnHostTime(data); return; }
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
@@ -989,6 +991,7 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
 // address) and sends it to the relay, which forwards it on.
 void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
     if (!m_relay) {
+        m_bytesOutAcc += size;
         if (!net::HoldDatagram(m_socket, to, data, size)) {
             if (m_socket.SendTo(to, data, size)) net::NoteWire(size, false);
         }
@@ -1014,6 +1017,7 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
     for (;;) {
         if (m_relay && consumed++ >= kMaxRelayFramesPerCall) return 0;
         int n = net::TakeDatagram(m_socket, buffer, capacity, from);
+        if (n > 0) m_bytesInAcc += (std::size_t)n;
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
@@ -1248,6 +1252,7 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
     }
     if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
+    if (channel == "__ownreq") return data.size() <= kMaxVarKey;   // asking the host for an object
     if (channel == "__ev")   // a named event (checked again when it is opened): bounded
         return data.size() <= kMaxEventData + kMaxEventName + 16;
     return false;   // __match_start and any other reserved channel: host only

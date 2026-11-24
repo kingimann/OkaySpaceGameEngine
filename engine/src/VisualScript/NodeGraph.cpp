@@ -435,7 +435,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent" ||
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
         type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent" ||
-        type == "OnPlayerJoined" || type == "OnPlayerLeft")
+        type == "OnPlayerJoined" || type == "OnPlayerLeft" || type == "OnOwnershipChanged")
         return std::make_unique<EventNode>();
     if (FindQuickBlock(type)) return std::make_unique<EventNode>();   // normally expanded before this (Parse); a bare one just passes flow on
     if (type == "OnEvent" || type == "OnNetRpc" || type == "OnNetworkEvent") return std::make_unique<CustomEventNode>();
@@ -663,6 +663,13 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetLastError")   return std::make_unique<NetLastErrorNode>();
     if (type == "NetTime")        return std::make_unique<NetTimeNode>();
     if (type == "NetPing")        return std::make_unique<NetPingNode>();
+    if (type == "NetIsMine")      return std::make_unique<NetIsMineNode>();
+    if (type == "NetIsPredicted") return std::make_unique<NetIsPredictedNode>();
+    if (type == "NetGiveOwnership") return std::make_unique<NetGiveOwnershipNode>();
+    if (type == "NetRequestOwnership") return std::make_unique<NetRequestOwnershipNode>();
+    if (type == "NetOwner")       return std::make_unique<NetOwnerNode>();
+    if (type == "NetStats")       return std::make_unique<NetStatsNode>();
+    if (type == "NetSimulate")    return std::make_unique<NetSimulateNode>();
     // Steam.
     if (type == "SteamName")        return std::make_unique<SteamNameNode>();
     if (type == "SteamIsUnlocked")  { if (!need(1)) return nullptr; return std::make_unique<SteamUnlockedNode>(args[0]); }

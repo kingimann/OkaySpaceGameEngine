@@ -8,6 +8,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/NetworkObject.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -919,6 +920,76 @@ struct NetTimeNode : VsNode {
 };
 struct NetPingNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->RttMs() : 0.0f; }
+};
+// This object's network id: its Network Sync's (blank = the object's name); "" without one.
+inline std::string VsSyncId(const VsContext& ctx) {
+    auto* ns = ctx.gameObject ? ctx.gameObject->GetComponent<NetworkSync>() : nullptr;
+    return ns ? (ns->netId.empty() ? ctx.gameObject->name : ns->netId) : std::string();
+}
+// Does this player drive this object now? (True offline or without a Network Sync.)
+struct NetIsMineNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* ns = ctx.gameObject ? ctx.gameObject->GetComponent<NetworkSync>() : nullptr;
+        return !ns || ns->IsLocallyOwned();
+    }
+};
+// Is this object the local player that this client predicts (authoritative movement)?
+struct NetIsPredictedNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->Predicted(VsSyncId(ctx)); }
+};
+// Host: give this object to player in0. A client: ask the host for it.
+struct NetGiveOwnershipNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNetOrSay(this, g, ctx);
+        const std::string id = VsSyncId(ctx);
+        if (!n) return 0;
+        if (id.empty()) { g.Error(this, ctx, "this object is not Networked (it has no Network Sync)"); return 0; }
+        if (!n->IsServer()) { n->RequestOwnership(id); return 0; }
+        const float who = In(0, g, ctx).AsFloat();
+        if (!(who >= 0.0f) || !n->GiveOwnership(id, (std::uint32_t)who)) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
+struct NetRequestOwnershipNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto* n = VsNetOrSay(this, g, ctx);
+        const std::string id = VsSyncId(ctx);
+        if (n && !id.empty()) n->RequestOwnership(id);
+        else if (n) g.Error(this, ctx, "this object is not Networked (it has no Network Sync)");
+        return 0;
+    }
+};
+// Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
+struct NetOwnerNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? (float)n->OwnerOf(VsSyncId(ctx)) : -1.0f; }
+};
+// Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
+struct NetSimulateNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true)) {
+            n->simulateLatencyMs = In(0, g, ctx).AsFloat();
+            n->simulateJitterMs = In(1, g, ctx).AsFloat();
+            n->simulateLossPercent = In(2, g, ctx).AsFloat();
+        }
+        return 0;
+    }
+};
+// Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
+struct NetStatsNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        auto* n = VsNet(ctx);
+        if (!n) return 0.0f;
+        const auto st = n->Stats();
+        switch (pin) {
+            case 1: return st.lossPercent;
+            case 2: return st.bytesInPerSec;
+            case 3: return st.bytesOutPerSec;
+            default: return st.rttMs;
+        }
+    }
 };
 
 // ---- Steam ------------------------------------------------------------

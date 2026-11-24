@@ -266,6 +266,84 @@ int main() {
         hn->Stop(); cn->Stop();
     }
 
+    // ---------------------------------------------------------------- ownership (handoff, under loss) and stats
+    {
+        Scene hs("OwnHost"); hs.physicsEnabled = false;
+        Scene cs("OwnClient"); cs.physicsEnabled = false;
+        auto* hn = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* cn = cs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        hn->interpolationRate = cn->interpolationRate = 0.0f;   // snap, so positions compare exactly
+        GameObject* hb = hs.CreateGameObject("Ball"); auto* hns = hb->AddComponent<NetworkSync>();
+        GameObject* cb = cs.CreateGameObject("Ball"); auto* cns = cb->AddComponent<NetworkSync>();
+        hns->clientClaimable = cns->clientClaimable = true;
+        hs.Start(); cs.Start();
+        CHECK(hn->StartServer(0));
+        CHECK(cn->StartClient("127.0.0.1", hn->ServerPort()));
+        CHECK(Pump(hs, cs, 200, [&] { return cn->Joined() && hn->Players().size() == 2; }));
+        const std::uint32_t cid = cn->LocalId();
+        CHECK(hn->IsMine("Ball") && !cn->IsMine("Ball"));   // the host's by default
+        CHECK(hn->OwnerOf("Ball") == -1);
+
+        std::vector<std::string> changes;
+        cn->OnOwnershipChanged([&](const std::string& id, std::uint32_t o) { changes.push_back(id + " " + std::to_string(o)); });
+        net::SimSettings& sim = net::Simulator();
+        const net::SimSettings saved = sim;
+        sim.enabled = true; sim.latencyMs = 30.0f; sim.jitterMs = 10.0f; sim.loss = 0.15f; sim.duplicate = 0.0f;
+        CHECK(hn->GiveOwnership("Ball", cid));
+        CHECK(Pump(hs, cs, 300, [&] { return cn->IsMine("Ball"); }));
+        CHECK(!hn->IsMine("Ball") && hn->OwnerOf("Ball") == (std::int64_t)cid);
+        CHECK(changes.size() == 1 && changes[0] == "Ball " + std::to_string(cid));
+        CHECK(cns->IsLocallyOwned() && !hns->IsLocallyOwned());
+        // Now the client moves it and the host follows; the host's own writes no longer stick.
+        cb->transform->localPosition = {2.0f, 3.0f, 4.0f};
+        CHECK(Pump(hs, cs, 300, [&] { return Near(hb->transform->localPosition, {2.0f, 3.0f, 4.0f}, 0.05f); }));
+        sim = saved;
+        net::ResetSimulator();
+        // Back to the host: the client asks for it, the ball is claimable, so the host... gives it to the
+        // client again (it holds it already); the host takes it back with GiveOwnership(…, 0).
+        CHECK(hn->GiveOwnership("Ball", 0));
+        CHECK(Pump(hs, cs, 150, [&] { return !cn->IsMine("Ball"); }));
+        CHECK(hn->IsMine("Ball"));
+        cn->RequestOwnership("Ball");                      // claimable, nobody else holds it: granted
+        CHECK(Pump(hs, cs, 150, [&] { return cn->IsMine("Ball"); }));
+        // A client can't take what isn't claimable.
+        hns->clientClaimable = false;
+        CHECK(hn->GiveOwnership("Ball", 0));
+        CHECK(Pump(hs, cs, 150, [&] { return !cn->IsMine("Ball"); }));
+        cn->RequestOwnership("Ball");
+        Pump(hs, cs, 80);
+        CHECK(!cn->IsMine("Ball") && hn->IsMine("Ball"));
+        // A client's transform for an object it does not hold is refused by the host.
+        hb->transform->localPosition = {0.0f, 0.0f, 0.0f};
+        cb->transform->localPosition = {9.0f, 9.0f, 9.0f};
+        Pump(hs, cs, 60);
+        CHECK(Near(hb->transform->localPosition, {0.0f, 0.0f, 0.0f}, 0.01f));
+        CHECK(!hn->GiveOwnership("Ball", 999));            // no such player
+        CHECK(!cn->GiveOwnership("Ball", 0));              // only the host gives
+
+        // Stats: traffic both ways, a round trip, and (no loss now) 0% loss.
+        Pump(hs, cs, 120);
+        const auto cst = cn->Stats(), hst = hn->Stats();
+        std::printf("  stats: client rtt %.1f ms, loss %.0f%%, in %.0f B/s, out %.0f B/s; host in %.0f B/s, out %.0f B/s\n",
+                    cst.rttMs, cst.lossPercent, cst.bytesInPerSec, cst.bytesOutPerSec, hst.bytesInPerSec, hst.bytesOutPerSec);
+        CHECK(cst.bytesInPerSec > 0.0f && cst.bytesOutPerSec > 0.0f);
+        CHECK(hst.bytesInPerSec > 0.0f && hst.bytesOutPerSec > 0.0f);
+        CHECK(cst.players == 2 && cst.networkTime > 0.0);
+        CHECK(cst.lossPercent < 50.0f);
+
+        // The bad-network settings on the Network Manager drive the simulator, and 0 turns it off again.
+        net::ResetSimulator();
+        hn->simulateLatencyMs = 50.0f; hn->simulateLossPercent = 10.0f;
+        Pump(hs, cs, 2);
+        CHECK(net::Simulator().enabled && net::Simulator().latencyMs == 50.0f && std::fabs(net::Simulator().loss - 0.1f) < 1e-4f);
+        hn->simulateLatencyMs = 0.0f; hn->simulateLossPercent = 0.0f;
+        Pump(hs, cs, 2);
+        CHECK(!net::Simulator().enabled);
+        net::Simulator() = saved;
+        net::ResetSimulator();
+        hn->Stop(); cn->Stop();
+    }
+
     // ---------------------------------------------------------------- graph (Visual Script, the same graph on both peers)
     {
         const std::uint16_t port = FreePort();

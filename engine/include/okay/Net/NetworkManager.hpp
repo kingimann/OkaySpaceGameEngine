@@ -819,6 +819,46 @@ public:
     /// Network time in seconds, the same on every peer to within about half a
     /// round trip: the host's clock since it started hosting. 0 while offline.
     double NetworkTime() const;
+    // ---- Ownership handoff (server-authoritative) ----
+    /// Host: hand the networked object `netId` (its Network Sync's id) to `player`
+    /// (0 = the host). Every peer's copy follows: the owner's copy drives it, the
+    /// others follow it, and the host takes its transform from that player only
+    /// (any other client's is refused). It holds for players who join later; when
+    /// the owner leaves, the object goes back to the host. False if not the host.
+    bool GiveOwnership(const std::string& netId, std::uint32_t player);
+    /// Client: ask the host for `netId`. The host grants it when its Network Sync
+    /// says "Players can claim it" (clientClaimable) and no other client holds it,
+    /// or when `allowOwnershipRequest` (host) says yes. The answer comes back as an
+    /// ownership change (OnOwnershipChanged). The host itself just takes it.
+    void RequestOwnership(const std::string& netId);
+    /// Host's rule for RequestOwnership (unset: the clientClaimable rule above).
+    std::function<bool(std::uint32_t player, const std::string& netId)> allowOwnershipRequest;
+    /// Who holds `netId` after a handoff; -1 if it was never handed (its Network Sync's authority decides).
+    std::int64_t OwnerOf(const std::string& netId) const;
+    /// Run `f(netId, owner)` on every peer when an object changes hands.
+    int OnOwnershipChanged(std::function<void(const std::string& netId, std::uint32_t owner)> f);
+    /// Does this peer drive `netId` now (its own player, an object it was given, ...)?
+    bool IsMine(const std::string& netId) const;
+
+    // ---- Stats ----
+    struct NetStats {
+        float rttMs = 0.0f;          ///< round trip to the host (0 on the host)
+        float lossPercent = 0.0f;    ///< pings without an answer, last ~16 s (measured on clients; 0 on the host)
+        float bytesInPerSec = 0.0f;  ///< this peer's socket, last full second
+        float bytesOutPerSec = 0.0f;
+        int   players = 0;           ///< Players().size()
+        double networkTime = 0.0;    ///< NetworkTime()
+    };
+    NetStats Stats() const;
+
+    // ---- Bad-network testing ----
+    /// Added one-way delay (ms), random extra delay (ms) and the share of datagrams
+    /// dropped (%), to test a game on a bad connection on one PC. All 0 (the
+    /// default) is off. They drive the program-wide simulator (net::Simulator(),
+    /// so every Network Manager in this program shares them) each frame while any
+    /// is above 0, so they can be changed while playing.
+    float simulateLatencyMs = 0.0f, simulateJitterMs = 0.0f, simulateLossPercent = 0.0f;
+
     /// Find this scene's Network Manager, or add one (on an object "__Network").
     static NetworkManager* Ensure(Scene& scene);
     /// The most recently started Network Manager that is still alive (okay::Net uses it).
@@ -1285,6 +1325,7 @@ private:
         std::function<void(std::uint32_t)> left;
         std::function<void(std::uint32_t, const std::string&)> event;
         std::function<void(const ReceivedEvent&)> any;
+        std::function<void(const std::string&, std::uint32_t)> owner;
     };
     std::vector<Listener> m_listeners;
     int m_nextListener = 1;
@@ -1301,6 +1342,19 @@ private:
     void OnEventWire(std::uint32_t from, const std::string& wire);
     void DispatchEvent(std::uint32_t from, const std::string& name, const std::string& data);
     void RaisePlayerEvent(bool joined, std::uint32_t id, const std::string& name);
+    std::unordered_map<std::string, std::uint32_t> m_netOwners;   // netId -> owner, after a handoff
+    void ApplyOwner(const std::string& netId, std::uint32_t owner);   // here, on this peer
+    void OnOwnerWire(std::uint32_t from, const std::string& data);    // "__own" (host -> clients)
+    void OnOwnerRequest(std::uint32_t from, const std::string& netId); // "__ownreq" (client -> host)
+    // Stats: socket bytes this second, and the client's pings (stamp, answered).
+    std::size_t m_bytesInAcc = 0, m_bytesOutAcc = 0;
+    float m_bytesInRate = 0.0f, m_bytesOutRate = 0.0f, m_statTimer = 0.0f;
+    struct PingMark { float stamp = 0.0f; float age = 0.0f; bool answered = false; };
+    std::vector<PingMark> m_pingMarks;   // the last 16
+    void NotePingSent(float stamp);
+    void NotePong(float stamp);
+    bool m_simApplied = false;   // this manager turned the simulator on
+    void SimulatorTick();
 
     // Networked transforms (drop-in object replication via NetworkSync).
     struct SyncObj {

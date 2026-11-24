@@ -75,6 +75,15 @@ GameObject* Net::Spawn(const std::string& prefab, const Vec3& position) {
 void Net::SetVar(const std::string& key, const std::string& value) { if (auto* n = Need("SetVar")) n->SetVar(key, value); }
 std::string Net::GetVar(const std::string& key) { auto* n = Manager(); return n ? n->GetVar(key) : std::string{}; }
 
+bool Net::Give(const std::string& netId, std::uint32_t player) {
+    auto* n = Need("Give");
+    if (!n) return false;
+    if (!n->IsServer()) { n->RequestOwnership(netId); return true; }
+    return n->GiveOwnership(netId, player);
+}
+bool Net::IsMine(const std::string& netId) { auto* n = Manager(); return !n || n->IsMine(netId); }
+NetworkManager::NetStats Net::Stats() { auto* n = Manager(); return n ? n->Stats() : NetworkManager::NetStats{}; }
+
 double Net::Time() { auto* n = Manager(); return n ? n->NetworkTime() : 0.0; }
 float Net::Ping() { auto* n = Manager(); return n ? n->RttMs() : 0.0f; }
 std::string Net::LastError() {

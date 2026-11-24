@@ -119,6 +119,7 @@ void NetworkManager::ClientTick(float dt) {
         if (m_pingTimer <= 0.0f) {
             net::Packet p(Ping); p.Write(m_clock);
             SendDatagram(m_serverEp, p.Data(), p.Size());
+            NotePingSent(m_clock);
             m_pingTimer = 1.0f;
         }
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
@@ -378,6 +379,7 @@ void NetworkManager::ClientTick(float dt) {
             SendDatagram(m_serverEp, r.Data(), r.Size());
         } else if (type == Pong) {
             float stamp = p.ReadF32();
+            NotePong(stamp);
             m_rtt = (m_clock - stamp) * 1000.0f;   // round-trip in ms
             if (m_rtt < 0.0f) m_rtt = 0.0f;
         }

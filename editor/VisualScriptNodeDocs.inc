@@ -15415,6 +15415,136 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "NetIsMine";
+        d.title = "Is Mine";
+        d.description = "True when this player drives this object now: its own player, an object it spawned or was given. True with no network or no Network Sync.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Is Mine's Bool output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is mine";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Bool", "Bool", "True or false. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetIsPredicted";
+        d.title = "Is Locally Predicted";
+        d.description = "True on the client for its own player when the host runs movement (Authoritative Movement): the client moves it at once and the host corrects it.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Is Locally Predicted's Bool output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is locally predicted";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Bool", "Bool", "True or false. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetGiveOwnership";
+        d.title = "Give Ownership";
+        d.description = "On the host: hand this Networked object to the player with this id (0 = the host); every player's copy follows that player. On a client it asks the host instead.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Give Ownership after an event such as On Start or On Update, and wire a value into Player Id.";
+        d.related = "";
+        d.keywords = "give ownership";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Give Ownership runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Give Ownership finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Player Id", "Number", "The Player Id input of Give Ownership. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetRequestOwnership";
+        d.title = "Request Ownership";
+        d.description = "Ask the host for this Networked object. The host agrees when its Network Sync has Players can claim it and nobody else holds it.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Request Ownership on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "request ownership";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Request Ownership runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Request Ownership finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetOwner";
+        d.title = "Owner";
+        d.description = "Who holds this object after a handoff (-1 if it was never handed over; its Network Sync then decides).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Owner's Player Id output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "owner";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Player Id", "Number", "What Owner produces on Player Id. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetStats";
+        d.title = "Network Stats";
+        d.description = "This player's connection: ping (ms), loss (% of pings never answered, measured on clients), bytes in and out per second.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Wire Network Stats's Ping ms output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "network stats";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Ping ms", "Number", "What Network Stats produces on Ping ms. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Loss %", "Number", "What Network Stats produces on Loss %. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "In B/s", "Number", "What Network Stats produces on In B/s. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Out B/s", "Number", "What Network Stats produces on Out B/s. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnOwnershipChanged";
+        d.title = "On Ownership Changed";
+        d.description = "Runs on this object, on every player, when it changes hands. Event Value is the new owner's id.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Drop On Ownership Changed into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on ownership changed";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Ownership Changed finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetSimulate";
+        d.title = "Simulate Bad Network";
+        d.description = "For testing: makes this program's connection slow and lossy (added delay, random extra delay, % of packets lost). All 0 turns it off.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Simulate Bad Network after an event such as On Start or On Update, and wire a value into Latency ms.";
+        d.related = "";
+        d.keywords = "simulate bad network";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Simulate Bad Network runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Simulate Bad Network finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Latency ms", "Number", "The Latency ms input of Simulate Bad Network. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Jitter ms", "Number", "The Jitter ms input of Simulate Bad Network. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Loss %", "Number", "The Loss % input of Simulate Bad Network. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "SteamName";
         d.title = "Steam Name";
         d.description = "The player's Steam name.";

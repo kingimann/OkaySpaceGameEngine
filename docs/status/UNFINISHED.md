@@ -233,7 +233,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 ### 16. Networking & multiplayer
 
 | [16.7](../feature_map/16-networking.md#167-voice-chat-server) | Voice chat server | Partial | no tests for ADPCM, jitter buffer or room-key handling; launcher voice calls now send version-3 hellos with the relay cookie and... |
-| [16.15](../feature_map/16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) | The easy layer (Net::Host, Host or Join node, net.on) | Partial | tested on Linux over loopback only (`net_easy`); not run on Windows, between two computers or in the editor (the Networked tick and the new palette entries are not built here); event validators see RPC names, not event names; a client hears joins and leaves with the roster, about once a second |
+| [16.15](../feature_map/16-networking.md#1615-the-easy-layer-one-call-or-one-node-per-action) | The easy layer (Net::Host, Host or Join node, net.on) | Partial | tested on Linux over loopback only (`net_easy`); not run on Windows, between two computers or in the editor (the Networked tick and the new palette entries are not built here); event validators see RPC names, not event names; a client hears joins and leaves with the roster, about once a second; not done: rollback mode, host migration; the bad-network settings are not saved in the scene |
 
 ### 17. Launcher & platform
 

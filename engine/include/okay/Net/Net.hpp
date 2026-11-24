@@ -73,6 +73,12 @@ public:
     static void SetVar(const std::string& key, const std::string& value);
     static std::string GetVar(const std::string& key);
 
+    /// Host: hand a Networked object (its Network Sync id) to a player; a client asks the host instead.
+    static bool Give(const std::string& netId, std::uint32_t player);
+    /// Does this player drive the Networked object now?
+    static bool IsMine(const std::string& netId);
+    /// Ping, loss and bandwidth of this player's connection.
+    static NetworkManager::NetStats Stats();
     /// Network time in seconds: the same on every peer (the host's clock).
     static double Time();
     /// Round trip to the host in milliseconds (0 on the host).

@@ -209,7 +209,7 @@ inline VsPlace VsLegacyPlaceForNode(const char* type) {
     if (VsIs(type, "OnTimer")) return VsAt("Time");
     if (VsPre(type, "OnItem") || VsIs(type, "OnEquip") || VsIs(type, "OnCraft") || VsIs(type, "OnInventoryFull")) return VsAt("Objects", "Items");
     if (VsIs(type, "OnCheatDetected") || VsPre(type, "OnValidate") || VsIs(type, "OnNetRpc") ||
-        VsIs(type, "OnNetworkEvent") || VsPre(type, "OnPlayer")) return VsAt("Online");
+        VsIs(type, "OnNetworkEvent") || VsPre(type, "OnPlayer") || VsIs(type, "OnOwnershipChanged")) return VsAt("Online");
     if (VsIs(type, "OnLanguageChanged")) return VsAt("Text", "Language");
     if (VsIs(type, "OnObjectPlaced") || VsIs(type, "OnObjectRemoved") || VsIs(type, "OnLogicSignal")) return VsAt("Scene");
     if (VsIs(type, "OnStart") || VsIs(type, "OnUpdate") || VsIs(type, "OnLateUpdate") || VsIs(type, "OnEnable") ||

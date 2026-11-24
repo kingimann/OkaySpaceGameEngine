@@ -601,7 +601,10 @@ void TestGit(const fs::path& tmp) {
     GitOut(root, {"config", "--local", "merge.okayscene.driver", "\"/nonexistent/okay\" vc merge-driver %O %A %B %P"});
     CHECK(Cli({"--project", P, "vc", "status"}, s) == 0 && Has(s.err, "is gone"));
     CHECK(!Has(GitOut(root, {"config", "merge.okayscene.driver"}), "/nonexistent/"));
-    CHECK(Has(GitOut(root, {"config", "merge.okayscene.driver"}), okaycli::SelfPath()));
+    // The stored command is exactly what vc init writes: the stable okay (an okay on PATH wins, as on the Windows runner,
+    // where wt/bin is on PATH), quoted with forward slashes. Comparing with SelfPath() failed there on both counts.
+    CHECK(okay::str::Trim(GitOut(root, {"config", "merge.okayscene.driver"})) ==
+          okaycli::vc::MergeDriverCommand(okaycli::detail::StableOkayPath()));
 
     // Sync with an online copy: here a bare repository in a folder (any git host works the same way).
     const fs::path bare = tmp / "server.git";

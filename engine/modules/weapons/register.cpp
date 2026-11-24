@@ -64,12 +64,18 @@ void ReadCrosshair(GameObject& go, std::istream& in) {
         in >> cr->spreadRecover >> cr->spreadMax;
 }
 
-ScriptApiEntry WeaponFn(const char* name, ScriptApiFn fn) {
+// A script command that acts on the calling object's component T and returns `act`'s number, or 0 when the
+// object has no such component.
+template <class T, class Act>
+ScriptApiEntry WeaponFn(const char* name, Act act) {
     ScriptApiEntry e;
     e.name = name;
     e.module = "weapons";
     e.ret = ScriptApiType::Float;
-    e.fn = std::move(fn);
+    e.fn = [act](GameObject* self, std::vector<vs::VsValue>&) {
+        T* c = self ? self->GetComponent<T>() : nullptr;
+        return vs::VsValue{c ? act(*c) : 0.0f};
+    };
     return e;
 }
 
@@ -83,26 +89,10 @@ void Register_weapons(ModuleContext&) {
     rec.inChain = true;   // the scene chain calls this at the old crosshair site
     ComponentSerializerRegistry::Register(std::move(rec));
 
-    AddScriptApi(WeaponFn("weapon_swing", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* m = self ? self->GetComponent<MeleeAttacker>() : nullptr;
-        if (!m) return vs::VsValue{0.0f};
-        m->Swing();
-        return vs::VsValue{1.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_fire", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        return vs::VsValue{g && g->Fire() ? 1.0f : 0.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_reload", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        if (!g) return vs::VsValue{0.0f};
-        g->Reload();
-        return vs::VsValue{1.0f};
-    }));
-    AddScriptApi(WeaponFn("weapon_ammo", [](GameObject* self, std::vector<vs::VsValue>&) {
-        auto* g = self ? self->GetComponent<RangedWeapon>() : nullptr;
-        return vs::VsValue{(float)(g ? g->Rounds() : 0)};
-    }));
+    AddScriptApi(WeaponFn<MeleeAttacker>("weapon_swing", [](MeleeAttacker& m) { m.Swing(); return 1.0f; }));
+    AddScriptApi(WeaponFn<RangedWeapon>("weapon_fire", [](RangedWeapon& g) { return g.Fire() ? 1.0f : 0.0f; }));
+    AddScriptApi(WeaponFn<RangedWeapon>("weapon_reload", [](RangedWeapon& g) { g.Reload(); return 1.0f; }));
+    AddScriptApi(WeaponFn<RangedWeapon>("weapon_ammo", [](RangedWeapon& g) { return (float)g.Rounds(); }));
 }
 
 } // namespace modules

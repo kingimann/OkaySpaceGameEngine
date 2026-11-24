@@ -1,5 +1,5 @@
-// module:survival — the survival record round-trips while the module is on and is
-// left out of the file when it is off.
+// module:survival — the survival record round-trips while the module is on. With it off a live
+// SurvivalStats writes no line, and a line loaded from a file is kept as text and written back.
 #include "test_framework.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -33,6 +33,7 @@ int main() {
     Scene skipped("skipped");
     CHECK(SceneSerializer::Deserialize(skipped, first));
     CHECK(skipped.Find("Player")->GetComponent<SurvivalStats>() == nullptr);
+    CHECK(SceneSerializer::Serialize(skipped).find(first.substr(at, end - at + 1)) != std::string::npos);   // not dropped by load then save
     std::cout << "survival off: " << (SceneSerializer::Serialize(scene).find("\n  survival ") == std::string::npos
               ? "(no survival line)" : "still present") << "\n";
     ModuleRegistry::Get().Add(saved, true);

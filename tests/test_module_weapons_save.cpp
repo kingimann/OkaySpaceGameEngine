@@ -1,5 +1,7 @@
 // module:weapons — the crosshair scene record is written by the weapons module
-// at its old place, so save then load then save matches. With weapons off the line is left out.
+// at its old place, so save then load then save matches. With weapons off a live Crosshair writes no
+// line, and a line that is loaded from a file is kept as text and written back (test_module_records_kept.cpp
+// covers every such record and turning the module on again).
 #include "test_framework.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -42,6 +44,9 @@ int main() {
     CHECK(SceneSerializer::Deserialize(skipped, first));
     GameObject* hud = skipped.Find("Hud");
     CHECK(hud && hud->GetComponent<Crosshair>() == nullptr);
+    const std::string kept = SceneSerializer::Serialize(skipped);
+    CHECK(kept.find("\n" + lineOf(first, "  crosshair ") + "\n") != std::string::npos);   // not dropped by load then save
+    std::cout << "weapons off, loaded and saved: " << lineOf(kept, "crosshair") << "\n";
     std::cout << "weapons off: " << lineOf(hidden, "crosshair") << "\n";
     ModuleRegistry::Get().Add(saved, true);
     TEST_MAIN_RESULT();

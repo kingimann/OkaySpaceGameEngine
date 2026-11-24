@@ -524,6 +524,22 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             bool sawEnd = false;
             std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
             std::vector<std::string> compOrder;                  // `comporder`: type keys in the saved component order
+            // Step over the rest of the record `field` and keep its text on the object, as it was read; the next
+            // save writes it back (WriteComponents), so this build does not drop what it cannot use.
+            auto keepRecord = [&]() {
+                const std::string rest = ReadRecordLine(in);
+                if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
+                    go->unknownRecords.push_back(field + rest);
+            };
+            // A record that a module reads (its register.cpp), at this place in the chain. With the module off, or
+            // on with no reader registered, the record is kept like one of a newer build: a scene saved by a
+            // build without the module still has it when the module is back.
+            auto moduleRecord = [&](const char* module) {
+                auto entry = ModuleRegistry::Get().IsEnabled(module) ? ComponentSerializerRegistry::Find(field) : nullptr;
+                if (entry && entry->read) { entry->read(*go, in); return; }
+                warn("kept '" + field + "' on object " + std::to_string(idx) + " unread (module '" + module + "' is off or has no reader)");
+                keepRecord();
+            };
             int nFpFeel = 0, nTpFeel = 0, nFpStance = 0, nTpStance = 0;
             int nCc3dSt = 0, nTpsSt = 0, nTdSt = 0, nCtmSt = 0, nNpcSt = 0;
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
@@ -2034,18 +2050,11 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 }
                 if (!fieldDone) { fieldDone = true;
                 if (field == "vehicle") {
-                    ModuleRegistry::Get();
-                    if (ModuleRegistry::Get().IsEnabled("vehicles")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("vehicle")) entry->read(*go, in);
-                    } else { std::string skip; std::getline(in, skip); }
+                    moduleRecord("vehicles");
                 } else if (field == "vehicletune") {
-                    if (ModuleRegistry::Get().IsEnabled("vehicles")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("vehicletune")) entry->read(*go, in);
-                    } else { std::string skip; std::getline(in, skip); }
+                    moduleRecord("vehicles");
                 } else if (field == "vehiclesusp") {
-                    if (ModuleRegistry::Get().IsEnabled("vehicles")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("vehiclesusp")) entry->read(*go, in);
-                    } else { std::string skip; std::getline(in, skip); }
+                    moduleRecord("vehicles");
                 } else if (field == "blockbuilder") {
                     auto* bb = go->AddComponent<BlockBuilder>();
                     in >> bb->blockSize >> bb->reach
@@ -2439,14 +2448,9 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;
                     if (in.peek() == '"') ni->saveDir = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
-                    if (ModuleRegistry::Get().IsEnabled("vehicles")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("vehicle2d")) entry->read(*go, in);
-                    } else { std::string skip; std::getline(in, skip); }
+                    moduleRecord("vehicles");
                 } else if (field == "survival") {
-                    ModuleRegistry::Get();
-                    if (ModuleRegistry::Get().IsEnabled("survival")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("survival")) entry->read(*go, in);
-                    } else { std::string skip; std::getline(in, skip); }
+                    moduleRecord("survival");
                 } else if (field == "stat_health") {
                     auto* c = go->AddComponent<HealthStat>();
                     in >> c->maxHealth >> c->armor >> c->regenPerSecond >> c->regenDelay >> c->lowThreshold;
@@ -4779,13 +4783,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (in.peek() == '"') bl->label = ReadQuoted(in);   // v4: label
                     }
                 } else if (field == "crosshair") {
-                    ModuleRegistry::Get();
-                    if (ModuleRegistry::Get().IsEnabled("weapons")) {
-                        if (auto entry = ComponentSerializerRegistry::Find("crosshair")) entry->read(*go, in);
-                    } else {
-                        std::string skip;   // one line of numbers; leave the rest of the file in place
-                        std::getline(in, skip);
-                    }
+                    moduleRecord("weapons");
                 } else if (field == "uislotgrid") {
                     auto* sg = go->AddComponent<UISlotGrid>();
                     int an = 0; std::size_t n = 0;
@@ -5351,9 +5349,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // A newer build's field: one record per line, so step over it. Its text is kept on the object and
                     // written back by the next save, so an older build does not drop what a newer one stored.
                     warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
-                    const std::string rest = ReadRecordLine(in);
-                    if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
-                        go->unknownRecords.push_back(field + rest);
+                    keepRecord();
                 }
                 }
             }
@@ -5366,11 +5362,17 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             // not there (an older or newer build's) is ignored.
             for (const auto& [key, occ] : compOff) {
                 int seen = 0;
+                bool found = false;
                 for (const auto& c : go->Components())
                     if (c.get() != static_cast<Component*>(go->transform) && ComponentSerializerRegistry::TypeKey(*c) == key && seen++ == occ) {
                         c->enabled = false;
+                        found = true;
                         break;
                     }
+                // The flag may belong to a record that was kept unread above (its module is off): keep it with them,
+                // written as WriteDisabledComponents writes it, so the component comes back switched off.
+                if (!found && !go->unknownRecords.empty() && go->unknownRecords.size() < kMaxUnknownRecords)
+                    go->unknownRecords.push_back("compoff " + Quote(key) + " " + std::to_string(occ));
             }
             if (!compOrder.empty()) ApplyComponentOrder(*go, compOrder);   // after the flags: they were counted in the writer's order
             // Every saved type keeps every instance (AllowsMultiple). A type that opts

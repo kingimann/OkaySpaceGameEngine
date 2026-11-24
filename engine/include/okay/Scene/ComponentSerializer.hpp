@@ -43,6 +43,9 @@ public:
     /// Add (or replace) an entry. Safe to call from any thread. Needs a name, a
     /// writer and a reader (`read` or `readWithNotes`).
     static void Register(Entry entry);
+    /// Take an entry out again (a module that goes away at run time; tests). Its record is then kept as
+    /// unknown text by a load. Nothing happens when the name is not registered.
+    static void Unregister(const std::string& name);
     static std::shared_ptr<const Entry> Find(const std::string& name);
     /// Run every entry's writer, in registration order.
     static void WriteAll(const GameObject& go, std::ostream& out);

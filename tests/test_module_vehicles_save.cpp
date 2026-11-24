@@ -1,5 +1,6 @@
 // module:vehicles — vehicle, vehicletune, vehiclesusp and vehicle2d round-trip while the
-// module is on, and are left out of the file when it is off.
+// module is on. With it off a live vehicle writes no line, and lines loaded from a file are kept as text
+// and written back.
 #include "test_framework.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -53,6 +54,11 @@ int main() {
     CHECK(SceneSerializer::Deserialize(skipped, first));
     CHECK(skipped.Find("Car")->GetComponent<VehicleController>() == nullptr);
     CHECK(skipped.Find("Kart")->GetComponent<VehicleController2D>() == nullptr);
+    const std::string kept = SceneSerializer::Serialize(skipped);
+    for (const char* rec : {"vehicle ", "vehicletune", "vehiclesusp", "vehicle2d"}) {
+        CHECK(kept.find("\n" + lineOf(first, rec) + "\n") != std::string::npos);   // not dropped by load then save
+        std::cout << "vehicles off, loaded and saved: " << lineOf(kept, rec) << "\n";
+    }
     std::cout << "vehicles off: " << lineOf(hidden, "vehicle ") << "\n";
     std::cout << "vehicles off: " << lineOf(hidden, "vehicle2d") << "\n";
     ModuleRegistry::Get().Add(saved, true);

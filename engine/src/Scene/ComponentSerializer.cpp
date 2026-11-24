@@ -42,6 +42,18 @@ void ComponentSerializerRegistry::Register(Entry entry) {
     AddEntry(GetTable(), std::move(entry));
 }
 
+void ComponentSerializerRegistry::Unregister(const std::string& name) {
+    Table& t = GetTable();
+    EnsureBuiltins(t);   // before the lock, and so a later first Find does not see a half-built table
+    debugutil::SpinGuard lock(t.mutex);
+    for (auto it = t.entries.begin(); it != t.entries.end(); ++it)
+        if ((*it)->name == name) {
+            t.entries.erase(it);
+            g_serializerGeneration.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+}
+
 std::shared_ptr<const ComponentSerializerRegistry::Entry> ComponentSerializerRegistry::Find(const std::string& name) {
     Table& t = GetTable();
     EnsureBuiltins(t);

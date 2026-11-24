@@ -50,6 +50,10 @@ add_test(NAME module_vehicles_save COMMAND test_module_vehicles_save)
 add_executable(test_module_survival_save test_module_survival_save.cpp)
 target_link_libraries(test_module_survival_save PRIVATE okay::engine)
 add_test(NAME module_survival_save COMMAND test_module_survival_save)
+# Review fix: a record whose module is off, or has no reader, is kept by load then save (all six gated records).
+add_executable(test_module_records_kept test_module_records_kept.cpp)
+target_link_libraries(test_module_records_kept PRIVATE okay::engine)
+add_test(NAME module_records_kept COMMAND test_module_records_kept)
 # Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)

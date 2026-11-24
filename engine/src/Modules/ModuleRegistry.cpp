@@ -1,8 +1,13 @@
 #include "okay/Modules/ModuleRegistry.hpp"
 #include <algorithm>
 #include <atomic>
+#include "okay/Core/Log.hpp"
+#include <exception>
 #include <map>
 #include <set>
+// The private threading shim, for YieldThread (never <thread> here, rule 21a). Last of the includes:
+// on Windows it brings in <windows.h>.
+#include "../Core/CoreThreads.hpp"
 
 namespace okay {
 
@@ -25,15 +30,25 @@ ModuleRegistry& ModuleRegistry::Get() {
     int expected = 0;
     if (phase.compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
         initializing = true;
-        auto* created = new ModuleRegistry();   // lives for the whole run, never destroyed
+        ModuleRegistry* created = nullptr;
+        try { created = new ModuleRegistry(); }   // lives for the whole run, never destroyed
+        catch (...) { initializing = false; phase.store(0, std::memory_order_release); throw; }   // nothing built: the next caller tries again
         published.store(created, std::memory_order_release);
-        detail::RegisterGeneratedModules(*created);
-        created->RunRegisterHooks();
+        // Whatever goes wrong while the list is built, the phase must reach 2: the threads waiting below
+        // would otherwise wait for ever. RunRegisterHooks deals with a hook that throws by itself.
+        try {
+            detail::RegisterGeneratedModules(*created);
+            created->RunRegisterHooks();
+        } catch (const std::exception& e) {
+            Log::Error("[modules] building the module list failed: ", e.what(), " (going on with what was registered)");
+        } catch (...) {
+            Log::Error("[modules] building the module list failed (going on with what was registered)");
+        }
         phase.store(2, std::memory_order_release);
         initializing = false;
         return *created;
     }
-    while (phase.load(std::memory_order_acquire) != 2) {}
+    while (phase.load(std::memory_order_acquire) != 2) corethreads::YieldThread();   // another thread is building it
     return *published.load(std::memory_order_acquire);
 }
 
@@ -140,9 +155,29 @@ void ModuleRegistry::RunRegisterHooks() {
     ModuleContext ctx{*this};
     for (auto& n : DependencyOrder()) {
         if (!IsEnabled(n)) continue;
-        for (auto& h : hooks_)
-            if (h.name == n && !h.ran && h.fn) { h.ran = true; h.fn(ctx); }
+        for (auto& h : hooks_) {
+            if (h.name != n || h.ran || !h.fn) continue;
+            h.ran = true;
+            try { h.fn(ctx); }
+            catch (const std::exception& e) { HookFailed(n, e.what()); }
+            catch (...) { HookFailed(n, "unknown error"); }
+        }
     }
+}
+
+void ModuleRegistry::HookFailed(const std::string& name, const char* what) {
+    // What the hook registered before it threw stays registered, but everything that asks "is this module
+    // on" now gets no, and the modules that need it do not register on top of a half-made one (they come
+    // later in the dependency order, so their hooks have not run yet). A core module cannot be off.
+    std::vector<std::string> off = RequiredBy(name);
+    off.push_back(name);
+    std::string left;
+    for (auto& e : mods_) {
+        if (e.manifest.core || !e.enabled || !Has(off, e.manifest.name)) continue;
+        e.enabled = false;
+        left += (left.empty() ? "" : ", ") + e.manifest.name;
+    }
+    Log::Error("[modules] the register hook of '", name, "' failed: ", what, ". Left off: ", left.empty() ? "nothing (core module)" : left);
 }
 
 std::vector<std::string> ModuleRegistry::Validate() const {

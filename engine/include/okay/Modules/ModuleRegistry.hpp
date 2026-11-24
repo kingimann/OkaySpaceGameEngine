@@ -65,7 +65,8 @@ public:
     /// A module's register function: the build links engine/modules/<name>/register.cpp (none exist yet; the
     /// first ones come with the registries of stage 1), and the generated file hands each one over here. RunRegisterHooks calls the hooks of enabled
     /// modules in dependency order (a module registers after everything it requires). Safe to call twice:
-    /// each hook runs once.
+    /// each hook runs once. A hook that throws does not stop the others: the error is logged, and that module and
+    /// every module that needs it are left off (a core module stays on).
     void SetRegisterHook(const std::string& name, ModuleRegisterFn fn);
     void RunRegisterHooks();
 
@@ -78,6 +79,7 @@ public:
 
 private:
     ModuleRegistry() = default;
+    void HookFailed(const std::string& name, const char* what);
     std::vector<Info> mods_;
     struct Hook { std::string name; ModuleRegisterFn fn; bool ran; };
     std::vector<Hook> hooks_;

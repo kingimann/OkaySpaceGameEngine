@@ -600,11 +600,8 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 2G
-      # editor/main.cpp (56,000 lines, about 5 minutes to compile, alone at the end of the build) passes __DATE__ " " __TIME__
-      # to the crash handler. ccache never reuses a file that uses __TIME__ unless told to, so it recompiled on every run,
-      # even with no change. time_macros lets ccache reuse it: in this CI build only, the crash handler's build stamp can be
-      # the time of an earlier compile of the same source. The release workflow does not set this, so release stamps stay exact.
-      CCACHE_SLOPPINESS: time_macros
+      # No CCACHE_SLOPPINESS: the editor's __DATE__ " " __TIME__ lives in editor/BuildStamp.cpp (recompiled every run, under a
+      # second), so ccache can reuse editor/main.cpp (about 5 minutes) and every build stamp stays exact.
     steps:
       - uses: actions/checkout@v6
 
@@ -629,33 +626,15 @@ jobs:
         id: install
         timeout-minutes: 20
         run: |
-          ls ~/apt-cache/*.deb 2>/dev/null | xargs -r -n1 basename | sort | md5sum > ~/apt-debs-before
+          bash scripts/ci-apt-cache.sh before
           bash scripts/ci-install-mingw.sh
 
       - name: Check for newly downloaded apt packages
         id: apt-new
         if: always()
-        run: |
-          [ -d ~/apt-cache ] || exit 0
-          # A timed-out install can leave apt-get or curl still downloading.
-          sudo pkill -x apt-get || true
-          sudo pkill -x curl || true
-          sudo chown -R "$USER" ~/apt-cache
-          rm -rf ~/apt-cache/partial ~/apt-cache/lock
-          # Keep only the files of packages that are installed now, so a cache restored from an older key (with the posix
-          # compiler or the release job's extra packages) does not grow the saved cache. Only after a good install.
-          if [ "${{ steps.install.outcome }}" != "failure" ] && command -v x86_64-w64-mingw32-g++ >/dev/null; then
-            for f in ~/apt-cache/*.deb; do
-              [ -f "$f" ] || continue
-              pkg=$(dpkg-deb -f "$f" Package); ver=$(dpkg-deb -f "$f" Version)
-              [ "$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)" = "$ver" ] || rm -f "$f"
-            done
-          fi
-          echo "cache: $(ls ~/apt-cache/*.deb 2>/dev/null | wc -l) files, $(du -sm ~/apt-cache | cut -f1) MB"
-          if [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt 0 ] && \
-             [ "$(ls ~/apt-cache/*.deb | xargs -n1 basename | sort | md5sum)" != "$(cat ~/apt-debs-before 2>/dev/null)" ]; then
-            echo "save=1" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: bash scripts/ci-apt-cache.sh after "$INSTALL_OUTCOME"
 
       - name: Save downloaded apt packages
         if: always() && steps.apt-new.outputs.save == '1'

@@ -167,7 +167,7 @@ check(idx("Restore compiler cache") < idx("Build Windows distribution"), "the co
 
 # ---- the copy of release.yml's first job ---------------------------------------------------------------------------------------------
 relsteps = steps_by_name(rel["jobs"]["windows-exe"])
-copied = ["Check the launcher's trusted anti-cheat keys", "Note the runner image", "Restore downloaded apt packages", "Install toolchain",
+copied = ["Check the launcher's trusted anti-cheat keys", "Note the Ubuntu release", "Restore downloaded apt packages", "Install toolchain",
           "Check for newly downloaded apt packages", "Save downloaded apt packages", "Fetch SDL2 (MinGW dev)", "Fetch libsodium (MinGW prebuilt)",
           "Refuse own crypto and the own-stack switch", "Build Windows distribution"]
 for name in copied:

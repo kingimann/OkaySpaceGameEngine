@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.7
+  Downloads, our own editor windows and more model readers
+  - Downloads and updates: the launcher, editor and player now use one
+    download path, and on Windows they use the built-in Windows web
+    client instead of starting curl for every request. Downloads can
+    resume, be cancelled and stop on a time limit. curl is only used if
+    that fails.
+  - Editor: the Crash Log, Audio Mixer and History windows and the script
+    editor now run on our own UI and text editor only.
+  - Input and windows: more of the old SDL2 library is replaced by our
+    own Windows code.
+  - Model files: 3D GameStudio .mdl (versions 3, 4, 5 and 7) and .hmp
+    terrain files, and Silo .sib files, open with our own readers.
+  - Fixed: a broken or deliberately damaged .mdl file could crash the
+    editor while importing, and a damaged .sib file could use gigabytes
+    of memory. Both are now refused with a clear message.
+
 v2.903.6
   Bug fixes and more of our own model readers
   - Fixed all of 2.903.5's known problems:

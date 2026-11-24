@@ -55,6 +55,32 @@ inline bool ReadFileCapped(const std::string& path, std::size_t cap, std::string
     return true;
 }
 
+// One code point (below 0x110000) as UTF-8.
+inline void AppendUtf8(std::string& out, unsigned cp) {
+    if (cp < 0x80) out.push_back((char)cp);
+    else if (cp < 0x800) { out.push_back((char)(0xC0 | (cp >> 6))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+    else if (cp < 0x10000) { out.push_back((char)(0xE0 | (cp >> 12))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+    else { out.push_back((char)(0xF0 | (cp >> 18))); out.push_back((char)(0x80 | ((cp >> 12) & 0x3F))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+}
+
+// `n` bytes of UTF-16 little endian (no byte order mark) as UTF-8, for names stored in binary files: a surrogate pair is
+// combined, a lone surrogate becomes U+FFFD, the text ends at the first NUL, an odd last byte is dropped.
+inline std::string Utf16LeToUtf8(const unsigned char* p, std::size_t n) {
+    std::string out;
+    out.reserve(n / 2);
+    for (std::size_t i = 0; i + 1 < n; i += 2) {
+        unsigned cp = (unsigned)p[i] | ((unsigned)p[i + 1] << 8);
+        if (cp == 0) break;
+        if (cp >= 0xD800 && cp <= 0xDBFF && i + 3 < n) {
+            const unsigned lo = (unsigned)p[i + 2] | ((unsigned)p[i + 3] << 8);
+            if (lo >= 0xDC00 && lo <= 0xDFFF) { cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); i += 2; }
+            else cp = 0xFFFD;
+        } else if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+        AppendUtf8(out, cp);
+    }
+    return out;
+}
+
 // Drops a UTF-8 byte order mark; converts UTF-16 (little or big endian, announced by its byte order mark) to UTF-8.
 // Returns false (with `why`) for UTF-16 with an odd length, a lone surrogate, or more than `cap` bytes of output.
 // Sets `converted` when the text was UTF-16. UTF-32 and UTF-16 without a mark are not detected.
@@ -81,10 +107,7 @@ inline bool NormalizeEncoding(std::string& s, bool& converted, std::string& why,
             cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
             i += 2;
         } else if (cp >= 0xDC00 && cp <= 0xDFFF) { why = "UTF-16 text with a lone surrogate"; return false; }
-        if (cp < 0x80) out.push_back((char)cp);
-        else if (cp < 0x800) { out.push_back((char)(0xC0 | (cp >> 6))); out.push_back((char)(0x80 | (cp & 0x3F))); }
-        else if (cp < 0x10000) { out.push_back((char)(0xE0 | (cp >> 12))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
-        else { out.push_back((char)(0xF0 | (cp >> 18))); out.push_back((char)(0x80 | ((cp >> 12) & 0x3F))); out.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); out.push_back((char)(0x80 | (cp & 0x3F))); }
+        AppendUtf8(out, cp);
         if (out.size() > cap) { why = "text too large after conversion"; return false; }
     }
     s.swap(out);

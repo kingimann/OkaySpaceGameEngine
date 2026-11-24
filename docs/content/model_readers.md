@@ -21,7 +21,7 @@
 - [Our own DXF reader (`.dxf`)](#our-own-dxf-reader-dxf) (was `docs/own_dxf_reader.md`)
 - [Our own FBX reader (`okay::fbx`)](#our-own-fbx-reader-okayfbx) (was `docs/own_fbx_reader.md`)
 - [Our own glTF 1.0 reader (`.gltf`, `.glb` of version 1)](#our-own-gltf-10-reader-gltf-glb-of-version-1) (new 2026-11-22; was `docs/own_gltf1_reader.md` on an unmerged branch)
-- [Our own HMP reader (`.hmp`, version HMP7)](#our-own-hmp-reader-hmp-version-hmp7) (was `docs/own_hmp_reader.md`)
+- [Our own HMP reader (`.hmp`, versions HMP4, HMP5 and HMP7)](#our-own-hmp-reader-hmp-versions-hmp4-hmp5-and-hmp7) (was `docs/own_hmp_reader.md`)
 - [Our own IQM reader (`.iqm`)](#our-own-iqm-reader-iqm) (was `docs/own_iqm_reader.md`)
 - [Our own Irrlicht scene reader (`.irr`)](#our-own-irrlicht-scene-reader-irr) (was `docs/own_irr_reader.md`)
 - [Our own Irrlicht mesh reader (`.irrmesh`)](#our-own-irrlicht-mesh-reader-irrmesh) (was `docs/own_irrmesh_reader.md`)
@@ -31,7 +31,7 @@
 - [Our own MD3 reader (`.md3`)](#our-own-md3-reader-md3) (was `docs/own_md3_reader.md`)
 - [Our own MD5 reader (`.md5mesh`, `.md5anim`)](#our-own-md5-reader-md5mesh-md5anim) (was `docs/own_md5_reader.md`)
 - [Our own MDC reader (`.mdc`)](#our-own-mdc-reader-mdc) (was `docs/own_mdc_reader.md`)
-- [Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)](#our-own-mdl-reader-mdl-quake-1-and-half-life-1) (new on main 2026-11-22; was `docs/own_mdl_reader.md` on an unmerged branch)
+- [Our own MDL reader (`.mdl`: Quake 1, Half-Life 1, 3D GameStudio)](#our-own-mdl-reader-mdl-quake-1-half-life-1-3d-gamestudio) (new on main 2026-11-22; was `docs/own_mdl_reader.md` on an unmerged branch)
 - [Our own MS3D reader (`.ms3d`)](#our-own-ms3d-reader-ms3d) (was `docs/own_ms3d_reader.md`)
 - [Our own NDO reader (`.ndo`): a seam only, no geometry](#our-own-ndo-reader-ndo-a-seam-only-no-geometry) (was `docs/own_ndo_reader.md`)
 - [Our own NFF reader (`.nff` `.enff`)](#our-own-nff-reader-nff-enff) (was `docs/own_nff_reader.md`)
@@ -42,7 +42,7 @@
 - [Our own Quake III map reader (`.bsp`, `.pk3`)](#our-own-quake-iii-map-reader-bsp-pk3) (new on main 2026-11-22; was `docs/own_q3bsp_reader.md` on an unmerged branch)
 - [Our own Q3D reader (`.q3o` `.q3s`)](#our-own-q3d-reader-q3o-q3s) (was `docs/own_q3d_reader.md`)
 - [Our own RAW reader (`.raw`)](#our-own-raw-reader-raw) (was `docs/own_raw_reader.md`)
-- [Our own SIB reader (`.sib`): NOT WRITTEN](#our-own-sib-reader-sib-not-written) (was `docs/own_sib_reader.md`)
+- [Our own SIB reader (`.sib`, Nevercenter Silo)](#our-own-sib-reader-sib-nevercenter-silo) (was `docs/own_sib_reader.md`)
 - [Our own SMD reader (`.smd`)](#our-own-smd-reader-smd) (was `docs/own_smd_reader.md`)
 - [Our own Terragen reader (`.ter`)](#our-own-terragen-reader-ter) (was `docs/own_terragen_reader.md`)
 - [Our own X3D reader (`.x3d`)](#our-own-x3d-reader-x3d) (was `docs/own_x3d_reader.md`)
@@ -1122,11 +1122,13 @@ on the number of values in one array (shared with the 2.0 reader).
 
 Not verified: files from other exporters, skinned or animated 1.0 files (not read), a run on real Windows.
 
-## Our own HMP reader (`.hmp`, version HMP7)
+## Our own HMP reader (`.hmp`, versions HMP4, HMP5 and HMP7)
 
 *Was `docs/own_hmp_reader.md` until 2026-11-20.*
 
-Status: **side by side, off by default** (`OKAY_OWN_HMP`, same rules as `docs/content/model_readers.md`). Assimp (when built) is still the only other reader of HMP files. Nothing was flipped. **Only the HMP7 flavour is read. The layout was worked out from two real files, no written specification was available: read the "How sure" part.**
+Status: **side by side** (`OKAY_OWN_HMP`, same rules as `docs/content/model_readers.md`). Assimp (when built) is still the only other reader of HMP files. **2026-11-23: HMP4 and HMP5 are read too** (branch `claude/third-party-3b`), and the layout is now backed by a public description: Conitec's "Gamestudio file formats" page (<http://www.conitec.net/beta/prog_mdlhmp.htm>, section "The HMP5 terrain format"), which gives the 84-byte header, the skins of the MDL5 format and the frame of a 36-byte header and 4-byte height points. Every field the table below marked "certain" from the two HMP7 files matches that page (for example `xmax = scale.x * 65536 + offset.x`: `0.00244 * 65536 - 80 = 80`). The page says HMP7 is the newer format of A6 / A7 and documents only HMP5; HMP7 reads with the same layout (both real files are HMP7).
+
+**HMP4** (A5 before 5.230, no file available): read like HMP5, but the skins have no size of their own: the header's skin width and height (offsets 52 and 56, the MDL4 skin layout of the 2001 Programmer's Manual) apply. That is our reading of the manual, **unverified** on a real file. A note says so on every HMP4 file. **Skin types** (shared with the MDL reader, `engine/src/Render/GameStudioSkin.hpp`): 0 (8-bit palette, 1 byte a pixel), 2 (565), 3 (4444), 4 (888), 5 (8888), plus 8 when three mipmaps of a half, a quarter and an eighth of the size follow; any other type is refused (its size is unknown, so the grid cannot be found). A type 7 skin (a file name, seen in Assimp's hostile test file `invalid_external_texture_name.hmp`) is refused.
 
 ### What it is
 
@@ -1170,7 +1172,7 @@ Mesh: one vertex per grid point, two triangles per cell, counter clockwise seen 
 
 ### Not handled
 
-Other versions (**HMP4, HMP5 and others are refused** with a message naming the version: their layouts are not known to me); skin types other than 4 (refused, because the pixel size is not known and the grid cannot be found past the skin); the embedded skin picture itself (skipped and noted: a material here names a texture file, it cannot carry pixels); the stored normals; more than one frame (the first is read, a note says so); terrain holes and water (if the format has any).
+Versions other than HMP4, HMP5 and HMP7 (refused with a message naming the version); skin types other than the ones above (refused, because the pixel size is not known and the grid cannot be found past the skin); the embedded skin picture itself (skipped and noted: a material here names a texture file, it cannot carry pixels); the stored normals; more than one frame (the first is read, a note says so); terrain holes and water (if the format has any).
 
 ### Limits
 
@@ -1178,7 +1180,7 @@ File 128 MiB. At most **1,048,576 grid points** (a 1024 x 1024 grid, about 2.1 m
 
 ### Tests and what was checked
 
-- `hmp_reader` (528 checks): a synthetic 3 x 3 plane with hand-computed vertices (heights `z = 10 + c + 3r`), UVs, the plane's normal `(-1/3, -2/3, 2/3)` at every point, the triangle indices of the first and last cell, the area (`24 * sqrt(2.25)`), counter-clockwise winding, the root rotation; a 4 x 2 grid with free heights; a skin (skipped, noted); extra frames; more than 30 refusal cases (other versions, counts of `0xFFFFFFFF`, over the budget, not a multiple of the row length, a row length of NaN, infinity, 2.5 or 1, one row, bad skin counts and types, a skin of 2^62 pixels, a skin larger than the file, NaN and infinity in every float field, a zero or negative cell size); every truncation; every header byte set to 0x00, 0xFF and 0x80.
+- `hmp_reader` (551 checks since 2026-11-23): an HMP5 and an HMP4 2 x 2 grid (`tests/gs_fixtures.hpp`), the nine HMP5 skin types, HMP3 and HMP6 refused, an HMP4 file with skins but no header skin size refused; and, from before, a synthetic 3 x 3 plane with hand-computed vertices (heights `z = 10 + c + 3r`), UVs, the plane's normal `(-1/3, -2/3, 2/3)` at every point, the triangle indices of the first and last cell, the area (`24 * sqrt(2.25)`), counter-clockwise winding, the root rotation; a 4 x 2 grid with free heights; a skin (skipped, noted); extra frames; more than 30 refusal cases (other versions, counts of `0xFFFFFFFF`, over the budget, not a multiple of the row length, a row length of NaN, infinity, 2.5 or 1, one row, bad skin counts and types, a skin of 2^62 pixels, a skin larger than the file, NaN and infinity in every float field, a zero or negative cell size); every truncation; every header byte set to 0x00, 0xFF and 0x80.
 - `batche_hostile`: mutations of two fixtures, the worst allowed file and a grid one column over the budget, the two real files.
 - `own_dispatch_e`: `.hmp` reaches this reader; HMP, MDC and CSM files under each other's extension are refused by the reader of that extension.
 - **Mutation checks:** reading the z scale from the wrong field (21 failures), reversing the triangle winding (25), removing the row-length check (2).
@@ -1189,7 +1191,7 @@ File 128 MiB. At most **1,048,576 grid points** (a 1024 x 1024 grid, about 2.1 m
 
 ### Provenance (what this file was written from)
 
-`HmpReader.cpp` was written from the byte-by-byte analysis of the two sample files above and from the layout they share with the Quake / GameStudio MDL header (counts, origin and scale as the model's coordinate transform). I found no written specification of the HMP7 header; where a field is called something in the table it is my reading of the data. No importer source (Assimp or any other project) was read, copied, ported or followed, and Assimp was not run on these files either.
+`HmpReader.cpp` was written from the byte-by-byte analysis of the two sample files above and from the layout they share with the Quake / GameStudio MDL header (counts, origin and scale as the model's coordinate transform). Since 2026-11-23 it also follows Conitec's published HMP5 description (the Gamestudio manual page above) for HMP5 and, with the MDL4 skin layout of Conitec's 2001 Programmer's Manual (<http://conitec.net/gstech.pdf>), HMP4; the page was read as prose and tables, no SDK or code was used. No importer source (Assimp or any other project) was read, copied, ported or followed, and Assimp was not run on these files either.
 
 Unverified: files from other GameStudio versions and other skins, the orientation and normals questions above, files larger than the sample, a run on real Windows.
 
@@ -1719,7 +1721,7 @@ The only real file is `spider.mdc` from the `test/models/MDC` folder of an Assim
 
 Unverified: a compressed first frame (no real example), the compressed offset scale, tag rotation, other MDC versions, files from games other than Return to Castle Wolfenstein, a run on real Windows.
 
-## Our own MDL reader (`.mdl`: Quake 1 and Half-Life 1)
+## Our own MDL reader (`.mdl`: Quake 1, Half-Life 1, 3D GameStudio)
 
 *Written on branch `claude/readers-e4` (2026-11-15), brought onto main on 2026-11-22 (branch `claude2/own-readers-last`).*
 
@@ -1728,21 +1730,95 @@ fallback for a file ours refuses, so the 3D GameStudio MDL files it reads still 
 
 ### What it is
 
-`.mdl` is used by four unrelated binary formats. This reader does two:
+`.mdl` is used by several unrelated binary formats. This reader does:
 
 - **Quake 1** (magic `IDPO`, version 6): one vertex-animated mesh.
 - **Half-Life 1** (magic `IDST`, version 10): the "studio" model, with bones, body parts, textures and sequences.
+- **3D GameStudio MDL3, MDL4 and MDL5** (since 2026-11-23, branch `claude/third-party-3b`): from Conitec's published layout.
+- **3D GameStudio MDL7** (since 2026-11-23): **not publicly documented**; worked out byte by byte from three real files.
 
-**Not done: 3D GameStudio MDL3, MDL4, MDL5 and MDL7** (no description of their layouts in hand; a file with those magics is
-refused with a message that names the format, so Assimp reads it). Also refused with their own messages: Half-Life sequence
-group files (`IDSQ`, animation only) and Half-Life 2 / Source models (`IDST` version 44 to 49).
+Refused with their own messages: Half-Life sequence group files (`IDSQ`, animation only), Half-Life 2 / Source models (`IDST`
+version 44 to 49) and other `MDLn` magics.
+
+### 3D GameStudio MDL3 / MDL4 / MDL5 (2026-11-23)
+
+Sources (prose and C-style struct tables of the file layout, no code): Conitec's "3D Gamestudio Programmer's Manual" for A5 5.10,
+May 2001 (<http://conitec.net/gstech.pdf>, chapter "The MDL model format": the MDL3 / MDL4 header, skins, skin vertices,
+triangles, frames) and the "Gamestudio file formats" page of the Gamestudio manual (<http://www.conitec.net/beta/prog_mdlhmp.htm>,
+"The MDL5 model format": the MDL5 skins with their own size and mipmaps, the 565 / 4444 / 888 / 8888 skin types).
+
+Layout: an 84-byte header (magic, an unused word, scale and offset vectors, an unused word and vector, skin count, skin width and
+height (MDL3 / MDL4 only), vertex, triangle, frame and skin-vertex counts, flags, a last word); the skins (MDL3 / MDL4: a type
+and `width * height * bpp` bytes; MDL5: a type, a width, a height, the pixels and, for type + 8, three mipmaps); the skin vertices
+(two shorts, pixel positions); the triangles (three vertex and three skin-vertex shorts, read **unsigned**, so a model may have up to 65,535 vertices); the frames (a type word, a bounding box,
+a 16-byte name, the packed positions: 4 bytes for type 0, 8 bytes, unsigned shorts, for type 2; `position = raw * scale + offset`).
+
+Read: **the first frame** as one static part (named by the frame); texture coordinates `u = (s + 0.5) / width`,
+`v = (t + 0.5) / height` against the header's skin size (MDL3 / MDL4) or the first skin's size (MDL5); no skin: no texture
+coordinates (noted). Our own choices, checked on the real files: **the files wind clockwise** (all three real files have a
+negative signed volume in file order, like Quake), so the corner order is reversed; GameStudio is Z-up (the root turns it). The
+pixel-centre `+ 0.5` is our choice (the manual says only "pixel position"). Not read (noted): frames after the first, the skin
+pictures (embedded pixels; a material names a texture file), the stored normal indices (smooth normals are generated), MDL4 bones
+(the manual calls them "future expansion").
+
+Real files (Assimp's test tree, data folders only): `minigun.MDL` (MDL3) and `minigun_mdl5.mdl` (MDL5) give the same mesh
+(424 vertices after welding, 576 triangles, area 5408.109, box -36.751, -13.293, -5.748 to 35.896, 2.046, 7.401, 8 frames
+noted); `PhosphoricAcid_MDl5.mdl` (MDL5, no skin): 960 triangles, area 5019.320. Every one of the three adds up to the byte
+with the layout above (checked by our own script before the reader was written). No MDL4 file was available: MDL4 is read as
+MDL3 with word frames allowed, **unverified**.
+
+### 3D GameStudio MDL7 (2026-11-23)
+
+Conitec's page says "The MDL7 format is not publicly documented, but an easy-to-use SDK is freely available". **The SDK was not
+used** (it is code); an archive named in a 2005 forum post (`server.conitec.net/down/mdl7.zip`) could not be fetched (the
+download was blocked) and was not looked for further. The layout below is **our own reading of three real files**:
+`Sphere_DiffPinkBlueSpec_Alpha90.mdl` (3,720 bytes), `PhosphoricAcid_MDl7.mdl` (28,944 bytes) and `broadleavedtreeD.mdl`
+(24,924 bytes), dumped and parsed with our own scripts. Every file adds up to the byte.
+
+| Part | Layout (as read) | Evidence |
+|---|---|---|
+| Header, 48 bytes | `"MDL7"`, a word (0), a word that is 0 in all three (read as nothing; a file where it is not 0 is **refused**), the group count (1, 8, 2), the data size (= the file size in all three), two words that are 0 in all three (noted when not 0), then ten 16-bit record sizes: 36, 28, 16, 68, 8, 16, 26, 26, 68, 24 | six of the sizes match records found below and are checked: [1] skin 28, [3] material 68, [4] skin point 8, [5] triangle 16, [6] vertex 26, [9] frame 24. The other four ([0] 36, [2] 16, [7] 26, [8] 68) match nothing in the files and are **not used** |
+| After the vertices | frame records (the frame count of the group header; each starts with a 16-byte name, `bindpose` in the tree) | **not read**: in the files they are 24 bytes with two words of 0 after the name; the group's byte size says where the next group starts, so the reader never needs their layout. A note counts them |
+| Group header, 44 bytes | type (1), the group's byte size **including** this header, a 16-byte name, the counts of skins, skin points, triangles, vertices, frames | the byte sizes chain the groups exactly in all files (8 groups in PhosphoricAcid) |
+| Skin, 28 bytes | type, width, height, a 16-byte name | type `0x10` (w = h = 0) is followed by a **material**; type `7` is followed by `width` bytes of a NUL-terminated **texture file name** (`barkD_texture.bmp` is 18 bytes, width 18) |
+| Material, 68 bytes | four colours of four floats, then a power | the 1st colour is the diffuse colour: PhosphoricAcid's phosphorus (1, 0.549, 0.078: orange), hydrogen white, oxygen red, and the sphere named "DiffPink" has (0.925, 0, 1); the 3rd is the specular colour (the sphere "BlueSpec" has (0, 0, 1)); the 4th value of the 2nd colour is 0.9 in the file named "Alpha90" and 1 elsewhere: **read as the opacity** (a guess from one file); power 10 in all: the shininess; the 4th colour (0 in all) is read as emissive (a guess) |
+| Skin point, 8 bytes | `u`, `v` floats | the tree's values are in 0 to 1 |
+| Triangle, 16 bytes | three vertex shorts, then three skin-point shorts (-1 = none) and a 32-bit skin index | the skin index points into **one skin list for all groups** (PhosphoricAcid's groups 1 to 7 have no skins of their own and use 0, 1, 2: the atoms come out in the right colours) |
+| Vertex, 26 bytes | position (three floats) first; the other 14 bytes (a 16-bit value, -1 or 0, then three floats that are unit vectors) are not used | positions need no scale or offset; the three floats were checked as normals only to settle the winding (below) |
+| Frame record | see "After the vertices" | |
+
+Winding: the stored normals of all 1,758 triangles agree with the file's corner order turned the other way **and point into the
+closed spheres**, while the signed volume in file order is negative: the corner order is reversed, so the faces point out (smooth
+normals are generated, the stored ones are not read). Texture coordinates are used as stored (the engine's `v` runs down, like
+DirectX's, which GameStudio uses; **not checked against the pictures**). Z-up, as for the other GameStudio formats.
+
+The strongest check: `PhosphoricAcid_MDl5.mdl` and `PhosphoricAcid_MDl7.mdl` are the same model in the two formats, and the two
+readers give the same 960 triangles, the same box (-5, -22, -12.5 to 24.748, 7, 15.862) and the same area (5019.32). Results:
+sphere 120 triangles, the tree 678 triangles in 2 groups with the two texture files resolved inside the model's folder.
+
+Not read (noted): frame records, embedded skin pictures (types 2 to 5, `+ 8` mipmaps, and type 6 as a DDS picture of `width`
+bytes: these type codes are the published MDL5 and WMB texture codes of the Gamestudio manual, **not seen in any MDL7 file**, so
+applying them to MDL7 is a guess guarded by the group size), groups of a type other than 1, the stored normals. A non-zero word
+at offset 8 is refused.
+
+**Where the names came from (rule 19a, said plainly).** The first version of this reader (2026-11-23) called the header
+fields "bone count", "entity lump", "editor (MED) lump" and the unused record sizes "bone", "colour", "frame vertex" and
+"bone transform", and read a frame as "a frame-vertex count and a bone-transform count". **None of that is in the three
+files** (they have no bones, no lumps and empty frames): those names came from my memory of how the MDL7 header is usually
+described, which is most likely memory of the SDK header or of another importer, not from an allowed source. On review
+(2026-11-24) they were taken out: the reader now uses only what the files show, refuses a file whose offset-8 word is not 0,
+and skips frame records by the group size instead of parsing them. The material's "four colours and a power" shape and the
+guess that the 2nd and 4th colours are ambient and emissive come from the public Direct3D material layout (diffuse, ambient,
+specular, emissive, power), recalled, which GameStudio uses; diffuse, specular and the opacity value are backed by the files
+(colours and file names, above).
 
 | File | What |
 |---|---|
 | `engine/src/Render/MdlReader.cpp` | `okay::ReadMdlBuffer` / `okay::ReadMdlFile` (declared in `ModelData.hpp`) |
 | `engine/src/Render/BinReader.hpp`, `ReaderCommon.hpp`, `AffineInverse.hpp` | Shared pieces: the bounds-checked cursor, the mesh builder, the affine inverse |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 38 (extension `.mdl`) |
-| `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`) |
+| `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp`, `tests/gs_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`), the GameStudio files since 2026-11-23 |
+| `engine/src/Render/GameStudioSkin.hpp` | The size of a GameStudio skin picture, shared with the HMP reader |
 | `tests/test_e4_hostile.cpp` | Budgets, hostile input, mutation fuzz and real files, for OpenGEX and MDL (`e4_hostile`) |
 | `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.mdl` (both formats); `-DOKAY_OWN_MDL=ON` really makes it the default |
 | `tests/test_own_e4_samples.cpp`, `examples/own_readers/quake_pyramid.mdl`, `halflife_tri.mdl` | The sample files (the test fixtures written out: a Quake pyramid and a Half-Life triangle with two bones and a clip) import through the seam with the reader on (`own_e4_samples`) |
@@ -1779,7 +1855,8 @@ sequence, 2,000,000 output vertices and triangles, 4,000,000 animation keys, a f
 43 `.mdl` files under `models/MDL` and `models-nonbsd/MDL` of the Assimp 5.4.3 test folder (`docs/content/model_corpus.md`; rows
 `mdl` of `tests/data/model_corpus_manifest.tsv`): the 3 Quake 1 models and 14 Half-Life 1 models read; the 19 Half-Life
 sequence-group files (`IDSQ`) and `manT.mdl` (textures only, no bones) are refused by ours and by Assimp; the 6 GameStudio files
-(MDL3, MDL5, MDL7) are refused by ours with their message and read by Assimp, which stays the fallback for them. Against Assimp
+(MDL3, MDL5, MDL7) were refused by ours until 2026-11-23 and are read by ours since then (numbers above; **not compared with
+Assimp**, which was not run). Against Assimp
 (`bench_model_readers`, 2026-11-22, the 17 files both read): 0.26x the read time, 0.37x the largest peak, 0.29x the import time
 (`docs/content/own_readers_speed.md`, row `mdl`). What differs (`--compare`):
 - Quake 1: Assimp keeps zero-area triangles, ours drops them with a note (`gijoe` 404 / 408, `steg` 304 / 305, `tekmechbot`
@@ -1800,6 +1877,13 @@ Valve SDK descriptions and the format notes built on them); no document, header 
 of Assimp or any other importer was read, copied or ported. Recollection cannot be audited; it is checked against the real files
 above and against Assimp's output on them (`own_readers_speed.md`). Unverified: Half-Life models with several skin families,
 Quake models from other tools, a Windows run.
+
+The 3D GameStudio part (2026-11-23) was written from Conitec's two published descriptions named above (MDL3 / MDL4 / MDL5) and,
+for MDL7, from our own byte-by-byte analysis of the three real files (the table above). No GameStudio SDK, header or importer
+source of any project (Assimp's `code/` folder included) was read; the Assimp checkout used for the files was a sparse checkout
+of the `test/models*/MDL`, `HMP`, `SIB` and `NDO` data folders only (but see "Where the names came from" in the MDL7 part: some
+field names of the first version were memory, and were taken out). Unverified: MDL4 files, MDL7 files with bones (refused), frame
+records or embedded pictures, the MDL7 opacity and emissive guesses, the texture `v` direction, a Windows run.
 
 ## Our own MS3D reader (`.ms3d`)
 
@@ -1881,6 +1965,24 @@ Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, sl
 ### What is needed to finish it
 
 A format description we may follow (Izware's own, or a clean-room note by someone who did not copy code) or real files with a way to say what they contain (a Nendo install, to export the same model as OBJ and compare). Until then the format stays on Assimp. Honest status: **0% of the body.** Counting this row as done anywhere would be wrong.
+
+### 2026-11-23: tried again, stopped (owner decision "write our own readers")
+
+What was looked at, all allowed sources:
+
+- **Web search** for a Nendo / Izware format description: only file-extension sites ("the proprietary format of Nendo, by
+  Izware"), Paul Bourke's format list (names NDO, no layout) and a Blender import script (code: **not opened**). No description.
+- **Sample files**: Assimp's `test/models/NDO` data folder (sparse checkout of data only) holds two files,
+  `dangling_vertex_index.ndo` (287 bytes) and `malformed_edge_index.ndo` (173 bytes). Their names say what they are: **broken on
+  purpose** (crash-regression inputs). Both start `nendo 1.2`, then mostly zeros, a few small big-endian counts and two floats of
+  1.0. Two deliberately malformed files of a few hundred bytes cannot show the layout of a real model: which numbers are counts,
+  what an edge or a face record is, where texture data goes. Working a reader out of them would be guessing.
+
+So the body is **still not read** and the seam still refuses every file. **What is missing**: real `.ndo` files of known
+content. The cleanest way to get them: Wings 3D (a free modeller) can export Nendo files; exporting a few known shapes from it
+(a cube, a cube with one material and UVs, a cylinder) on the owner's PC, together with the same shapes as `.obj`, would give
+files we can analyse byte by byte against a known answer, the way MDL7 and SIB were done. A Nendo install with its sample
+models would do too. Without either, `.ndo` stays with Assimp.
 
 ### Provenance
 
@@ -2488,19 +2590,86 @@ File 256 MiB; 500,000 triangles, 100,000 groups, 4,000,000 output vertices per f
 
 Written from the public description "POV-Ray RAW triangle format" (Paul Bourke): nine numbers per triangle, the twelve-number colour variant, the texture-name variant, non-numeric identifiers separating groups. The `#` comment is my own choice (the description gives no comment syntax). No importer source and no code from any other project was read.
 
-## Our own SIB reader (`.sib`): NOT WRITTEN
+## Our own SIB reader (`.sib`, Nevercenter Silo)
 
-*Was `docs/own_sib_reader.md` until 2026-11-20.*
+*Was `docs/own_sib_reader.md` until 2026-11-20. Written on branch `claude/own-readers-6` (2026-11-16); brought onto main's line
+on 2026-11-23 (branch `claude/third-party-3b`) after the owner's decision "write our own readers", with instances added.*
 
-Status: **no reader**. Slot 32 of the table in `ModelImport.cpp` is reserved for it (an empty row; `.sib` is routed nowhere, and `test_own_dispatch_e2` checks that), `OKAY_OWN_SIB` does not exist.
+Status: **side by side, on by default** (rules 19d and 19e; `OKAY_OWN_SIB`, slot 32 of the table in `ModelImport.cpp`; Assimp, when built, stays
+the fallback). **Written from one sample file**: there is no public description of the Silo format (a web search found only
+that `.sib` is the binary twin of the ASCII `.sia`). Everything marked "guess" below may be wrong for files from other Silo
+versions or with other features.
 
-Why: SIB is the binary file of the Silo modeller (Nevercenter). The search for a public description of its structure found only that it exists (the binary twin of the ASCII `.sia`); no field list, no chunk list, no sample file (the only one, `heffalump.sib`, is in Assimp's test tree, not here). The rule for this work is to write from a format description or from our own analysis of sample files only, never from another importer's source. With neither a description nor a sample, a reader would be invented, so none was written. To go on: a published description, or the sample file to analyse (then `ModelData`, budgets and tests as for `docs/content/model_readers.md`).
+The sample: `heffalump.sib` by Richard Mitton (the readme next to it: "I waive all rights to this and release it into the
+public domain"), from the `test/models/SIB` data folder of Assimp's repository (a sparse checkout of data folders only, no
+`code/`). It is **not in this repository**; `sib_import` reads it when `OKAY_MODEL_CORPUS` names that `test` folder.
 
-**2026-11-22.** A sample file was later found in Assimp's test tree (`models/SIB/heffalump.sib`, released into the public domain by
-its author), and a reader worked out from that one file was written on branch `claude/own-readers-6` (unmerged). It was
-**not** brought onto main with the glTF 1.0, OpenGEX, MDL and Q3BSP readers: the rule for this work is to write a reader from a
-public specification, and SIB has none, so a reader from one sample would be a guess at every file but that one. `.sib` stays with
-Assimp.
+| File | What |
+|---|---|
+| `engine/src/Render/SibReader.cpp` | `okay::ReadSibFile` / `okay::ReadSibBuffer` (declared in `ModelData.hpp`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 32 (extension `.sib`), `OKAY_OWN_SIB` (CMake option ON, env `OKAY_OWN_SIB=1/0`; a file ours refuses goes to Assimp when it is built) |
+| `tests/test_sib_reader.cpp`, `tests/sib_fixtures.hpp` | Hand-computed checks on synthetic files, instances, every truncation, 30,000 mutations, every aligned word at five extreme values, budgets (`sib_reader`, reader source only) |
+| `tests/test_sib_import.cpp` | The seam routes `.sib`, the switches, flatten; with `OKAY_MODEL_CORPUS` the real file (`sib_import`) |
+
+### The structure we found (all from `heffalump.sib`)
+
+A file is a list of **chunks**: four ASCII letters, a 32-bit little-endian byte size, that many bytes. It starts with `HEAD`
+(size 4, the value 1: read as the version; any other value is refused). Top-level chunks in the sample: `MATR` x4, `SHAP` x5,
+`INST` x4, `LGHT` x3, `TEXP` x5, `GRPS` x1.
+
+| Chunk | Layout (as read) | Basis |
+|---|---|---|
+| `MATR` | 16 floats (four colours of four), a 32-bit flags word, the name, the texture file name; a string is a 32-bit byte count, then UTF-16LE | sizes add up exactly in all four materials. **Guess:** the first colour is the diffuse colour (the only one used) |
+| `SHAP` | sub-chunks, below | consistent in all five shapes |
+| `SHAP/SNAM` | the name, UTF-16LE, no length word | |
+| `SHAP/AXIS` | 12 floats: an origin, then the x, y and z axis vectors of the shape's frame | the cube "Original" becomes an exact cube of +-0.2959 in this frame (axis vectors as rows) |
+| `SHAP/VRTS` | `n` vertices of three floats, **world** positions | the cube's vertices centre on its `AXIS` origin, so the frame is not applied again |
+| `SHAP/FACS` | per face: a count `k`, then `k` vertex numbers (3 to 5 corners in the sample) | the counts add up in all shapes; the closed shapes have a **positive signed volume** (16.157, 0.207, 1.04): counter clockwise from outside, kept as it is |
+| `SHAP/FTVS` | per face: an index word, a corner count equal to the face's, then the `(u, v)` pairs | consistent. **Guess:** `v` points up, so it is flipped (`v' = 1 - v`) |
+| `SHAP/FAMA` | pairs `(first face, material)`; a material applies from that face to the next pair; -1 = none | the cube has `(0,1) (2,2) (3,1) (4,2) (5,1)` |
+| `SHAP/IMRP` | two ints; the second is 1 on the shape named "Mirrored" | **guess:** a mirror plane is on. The mirrored half is **not generated** (noted) |
+| `INST` | an instance: `SNAM`, `INSI` (a shape number among the `SHAP` chunks), `DINF`, `PINF`, `AXIS` (the instance's frame), `SMTX` (16 floats, a 4 x 4 scale matrix) | **since 2026-11-23 the instances are placed**: a vertex is taken into its shape's frame, scaled by the 3 x 3 part of `SMTX` and put into the instance's frame. Evidence: the four copies of the cube then stand on the ground (lowest y -0.012, 0.018, 0.028) and "Inst1" rests on "Inst2" (its lowest y 0.756, Inst2's top 0.763), which is how the scene looks as stacked boxes. `SMTX` holds only scales in the sample; a move in it is not applied (noted). **Guess** for any file but the sample |
+| `DINF PINF MIRP VMIR EDGS ECRS TXSM FAHS FMIR`, `LGHT`, `GRPS`, `TEXP` | seen, not used | edges and mirror data are not needed for triangles; `TEXP` repeats each shape with a `TEXF` chunk (not understood) |
+
+The model is one root node `SIB`, one child node per shape and one per instance, one part per (shape or instance, material).
+Faces of more than 3 corners are triangulated (ear clipping up to 32 corners within a per-file work budget, a fan beyond that,
+noted). There are no stored normals: smooth normals are generated (an instance's are turned with its frame, and a mirroring
+scale turns the winding back). Y-up (the sample stands on y = 0), no axis turn. A texture file name must lie inside the model's
+folder (no absolute path, no `..`, no link out).
+
+### Budgets
+
+Work is linear in the file: the material runs of a shape are walked once with one pointer (faces come in order) and a table
+gives each material's part (since 2026-11-24, after a review timed 100,000 faces with 100,000 runs at 11.5 s;
+`sib_reader` now reads 200,000 faces, 200,000 runs and 50,000 materials in about 0.3 s and fails above 5 s). Names use the shared
+UTF-16LE converter of `TextReaderUtil.hpp` and every read goes through the shared `BinReader` cursor.
+
+File 256 MiB; 2,000,000 chunks; 100,000 shapes and materials; 4,000,000 vertices per shape and per file and 4,000,000
+triangles per file, **instances included**; 16,000,000 face corners. Every count is checked against the bytes that are there
+before anything is allocated.
+
+### What was checked (2026-11-23)
+
+- `sib_reader`: 33,298 checks, 0 failures: a cube split over two materials, a concave L (area 3, no triangle leaves the L), `v`
+  flipped, winding kept, texture rules, bad indices, short faces, a mirror note, an instance with a quarter turn and a scale of 2
+  (box x 9.5 to 10.5, y -0.5 to 0.5, z -1 to 1, faces and stored normals pointing out) and with a mirroring scale of -2 (still
+  pointing out), bad instances (shape number past the end, NaN frame, flat scale) skipped and noted, a scale with a move noted,
+  2,000 instances of a 2,500-triangle grid refused by the budget, every truncation, 30,000 mutations, every aligned word at five
+  extreme values, a 40,000-corner face (fanned), 5 million triangles (refused).
+- The real file (`sib_import` with `OKAY_MODEL_CORPUS`, and our own driver): 10 nodes (root, 5 shapes, 4 instances), 4 materials
+  (`HeffalumpSkin`, `UpMtl`, `Mapping`, `Ground`; the two textures resolve to the pictures next to the file), 14 parts, **724
+  triangles** (676 of the shapes, worked out from the bytes by a separate script, plus 4 x 12), box x and z -4.91 to 4.91, y
+  -0.023 to 3.165. **Not compared with Assimp** (not run).
+
+### Provenance (rule 19a)
+
+Written from our own inspection of `heffalump.sib` only (hex dumps and our own parsing scripts), not from any description or
+importer. No importer source of any project was read; the Assimp checkout used to get the file had only data folders.
+
+### Not done
+
+Mirror generation, lights, groups, `TEXP`, the other colours of a material, subdivision data, the move part of `SMTX`, files
+from other Silo versions, any file but the one sample, a comparison with Assimp, a run on real Windows.
 
 ## Our own SMD reader (`.smd`)
 

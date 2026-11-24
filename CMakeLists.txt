@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.903.6
+    VERSION 2.903.7
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for C dependencies built from source (Assimp's bundled zlib and similar)
 
@@ -79,7 +79,8 @@ option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader
 option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_SIB      "Read .sib (Nevercenter Silo; worked out from one sample file) with our own SIB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_SIB=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP4, HMP5 and HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" ON)
@@ -90,7 +91,7 @@ option(OKAY_OWN_ZAE      "Read .zae (COLLADA in a ZIP archive) with our own ZAE 
 option(OKAY_OWN_XML      "Read .xml (an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element) with our own readers by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XML=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_LXO      "Read .lxo (Modo objects) with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LXO=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_OPENGEX  "Read .ogex (Open Game Engine Exchange) with our own OpenGEX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OPENGEX=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_MDL      "Read .mdl (Quake 1 and Half-Life 1 models) with our own MDL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDL=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MDL      "Read .mdl (Quake 1, Half-Life 1 and 3D GameStudio MDL3 / MDL4 / MDL5 / MDL7 models) with our own MDL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDL=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_Q3BSP    "Read .bsp / .pk3 (Quake III Arena maps) with our own Q3BSP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3BSP=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused: .gltf / .glb never go to Assimp; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" ON)
 option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)

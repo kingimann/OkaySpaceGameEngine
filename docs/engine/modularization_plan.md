@@ -36,7 +36,7 @@ and `docs/SYSTEMS.md` (the named systems), the code index (`docs/engine/code_ind
 
 ### 1.1 How it was measured
 
-- **Files:** every tracked `.cpp`, `.hpp`, `.h` and `.c` file, without `engine/third_party/`, `editor/vendor/`,
+- **Files:** every tracked `.cpp`, `.hpp`, `.h` and `.c` file, without `engine/third_party/`, `editor/vendor/` (since deleted),
   `okayui/probe/imgui*`, generated `.inc` files, `dist/` and data files. 930,048 lines in all.
 - **Functions:** a brace counter (comments, strings and raw strings skipped; the one described in Part B.1) finds
   every outermost function body and its size. Lambdas inside a function count as part of it.

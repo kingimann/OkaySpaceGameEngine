@@ -3774,11 +3774,20 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     set_tests_properties(platform_default_env_own_short PROPERTIES
         ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
     # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
-    if(TARGET okay-platform-selftest)
+    # Not in a Windows build: there it runs as its own step of .github/workflows/windows-tests.yml (`--ci`), on
+    # the runner's real desktop, with its report in the job summary.
+    if(TARGET okay-platform-selftest AND NOT WIN32)
         add_test(NAME platform_selftest_auto
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
         set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+        # The --ci mode the Windows workflow uses, here with no sound device at all: audio is NOT TESTED, not FAIL,
+        # and the event pump check (pushed event, resize through the X server) must pass.
+        add_test(NAME platform_selftest_ci
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --ci)
+        set_tests_properties(platform_selftest_ci PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=okay-no-such-device"
+                             PASS_REGULAR_EXPRESSION "\\[PASS\\] event pump.*RESULT: nothing failed")
     endif()
 endif()
 
@@ -4659,7 +4668,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers.md): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB has its own tests below, sib_reader and sib_import): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -5099,6 +5108,16 @@ function(okay_e4_reader_test name src)
 endfunction()
 okay_e4_reader_test(ogex_reader OgexReader.cpp)
 okay_e4_reader_test(mdl_reader MdlReader.cpp)
+# Our own SIB (Silo) reader (docs/content/model_readers.md, section SIB): synthetic files with hand-computed values, instances, every
+# truncation, a mutation sweep and budgets (sib_reader), and the import seam plus, with OKAY_MODEL_CORPUS set, the one real file (sib_import).
+okay_e4_reader_test(sib_reader SibReader.cpp)   # reader source only, so it can also be built by hand under the sanitizers
+set_tests_properties(sib_reader PROPERTIES TIMEOUT 600)
+add_executable(test_sib_import test_sib_import.cpp)
+target_link_libraries(test_sib_import PRIVATE okay::engine)
+if(OKAY_OWN_SIB)
+    target_compile_definitions(test_sib_import PRIVATE OKAY_EXPECT_OWN_SIB)
+endif()
+add_test(NAME sib_import COMMAND test_sib_import WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_e4_hostile test_e4_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)

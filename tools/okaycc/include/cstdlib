@@ -1,0 +1,25 @@
+// <cstdlib> for okay-cc (ISO/IEC 14882 [cstdlib.syn], ISO C 7.22). Our own header: the memory and
+// number functions of lib/alloc.c, lib/exit.c and lib/str.c, and abs for the integer types.
+#pragma once
+extern "C" {
+void *malloc(unsigned long n);
+void *calloc(unsigned long n, unsigned long size);
+void *realloc(void *p, unsigned long n);
+void free(void *p);
+void exit(int code);
+int atoi(const char *s);
+}
+namespace std {
+extern "C" {
+void *malloc(unsigned long n);
+void *calloc(unsigned long n, unsigned long size);
+void *realloc(void *p, unsigned long n);
+void free(void *p);
+void exit(int code);
+int atoi(const char *s);
+}
+typedef unsigned long size_t;
+inline int abs(int x) { return x < 0 ? -x : x; }
+inline long abs(long x) { return x < 0 ? -x : x; }
+inline long labs(long x) { return x < 0 ? -x : x; }
+}  // namespace std

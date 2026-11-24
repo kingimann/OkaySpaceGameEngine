@@ -190,6 +190,15 @@ public:
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
+    /// Empty space between the gutter and the first column of text, in pixels (4 by default, 0 to 200). A click in it is column 0.
+    void SetTextMargin(float px) { textMargin_ = px > 0.0f ? (px < 200.0f ? px : 200.0f) : 0.0f; }
+    float TextMargin() const { return textMargin_; }
+    /// What a word in the text says when the pointer rests on it (a built-in's signature and doc): called with the word under
+    /// the pointer, returns the tooltip text ("" for none). Empty function: no word tooltips.
+    void SetHoverInfo(std::function<std::string(const std::string& word)> f) { hoverInfo_ = std::move(f); }
+    /// The tooltip for a screen point after the last Draw: the message of an error on that line (anywhere across the row), else
+    /// the hover info of the word (letters, digits, '_') whose cell is under the point. "" for none.
+    std::string HoverText(float x, float y) const;
     /// Key bindings for the line commands while the editor has the keyboard (on by default; the script editor's keys):
     /// Ctrl+/ ToggleLineComment, Ctrl+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
     void SetLineCommandKeys(bool on) { lineKeys_ = on; }
@@ -330,7 +339,8 @@ private:
     bool drawImpl(const char* id, float w, float h);
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
-    float padX_ = 0.0f, padY_ = 0.0f, sbSize_ = 10.0f, sbRound_ = 3.0f;
+    float padX_ = 0.0f, padY_ = 0.0f, sbSize_ = 10.0f, sbRound_ = 3.0f, textMargin_ = 4.0f;
+    std::function<std::string(const std::string&)> hoverInfo_;
     bool alwaysH_ = false;
     CodePalette pal_;
 

@@ -309,6 +309,71 @@ int main() {
         TapCharsForKey(Key::D, [](char c) { return KeyForLetter(Key::Unknown, c); }, chars);
         CHECK(chars.size() == 1 && chars[0] == 'd');
     }
+    Block("input_deep_one_held_key_mapping");
+    {
+        // The editor's Play, the player and the editor's tests each had their own copy of "held keys -> the characters
+        // FeedKeys takes"; the editor's copy ignored "keys by position" and the copy its tests used read SDL scancodes.
+        // Now there is one (AppendHeldMainKeys). Held keys are faked here; `charKey` stands in for the layout.
+        using platform::Key;
+        auto has = [](const std::vector<char>& v, char c) { for (char x : v) if (x == c) return true; return false; };
+        bool held[platform::kKeyCount] = {};
+        auto isHeld = [&](Key k) { return (int)k >= 0 && (int)k < platform::kKeyCount && held[(int)k]; };
+        auto us = [](char c) { return KeyForLetter(Key::Unknown, c); };                       // US layout (or none)
+        auto azerty = [](char c) {
+            return KeyForLetter(c == 'w' ? Key::Z : c == 'a' ? Key::Q : c == 'z' ? Key::W : c == 'q' ? Key::A : Key::Unknown, c);
+        };
+        std::vector<char> d;
+        AppendHeldMainKeys(isHeld, us, false, d);
+        CHECK(d.empty());
+        held[(int)Key::D] = true;
+        AppendHeldMainKeys(isHeld, us, false, d);
+        CHECK(d.size() == 1 && d[0] == 'd');
+        held[(int)Key::D] = false; d.clear();
+        held[(int)Key::Up] = held[(int)Key::Space] = held[(int)Key::N5] = held[(int)Key::KpEnter] = true;
+        held[(int)Key::RGui] = held[(int)Key::LCtrl] = true;
+        AppendHeldMainKeys(isHeld, us, true, d);
+        CHECK(has(d, 'w') && has(d, Input::KeyUp) && has(d, ' ') && has(d, '5') && has(d, '\r') && has(d, Input::KeyCmd) &&
+              has(d, Input::KeyCtrl) && has(d, (char)27) && !has(d, Input::KeyShift) && !has(d, 'd'));
+        for (bool& h : held) h = false;
+        // AZERTY: holding the key labelled W (the HID place of Z) gives 'w'; with "keys by position" it gives 'z'.
+        held[(int)Key::Z] = true; d.clear();
+        AppendHeldMainKeys(isHeld, azerty, false, d);
+        CHECK(d.size() == 1 && d[0] == 'w');
+        Input::SetKeysByPosition(true); d.clear();
+        AppendHeldMainKeys(isHeld, azerty, false, d);
+        CHECK(d.size() == 1 && d[0] == 'z');
+        Input::SetKeysByPosition(false);
+        // The Escape character comes only from the caller's flag (the editor feeds Escape by its own rule).
+        for (bool& h : held) h = false;
+        held[(int)Key::Escape] = true; d.clear();
+        AppendHeldMainKeys(isHeld, us, false, d);
+        CHECK(d.empty());
+        // Taps and holds agree (the editor's Play used to tap by CharForKey, which ignores "keys by position"): for
+        // every letter and digit key, on AZERTY, with "keys by position" off and on, a tap of the key gives exactly the
+        // letters that holding it gives.
+        for (int byPos = 0; byPos < 2; ++byPos) {
+            Input::SetKeysByPosition(byPos == 1);
+            int mismatches = 0;
+            for (int k = (int)Key::A; k <= (int)Key::N0; ++k) {
+                for (bool& h : held) h = false;
+                held[k] = true;
+                std::vector<char> hold, tap;
+                AppendHeldMainKeys(isHeld, azerty, false, hold);
+                TapCharsForKey((Key)k, azerty, tap);
+                if (hold != tap) ++mismatches;
+            }
+            CHECK(mismatches == 0);
+        }
+        // AZERTY with "keys by position" on: a tap at the US W place (the key labelled Z) is 'w'; off, it is 'z'.
+        std::vector<char> tap;
+        Input::SetKeysByPosition(true);
+        TapCharsForKey(Key::W, azerty, tap);
+        CHECK(tap.size() == 1 && tap[0] == 'w');
+        Input::SetKeysByPosition(false); tap.clear();
+        TapCharsForKey(Key::W, azerty, tap);
+        CHECK(tap.size() == 1 && tap[0] == 'z');
+        for (bool& h : held) h = false;
+    }
     Block("input_deep_quick_touch_tap_still_began");
     {
         Reset();

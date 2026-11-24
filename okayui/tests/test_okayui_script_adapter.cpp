@@ -265,9 +265,9 @@ int main() {
     }
     {   // the Dear ImGui editor's palette
         ScriptEditorCodeEdit s;
-        unsigned pal[kImGuiPaletteSize];
-        for (int i = 0; i < kImGuiPaletteSize; ++i) pal[i] = 0xff000000u | (unsigned)(i + 1);
-        s.SetPaletteFromImGui(pal, kImGuiPaletteSize);
+        unsigned pal[kScriptPaletteSize];
+        for (int i = 0; i < kScriptPaletteSize; ++i) pal[i] = 0xff000000u | (unsigned)(i + 1);
+        s.SetPaletteColors(pal, kScriptPaletteSize);
         const UI::CodePalette& p = s.Edit().Palette();
         CHECK(p.text[UI::CodeColor_Default] == pal[0] && p.text[UI::CodeColor_Keyword] == pal[1] && p.text[UI::CodeColor_Number] == pal[2]);
         CHECK(p.text[UI::CodeColor_String] == pal[3] && p.text[UI::CodeColor_Char] == pal[4] && p.text[UI::CodeColor_Punct] == pal[5]);
@@ -277,9 +277,9 @@ int main() {
         CHECK(p.breakpointLine == pal[16] && p.lineNumber == pal[17] && p.currentLine == pal[18] && p.currentLineInactive == pal[19]);
         CHECK(p.currentLineEdge == pal[20]);
         const UI::CodePalette before = s.Edit().Palette();
-        s.SetPaletteFromImGui(pal, 5);                                   // too short: ignored
+        s.SetPaletteColors(pal, 5);                                   // too short: ignored
         CHECK(s.Edit().Palette().background == before.background);
-        s.SetPaletteFromImGui(nullptr, kImGuiPaletteSize);
+        s.SetPaletteColors(nullptr, kScriptPaletteSize);
         CHECK(s.Edit().Palette().background == before.background);
     }
     {   // markers: "warning: " messages are amber, the tooltip names the line like the ImGui editor's
@@ -293,6 +293,48 @@ int main() {
             CHECK(m[1].line == 2 && m[1].lineColor == UI::RGBA(200, 150, 40, 55) && m[1].color == UI::RGBA(230, 190, 70));
             CHECK(m[1].message == "Warning at line 3: unused variable");
         }
+    }
+    {   // a long message stays whole in the tooltip
+        ScriptEditorCodeEdit s;
+        s.SetText("a\n");
+        const std::string longMsg(100, 'x');
+        s.SetErrorMarkers({{1, longMsg}});
+        CHECK(s.Edit().Markers().size() == 1 && s.Edit().Markers()[0].message == "Error at line 1: " + longMsg);
+    }
+    {   // the hover tooltip on a documented word: the language's docs (a built-in's signature and doc), nothing for other words
+        Rig r;
+        LanguageWords w;
+        w.keywords = {"if"};
+        w.known = {"print"};
+        w.docs = {{"print", "print(value)\nWrites a line to the console"}, {"Vector3", "Vector3 (built-in type)"}};
+        r.se.SetLanguage(w);
+        r.se.SetText("if print(Vector3) other");
+        r.Frame(); r.Frame();
+        auto tipAt = [&](int col) {
+            const UI::Vec2 p = r.se.Edit().PosToScreen(UI::CodePos{0, col});
+            return r.se.Edit().HoverText(p.x + 1.0f, p.y + r.se.RowHeight() * 0.5f);
+        };
+        CHECK(tipAt(3) == "print(value)\nWrites a line to the console");
+        CHECK(tipAt(9) == "Vector3 (built-in type)");
+        CHECK(tipAt(0).empty() && tipAt(18).empty());   // a keyword and a word with no doc
+        r.se.SetColorizerEnable(false);                 // the tooltips stay with colouring off, as in the vendored editor
+        CHECK(tipAt(3) == "print(value)\nWrites a line to the console");
+    }
+    {   // the left margin between the line numbers and the text (the script editor's Density setting); at least 4 px
+        ScriptEditorCodeEdit s;
+        s.SetLeftMargin(26);
+        CHECK(s.Edit().TextMargin() == 26.0f);
+        s.SetLeftMargin(0);
+        CHECK(s.Edit().TextMargin() == 4.0f);
+    }
+    {   // the palette type and its index names (our own; the vendored TextEditor::Palette is gone)
+        ScriptPalette p{};
+        p[(int)PaletteIndex::Background] = 0xff102030u;
+        p[(int)PaletteIndex::Keyword] = 0xff0000ffu;
+        CHECK((int)PaletteIndex::Member == kScriptPaletteSize - 1 && p.size() == (size_t)kScriptPaletteSize);
+        ScriptEditorCodeEdit s;
+        s.SetPalette(p);
+        CHECK(s.Edit().Palette().background == 0xff102030u && s.Edit().Palette().text[UI::CodeColor_Keyword] == 0xff0000ffu);
     }
     TEST_MAIN_RESULT();
 }

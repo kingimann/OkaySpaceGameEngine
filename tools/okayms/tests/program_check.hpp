@@ -43,11 +43,12 @@ inline bool has_symbol(const okayms::ObjectFile& object, const std::string& name
 
 inline const char* check_macro() { return "#define CK(n, c) if (!(c)) return n;\n"; }
 
-// What one test file passes to run_both: its tag ("r23": the folder /tmp/okayms-r23 and the "r23 program" line) and
-// the kernel32 functions its programs may import.
+// What one test file passes to run_both: its tag ("r23": the folder /tmp/okayms-r23 and the "r23 program" line), the
+// kernel32 functions its programs may import, and whether g++ needs run-time type information.
 struct ProgramRun {
     std::string tag;
     std::vector<std::string> kernel32;
+    bool rtti = false;  // g++ builds the reference with run-time type information (a program that uses typeid)
 };
 
 // Builds `source` at each optimization level and runs it; MinGW g++ runs the same text. Both must exit with `want`.
@@ -100,7 +101,8 @@ inline void run_both(const ProgramRun& run, Tally& tally, const std::string& nam
         out << check_macro() << "#include <cstdint>\n#include <cstddef>\n" << source << "\nint main() { return entry(); }\n";
     }
     const std::string gpp_exe = dir + "/" + name + "-gpp.exe";
-    const int built = run_shell("x86_64-w64-mingw32-g++ -static -fno-exceptions -fno-rtti -w -o " + gpp_exe + " " + src +
+    const int built = run_shell(std::string("x86_64-w64-mingw32-g++ -static -fno-exceptions ") + (run.rtti ? "" : "-fno-rtti ") +
+                                "-w -o " + gpp_exe + " " + src +
                                 " 2>" + dir + "/" + name + ".log");
     CHECK(tally, built == 0);
     if (built != 0) return;

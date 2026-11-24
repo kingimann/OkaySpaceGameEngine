@@ -89,7 +89,7 @@ inline std::string Mdl5(const Mdl5Spec& sp = Mdl5Spec{}, Mdl5Offsets* off = null
 struct Mdl7Spec {
     std::string texture = "tex/wood.png";
     int animatedFrameVerts = 0;   // > 0: group 0's frame carries this many frame vertices (not read; the reader notes them)
-    int bones = 0;                // bone records (36 bytes each) between the header and the first group
+    int bones = 0;                // > 0: this count at offset 8 and that many 36-byte records before the first group (our guess at bones; the reader refuses it)
 };
 inline std::string Mdl7(const Mdl7Spec& sp = Mdl7Spec{}) {
     std::string o;

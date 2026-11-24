@@ -9,6 +9,7 @@
 // placed by its own axes (AXIS) and scaled by its SMTX). Not read: lights, groups, texture previews (TEXP), the mirrored half
 // of a shape with a mirror plane, edges. Bounds-checked, every count is tested against the bytes that are there, per-file
 // budgets, no recursion.
+#include "BinReader.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"
@@ -39,23 +40,24 @@ bool Fail(std::string* err, const std::string& m) { if (err) *err = "SIB: " + m;
 
 struct Chunk { char tag[4]; std::size_t off, len; };
 
-std::uint32_t U32(const std::string& b, std::size_t o) {
-    return (std::uint32_t)(unsigned char)b[o] | ((std::uint32_t)(unsigned char)b[o + 1] << 8) | ((std::uint32_t)(unsigned char)b[o + 2] << 16) | ((std::uint32_t)(unsigned char)b[o + 3] << 24);
-}
-float F32(const std::string& b, std::size_t o) { const std::uint32_t u = U32(b, o); float f; std::memcpy(&f, &u, 4); return f; }
+using detail::bin::Br;
+// A bounds-checked cursor over the whole file, at `o` (a read past the end gives 0 and latches `bad`).
+Br At(const std::string& b, std::size_t o) { Br r(b); r.pos = o <= r.n ? o : r.n; return r; }
 
 // The chunks of [off, end): tag, size, data. False when one runs past `end` or there are too many.
 bool Split(const std::string& b, std::size_t off, std::size_t end, std::vector<Chunk>& out, std::string& why) {
     out.clear();
-    while (off < end) {
-        if (end - off < 8) { why = "a chunk header is cut off"; return false; }
+    Br r((const unsigned char*)b.data(), end);
+    r.pos = off;
+    while (r.pos < end) {
+        if (r.Left() < 8) { why = "a chunk header is cut off"; return false; }
         Chunk c;
-        std::memcpy(c.tag, b.data() + off, 4);
-        const std::uint32_t n = U32(b, off + 4);
-        off += 8;
-        if (n > end - off) { why = std::string("chunk ") + std::string(c.tag, 4) + " is longer than the file"; return false; }
-        c.off = off; c.len = n;
-        off += n;
+        std::memcpy(c.tag, r.d + r.pos, 4);
+        r.Skip(4);
+        const std::uint32_t n = r.U32();
+        if (n > r.Left()) { why = std::string("chunk ") + std::string(c.tag, 4) + " is longer than the file"; return false; }
+        c.off = r.pos; c.len = n;
+        r.Skip(n);
         if (out.size() >= kMaxChunks) { why = "too many chunks"; return false; }
         out.push_back(c);
     }
@@ -63,28 +65,13 @@ bool Split(const std::string& b, std::size_t off, std::size_t end, std::vector<C
 }
 bool Is(const Chunk& c, const char* t) { return std::memcmp(c.tag, t, 4) == 0; }
 
-// UTF-16 little endian text of `len` bytes to UTF-8 (surrogate pairs combined; a lone surrogate or an odd length gives "?").
-std::string Utf8(const std::string& b, std::size_t off, std::size_t len) {
-    std::string s;
-    std::vector<std::uint32_t> u;
-    for (std::size_t i = 0; i + 1 < len; i += 2) u.push_back((std::uint32_t)(unsigned char)b[off + i] | ((std::uint32_t)(unsigned char)b[off + i + 1] << 8));
-    for (std::size_t i = 0; i < u.size(); ++i) {
-        std::uint32_t c = u[i];
-        if (c >= 0xD800 && c < 0xDC00 && i + 1 < u.size() && u[i + 1] >= 0xDC00 && u[i + 1] < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (u[i + 1] - 0xDC00); ++i; }
-        else if (c >= 0xD800 && c < 0xE000) c = '?';
-        if (c == 0) break;
-        if (c < 0x80) s += (char)c;
-        else if (c < 0x800) { s += (char)(0xC0 | (c >> 6)); s += (char)(0x80 | (c & 63)); }
-        else if (c < 0x10000) { s += (char)(0xE0 | (c >> 12)); s += (char)(0x80 | ((c >> 6) & 63)); s += (char)(0x80 | (c & 63)); }
-        else { s += (char)(0xF0 | (c >> 18)); s += (char)(0x80 | ((c >> 12) & 63)); s += (char)(0x80 | ((c >> 6) & 63)); s += (char)(0x80 | (c & 63)); }
-    }
-    return s;
-}
+// UTF-16 little endian text of `len` bytes at `off`, as UTF-8 (the shared converter of TextReaderUtil.hpp).
+std::string Utf8(const std::string& b, std::size_t off, std::size_t len) { return detail::txt::Utf16LeToUtf8((const unsigned char*)b.data() + off, len); }
 
 // A string in a MATR chunk: a 32 bit byte count, then that many bytes of UTF-16.
 bool Str(const std::string& b, std::size_t& p, std::size_t end, std::string& out) {
     if (end - p < 4) return false;
-    const std::uint32_t n = U32(b, p);
+    const std::uint32_t n = At(b, p).U32();
     p += 4;
     if (n > end - p || (n & 1)) return false;
     out = Utf8(b, p, n);
@@ -98,8 +85,8 @@ bool Str(const std::string& b, std::size_t& p, std::size_t end, std::string& out
 static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err) {
     using namespace sib;
     out = ImportedModel{};
-    if (bytes.size() < 12 || std::memcmp(bytes.data(), "HEAD", 4) != 0 || U32(bytes, 4) != 4) return Fail(err, "not a Silo file (the HEAD chunk is missing)");
-    const std::uint32_t version = U32(bytes, 8);
+    if (bytes.size() < 12 || std::memcmp(bytes.data(), "HEAD", 4) != 0 || At(bytes, 4).U32() != 4) return Fail(err, "not a Silo file (the HEAD chunk is missing)");
+    const std::uint32_t version = At(bytes, 8).U32();
     if (version != 1) return Fail(err, "unsupported file version " + std::to_string(version) + " (the one sample we have is version 1)");
     std::vector<Chunk> top;
     std::string why;
@@ -117,7 +104,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         if (good) {
             // 16 floats (four colours of four), one 32 bit flags word, the name, the texture file name (empty = none)
             float col[4];
-            for (int i = 0; i < 4; ++i) col[i] = F32(bytes, p + (std::size_t)i * 4);
+            for (int i = 0; i < 4; ++i) col[i] = At(bytes, p + (std::size_t)i * 4).F32();
             for (float& f : col) if (!std::isfinite(f) || f < -1e6f || f > 1e6f) f = 0.0f;
             m.hasDiffuse = true;
             m.diffuse = Color{col[0], col[1], col[2], 1.0f};
@@ -138,6 +125,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
     ImportedNode root;
     root.name = "SIB";
     out.nodes.push_back(root);
+    std::vector<std::int32_t> soupOf(out.materials.size() + 1, -1);   // material + 1 -> its soup in the current shape (reset after each shape)
     std::vector<std::vector<std::size_t>> shapeParts;   // shape number -> its parts in out.parts
     std::vector<std::array<float, 12>> shapeAxes;       // shape number -> its AXIS (origin, then the three axis vectors); all zero = none
     std::size_t nShapes = 0, badShapes = 0, badFaces = 0, shortFaces = 0, badUv = 0, mirrored = 0, noUv = 0, badRuns = 0;
@@ -152,7 +140,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         if (!Split(bytes, sc.off, sc.off + sc.len, sub, why)) { ++badShapes; continue; }
         const Chunk *vrts = nullptr, *facs = nullptr, *ftvs = nullptr, *fama = nullptr, *snam = nullptr, *imrp = nullptr;
         for (const Chunk& c : sub)
-            if (Is(c, "AXIS") && c.len == 48) for (int k = 0; k < 12; ++k) { const float f = F32(bytes, c.off + (std::size_t)k * 4); shapeAxes.back()[(std::size_t)k] = std::isfinite(f) && std::fabs(f) < 1e8f ? f : 0.0f; }
+            if (Is(c, "AXIS") && c.len == 48) for (int k = 0; k < 12; ++k) { const float f = At(bytes, c.off + (std::size_t)k * 4).F32(); shapeAxes.back()[(std::size_t)k] = std::isfinite(f) && std::fabs(f) < 1e8f ? f : 0.0f; }
         for (const Chunk& c : sub) {
             if (Is(c, "VRTS")) vrts = &c; else if (Is(c, "FACS")) facs = &c; else if (Is(c, "FTVS")) ftvs = &c;
             else if (Is(c, "FAMA")) fama = &c; else if (Is(c, "SNAM")) snam = &c; else if (Is(c, "IMRP")) imrp = &c;
@@ -163,10 +151,10 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         std::vector<Vec3> pos(nv);
         for (std::size_t i = 0; i < nv; ++i) {
             float v[3];
-            for (int k = 0; k < 3; ++k) { v[k] = F32(bytes, vrts->off + i * 12 + (std::size_t)k * 4); if (!std::isfinite(v[k]) || std::fabs(v[k]) > 1e15f) v[k] = 0.0f; }
+            for (int k = 0; k < 3; ++k) { v[k] = At(bytes, vrts->off + i * 12 + (std::size_t)k * 4).F32(); if (!std::isfinite(v[k]) || std::fabs(v[k]) > 1e15f) v[k] = 0.0f; }
             pos[i] = Vec3{v[0], v[1], v[2]};
         }
-        if (imrp && imrp->len >= 8 && U32(bytes, imrp->off + 4) != 0) ++mirrored;
+        if (imrp && imrp->len >= 8 && At(bytes, imrp->off + 4).U32() != 0) ++mirrored;
         // faces: a count and that many vertex numbers
         struct Face { std::size_t at; std::uint32_t n; };
         std::vector<Face> faces;
@@ -174,7 +162,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
             std::size_t p = facs->off;
             const std::size_t end = facs->off + facs->len;
             while (p < end) {
-                const std::uint32_t n = U32(bytes, p);
+                const std::uint32_t n = At(bytes, p).U32();
                 p += 4;
                 if (n > (end - p) / 4) { ++badShapes; faces.clear(); break; }
                 corners += n;
@@ -194,7 +182,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
             haveUv = true;
             while (p < end && f < faces.size()) {
                 if (end - p < 8) { haveUv = false; break; }
-                const std::uint32_t n = U32(bytes, p + 4);
+                const std::uint32_t n = At(bytes, p + 4).U32();
                 p += 8;
                 if (n > (end - p) / 8) { haveUv = false; break; }
                 uvAt[f] = p; uvN[f] = n;
@@ -207,25 +195,30 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         // material runs: (first face, material) pairs
         std::vector<std::pair<std::uint32_t, std::int32_t>> runs;
         if (fama && fama->len % 8 == 0)
-            for (std::size_t p = fama->off; p < fama->off + fama->len; p += 8) runs.push_back({U32(bytes, p), (std::int32_t)U32(bytes, p + 4)});
+            for (std::size_t p = fama->off; p < fama->off + fama->len; p += 8) runs.push_back({At(bytes, p).U32(), (std::int32_t)At(bytes, p + 4).U32()});
         else if (fama) ++badRuns;
         std::stable_sort(runs.begin(), runs.end(), [](const std::pair<std::uint32_t, std::int32_t>& a, const std::pair<std::uint32_t, std::int32_t>& b) { return a.first < b.first; });
+        // faces are visited in order, so one pointer walks the sorted runs (no search per face)
+        std::size_t runAt = 0;
+        std::int32_t runMat = -1;
         auto materialOf = [&](std::size_t face) {
-            std::int32_t m = -1;
-            for (const auto& r : runs) { if (r.first <= face) m = r.second; else break; }
-            return (m >= 0 && (std::size_t)m < out.materials.size()) ? m : -1;
+            while (runAt < runs.size() && runs[runAt].first <= face) runMat = runs[runAt++].second;
+            return (runMat >= 0 && (std::size_t)runMat < out.materials.size()) ? runMat : -1;
         };
 
-        // one part per material
+        // one part per material; soupOf[material + 1] is its soup (a table, not a search)
         std::vector<int> order;   // distinct materials in first-use order
         std::vector<detail::rc::Soup> soups;
         std::vector<std::unordered_map<std::uint32_t, std::uint32_t>> remaps;   // shape vertex -> position in that soup (only the used ones are copied)
         auto soupFor = [&](int m) -> std::size_t {
-            for (std::size_t i = 0; i < order.size(); ++i) if (order[i] == m) return i;
-            order.push_back(m);
-            soups.emplace_back();
-            remaps.emplace_back();
-            return order.size() - 1;
+            std::int32_t& slot = soupOf[(std::size_t)(m + 1)];
+            if (slot < 0) {
+                slot = (std::int32_t)order.size();
+                order.push_back(m);
+                soups.emplace_back();
+                remaps.emplace_back();
+            }
+            return (std::size_t)slot;
         };
         std::vector<Vec3> poly;
         std::vector<std::array<int, 3>> tr;
@@ -236,7 +229,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
             bool ok = true;
             std::vector<std::uint32_t> idx(f.n);
             for (std::uint32_t k = 0; k < f.n; ++k) {
-                const std::uint32_t v = U32(bytes, f.at + (std::size_t)k * 4);
+                const std::uint32_t v = At(bytes, f.at + (std::size_t)k * 4).U32();
                 if (v >= nv) { ok = false; break; }
                 idx[k] = v; poly.push_back(pos[v]);
             }
@@ -254,7 +247,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
                 if (it == remaps[si].end()) { it = remaps[si].emplace(idx[(std::size_t)c], (std::uint32_t)s.pos.size()).first; s.pos.push_back(pos[idx[(std::size_t)c]]); }
                 s.ci.push_back(it->second);
                 if (uvOk) {
-                    const float u = F32(bytes, uvAt[fi] + (std::size_t)c * 8), v = F32(bytes, uvAt[fi] + (std::size_t)c * 8 + 4);
+                    const float u = At(bytes, uvAt[fi] + (std::size_t)c * 8).F32(), v = At(bytes, uvAt[fi] + (std::size_t)c * 8 + 4).F32();
                     if (std::isfinite(u) && std::isfinite(v) && std::fabs(u) < 1e8f && std::fabs(v) < 1e8f) s.cuv.push_back(Vec2{u, 1.0f - v});   // v up in the file: flipped like the other bottom-up formats
                     else { s.cuv.push_back(Vec2{0, 0}); ++badUv; }
                 } else s.cuv.push_back(Vec2{0, 0});
@@ -267,6 +260,7 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         node.parent = 0;
         out.nodes.push_back(node);
         const int nodeIdx = (int)out.nodes.size() - 1;
+        for (int m : order) soupOf[(std::size_t)(m + 1)] = -1;
         for (std::size_t i = 0; i < soups.size(); ++i) {
             if (!haveUv) soups[i].cuv.clear();
             ImportedPart part;
@@ -297,14 +291,14 @@ static bool ReadSibImpl(const std::string& bytes, const std::string& baseDir, Im
         const Chunk *insi = nullptr, *axis = nullptr, *smtx = nullptr, *snam = nullptr;
         for (const Chunk& c : sub) { if (Is(c, "INSI")) insi = &c; else if (Is(c, "AXIS")) axis = &c; else if (Is(c, "SMTX")) smtx = &c; else if (Is(c, "SNAM")) snam = &c; }
         if (!insi || insi->len < 4 || !axis || axis->len != 48) { ++badInst; continue; }
-        const std::uint32_t si = U32(bytes, insi->off);
+        const std::uint32_t si = At(bytes, insi->off).U32();
         if (si >= shapeParts.size() || shapeParts[si].empty()) { ++badInst; continue; }
         double A[12], S[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
         bool ok = true;
-        for (int k = 0; k < 12; ++k) { const float f = F32(bytes, axis->off + (std::size_t)k * 4); if (!std::isfinite(f) || std::fabs(f) > 1e8f) ok = false; A[k] = f; }
+        for (int k = 0; k < 12; ++k) { const float f = At(bytes, axis->off + (std::size_t)k * 4).F32(); if (!std::isfinite(f) || std::fabs(f) > 1e8f) ok = false; A[k] = f; }
         if (smtx && smtx->len == 64) {
             float m[16];
-            for (int k = 0; k < 16; ++k) { m[k] = F32(bytes, smtx->off + (std::size_t)k * 4); if (!std::isfinite(m[k]) || std::fabs(m[k]) > 1e8f) ok = false; }
+            for (int k = 0; k < 16; ++k) { m[k] = At(bytes, smtx->off + (std::size_t)k * 4).F32(); if (!std::isfinite(m[k]) || std::fabs(m[k]) > 1e8f) ok = false; }
             for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) S[r * 3 + c] = m[r * 4 + c];
             if (m[3] != 0 || m[7] != 0 || m[11] != 0 || m[12] != 0 || m[13] != 0 || m[14] != 0) ++smtxMove;
         }

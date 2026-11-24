@@ -7,6 +7,7 @@
 #include "reader_hostile_common.hpp"
 #include "sib_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -171,6 +172,28 @@ int main() {
                 const bool ok = Read(s, m, err, base);
                 CHECK(ok ? hostile::Sane(m) : (m.parts.empty() && m.nodes.empty() && !err.empty()));
             }
+    }
+    {   // time: material runs and the material -> part table are walked in one pass, not once per face (a review found a file of
+        // 100,000 faces and 100,000 runs took 11.5 s before). 200,000 faces, each its own run, over 50,000 materials: must be fast.
+        const int nf = 200000, nm = 50000;
+        std::vector<std::string> ch;
+        for (int i = 0; i < nm; ++i) ch.push_back(sibfx::Matr(1, 1, 1, "m", ""));
+        std::string vrts, facs, fama;
+        for (float f : {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f}) fx::PF(vrts, f);
+        for (int i = 0; i < nf; ++i) { fx::P32(facs, 3); fx::P32(facs, 0); fx::P32(facs, 1); fx::P32(facs, 2); fx::P32(fama, (std::uint32_t)i); fx::P32(fama, (std::uint32_t)(i % nm)); }
+        ch.push_back(sibfx::Chunk("SHAP", sibfx::Chunk("VRTS", vrts) + sibfx::Chunk("FACS", facs) + sibfx::Chunk("FAMA", fama)));
+        const std::string file = sibfx::File(ch);
+        const auto t0 = std::chrono::steady_clock::now();
+        ImportedModel m; std::string err;
+        const bool ok = Read(file, m, err);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+        const double cap = 30.0;
+#else
+        const double cap = 5.0;
+#endif
+        std::fprintf(stderr, "  %d faces, %d runs, %d materials: %s in %.2f s (cap %.0f s)\n", nf, nf, nm, ok ? "read" : "refused", secs, cap);
+        CHECK(ok && fx::TriCount(m) == (std::size_t)nf && m.parts.size() == (std::size_t)nm && secs < cap);
     }
     {   // budgets: a face that names 40,000 corners is fanned (past the ear clipping size), 100,000 faces of a million corners over the corner budget is refused
         sibfx::Shape big; big.name = "big";

@@ -574,9 +574,9 @@ bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
     std::vector<std::array<std::int16_t, 2>> st((std::size_t)numSkinVerts);
     for (auto& v : st) { v[0] = b.I16(); v[1] = b.I16(); }
     if (!b.Fits((std::uint64_t)numTris, 12)) return fail("the file ends inside the triangle list");
-    struct Tr { std::int16_t v[3], t[3]; };
+    struct Tr { std::uint16_t v[3], t[3]; };   // unsigned: the format allows up to 65,535 vertices and skin vertices
     std::vector<Tr> tr((std::size_t)numTris);
-    for (Tr& t : tr) { for (std::int16_t& x : t.v) x = b.I16(); for (std::int16_t& x : t.t) x = b.I16(); }
+    for (Tr& t : tr) { for (std::uint16_t& x : t.v) x = b.U16(); for (std::uint16_t& x : t.t) x = b.U16(); }
     // the first frame
     const std::int32_t ftype = b.I32();
     if (b.bad) return fail("the file has no frames");
@@ -604,7 +604,7 @@ bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
             soup.ci.push_back((std::uint32_t)t.v[k]);
             if (!haveUv) continue;
             Vec2 uv{0, 0};
-            if (t.t[k] >= 0 && t.t[k] < numSkinVerts) {
+            if (t.t[k] < numSkinVerts) {
                 const auto& s = st[(std::size_t)t.t[k]];
                 uv = Vec2{(float)(((double)s[0] + 0.5) / (double)uvW), (float)(((double)s[1] + 0.5) / (double)uvH)};
             } else ++badSt;
@@ -625,48 +625,50 @@ bool ReadGameStudio5(Br& b, ImportedModel& out, std::string* err) {
 }
 
 // ---- 3D GameStudio MDL7 ----------------------------------------------------------------------------------------------------
-// NOT publicly documented (Conitec's manual says so and points to an SDK, which was not used). The layout below was worked out
-// byte by byte from three real files (docs/content/model_readers.md, section MDL, says which field was seen where):
-//   header (48 bytes): "MDL7", a version word, bone count, group count, data size (= the file size), two lump sizes, then ten
-//     16-bit record sizes: bone, skin, colour, material, skin point, triangle, main vertex, frame vertex, bone transform, frame;
-//   bones (bone size each; no file had any, so where they sit is a guess that the group sizes check);
-//   groups: type (1 = a mesh), the group's byte size (header included), a 16-byte name, the counts of skins, skin points,
-//     triangles, vertices and frames, then the skins (type, width, height, a 16-byte name; type & 7 = 7: `width` bytes of a
-//     texture file name; type & 0x10: a material follows: four colours of four floats and a power), the skin points (two
-//     floats), the triangles (three vertex shorts, then a skin set: three skin-point shorts and a 32-bit skin index), the
-//     vertices (three floats, a bone short, three normal floats) and the frames (a 16-byte name, a frame-vertex count and a
-//     bone-transform count, then those records).
+// NOT publicly documented (Conitec's manual says so and points to an SDK, which was not used). Only what three real files show
+// is used (docs/content/model_readers.md, section MDL, says which field was seen where, and which names came from memory):
+//   header (48 bytes): "MDL7", a word (0), a word that is 0 in every file (a non-zero value is refused: not understood), the
+//     group count, the data size (= the file size), two more words that are 0 in every file (noted when not 0), then ten 16-bit
+//     record sizes, of which these are checked against the records found: [1] skin 28, [3] material 68, [4] skin point 8,
+//     [5] triangle 16, [6] vertex 26, [9] frame 24 (the other four are never needed by the files and are not used);
+//   groups: type (1 = a mesh), the group's byte size (header included: it chains the groups), a 16-byte name, the counts of
+//     skins, skin points, triangles, vertices and frames, then the skins (type, width, height, a 16-byte name; type & 7 = 7:
+//     `width` bytes of a texture file name; type & 0x10: a material follows), the skin points (two floats), the triangles
+//     (three vertex shorts, three skin-point shorts (0xFFFF = none), a 32-bit skin index) and the vertices (three floats
+//     first); what follows the vertices (frame records) is not read: the group size says where the next group starts.
 // The skins of all groups form one list, which the triangles' skin indices point into.
-constexpr std::int32_t kMaxGsGroups = 65536, kMaxGsBones = 65536;
+constexpr std::int32_t kMaxGsGroups = 65536;
 constexpr std::size_t kMaxGsRecord = 4096;
 
 bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std::string* err) {
     auto fail = [&](const std::string& m) { return Fail(err, "(3D GameStudio MDL7) " + m); };
     if (b.n < 48) return fail("file too short for the header");
     b.pos = 4;
-    b.I32();   // a version word, 0 in every file seen
-    const std::int32_t numBones = b.I32(), numGroups = b.I32();
+    b.I32();   // a word, 0 in every file seen
+    const std::uint32_t zeroWord = b.U32();   // 0 in every file seen; what a non-zero value means (and what it adds to the file) is not known
+    const std::int32_t numGroups = b.I32();
     const std::uint32_t dataSize = b.U32();
-    const std::uint32_t entLump = b.U32(), medLump = b.U32();
+    const std::uint32_t zero2 = b.U32(), zero3 = b.U32();   // 0 in every file seen
     std::uint16_t sz[10];
     for (std::uint16_t& v : sz) v = b.U16();
-    const std::size_t boneSz = sz[0], skinSz = sz[1], matSz = sz[3], stSz = sz[4], triSz = sz[5], vertSz = sz[6], fvSz = sz[7], btSz = sz[8], frameSz = sz[9];
+    const std::size_t skinSz = sz[1], matSz = sz[3], stSz = sz[4], triSz = sz[5], vertSz = sz[6], frameSz = sz[9];
+    if (zeroWord != 0) return fail("the header word at offset 8 is " + std::to_string(zeroWord) + ", not 0 as in every file the layout was worked out from (perhaps bones, which are not understood): refused");
     if (numGroups <= 0 || numGroups > kMaxGsGroups) return fail("bad group count " + std::to_string(numGroups));
-    if (numBones < 0 || numBones > kMaxGsBones) return fail("bad bone count " + std::to_string(numBones));
     if (dataSize > b.n) return fail("the data size in the header (" + std::to_string(dataSize) + " bytes) is larger than the file");
     if (skinSz < 12 || skinSz > kMaxGsRecord || stSz < 8 || stSz > kMaxGsRecord || triSz < 16 || triSz > kMaxGsRecord || vertSz < 12 || vertSz > kMaxGsRecord ||
-        frameSz < 24 || frameSz > kMaxGsRecord || fvSz > kMaxGsRecord || btSz > kMaxGsRecord || boneSz > kMaxGsRecord || matSz > kMaxGsRecord || (matSz != 0 && matSz < 68))
+        frameSz < 24 || frameSz > kMaxGsRecord || matSz > kMaxGsRecord || (matSz != 0 && matSz < 68))
         return fail("a record size in the header is out of range (skin " + std::to_string(skinSz) + ", skin point " + std::to_string(stSz) + ", triangle " +
                     std::to_string(triSz) + ", vertex " + std::to_string(vertSz) + ", frame " + std::to_string(frameSz) + ")");
     const std::size_t end = dataSize ? (std::size_t)dataSize : b.n;
-    std::uint64_t pos = 48 + (std::uint64_t)numBones * boneSz;
-    if (pos > end) return fail("the file ends inside the bone list");
+    std::uint64_t pos = 48;
 
     ImportedNode root;
     root.name = "MDL";
     out.nodes.push_back(root);
     std::vector<std::int32_t> skinMaterial;   // skin index -> material index
-    int badTri = 0, badSt = 0, badSkin = 0, animFrames = 0, otherGroups = 0, embedded = 0, bonesRef = 0;
+    std::vector<std::int32_t> soupOf(kMaxGsSkins + 1, -1);   // material + 1 -> its soup in the current group (a table; reset after each group)
+    int badTri = 0, badSt = 0, badSkin = 0, otherGroups = 0, embedded = 0;
+    std::size_t framesSeen = 0;
     std::size_t outVerts = 0, work = 0;
     rc::BuildStats stats;
     for (std::int32_t g = 0; g < numGroups; ++g) {
@@ -745,20 +747,8 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
         if (!c.Fits((std::uint64_t)nVert, vertSz)) return fail("the file ends inside the vertices of group " + std::to_string(g));
         const std::size_t vertAt = c.pos;
         c.Skip((std::uint64_t)nVert * vertSz);
-        // frames: only counted (an animation frame carries frame vertices or bone transforms)
-        for (std::int32_t f = 0; f < nFrames; ++f) {
-            const std::size_t at = c.pos;
-            c.Skip(16);
-            const std::int32_t nfv = c.I32(), nbt = c.I32();
-            c.pos = at;
-            c.Skip(frameSz);
-            if (c.bad || nfv < 0 || nbt < 0) return fail("a bad frame in group " + std::to_string(g));
-            if (!c.Fits((std::uint64_t)nfv, fvSz)) return fail("the file ends inside a frame of group " + std::to_string(g));
-            c.Skip((std::uint64_t)nfv * fvSz);
-            if (!c.Fits((std::uint64_t)nbt, btSz)) return fail("the file ends inside a frame of group " + std::to_string(g));
-            c.Skip((std::uint64_t)nbt * btSz);
-            if (nfv > 0 || nbt > 0) ++animFrames;
-        }
+        // what follows the vertices (the frame records) is not read: the group size gives the next group
+        framesSeen += (std::size_t)nFrames;
         work += (std::size_t)nTri + (std::size_t)nVert;
         if (work > kMaxWork) return fail("over the work budget");
         // positions
@@ -769,7 +759,6 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
             const std::size_t at = v.pos;
             float p[3];
             for (float& x : p) { x = v.F32(); if (!Reasonable(x)) return fail("a vertex of group " + std::to_string(g) + " is not finite or is out of range"); }
-            if (vertSz >= 14 && numBones > 0 && v.I16() >= 0) ++bonesRef;
             v.pos = at + vertSz;
             basePos[(std::size_t)i] = Vec3{p[0], p[1], p[2]};
         }
@@ -782,25 +771,25 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
         t.pos = triAt;
         for (std::int32_t i = 0; i < nTri; ++i) {
             const std::size_t at = t.pos;
-            std::int16_t vi[3], si[3];
-            for (std::int16_t& x : vi) x = t.I16();
-            for (std::int16_t& x : si) x = t.I16();
+            std::uint16_t vi[3], si[3];   // unsigned 16-bit; a skin point of 0xFFFF is "none"
+            for (std::uint16_t& x : vi) x = t.U16();
+            for (std::uint16_t& x : si) x = t.U16();
             const std::int32_t skin = t.I32();
             t.pos = at + triSz;
             if (!CornersIn(vi, nVert)) { ++badTri; continue; }
             std::int32_t mat = -1;
             if (skin >= 0 && (std::size_t)skin < skinMaterial.size()) mat = skinMaterial[(std::size_t)skin];
             else if (!(skin == -1 && skinMaterial.empty())) ++badSkin;
-            std::size_t k = 0;
-            while (k < order.size() && order[k] != mat) ++k;
-            if (k == order.size()) { order.push_back(mat); soups.emplace_back(); remaps.emplace_back(); uvOk.push_back(1); }
+            std::int32_t& slot = soupOf[(std::size_t)(mat + 1)];
+            if (slot < 0) { slot = (std::int32_t)order.size(); order.push_back(mat); soups.emplace_back(); remaps.emplace_back(); uvOk.push_back(1); }
+            const std::size_t k = (std::size_t)slot;
             rc::Soup& s = soups[k];
             for (int corner : {2, 1, 0}) {   // the files wind clockwise (their stored normals agree with the reversed order): reversed
                 auto it = remaps[k].find((std::uint32_t)vi[corner]);
                 if (it == remaps[k].end()) { it = remaps[k].emplace((std::uint32_t)vi[corner], (std::uint32_t)s.pos.size()).first; s.pos.push_back(basePos[(std::size_t)vi[corner]]); }
                 s.ci.push_back(it->second);
                 Vec2 uv{0, 0};
-                if (si[corner] >= 0 && si[corner] < nSt) {
+                if (si[corner] != 0xFFFF && si[corner] < nSt) {
                     Br u(b.d, gend);
                     u.pos = stAt + (std::size_t)si[corner] * stSz;
                     const float uu = u.F32(), vv = u.F32();
@@ -810,6 +799,7 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
                 s.cuv.push_back(uv);
             }
         }
+        for (std::int32_t m : order) soupOf[(std::size_t)(m + 1)] = -1;
         ImportedNode node;
         node.name = gname.empty() ? "group " + std::to_string(g) : gname;
         node.parent = 0;
@@ -833,11 +823,10 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
     out.backend = "own";
     auto note = [&](const std::string& s) { out.notes.push_back("MDL (3D GameStudio MDL7): " + s); };
     note("the layout of MDL7 is not published: it was worked out from three real files (docs/content/model_readers.md); the stored normals are not read (smooth normals were generated), texture coordinates are used as stored");
-    if (numBones > 0) note(std::to_string(numBones) + " bone(s) not read (no file with bones was available to work out their layout): the model is static" + (bonesRef ? ", " + std::to_string(bonesRef) + " vertex(es) name a bone" : std::string()));
-    if (animFrames) note(std::to_string(animFrames) + " animation frame(s) not read: the base vertices are used");
+    if (framesSeen) note(std::to_string(framesSeen) + " frame record(s) not read (their layout is not known from the files): the base vertices are used");
     if (embedded) note(std::to_string(embedded) + " embedded skin picture(s) not extracted (a material names a texture file, it cannot carry pixels)");
     if (otherGroups) note(std::to_string(otherGroups) + " group(s) of a type other than 1 (a mesh) skipped");
-    if (entLump || medLump) note("the entity and editor lumps are not read");
+    if (zero2 || zero3) note("two header words that are 0 in every file the layout was worked out from are not 0 here: not understood, not read");
     if (badTri) note(std::to_string(badTri) + " triangle(s) with an out-of-range vertex index skipped");
     if (badSkin) note(std::to_string(badSkin) + " triangle(s) name a skin that does not exist: no material");
     if (badSt) note(std::to_string(badSt) + " corner(s) with a bad texture coordinate got (0, 0)");

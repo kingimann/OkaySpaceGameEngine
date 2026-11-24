@@ -293,8 +293,30 @@ static void GameStudioBudgets() {
     }
 }
 
+// MDL7 time: the skin -> part lookup is a table, not a search per triangle. 4,096 skins and 2,000,000 triangles that cycle
+// through them (a review found the per-triangle search; it made this file take seconds).
+static void Mdl7ManySkins() {
+    std::string o;
+    o += "MDL7"; P32(o, 0); P32(o, 0); P32(o, 1); P32(o, 0); P32(o, 0); P32(o, 0);
+    for (unsigned v : {36u, 28u, 16u, 68u, 8u, 16u, 26u, 26u, 68u, 24u}) gs::P16(o, v);
+    const std::int32_t ns = 4096, nt = 2000000;
+    const std::size_t g0 = o.size();
+    P32(o, 1); P32(o, 0); gs::PStr(o, "g", 16);
+    P32(o, ns); P32(o, 0); P32(o, nt); P32(o, 3); P32(o, 0);
+    for (std::int32_t s = 0; s < ns; ++s) { P32(o, 0x10); P32(o, 0); P32(o, 0); gs::PStr(o, "s", 16); for (int k = 0; k < 17; ++k) gs::PF(o, k == 0 ? 1.0f : 0.0f); }
+    for (std::int32_t t = 0; t < nt; ++t) { gs::P16(o, 0); gs::P16(o, 1); gs::P16(o, 2); gs::P16(o, 0xFFFF); gs::P16(o, 0xFFFF); gs::P16(o, 0xFFFF); P32(o, t % ns); }
+    for (int v = 0; v < 3; ++v) { gs::PF(o, v == 1 ? 1.0f : 0.0f); gs::PF(o, v == 2 ? 1.0f : 0.0f); gs::PF(o, 0); gs::P16(o, 0xFFFF); gs::PF(o, 0); gs::PF(o, 0); gs::PF(o, 1); }
+    gs::Put32At(o, g0 + 4, (std::uint32_t)(o.size() - g0));
+    gs::Put32At(o, 16, (std::uint32_t)o.size());
+    const double t0 = Now();
+    const Run r = MdlRun("MDL7 with 4,096 skins and 2,000,000 triangles", o);
+    const double secs = Now() - t0;
+    CHECK(r.ok && r.m.parts.size() == (std::size_t)ns && secs < (budget::kSanitizerBuild ? 20.0 : 2.0));
+}
+
 int main() {
     RUN_SUITE("e4_hostile");
+    Mdl7ManySkins();
     GameStudioBudgets();
     OgexHugeMatrix();
     OgexBudgets();
@@ -312,7 +334,7 @@ int main() {
     { gs::Mdl5Spec sp; sp.version = '4'; sp.wordFrames = true; Sweep("gamestudio mdl4, word frames", false, gs::Mdl5(sp), iters / 2); }
     { gs::Mdl5Spec sp; sp.version = '5'; Sweep("gamestudio mdl5", false, gs::Mdl5(sp), iters); }
     Sweep("gamestudio mdl7", false, gs::Mdl7(), iters);
-    { gs::Mdl7Spec sp; sp.bones = 1; sp.animatedFrameVerts = 2; Sweep("gamestudio mdl7, bones and frames", false, gs::Mdl7(sp), iters / 2); }
+    { gs::Mdl7Spec sp; sp.animatedFrameVerts = 2; Sweep("gamestudio mdl7, frame records", false, gs::Mdl7(sp), iters / 2); }
     // With OKAY_MODEL_CORPUS set (docs/content/model_corpus.md: the "test" folder of an Assimp 5.4.3 checkout), real files are
     // read whole, then fuzzed the same way (a smaller sweep: they are larger).
     if (const char* c = std::getenv("OKAY_MODEL_CORPUS")) {

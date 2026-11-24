@@ -155,6 +155,24 @@ int main() {
         }
     }
 
+    {   // MDL3 / MDL4 / MDL5 vertex indices are unsigned 16-bit: a model of 40,000 vertices keeps a triangle that uses vertex 39,999
+        std::string o = "MDL3";
+        auto p32 = [&](std::uint32_t v) { gs::P32(o, v); };
+        p32(0); for (float f : {1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f}) gs::PF(o, f);
+        p32(0); gs::PF(o, 0); gs::PF(o, 0); gs::PF(o, 0);
+        p32(0); p32(0); p32(0); p32(40000); p32(1); p32(1); p32(1); p32(0); p32(0);
+        gs::P16(o, 0); gs::P16(o, 0);                                                   // one skin vertex
+        for (unsigned v : {39999u, 39998u, 0u, 0u, 0u, 0u}) gs::P16(o, v);              // the triangle
+        p32(0); o.append(8, '\0'); gs::PStr(o, "f", 16);
+        for (int v = 0; v < 40000; ++v) { gs::P8(o, (unsigned)(v % 7)); gs::P8(o, (unsigned)(v % 11)); gs::P8(o, (unsigned)(v % 13)); gs::P8(o, 0); }
+        ImportedModel m; std::string err;
+        const bool ok = Read(o, m, err);
+        if (!ok) std::fprintf(stderr, "  40,000 vertices: %s\n", err.c_str());
+        CHECK(ok && m.parts.size() == 1 && m.parts[0].mesh.triangles.size() == 3);
+        // 39999 % 7 = 1, % 11 = 3, % 13 = 11: that corner is in the mesh
+        CHECK(ok && FindVertex(m.parts[0].mesh, 1, 3, 11) >= 0);
+    }
+
     // ---- 3D GameStudio MDL7 (worked out from three real files) --------------------------------------------------------------------
     {
         ImportedModel m; std::string err;
@@ -197,9 +215,12 @@ int main() {
             sp.texture = "C:\\art\\x.png";
             CHECK(Read(gs::Mdl7(sp), e, err) && e.materials[1].texture.empty());
         }
-        {   // animation frames are skipped (by the group size) and noted; bones are skipped and noted
-            gs::Mdl7Spec sp; sp.animatedFrameVerts = 4; sp.bones = 2;
-            ImportedModel a; CHECK(Read(gs::Mdl7(sp), a, err) && a.parts.size() == 3 && HasNote(a, "frame") && HasNote(a, "bone"));
+        {   // frame records are not read (the group size gives the next group) and are noted; a non-zero word at offset 8 (0 in every
+            // real file; bones are not understood) is refused
+            gs::Mdl7Spec sp; sp.animatedFrameVerts = 4;
+            ImportedModel a; CHECK(Read(gs::Mdl7(sp), a, err) && a.parts.size() == 3 && HasNote(a, "frame record"));
+            gs::Mdl7Spec bn; bn.bones = 2;
+            ImportedModel c; CHECK(!Read(gs::Mdl7(bn), c, err) && err.find("offset 8") != std::string::npos && c.parts.empty());
         }
         {   // hostile: counts, sizes and struct sizes at extreme values never crash; the obvious ones are refused
             const std::string f = gs::Mdl7();

@@ -1728,7 +1728,7 @@ triangles, frames) and the "Gamestudio file formats" page of the Gamestudio manu
 Layout: an 84-byte header (magic, an unused word, scale and offset vectors, an unused word and vector, skin count, skin width and
 height (MDL3 / MDL4 only), vertex, triangle, frame and skin-vertex counts, flags, a last word); the skins (MDL3 / MDL4: a type
 and `width * height * bpp` bytes; MDL5: a type, a width, a height, the pixels and, for type + 8, three mipmaps); the skin vertices
-(two shorts, pixel positions); the triangles (three vertex and three skin-vertex shorts); the frames (a type word, a bounding box,
+(two shorts, pixel positions); the triangles (three vertex and three skin-vertex shorts, read **unsigned**, so a model may have up to 65,535 vertices); the frames (a type word, a bounding box,
 a 16-byte name, the packed positions: 4 bytes for type 0, 8 bytes, unsigned shorts, for type 2; `position = raw * scale + offset`).
 
 Read: **the first frame** as one static part (named by the frame); texture coordinates `u = (s + 0.5) / width`,
@@ -1755,15 +1755,15 @@ download was blocked) and was not looked for further. The layout below is **our 
 
 | Part | Layout (as read) | Evidence |
 |---|---|---|
-| Header, 48 bytes | `"MDL7"`, a word (0), bone count (0 in all), group count (1, 8, 2), data size (= the file size in all three), two more sizes (0), then ten 16-bit record sizes: 36, 28, 16, 68, 8, 16, 26, 26, 68, 24 | the record sizes match the records found below: skin 28, material 68, skin point 8, triangle 16, vertex 26, frame 24; the other four (bone 36, colour 16, frame vertex 26, bone transform 68) are never used by the files, so their meaning is a guess |
-| Bones | `bone count` records of the bone size, before the first group | **guess**: no file has bones; the reader skips them and notes that they are not read |
+| Header, 48 bytes | `"MDL7"`, a word (0), a word that is 0 in all three (read as nothing; a file where it is not 0 is **refused**), the group count (1, 8, 2), the data size (= the file size in all three), two words that are 0 in all three (noted when not 0), then ten 16-bit record sizes: 36, 28, 16, 68, 8, 16, 26, 26, 68, 24 | six of the sizes match records found below and are checked: [1] skin 28, [3] material 68, [4] skin point 8, [5] triangle 16, [6] vertex 26, [9] frame 24. The other four ([0] 36, [2] 16, [7] 26, [8] 68) match nothing in the files and are **not used** |
+| After the vertices | frame records (the frame count of the group header; each starts with a 16-byte name, `bindpose` in the tree) | **not read**: in the files they are 24 bytes with two words of 0 after the name; the group's byte size says where the next group starts, so the reader never needs their layout. A note counts them |
 | Group header, 44 bytes | type (1), the group's byte size **including** this header, a 16-byte name, the counts of skins, skin points, triangles, vertices, frames | the byte sizes chain the groups exactly in all files (8 groups in PhosphoricAcid) |
 | Skin, 28 bytes | type, width, height, a 16-byte name | type `0x10` (w = h = 0) is followed by a **material**; type `7` is followed by `width` bytes of a NUL-terminated **texture file name** (`barkD_texture.bmp` is 18 bytes, width 18) |
 | Material, 68 bytes | four colours of four floats, then a power | the 1st colour is the diffuse colour: PhosphoricAcid's phosphorus (1, 0.549, 0.078: orange), hydrogen white, oxygen red, and the sphere named "DiffPink" has (0.925, 0, 1); the 3rd is the specular colour (the sphere "BlueSpec" has (0, 0, 1)); the 4th value of the 2nd colour is 0.9 in the file named "Alpha90" and 1 elsewhere: **read as the opacity** (a guess from one file); power 10 in all: the shininess; the 4th colour (0 in all) is read as emissive (a guess) |
 | Skin point, 8 bytes | `u`, `v` floats | the tree's values are in 0 to 1 |
 | Triangle, 16 bytes | three vertex shorts, then three skin-point shorts (-1 = none) and a 32-bit skin index | the skin index points into **one skin list for all groups** (PhosphoricAcid's groups 1 to 7 have no skins of their own and use 0, 1, 2: the atoms come out in the right colours) |
-| Vertex, 26 bytes | position (three floats), a bone short (-1, or 0 with no bones), a normal (three floats) | positions need no scale or offset |
-| Frame, 24 bytes | a 16-byte name, a frame-vertex count, a bone-transform count, then those records | all files: no frame or one named `bindpose` with both counts 0; skipped by the group size anyway |
+| Vertex, 26 bytes | position (three floats) first; the other 14 bytes (a 16-bit value, -1 or 0, then three floats that are unit vectors) are not used | positions need no scale or offset; the three floats were checked as normals only to settle the winding (below) |
+| Frame record | see "After the vertices" | |
 
 Winding: the stored normals of all 1,758 triangles agree with the file's corner order turned the other way **and point into the
 closed spheres**, while the signed volume in file order is negative: the corner order is reversed, so the faces point out (smooth
@@ -1774,9 +1774,21 @@ The strongest check: `PhosphoricAcid_MDl5.mdl` and `PhosphoricAcid_MDl7.mdl` are
 readers give the same 960 triangles, the same box (-5, -22, -12.5 to 24.748, 7, 15.862) and the same area (5019.32). Results:
 sphere 120 triangles, the tree 678 triangles in 2 groups with the two texture files resolved inside the model's folder.
 
-Not read (noted): bones, animation frames, embedded skin pictures (type 2 to 5, `+ 8` mipmaps, and type 6 as a DDS picture of
-`width` bytes, both skipped by their size: **no file had any**, so both are guesses guarded by the group size), groups of a type
-other than 1, the entity and editor lumps, the stored normals.
+Not read (noted): frame records, embedded skin pictures (types 2 to 5, `+ 8` mipmaps, and type 6 as a DDS picture of `width`
+bytes: these type codes are the published MDL5 and WMB texture codes of the Gamestudio manual, **not seen in any MDL7 file**, so
+applying them to MDL7 is a guess guarded by the group size), groups of a type other than 1, the stored normals. A non-zero word
+at offset 8 is refused.
+
+**Where the names came from (rule 19a, said plainly).** The first version of this reader (2026-11-23) called the header
+fields "bone count", "entity lump", "editor (MED) lump" and the unused record sizes "bone", "colour", "frame vertex" and
+"bone transform", and read a frame as "a frame-vertex count and a bone-transform count". **None of that is in the three
+files** (they have no bones, no lumps and empty frames): those names came from my memory of how the MDL7 header is usually
+described, which is most likely memory of the SDK header or of another importer, not from an allowed source. On review
+(2026-11-24) they were taken out: the reader now uses only what the files show, refuses a file whose offset-8 word is not 0,
+and skips frame records by the group size instead of parsing them. The material's "four colours and a power" shape and the
+guess that the 2nd and 4th colours are ambient and emissive come from the public Direct3D material layout (diffuse, ambient,
+specular, emissive, power), recalled, which GameStudio uses; diffuse, specular and the opacity value are backed by the files
+(colours and file names, above).
 
 | File | What |
 |---|---|
@@ -1847,8 +1859,9 @@ Quake models from other tools, a Windows run.
 The 3D GameStudio part (2026-11-23) was written from Conitec's two published descriptions named above (MDL3 / MDL4 / MDL5) and,
 for MDL7, from our own byte-by-byte analysis of the three real files (the table above). No GameStudio SDK, header or importer
 source of any project (Assimp's `code/` folder included) was read; the Assimp checkout used for the files was a sparse checkout
-of the `test/models*/MDL`, `HMP`, `SIB` and `NDO` data folders only. Unverified: MDL4 files, MDL7 files with bones, animation
-frames or embedded pictures, the MDL7 opacity and emissive guesses, the texture `v` direction, a Windows run.
+of the `test/models*/MDL`, `HMP`, `SIB` and `NDO` data folders only (but see "Where the names came from" in the MDL7 part: some
+field names of the first version were memory, and were taken out). Unverified: MDL4 files, MDL7 files with bones (refused), frame
+records or embedded pictures, the MDL7 opacity and emissive guesses, the texture `v` direction, a Windows run.
 
 ## Our own MS3D reader (`.ms3d`)
 
@@ -2603,6 +2616,11 @@ scale turns the winding back). Y-up (the sample stands on y = 0), no axis turn. 
 folder (no absolute path, no `..`, no link out).
 
 ### Budgets
+
+Work is linear in the file: the material runs of a shape are walked once with one pointer (faces come in order) and a table
+gives each material's part (since 2026-11-24, after a review timed 100,000 faces with 100,000 runs at 11.5 s;
+`sib_reader` now reads 200,000 faces, 200,000 runs and 50,000 materials in about 0.3 s and fails above 5 s). Names use the shared
+UTF-16LE converter of `TextReaderUtil.hpp` and every read goes through the shared `BinReader` cursor.
 
 File 256 MiB; 2,000,000 chunks; 100,000 shapes and materials; 4,000,000 vertices per shape and per file and 4,000,000
 triangles per file, **instances included**; 16,000,000 face corners. Every count is checked against the bytes that are there

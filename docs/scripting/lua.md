@@ -74,7 +74,9 @@ like the lifecycle run by name with the table as `self`: `Awake`, `OnEnable`, `S
 
 Engine access comes from two existing binding tables, never a Lua copy: the typed table `Script/EngineApi` first,
 then the generated binding layer `Scripting/ScriptBindings` (the one OkayScript uses, `docs/scripting/script_bindings.md`)
-for every component and member the typed table does not list:
+for every component and member the typed table does not list. The generator's file, network, platform and clipboard
+rules (`docs/scripting/script_bindings.md`, "Side effects scripts cannot reach") hold on both: a typed-table type or
+method they deny is not reachable from Lua either (`scriptbind::IsDeniedClass` / `IsDeniedMethod`).
 - `self.gameObject`, `self.transform` (also globals `gameObject`, `transform`), `GetComponent("Rigidbody")`,
   `obj:GetComponent(...)`, `Destroy(obj)`.
 - Instance members: `obj.prop`, `obj.prop = v`, `obj:Method(args)` (overloads chosen by argument count and types).

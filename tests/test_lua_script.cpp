@@ -3,6 +3,9 @@
 #include "okay/Lua/LuaScriptVM.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Components/Light.hpp"
+#include "okay/Components/UIFilePicker.hpp"
+#include "okay/Components/Animator.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Scripting/ScriptVM.hpp"
 #include <algorithm>
 #include <string>
@@ -474,6 +477,54 @@ return S
         CHECK(w.Get("open").AsFloat() == 0.0f);
         CHECK(w.Get("safe").AsBool());
         CHECK(w.Get("bin").AsBool());
+    }
+
+    // 18. The generated layer's DENY_* rules (no file, network, platform or clipboard call) hold for the typed
+    //     table too: Lua reaches neither UIFilePicker (a whole denied class) nor a typed method whose text
+    //     parameter names a place, through EngineApi or the generated layer.
+    {
+        namespace sb = scriptbind;
+        CHECK(sb::NameWords("HTTPServer") == (std::vector<std::string>{"http", "server"}));
+        CHECK(sb::NameWords("filePath") == (std::vector<std::string>{"file", "path"}));
+        CHECK(sb::NameWords("ExportHeightmap2D") == (std::vector<std::string>{"export", "heightmap", "2", "d"}));
+        CHECK(sb::IsDeniedClass("UIFilePicker") && sb::IsDeniedClass("NetworkManager") && !sb::IsDeniedClass("Light"));
+        CHECK(sb::IsDeniedMethod("UIFilePicker", "Open"));
+        CHECK(sb::IsDeniedMethod("Terrain", "ExportHeightmap"));
+        CHECK(sb::IsDeniedMethod("Animator", "SetCharacterModel", {{true, "path"}}));
+        CHECK(sb::IsDeniedMethod("UIInputField", "PasteFromClipboard"));
+        CHECK(!sb::IsDeniedMethod("Light", "FlickerFactor"));
+        CHECK(!sb::IsDeniedMethod("NavMeshAgent", "Move", {{false, "dir"}}));   // a direction vector is fine
+        for (const sb::ClassBinding& c : sb::AllClasses())   // the generated table and the rules agree
+            for (const sb::MethodBinding& m : c.methods)
+                if (sb::IsDeniedClass(c.name) || sb::IsDeniedMethod(c.name, m.name)) {
+                    std::cerr << "  bound but denied: " << c.name << "." << m.name << "\n";
+                    CHECK(false);
+                }
+
+        Scene scene{"D"};
+        GameObject* g = scene.CreateGameObject("Picker");
+        g->AddComponent<UIFilePicker>();
+        g->AddComponent<Animator>();
+        auto* sc = g->AddComponent<ScriptComponent>("lua");
+        std::string err;
+        CHECK(sc->LoadSource(R"LUA(
+local S = {}
+function S:Start()
+    local fp = GetComponent("UIFilePicker")
+    rootOk = pcall(function() fp:SetRoot("/") end)
+    openOk = pcall(function() fp:Open("passwd") end)
+    animOk, animErr = pcall(function() GetComponent("Animator"):SetCharacterModel("/etc/passwd") end)
+    rmOk = pcall(function() GetComponent("Animator"):SetRootMotion(false) end)   -- the rest of Animator still works
+end
+return S
+)LUA", &err));
+        if (!err.empty()) std::cerr << "  load: " << err << "\n";
+        scene.Start();
+        CHECK(!sc->VM()->GetGlobal("rootOk").AsBool());
+        CHECK(!sc->VM()->GetGlobal("openOk").AsBool());
+        CHECK(!sc->VM()->GetGlobal("animOk").AsBool());
+        CHECK(sc->VM()->GetGlobal("animErr").AsString().find("SetCharacterModel") != std::string::npos);
+        CHECK(sc->VM()->GetGlobal("rmOk").AsBool());
     }
 
     // 17. The language comes from the file extension: .lua is Lua, the rest stays as before.

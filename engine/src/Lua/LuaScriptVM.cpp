@@ -65,6 +65,7 @@ const sc::EngineApi& Api() { return sc::EngineApi::Get(); }
 // of the same name), which must keep its Lua meaning.
 bool LuaHidden(const sc::ApiType& t) {
     if (t.name.empty()) return true;
+    if (scriptbind::IsDeniedClass(t.name)) return true;   // the generator's DENY_* rules: no file, network, platform class
     for (const char* lib : {"string", "table", "math", "os", "coroutine", "utf8", "io", "debug", "package"})
         if (t.name == lib) return true;
     return false;
@@ -259,7 +260,7 @@ int ApiCall(State& L, int n) {
     int nargs = n - first;
     std::string why, expected;
     for (const sc::ApiMethod& m : list) {
-        if (m.name != name) continue;
+        if (m.name != name || LuaDenied(t, m)) continue;
         std::string sig = name + "(";
         for (std::size_t i = 0; i < m.params.size(); ++i)
             sig += (i ? ", " : "") + (i < m.paramNames.size() ? m.paramNames[i] + ": " : std::string()) + TypeWord(m.params[i]);
@@ -313,8 +314,17 @@ LV BoundMethod(State& L, int typeIdx, bool isStatic, const std::string& name) {
     return f;
 }
 
-bool HasMethod(const std::vector<sc::ApiMethod>& list, const std::string& name) {
-    for (const auto& m : list) if (m.name == name) return true;
+// A typed-table method the generated layer's DENY_* rules leave out (a file, network, platform or clipboard call):
+// Lua does not reach it here either, so EngineApi is no way around those rules.
+bool LuaDenied(const sc::ApiType& t, const sc::ApiMethod& m) {
+    std::vector<scriptbind::DenyParam> ps;
+    for (std::size_t i = 0; i < m.params.size(); ++i)
+        ps.push_back({m.params[i].kind == sc::TK::String, i < m.paramNames.size() ? m.paramNames[i] : std::string()});
+    return scriptbind::IsDeniedMethod(t.name, m.name, ps);
+}
+
+bool HasMethod(const sc::ApiType& t, const std::vector<sc::ApiMethod>& list, const std::string& name) {
+    for (const auto& m : list) if (m.name == name && !LuaDenied(t, m)) return true;
     return false;
 }
 
@@ -388,7 +398,7 @@ int ObjIndex(State& L, int n) {
         L.Push(ToLua(L, r));
         return 1;
     }
-    if (HasMethod(t.methods, k)) { L.Push(BoundMethod(L, typeIdx, false, k)); return 1; }
+    if (HasMethod(t, t.methods, k)) { L.Push(BoundMethod(L, typeIdx, false, k)); return 1; }
     if (k == "GetComponent") { L.Push(LV::Obj(L.NewNative(GetComponentFn, "GetComponent"))); return 1; }
     if (k == "gameObject" || k == "transform") {
         GameObject* g = ResolveObj(L, o);
@@ -465,7 +475,7 @@ int VecIndex(State& L, int n) {
         return 1;
     }
     if (k == "sqrMagnitude") { Vec3 v = VecOf(o); L.Push(LV::Num((double)Vec3::Dot(v, v))); return 1; }
-    if (HasMethod(t.methods, k)) { L.Push(BoundMethod(L, Api().vector3, false, k)); return 1; }
+    if (HasMethod(t, t.methods, k)) { L.Push(BoundMethod(L, Api().vector3, false, k)); return 1; }
     L.Error("Vector3 has no member '" + k + "'");
 }
 
@@ -547,7 +557,7 @@ int StaticIndex(State& L, int n) {
         L.Push(ToLua(L, r));
         return 1;
     }
-    if (HasMethod(t.staticMethods, k)) { L.Push(BoundMethod(L, typeIdx, true, k)); return 1; }
+    if (HasMethod(t, t.staticMethods, k)) { L.Push(BoundMethod(L, typeIdx, true, k)); return 1; }
     L.Error(t.name + " has no member '" + k + "'");
 }
 

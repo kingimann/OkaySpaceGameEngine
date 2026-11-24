@@ -76,6 +76,9 @@ int main() {
                    "var r = [1, 2, 3].Select(v => v * a)\nprint(r)"},
         {"lists", "var xs = []\nfor (var i = 0; i < 5; i++) { xs.Add(i * i); }\nxs[2] = 99\nvar s = 0\n"
                   "foreach (var v in xs) { s = s + v; }\nprint(xs, s, xs.Count, xs[10])"},
+        {"foreach_flow", "var xs = [1, 2, 3, 4, 5, 6]\nforeach (var v in xs) { if (v == 2) continue; if (v == 5) break; xs.Add(v); print(v); }\n"
+                         "print(xs.Count, v)\nvar m = {}\nm.a = 1\nm.b = 2\nforeach (var kv in m) { print(kv.Key, kv.Value); }\n"
+                         "foreach (var q in 5) { print(\"never\"); }\nfunction f() { foreach (var z in [7, 8]) { return z; } }\nprint(f())"},
         {"maps", "var m = {}\nm[\"a\"] = 1\nm.b = 2\nforeach (var k in m) { print(k, m[k]); }\nprint(m.Count)"},
         {"typed", "int n = 3.7\nprint(n)\nn = 9.9\nprint(n)\nconst string s = \"k\"\nprint(s)"},
         {"const_error", "const int c = 1\nprint(c)\nc = 2\nprint(\"never\")"},

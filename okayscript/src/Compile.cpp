@@ -312,6 +312,24 @@ private:
                 EndLoop(Here(), count);
                 return;
             }
+            case StmtKind::ForEach: {
+                // As the walker: the collection once, the variable declared here, a list's length taken at the start
+                // (items added while looping are not visited), a map's keys copied first. No iteration limit.
+                auto& s = static_cast<const ForEachStmt&>(st);
+                Emit(Op::Line, st.line);
+                Expression(*s.iterable);
+                const int it = c.iterators++;
+                Emit(Op::ForEachStart, it, &s);
+                Drop();
+                const int top = Here();
+                const std::size_t next = Emit(Op::ForEachNext, it, &s);
+                loops.emplace_back();
+                List(s.body);
+                Emit(Op::Jump, top);
+                EndLoop(Here(), top);
+                c.code[next].b = Here();
+                return;
+            }
             case StmtKind::For: {
                 auto& s = static_cast<const ForStmt&>(st);
                 Emit(Op::Line, st.line);
@@ -359,6 +377,7 @@ const char* OpName(Op op) {
         case Op::PushStr: return "push_str"; case Op::PushNull: return "push_null"; case Op::Pop: return "pop";
         case Op::Load: return "load"; case Op::Store: return "store"; case Op::StorePop: return "store_pop";
         case Op::Define: return "define"; case Op::Binary: return "binary"; case Op::Unary: return "unary";
+        case Op::ForEachStart: return "foreach_start"; case Op::ForEachNext: return "foreach_next";
         case Op::Index: return "index"; case Op::IndexStore: return "index_store";
         case Op::MethodCall: return "method_call";
         case Op::BinaryK: return "binary_k"; case Op::CompareJump: return "compare_jump";

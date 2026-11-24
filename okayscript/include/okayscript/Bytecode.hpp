@@ -45,6 +45,8 @@ enum class Op : unsigned char {
     Return,        ///< pop into retVal and end the body with Flow::Return
     ReturnNone,    ///< retVal = 0 and end with Flow::Return
     EndFlow,       ///< end the body with Flow a (a stray break or continue: no loop around it here)
+    ForEachStart,  ///< pop a list or map into iterator a; declare the loop variable p ((const ForEachStmt*) in f's place: b)
+    ForEachNext,   ///< iterator a's next item into the loop variable, or go to b when there is none
     LoopInit,      ///< loop counter a = 0
     LoopCount,     ///< count one iteration of loop a ((const char*)p names it in the error)
     End            ///< the end of the body: Flow::Normal
@@ -78,6 +80,7 @@ struct Chunk {
     std::vector<Instr> code;
     int maxStack = 0;    ///< operand stack slots it needs
     int loops = 0;       ///< loop counters it needs
+    int iterators = 0;   ///< foreach iterators it needs
     mutable std::vector<NameCache> caches;
     mutable std::vector<CallCache> calls;
 };

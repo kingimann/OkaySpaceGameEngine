@@ -4,7 +4,7 @@
 // It is a template over the value type V, so one core runs both the standalone okayscript::Value (Value.hpp) and the
 // engine's vs::VsValue. V must have the script-value interface: constructors from float, bool, std::string and its
 // vector type; MakeArray/MakeMap; IsNumber/IsBool/IsString/IsVec3/IsArray/IsMap/IsObject; AsFloat/AsBool/AsString/
-// AsVec3/AsArray/AsMap/AsObjectId; NumberPtr (the number, or nullptr), SetNumber, SetBool. The definitions are in detail/Runtime.ipp and detail/Eval.ipp; the standalone value
+// AsVec3/AsArray/AsMap/AsObjectId; NumberPtr (the number, or nullptr), SetNumber, SetBool, StringPtr. The definitions are in detail/Runtime.ipp and detail/Eval.ipp; the standalone value
 // is instantiated in src/Instantiate.cpp, another value type where its program includes those files once.
 #include "okayscript/Ast.hpp"
 #include "okayscript/Bytecode.hpp"

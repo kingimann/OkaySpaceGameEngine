@@ -94,6 +94,13 @@ template <class V> inline void CopyValue(V& to, const V& from) {
 
 template <class V> V Arith(Tok op, const V& a, const V& b);
 
+/// One running foreach: the collection, where it is, and a map's keys.
+template <class V> struct ForEachState {
+    V coll;
+    std::size_t i = 0, n = 0;
+    std::vector<std::string> keys;
+};
+
 } // namespace detail
 
 template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c) {
@@ -104,6 +111,8 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c) {
     std::unique_ptr<long long[]> moreCounters;
     long long* counters = fixedCounters;
     if (c.loops > 8) { moreCounters.reset(new long long[(std::size_t)c.loops]); counters = moreCounters.get(); }
+    std::unique_ptr<detail::ForEachState<V>[]> iters;
+    if (c.iterators) iters.reset(new detail::ForEachState<V>[(std::size_t)c.iterators]);
     NameCache* const caches = c.caches.data();
     const Instr* const code = c.code.data();
     int sp = 0;
@@ -155,7 +164,15 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c) {
                 break;
             case Op::Binary: {
                 V& a = bp[sp - 2];
-                const V& b = bp[sp - 1];
+                V& b = bp[sp - 1];
+                if (in.tok == Tok::Plus) {
+                    if (std::string* s = a.StringPtr()) {   // text + anything: append in place (JoinText's rule)
+                        if (const std::string* t = b.StringPtr()) { detail::CheckTextLength(s->size() + t->size()); s->append(*t); }
+                        else { const std::string t2 = b.AsString(); detail::CheckTextLength(s->size() + t2.size()); s->append(t2); }
+                        --sp;
+                        break;
+                    }
+                }
                 const auto* x = a.NumberPtr();
                 const auto* y = b.NumberPtr();
                 if (!(x && y && detail::NumberArith<V>(in.tok, *x, *y, a))) a = detail::Arith<V>(in.tok, a, b);
@@ -164,6 +181,14 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c) {
             }
             case Op::BinaryK: {
                 V& a = bp[sp - 1];
+                if (in.tok == Tok::Plus) {
+                    if (std::string* s = a.StringPtr()) {
+                        const std::string t = V{in.f}.AsString();
+                        detail::CheckTextLength(s->size() + t.size());
+                        s->append(t);
+                        break;
+                    }
+                }
                 const auto* x = a.NumberPtr();
                 if (!(x && detail::NumberArith<V>(in.tok, *x, in.f, a))) a = detail::Arith<V>(in.tok, a, V{in.f});
                 break;
@@ -266,6 +291,44 @@ template <class V> Flow BasicRuntime<V>::RunChunk(const Chunk& c) {
             case Op::Return: retVal = std::move(bp[--sp]); return Flow::Return;
             case Op::ReturnNone: retVal = V{}; return Flow::Return;
             case Op::EndFlow: return (Flow)in.a;
+            case Op::ForEachStart: {
+                auto& s = *static_cast<const ForEachStmt*>(in.p);
+                auto& st = iters[(std::size_t)in.a];
+                st.coll = std::move(bp[--sp]);
+                st.i = 0;
+                st.keys.clear();
+                Define(s.var, V{});   // the loop variable lives in the current scope
+                if (auto arr = st.coll.AsArray()) st.n = arr->size();
+                else if (auto m = st.coll.AsMap()) {
+                    st.keys.reserve(m->size());
+                    for (auto& kv : *m) st.keys.push_back(kv.first);
+                    st.n = st.keys.size();
+                } else st.n = 0;
+                break;
+            }
+            case Op::ForEachNext: {
+                auto& s = *static_cast<const ForEachStmt*>(in.p);
+                auto& st = iters[(std::size_t)in.a];
+                if (auto arr = st.coll.AsArray()) {
+                    if (st.i >= st.n || st.i >= arr->size()) { st.coll = V{}; pc = in.b; break; }
+                    Assign(s.var, (*arr)[st.i++]);
+                } else if (auto m = st.coll.AsMap()) {
+                    if (st.i >= st.n) { st.coll = V{}; pc = in.b; break; }
+                    const std::string& k = st.keys[st.i++];
+                    if (s.pairs) {
+                        V kv = V::MakeMap();
+                        (*kv.AsMap())["Key"] = V{k};
+                        auto f = m->find(k);
+                        (*kv.AsMap())["Value"] = f != m->end() ? f->second : V{};
+                        Assign(s.var, kv);
+                    } else {
+                        Assign(s.var, V{k});
+                    }
+                } else {
+                    pc = in.b;
+                }
+                break;
+            }
             case Op::LoopInit: counters[in.a] = 0; break;
             case Op::LoopCount: CountIteration(counters[in.a], static_cast<const char*>(in.p)); break;
             case Op::End: return Flow::Normal;

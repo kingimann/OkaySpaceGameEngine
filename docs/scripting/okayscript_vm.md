@@ -58,5 +58,5 @@ jump targets patched once they are known. No code or instruction set was taken f
 
 - Expressions: dotted and `this.` names, named arguments, `?.` method calls, an index that is not a name or a
   constant, interpolated text, members, lambdas, `new`, casts, compound and nullish assignments.
-- Statements: typed, const and static declarations, `foreach`, `switch`, `try`, `throw` and `yield`.
+- Statements: typed, const and static declarations, `switch`, `try`, `throw` and `yield`.
 - A walker statement inside a compiled loop still reaches that loop with its `break` and `continue`.

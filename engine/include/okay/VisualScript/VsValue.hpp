@@ -147,6 +147,8 @@ public:
     /// Make this the number f / the bool b (in place when it already is one: OkayScript's hot path).
     void SetNumber(float f) { if (auto* p = std::get_if<float>(&m_data)) *p = f; else m_data = f; }
     void SetBool(bool b) { if (auto* p = std::get_if<bool>(&m_data)) *p = b; else m_data = b; }
+    /// The text itself when this is text, else nullptr (OkayScript appends in place).
+    std::string* StringPtr() { return std::get_if<std::string>(&m_data); }
     std::string AsString() const {
         if (auto* s = std::get_if<std::string>(&m_data)) return *s;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";

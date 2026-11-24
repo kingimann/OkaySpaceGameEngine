@@ -77,6 +77,8 @@ public:
     /// Make this the number f / the bool b (in place when it already is one: the interpreter's hot path).
     void SetNumber(Number f) { if (auto* p = std::get_if<Number>(&m_data)) *p = f; else m_data = f; }
     void SetBool(bool b) { if (auto* p = std::get_if<bool>(&m_data)) *p = b; else m_data = b; }
+    /// The text itself when this is text, else nullptr (appending in place).
+    std::string* StringPtr() { return std::get_if<std::string>(&m_data); }
     bool IsBool() const { return std::holds_alternative<bool>(m_data); }
     bool IsString() const { return std::holds_alternative<std::string>(m_data); }
     bool IsVec3() const { return std::holds_alternative<Vec3>(m_data); }

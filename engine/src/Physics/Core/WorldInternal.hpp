@@ -77,6 +77,7 @@ struct ContactPair {
     bool sensor = false;
     bool touching = false, wasTouching = false;
     bool active = false;              // looked at this step (one side awake)
+    bool recheck = true;              // a still pair (World::reportStillPairs): look at it this step (new, or a side moved)
     V3 normal;                        // A to B
     bool mixed = false;               // points have their own normals (a mesh pair)
     int count = 0;

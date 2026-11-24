@@ -11,5 +11,5 @@ components=GridObstacle2D,Joint2D,TilemapCollider2D
 serializers=joint2d
 vs_group=physics
 editor=
-sources=include/okay/Physics/Physics2D.hpp include/okay/Physics/Collider2D.hpp include/okay/Physics/Rigidbody2D.hpp src/Physics/Physics2D.cpp include/okay/Components/Joint2D.hpp include/okay/Components/TilemapCollider2D.hpp include/okay/Components/GridObstacle2D.hpp
-tests=physics2d_casts hinge2d angular2d tilemap_collision
+sources=include/okay/Physics/Physics2D.hpp include/okay/Physics/Collider2D.hpp include/okay/Physics/Rigidbody2D.hpp src/Physics/Physics2D.cpp src/Physics/Physics2DEngine.inl include/okay/Components/Joint2D.hpp include/okay/Components/TilemapCollider2D.hpp include/okay/Components/GridObstacle2D.hpp
+tests=physics2d_casts physics2d_core hinge2d angular2d tilemap_collision

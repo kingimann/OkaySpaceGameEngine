@@ -85,12 +85,12 @@ components and the saved-scene fields are unchanged.
 | Triggers, layers, materials | sensors with the tag and layer filter checked every step; the scene's layer matrix; per-collider friction and bounciness with the combine modes (`CombineSurface`); hits slower than 0.5 units a second do not bounce (the old 2D rule) |
 | One-way platforms (Edge collider) | `World::contactEnabled`: asked every step for each close pair; the pair is switched off while the other collider's centre is on the far side of the edge (the old rule) |
 | Joint2D Distance, Spring, Pin, Hinge | core Distance (rod, or spring in N/m), Fixed, Hinge about z with limits and motor. A partner object without a body is followed when it moves. `breakForce` is a stretch length, as before |
-| Events | OnCollisionEnter2D / Stay / Exit and OnTriggerEnter2D / Stay / Exit from the world's touching pairs, one per pair of components |
+| Events | OnCollisionEnter2D / Stay / Exit and OnTriggerEnter2D / Stay / Exit from the world's touching pairs, one per pair of components. Two solid colliders that cannot be pushed (two fixed ones, a kinematic body or a collider moved by its transform against a wall) still raise OnCollision while they overlap, as the old 2D step did (`World::reportStillPairs`; nothing is pushed) |
 | Queries | `Physics2D`'s own ray, overlap and cast code, unchanged (it never used the step) |
 | Step length | a step longer than 1/45 s is solved in equal slices (forces are applied in every slice) |
 
-Added to the core for this: `World::contactEnabled` (a per-step switch for a pair), `World::SetInertia` (a given
-inertia instead of the shapes') and `World::Configure` (the per-step body settings in one call; the 3D bridge uses it
+Added to the core for this: `World::contactEnabled` (a per-step switch for a pair), `World::reportStillPairs` (solid pairs
+without a dynamic body are reported; off in 3D), `World::SetInertia` (a given inertia instead of the shapes') and `World::Configure` (the per-step body settings in one call; the 3D bridge uses it
 too). One core fault was fixed: a joint that holds a point (Fixed, Ball, Hinge) did nothing on a body with a locked
 axis, because the point constraint's matrix had an empty row and no inverse; an axis neither body can move along is
 now left out (`PointInverse` in `Joint.cpp`, tested in `physcore_world` and by the 2D pin and hinge tests). The solver,
@@ -100,10 +100,9 @@ What a 2D game can notice (measured in `physics2d_core` and the older 2D tests):
 things sit up to about 1 cm into each other (the core's slop and soft position correction) instead of exactly touching;
 bodies fall asleep in groups and wake when their support goes; a Pin joint is a weld (it also holds the turn, as in
 3D; the old 2D pin only held the position); a hinge pushes back on its partner body; Rolling Resistance (default 0.03)
-now slows a rolling ball; a collider's own friction and bounciness (>= 0) are used, before only the body's were; two solid
-colliders that both have no dynamic body (two static ones, or a collider moved by its transform against a wall) no
-longer raise OnCollision callbacks (trigger callbacks still come); a body going up through a one-way platform raises no
-collision callbacks until it lands; speeds are capped at 10,000 units a second.
+now slows a rolling ball; a collider's own friction and bounciness (>= 0) are used, before only the body's were; a body
+going up through a one-way platform raises no collision callbacks until it lands; two solid colliders that only touch
+edge to edge without a dynamic body raise no callbacks (they must overlap); speeds are capped at 10,000 units a second.
 
 ## Memory
 

@@ -21,7 +21,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/physics/physics_core.md` (section "2D on the core")
 - **Tests:** `physics2d_core`, `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - headless on Linux only; covered by the tests above (a 10-crate stack at 30, 60 and 120 steps a second, waking on lost support, heavy on light, a fast ball at a thin wall, friction, spin, tilemap strips, NaN and freed-pointer safety)
-- **Open:** 2D joints are the Joint2D component (6.3), solved by the core; no 2D slider joint; the debug view draws no 2D bodies or joints; two solid colliders without a dynamic body raise no collision callbacks; not run in the editor or on Windows
+- **Open:** 2D joints are the Joint2D component (6.3), solved by the core; no 2D slider joint; the debug view draws no 2D bodies or joints; not run in the editor or on Windows
 - **Related:** 6.3, 6.4, 6.5, 6.7, 2.6, 4.3
 - **Words:** physics, gravity, 2D physics, Rigidbody2D, BoxCollider2D, CircleCollider2D, CapsuleCollider2D, PolygonCollider2D, EdgeCollider2D, one-way platform, trigger, TilemapCollider2D, sleeping, friction, bounce, restitution, Box2D-style
 - **Seen as:** a sprite falls through the floor; a box jitters or never comes to rest; a ball does not bounce; a platform cannot be jumped up through; tilemap tiles do not block the player; a body spins when it should stay upright

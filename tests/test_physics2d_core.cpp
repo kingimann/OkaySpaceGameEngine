@@ -11,10 +11,18 @@ using namespace okay;
 //  2. a sleeping crate wakes and falls when what holds it up goes away;
 //  3. a heavy crate on a light crate does not squash it;
 //  4. a fast small ball does not pass a thin wall (with and without Continuous Collision ticked);
-//  5. a platform moved by its transform lifts and carries a crate.
+//  5. a platform moved by its transform lifts and carries a crate;
+//  6. solid colliders that cannot be pushed still raise OnCollision while they overlap.
 // Every case prints the numbers it measured, so a failure says how far off it was.
 
 namespace {
+
+struct Probe : Component {
+    int enter = 0, stay = 0, exit = 0;
+    void OnCollisionEnter2D(const Collision2D&) override { ++enter; }
+    void OnCollisionStay2D(const Collision2D&) override { ++stay; }
+    void OnCollisionExit2D(const Collision2D&) override { ++exit; }
+};
 
 GameObject* Box(Scene& s, const char* name, float x, float y, float w, float h, bool dynamic, float mass = 1.0f) {
     auto* go = s.CreateGameObject(name);
@@ -149,19 +157,58 @@ int main() {
         GameObject* crate = Box(s, "Crate", 0, 0.5f, 1, 1, true);
         s.Start();
         for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);   // settle
-        float worstGap = 0;
+        float worstGap = 0, xAt50 = 0;
         for (int i = 0; i < 60; ++i) {                          // one second at 2 units a second
+            if (i == 50) xAt50 = crate->transform->Position().x;
             plat->transform->localPosition += sideways ? Vec3{2.0f / 60.0f, 0, 0} : Vec3{0, 2.0f / 60.0f, 0};
             s.Update(1.0f / 60.0f);
             const float top = plat->transform->Position().y + 0.5f;
             worstGap = std::max(worstGap, std::fabs((crate->transform->Position().y - 0.5f) - top));
         }
         const Vec3 pp = plat->transform->Position(), cp = crate->transform->Position();
-        std::printf("  platform moved %s: platform at (%.3f, %.3f), crate at (%.3f, %.3f), worst gap or overlap %.4f\n",
-                    sideways ? "sideways" : "up", pp.x, pp.y, cp.x, cp.y, worstGap);
+        std::printf("  platform moved %s: platform at (%.3f, %.3f), crate at (%.3f, %.3f), worst gap or overlap %.4f, "
+                    "crate moved %.3f in the last 10 steps (platform 0.333)\n",
+                    sideways ? "sideways" : "up", pp.x, pp.y, cp.x, cp.y, worstGap, cp.x - xAt50);
         CHECK(worstGap < 0.03f);                       // the crate stays on the platform's top
-        if (sideways) CHECK(std::fabs(cp.x - pp.x) < 0.2f);   // and rides along with it
-        else CHECK(std::fabs(cp.y - (pp.y + 1.0f)) < 0.03f);
+        if (sideways) {
+            // the platform starts at full speed, so the crate slips first (friction 0.4: about v*v / (2 * 0.4 * g) = 0.51
+            // behind) and then rides along at the platform's speed
+            CHECK(pp.x - cp.x > 0.3f && pp.x - cp.x < 0.7f);
+            CHECK(std::fabs((cp.x - xAt50) - 10.0f * 2.0f / 60.0f) < 0.02f);
+        } else {
+            CHECK(std::fabs(cp.y - (pp.y + 1.0f)) < 0.03f);
+        }
+    }
+
+    // ---- 6. solid colliders that cannot be pushed still report their overlap (as the old 2D step did) ----
+    // (Also a guard added with the move to the core.) A collider moved by its transform, then a kinematic body moved by
+    // its speed, pass through a wall that has no body: Enter once, Stay while inside, Exit once, and nothing is pushed.
+    for (int kinematic = 0; kinematic < 2; ++kinematic) {
+        Scene s("still");
+        GameObject* wall = Box(s, "Wall", 0, 0, 1, 4, false);
+        GameObject* mover = Box(s, "Mover", -3, 0, 1, 1, false);
+        auto* probe = mover->AddComponent<Probe>();
+        auto* wallProbe = wall->AddComponent<Probe>();
+        if (kinematic) {
+            auto* rb = mover->AddComponent<Rigidbody2D>();
+            rb->bodyType = Rigidbody2D::BodyType::Kinematic;
+            rb->velocity = {3.0f, 0};
+        }
+        s.Start();
+        for (int i = 0; i < 120; ++i) {   // 2 seconds at 3 units a second: from x = -3 to x = +3
+            if (!kinematic) mover->transform->localPosition.x += 3.0f / 60.0f;
+            s.Update(1.0f / 60.0f);
+        }
+        for (int i = 0; i < 5; ++i) s.Update(1.0f / 60.0f);
+        std::printf("  %s through a wall: enter %d, stay %d, exit %d (the wall saw %d / %d / %d), mover x %.3f, wall x %.3f\n",
+                    kinematic ? "kinematic body" : "collider moved by its transform", probe->enter, probe->stay, probe->exit,
+                    wallProbe->enter, wallProbe->stay, wallProbe->exit, mover->transform->Position().x, wall->transform->Position().x);
+        CHECK(probe->enter == 1 && probe->exit == 1);
+        CHECK(probe->stay > 30 && probe->stay < 45);     // the two overlap for 2 units of travel: 40 steps
+        CHECK(wallProbe->enter == 1 && wallProbe->exit == 1);
+        // nothing stopped it (the kinematic body kept its speed for the 5 extra steps: 125 steps in all)
+        CHECK(std::fabs(mover->transform->Position().x - (kinematic ? 3.25f : 3.0f)) < 0.05f);
+        CHECK(wall->transform->Position().x == 0.0f);
     }
 
     TEST_MAIN_RESULT();

@@ -178,6 +178,10 @@ public:
     bool blockSolver = true;             // solve the 2 to 4 normal points of a manifold together (steadier stacks)
     bool enableSleep = true;
     bool continuous = true;              // speculative contacts sized by each body's motion this step
+    /// Also report solid pairs in which neither body is dynamic (two fixed things, or a kinematic body against a wall).
+    /// Nothing is pushed; the pair is touching while the two overlap, with its events and manifold, like a sensor that
+    /// reports as solid. It is looked at only when one side moved. Off: such pairs do not exist (the 3D rule).
+    bool reportStillPairs = false;
     float linearSlop = 0.002f;           // overlap that is left alone (stops jitter)
     float speculativeDistance = 0.02f;   // contacts closer than this are kept even at rest
     float positionCorrection = 0.2f;     // fraction of the overlap removed per position iteration

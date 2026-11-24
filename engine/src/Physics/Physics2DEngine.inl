@@ -257,6 +257,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     W.velocityIterations = std::min(std::max(solverIterations, 4), 30);
     W.restitutionThreshold = 0.5f;   // slower hits do not bounce (the 2D rule)
     W.maxLinearSpeed = 10000.0f;     // 2D games often count in pixels: the 3D speed cap is far too low for them
+    W.reportStillPairs = true;       // two solid colliders that overlap raise OnCollision even when neither can be pushed
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {
         const Collider2D* ca = E.Component(a);
         const Collider2D* cb = E.Component(b);
@@ -307,9 +308,17 @@ void Physics2D::Step(Scene& scene, float dt) {
         const bool goodPose = std::isfinite(pos.x + pos.y + angle);
         const bool goodSpeed = std::isfinite(rb->velocity.x + rb->velocity.y + rb->angularVelocity);
         const float spin = rb->freezeRotation ? 0.0f : rb->angularVelocity;   // a frozen body keeps its number but never turns
-        const phys::BodyType type = rb->bodyType == Rigidbody2D::BodyType::Dynamic ? phys::BodyType::Dynamic
-                                  : rb->bodyType == Rigidbody2D::BodyType::Kinematic ? phys::BodyType::Kinematic
-                                  : phys::BodyType::Static;
+        phys::BodySettings set;
+        set.type = rb->bodyType == Rigidbody2D::BodyType::Dynamic ? phys::BodyType::Dynamic
+                 : rb->bodyType == Rigidbody2D::BodyType::Kinematic ? phys::BodyType::Kinematic : phys::BodyType::Static;
+        set.lockLinear = 4;                              // stays in the plane,
+        set.lockAngular = rb->freezeRotation ? 7 : 3;    // turns about z only (or not at all)
+        set.linearDamping = std::max(rb->drag, 0.0f);
+        set.angularDamping = std::max(rb->angularDrag, 0.0f);
+        set.gravityScale = rb->gravityScale;
+        set.allowSleep = rb->allowSleep;
+        set.bullet = rb->continuousCollision;
+        const phys::BodyType type = set.type;
         auto it = E.bodies.find(rb);
         if (it == E.bodies.end()) {
             if (!goodPose) continue;   // nowhere to put it
@@ -330,15 +339,6 @@ void Physics2D::Step(Scene& scene, float dt) {
         EngineBridge::BodyRec& r = it->second;
         r.seen = true;
         const phys::BodyId id = r.id;
-        phys::BodySettings set;
-        set.type = type;
-        set.linearDamping = std::max(rb->drag, 0.0f);
-        set.angularDamping = std::max(rb->angularDrag, 0.0f);
-        set.gravityScale = rb->gravityScale;
-        set.lockLinear = 4;                              // stays in the plane,
-        set.lockAngular = rb->freezeRotation ? 7 : 3;    // turns about z only (or not at all)
-        set.bullet = rb->continuousCollision;
-        set.allowSleep = rb->allowSleep;
         W.Configure(id, set);
         const float mass = rb->mass > 0.0f && std::isfinite(rb->mass) ? rb->mass : 1.0f;
         if (mass != r.mass) { W.SetMass(id, mass); r.mass = mass; r.shapeChanged = true; }

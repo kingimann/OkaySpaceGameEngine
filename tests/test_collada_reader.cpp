@@ -462,14 +462,15 @@ int main() {
 
     // ---------------- Fixed counts (were: Assimp reads the same files, compare) ----------------
     // Until 2026-11-24 Assimp 5.4.3 read these files too (CI job assimp-models) and our counts and world bounds had to equal its
-    // own. Assimp is removed, so the values it agreed with are kept here as fixed numbers.
+    // own. Assimp is removed, so the values are kept here as fixed numbers (recorded 2026-11-24 from our reader; the CI comparison
+    // that required them to equal Assimp's was green on main before the removal; not re-run against Assimp here).
     {
         struct Case { const char* file; int parts, vertices, triangles, bones, clips; float lo[3], hi[3]; };
         const Case cases[] = {
-            {"two_materials.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
-            {"zup_cm.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
-            {"skinned_strip.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
-            {"component_anim.dae", -1, -1, -1, -1, -1, {0, 0, 0}, {0, 0, 0}},
+            {"two_materials.dae", 2, 7, 3, 0, 0, {-1, 12, 3}, {1, 14, 3}},
+            {"zup_cm.dae", 1, 5, 3, 0, 0, {-0.5f, 0, -1.8f}, {1.5f, 1, 0}},
+            {"skinned_strip.dae", 1, 4, 2, 2, 1, {0, 0, 0}, {0, 3, 0}},
+            {"component_anim.dae", 4, 12, 4, 0, 1, {0, 0, 0}, {1, 1, 0}},
         };
         for (const Case& c : cases) {
             ImportedModel own; std::string e1;

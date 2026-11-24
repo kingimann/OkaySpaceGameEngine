@@ -578,23 +578,21 @@ int main() {
 
     // ---------------- Fixed counts (were: the same files through Assimp) ----------------
     // Until 2026-11-24 these files were also read by Assimp 5.4.3 (CI job assimp-models) and our counts had to equal its counts.
-    // Assimp is removed, so the counts it agreed with are kept here as fixed numbers.
+    // Assimp is removed, so the counts are kept here as fixed numbers (recorded 2026-11-24 from our readers; the CI comparison with
+    // Assimp, which required equal counts, was green on main before the removal; not re-run against Assimp here).
     {
         struct Case { const char* file; int parts, vertices, triangles; };
         const Case cases[] = {
-            {"cube_ascii.stl", -1, -1, -1}, {"cube_binary.stl", -1, -1, -1},
-            {"cube_ascii.ply", -1, -1, -1}, {"cube_le.ply", -1, -1, -1}, {"cube_be.ply", -1, -1, -1},
-            {"tetra_plain.ply", -1, -1, -1},
-            {"plain.obj", -1, -1, -1},
-            {"cube.obj", -1, -1, -1},
+            {"cube_ascii.stl", 1, 24, 12}, {"cube_binary.stl", 1, 24, 12},
+            {"cube_ascii.ply", 1, 8, 12}, {"cube_le.ply", 1, 8, 12}, {"cube_be.ply", 1, 8, 12},
+            {"tetra_plain.ply", 1, 4, 4},
+            {"plain.obj", 1, 4, 2},
+            {"cube.obj", 2, 24, 12},
         };
         for (const Case& c : cases) {
-            ImportedModel own; std::string e1;
-            const bool a = ImportModelData(kDir + c.file, own, ImportBackend::Own, false, &e1);
-            if (!a) std::printf("  %s: %s\n", c.file, e1.c_str());
-            CHECK(a);
-            if (!a) continue;
-            const ModelCounts co = CountModel(own);
+            ImportedModel read; std::string why;
+            if (!ImportModelData(kDir + c.file, read, ImportBackend::Own, false, &why)) { std::printf("  %s refused: %s\n", c.file, why.c_str()); CHECK(false); continue; }
+            const ModelCounts co = CountModel(read);
             if (co.parts != c.parts || co.vertices != c.vertices || co.triangles != c.triangles)
                 std::printf("  %s: parts %d vertices %d triangles %d (expected %d %d %d)\n", c.file, co.parts, co.vertices, co.triangles, c.parts, c.vertices, c.triangles);
             CHECK(co.parts == c.parts && co.vertices == c.vertices && co.triangles == c.triangles);

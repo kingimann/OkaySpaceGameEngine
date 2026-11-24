@@ -440,7 +440,6 @@ int main(int argc, char** argv) {
     }
     std::printf("\n%zu files. Runs per measurement: at least %d (until 50 ms). Heap counting: %s.\n", rows.size(), runs,
 #ifdef OKAY_BENCH_COUNT_HEAP
-                "on"#ifdef OKAY_BENCH_COUNT_HEAP
                 "on"
 #else
                 "off (not glibc)"

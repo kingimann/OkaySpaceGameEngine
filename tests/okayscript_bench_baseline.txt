@@ -1,6 +1,9 @@
 # Instructions counted by callgrind inside OkayScriptVM::Load for tests/bench_okayscript.cpp (Release, GCC 13,
-# Linux x86-64), 2026-11-24. The okayscript_bench test fails when a case is more than 10% over its line.
-# For reference, main before the OkayScript core: arith 236238146, calls 1111263748, deep 173342680.
-arith 218440801
-calls 196400852
-deep 100609320
+# Linux x86-64), 2026-11-24, on the bytecode machine. The okayscript_bench test fails when a case is more than 10% over
+# its line. For reference, main before the OkayScript core: arith 236238146, calls 1111263748, deep 173342680; the tree
+# walker of #1217: arith 218440801, calls 196400852, deep 100609320, list 132616898, text 2417653166.
+arith 55354630
+calls 139916166
+deep 9159986
+list 77354398
+text 815474463

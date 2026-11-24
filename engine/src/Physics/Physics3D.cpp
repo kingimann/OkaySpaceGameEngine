@@ -332,7 +332,7 @@ Contact TestOBB3OBB3(const OBB3& A, const OBB3& B) {
         float overlap = OBBProjRadius(A, L) + OBBProjRadius(B, L) - Mathf::Abs(Vec3::Dot(d, L));
         if (overlap <= 0.0f) return c;                    // separating axis found
         // Bias face axes slightly under edge-cross axes so flat rests pick a clean
-        // face normal instead of chattering on a nearby-tie edge axis.
+        // face normal instead of chattering on a near-tie edge axis.
         float metric = overlap + (i < 6 ? 0.0f : 1e-3f);
         if (metric < bestMetric) { bestMetric = metric; bestOverlap = overlap; bestAxis = L; }
     }
@@ -903,7 +903,7 @@ const Physics3D::QueryCache& Physics3D::QueryLists(Scene& scene) {
 }
 
 // ===================== The broad phase of the scene queries =====================
-// Every scene query (ray, overlap, shape cast, closest point) first asks ONE box tree which colliders are nearby, then
+// Every scene query (ray, overlap, shape cast, closest point) first asks ONE box tree which colliders are near, then
 // runs its exact tests on those only, in the order of the collider list (so answers, their order and ties are what a
 // walk over every collider gives). The tree is a phys::DynamicTree, the tree class our physics core's broad phase is
 // made of. It is its own instance over the cached collider list, not the tree inside the core world, because the
@@ -1210,7 +1210,7 @@ bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) 
         point = c;
         return true;
     }
-    // Sphere / capsule / cylinder: reduce to a sphere nearby c.
+    // Sphere / capsule / cylinder: reduce to a sphere near c.
     Vec3 sc; float sr; AsSphere(col, c, sc, sr);
     Vec3 d = c - sc; float dist = d.Magnitude();
     if (dist > r + sr) return false;
@@ -1389,7 +1389,7 @@ RaycastHit3D Sweep(const std::vector<Collider3D*>& nearby, const QueryShape& q, 
         float t0, t1;
         if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
         ++st.shapeTests;
-        Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere nearby the path)
+        Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere near the path)
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
         cands.push_back({c, t0, t1});
         lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);

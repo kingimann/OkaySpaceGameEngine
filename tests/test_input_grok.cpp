@@ -7,8 +7,17 @@
 #include "okay/Input/Gestures.hpp"
 #include <cmath>
 #include <string>
+#include <type_traits>
+#include <utility>
 
 using namespace okay;
+
+namespace {
+template <class T, class = void> struct HasPadQueue : std::false_type {};
+template <class T> struct HasPadQueue<T, std::void_t<decltype(T::TakePadEdge(std::declval<int&>(), std::declval<bool&>()))>> : std::true_type {};
+template <class T, class = void> struct HasControlRows : std::false_type {};
+template <class T> struct HasControlRows<T, std::void_t<decltype(std::declval<const T&>().ControlRows())>> : std::true_type {};
+}
 
 int main() {
     RUN_SUITE("axial dead zone");
@@ -245,6 +254,62 @@ int main() {
         CHECK(found && found->phase == Input::Touch::Phase::Began && found->began);
         CHECK(found && found->position.x == 40.0f && found->delta.y == 70.0f);
         Input::ClearTypedText();
+    }
+
+    RUN_SUITE("touch began survives Gestures::Tick");
+    {
+        Input::ClearTypedText();
+        Gestures::Reset();
+        Input::FeedTouch(5, 0, {20, 20});
+        Gestures::Tick(0.0);
+        const Input::Touch* t = nullptr;
+        for (int i = 0; i < Input::TouchCount(); ++i) if (Input::GetTouch(i).id == 5) t = &Input::GetTouch(i);
+        CHECK(t && t->began && t->phase == Input::Touch::Phase::Began);
+        Input::ClearTypedText();   // the frame ends: now it is a held finger, and a later sample is a move
+        Input::FeedTouch(5, 1, {30, 30});
+        for (int i = 0; i < Input::TouchCount(); ++i) if (Input::GetTouch(i).id == 5) t = &Input::GetTouch(i);
+        CHECK(t && !t->began && t->phase == Input::Touch::Phase::Moved);
+        Input::ClearTypedText();
+        Gestures::Reset();
+    }
+
+    RUN_SUITE("response overrides keep action names with spaces");
+    {
+        ActionSet a;
+        a.Add("Fire Gun", ValueType::Axis1D);
+        a.Add("Look", ValueType::Vector2);
+        InputActions::Response r; r.deadzone = 0.3f; r.curve = 2.0f; r.sensitivity = 1.5f; r.invertY = true;
+        a.Find("Fire Gun")->response = r;
+        a.Find("Look")->response = r;
+        const std::string text = a.ExportOverrides();
+        ActionSet b;
+        b.Add("Fire Gun", ValueType::Axis1D);
+        b.Add("Look", ValueType::Vector2);
+        CHECK(b.ImportOverrides(text) == 2);
+        CHECK_NEAR(b.Find("Fire Gun")->response.deadzone, 0.3f, 0.001f);
+        CHECK_NEAR(b.Find("Fire Gun")->response.curve, 2.0f, 0.001f);
+        CHECK(b.Find("Fire Gun")->response.invertY);
+        CHECK_NEAR(b.Find("Look")->response.sensitivity, 1.5f, 0.001f);
+        ActionSet c;   // a set without the action keeps the line for later
+        c.Add("Look", ValueType::Vector2);
+        CHECK(c.ImportOverrides(text) == 1);
+        CHECK(c.ExportOverrides().find("Fire Gun") != std::string::npos);
+    }
+
+    RUN_SUITE("TEMP repro: ten edges in, ten out");
+    {
+        int who = -1; bool on = false;
+        while (Input::TakePadEdge(who, on)) {}
+        int out = 0;
+        for (int k = 0; k < 10; ++k) Input::FeedGamepadRaw(0, {}, {}, 0, 0, 0, (k % 2) == 0);
+        while (Input::TakePadEdge(who, on)) ++out;
+        CHECK(out == 10);
+    }
+
+    RUN_SUITE("one row model and one connect detector, no second copies");
+    {
+        CHECK(!HasPadQueue<Input>::value);       // the platform's GamepadAdded/Removed events are the only connect source
+        CHECK(!HasControlRows<ActionEditor>::value);   // the Controls screen builds its rows from the set alone
     }
 
     TEST_MAIN_RESULT();

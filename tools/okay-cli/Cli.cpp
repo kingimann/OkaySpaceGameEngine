@@ -694,7 +694,7 @@ int CmdDoctor(const std::vector<std::string>& args, const std::string& project, 
                 const std::string user = git.Capture({"config", "user.name"}).out;
                 if (user.empty()) bad("Git does not know your name, so saves would not work.", "okay vc who \"Your Name\" you@example.com");
                 for (const vc::Change& c : git.Status())
-                    if (c.state == vc::State::Conflict) bad(c.path + " has a merge clash.", "open it, keep what you want, then okay vc save \"message\".");
+                    if (c.state == vc::State::Conflict) bad(c.path + " has a merge clash.", "okay vc resolve " + c.path + " --mine | --theirs | --as-is, then okay vc save \"message\".");
             }
         }
     }

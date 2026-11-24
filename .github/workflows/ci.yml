@@ -633,7 +633,9 @@ jobs:
       - name: Check for newly downloaded apt packages
         id: apt-new
         if: always()
-        run: bash scripts/ci-apt-cache.sh after "${{ steps.install.outcome }}"
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: bash scripts/ci-apt-cache.sh after "$INSTALL_OUTCOME"
 
       - name: Save downloaded apt packages
         if: always() && steps.apt-new.outputs.save == '1'

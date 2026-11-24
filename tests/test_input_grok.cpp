@@ -1,7 +1,9 @@
 // ActionSet: per-axis dead zone, press buffer on a local player's own set, Controls rows for composites, smooth per controller.
 #include "test_framework.hpp"
+#include <limits>
 #include "okay/Input/ActionSet.hpp"
 #include "okay/Input/ActionEditor.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Input/Gestures.hpp"
 #include <cmath>
 #include <string>
@@ -26,6 +28,10 @@ int main() {
         CHECK(ProcessorsToString(back) == "axial(0.15,0.9)");
         const InputValue mid = back[0].Apply({0.525f, 0.0f, 0.0f}, 0.0f);   // halfway from 0.15 to 0.9
         CHECK_NEAR(mid.x, 0.5f, 0.02f);
+        const InputValue bad = axial.Apply({std::numeric_limits<float>::quiet_NaN(), 0.4f, 0.1f}, 0.0f);
+        CHECK(bad.x == 0.0f);                 // NaN must not become a full deflection
+        CHECK(bad.y > 0.2f && bad.y < 0.3f);  // the other axis still uses the axial ramp
+        CHECK(bad.z == 0.0f);
     }
 
     RUN_SUITE("action set buffer");
@@ -69,6 +75,21 @@ int main() {
         h.Update(0.1f);
         CHECK(!h.HoldReached("Confirm", 0.25f));
         Input::FeedKeys({});
+
+        InputRuntime::Reset();
+        Input::FeedKeys({});
+        InputActions::Tick(0.016f);
+        Input::FeedKeys({' '});
+        InputActions::Tick(0.016f);
+        Input::FeedKeys({});
+        InputActions::Tick(0.05f);
+        CHECK(InputActions::Buffered("Jump", 0.2f));
+        CHECK(InputRuntime::Actions().Buffered("Jump", 0.2f));
+        CHECK(InputActions::Consume("Jump"));
+        CHECK(!InputRuntime::Actions().Buffered("Jump", 0.2f));
+        CHECK(!InputActions::Buffered("Jump", 0.2f));
+        InputRuntime::Reset();
+        Input::FeedKeys({});
     }
 
     RUN_SUITE("control rows for composites");
@@ -90,6 +111,19 @@ int main() {
         CHECK(rows[2].keyboard.find("W") != std::string::npos);
         CHECK(rows[2].keyboard.find("E") != std::string::npos);
         CHECK(rows[2].keyboard.find("None") == std::string::npos);
+
+        ActionEditor schemes;
+        schemes.set.AddScheme(ControlScheme{"Keys", true, true, false, false});
+        schemes.set.AddScheme(ControlScheme{"Pad", false, false, true, false});
+        schemes.set.Add("Jump", ValueType::Button).AddBinding("key:space", "Keys");
+        schemes.set.Find("Jump")->AddBinding("pad:a", "Pad");
+        schemes.set.Add("Trick", ValueType::Button).AddBinding("pad:b", "Keys");
+        const std::vector<ActionEditor::ControlRow> byScheme = schemes.ControlRows();
+        CHECK(byScheme.size() == 2);
+        CHECK(byScheme[0].keyboard.find("Space") != std::string::npos);
+        CHECK(byScheme[0].gamepad.find("A") != std::string::npos);
+        CHECK(byScheme[1].keyboard.find("B") != std::string::npos);
+        CHECK(byScheme[1].gamepad.empty());
     }
 
     RUN_SUITE("smooth per controller");

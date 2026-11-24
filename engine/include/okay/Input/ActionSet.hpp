@@ -255,6 +255,8 @@ public:
     bool Buffered(const std::string& name, float window = 0.15f) const;
     /// Use up that buffered press. False when there is none inside `window`, so a stale press cannot fire late.
     bool Consume(const std::string& name, float window = 0.15f);
+    /// Use up the latest press however old it is. InputActions::Consume calls this; there is one buffer.
+    bool ConsumeAny(const std::string& name);
     /// The press this frame is the second one inside `window` seconds of the previous press.
     bool DoubleTap(const std::string& name, float window = 0.3f) const;
     /// Seconds the action has been held, or 0 when it is up.

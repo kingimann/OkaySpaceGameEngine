@@ -1,6 +1,7 @@
 // Typed actions, composites, processors and control schemes (see ActionSet.hpp). Written from the general idea of
 // action maps: our own value rules, text forms and thresholds, checked by tests/test_action_set.cpp.
 #include "okay/Input/ActionSet.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/StringUtil.hpp"
@@ -52,13 +53,15 @@ InputValue Processor::Apply(const InputValue& in, float dt, int slot) {
             const float k = std::min(1.0f, (len - lo) / (hi - lo)) / len;
             return {v.x * k, v.y * k, v.z * k};
         }
-        case Kind::Axial: {   // the same reshape on each component, so a forward stick with a small sideways bias does not strafe
-            const float lo = a, hi = b > a ? b : 1.0f;
+        case Kind::Axial: {   // Input::ProcessStick's axial ramp, one component at a time (no second dead-zone path)
+            Input::StickSettings stick;
+            stick.shape = Input::StickSettings::Shape::Axial;
+            stick.deadZone = a;
+            stick.outerZone = b > a ? b : 1.0f;
+            stick.curve = 1.0f;
             auto one = [&](float x) {
-                const float s = x < 0.0f ? -1.0f : 1.0f;
-                const float m = std::fabs(x);
-                if (m <= lo || !(hi > lo)) return 0.0f;
-                return s * std::min(1.0f, (m - lo) / (hi - lo));
+                if (!std::isfinite(x)) return 0.0f;
+                return Input::ProcessStick(Vec2{x, 0.0f}, stick).x;
             };
             return {one(v.x), one(v.y), one(v.z)};
         }
@@ -763,11 +766,15 @@ bool ActionSet::Buffered(const std::string& name, float window) const {
     if (!a || a->pressConsumed || !(window >= 0.0f) || a->pressedAt < -1.0e8) return false;
     return m_time - a->pressedAt <= (double)window;
 }
-bool ActionSet::Consume(const std::string& name, float window) {
-    if (!Buffered(name, window)) return false;
+bool ActionSet::ConsumeAny(const std::string& name) {
     ActionDef* a = FindNoCase(name);
+    if (!a || a->pressConsumed || a->pressedAt < -1.0e8) return false;
     a->pressConsumed = true;
     return true;
+}
+bool ActionSet::Consume(const std::string& name, float window) {
+    if (!Buffered(name, window)) return false;
+    return ConsumeAny(name);
 }
 bool ActionSet::DoubleTap(const std::string& name, float window) const {
     const ActionDef* a = FindNoCase(name);

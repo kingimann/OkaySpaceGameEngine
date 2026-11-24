@@ -202,6 +202,7 @@ float Ramp(float mag, float dead, float outer) {
 } // namespace
 
 Vec2 Input::ProcessStick(const Vec2& raw, const StickSettings& s) {
+    if (!std::isfinite(raw.x) || !std::isfinite(raw.y)) return {0.0f, 0.0f};
     if (s.shape == StickSettings::Shape::Axial) {
         auto axis = [&](float v) {
             const float t = Curve(Ramp(std::fabs(v), s.deadZone, s.outerZone), s.curve);

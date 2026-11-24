@@ -138,7 +138,11 @@ std::vector<ActionEditor::ControlRow> ActionEditor::ControlRows() const {
             dest += text;
         };
         for (const BindingSpec& b : a.bindings) {
-            bool pad = false, other = false;
+            bool pad = false, other = false, named = false, padScheme = false;
+            if (!b.group.empty()) {
+                for (const ControlScheme& c : set.Schemes())
+                    if (c.name == b.group) { named = true; padScheme = c.gamepad; break; }
+            }
             std::string label;
             const char* kind = b.kind == BindingSpec::Kind::Vector2 ? "vector " : b.kind == BindingSpec::Kind::Vector3 ? "vector3 " :
                                b.kind == BindingSpec::Kind::Axis1D ? "axis " : b.kind == BindingSpec::Kind::Chord ? "chord " : "";
@@ -151,7 +155,8 @@ std::vector<ActionEditor::ControlRow> ActionEditor::ControlRows() const {
             }
             if (label.empty()) continue;
             label = kind + label;
-            if (pad && !other) take(row.gamepad, label);
+            const bool gamepad = named ? padScheme : (pad && !other);
+            if (gamepad) take(row.gamepad, label);
             else take(row.keyboard, label);
         }
         rows.push_back(std::move(row));

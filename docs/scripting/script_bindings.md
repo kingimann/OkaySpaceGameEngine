@@ -54,6 +54,34 @@ One layer, `okay/Scripting/ScriptBindings.hpp`:
   members stay first, with their names and behaviour, and anything they do not know falls through to the layer
   (`rb.InvMass()`, `rb.continuousCollision`).
 
+## Side effects scripts cannot reach
+
+Review of PR #1234 (B1, B2). Before this layer a game script could touch only named save slots, the prefs and the
+`net.*` builtins (which have their own rules). The generator keeps it that way: `scripts/gen_script_bindings.py`
+does not bind a method when any of these holds (`DENY_*` there; `--audit` counts them, 267 now):
+
+1. its class is a network, platform or file service: `NetworkManager`, `NetworkObject`, `NetworkSync`,
+   `NetworkPlayerSpawner`, `NetValidator`, `SteamManager`, `UIFilePicker`, `UIHotReload` (networking stays reachable
+   only through `net.*`);
+2. a text parameter's name names a place: path, file, filename, dir, folder, url, uri, address, host, link, root
+   (`ImportHeightmap(path)`, `ScriptComponent.LoadFile`, `AudioSource.OpenStream`, ...); a `dir` that is a vector is
+   a direction and stays;
+3. a word of its name says it: file, clipboard, overlay, cloud, export, import, server, client, relay, socket,
+   connect, url, download, upload, http, workshop, lobby;
+4. it is on the explicit list: methods that write a file named earlier through a property or read one
+   (`NavMeshSurface.Save`, `BuilderMode.SaveModel` / `SaveMap`, `SurvivalSave.Save` / `Load`,
+   `Terrain.ExportHeightmap` / `ImportHeightmap`, `VehicleController.ToFile` / `LoadPresetText` / `SavePresetText`,
+   `ScriptComponent.SetPath`, `VisualScriptComponent.SetPath`).
+
+The rules are on the safe side: some harmless methods are dropped too (`Transform.Find(path)` names a child, not a
+file). Argument checks in the generated conversion (B2): an enum argument must be one of its values (the range read
+from the enum's declaration; a bit-flag enum any combination), and a whole-number parameter whose name is count- or
+index-like (count, size, index, length, num, slot, points, width, height, ...) must be -1 to 1048576; small integer
+types must fit their type. Anything else is the call's error, "LineRenderer.SetPositionCount(): argument 1 must be -1
+to 1048576, got 2000000000" (`ArgIntIn`, `ArgCount`, `ArgError` in `ScriptBindings.hpp`). Tests:
+`script_bindings_rules` (`scripts/tests/test_gen_script_bindings.py`: no bound method breaks a rule) and
+`script_bindings` (the denied methods are not reachable; the caps and enum checks give their errors).
+
 ## What was not replaced, and why
 
 The hand-written component members were kept: none is exactly equivalent to its generated or registry form. Examples:
@@ -73,9 +101,8 @@ Visual Script's property-to-value conversion, was merged into the layer.
 - `scripts/script_bindings_exclude.txt` lists methods that crashed when the parity test called them with ordinary
   values (an index they do not check): `CompoundCollider3D.PartFrame`, `CompoundCollider3D.PartSupport`,
   `ModelAnimator.SlotOfClip`. They stay C++ only until they check their input.
-- The parity test runs every const (read-only) method (1291) on a fresh component of each of the 298 classes that can
-  be added. The 1022 non-const methods are checked for reachability only, not run: they change state, and some open
-  files, sockets or windows.
+- The parity test runs every const (read-only) method on a fresh component of each class that can be added. The
+  non-const methods are checked for reachability only, not run: they change state.
 - A script function with the same name as a builtin (`shake`, `trauma`) cannot be called as an event:
   `Runtime::Call` tries builtins first. Found while writing the tests; not changed here.
 - Windows: unverified (built and tested on Linux only).

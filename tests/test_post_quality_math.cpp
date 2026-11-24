@@ -79,7 +79,7 @@ int main() {
     CHECK(Has(knee_src, "max(max(s, l - t), 0.0) / max(l, 1e-4)"));
     std::string here = OKAY_TESTS_DIR "/test_post_quality_math.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
-    const std::string gl = Slurp(root + "GLRenderer.cpp");
+    const std::string gl = Slurp(root + "GLRenderer.cpp") + Slurp(root + "GLRendererShaders.cpp") + Slurp(root + "GLRendererPasses.cpp") + Slurp(root + "GLRendererResources.cpp") + Slurp(root + "GLRendererInternal.hpp");   // GLRenderer.cpp is split into four files (pure move)
     const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3DPostHLSL.hpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // the bright-pass lives in the shared post header
     CHECK(!gl.empty() && !dx.empty());
     if (!gl.empty()) {

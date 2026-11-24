@@ -242,7 +242,7 @@ class ThreeLanes(unittest.TestCase):
         return dict({"branch": branch, "has_fields": True, "existing": "e", "gap": "g", "files": files, "test_first": "t", "try_it": "s", "agreed": False}, **kw)
 
     def test_lanes_come_from_the_file(self):
-        self.assertEqual(L.lane_prefixes(self.lanes), {"coordinator": "claude/", "claude2": "claude2/", "claude3": "claude3/"})
+        self.assertEqual(L.lane_prefixes(self.lanes), {"coordinator": "claude/", "claude2": "claude2/", "claude3": "claude3/", "grok": "grok/"})   # grok: #1190
         self.assertEqual(L.lane_of_branch("claude3/world-streaming", self.lanes), "claude3")
         self.assertEqual(L.lane_of_branch("origin/claude3/x"), "claude3")
         self.assertEqual(L.lane_of_branch("claude2/x"), "claude2"); self.assertEqual(L.lane_of_branch("claude/x"), "coordinator")

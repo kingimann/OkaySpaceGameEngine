@@ -8,6 +8,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import gen_feature_map as G
 
+# a system's describing line must give its registry fields on the next line (docs/feature_map/README.md, #1169)
+SAVES = '- **System:** Save Games - Keeps progress.\n  Home: `src/a.cpp`. Entry: `src/a.cpp`.'
+
 
 def write(path, text):
     with open(path, 'w', encoding='utf-8') as f:
@@ -111,14 +114,14 @@ class Validate(unittest.TestCase):
                             'docs/feature_map/_index_symptoms.md') if os.path.exists(os.path.join(self.d.name, p))]
 
     def test_valid_pages_pass_and_nothing_is_written(self):
-        self.page(sub('1.1', 'Saves', '- **System:** Save Games - Keeps progress.'))
+        self.page(sub('1.1', 'Saves', SAVES))
         rc, out, err = self.run_main('--validate')
         self.assertEqual(rc, 0, err)
         self.assertIn('pages valid (1 areas, 1 sub-areas', out)
         self.assertEqual(self.generated(), [])
 
     def test_stale_generated_files_do_not_matter(self):
-        self.page(sub('1.1', 'Saves', '- **System:** Save Games - Keeps progress.'))
+        self.page(sub('1.1', 'Saves', SAVES))
         write(os.path.join(self.d.name, 'docs', 'FEATURE_MAP.md'), 'old copy from an older main\n')
         self.assertEqual(self.run_main('--check')[0], 1)      # the old check would fail ...
         self.assertEqual(self.run_main('--validate')[0], 0)   # ... the PR check does not
@@ -126,7 +129,7 @@ class Validate(unittest.TestCase):
             self.assertEqual(f.read(), 'old copy from an older main\n')
 
     def test_problems_fail(self):
-        self.page("### 1.1 Saves\n- **System:** Save Games - Keeps progress.\n- **What:** w\n- **Code:** `src/a.cpp`\n"
+        self.page("### 1.1 Saves\n" + SAVES + "\n- **What:** w\n- **Code:** `src/a.cpp`\n"
                   "- **Status:** Works\n\n" + sub('1.2', 'No system', ''))
         rc, out, err = self.run_main('--validate')
         self.assertEqual(rc, 1)

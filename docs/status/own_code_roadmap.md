@@ -181,20 +181,20 @@ other than the corpus runs, and anything the memory-written formats do that a sp
 
 **4. No reader of ours (the gap):**
 
-Which Assimp importer claims each of these extensions, and what the format is, comes from public format documentation and the
-extension list above, not from Assimp's code; for the ones without a corpus file it is unverified.
+**2026-11-23 (branch `claude/third-party-3`):** `.ask`, `.scn`, `.prj`, `.x3db`, `.vta`, `.md5camera` and `.vrm` now go to readers of
+ours under the switch of the format they belong to (test `model_import_aliases`, fixtures built in memory; none has a corpus file, so all
+are **unverified against real files**): `.ask` the ASE reader (`OKAY_OWN_ASE`), `.scn` the COB reader (`OKAY_OWN_COB`), `.prj` the 3DS
+reader, which now also takes the project chunk 0xC23D at the top (`OKAY_OWN_3DS`), `.x3db` the X3D reader (XML encoding only; a
+binary-encoded file is refused, `OKAY_OWN_X3D`), `.vta` the SMD reader (the first vertex-animation frame is the base mesh, the flex
+frames are noted, `OKAY_OWN_SMD`), `.md5camera` a new reader `Md5CameraReader.cpp` (a camera node and a clip; the field of view is
+noted, `OKAY_OWN_MD5`), and `.vrm` our glTF 2.0 reader. The binary OGRE `.skeleton` next to a mesh is now read by default
+(`OKAY_OWN_OGRE_SKELBIN=0` switches it off). What is left:
 
 | Extensions | Corpus | What it is | Note |
 |---|---:|---|---|
 | `.sib` | 1 | Silo | no public specification of the format; a reader worked out from the one sample file exists on the unmerged branch `claude/own-readers-6` and was not brought over (`docs/content/model_readers.md`, section SIB) |
-| `.ask` | 0 | an ASE variant, claimed by Assimp's ASE importer | possibly our ASE reader with a new extension; unverified, no file to check it on |
-| `.prj` | 0 | 3D Studio project file, claimed by the 3DS importer | no file to check |
-| `.md5camera` | 0 | Doom 3 camera path | no file to check; a camera clip, not a mesh |
-| `.vta` | 0 | Source engine vertex animation (SMD flavour) | no file to check; the engine has no vertex-animation clip |
-| `.scn` | 0 | trueSpace scene, claimed by the COB importer | no file to check |
-| `.x3db` | 0 | binary X3D | needs the X3D binary encoding; no file to check |
-| `.vrm` | 0 | VRM avatars (glTF 2.0 binary with extensions) | our glTF reader could read the geometry; not routed, no file to check |
-| `.skeleton`, `.skeleton.xml` | 2, 2 (not model files on their own) | OGRE skeletons, read by Assimp together with the mesh | `.skeleton.xml` is read by our reader since 2026-11-20 (bones, bind pose, clips, skin weights); the binary `.skeleton` since 2026-11-21 (`ReadOgreSkeletonBinary`; found next to a mesh only with `OKAY_OWN_OGRE_SKELBIN=1`, **off by default**, so by default a skinned binary OGRE mesh with only a binary skeleton still imports rigid). On the real fish and ninja the binary skeletons equal their XML twins and skin the binary meshes the same way; mesh plus binary skeleton import 0.17x (fish) and 0.42x (ninja) Assimp's time on one Linux machine, same clip and key counts; no Windows run |
+| `.ndo` | 0 | Nendo | our reader is a seam that refuses every file (`OKAY_OWN_NDO` OFF); no public description of the body and no file |
+| `.mdl` (3D GameStudio MDL3/4/5/7), `.hmp` (HMP4/5) | 6, 0 | 3D GameStudio models and terrain | our MDL reader reads Quake 1 and Half-Life 1, our HMP reader HMP7; the others are refused and fall back to Assimp; no public description in hand (the only detailed one found is Assimp's own source, which rule 19a forbids) |
 
 The gap batch of 2026-11-16 took the three gap formats with the most corpus files (`.xml` 9, `.mesh` 3, `.zae` 3) and that users
 are most likely to have: OGRE game assets ship as binary `.mesh` far more often than as XML, ZAE is COLLADA's packaged form (one

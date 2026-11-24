@@ -117,7 +117,7 @@ RULES = [
          allowed=["engine/include/okay/Core/Base64.hpp"], use="Core/Base64.hpp (planned; dedup in progress)"),
     dict(id="actionlist-broadcast", what="hand-written FindObjectsOfType<ActionList> + ReceiveMessage loop", fams={"c"},
          rx=r"FindObjectsOfType<\s*ActionList\s*>\s*\(\s*\)[^;]{0,200}?ReceiveMessage\s*\(",
-         allowed=["engine/src/Components/ActionList.cpp"], use="one ActionList broadcast helper (planned; dedup in progress)"),
+         allowed=["engine/src/Components/ActionList.cpp", "engine/src/Components/ActionListOps.cpp"], use="one ActionList broadcast helper (planned; dedup in progress)"),
     dict(id="string-helper", what="hand-made Trim / ToLower / ToUpper / Split function", fams={"c"},
          rx=r"(?m)^[ \t]*(?:(?:static|inline|constexpr)\s+)*(?:std::)?(?:string|wstring|string_view|vector\s*<\s*(?:std::)?string(?:_view)?\s*>|void|char)\s*[&*]?\s+"
             r"(?:\w+::)?[A-Za-z]*_?(?:[Tt]rim|[Ll]ower|[Uu]pper|[Ss]plit)(?:[A-Z0-9]\w*)?\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{",

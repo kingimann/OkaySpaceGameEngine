@@ -140,6 +140,15 @@ struct GroundSense {
         if (!m_have || n.y > m_pending.y) { m_pending = n; m_have = true; }
         return true;
     }
+    /// The same, given the contact's relative velocity (the other's minus ours): a ground contact the body is leaving
+    /// at more than kLeavingSpeed is not ground. The physics core finds contacts before it moves the bodies, so the
+    /// step that launches a jump still reports the floor under the feet; counted as ground, that refilled the jumps
+    /// and held the body "grounded" for 0.1 s of the climb, and a double jump could jump three times.
+    static constexpr float kLeavingSpeed = 1.0f;   // m/s along the normal; a body resting or riding a platform is near 0
+    bool Note(const Vec3& contactNormal, const Vec3& relativeVelocity) {
+        if (contactNormal.y <= -0.5f && Vec3::Dot(relativeVelocity, contactNormal) > kLeavingSpeed) return false;
+        return Note(contactNormal);
+    }
     /// Once per Simulate: take what the physics reported since the last call, or let the old normal age.
     void Step(float dt) {
         if (m_have) { normal = m_pending; age = 0.0f; m_have = false; }

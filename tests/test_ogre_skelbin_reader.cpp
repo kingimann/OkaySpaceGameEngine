@@ -271,7 +271,7 @@ int main() {
         const std::string cut = bin.substr(0, 30);
         CHECK(ReadOgreBinaryBuffer(BinMesh(), "", r, &err, nullptr, &cut) && r.parts[0].bones.empty() && HasNote(r, "skeleton could not be read"));
     }
-    {   // the file readers find <link> (binary) next to the mesh only with OKAY_OWN_OGRE_SKELBIN=1; the .skeleton.xml comes first
+    {   // the file readers find <link> (binary) next to the mesh by default (OKAY_OWN_OGRE_SKELBIN=0 turns that off); the .skeleton.xml comes first
 #ifdef _WIN32
         _mkdir("skelbin_tmp");
 #else
@@ -281,10 +281,12 @@ int main() {
         WriteFile("skelbin_tmp/w.mesh.xml", MeshXml());
         WriteFile("skelbin_tmp/x.skeleton", bin);
         ImportedModel m; std::string err;
-        SetSwitch(nullptr);
-        CHECK(ReadOgreBinaryFile("skelbin_tmp/w.mesh", m, &err) && m.parts[0].bones.empty() && HasNote(m, "skeleton 'x.skeleton'"));   // off: rigid
         SetSwitch("0");
+        CHECK(ReadOgreBinaryFile("skelbin_tmp/w.mesh", m, &err) && m.parts[0].bones.empty() && HasNote(m, "skeleton 'x.skeleton'"));   // off: rigid
+        SetSwitch("off");
         CHECK(ReadOgreBinaryFile("skelbin_tmp/w.mesh", m, &err) && m.parts[0].bones.empty());
+        SetSwitch(nullptr);   // nothing set: on (the default since 2026-11-23)
+        CHECK(ReadOgreBinaryFile("skelbin_tmp/w.mesh", m, &err) && m.parts[0].bones.size() == 6 && m.clips.size() == 1);
         SetSwitch("1");
         CHECK(ReadOgreBinaryFile("skelbin_tmp/w.mesh", m, &err) && m.parts[0].bones.size() == 6 && m.clips.size() == 1);
         CHECK(ReadOgreXmlFile("skelbin_tmp/w.mesh.xml", m, &err) && m.parts[0].bones.size() == 6);

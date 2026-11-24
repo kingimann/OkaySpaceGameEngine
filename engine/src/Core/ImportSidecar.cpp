@@ -6,6 +6,7 @@
 #include "okay/Core/StringUtil.hpp"
 #include "okay/Debug/DebugUtil.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
@@ -92,7 +93,20 @@ Stamp StampOf(const std::string& metaPath) {
 struct Entry {
     Stamp stamp;
     ImportSidecar data;
+    bool settled = false;   // the file was older than kSettle when it was read
 };
+
+// A file changed within this long before it was read may change again with the same time and size: file times tick
+// coarsely (Windows: a rewrite a few milliseconds later often keeps the same time), and "set compress 0" rewritten as
+// "set compress 1" keeps the same size. Such an entry is read again until the file is older than this ("racy" times).
+constexpr std::chrono::seconds kSettle{2};
+
+bool Settled(const Stamp& st) {
+    using clock = fs::file_time_type::clock;
+    const long long nowTicks = static_cast<long long>(clock::now().time_since_epoch().count());
+    const long long settle = static_cast<long long>(std::chrono::duration_cast<clock::duration>(kSettle).count());
+    return st.time < nowTicks - settle;
+}
 
 debugutil::SpinLock g_lock;
 std::unordered_map<std::string, Entry>& Cache() {
@@ -115,10 +129,11 @@ ImportSidecar ReadImportSidecar(const std::string& assetPath, AssetType kind) {
     {
         debugutil::SpinGuard g(g_lock);
         auto it = Cache().find(key);
-        if (it != Cache().end() && it->second.stamp == now) return it->second.data;
+        if (it != Cache().end() && it->second.stamp == now && it->second.settled) return it->second.data;
     }
     Entry e;
     e.stamp = now;
+    e.settled = Settled(now);   // decided before the read: a change made during the read is seen next time
     e.data = ReadUncached(metaPath, kind);   // parsed outside the lock
     debugutil::SpinGuard g(g_lock);
     if (Cache().size() >= kMaxEntries) Cache().clear();

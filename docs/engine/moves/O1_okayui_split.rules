@@ -213,3 +213,53 @@ add: ^\s*namespace\ ui_core\ \{\ float\ g_popupPadX\ =\ \-1\.0f,\ g_popupPadY\ =
 add: ^\s*namespace\ \{$
 drop: ^\s*namespace\ \{$
 add: ^\s*namespace\ ui_core\ \{$
+
+# ---- part 3, step 1 (header): the structs the moved families read, extern lines and prototypes
+add: ^\s*extern\ TabSel\ g_tabSel\[16\];$
+add: ^\s*extern\ TabOrder\ g_tabOrders\[16\];$
+add: ^\s*extern\ TabBarCtx\ g_tabBar;$
+add: ^\s*extern\ DragDrop\ g_dd;$
+add: ^\s*extern\ TypedDrag\ g_tdd;$
+add: ^\s*extern\ bool\ g_tddExt,\ g_tddExtSeen,\ g_tddExtReleased;$
+add: ^\s*extern\ int\ g_nextOpen;$
+add: ^\s*extern\ int\ g_toggledId;$
+add: ^\s*extern\ bool\ g_mPressed;$
+add: ^\s*extern\ float\ g_pressX,\ g_pressY;$
+add: ^\s*extern\ SDL_Texture\*\ const\ kAtlasTex;$
+add: ^\s*extern\ int\ g_nfb;$
+add: ^\s*extern\ okay::TtfFont\*\ g_fbFonts\[8\];$
+add: ^\s*extern\ unsigned\ g_frame;$
+add: ^\s*extern\ ColorSave\ g_colStack\[64\];$
+add: ^\s*extern\ int\ g_colTop;$
+add: ^\s*extern\ float\ g_btnAlignX;$
+add: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\ =\ \-1\.0f\);$
+add: ^\s*void\ captureFrameEnd\(\);$
+add: ^\s*void\ tickMark\(float\ x,\ float\ y,\ float\ sz,\ const\ unsigned\ char\ c\[4\]\);$
+add: ^\s*void\ framedTick\(float\ x,\ float\ y,\ float\ sz,\ const\ unsigned\ char\ c\[4\]\);$
+drop: ^\s*static\ float\ g_btnAlignX\ =\ 0\.5f;\ \ \ //\ StyleVar_ButtonTextAlign\ \(x\):\ 0\ left,\ 0\.5\ centred,\ 1\ right,\ inside\ a\ 12\-pixel\ padding$
+add: ^\s*float\ ui_core::g_btnAlignX\ =\ 0\.5f;\ \ \ //\ StyleVar_ButtonTextAlign\ \(x\):\ 0\ left,\ 0\.5\ centred,\ 1\ right,\ inside\ a\ 12\-pixel\ padding$
+drop: ^\s*namespace\ \{$
+add: ^\s*namespace\ ui_core\ \{$
+drop: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\ =\ \-1\.0f\)\ \{$
+add: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\)\ \{$
+
+# ---- part 3: OkayUI_Tabs.cpp (tab bars: TabBar, BeginTabBar / BeginTabItem, TabItemButton, the dock strip amend)
+
+# ---- part 3: OkayUI_Trees.cpp (collapsing headers and tree nodes)
+
+# ---- part 3: OkayUI_DragDrop.cpp (drag and drop: sources, targets, payloads, the outside-drag hook)
+
+# ---- part 3: OkayUI_Toolkit.cpp (launcher-style building blocks: text scale, Heading, Caption, Badge, Avatar, cards, list items, key/value rows, Spinner)
+drop: ^\s*unsigned\ h\ =\ 2166136261u;$
+add: ^\s*unsigned\ h\ =\ 2166136261u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\),\ the\ avatar\ colour\ hash$
+drop: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;$
+add: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\)$
+
+# ---- part 3: OkayUI_Capture.cpp (BeginCapture / EndCapture and GetTexturePixels)
+drop: ^\s*namespace\ \{\ void\ captureFrameEnd\(\)\ \{\ g_cap\.depth\ =\ 0;\ \}\ \}$
+add: ^\s*namespace\ ui_core\ \{\ void\ captureFrameEnd\(\)\ \{\ g_cap\.depth\ =\ 0;\ \}\ \}$
+drop: ^\s*void\ captureFrameEnd\(\);\ \ \ //\ below\ \(Capture\):\ a\ capture\ left\ open\ ends\ with\ the\ frame$
+
+# ---- part 3: OkayUI_Style.cpp (the theme and colours: Style, SlateTheme, UseLauncherLook, PushStyleColor and friends, colour conversions)
+
+# ---- part 3: OkayUI_Basic.cpp (the low-level widgets: Button, Label, Panel, Checkbox, ToggleSwitch, Slider, ProgressBar, RadioButton, Tab)

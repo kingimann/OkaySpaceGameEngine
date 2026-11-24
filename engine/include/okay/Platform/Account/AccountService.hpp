@@ -7,8 +7,9 @@
 // chosen at runtime by whether a server URL is configured:
 //
 //   * Remote  — when a server URL is set, Register/Login POST JSON over HTTPS
-//               (via the system `curl`, the same approach the launcher already
-//               uses for the updater) and read back a session token. This is
+//               (through the HTTP seam, okay::http::Send: WinHTTP on Windows,
+//               our own client on Linux when on, curl only as the last
+//               fallback) and read back a session token. This is
 //               the real "online account" path; point it at your auth server.
 //
 //   * Local   — when no server URL is set, accounts live in a small on-disk
@@ -48,7 +49,7 @@
 #  endif
 #endif
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
-#include "okay/Platform/NativeHttp.hpp"
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: okay::http::Send (WinHTTP / our own client first, curl only as its last fallback)
 
 namespace okay::account {
 
@@ -178,30 +179,6 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
     for (std::size_t i = 0; i < a.size(); ++i)
         diff |= (unsigned)(a[i] ^ b[i]);
     return diff == 0;
-}
-
-// Run a shell command and wait. On Windows this avoids std::system so no
-// console window flashes for each curl request (CREATE_NO_WINDOW); elsewhere it
-// is std::system. Returns the process exit code (-1 on spawn failure).
-inline int RunCommand(const std::string& cmd) {
-#if defined(OKAY_XBOX_UWP)
-    (void)cmd; return -1;   // a UWP app cannot start other programs (no curl fallback): "not reached"
-#elif defined(_WIN32)
-    std::string full = "cmd /c " + cmd;
-    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
-    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
-    if (!CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
-        return -1;
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 0; GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-    return (int)code;
-#else
-    return std::system(cmd.c_str());
-#endif
 }
 
 // Minimal JSON helpers — just enough to send credentials and read a token back.
@@ -1208,12 +1185,11 @@ private:
         return out;
     }
 
-    // Perform one HTTP request via the system `curl` so the launcher/engine need
-    // no HTTP library and reuse the platform's TLS stack. Secrets (the request
-    // body and the auth header) are passed through files, never argv, so they
-    // don't show up in the process list. We avoid curl's -f/--fail because it
-    // discards the response body on HTTP errors and we want the server's
-    // {"error": ...} message; instead we capture the status code via -w.
+    // Perform one HTTP request through the HTTP seam (okay::http::Send, NativeFetch.hpp): WinHTTP on Windows, our own
+    // client on Linux when on, curl only as its last fallback. Secrets (the auth header, the body) reach curl through
+    // files only this user can read, never argv. Any status is an answer (no curl -f), so the server's
+    // {"error": ...} message survives. A request that may already have reached the server is never re-sent by curl
+    // unless it is a GET or HEAD.
     ApiResponse HttpRequest(const std::string& method, const std::string& url,
                             const std::string& jsonBody,
                             const std::string& authToken,
@@ -1221,80 +1197,19 @@ private:
                             const std::string& bodyFile = {},     // raw file body (uploads)
                             const std::string& bodyType = {},
                             int timeoutSec = 0) const {
-        // Native client first (Windows: WinHTTP, kept-alive connections, no
-        // process spawn); fall back to curl if it can't reach the server.
-        if (okay::http::NativeAvailable()) {
-            std::vector<std::string> hdrs;
-            if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);
-            if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
-            for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);
-            if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
-            else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
-            okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile, {}, timeoutSec > 0 ? timeoutSec * 1000 : 0);
-            if (nr.reached) {
-                ApiResponse out;
-                out.status = nr.status; out.body = std::move(nr.body);
-                out.reached = true;
-                out.ok = out.status >= 200 && out.status < 300;
-                return out;
-            }
-            // The request may have reached the server (timeout, reset or bad answer after the send): sending a POST,
-            // PUT, PATCH or DELETE again through curl could do the action twice. Report "not reached" instead.
-            if (!okay::http::ShouldFallBackToCurl(method, nr)) return {};
-        }
-        std::error_code ec;
-        fs::path dir   = fs::temp_directory_path(ec);
-        std::string id = detail::RandomHex(8);
-        fs::path resp  = dir / ("okay_acct_" + id + ".out");
-        fs::path code  = dir / ("okay_acct_" + id + ".code");
-        fs::path bodyF = dir / ("okay_acct_" + id + ".json");
-        fs::path cfgF  = dir / ("okay_acct_" + id + ".cfg");
-
-        std::string cmd = "curl -s -X " + method;
-        if (timeoutSec > 0)   // a stalled server must not hang the caller (the join-time ticket request)
-            cmd += " --connect-timeout " + std::to_string(timeoutSec < 5 ? timeoutSec : 5) + " --max-time " + std::to_string(timeoutSec);
-        cmd +=
-            " -o \"" + resp.string() + "\" -w \"%{http_code}\"";
-
-        // Headers/secrets go in a curl config file (-K), keeping them out of argv.
-        std::string cfg;
-        if (!apiKey_.empty())                          // managed backends (Supabase)
-            cfg += "header = \"apikey: " + apiKey_ + "\"\n";
-        if (!authToken.empty())
-            cfg += "header = \"Authorization: Bearer " + authToken + "\"\n";
-        for (const std::string& h : SplitHeaders(extraHeader))   // e.g. PostgREST "Prefer: ..."
-            cfg += "header = \"" + h + "\"\n";
-        if (!bodyFile.empty()) {                       // upload a file as-is
-            cfg += "header = \"Content-Type: " + bodyType + "\"\n";
-            cmd += " --data-binary @\"" + bodyFile + "\"";
-        } else if (!jsonBody.empty()) {
-            std::ofstream(bodyF, std::ios::trunc) << jsonBody;
-            cfg += "header = \"Content-Type: application/json\"\n";
-            cmd += " --data-binary @\"" + bodyF.string() + "\"";
-        }
-        if (!cfg.empty()) {
-            std::ofstream(cfgF, std::ios::trunc) << cfg;
-            cmd += " -K \"" + cfgF.string() + "\"";
-        }
-        cmd += " \"" + url + "\" > \"" + code.string() + "\"";
-#if !defined(_WIN32)
-        cmd += " 2>/dev/null";
-#endif
-        int rc = detail::RunCommand(cmd);
-
-        auto slurp = [](const fs::path& p) {
-            std::ifstream r(p, std::ios::binary);
-            std::stringstream ss; ss << r.rdbuf(); return ss.str();
-        };
+        std::vector<std::string> hdrs;
+        if (!apiKey_.empty())      hdrs.push_back("apikey: " + apiKey_);   // managed backends (Supabase)
+        if (!authToken.empty())    hdrs.push_back("Authorization: Bearer " + authToken);
+        for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);   // e.g. PostgREST "Prefer: ..."
+        if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
+        else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
+        okay::http::Result nr = okay::http::Send(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile,
+                                                 timeoutSec > 0 ? timeoutSec * 1000 : 0);
         ApiResponse out;
-        out.body = slurp(resp);
-        std::string codeS = slurp(code);
-        fs::remove(resp, ec); fs::remove(code, ec);
-        fs::remove(bodyF, ec); fs::remove(cfgF, ec);
-
-        try { out.status = std::stol(codeS); } catch (...) { out.status = 0; }
-        out.reached = (rc == 0 && out.status != 0);
-        out.ok = out.reached && out.status >= 200 && out.status < 300;
+        if (!nr.reached) return out;
+        out.status = nr.status; out.body = std::move(nr.body);
+        out.reached = true;
+        out.ok = out.status >= 200 && out.status < 300;
         return out;
     }
 };

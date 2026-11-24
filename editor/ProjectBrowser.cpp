@@ -544,6 +544,7 @@ bool Browser::Poll(std::uint64_t nowMs) {
         m_watchTried = true;   // one try: a failed watch is not reopened on every poll
         std::string err;
         m_watchStarted = m_db.StartWatch(&err);
+        m_watchHeard = true;   // nothing is known yet about changes from before the watch: scan once
     }
     // The operating-system watch says whether anything changed. With it running and quiet, the
     // full folder scan is only a safety net every 10 seconds; a change heard waits for the usual

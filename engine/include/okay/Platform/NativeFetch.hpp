@@ -332,7 +332,8 @@ inline bool RetryableStatus(long s) { return s == 408 || s == 429 || s == 500 ||
 /// FetchToFile on WinHTTP: a temporary file next to `path`, a dropped transfer resumed with Range on the next try,
 /// 408/429/5xx tried again with a doubling wait, a cancel or a cap that ends it at once. A resume sends If-Range with
 /// the first answer's validator (as OwnHttpDownload.hpp does), so a file that changed comes back whole (200: the file
-/// starts again); with no validator and no expected SHA-256 the next try starts from byte 0 instead of resuming.
+/// starts again); with no validator and no expected SHA-256 the next try starts from byte 0 instead of resuming,
+/// and with only the expected SHA-256 a resumed file that fails the checksum is fetched once more from byte 0.
 /// A 407 from a proxy is no answer here (NotHandled): curl may know the proxy's password.
 inline OwnDownloadResult WinDownload(const std::string& url, const std::filesystem::path& path, const OwnDownloadSpec& sp) {
     OwnDownloadResult out;
@@ -347,7 +348,9 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
     int wait = sp.retryDelayMs > 0 ? sp.retryDelayMs : 1000;
     const auto t0 = std::chrono::steady_clock::now();
     std::string validator;   // of the answer the bytes in `tmp` came from
-    for (int attempt = 0; attempt <= sp.retries; ++attempt) {
+    int last = sp.retries;   // the last attempt; one more after a checksum mismatch on resumed bytes (below)
+    bool wholeRetried = false;
+    for (int attempt = 0; attempt <= last; ++attempt) {
         out.attempts = attempt + 1;
         RequestOptions ro;
         ro.connectMs = sp.connectMs; ro.ioMs = sp.ioMs;
@@ -378,9 +381,22 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
         if (r.writeFailed) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::DiskFull; return out; }
         if (tooBig || r.error.rfind("too-large", 0) == 0) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::TooBig; return out; }
         if (r.reached) {
-            if (r.status == 200 || r.status == 206) return Finish(tmp, path, sp, out);
+            if (r.status == 200 || r.status == 206) {
+                // With only the expected checksum a resume has no If-Range to send, so a file that changed on the server
+                // comes back as two versions glued together. Fetch it once more from byte 0 before calling it wrong
+                // (PR #1186 review); Finish has removed the temporary file, so the next try starts at 0 with no wait.
+                const bool fromResume = out.resumes > 0;
+                OwnDownloadResult f = Finish(tmp, path, sp, out);
+                if (f.outcome == OwnOutcome::ChecksumMismatch && fromResume && !wholeRetried) {
+                    wholeRetried = true;
+                    validator.clear();
+                    ++last;
+                    continue;
+                }
+                return f;
+            }
             if (r.status == 416 && ro.resumeFrom > 0) { std::filesystem::remove(tmp, ec); continue; }   // start the file again
-            if (!RetryableStatus(r.status) || attempt == sp.retries) {
+            if (!RetryableStatus(r.status) || attempt == last) {
                 std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::HttpError; return out;
             }
         } else {
@@ -388,7 +404,7 @@ inline OwnDownloadResult WinDownload(const std::string& url, const std::filesyst
             if (r.error.rfind("bad-response: Content-Range", 0) == 0) std::filesystem::remove(tmp, ec);   // the next try starts over
             if (r.error.rfind("bad-url", 0) == 0 || r.error.rfind("proxy-auth", 0) == 0) break;
         }
-        if (attempt < sp.retries) {
+        if (attempt < last) {
             if (!SleepUnlessCancelled(wait, sp.cancelled)) { std::filesystem::remove(tmp, ec); out.outcome = OwnOutcome::Cancelled; return out; }
             wait = wait > 15000 ? 30000 : wait * 2;
         }

@@ -87,8 +87,10 @@ std::vector<FoundRef> ExtractMaterialRefs(const std::string& text);
 /// Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
 /// quoted strings, `key=value` values and bare words that end in a known asset extension.
 std::vector<FoundRef> ExtractTextRefs(const std::string& text);
-/// `.obj`, `.mtl` and `.dae`: Wavefront `mtllib` and `map_*` lines (options skipped, spaces
-/// kept). A binary file is not scanned: splicing a path into it breaks its lengths.
+/// `.obj`, `.mtl`, `.dae` and ASCII `.fbx`: Wavefront `mtllib` and `map_*` lines (options skipped,
+/// spaces kept), Collada `<init_from>` image paths and FBX `RelativeFilename:` / `FileName:` strings.
+/// Text with a NUL (a binary .fbx) gives nothing: its strings carry their lengths, so a rename
+/// must not splice a path into it. Spans cover the path text.
 std::vector<FoundRef> ExtractModelRefs(const std::string& text);
 
 struct ScanOptions {

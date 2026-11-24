@@ -276,11 +276,52 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text) {
     return out;
 }
 
+// An ASCII FBX texture line: `RelativeFilename: "..."`, `FileName: "..."` or `Filename: "..."`.
+// The span is the text inside the quotes, so a rename rewrites only the path.
+void TakeFbxTextLine(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
+    std::size_t i = lb;
+    while (i < le && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    std::size_t colon = i;
+    while (colon < le && text[colon] != ':' && !std::isspace(static_cast<unsigned char>(text[colon]))) ++colon;
+    if (colon >= le || text[colon] != ':') return;
+    const std::string key = Lower(text.substr(i, colon - i));
+    if (key != "relativefilename" && key != "filename") return;
+    const std::size_t q1 = text.find('"', colon);
+    if (q1 == std::string::npos || q1 >= le) return;
+    const std::size_t q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos || q2 >= le) return;
+    ConsiderPath(text, q1 + 1, q2, out);
+}
+
+// Collada image sources: `<init_from>path</init_from>` (1.4) and `<init_from><ref>path</ref></init_from>` (1.5).
+void TakeColladaImages(const std::string& text, std::vector<FoundRef>& out) {
+    static const std::string kOpen = "<init_from>", kClose = "</init_from>", kRef = "<ref>", kRefEnd = "</ref>";
+    for (std::size_t at = text.find(kOpen); at != std::string::npos && out.size() < 4096; at = text.find(kOpen, at)) {
+        std::size_t b = at + kOpen.size();
+        const std::size_t e = text.find(kClose, b);
+        if (e == std::string::npos) break;
+        std::size_t inner = e;
+        std::size_t r = b;
+        while (r < e && std::isspace(static_cast<unsigned char>(text[r]))) ++r;
+        if (text.compare(r, kRef.size(), kRef) == 0) {
+            b = r + kRef.size();
+            const std::size_t re = text.find(kRefEnd, b);
+            if (re != std::string::npos && re < e) inner = re;
+        }
+        if (inner > b && text.find('<', b) >= inner) ConsiderPath(text, b, inner, out);
+        at = e + kClose.size();
+    }
+}
+
 std::vector<FoundRef> ExtractModelRefs(const std::string& text) {
     std::vector<FoundRef> out;
+    // A binary model (a binary .fbx) has a NUL. Its strings carry their lengths, so a path of a
+    // different length cannot be spliced in: it is neither listed nor rewritten.
+    if (text.find('\0') != std::string::npos) return out;
     ForEachLine(text, [&](std::size_t lb, std::size_t le) {
-        TakeModelLine(text, lb, le, out);
+        if (!TakeModelLine(text, lb, le, out)) TakeFbxTextLine(text, lb, le, out);
     });
+    TakeColladaImages(text, out);
     if (out.size() > 4096) out.resize(4096);
     return out;
 }
@@ -299,8 +340,9 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
-    // Text models use the same extractor the project panel rewrites with. Binary .fbx stays out.
-    RegisterExtractor("model", {"obj", "mtl", "dae"}, wrap(&ExtractModelRefs));
+    // Text models use the same extractor the project panel rewrites with. A binary .fbx gives
+    // no references (ExtractModelRefs refuses text with a NUL), so a rename never edits it.
+    RegisterExtractor("model", {"obj", "mtl", "dae", "fbx"}, wrap(&ExtractModelRefs));
 }
 
 void AssetDatabase::RegisterExtractor(const std::string& name, const std::vector<std::string>& extensions, RefExtractor extractor) {

@@ -1,0 +1,18 @@
+2 4 6 (done)
+1:1 4:16 7:49 
+suspended
+got	5
+true	10
+got	x	y
+true	in pcall
+pcall	false	coroutines.lua:39: failed with boom
+true	finished
+dead	false	cannot resume dead coroutine
+false	coroutines.lua:50: attempt to index a nil value (local 't')
+false	table	7
+o1	o2	end	inner1,inner2
+true	true	running
+true	dead
+false	cannot resume non-suspended coroutine
+2	false
+3	0	2

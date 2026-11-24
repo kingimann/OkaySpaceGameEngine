@@ -1,0 +1,11 @@
+Cat says meow
+Rex says woof
+3	3
+Animal(Cat)	Dog(Rex, 3 tricks)
+true	true	true
+120
+nil	insufficient funds
+120	+50 -30
+108	18.0	4	42
+3	1.5	10
+integer	float

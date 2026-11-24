@@ -58,6 +58,19 @@ namespace {
 
 LuaScriptVM::Impl& Ctx(State& L) { return *static_cast<LuaScriptVM::Impl*>(L.userData); }
 const sc::EngineApi& Api() { return sc::EngineApi::Get(); }
+// Types Lua does not see: anything named like a Lua library table (or a typed-language value type
+// of the same name), which must keep its Lua meaning.
+bool LuaHidden(const sc::ApiType& t) {
+    if (t.name.empty()) return true;
+    for (const char* lib : {"string", "table", "math", "os", "coroutine", "utf8", "io", "debug", "package"})
+        if (t.name == lib) return true;
+    return false;
+}
+// EngineApi::Find for Lua: -1 for a hidden type.
+int LuaFind(const std::string& name) {
+    int idx = Api().Find(name);
+    return idx >= 0 && LuaHidden(Api().types[(std::size_t)idx]) ? -1 : idx;
+}
 LV Str(State& L, const std::string& s) { return LV::Obj(L.NewString(s)); }
 
 int CallerLine(State& L) {
@@ -313,7 +326,7 @@ int GetComponentFn(State& L, int n) {
     if (!g) L.Error("This script isn't attached to an object");
     LV nm = L.Arg(nameArg);
     if (!nm.IsString()) L.Error("GetComponent needs a component name, e.g. GetComponent(\"Rigidbody\")");
-    int idx = Api().Find(nm.Str()->s);
+    int idx = LuaFind(nm.Str()->s);
     if (idx < 0 || !Api().types[(std::size_t)idx].isComponent)
         L.Error("'" + nm.Str()->s + "' isn't a component type scripts can use");
     const sc::ApiType& t = Api().types[(std::size_t)idx];
@@ -563,7 +576,7 @@ void InstallBindings(LuaScriptVM::Impl& I) {
     // one global table per engine type with static members (Input, Time, Debug, Mathf, GameObject, Vector3, ...)
     for (std::size_t i = 0; i < api.types.size(); ++i) {
         const sc::ApiType& t = api.types[i];
-        if (t.name.empty()) continue;
+        if (LuaHidden(t)) continue;
         if (t.staticProps.empty() && t.staticMethods.empty() && (int)i != api.vector3) continue;
         lua::Table* g = L.NewTable();
         L.SetGlobal(t.name.c_str(), LV::Obj(g));
@@ -675,7 +688,7 @@ std::vector<std::string> LuaScriptVM::CompletionNames() {
                           "coroutine.yield", "coroutine.wrap", "coroutine.status", "os.clock", "os.time", "Vector3.new"})
         names.insert(n);
     for (const sc::ApiType& t : Api().types) {
-        if (t.name.empty()) continue;
+        if (LuaHidden(t)) continue;
         names.insert(t.name);
         for (auto& p : t.props) names.insert(p.name);
         for (auto& m : t.methods) names.insert(m.name);
@@ -817,7 +830,7 @@ std::string LuaScriptVM::CompletionDoc(const std::string& name) {
     const auto& api = Api();
     std::size_t dot = name.find('.');
     if (dot != std::string::npos) {   // Type.member
-        int idx = api.Find(name.substr(0, dot));
+        int idx = LuaFind(name.substr(0, dot));
         if (idx < 0) return "";
         const sc::ApiType& t = api.types[(std::size_t)idx];
         const std::string m = name.substr(dot + 1);
@@ -826,11 +839,18 @@ std::string LuaScriptVM::CompletionDoc(const std::string& name) {
         if (idx == api.vector3 && m == "new") return "Vector3.new(x, y, z): a new Vector3 (also Vector3(x, y, z))";
         return "";
     }
-    int idx = api.Find(name);
+    int idx = LuaFind(name);
     if (idx >= 0) return "engine type " + name + ": " + api.types[(std::size_t)idx].doc;
     for (const sc::ApiType& t : api.types) {
+        if (LuaHidden(t)) continue;
         for (const auto& p : t.props) if (p.name == name) return t.name + "." + p.name + ": " + TypeWord(p.type) + ". " + p.doc;
         for (const auto& f : t.methods) if (f.name == name) return Signature(t.name, ":", f) + ". " + f.doc;
+    }
+    // a static member named alone (the editor's hover word for "Input.GetKey" is "GetKey")
+    for (const sc::ApiType& t : api.types) {
+        if (LuaHidden(t)) continue;
+        for (const auto& p : t.staticProps) if (p.name == name) return t.name + "." + p.name + ": " + TypeWord(p.type) + ". " + p.doc;
+        for (const auto& f : t.staticMethods) if (f.name == name) return Signature(t.name, ".", f) + ". " + f.doc;
     }
     return "";
 }
@@ -845,7 +865,7 @@ std::vector<std::string> LuaScriptVM::CompletionMembers(const std::string& recei
         if (receiver == lib[0])
             for (const std::string& w : Words(lib[1])) out.insert(w);
     if (out.empty()) {
-        int idx = api.Find(receiver);
+        int idx = LuaFind(receiver);
         if (idx >= 0) {   // a static type: Input., Time., Vector3.
             AddTypeMembers(api.types[(std::size_t)idx], true, out);
             if (idx == api.vector3) out.insert("new");
@@ -1009,7 +1029,7 @@ std::vector<ScriptDiagnostic> LuaScriptVM::Lint(const std::string& source) {
     for (std::size_t i = 0; i + 2 < t.size(); ++i) {
         // Type.member on an engine type with static members
         if ((t[i + 1].text == "." || t[i + 1].text == ":") && (i == 0 || (t[i - 1].text != "." && t[i - 1].text != ":"))) {
-            int idx = api.Find(t[i].text);
+            int idx = LuaFind(t[i].text);
             if (idx < 0) continue;
             const sc::ApiType& ty = api.types[(std::size_t)idx];
             if (ty.staticProps.empty() && ty.staticMethods.empty() && idx != api.vector3) continue;

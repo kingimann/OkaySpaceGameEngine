@@ -167,7 +167,9 @@ struct Frame {
     bool tail = false;    ///< reached through a tail call
     bool pcallMark = false;   ///< a pcall running inside the loop: the protected function's results come back here
     bool xpcallMark = false;  ///< with pcallMark: an xpcall; the message handler is in stack[func]
-    std::uint8_t post = 0;    ///< a metamethod run inside the loop: 1 = its result becomes a boolean, 2 = the negated boolean
+    std::uint8_t post = 0;    ///< a metamethod run inside the loop: 1 = its result becomes a boolean, 2 = the negated boolean,
+                              ///< 3 = a method lookup (`o:m()`): the result and the object below it swap places
+    int concatLeft = 0;       ///< a CONCAT of 3+ values paused for a Lua __concat: the values still to join when it runs again
 };
 
 enum class CoStatus : std::uint8_t { Suspended, Running, Normal, Dead };
@@ -293,6 +295,12 @@ public:
     static bool ToInteger(const Value& v, std::int64_t& out);   ///< integer or float with an exact integer value (strings too)
     static bool ToNumber(const Value& v, Value& out);           ///< number or numeric string
 
+    /// Run the __gc finalizers of every object still marked for finalization, in reverse order of
+    /// marking (manual 2.5.3: lua_close does this). Call it before destroying the State while the
+    /// natives and printSink still work (the destructor only frees). An error in a finalizer is a
+    /// warning, and the run budget still stops an endless one. After Close no finalizer runs again.
+    void Close();
+
     // ---- budget and limits ----
     /// Instructions allowed before LuaFatal("...run budget..."). 0 = no limit.
     void SetBudget(std::uint64_t instructions) { budget_ = instructions; used_ = 0; }
@@ -356,6 +364,10 @@ public:
     void PushXPcallMarker(int func, int nargs, int nres);
     /// Close the to-be-closed variables at stack index >= level (err = the error, or nil).
     void CloseTbc(int level, const Value& err, bool withErr);
+    /// CloseTbc for a normal block exit inside the loop: closes pending variables at or above `level`
+    /// until one has a Lua __close, which is pushed as a frame of the loop (so it can yield) and true
+    /// is returned; the caller then runs its instruction again for the rest.
+    bool CloseTbcInLoop(int level);
     LClosure* NewLClosure(Proto* p);
     void Unwind(std::size_t frames, int top, Value& err);   ///< drop frames after an error, closing variables
     template <class T> T* Alloc(std::size_t extraBytes = 0) {
@@ -400,6 +412,7 @@ private:
     std::vector<GcObj*> finObjs_;      ///< marked for finalization, in marking order
     std::vector<GcObj*> toFinalize_;   ///< unreachable, finalizer not run yet (roots)
     bool runningFinalizers_ = false;
+    bool closed_ = false;
 };
 
 } // namespace okay::lua

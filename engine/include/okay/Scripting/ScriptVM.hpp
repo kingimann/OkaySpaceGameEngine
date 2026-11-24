@@ -120,4 +120,9 @@ std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 /// fails with this message instead of failing silently.
 std::string RemovedScriptLanguageMessage(const std::string& language);
 
+/// The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
+/// ".okay" and anything else -> "okayscript"; case is ignored, the dot is optional).
+/// The one place the editor and the engine pick a script language from a file name.
+const char* ScriptLanguageForExtension(const std::string& ext);
+
 } // namespace okay

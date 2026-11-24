@@ -290,6 +290,24 @@ State::State() {
     printSink = [](const std::string& s) { std::fwrite(s.data(), 1, s.size(), stdout); std::fputc('\n', stdout); };
 }
 
+void State::Close() {
+    if (closed_) return;
+    closed_ = true;
+    try {
+        co_ = main_;
+        // newest first; a finalizer that marks a new object queues it as well (100 rounds at most)
+        for (int round = 0; round < 100 && !finObjs_.empty(); ++round) {
+            for (std::size_t i = finObjs_.size(); i-- > 0;) {
+                finObjs_[i]->fin = false;
+                toFinalize_.push_back(finObjs_[i]);
+            }
+            finObjs_.clear();
+            RunFinalizers();
+        }
+    } catch (...) {   // the budget or the memory limit stopped a finalizer: free the rest without them
+    }
+}
+
 State::~State() {
     GcObj* o = gcList_;
     while (o) {
@@ -402,7 +420,8 @@ void State::CollectGarbage() {
     for (auto* v : tempRoots)
         for (const Value& x : *v) MarkValue(x, gray);
     for (GcObj* o : toFinalize_) Mark(o, gray);   // finalizers not run yet
-    auto propagate = [&]() {
+    std::vector<Table*> ephemerons;
+    auto propagateGray = [&]() {
         while (!gray.empty()) {
             GcObj* o = gray.back();
             gray.pop_back();
@@ -411,8 +430,10 @@ void State::CollectGarbage() {
                     Table* t = static_cast<Table*>(o);
                     Mark(t->meta, gray);
                     // weak tables (manual 2.5.4): a weak part does not keep its objects alive.
-                    // Strings count as values here (never removed). Weak keys are not full
-                    // ephemerons: a value that refers to its own key keeps the entry.
+                    // Strings count as values here (never removed). A table with weak keys and
+                    // strong values is an ephemeron table: a value is kept only while its key is
+                    // reachable from elsewhere (converged in `ephemerons` below), so a value that
+                    // refers to its own key does not keep the entry.
                     bool weakK = false, weakV = false;
                     if (t->meta) {
                         Value mode = t->meta->GetStr(tmName[TM_MODE]);
@@ -422,11 +443,15 @@ void State::CollectGarbage() {
                         }
                     }
                     if (weakK || weakV) weakTables.push_back(t);
+                    if (weakK && !weakV) ephemerons.push_back(t);
                     for (const Value& v : t->arr) if (!weakV || !IsWeakRef(v)) MarkValue(v, gray);
                     for (const Table::Node& n : t->node) {
                         if (n.v.IsNil()) continue;   // cleared entries keep their key only as a marker
-                        if (!weakK || !IsWeakRef(n.k)) MarkValue(n.k, gray);
-                        if (!weakV || !IsWeakRef(n.v)) MarkValue(n.v, gray);
+                        const bool keyWeak = weakK && IsWeakRef(n.k);
+                        if (!keyWeak) MarkValue(n.k, gray);
+                        if (weakV && IsWeakRef(n.v)) continue;
+                        if (keyWeak && !weakV && !n.k.o->marked) continue;   // ephemeron: wait for the key
+                        MarkValue(n.v, gray);
                     }
                     break;
                 }
@@ -457,6 +482,20 @@ void State::CollectGarbage() {
                 case Type::Userdata: Mark(static_cast<UData*>(o)->meta, gray); break;
                 default: break;
             }
+        }
+    };
+    // ephemeron tables: mark the values whose keys became reachable, until nothing changes
+    auto propagate = [&]() {
+        propagateGray();
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (Table* t : ephemerons)
+                for (const Table::Node& n : t->node)
+                    if (!n.v.IsNil() && n.k.IsGc() && n.k.o->marked && n.v.IsGc() && !n.v.o->marked) {
+                        Mark(n.v.o, gray);
+                        changed = true;
+                    }
+            propagateGray();
         }
     };
     propagate();
@@ -516,7 +555,7 @@ void State::CollectGarbage() {
 }
 
 void State::MarkForFinalization(GcObj* o) {
-    if (!o || o->fin) return;
+    if (!o || o->fin || closed_) return;
     o->fin = true;
     finObjs_.push_back(o);
 }
@@ -1355,6 +1394,29 @@ void State::CloseTbc(int level, const Value& err, bool withErr) {
     }
 }
 
+bool State::CloseTbcInLoop(int level) {
+    Coroutine* co = co_;
+    while (!co->tbc.empty() && co->tbc.back() >= level) {
+        int slot = co->tbc.back();
+        Value v = co->stack[(std::size_t)slot];
+        Value tm = GetTM(v, TM_CLOSE);
+        co->tbc.pop_back();
+        if (tm.IsNil()) continue;
+        if (tm.t == Type::LFunc) {
+            Value args[2] = {v, Value()};
+            PushMetaFrame(co->top, tm, args, 2, 0, 0);
+            return true;
+        }
+        CheckStack(4);
+        int func = co->top;
+        co->stack[(std::size_t)co->top++] = tm;
+        co->stack[(std::size_t)co->top++] = v;
+        co->stack[(std::size_t)co->top++] = Value();
+        CallAt(func, 0);
+    }
+    return false;
+}
+
 // Drop frames above `frames` after an error, closing pending to-be-closed
 // variables above `top` with the error (an error while closing replaces it).
 void State::Unwind(std::size_t frames, int top, Value& err) {
@@ -1891,14 +1953,17 @@ newframe:
                 Value f;
                 if (o.t == Type::Table) {
                     f = o.Tab()->GetStr(K[in.a].Str());
-                    if (f.IsNil() && o.Tab()->meta) f = Index(o, K[in.a]);
-                } else {
-                    f = Index(o, K[in.a]);
+                    if (!f.IsNil() || !o.Tab()->meta) { S(TOP - 1) = f; S(TOP) = o; ++TOP; break; }
                 }
-                S(TOP - 1) = f;
+                Value fn, self;
+                if (IndexStep(o, K[in.a], f, fn, self)) { S(TOP - 1) = f; S(TOP) = o; ++TOP; break; }
+                // a Lua __index function runs as a frame of the loop (it can yield): its result lands
+                // on a copy of the object, then the two swap so the method sits below the object (post 3)
                 S(TOP) = o;
                 ++TOP;
-                break;
+                Value args[2] = {self, K[in.a]};
+                PushMetaFrame(TOP - 1, fn, args, 2, 1, 3);
+                goto newframe;
             }
             case ADD: case SUB: case MUL: {
                 Value& a = S(TOP - 2);
@@ -1998,6 +2063,8 @@ newframe:
             case CONCAT: {
                 MaybeCollect();
                 int n = in.a;
+                if (FR.concatLeft > 0) { n = FR.concatLeft; FR.concatLeft = 0; }   // resumed after a Lua __concat
+                if (n <= 1) break;
                 bool simple = true;
                 std::size_t total = 0;
                 for (int i = TOP - n; i < TOP; ++i) {
@@ -2031,11 +2098,27 @@ newframe:
                     --TOP;
                     S(TOP - 1) = r;
                 } else {
+                    // right to left (concatenation is right associative); a Lua __concat runs as a
+                    // frame of the loop, and this instruction runs again for the values still left
+                    bool paused = false;
                     for (int k = n; k > 1; --k) {
-                        Value r = Concat(S(TOP - 2), S(TOP - 1));
+                        Value a = S(TOP - 2), b = S(TOP - 1);
+                        if (!((a.IsString() || a.IsNumber()) && (b.IsString() || b.IsNumber()))) {
+                            Value tm = GetTM(a, TM_CONCAT);
+                            if (tm.IsNil()) tm = GetTM(b, TM_CONCAT);
+                            if (tm.t == Type::LFunc) {
+                                if (k - 1 > 1) { FR.concatLeft = k - 1; --FR.pc; }
+                                Value args[2] = {a, b};
+                                PushMetaFrame(TOP - 2, tm, args, 2, 1, 0);
+                                paused = true;
+                                break;
+                            }
+                        }
+                        Value r = Concat(a, b);
                         --TOP;
                         S(TOP - 1) = r;
                     }
+                    if (paused) goto newframe;
                 }
                 break;
             }
@@ -2093,7 +2176,11 @@ newframe:
             case JMP: {
                 if (in.b >= 0) {
                     int nt = base + in.b;
-                    if (in.c >= 0 && !co->tbc.empty() && co->tbc.back() >= base + in.c) CloseTbc(base + in.c, Value(), false);
+                    if (in.c >= 0 && !co->tbc.empty() && co->tbc.back() >= base + in.c) {
+                        --FR.pc;   // a Lua __close runs as a frame; this jump runs again for the rest
+                        if (CloseTbcInLoop(base + in.c)) goto newframe;
+                        ++FR.pc;
+                    }
                     while (TOP < nt) S(TOP++) = Value();
                     TOP = nt;
                 }
@@ -2193,12 +2280,16 @@ newframe:
                 if ((int)co->tbc.size() > FR.tbcMark) {
                     // close pending variables; the results above them stay put
                     TOP = first + n;
-                    CloseTbc(base, Value(), false);
+                    --FR.pc;   // a Lua __close runs as a frame above the results; RETURN runs again
+                    if (CloseTbcInLoop(base)) goto newframe;
+                    ++FR.pc;
                 }
                 Frame done = FR;
                 co->frames.pop_back();
                 PostCall(done, first, n);
-                if (done.post) {   // a comparison metamethod: the result is a boolean
+                if (done.post == 3) {   // a method lookup: method below the object
+                    std::swap(S(done.func - 1), S(done.func));
+                } else if (done.post) {   // a comparison metamethod: the result is a boolean
                     const bool t = S(done.func).Truthy();
                     S(done.func) = Value::Bool(done.post == 1 ? t : !t);
                 }
@@ -2261,7 +2352,11 @@ newframe:
                 co->tbc.push_back(base + in.a);
                 break;
             }
-            case CLOSE: CloseTbc(base + in.a, Value(), false); break;
+            case CLOSE:
+                --FR.pc;   // a Lua __close runs as a frame of the loop (it can yield); CLOSE runs again
+                if (CloseTbcInLoop(base + in.a)) goto newframe;
+                ++FR.pc;
+                break;
             default: Error("bad opcode");
         }
     }

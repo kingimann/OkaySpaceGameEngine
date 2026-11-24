@@ -752,7 +752,7 @@ void Compiler::CloseBlock() {
     fs_->blocks.pop_back();
     if (fs_->blocks.empty() && !fs_->gotos.empty()) {
         const PendingGoto& g = fs_->gotos.front();
-        throw CompileError{"no visible label '" + g.name + "' for goto at line " + std::to_string(g.line), g.line, g.col};
+        throw CompileError{"no visible label '" + g.name + "' for <goto> at line " + std::to_string(g.line), g.line, g.col};
     }
 }
 

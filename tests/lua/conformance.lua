@@ -491,4 +491,36 @@ do
   local okS, eS = s()
   check("yield across sort", okS == false and eS:find("C%-call boundary") ~= nil)
 end
+-- yield inside a method lookup through a Lua __index (obj:m()), a __concat in a chain of three or
+-- more values, and a __close on a normal block exit, a break and a return (manual 2.4, 3.3.8, 3.4.6)
+do
+  local obj = setmetatable({}, {__index = function(t, k) coroutine.yield("look " .. k) return function(self, x) return x + 1 end end})
+  local cat = setmetatable({}, {__concat = function(a, b) coroutine.yield("cat") return "K" end})
+  local closed = {}
+  local function closer(name) return setmetatable({}, {__close = function() coroutine.yield("close " .. name) closed[#closed + 1] = name end}) end
+  local m = coroutine.wrap(function()
+    local r1 = obj:m(41)
+    local r2 = "a" .. "b" .. cat .. "c"
+    do local x <close> = closer("block") end
+    for i = 1, 3 do local y <close> = closer("loop" .. i) if i == 2 then break end end
+    local function f() local z <close> = closer("ret") return "rv", 2 end
+    local r3, r4 = f()
+    return r1, r2, r3, r4
+  end)
+  local asks = {}
+  for _ = 1, 6 do asks[#asks + 1] = m() end
+  local r1, r2, r3, r4 = m()
+  check("yield self/concat/close asks", table.concat(asks, ",") == "look m,cat,close block,close loop1,close loop2,close ret")
+  check("yield self/concat/close results", r1 == 42 and r2 == "abK" and r3 == "rv" and r4 == 2
+    and table.concat(closed, ",") == "block,loop1,loop2,ret")
+end
+-- ephemeron tables (manual 2.5.4): a weak-key entry whose value refers to its own key goes away
+do
+  local eph = setmetatable({}, {__mode = "k"})
+  do local k = {}; eph[k] = {self = k} end
+  local kept = {}; eph[kept] = {self = kept}
+  collectgarbage(); collectgarbage()
+  local n = 0; for _ in pairs(eph) do n = n + 1 end
+  check("ephemeron", n == 1 and eph[kept].self == kept)
+end
 print("conformance done")

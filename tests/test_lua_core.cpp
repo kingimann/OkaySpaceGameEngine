@@ -212,6 +212,53 @@ void HostApi() {
     CHECK(err == "h3:1: bad argument #1 to 'twice' (number expected, got string)");
 }
 
+// Whole Lua programs (tests/lua/programs/*.lua) whose printed output must equal the matching
+// .expected file line for line: classes and closures, text processing with patterns, coroutines,
+// errors with chunk:line messages, numbers / tables / utf8 / goto / os.
+void Programs(bool stress) {
+    for (const char* name : {"classes", "text", "coroutines", "errors", "data"}) {
+        const std::string dir = std::string(OKAY_SOURCE_DIR) + "/tests/lua/programs/";
+        const std::string src = ReadFile(dir + name + ".lua"), want = ReadFile(dir + name + ".expected");
+        CHECK(!src.empty() && !want.empty());
+        State L;
+        L.OpenLibs();
+        L.gcStress = stress;
+        L.SetBudget(50'000'000);
+        std::string got, err;
+        L.printSink = [&](const std::string& s) { got += s + "\n"; };
+        if (!L.DoString(src, std::string(name) + ".lua", &err)) got += "ERROR: " + err + "\n";
+        L.Close();
+        if (got != want) {
+            std::istringstream g(got), w(want);
+            std::string gl, wl;
+            for (int line = 1; std::getline(w, wl); ++line) {
+                if (!std::getline(g, gl)) gl = "<missing>";
+                if (gl != wl) { std::cerr << "  " << name << " line " << line << ": got  " << gl << "\n    want " << wl << "\n"; break; }
+            }
+        }
+        CHECK(got == want);
+    }
+}
+
+// State::Close runs the finalizers still pending, newest first (manual 2.5.3, lua_close).
+void CloseFinalizers() {
+    std::string printed;
+    {
+        State L;
+        L.OpenLibs();
+        L.printSink = [&](const std::string& s) { printed += s + ";"; };
+        std::string err;
+        CHECK(L.DoString("a = setmetatable({}, {__gc = function() print('a') end})\n"
+                         "b = setmetatable({}, {__gc = function() print('b') error('late') end})\n"
+                         "setmetatable({}, {__gc = function() print('c') end})", "fin", &err));
+        L.Close();
+        L.Close();   // twice: nothing runs again
+    }
+    CHECK(printed == "c;b;warning: error in __gc metamethod (fin:2: late);a;" ||
+          printed == "b;warning: error in __gc metamethod (fin:2: late);a;c;");
+    if (printed.find("a;") == std::string::npos) std::cerr << "  close finalizers printed: " << printed << "\n";
+}
+
 // Mutation fuzz: valid snippets with bytes flipped, inserted and dropped, plus token soup.
 void Fuzz() {
     const char* corpus[] = {
@@ -276,6 +323,9 @@ int main() {
     Errors();
     BudgetAndLimits();
     HostApi();
+    Programs(false);
+    Programs(true);
+    CloseFinalizers();
     ConformanceScript(false);
     ConformanceScript(true);   // collect at every safe point
     Fuzz();

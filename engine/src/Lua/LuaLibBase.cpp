@@ -522,7 +522,8 @@ int M_tointeger(State& L, int n) {
     (void)n;
     Value v = L.Arg(0);
     std::int64_t i;
-    if (v.IsNumber() && State::ToInteger(v, i)) L.Push(Value::Int(i));
+    // "if the value x is convertible to an integer" (manual 6.7): numbers and numeric strings (3.4.3)
+    if ((v.IsNumber() || v.IsString()) && State::ToInteger(v, i)) L.Push(Value::Int(i));
     else { L.CheckAny(0, "tointeger"); L.PushNil(); }
     return 1;
 }

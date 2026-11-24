@@ -46,6 +46,15 @@ int main() {
         if (l >= Log::Level::Error) g_errs.push_back(m); else g_logs.push_back(m);
     };
 
+    // 0. Lua's own library tables keep their Lua meaning next to the engine API (the typed
+    //    language's "string" / "int" / "float" value types are not Lua globals).
+    {
+        World w("ok = string.format('%d-%s', 7, string.upper('x')) == '7-X' and math.floor(2.5) == 2 and type(table.concat) == 'function'");
+        CHECK(w.loaded);
+        CHECK(w.Get("ok").AsBool());
+        CHECK(LuaScriptVM::CompletionDoc("string.Format").empty());
+    }
+
     // 1. A table script: settings, Start, Update moving the transform with dt.
     {
         World w(R"LUA(
@@ -323,6 +332,12 @@ return C
         CHECK(LuaScriptVM::CompletionDoc("Update").find("every frame") != std::string::npos);
         CHECK(LuaScriptVM::CompletionDoc("Vector3").find("engine type Vector3") == 0);
         CHECK(LuaScriptVM::CompletionDoc("nothingHere").empty());
+        // hover on the member part of "Input.GetKey" / "Time.deltaTime" (the editor's word is the bare name)
+        CHECK(LuaScriptVM::CompletionDoc("GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
+        CHECK(LuaScriptVM::CompletionDoc("deltaTime").find("Time.deltaTime") == 0);
+        // a .lua file attached to an object (New Script with "Also attach", drag and drop) is a Lua script
+        CHECK(std::string(ScriptLanguageForExtension(".lua")) == "lua");
+        CHECK(std::string(ScriptLanguageForExtension(".LUA")) == "lua");
         std::vector<std::string> words = LuaScriptVM::CompletionNames();
         CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update"));
         std::vector<LuaScriptVM::Setting> st = LuaScriptVM::Settings(

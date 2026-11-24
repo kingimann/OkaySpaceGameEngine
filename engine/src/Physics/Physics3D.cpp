@@ -8,6 +8,7 @@
 #include "okay/Physics/ConvexContact.hpp"
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Physics/Core/World.hpp"
+#include "okay/Physics/Core/DynamicTree.hpp"
 #include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/StringId.hpp"
@@ -24,8 +25,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iterator>
+#include <string>
 #include <typeinfo>
 #include <vector>
 #include <unordered_map>
@@ -329,7 +332,7 @@ Contact TestOBB3OBB3(const OBB3& A, const OBB3& B) {
         float overlap = OBBProjRadius(A, L) + OBBProjRadius(B, L) - Mathf::Abs(Vec3::Dot(d, L));
         if (overlap <= 0.0f) return c;                    // separating axis found
         // Bias face axes slightly under edge-cross axes so flat rests pick a clean
-        // face normal instead of chattering on a near-tie edge axis.
+        // face normal instead of chattering on a nearby-tie edge axis.
         float metric = overlap + (i < 6 ? 0.0f : 1e-3f);
         if (metric < bestMetric) { bestMetric = metric; bestOverlap = overlap; bestAxis = L; }
     }
@@ -887,14 +890,225 @@ bool RayNearBounds(Collider3D* c, const Vec3& o, const Vec3& d, float maxT) {
 
 const Physics3D::QueryCache& Physics3D::QueryLists(Scene& scene) {
     if (m_query.scene != scene.Uid() || m_query.structure != scene.StructureVersion() ||
-        m_query.components != scene.ComponentVersion()) {
+        m_query.components != scene.ComponentVersion() || m_query.objects != scene.Objects().size()) {
         m_query.scene = scene.Uid();
         m_query.structure = scene.StructureVersion();
         m_query.components = scene.ComponentVersion();
+        m_query.objects = scene.Objects().size();
         m_query.colliders = scene.FindObjectsOfType<Collider3D>();
         m_query.terrains = scene.FindObjectsOfType<Terrain>();
+        ++m_query.version;
     }
     return m_query;
+}
+
+// ===================== The broad phase of the scene queries =====================
+// Every scene query (ray, overlap, shape cast, closest point) first asks ONE box tree which colliders are nearby, then
+// runs its exact tests on those only, in the order of the collider list (so answers, their order and ties are what a
+// walk over every collider gives). The tree is a phys::DynamicTree, the tree class our physics core's broad phase is
+// made of. It is its own instance over the cached collider list, not the tree inside the core world, because the
+// world's tree only holds what the last Step put there: queries are asked before the first step, between steps after
+// game code moved something, and for colliders the world has no shape for; and its boxes are the core shapes', not
+// Collider3D::WorldAABB, which is what the exact tests here are written against.
+//
+// Kept right at every query, not once a frame: SyncQueryIndex looks at each live collider and works its box out again
+// only when what the box is made from changed (the object's world matrix stamp, the offset, the shape's sizes). A shape
+// with no cheap "did it change" (a convex hull, a compound: their sizes are text) has its box worked out at every query.
+// A plane (endless) and a heightfield (solid below its bounds) are never in the tree: every query tests them.
+// Not thread safe, as before: the transform and mesh caches the queries read are not either.
+namespace {
+
+// What a collider's box is worked out from. Equal keys = an equal box.
+struct BoundsKey {
+    const Transform* xf = nullptr;
+    unsigned long long stamp = 0;   // Transform::WorldVersion: moves when the world matrix does
+    int shape = -1, n = 0;
+    Vec3 offset{0, 0, 0};
+    float skin = 0.0f;
+    Vec3 size{0, 0, 0};
+    bool operator==(const BoundsKey& o) const {
+        return xf == o.xf && stamp == o.stamp && shape == o.shape && n == o.n && offset == o.offset && skin == o.skin && size == o.size;
+    }
+};
+// Fills the key; false for the shapes whose box has to be worked out every time.
+bool BoundsKeyOf(Collider3D* c, BoundsKey& k) {
+    using S = Collider3D::Shape;
+    k.xf = c->transform;
+    k.stamp = c->transform ? c->transform->WorldVersion() : 0;
+    k.shape = (int)c->shape();
+    k.offset = c->offset;
+    k.skin = c->contactOffset;
+    switch (c->shape()) {
+    case S::Box: k.size = static_cast<BoxCollider3D*>(c)->size; return true;
+    case S::Sphere: k.size.x = static_cast<SphereCollider3D*>(c)->radius; return true;
+    case S::Capsule:
+    case S::Cylinder: {
+        auto* cc = static_cast<CapsuleCollider3D*>(c);
+        k.size.x = cc->radius; k.size.y = cc->height; k.n = cc->axis;
+        return true;
+    }
+    case S::Cone: {
+        auto* cc = static_cast<ConeCollider3D*>(c);
+        k.size.x = cc->radius; k.size.y = cc->height; k.n = cc->axis;
+        return true;
+    }
+    case S::Mesh: {   // its triangles (rebuilt = a new build count), or its size box without any; the hull of a dynamic body
+        auto* mc = static_cast<MeshCollider3D*>(c);
+        k.size = mc->size;
+        k.n = mc->HasTriangles() ? mc->BuildCount() * 2 + (mc->UsesConvexHull() ? 3 : 2) : 0;
+        return true;
+    }
+    default: return false;
+    }
+}
+// The box the tree keeps for a collider: its world bounds, grown by more than any exact test reaches past them (the
+// contact offset, the tolerance of the tests, float rounding far from the origin). False when the collider cannot be
+// in the tree and every query has to test it.
+bool BroadBox(Collider3D* c, phys::Aabb& box) {
+    if (IsFieldShape(c)) return false;
+    Vec3 mn, mx;
+    c->WorldAABB(mn, mx);
+    if (!std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) return false;
+    const Vec3 d = mx - mn;
+    float skin = 0.05f + Mathf::Max(c->contactOffset, 0.0f);
+    if (UsesHull(c)) skin += d.Magnitude() * 0.03f;   // a flat mesh's hull is thickened a little past its triangles
+    const Vec3 pad{skin + d.x * 1e-3f + 8e-6f * Mathf::Max(Mathf::Abs(mn.x), Mathf::Abs(mx.x)),
+                   skin + d.y * 1e-3f + 8e-6f * Mathf::Max(Mathf::Abs(mn.y), Mathf::Abs(mx.y)),
+                   skin + d.z * 1e-3f + 8e-6f * Mathf::Max(Mathf::Abs(mn.z), Mathf::Abs(mx.z))};
+    if (!std::isfinite(pad.x + pad.y + pad.z)) return false;
+    box.lo = phys::V3{mn.x - pad.x, mn.y - pad.y, mn.z - pad.z};
+    box.hi = phys::V3{mx.x + pad.x, mx.y + pad.y, mx.z + pad.z};
+    return true;
+}
+
+// A height grid ClosestPoint built (a terrain's, a heightfield collider's): the core shape, and the numbers it was built
+// from. Kept while those numbers stay the same (Physics3DEngine.inl, TerrainGrid / FieldGrid).
+struct HeightGridMemo {
+    phys::Shape shape;
+    std::vector<float> nums;                       // sizes, cells and scale
+    std::vector<float> heights;                    // a terrain's samples
+    std::string text;                              // a heightfield's samples
+};
+
+} // namespace
+
+struct Physics3D::QueryIndex {
+    struct Leaf {
+        Collider3D* col = nullptr;                 // nullptr = a free slot
+        int proxy = phys::DynamicTree::kNull;      // its leaf in the tree (kNull: not in the tree)
+        std::uint32_t order = 0;                   // its place in the collider list
+        std::uint64_t seen = 0;                    // the list version that last had it
+        bool current = false;                      // `key` is what the box was worked out from
+        BoundsKey key;
+    };
+    phys::DynamicTree tree;                        // leaf user value = slot in `leaves`
+    std::vector<Leaf> leaves;
+    std::vector<std::uint32_t> freeSlots;
+    std::unordered_map<const Collider3D*, std::uint32_t> slotOf;
+    std::vector<std::uint32_t> listed;             // the slot of each collider, in list order
+    std::vector<std::uint32_t> loose;              // live colliders that are not in the tree (every query tests them)
+    std::vector<std::uint32_t> found;              // scratch
+    std::uint64_t listVersion = 0;
+    // ClosestPoint's height grids
+    std::unordered_map<const Terrain*, HeightGridMemo> terrainGrids;
+    std::unordered_map<const Collider3D*, HeightGridMemo> fieldGrids;
+
+    // `found` -> colliders, in the order of the collider list.
+    void Emit(std::vector<Collider3D*>& out) {
+        std::sort(found.begin(), found.end(), [this](std::uint32_t a, std::uint32_t b) { return leaves[a].order < leaves[b].order; });
+        out.clear();
+        out.reserve(found.size());
+        for (std::uint32_t slot : found) out.push_back(leaves[slot].col);
+    }
+};
+
+Physics3D::QueryIndex& Physics3D::SyncQueryIndex(Scene& scene) {
+    const QueryCache& q = QueryLists(scene);
+    if (!m_queryIndex) m_queryIndex = std::make_unique<QueryIndex>();
+    QueryIndex& ix = *m_queryIndex;
+    if (ix.listVersion != q.version) {   // objects or components came or went: keep the leaves of those that stayed
+        ix.listVersion = q.version;
+        ix.listed.clear();
+        ix.listed.reserve(q.colliders.size());
+        for (std::size_t i = 0; i < q.colliders.size(); ++i) {
+            Collider3D* c = q.colliders[i];
+            auto it = ix.slotOf.find(c);
+            std::uint32_t slot;
+            if (it != ix.slotOf.end()) slot = it->second;
+            else {
+                if (!ix.freeSlots.empty()) { slot = ix.freeSlots.back(); ix.freeSlots.pop_back(); }
+                else { slot = (std::uint32_t)ix.leaves.size(); ix.leaves.emplace_back(); }
+                ix.leaves[slot] = QueryIndex::Leaf{};
+                ix.leaves[slot].col = c;
+                ix.slotOf.emplace(c, slot);
+            }
+            ix.leaves[slot].order = (std::uint32_t)i;
+            ix.leaves[slot].seen = q.version;
+            ix.listed.push_back(slot);
+        }
+        for (std::uint32_t slot = 0; slot < (std::uint32_t)ix.leaves.size(); ++slot) {
+            QueryIndex::Leaf& l = ix.leaves[slot];
+            if (!l.col || l.seen == q.version) continue;
+            if (l.proxy != phys::DynamicTree::kNull) ix.tree.Destroy(l.proxy);
+            ix.slotOf.erase(l.col);
+            l = QueryIndex::Leaf{};
+            ix.freeSlots.push_back(slot);
+        }
+        for (auto it = ix.terrainGrids.begin(); it != ix.terrainGrids.end();)
+            it = std::find(q.terrains.begin(), q.terrains.end(), it->first) == q.terrains.end() ? ix.terrainGrids.erase(it) : std::next(it);
+        for (auto it = ix.fieldGrids.begin(); it != ix.fieldGrids.end();)
+            it = ix.slotOf.count(it->first) ? std::next(it) : ix.fieldGrids.erase(it);
+    }
+    ix.loose.clear();
+    for (std::uint32_t slot : ix.listed) {
+        QueryIndex::Leaf& l = ix.leaves[slot];
+        Collider3D* c = l.col;
+        if (!Alive(c)) { l.current = false; continue; }   // no query takes it (Passes); its box is redone when it is back
+        BoundsKey k;
+        const bool keyed = BoundsKeyOf(c, k);
+        if (!(keyed && l.current && l.key == k)) {
+            ++m_queryStats.boundsUpdates;
+            phys::Aabb box;
+            if (BroadBox(c, box)) {
+                if (l.proxy == phys::DynamicTree::kNull) l.proxy = ix.tree.Create(box, slot);
+                else ix.tree.Move(l.proxy, box, phys::V3{});
+            } else if (l.proxy != phys::DynamicTree::kNull) {
+                ix.tree.Destroy(l.proxy);
+                l.proxy = phys::DynamicTree::kNull;
+            }
+            l.key = k;
+            l.current = keyed;
+        }
+        if (l.proxy == phys::DynamicTree::kNull) ix.loose.push_back(slot);
+    }
+    return ix;
+}
+
+// The colliders whose box meets the box mn..mx (after SyncQueryIndex). Returns true when that is every collider the
+// tree holds (a caller that widens its box step by step can stop).
+bool Physics3D::NearBox(const Vec3& mn, const Vec3& mx, std::vector<Collider3D*>& out) {
+    QueryIndex& ix = *m_queryIndex;
+    if (QueryFullScan() || !std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) { out = m_query.colliders; return true; }
+    const phys::Aabb box{phys::V3{mn.x, mn.y, mn.z}, phys::V3{mx.x, mx.y, mx.z}};
+    ix.found = ix.loose;
+    ix.tree.Query(box, [&ix](int proxy) { ix.found.push_back((std::uint32_t)ix.tree.User(proxy)); return true; });
+    ix.Emit(out);
+    return ix.tree.Root() == phys::DynamicTree::kNull || box.Contains(ix.tree.FatAabb(ix.tree.Root()));
+}
+
+// The colliders whose box a box of half-size `halfSize` meets on its way from `origin` along `dir` for `maxDistance`
+// (a zero half-size is a ray; a zero `dir` is the box where it stands). After SyncQueryIndex.
+void Physics3D::NearPath(const Vec3& origin, const Vec3& dir, float maxDistance, const Vec3& halfSize,
+                         std::vector<Collider3D*>& out) {
+    QueryIndex& ix = *m_queryIndex;
+    const bool usable = maxDistance >= 0.0f && std::isfinite(maxDistance) && std::isfinite(origin.x + origin.y + origin.z) &&
+                        std::isfinite(dir.x + dir.y + dir.z) && std::isfinite(halfSize.x + halfSize.y + halfSize.z);
+    if (QueryFullScan() || !usable) { out = m_query.colliders; return; }
+    ix.found = ix.loose;
+    ix.tree.RayCast(phys::V3{origin.x, origin.y, origin.z}, phys::V3{dir.x, dir.y, dir.z}, maxDistance,
+                    [&ix](int proxy, float maxT) { ix.found.push_back((std::uint32_t)ix.tree.User(proxy)); return maxT; },
+                    phys::V3{Mathf::Abs(halfSize.x), Mathf::Abs(halfSize.y), Mathf::Abs(halfSize.z)});
+    ix.Emit(out);
 }
 
 RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
@@ -903,10 +1117,13 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
     RaycastHit3D best;
     best.distance = maxDistance;
     Vec3 dir = direction.Normalized();
-    const QueryCache& q = QueryLists(scene);
+    std::vector<Collider3D*> nearby;
+    SyncQueryIndex(scene);
+    NearPath(origin, dir, maxDistance, Vec3::Zero, nearby);
+    const QueryCache& q = m_query;
     ++m_queryStats.queries;
-    m_queryStats.considered += q.colliders.size();
-    for (Collider3D* c : q.colliders) {
+    m_queryStats.considered += nearby.size();
+    for (Collider3D* c : nearby) {
         if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, best.distance)) continue;
         ++m_queryStats.shapeTests;
         float t; Vec3 n;
@@ -937,10 +1154,13 @@ std::vector<RaycastHit3D> Physics3D::RaycastAll(Scene& scene, const Vec3& origin
         h.distance = t; h.point = origin + dir * t; h.normal = n;
         hits.push_back(h);
     };
-    const QueryCache& q = QueryLists(scene);
+    std::vector<Collider3D*> nearby;
+    SyncQueryIndex(scene);
+    NearPath(origin, dir, maxDistance, Vec3::Zero, nearby);
+    const QueryCache& q = m_query;
     ++m_queryStats.queries;
-    m_queryStats.considered += q.colliders.size();
-    for (Collider3D* c : q.colliders) {
+    m_queryStats.considered += nearby.size();
+    for (Collider3D* c : nearby) {
         if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, maxDistance)) continue;
         ++m_queryStats.shapeTests;
         float t; Vec3 n;
@@ -990,7 +1210,7 @@ bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point) 
         point = c;
         return true;
     }
-    // Sphere / capsule / cylinder: reduce to a sphere near c.
+    // Sphere / capsule / cylinder: reduce to a sphere nearby c.
     Vec3 sc; float sr; AsSphere(col, c, sc, sr);
     Vec3 d = c - sc; float dist = d.Magnitude();
     if (dist > r + sr) return false;
@@ -1117,11 +1337,12 @@ bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
     return false;
 }
 
-std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_t mask,
+// `nearby` is what the broad phase found for the shape's box (Physics3D::NearBox), in collider-list order.
+std::vector<Collider3D*> Overlap(const std::vector<Collider3D*>& nearby, const QueryShape& q, std::uint32_t mask,
                                  bool queryTriggers, GameObject* ignore, PhysicsQueryStats& st) {
     std::vector<Collider3D*> out;
     ++st.queries;
-    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+    for (Collider3D* c : nearby) {
         ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         ++st.shapeTests;
@@ -1151,26 +1372,24 @@ bool SweepWindow(Collider3D* c, const Vec3& origin, const Vec3& dir, const Vec3&
 // `skipStartOverlaps` ignores colliders already touching at the start (as
 // casts usually do; continuous collision needs it so a body resting on the floor can
 // still slide along it).
-RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+// `nearby` is what the broad phase found along the path (Physics3D::NearPath), in collider-list order.
+RaycastHit3D Sweep(const std::vector<Collider3D*>& nearby, const QueryShape& q, const Vec3& dir, float maxDist,
                    GameObject* ignore, std::uint32_t mask, bool queryTriggers,
-                   bool skipStartOverlaps, PhysicsQueryStats& st, bool skipTriMeshes = false,
-                   const std::vector<Collider3D*>* only = nullptr) {
+                   bool skipStartOverlaps, PhysicsQueryStats& st, bool skipTriMeshes = false) {
     RaycastHit3D best;
     struct Cand { Collider3D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
     float lo = 1e30f, hi = -1e30f;
-    std::vector<Collider3D*> everything;
-    if (!only) everything = scene.FindObjectsOfType<Collider3D>();
     ++st.queries;
-    for (Collider3D* c : (only ? *only : everything)) {
+    for (Collider3D* c : nearby) {
         ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         if (skipTriMeshes && MeshHasTris(c)) continue;
         float t0, t1;
         if (!SweepWindow(c, o, dir, ext, maxDist, t0, t1)) continue;
         ++st.shapeTests;
-        Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere near the path)
+        Vec3 n, p;   // (the bounds test comes first: it is cheap, and most colliders are nowhere nearby the path)
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
         cands.push_back({c, t0, t1});
         lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
@@ -1232,10 +1451,10 @@ float ShapeReach(const QueryShape& q, const Vec3& n) {
 
 // Terrain is part of every shape cast, not only a zero-radius ray. The ray hits the
 // surface; the cast hits earlier by the shape's reach along the ground normal.
-void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+void AddTerrainSweep(const std::vector<Terrain*>& terrains, const QueryShape& q, const Vec3& dir, float maxDist,
                      GameObject* ignore, std::uint32_t mask, std::vector<RaycastHit3D>& hits) {
     if (!(dir.SqrMagnitude() > 0.5f) || !(maxDist > 0.0f)) return;
-    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+    for (Terrain* terr : terrains) {
         if (!TerrainPasses(terr, ignore, mask) || !terr->gameObject) continue;
         float t = 0.0f;
         Vec3 n{0, 1, 0};
@@ -1257,7 +1476,9 @@ void AddTerrainSweep(Scene& scene, const QueryShape& q, const Vec3& dir, float m
 // step and bisection as Sweep, so a thin wall between two samples is not skipped and a later wall is kept.
 // A zero direction or a zero distance still reports what the shape already overlaps, the same as SphereCast
 // testing the place it stands.
-std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+// `nearby` is what the broad phase found along the path (Physics3D::NearPath), in collider-list order.
+std::vector<RaycastHit3D> SweepAll(const std::vector<Collider3D*>& nearby, const std::vector<Terrain*>& terrains,
+                                   const QueryShape& q, const Vec3& dir, float maxDist,
                                    GameObject* ignore, std::uint32_t mask, bool queryTriggers, PhysicsQueryStats& st) {
     std::vector<RaycastHit3D> hits;
     ++st.queries;
@@ -1265,7 +1486,7 @@ std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3
     const bool zeroDist = !(maxDist > 1e-8f);
     if (badDir || zeroDist) {
         if (!(maxDist >= 0.0f) || !std::isfinite(maxDist)) return hits;
-        for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+        for (Collider3D* c : nearby) {
             ++st.considered;
             if (!Passes(c, ignore, mask, queryTriggers)) continue;
             ++st.shapeTests;
@@ -1281,7 +1502,7 @@ std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3
     struct Cand { Collider3D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
-    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+    for (Collider3D* c : nearby) {
         ++st.considered;
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         float t0, t1;
@@ -1326,7 +1547,7 @@ std::vector<RaycastHit3D> SweepAll(Scene& scene, const QueryShape& q, const Vec3
         h.distance = hitT; h.point = p; h.normal = n;
         hits.push_back(h);
     }
-    AddTerrainSweep(scene, q, dir, maxDist, ignore, mask, hits);
+    AddTerrainSweep(terrains, q, dir, maxDist, ignore, mask, hits);
     std::sort(hits.begin(), hits.end(), [](const RaycastHit3D& a, const RaycastHit3D& b) {
         return a.distance < b.distance;
     });
@@ -1430,22 +1651,49 @@ bool NudgeSphere(Collider3D* col, Vec3& c, float r) {
 }
 } // namespace
 
+template <class Shape>
+std::vector<Collider3D*> Physics3D::OverlapShape(Scene& scene, const Shape& q, std::uint32_t layerMask, bool queryTriggers,
+                                                 GameObject* ignore) {
+    std::vector<Collider3D*> nearby;
+    SyncQueryIndex(scene);
+    const Vec3 c = q.Center(), e = q.Extent();
+    const Vec3 h{Mathf::Abs(e.x), Mathf::Abs(e.y), Mathf::Abs(e.z)};
+    NearBox(c - h, c + h, nearby);
+    return Overlap(nearby, q, layerMask, queryTriggers, ignore, m_queryStats);
+}
+template <class Shape>
+RaycastHit3D Physics3D::SweepShape(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance, GameObject* ignore,
+                                   std::uint32_t layerMask, bool queryTriggers) {
+    std::vector<Collider3D*> nearby;
+    SyncQueryIndex(scene);
+    NearPath(q.Center(), dir, maxDistance, q.Extent(), nearby);
+    return Sweep(nearby, q, dir, maxDistance, ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
+}
+template <class Shape>
+std::vector<RaycastHit3D> Physics3D::SweepShapeAll(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance,
+                                                   GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    std::vector<Collider3D*> nearby;
+    SyncQueryIndex(scene);
+    NearPath(q.Center(), dir, maxDistance, q.Extent(), nearby);
+    return SweepAll(nearby, m_query.terrains, q, dir, maxDistance, ignore, layerMask, queryTriggers, m_queryStats);
+}
+
 std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& center, float radius,
                                                   std::uint32_t layerMask, bool queryTriggers,
                                                   GameObject* ignore) {
-    return Overlap(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore, m_queryStats);
+    return OverlapShape(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapBox(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                                const Quat& rotation, std::uint32_t layerMask,
                                                bool queryTriggers, GameObject* ignore) {
-    return Overlap(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore, m_queryStats);
+    return OverlapShape(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapCapsule(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                                    std::uint32_t layerMask, bool queryTriggers,
                                                    GameObject* ignore) {
-    return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore, m_queryStats);
+    return OverlapShape(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
 }
 
 bool& Physics3D::QueryFullScan() { static bool on = false; return on; }
@@ -1458,8 +1706,8 @@ RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3&
                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
-    return Sweep(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
-                 queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
+    return SweepShape(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
+                 queryTriggers);
 }
 
 std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& origin, const Vec3& direction,
@@ -1467,14 +1715,14 @@ std::vector<RaycastHit3D> Physics3D::SphereCastAll(Scene& scene, const Vec3& ori
                                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return RaycastAll(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
-    return SweepAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers, m_queryStats);
+    return SweepShapeAll(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
 RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                 const Vec3& direction, const Quat& rotation, float maxDistance,
                                 GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
-    return Sweep(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
-                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
+    return SweepShape(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+                 ignore, layerMask, queryTriggers);
 }
 
 std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center, const Vec3& halfExtents,
@@ -1483,15 +1731,15 @@ std::vector<RaycastHit3D> Physics3D::BoxCastAll(Scene& scene, const Vec3& center
     // A box with no size is a ray, and a ray includes terrain (the same as SphereCastAll with radius 0).
     if (!(halfExtents.x > 1e-6f) && !(halfExtents.y > 1e-6f) && !(halfExtents.z > 1e-6f))
         return RaycastAll(scene, center, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
-    return SweepAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
-                    ignore, layerMask, queryTriggers, m_queryStats);
+    return SweepShapeAll(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
 }
 
 RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                     const Vec3& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
-    return Sweep(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
-                 ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false, m_queryStats);
+    return SweepShape(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+                 ignore, layerMask, queryTriggers);
 }
 
 std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a, const Vec3& b, float radius,
@@ -1499,8 +1747,8 @@ std::vector<RaycastHit3D> Physics3D::CapsuleCastAll(Scene& scene, const Vec3& a,
                                                    std::uint32_t layerMask, bool queryTriggers) {
     if (!(radius > 0.0f) && (a - b).SqrMagnitude() < 1e-12f)
         return RaycastAll(scene, a, direction.Normalized(), maxDistance, ignore, layerMask, queryTriggers);
-    return SweepAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
-                    ignore, layerMask, queryTriggers, m_queryStats);
+    return SweepShapeAll(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+                    ignore, layerMask, queryTriggers);
 }
 
 const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }
@@ -1517,15 +1765,29 @@ void Physics3D::RecordQueryRay(const Vec3& origin, const Vec3& direction, float 
     m_debugRays.push_back(r);
 }
 
+// ResolveSphere and ResolveCapsule: only a collider the shape reaches can push it, so a pass asks the broad phase for
+// the colliders within `slack` of where the shape starts. When the pushes carry it further than `slack`, the same pass
+// is done again from its start with a wider net, so the result is the one a pass over every collider gives.
 Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {
+    SyncQueryIndex(scene);
+    ++m_queryStats.queries;
+    std::vector<Collider3D*> nearby;
+    const float reach = Mathf::Abs(r), firstSlack = Mathf::Max(reach, 0.5f);
+    float slack = firstSlack;
     for (int it = 0; it < iterations; ++it) {
-        bool moved = false;
-        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        bool moved = false, tooFar = false;
+        const Vec3 from = c, net{reach + slack, reach + slack, reach + slack};
+        const bool all = NearBox(from - net, from + net, nearby);
+        m_queryStats.considered += nearby.size();
+        for (Collider3D* col : nearby) {
             if (!Alive(col)) continue;
             if (ignore && col->gameObject == ignore) continue;
             if (col->isTrigger) continue;
             if (NudgeSphere(col, c, r)) moved = true;
+            if (moved && !all && !((c - from).SqrMagnitude() <= slack * slack)) { tooFar = true; break; }
         }
+        if (tooFar) { c = from; slack *= 4.0f; --it; continue; }
+        slack = firstSlack;
         if (!moved) break;
     }
     return c;
@@ -1538,11 +1800,20 @@ Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfS
     else axis = {0, 1, 0};
     if (!(halfSegment > 1e-4f) || !(radius > 0.0f))
         return ResolveSphere(scene, center, std::max(radius, 0.0f), ignore, iterations);
+    SyncQueryIndex(scene);
+    ++m_queryStats.queries;
+    std::vector<Collider3D*> nearby;
+    const Vec3 reach{Mathf::Abs(axis.x) * halfSegment + radius, Mathf::Abs(axis.y) * halfSegment + radius, Mathf::Abs(axis.z) * halfSegment + radius};
+    const float firstSlack = Mathf::Max(radius, 0.5f);
+    float slack = firstSlack;
     for (int it = 0; it < iterations; ++it) {
-        bool moved = false;
+        bool moved = false, tooFar = false;
         Vec3 a = center - axis * halfSegment;
         Vec3 b = center + axis * halfSegment;
-        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        const Vec3 from = center, net = reach + Vec3{slack, slack, slack};
+        const bool all = NearBox(from - net, from + net, nearby);
+        m_queryStats.considered += nearby.size();
+        for (Collider3D* col : nearby) {
             if (!Alive(col) || (ignore && col->gameObject == ignore) || col->isTrigger) continue;
             // Seven stations along the segment, plus the point nearest this collider.
             // Three stations (the two ends and the waist) miss a corner that overlaps
@@ -1566,8 +1837,11 @@ Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfS
                 a = center - axis * halfSegment;
                 b = center + axis * halfSegment;
                 moved = true;
+                if (!all && !((center - from).SqrMagnitude() <= slack * slack)) { tooFar = true; break; }
             }
         }
+        if (tooFar) { center = from; slack *= 4.0f; --it; continue; }
+        slack = firstSlack;
         if (!moved) break;
     }
     return center;

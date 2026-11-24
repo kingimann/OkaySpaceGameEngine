@@ -78,8 +78,9 @@ public:
 
     /// Ray from `o` along `d` (any length) for t in [0, maxT]. cb(proxy, maxT) is called for leaves whose fat box the
     /// ray enters before maxT; it returns the new clip distance (return maxT unchanged to keep going, a smaller value to
-    /// clip the search to the nearest hit so far, or a negative value to stop).
-    template <class F> void RayCast(const V3& o, const V3& d, float maxT, F&& cb) const {
+    /// clip the search to the nearest hit so far, or a negative value to stop). `grow` widens every box by that much on
+    /// each side: the ray is then a box of that half-size swept along it (a shape cast).
+    template <class F> void RayCast(const V3& o, const V3& d, float maxT, F&& cb, const V3& grow = V3{}) const {
         if (m_root == kNull) return;
         V3 inv;
         for (int k = 0; k < 3; ++k) inv[k] = d[k] != 0.0f ? 1.0f / d[k] : (d[k] >= 0.0f ? 1e30f : -1e30f);
@@ -89,7 +90,7 @@ public:
         while (!stack.empty()) {
             const int id = stack.back(); stack.pop_back();
             const Node& n = m_nodes[(std::size_t)id];
-            if (!RayHitsBox(o, d, inv, n.box, maxT)) continue;
+            if (!RayHitsBox(o, d, inv, Aabb{n.box.lo - grow, n.box.hi + grow}, maxT)) continue;
             if (n.child1 == kNull) {
                 const float t = cb(id, maxT);
                 if (t < 0.0f) return;

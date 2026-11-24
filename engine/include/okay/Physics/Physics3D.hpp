@@ -275,15 +275,32 @@ private:
     std::vector<PhysicsDebugBody3D>    m_debugBodies;
     std::vector<PhysicsDebugJoint3D>   m_debugJoints;
     void StepTerrain(Scene& scene);   // grounded-on-terrain signals and voxel terrain collision (after the engine step)
-    /// The colliders and terrains ray queries test, gathered once and reused
-    /// until the scene's objects or components change (not per ray).
+    /// The colliders and terrains the scene queries test, gathered once and reused
+    /// until the scene's objects or components change (not per query).
     struct QueryCache {
-        std::uint64_t scene = 0, structure = 0, components = 0;
+        std::uint64_t scene = 0, structure = 0, components = 0, objects = 0;
+        std::uint64_t version = 0;      // goes up each time the lists are gathered again
         std::vector<Collider3D*> colliders;
         std::vector<Terrain*> terrains;
     };
     QueryCache m_query;
     const QueryCache& QueryLists(Scene& scene);
+    /// The broad phase of the scene queries: one box tree over `m_query.colliders` (Physics3D.cpp, "The broad phase of
+    /// the scene queries"). NearBox / NearPath fill `out` with the colliders whose box meets a box, or a box swept along
+    /// a path, in the order of the collider list; the exact tests then run on those only.
+    struct QueryIndex;
+    std::unique_ptr<QueryIndex> m_queryIndex;
+    QueryIndex& SyncQueryIndex(Scene& scene);   // call first: brings the tree up to date with the scene
+    bool NearBox(const Vec3& mn, const Vec3& mx, std::vector<Collider3D*>& out);
+    void NearPath(const Vec3& origin, const Vec3& dir, float maxDistance, const Vec3& halfSize,
+                  std::vector<Collider3D*>& out);
+    // The overlap and shape-cast calls above, for one query shape (a type of Physics3D.cpp).
+    template <class Shape> std::vector<Collider3D*> OverlapShape(Scene& scene, const Shape& q, std::uint32_t layerMask,
+                                                                 bool queryTriggers, GameObject* ignore);
+    template <class Shape> RaycastHit3D SweepShape(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance,
+                                                   GameObject* ignore, std::uint32_t layerMask, bool queryTriggers);
+    template <class Shape> std::vector<RaycastHit3D> SweepShapeAll(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance,
+                                                                  GameObject* ignore, std::uint32_t layerMask, bool queryTriggers);
 };
 
 } // namespace okay

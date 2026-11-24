@@ -64,7 +64,7 @@ proves both). The editor no longer shows it; **Solver iterations** stays.
 | Joint3D Ball, ConeTwist | engine Ball and ConeTwist with `anchor` as the world pivot, swing cone (`swingLimit1`, `swingLimit2`), twist limits (`minAngle`, `maxAngle`), and a drive (`useDrive`, `driveTarget` Euler degrees, `driveStiffness` and `driveDamping` or `driveFrequency` and `driveDampingRatio`, `driveMaxTorque`). These drive field names are kept stable: the active ragdoll moves onto them. They are saved only when not default. |
 | A joint whose partner object is destroyed | keeps its length and hangs from the partner's last position (it is not flung) |
 | Events | OnCollisionEnter3D / Stay / Exit with normal, point, penetration and impact speed; one Enter and one Exit per pair of components (a compound's pieces or a collider rebuilt while playing do not repeat them); the event pass costs one look per touching pair |
-| Queries | Raycast, shape casts and overlaps are `Physics3D`'s own (the core keeps no second ray or sweep code; it only has an overlap test built on its contact code) |
+| Queries | Raycast, shape casts, overlaps and closest point are `Physics3D`'s own exact tests (the core keeps no second ray or sweep code; it only has an overlap test built on its contact code). They ask a broad phase first: one `DynamicTree` (the core's tree class) over the scene's collider list, brought up to date at every query (`Physics3D.cpp`, "The broad phase of the scene queries"; test `physics_query_broadphase`) |
 | Step length | a frame longer than 1/45 s is cut into equal slices no longer than that |
 | Advanced | `Physics3D::EngineWorld()`, `EngineBody(rb)`, `EngineJoint(j)` reach the engine world (e.g. an active ragdoll setting drive targets every frame) |
 
@@ -130,8 +130,9 @@ and controller test runs on this one path.
 
 ## Not done yet
 
-* Scene queries through the engine tree (today `Physics3D`'s own query code runs; the core keeps no second ray code).
-  Doing it needs the tree to follow bodies that scripts move between steps.
+* Scene queries on the world's own tree and shapes. Today they use a tree of their own (the same `DynamicTree` class,
+  over the scene's collider list, checked against the scene at every query) and `Physics3D`'s exact tests, because the
+  world only knows what the last step saw and scripts move things between steps.
 * Voxel terrain inside the core (it runs as the old pass after the core step); mesh-mesh pairs (static meshes only
   meet convex shapes); a terrain raises no collision callbacks (as before).
 * A dedicated configurable 6-DOF Joint3D mode in the editor (the core's SixDof joint is reachable from code).

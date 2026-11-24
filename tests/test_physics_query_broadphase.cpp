@@ -6,31 +6,31 @@
 //       a) the scene's own Physics3D (its broad phase is kept up to date as things change),
 //       b) the same with Physics3D::QueryFullScan() on: every collider goes to the exact tests,
 //       c) a Physics3D made for that one question (a broad phase built from nothing).
+//     ResolveSphere and ResolveCapsule (a shape pushed out of the solid colliders) are asked the same three ways.
 //     Between rounds objects move, turn, grow, change layer, are switched off, deleted and added, and physics steps.
 //  2. Less work: on 2,000 colliders a query looks at a small part of the scene, and a collider's box is only worked out
 //     again when the collider changed.
 //  3. ClosestPoint builds the height grid of a terrain or a heightfield once, and again only when its data changed.
 //
 // The line "digest" is a hash of every answer of part 1; it is printed so a run before a change and a run after it can
-// be compared by hand.
+// be compared by hand. When two of the three answers differ, the call is named.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Random.hpp"
+#include "okay/Core/StringId.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace okay;
 
 namespace {
 
-std::uint64_t g_digest = 0xcbf29ce484222325ull;
-void Mix(const void* p, std::size_t n) {
-    const unsigned char* b = static_cast<const unsigned char*>(p);
-    for (std::size_t i = 0; i < n; ++i) { g_digest ^= b[i]; g_digest *= 0x100000001b3ull; }
-}
+std::string g_digest;   // every answer's bytes; hashed at the end with the engine's string hash
+void Mix(const void* p, std::size_t n) { g_digest.append(static_cast<const char*>(p), n); }
 void MixF(float f) { Mix(&f, sizeof f); }
 void MixV(const Vec3& v) { MixF(v.x); MixF(v.y); MixF(v.z); }
 void MixGo(const GameObject* g) {
@@ -61,7 +61,9 @@ void MixHit(const RaycastHit3D& h) {
 }
 void MixHits(const std::vector<RaycastHit3D>& v) { for (const RaycastHit3D& h : v) MixHit(h); Mix("|", 1); }
 
-int g_asked = 0, g_withHits = 0;
+std::string g_pushDigest;   // the same for the ResolveSphere / ResolveCapsule answers
+int g_asked = 0, g_withHits = 0, g_pushed = 0;
+const char* g_what = "";   // the call being asked (named when two answers differ)
 
 // Ask one question the three ways. `ask` takes the Physics3D to ask; `same` compares two answers.
 template <class Ask, class Same> auto Three(Scene& s, Ask ask, Same same) -> decltype(ask(s.physics3D())) {
@@ -73,8 +75,9 @@ template <class Ask, class Same> auto Three(Scene& s, Ask ask, Same same) -> dec
     Physics3D fresh;
     auto viaFresh = ask(fresh);
     ++g_asked;
-    CHECK(same(viaBroad, viaScan));
-    CHECK(same(viaBroad, viaFresh));
+    const bool agree = same(viaBroad, viaScan) && same(viaBroad, viaFresh);
+    CHECK(agree);
+    if (!agree) std::printf("  question %d (%s): the broad phase and the full scan answer differently\n", g_asked, g_what);
     return viaBroad;
 }
 
@@ -208,30 +211,38 @@ struct World {
         const Vec3 a = o - d * rng.Range(0.0f, 1.5f), b = o + Dir() * rng.Range(0.0f, 1.5f);
         const float castReach = rng.Range(0, 4) == 0 ? 0.0f : rng.Range(0.5f, area);
 
-        RaycastHit3D h = Three(s, [&](Physics3D& p) { return p.Raycast(s, o, d, reach, ignore, mask, trig); }, SameHit);
+        RaycastHit3D h = Three(s, [&](Physics3D& p) { g_what = "Raycast"; return p.Raycast(s, o, d, reach, ignore, mask, trig); }, SameHit);
         MixHit(h); g_withHits += h.hit;
-        MixHits(Three(s, [&](Physics3D& p) { return p.RaycastAll(s, o, d, reach, ignore, mask, trig); }, SameHits));
-        MixHit(Three(s, [&](Physics3D& p) { return p.Linecast(s, o, o + d * 6.0f, ignore, mask, trig); }, SameHit));
+        MixHits(Three(s, [&](Physics3D& p) { g_what = "RaycastAll"; return p.RaycastAll(s, o, d, reach, ignore, mask, trig); }, SameHits));
+        MixHit(Three(s, [&](Physics3D& p) { g_what = "Linecast"; return p.Linecast(s, o, o + d * 6.0f, ignore, mask, trig); }, SameHit));
 
         auto sameCols = [](const std::vector<Collider3D*>& x, const std::vector<Collider3D*>& y) { return x == y; };
         auto mixCols = [](const std::vector<Collider3D*>& v) { for (Collider3D* c : v) MixGo(c->gameObject); Mix("|", 1); };
-        auto os = Three(s, [&](Physics3D& p) { return p.OverlapSphere(s, o, r, mask, trig, ignore); }, sameCols);
+        auto os = Three(s, [&](Physics3D& p) { g_what = "OverlapSphere"; return p.OverlapSphere(s, o, r, mask, trig, ignore); }, sameCols);
         mixCols(os); g_withHits += !os.empty();
-        mixCols(Three(s, [&](Physics3D& p) { return p.OverlapBox(s, o, half, rot, mask, trig, ignore); }, sameCols));
-        mixCols(Three(s, [&](Physics3D& p) { return p.OverlapCapsule(s, a, b, r * 0.5f, mask, trig, ignore); }, sameCols));
+        mixCols(Three(s, [&](Physics3D& p) { g_what = "OverlapBox"; return p.OverlapBox(s, o, half, rot, mask, trig, ignore); }, sameCols));
+        mixCols(Three(s, [&](Physics3D& p) { g_what = "OverlapCapsule"; return p.OverlapCapsule(s, a, b, r * 0.5f, mask, trig, ignore); }, sameCols));
 
-        h = Three(s, [&](Physics3D& p) { return p.SphereCast(s, o, d, r * 0.5f, castReach, ignore, mask, trig); }, SameHit);
+        h = Three(s, [&](Physics3D& p) { g_what = "SphereCast"; return p.SphereCast(s, o, d, r * 0.5f, castReach, ignore, mask, trig); }, SameHit);
         MixHit(h); g_withHits += h.hit;
-        MixHit(Three(s, [&](Physics3D& p) { return p.BoxCast(s, o, half * 0.5f, d, rot, castReach, ignore, mask, trig); }, SameHit));
-        MixHit(Three(s, [&](Physics3D& p) { return p.CapsuleCast(s, a, b, r * 0.4f, d, castReach, ignore, mask, trig); }, SameHit));
-        MixHits(Three(s, [&](Physics3D& p) { return p.SphereCastAll(s, o, d, r * 0.5f, castReach, ignore, mask, trig); }, SameHits));
-        MixHits(Three(s, [&](Physics3D& p) { return p.BoxCastAll(s, o, half * 0.5f, d, rot, castReach, ignore, mask, trig); }, SameHits));
-        MixHits(Three(s, [&](Physics3D& p) { return p.CapsuleCastAll(s, a, b, r * 0.4f, d, castReach, ignore, mask, trig); }, SameHits));
+        MixHit(Three(s, [&](Physics3D& p) { g_what = "BoxCast"; return p.BoxCast(s, o, half * 0.5f, d, rot, castReach, ignore, mask, trig); }, SameHit));
+        MixHit(Three(s, [&](Physics3D& p) { g_what = "CapsuleCast"; return p.CapsuleCast(s, a, b, r * 0.4f, d, castReach, ignore, mask, trig); }, SameHit));
+        MixHits(Three(s, [&](Physics3D& p) { g_what = "SphereCastAll"; return p.SphereCastAll(s, o, d, r * 0.5f, castReach, ignore, mask, trig); }, SameHits));
+        MixHits(Three(s, [&](Physics3D& p) { g_what = "BoxCastAll"; return p.BoxCastAll(s, o, half * 0.5f, d, rot, castReach, ignore, mask, trig); }, SameHits));
+        MixHits(Three(s, [&](Physics3D& p) { g_what = "CapsuleCastAll"; return p.CapsuleCastAll(s, a, b, r * 0.4f, d, castReach, ignore, mask, trig); }, SameHits));
 
         const float nearReach = rng.Range(0, 2) == 0 ? 1e9f : rng.Range(0.2f, area);
-        NearestSolid3D n = Three(s, [&](Physics3D& p) { return p.ClosestPoint(s, o, nearReach, ignore, mask); }, SameNear);
+        NearestSolid3D n = Three(s, [&](Physics3D& p) { g_what = "ClosestPoint"; return p.ClosestPoint(s, o, nearReach, ignore, mask); }, SameNear);
         Mix(&n.hit, 1);
         if (n.hit) { MixGo(n.gameObject); MixF(n.distance); MixV(n.point); ++g_withHits; }
+
+        // pushing a sphere and a capsule out of the solid colliders (hashed apart, so the digest above stays comparable)
+        const Vec3 ball = Three(s, [&](Physics3D& p) { g_what = "ResolveSphere"; return p.ResolveSphere(s, o, r, ignore); }, SameV);
+        const Vec3 pill = Three(s, [&](Physics3D& p) { g_what = "ResolveCapsule"; return p.ResolveCapsule(s, o, d, half.y, r * 0.4f, ignore); }, SameV);
+        g_pushed += !SameV(ball, o) + !SameV(pill, o);
+        std::swap(g_digest, g_pushDigest);
+        MixV(ball); MixV(pill);
+        std::swap(g_digest, g_pushDigest);
     }
 };
 
@@ -280,7 +291,9 @@ int main() {
         }
     }
     std::printf("part 1: %d questions asked three ways, %d of the sampled answers hit something\n", g_asked, g_withHits);
-    std::printf("digest %016llx\n", (unsigned long long)g_digest);
+    std::printf("digest %016llx\n", (unsigned long long)StringId::HashOf(g_digest));
+    std::printf("push digest %016llx (%d of the spheres and capsules were pushed)\n", (unsigned long long)StringId::HashOf(g_pushDigest), g_pushed);
+    CHECK(g_pushed > 100);
     CHECK(g_asked > 4000);
     CHECK(g_withHits > 300);   // the questions really find things (an empty scene would agree with itself too)
 
@@ -293,11 +306,11 @@ int main() {
         s.Start();
         auto sameCols = [](const std::vector<Collider3D*>& x, const std::vector<Collider3D*>& y) { return x == y; };
         for (float gap : {-1e-3f, -1e-5f, 0.0f, 1e-5f, 1e-3f}) {
-            Three(s, [&](Physics3D& p) { return p.OverlapSphere(s, {1.5f + gap, 0, 0}, 1.0f); }, sameCols);
-            Three(s, [&](Physics3D& p) { return p.OverlapSphere(s, {5.0f, 1.5f + gap, 0}, 1.0f); }, sameCols);
-            Three(s, [&](Physics3D& p) { return p.OverlapBox(s, {0, 1.0f + gap, 0}, {0.5f, 0.5f, 0.5f}); }, sameCols);
-            Three(s, [&](Physics3D& p) { return p.Raycast(s, {-5, 0.5f + gap, 0}, {1, 0, 0}, 100.0f); }, SameHit);
-            Three(s, [&](Physics3D& p) { return p.SphereCast(s, {-5, 1.0f + gap, 0}, {1, 0, 0}, 0.5f, 100.0f); }, SameHit);
+            Three(s, [&](Physics3D& p) { g_what = "OverlapSphere"; return p.OverlapSphere(s, {1.5f + gap, 0, 0}, 1.0f); }, sameCols);
+            Three(s, [&](Physics3D& p) { g_what = "OverlapSphere"; return p.OverlapSphere(s, {5.0f, 1.5f + gap, 0}, 1.0f); }, sameCols);
+            Three(s, [&](Physics3D& p) { g_what = "OverlapBox"; return p.OverlapBox(s, {0, 1.0f + gap, 0}, {0.5f, 0.5f, 0.5f}); }, sameCols);
+            Three(s, [&](Physics3D& p) { g_what = "Raycast"; return p.Raycast(s, {-5, 0.5f + gap, 0}, {1, 0, 0}, 100.0f); }, SameHit);
+            Three(s, [&](Physics3D& p) { g_what = "SphereCast"; return p.SphereCast(s, {-5, 1.0f + gap, 0}, {1, 0, 0}, 0.5f, 100.0f); }, SameHit);
         }
         CHECK(s.physics3D().OverlapSphere(s, {1.4f, 0, 0}, 1.0f).size() == 1);
         CHECK(s.physics3D().OverlapSphere(s, {1.6f, 0, 0}, 1.0f).empty());
@@ -305,6 +318,27 @@ int main() {
         CHECK(s.physics3D().Raycast(s, {-5, 0, 0}, {1, 0, 0}, 100.0f).gameObject->name == "g0");
         CHECK(!s.physics3D().Raycast(s, {-5, 0, 0}, {1, 0, 0}, 4.0f).hit);
         CHECK_NEAR(s.physics3D().ClosestPoint(s, {2.5f, 0, 0}).distance, 2.0f, 1e-4);
+    }
+
+    // A point outside a closed mesh, level with one of its faces, is not "inside" it. (The nearest-triangle test picked
+    // the neighbouring face, whose plane the point is behind, and ClosestPoint answered 0 from 2 m away. Seen because the
+    // full scan and the broad phase disagreed about a mesh 6 m from the point.)
+    {
+        Scene s("Beside");
+        s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("cube");
+        g->AddComponent<MeshRenderer>()->mesh = Mesh::Cube(2.0f);
+        g->AddComponent<MeshCollider3D>();
+        s.Start();
+        const Vec3 beside[3] = {{-0.99994278f, -2.98334026f, -0.688586712f}, {0.999667168f, 0.81826067f, -2.94999123f},
+                                {2.13447905f, -1.05895185f, 0.999763012f}};
+        const float away[3] = {1.98334f, 1.94999f, 1.13601f};
+        for (int i = 0; i < 3; ++i) {
+            NearestSolid3D n = Three(s, [&](Physics3D& p) { g_what = "ClosestPoint"; return p.ClosestPoint(s, beside[i]); }, SameNear);
+            CHECK(n.hit);
+            CHECK_NEAR(n.distance, away[i], 1e-4);
+        }
+        CHECK(s.physics3D().ClosestPoint(s, {0.2f, 0.3f, -0.4f}).distance == 0.0f);   // really inside: still 0
     }
 
     // ---- 2. Less work on 2,000 colliders ---------------------------------------------------------------------------
@@ -357,6 +391,12 @@ int main() {
         p.ResetQueryStats();
         for (int i = 0; i < calls; ++i) found += p.ClosestPoint(s, at()).hit;   // no reach given: the nearest of all 2,000
         perQuery("ClosestPoint", 120);
+        p.ResetQueryStats();
+        for (int i = 0; i < calls; ++i) { const Vec3 c = at(); found += (p.ResolveSphere(s, c, 1.2f) - c).SqrMagnitude() > 0.0f; }
+        perQuery("ResolveSphere", 150);   // (up to four passes a call, each over the few boxes around the sphere)
+        p.ResetQueryStats();
+        for (int i = 0; i < calls; ++i) { const Vec3 c = at(); found += (p.ResolveCapsule(s, c, {0, 1, 0}, 0.8f, 0.6f) - c).SqrMagnitude() > 0.0f; }
+        perQuery("ResolveCapsule", 150);
 
         // 50 boxes move: exactly those 50 boxes are worked out again, once, and the answers follow them.
         for (int i = 0; i < 50; ++i) boxes[(std::size_t)i * 7]->transform->localPosition = Vec3{-20.0f - (float)i * 3.0f, 0, 0};

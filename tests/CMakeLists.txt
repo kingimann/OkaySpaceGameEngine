@@ -1889,6 +1889,25 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
+# The editor's Crash Log, Audio Mixer and History windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
+# (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
+# reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
+if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
+    add_executable(test_okayui_panels_imgui test_okayui_panels_imgui.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_panels_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_panels_imgui PRIVATE okay_ui_render okay_ui_screens)
+    target_include_directories(test_okayui_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_panels_imgui COMMAND test_okayui_panels_imgui)
+    set_tests_properties(okayui_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
+
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)

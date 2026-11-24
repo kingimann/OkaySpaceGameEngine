@@ -140,14 +140,26 @@ void SplitLines(const std::string& text, std::vector<std::pair<std::size_t, std:
 CrashLogResult DrawCrashLog(const CrashLogModel& m, CrashLogState& st, const CrashLogHost& host,
                             float x, float y, float w, float h) {
     CrashLogResult res;
-    if (st.seenRevision != m.revision) {
-        SplitLines(m.text, st.lines);
-        st.seenRevision = m.revision;
-        st.scrollToEnd = true;
-        st.settle = 0;
+    if (!st.body) {
+        st.body = std::make_shared<UI::CodeEdit>();
+        UI::MakeTextBox(*st.body);
+        st.body->SetReadOnly(true);
     }
+    UI::CodeEdit& body = *st.body;
+    // Ctrl+C copies the selection through the host's clipboard (the same call as Copy All); nothing is ever pasted
+    body.SetClipboardFunctions([&host](const std::string& t) { if (host.copyAll) host.copyAll(t); }, [] { return std::string(); });
+    if (st.seenRevision != m.revision) {
+        std::vector<std::pair<std::size_t, std::size_t>> lines;
+        SplitLines(m.text, lines);
+        st.lineCount = (int)lines.size();
+        body.SetText(m.text);
+        body.SetCaret(UI::CodePos{body.LineCount() - 1, body.LineLength(body.LineCount() - 1)});   // the newest report is at the bottom
+        st.revealFrames = 3;
+        st.seenRevision = m.revision;
+    }
+    if (st.revealFrames > 0) { --st.revealFrames; body.ScrollToCaret(); }
     res.empty = m.text.empty();
-    res.lineCount = (int)st.lines.size();
+    res.lineCount = st.lineCount;
 
     UI::BareNextWindow();
     if (UI::Begin("Crash Log##okayui", x, y, w, h)) {
@@ -194,40 +206,14 @@ CrashLogResult DrawCrashLog(const CrashLogModel& m, CrashLogState& st, const Cra
             char info[96];
             std::snprintf(info, sizeof(info), "Newest report is at the bottom. \xE2\x80\xA2 %d bytes", (int)m.text.size());
             UI::TextDisabled(info);
-            UI::BeginChild("##crashbody", 0.0f, UI::GetContentRegionAvail().y, true);
+            body.SetPalette(UI::TextBoxPalette());
+            const float bw = std::max(UI::GetContentRegionAvail().x, 32.0f), bh = std::max(UI::GetContentRegionAvail().y, 24.0f);
+            body.Draw("##crashbody", bw, bh);
             res.body = UI::GetItemRect();
-            // One row per line, only the visible ones laid out by UI::ListClipper (the rows above and below are skipped by moving the
-            // cursor, so the scroll range is the full list's). The row pitch is measured from the first drawn row each frame (it depends
-            // on the look and the text scale) and handed to the clipper next frame; the first frame lets the clipper measure row 0.
-            UI::ListClipper clip;
-            clip.Begin((int)st.lines.size(), st.pitch > 0.0f ? st.pitch : -1.0f);
-            std::string row;
-            bool measured = false;
-            while (clip.Step()) {
-                for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
-                    const auto& ln = st.lines[(std::size_t)i];
-                    row.assign(m.text, ln.first, ln.second);
-                    for (char& c : row) if (c == '\t') c = ' ';
-                    if (row.empty()) row = " ";            // a blank line keeps the same row height as the others
-                    const float y0 = UI::GetCursorScreenPos().y;
-                    UI::Text(row.c_str());
-                    if (!measured) {
-                        measured = true;
-                        const float pitch = UI::GetCursorScreenPos().y - y0;
-                        if (pitch > 1.0f) st.pitch = pitch;
-                    }
-                    if (res.linesDrawn == 0 || i < res.firstDrawn) res.firstDrawn = i;
-                    if (i > res.lastDrawn || res.linesDrawn == 0) res.lastDrawn = i;
-                    ++res.linesDrawn;
-                }
-            }
-            if (st.scrollToEnd) {   // the extent is measured a frame late: keep asking until the end is reached (or a few frames pass)
-                UI::SetScrollY(1e9f);
-                const bool atEnd = UI::GetScrollMaxY() > 0.0f && UI::GetScrollY() >= UI::GetScrollMaxY() - 1.0f;
-                if ((atEnd && st.settle >= 2) || ++st.settle > 12) st.scrollToEnd = false;
-                else if (atEnd) ++st.settle;
-            }
-            UI::EndChild();
+            // what is on screen: only these lines are laid out
+            res.firstDrawn = std::min(body.FirstVisibleLine(), std::max(st.lineCount - 1, 0));
+            res.lastDrawn = std::min(body.FirstVisibleLine() + body.VisibleLineCount(), st.lineCount - 1);   // (and the part-shown line)
+            res.linesDrawn = std::max(res.lastDrawn - res.firstDrawn + 1, 0);
         }
     }
     UI::End();

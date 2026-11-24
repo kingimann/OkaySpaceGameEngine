@@ -1,5 +1,5 @@
 #pragma once
-// The Dear ImGui bodies of the Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and
+// The Dear ImGui bodies of the Problems, Stats, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and
 // Rendering panels and sections, drawn from the models in shared/EditorPanelModels.hpp.
 // The editor opens the window (title, dock tab, close box) and calls a body inside it; the headless comparison test calls
 // the same body in a bare window, with no editor around it. Only Dear ImGui and the model header: no EditorState.
@@ -24,7 +24,6 @@ struct PanelViewHooks {
 okaypanels::ProblemsIntent DrawProblemsBodyImGui(const okaypanels::ProblemsModel& m, okaypanels::ProblemsState& st,
                                                  const PanelViewHooks& hooks);
 okaypanels::StatsIntent DrawStatsBodyImGui(okaypanels::StatsModel& m, const PanelViewHooks& hooks);
-okaypanels::HistoryIntent DrawHistoryBodyImGui(const okaypanels::HistoryModel& m, const PanelViewHooks& hooks);
 /// Project Settings > Tags and Layers (inside its collapsing header).
 okaypanels::TagsLayersIntent DrawTagsLayersBodyImGui(const okaypanels::TagsLayersModel& m, okaypanels::TagsLayersState& st,
                                                      const PanelViewHooks& hooks);

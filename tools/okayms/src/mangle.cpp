@@ -32,6 +32,8 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs) {
         // U is struct, T is union, V is class; then the name and "@@".
         return std::string(def.is_union ? "T" : def.is_class ? "V" : "U") + def.symname() + "@@";
     }
+    if (type.base == 1 && type.enum_id >= 0 && type.enum_id < static_cast<int>(enum_names().size()))
+        return "W4" + enum_names()[static_cast<size_t>(type.enum_id)] + "@@";  // an enumeration of int
     if (type.wide) return type.is_unsigned ? "_K" : "_J";
     return type.is_unsigned ? "I" : "H";
 }

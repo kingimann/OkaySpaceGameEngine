@@ -366,9 +366,28 @@ public:
         one.uval = 1;
         builtin.body.push_back(one);
         macros_["__okaycc__"] = std::move(builtin);
+        // The target: x86-64 Linux, LP64 (System V AMD64 ABI). __GNUC__ is not defined: okay-cc
+        // has none of GCC's extensions.
+        for (const char* name : {"__x86_64__", "__x86_64", "__linux__", "__linux", "__LP64__", "__ELF__"})
+            define(name, 1);
+    }
+    void define(const char* name, unsigned long value) {
+        Macro m;
+        m.name = name;
+        Token t;
+        t.kind = Tok::Int;
+        t.text = std::to_string(value);
+        t.uval = value;
+        m.body.push_back(t);
+        macros_[name] = std::move(m);
     }
 
     std::vector<Token> run(const std::string& path) {
+        auto ends = [&](const char* sfx) {
+            std::string s(sfx);
+            return path.size() >= s.size() && path.compare(path.size() - s.size(), s.size(), s) == 0;
+        };
+        if (ends(".cpp") || ends(".cc") || ends(".hpp") || ends(".cxx")) define("__cplusplus", 201703);  // C++17
         if (!pushFile(path, nullptr)) {
             diags_.error(path, 1, 1, "cannot open " + path);
             return {};

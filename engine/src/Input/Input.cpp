@@ -235,6 +235,16 @@ void Input::FeedGamepadAt(int player, const Vec2& axis, unsigned buttonMask) {
     p.current = buttonMask;
     if (buttonMask != p.previous || axis.x * axis.x + axis.y * axis.y > 0.25f) NoteDevice(Device::Gamepad, i);
 }
+namespace {
+struct PadNote { int player; bool connected; };
+PadNote g_padNotes[8];
+int g_padNoteCount = 0;
+void NotePad(int player, bool connected) {
+    if (g_padNoteCount >= 8) return;
+    g_padNotes[g_padNoteCount++] = {player, connected};
+}
+}
+
 void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, float rt, bool connected) {
     const int i = PadIndex(player);
     if (i < 0) return;
@@ -242,7 +252,17 @@ void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, floa
     p.right = rightAxis;
     p.trigger[0] = Clamp01(lt);
     p.trigger[1] = Clamp01(rt);
+    if (p.connected != connected) NotePad(i, connected);
     p.connected = connected;
+}
+
+bool Input::TakePadEdge(int& player, bool& connected) {
+    if (g_padNoteCount <= 0) return false;
+    player = g_padNotes[0].player;
+    connected = g_padNotes[0].connected;
+    for (int i = 1; i < g_padNoteCount; ++i) g_padNotes[i - 1] = g_padNotes[i];
+    --g_padNoteCount;
+    return true;
 }
 void Input::FeedGamepadRaw(int player, const Vec2& rawLeft, const Vec2& rawRight, float rawLT, float rawRT,
                            unsigned buttonMask, bool connected) {

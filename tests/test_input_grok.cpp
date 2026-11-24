@@ -113,6 +113,21 @@ int main() {
         Input::FeedGamepadAt(1, {0, 0}, 0);
     }
 
+    RUN_SUITE("controller hot-plug edges");
+    {
+        int who = -1; bool on = false;
+        while (Input::TakePadEdge(who, on)) {}
+        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, false);
+        CHECK(!Input::TakePadEdge(who, on));
+        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, true);
+        CHECK(Input::TakePadEdge(who, on) && who == 1 && on);
+        CHECK(Input::GamepadConnected(1));
+        CHECK(!Input::TakePadEdge(who, on));
+        Input::FeedGamepadExtraAt(1, {0, 0}, 0, 0, false);
+        CHECK(Input::TakePadEdge(who, on) && who == 1 && !on);
+        CHECK(!Input::GamepadConnected(1));
+    }
+
     RUN_SUITE("gesture drives an action");
     {
         Gestures::Reset();

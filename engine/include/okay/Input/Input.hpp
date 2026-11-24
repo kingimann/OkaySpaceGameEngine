@@ -149,6 +149,9 @@ public:
     static float GamepadTrigger(int side, int player = 0);
     /// True while that controller is plugged in.
     static bool GamepadConnected(int player = 0);
+    /// The next controller connect or disconnect since the last take, from FeedGamepadExtraAt
+    /// (and the raw feed). False when nothing changed. Hot-plug without the window's event loop.
+    static bool TakePadEdge(int& player, bool& connected);
     /// How many controllers are plugged in.
     static int GamepadCount();
 

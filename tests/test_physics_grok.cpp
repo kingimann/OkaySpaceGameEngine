@@ -10,6 +10,9 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <utility>
+#include <vector>
 
 using namespace okay;
 
@@ -668,6 +671,392 @@ int main() {
         auto boxOne = s.physics().BoxCast(s, {0, 0}, {0.2f, 0.2f}, {1, 0});
         CHECK(!boxAll.empty() && boxOne.hit && boxOne.gameObject == boxAll[0].gameObject);
         CHECK(!boxAll.empty() && std::fabs(boxOne.distance - boxAll[0].distance) < 0.01f);
+    }
+
+    // Review round 4, finding 1: a point outside a closed mesh, near a sharp edge or corner, is never "inside, 0 away".
+    // Sharp wedges, a thin tetrahedron and an L-shaped (concave) block, each also turned, stretched and mirrored.
+    RUN_SUITE("inside a closed mesh at sharp edges");
+    {
+        struct Rng { std::uint32_t s = 12345u; float Next() { s = s * 1664525u + 1013904223u; return (float)(s >> 8) / 16777216.0f; } };
+        // A closed block: the outline (counter-clockwise, in x/y) pushed through z = -depth .. +depth; `caps` triangulates the outline.
+        auto prism = [](Mesh& m, const std::vector<Vec2>& outline, const std::vector<int>& caps, float depth) {
+            m.vertices.clear(); m.triangles.clear();
+            const int n = (int)outline.size();
+            for (const Vec2& p : outline) m.vertices.push_back({p.x, p.y, -depth});
+            for (const Vec2& p : outline) m.vertices.push_back({p.x, p.y, depth});
+            for (std::size_t k = 0; k + 2 < caps.size(); k += 3) {
+                m.triangles.insert(m.triangles.end(), {caps[k] + n, caps[k + 1] + n, caps[k + 2] + n});
+                m.triangles.insert(m.triangles.end(), {caps[k], caps[k + 2], caps[k + 1]});
+            }
+            for (int i = 0; i < n; ++i) {
+                const int j = (i + 1) % n;
+                m.triangles.insert(m.triangles.end(), {i, j, j + n, i, j + n, i + n});
+            }
+        };
+        auto inOutline = [](const std::vector<Vec2>& o, double x, double y) {   // even-odd crossing test
+            bool in = false;
+            for (std::size_t i = 0, j = o.size() - 1; i < o.size(); j = i++) {
+                const double xi = o[i].x, yi = o[i].y, xj = o[j].x, yj = o[j].y;
+                if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) in = !in;
+            }
+            return in;
+        };
+        struct Case { const char* name; Mesh mesh; std::function<bool(const Vec3&)> insideLocal; };
+        std::vector<Case> cases;
+        for (float degrees : {25.0f, 10.0f, 5.0f}) {
+            const float rise = 2.0f * std::tan(degrees * 3.14159265f / 180.0f);
+            const std::vector<Vec2> tri = {{-1, 0}, {1, 0}, {1, rise}};
+            Case c; c.name = degrees > 20.0f ? "wedge 25" : degrees > 7.0f ? "wedge 10" : "wedge 5";
+            prism(c.mesh, tri, {0, 1, 2}, 1.0f);
+            c.insideLocal = [tri, inOutline](const Vec3& p) { return std::fabs(p.z) < 1.0f && inOutline(tri, p.x, p.y); };
+            cases.push_back(std::move(c));
+        }
+        {
+            const std::vector<Vec2> ell = {{0, 0}, {2, 0}, {2, 1}, {1, 1}, {1, 2}, {0, 2}};
+            Case c; c.name = "L block";
+            prism(c.mesh, ell, {0, 1, 2, 0, 2, 3, 0, 3, 5, 3, 4, 5}, 0.5f);
+            c.insideLocal = [ell, inOutline](const Vec3& p) { return std::fabs(p.z) < 0.5f && inOutline(ell, p.x, p.y); };
+            cases.push_back(std::move(c));
+        }
+        {
+            Case c; c.name = "thin tetrahedron";
+            const Vec3 v[4] = {{-1, 0, -0.6f}, {1, 0, -0.6f}, {0, 0, 1}, {0.1f, 0.12f, 0.1f}};
+            c.mesh.vertices.assign(v, v + 4);
+            c.mesh.triangles.clear();
+            const int f[4][3] = {{0, 1, 2}, {0, 1, 3}, {1, 2, 3}, {2, 0, 3}};
+            const Vec3 mid = (v[0] + v[1] + v[2] + v[3]) * 0.25f;
+            std::vector<std::pair<Vec3, Vec3>> planes;   // a point of the face, its outward normal
+            for (const auto& t : f) {
+                Vec3 nrm = Vec3::Cross(v[t[1]] - v[t[0]], v[t[2]] - v[t[0]]);
+                const bool out = Vec3::Dot(nrm, v[t[0]] - mid) > 0.0f;
+                c.mesh.triangles.insert(c.mesh.triangles.end(), {t[0], out ? t[1] : t[2], out ? t[2] : t[1]});
+                planes.push_back({v[t[0]], out ? nrm : nrm * -1.0f});
+            }
+            c.insideLocal = [planes](const Vec3& p) {
+                for (const auto& pl : planes) if (Vec3::Dot(p - pl.first, pl.second) > 0.0f) return false;
+                return true;
+            };
+            cases.push_back(std::move(c));
+        }
+        struct Pose { Vec3 pos; Quat rot; Vec3 scale; };
+        const Pose poses[3] = {{{0, 0, 0}, Quat::Identity, {1, 1, 1}},
+                               {{3, -2, 1}, Quat::AngleAxis(37.0f, Vec3{1, 2, 3}.Normalized()), {1.5f, 0.7f, 2.0f}},
+                               {{-1, 4, 2}, Quat::AngleAxis(-70.0f, Vec3{0, 1, 0}), {-1.0f, 1.0f, 1.0f}}};   // mirrored
+        for (Case& c : cases) {
+            for (int pi = 0; pi < 3; ++pi) {
+                Scene s("sharp");
+                auto* g = s.CreateGameObject(c.name);
+                g->transform->localPosition = poses[pi].pos;
+                g->transform->localRotation = poses[pi].rot;
+                g->transform->localScale = poses[pi].scale;
+                g->AddComponent<MeshRenderer>()->mesh = c.mesh;
+                auto* mc = g->AddComponent<MeshCollider3D>();
+                CHECK(mc->HasTriangles() && mc->Tris().ClosedWinding() != 0);
+                const Mat4 l2w = mc->WorldMatrix();
+                std::vector<Vec3> world;
+                for (const Vec3& v : c.mesh.vertices) world.push_back(l2w.MultiplyPoint(v));
+                auto surface = [&](const Vec3& p) {   // every triangle, one by one
+                    float best = 1e30f;
+                    for (std::size_t t = 0; t + 2 < c.mesh.triangles.size(); t += 3) {
+                        const Vec3 q = trimesh::ClosestPointOnTriangle(p, world[c.mesh.triangles[t]], world[c.mesh.triangles[t + 1]],
+                                                                       world[c.mesh.triangles[t + 2]]);
+                        best = std::min(best, (p - q).Magnitude());
+                    }
+                    return best;
+                };
+                Rng rng;
+                int outsideZero = 0, insideNot = 0, wrongDistance = 0, outside = 0, inside = 0;
+                Vec3 firstBad{0, 0, 0};
+                const std::size_t tris = c.mesh.triangles.size() / 3;
+                for (int k = 0; k < 6000; ++k) {
+                    Vec3 local;
+                    if (k % 3 == 0) {   // anywhere around the mesh
+                        local = {-2.0f + 5.0f * rng.Next(), -1.5f + 5.0f * rng.Next(), -2.0f + 4.0f * rng.Next()};
+                    } else {            // close to an edge or a corner: a point of an edge, moved a little any way
+                        const std::size_t t = (std::size_t)(rng.Next() * (float)tris) % tris;
+                        const int e = (int)(rng.Next() * 3.0f) % 3;
+                        const Vec3 a = c.mesh.vertices[c.mesh.triangles[3 * t + e]], b = c.mesh.vertices[c.mesh.triangles[3 * t + (e + 1) % 3]];
+                        const float along = k % 3 == 1 ? rng.Next() : (rng.Next() < 0.5f ? 0.0f : 1.0f);
+                        Vec3 dir{rng.Next() - 0.5f, rng.Next() - 0.5f, rng.Next() - 0.5f};
+                        if (dir.Magnitude() < 0.05f) dir = {0.3f, 0.2f, 0.1f};
+                        local = a + (b - a) * along + dir.Normalized() * (0.003f + 0.4f * rng.Next() * rng.Next());
+                    }
+                    const Vec3 p = l2w.MultiplyPoint(local);
+                    const float truth = surface(p);
+                    if (truth < 2e-3f) continue;   // on the skin: either answer is right
+                    const bool in = c.insideLocal(local);
+                    const NearestSolid3D q = s.physics3D().ClosestPoint(s, p);
+                    bool bad = false;
+                    if (in) { ++inside; if (!q.hit || q.distance != 0.0f) { ++insideNot; bad = true; } }
+                    else {
+                        ++outside;
+                        if (!q.hit || q.distance <= 0.0f) { ++outsideZero; bad = true; }
+                        else if (std::fabs(q.distance - truth) > 1e-3f + truth * 1e-3f) { ++wrongDistance; bad = true; }
+                    }
+                    if (bad && outsideZero + insideNot + wrongDistance == 1) firstBad = p;
+                }
+                std::printf("%s, pose %d: %d outside points (%d answered 0, %d a wrong distance), %d inside points (%d not 0)",
+                            c.name, pi, outside, outsideZero, wrongDistance, inside, insideNot);
+                if (outsideZero + insideNot + wrongDistance > 0) std::printf("; first bad point (%.3f, %.3f, %.3f)", firstBad.x, firstBad.y, firstBad.z);
+                std::printf("\n");
+                CHECK(outside > 1000 && inside > 100);
+                CHECK(outsideZero == 0);
+                CHECK(insideNot == 0);
+                CHECK(wrongDistance == 0);
+            }
+        }
+        // The reviewer's own example: just in front of the toe edge of the 25 degree wedge.
+        Scene s("toe");
+        auto* g = s.CreateGameObject("Wedge");
+        g->AddComponent<MeshRenderer>()->mesh = cases[0].mesh;
+        g->AddComponent<MeshCollider3D>();
+        int zero = 0, total = 0;
+        for (int i = 0; i < 27; ++i)
+            for (int k = 0; k < 13; ++k, ++total) {
+                const float ang = (100.0f + 160.0f * (float)i / 26.0f) * 3.14159265f / 180.0f;   // around the toe, on the outside
+                const Vec3 p{-1.0f + 0.25f * std::cos(ang), 0.25f * std::sin(ang), -0.9f + 0.15f * (float)k};
+                if (cases[0].insideLocal(p)) { --total; continue; }
+                if (s.physics3D().ClosestPoint(s, p).distance <= 0.0f) ++zero;
+            }
+        std::printf("25 degree wedge, %d points in front of the toe edge: %d answered 0\n", total, zero);
+        CHECK(total > 250);
+        CHECK(zero == 0);
+    }
+
+    // Finding 5: a point deep inside a big closed mesh is answered without looking for the nearest triangle.
+    RUN_SUITE("deep inside a large closed mesh is cheap");
+    {
+        Scene s("deep");
+        auto* ball = s.CreateGameObject("Ball");
+        Mesh& m = ball->AddComponent<MeshRenderer>()->mesh;
+        m.vertices.clear(); m.triangles.clear();
+        const int rings = 200, around = 200;
+        const float pi = 3.14159265f, radius = 5.0f;
+        for (int i = 0; i <= rings; ++i)
+            for (int j = 0; j < around; ++j) {
+                const float th = pi * (float)i / (float)rings, ph = 2.0f * pi * (float)j / (float)around;
+                const float ring = (i == 0 || i == rings) ? 0.0f : std::sin(th);
+                m.vertices.push_back({radius * ring * std::cos(ph), i == rings ? -radius : radius * std::cos(th), radius * ring * std::sin(ph)});
+            }
+        for (int i = 0; i < rings; ++i)
+            for (int j = 0; j < around; ++j) {
+                const int j2 = (j + 1) % around;
+                const int q[6] = {i * around + j, i * around + j2, (i + 1) * around + j, i * around + j2, (i + 1) * around + j2, (i + 1) * around + j};
+                m.triangles.insert(m.triangles.end(), q, q + 6);
+            }
+        auto* mc = ball->AddComponent<MeshCollider3D>();
+        CHECK(mc->HasTriangles() && mc->Tris().TriangleCount() >= 79000);
+        CHECK(mc->Tris().ClosedWinding() != 0);
+        CHECK(s.physics3D().ClosestPoint(s, {0, 0, 0}).distance == 0.0f);   // (the first call builds the tree)
+        const int calls = 50;
+        int zeros = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < calls; ++i) {
+            const float f = 0.002f * (float)i;
+            if (s.physics3D().ClosestPoint(s, {f, -f, 0.5f * f}).distance == 0.0f) ++zeros;
+        }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / calls;
+        std::printf("centre of an 80k-triangle sphere: %.3f ms per call\n", ms);
+        CHECK(zeros == calls);
+        CHECK(ms < 0.5);
+        // The poles and the seam: rays through shared corners and edges still count once.
+        CHECK(s.physics3D().ClosestPoint(s, {0, 4.9f, 0}).distance == 0.0f);
+        CHECK(s.physics3D().ClosestPoint(s, {-4.9f, 0, 0}).distance == 0.0f);
+        CHECK_NEAR(s.physics3D().ClosestPoint(s, {-5.5f, 0, 0}).distance, 0.5f, 0.01f);
+        CHECK_NEAR(s.physics3D().ClosestPoint(s, {0, 5.5f, 0}).distance, 0.5f, 0.01f);
+        CHECK_NEAR(s.physics3D().ClosestPoint(s, {-8.0f, 0, 0}, 1.0f).hit ? 1.0f : 0.0f, 0.0f, 0.01f);   // too far: no answer
+    }
+
+    // Finding 6b (probe): the nearest-triangle walk skips nothing, also on a mesh of stacked look-alike triangles
+    // (the tree halves its triangles at every level, so it is far shallower than the walk's stack).
+    RUN_SUITE("triangle tree walk on a degenerate pile");
+    {
+        Mesh m;
+        m.vertices.clear(); m.triangles.clear();
+        for (int i = 0; i < 30000; ++i) {   // long thin slivers piled along one line, plus many exact copies of one triangle
+            const float x = (i % 3 == 0) ? 0.0f : 1e-4f * (float)i;
+            const int base = (int)m.vertices.size();
+            m.vertices.push_back({x, 0, 0}); m.vertices.push_back({x + 50.0f, 0.001f, 0}); m.vertices.push_back({x, 0.001f, 0.002f});
+            m.triangles.insert(m.triangles.end(), {base, base + 1, base + 2});
+        }
+        TriMesh t;
+        t.Build(m);
+        CHECK(t.TriangleCount() == 30000);
+        std::printf("triangle tree: %d triangles, %d nodes\n", t.TriangleCount(), t.NodeCount());
+        const trimesh::WorldView view(t, Mat4::Identity());
+        Vec3 cp; float d = 0.0f; bool in = false;
+        const Vec3 p{1.0f, 0.5f, 0.3f};
+        CHECK(view.Nearest(p, 1e9f, cp, d, in));
+        float brute = 1e30f;
+        for (int i = 0; i < t.TriangleCount(); ++i) {
+            Vec3 a, b, c; t.Triangle(i, a, b, c);
+            brute = std::min(brute, (p - trimesh::ClosestPointOnTriangle(p, a, b, c)).Magnitude());
+        }
+        CHECK_NEAR(d, brute, 1e-5f);
+    }
+
+    // Finding 2: a flipped sprite (negative scale) still has an inside.
+    RUN_SUITE("2d closest point on a flipped collider");
+    {
+        const Vec3 flips[4] = {{1, 1, 1}, {-1, 1, 1}, {1, -1, 1}, {-1, -1, 1}};
+        for (const Vec3& f : flips) {
+            Scene s("flip2d");
+            auto* box = s.CreateGameObject("Box");
+            box->transform->localScale = f;
+            box->AddComponent<BoxCollider2D>()->size = {2, 2};
+            SurfaceQuery2D in = s.physics().ClosestPoint(s, {0.2f, 0.1f});
+            std::printf("2x2 box, scale (%+.0f, %+.0f): inside point (0.2, 0.1) is %.3f away at (%.2f, %.2f)\n", f.x, f.y, in.distance, in.point.x, in.point.y);
+            CHECK(in.hit && in.distance == 0.0f);
+            CHECK_NEAR(s.physics().ClosestPoint(s, {1.5f, 0.1f}).distance, 0.5f, 0.01f);
+            CHECK_NEAR(s.physics().ClosestPoint(s, {-0.3f, -1.75f}).distance, 0.75f, 0.01f);
+
+            Scene p("flippoly");
+            auto* tri = p.CreateGameObject("Tri");
+            tri->transform->localScale = f;
+            tri->AddComponent<PolygonCollider2D>();   // (-0.5,-0.5) (0.5,-0.5) (0,0.5)
+            CHECK(p.physics().ClosestPoint(p, {0.0f, -0.1f * f.y}).distance == 0.0f);
+            CHECK(p.physics().ClosestPoint(p, {0.45f, 0.4f * f.y}).distance > 0.1f);
+
+            Scene c("flipcap");
+            auto* cap = c.CreateGameObject("Cap");
+            cap->transform->localScale = f;
+            auto* cc = cap->AddComponent<CapsuleCollider2D>();
+            Vec2 a, b; cc->Segment(a, b);
+            const float r = cc->WorldRadius();
+            const Vec2 mid{(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+            CHECK(r > 0.0f);
+            CHECK(c.physics().ClosestPoint(c, {mid.x + 0.5f * std::fabs(r), mid.y}).distance == 0.0f);
+            CHECK_NEAR(c.physics().ClosestPoint(c, {mid.x + std::fabs(r) + 0.4f, mid.y}).distance, 0.4f, 0.01f);
+
+            Scene k("flipcomp");
+            auto* comp = k.CreateGameObject("Comp");
+            comp->transform->localScale = f;
+            comp->AddComponent<CompositeCollider2D>()->AddBox({0, 0}, {2, 2});
+            CHECK(k.physics().ClosestPoint(k, {0.2f, 0.1f}).distance == 0.0f);
+            CHECK_NEAR(k.physics().ClosestPoint(k, {1.5f, 0.1f}).distance, 0.5f, 0.01f);
+        }
+    }
+
+    // Finding 6a: ConnectTo an object with no name, then type a name: the typed name is the partner.
+    RUN_SUITE("joint name typed after linking a nameless object");
+    {
+        Scene s("nameless");
+        auto* blank = s.CreateGameObject("");
+        auto* b = s.CreateGameObject("Beta");
+        auto* w = s.CreateGameObject("Weight");
+        auto* j = w->AddComponent<Joint3D>();
+        j->ConnectTo(blank);
+        CHECK(Joint3DPartner(s, j) == blank);
+        CHECK(Joint3DPartner(s, j) == blank);
+        j->connectedBody = "Beta";
+        GameObject* now = Joint3DPartner(s, j);
+        std::printf("nameless link, then \"Beta\" typed: partner is %s\n", now == b ? "Beta" : now == blank ? "still the nameless object" : "something else");
+        CHECK(now == b);
+    }
+
+    // Finding 3: the step limit also holds when the top of the ledge is not exactly flat: a little tilted, round or
+    // uneven. A real slope is still walked with no step at all.
+    RUN_SUITE("step limit on tilted, round and uneven tops");
+    {
+        auto player = [](Scene& s) {
+            auto* g = s.CreateGameObject("Player");
+            g->transform->localPosition = {0, 0.9f, 0};
+            g->AddComponent<BoxCollider3D>()->size = {0.6f, 1.8f, 0.6f};
+            return g;
+        };
+        auto walk = [](Scene& s, GameObject* p, float stepHeight, int frames, float& highest) {
+            highest = 0.0f;
+            for (int i = 0; i < frames; ++i) {
+                MovePlayerBody(s, p, {0.05f, 0, 0}, stepHeight, 50.0f);
+                highest = std::max(highest, p->transform->Position().y - 0.9f);
+            }
+        };
+        auto bumpy = [](Scene& s) {   // a block with an upright 0.34 side whose top goes up and down by a few centimetres
+            auto* g = s.CreateGameObject("Bumpy");
+            Mesh& m = g->AddComponent<MeshRenderer>()->mesh;
+            m.vertices.clear(); m.triangles.clear();
+            const Vec2 outline[7] = {{0.8f, 0}, {3, 0}, {3, 0.34f}, {2.2f, 0.31f}, {1.6f, 0.39f}, {1.1f, 0.32f}, {0.8f, 0.34f}};
+            for (const Vec2& o : outline) { m.vertices.push_back({o.x, o.y, -1}); m.vertices.push_back({o.x, o.y, 1}); }
+            for (int i = 0; i < 7; ++i) {
+                const int a = 2 * i, b = 2 * ((i + 1) % 7);
+                m.triangles.insert(m.triangles.end(), {a, b, b + 1, a, b + 1, a + 1});
+            }
+            g->AddComponent<MeshCollider3D>();
+        };
+        struct Top { const char* name; int kind; float degrees; };
+        const Top tops[] = {{"flat", 0, 0.0f}, {"tilted 2 degrees up", 0, 2.0f}, {"tilted 3 degrees up", 0, 3.0f}, {"tilted 3 degrees down", 0, -3.0f},
+                            {"tilted 8 degrees up", 0, 8.0f}, {"tilted 3 degrees sideways", 1, 3.0f}, {"an uneven mesh", 3, 0.0f}};
+        for (const Top& t : tops) {
+            for (int withStep = 0; withStep < 2; ++withStep) {
+                Scene s("top");
+                Floor(s);
+                if (t.kind == 3) {
+                    bumpy(s);
+                } else {   // a box turned about the middle of its near top edge, which stays at x 0.8, 0.34 above the floor
+                    auto* ledge = s.CreateGameObject("Ledge");
+                    const Quat rot = Quat::AngleAxis(t.degrees, t.kind == 1 ? Vec3{1, 0, 0} : Vec3{0, 0, 1});
+                    ledge->transform->localRotation = rot;
+                    ledge->transform->localPosition = Vec3{0.8f, 0.34f, 0} - rot * Vec3{-1.1f, 0.4f, 0};
+                    ledge->AddComponent<BoxCollider3D>()->size = {2.2f, 0.8f, 2.0f};
+                }
+                auto* p = player(s);
+                float highest = 0.0f;
+                walk(s, p, withStep ? 0.4f : 0.0f, 30, highest);
+                std::printf("0.34 ledge, top %s, stepHeight %.1f: x %+.3f y %+.3f (highest %+.3f above rest)\n", t.name,
+                            withStep ? 0.4f : 0.0f, p->transform->Position().x, p->transform->Position().y, highest);
+                if (withStep) CHECK(p->transform->Position().y > 1.1f);   // a 0.4 step climbs every one of them
+                else { CHECK(highest < 0.12f); CHECK(p->transform->Position().y < 1.02f); }   // (climbing it would be 0.34)
+            }
+        }
+        for (float degrees : {10.0f, 20.0f, 35.0f}) {   // a ramp from the floor is walked with no step at all
+            Scene s("ramp");
+            Floor(s);
+            auto* ramp = s.CreateGameObject("Ramp");
+            const float rad = degrees * 3.14159265f / 180.0f;
+            // a 6 long, 0.2 thick slab whose top face starts on the floor at x = 0.6
+            ramp->transform->localRotation = Quat::AngleAxis(degrees, {0, 0, 1});
+            ramp->transform->localPosition = Vec3{0.6f, 0, 0} + Vec3{std::cos(rad), std::sin(rad), 0} * 3.0f + Vec3{std::sin(rad), -std::cos(rad), 0} * 0.1f;
+            ramp->AddComponent<BoxCollider3D>()->size = {6.0f, 0.2f, 4.0f};
+            auto* p = player(s);
+            float highest = 0.0f;
+            walk(s, p, 0.0f, 40, highest);
+            const float x = p->transform->Position().x, y = p->transform->Position().y;
+            std::printf("%.0f degree ramp, stepHeight 0: x %+.3f y %+.3f\n", degrees, x, y);
+            CHECK(x > 1.2f);
+            CHECK(y > 0.9f + (x - 0.9f) * std::tan(rad) * 0.8f);
+        }
+    }
+
+    // Finding 4: the controllers pass their own step setting on. stepOffset 0 does not climb, the default climbs a small step.
+    RUN_SUITE("controllers honour their step setting");
+    {
+        auto run = [](int which, float stepOffset, float ledgeHeight, const char* label) {
+            Scene s("controller");
+            Floor(s);
+            auto* ledge = s.CreateGameObject("Ledge");
+            ledge->transform->localPosition = {0, ledgeHeight * 0.5f, -1.9f};
+            ledge->AddComponent<BoxCollider3D>()->size = {3.0f, ledgeHeight, 2.2f};   // its near side is at z = -0.8
+            auto* p = s.CreateGameObject("Player");
+            p->transform->localPosition = {0, 0.9f, 0};
+            p->AddComponent<BoxCollider3D>()->size = {0.6f, 1.8f, 0.6f};
+            if (which == 0) { auto* c = p->AddComponent<FirstPersonController>(); if (stepOffset >= 0.0f) c->stepOffset = stepOffset; }
+            else { auto* c = p->AddComponent<ThirdPersonController>(); if (stepOffset >= 0.0f) c->stepOffset = stepOffset; }
+            s.Start();
+            Input::FeedKeys({'w'});   // forward is -Z
+            float highest = 0.0f;
+            for (int i = 0; i < 90; ++i) { s.Update(1.0f / 60.0f); highest = std::max(highest, p->transform->Position().y - 0.9f); }
+            Input::FeedKeys({});
+            const Vec3 at = p->transform->Position();
+            std::printf("%s controller, %s, %.2f ledge: z %+.3f y %+.3f (highest %+.3f above rest)\n", which == 0 ? "first-person" : "third-person",
+                        label, ledgeHeight, at.z, at.y, highest);
+            return highest;
+        };
+        for (int which = 0; which < 2; ++which) {
+            CHECK(run(which, 0.0f, 0.3f, "stepOffset 0") < 0.05f);
+            CHECK(run(which, 0.2f, 0.3f, "stepOffset 0.2") < 0.05f);
+            CHECK(run(which, -1.0f, 0.25f, "default stepOffset") > 0.2f);
+            CHECK(run(which, 0.3f, 0.25f, "stepOffset 0.3") > 0.2f);
+        }
     }
 
     TEST_MAIN_RESULT();

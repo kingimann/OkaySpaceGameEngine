@@ -1,6 +1,7 @@
 #include "okay/Input/Gestures.hpp"
 #include "okay/Input/GestureRecognizer.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/ActionSet.hpp"
 #include <cmath>
 #include <unordered_set>
 #include <vector>
@@ -20,6 +21,7 @@ struct Frame {
     float twistDelta = 0.0f;   // radians
     std::string swipe;
     Vec2 swipeVector;
+    std::vector<std::pair<std::string, std::string>> binds;
 };
 Frame& State() {
     static Frame f;
@@ -124,5 +126,17 @@ float Gestures::PinchScale() { return State().recognizer.PinchScale(); }
 float Gestures::PinchDelta() { return State().pinchDelta; }
 float Gestures::TwistDegrees() { return State().recognizer.TwistRadians() * (180.0f / 3.14159265358979323846f); }
 float Gestures::TwistDeltaDegrees() { return State().twistDelta * (180.0f / 3.14159265358979323846f); }
+
+void Gestures::Bind(const std::string& gesture, const std::string& action) {
+    const std::string key = Fold(gesture);
+    for (auto& b : State().binds)
+        if (Fold(b.first) == key) { b.second = action; return; }
+    State().binds.emplace_back(gesture, action);
+}
+void Gestures::ClearBinds() { State().binds.clear(); }
+void Gestures::Apply(ActionSet& set) {
+    for (const auto& b : State().binds)
+        if (Happened(b.first)) set.Contribute(b.second, 1.0f);
+}
 
 } // namespace okay

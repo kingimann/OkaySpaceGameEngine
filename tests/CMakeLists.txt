@@ -5277,3 +5277,9 @@ add_executable(test_vs_facing test_vs_facing.cpp)
 target_link_libraries(test_vs_facing PRIVATE okay::engine)
 target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_facing COMMAND test_vs_facing)
+
+# Grok input, on the ActionSet path: axial dead zone, per-set press buffer, Controls rows, smooth per controller.
+add_executable(test_input_grok test_input_grok.cpp)
+target_link_libraries(test_input_grok PRIVATE okay::engine)
+target_include_directories(test_input_grok PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME input_grok COMMAND test_input_grok)

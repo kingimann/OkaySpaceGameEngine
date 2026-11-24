@@ -41,7 +41,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     3. Open the link in the email.
   - **You should see (expected, not yet seen on Windows):** "Password reset email sent. Open the link in it to choose a new password." and a page where you pick a new password.
   - **Known partial:** the hosted reset page (`OKAY_PASSWORD_RESET_URL`) must be set up by the owner; without it the launcher says no reset page is set up.
-  - **More:** [password-reset.md](../../online/password-reset.md)
+  - **More:** [password-reset.md](../online/password-reset.md)
 
 - [ ] **V-LA-005** Check for updates by hand
   - **Map:** 17.1.2. **Where:** `OkaySpace.exe`, Settings page
@@ -51,7 +51,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     3. Wait for the button to stop saying "Checking".
   - **You should see (expected, not yet seen on Windows):** a toast "You're up to date" when you are on the newest release, or "Update available" with an **Install now** button when not.
   - **Known partial:** the update index (`versions.json`) is not signed yet (map 17.1, 17.11).
-  - **More:** [updater.md](../../release/updater.md)
+  - **More:** [updater.md](../release/updater.md)
 
 - [ ] **V-LA-006** Update check when the launcher starts
   - **Map:** 17.1.2, 17.1.3. **Where:** `OkaySpace.exe`, Settings page
@@ -71,7 +71,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     3. Open **Settings** and read the version.
   - **You should see (expected, not yet seen on Windows):** the version is the new one, the launcher started on its own, and `Tools\OkayEngine.exe` and `Tools\OkaySpacePlayer.exe` are updated too. A refusal (no checksum, antivirus lock) shows the reason in words and leaves your version unchanged; the reason is also in `okay_update.log` next to the exe.
   - **Known partial:** the Windows restart helper has only run in CI, never by us on real Windows (docs/release/updater.md audit). Never re-run a release to fix this (CLAUDE.md rule 12).
-  - **More:** [updater.md](../../release/updater.md)
+  - **More:** [updater.md](../release/updater.md)
 
 - [ ] **V-LA-008** Update channel and other editor versions
   - **Map:** 17.1.2, 18.5. **Where:** `OkaySpace.exe`, Settings page
@@ -81,7 +81,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     3. On the **Versions** page install or open one other editor version.
   - **You should see (expected, not yet seen on Windows):** the combo offers the channels, and the Versions page lists installable editor versions; a version without a checksum is refused.
   - **Known partial:** the launcher itself is never downgraded by the channel choice (the setting text says so).
-  - **More:** [launcher_versions.md](../../release/launcher_versions.md)
+  - **More:** [launcher_versions.md](../release/launcher_versions.md)
 
 - [ ] **V-LA-009** Settings are remembered
   - **Map:** 17.1.5. **Where:** `OkaySpace.exe`, Settings page
@@ -126,7 +126,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     3. Open the `exports` folder next to the launcher.
   - **You should see (expected, not yet seen on Windows):** one JSON file with your data, and a list of any sections that failed or are "not set up".
   - **Known partial:** the server function and tables are not set up everywhere; the owner steps are in `docs/online/account_data.md`.
-  - **More:** [account_data.md](../../online/account_data.md)
+  - **More:** [account_data.md](../online/account_data.md)
 
 - [ ] **V-LA-014** Delete my account (use a throwaway account only)
   - **Map:** 17.2.8. **Where:** `OkaySpace.exe`, Account page, signed in as a throwaway account
@@ -135,7 +135,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     2. Type the username and the password and confirm.
   - **You should see (expected, not yet seen on Windows):** the launcher shows each server step, then signs you out; or it says the function is not deployed. Do not run this on an account you want to keep.
   - **Known partial:** the Edge Function is not deployed or run against a live project yet (map 17.2). Expect "function not deployed".
-  - **More:** [account_data.md](../../online/account_data.md)
+  - **More:** [account_data.md](../online/account_data.md)
 
 - [ ] **V-LA-015** Crash reports page
   - **Map:** 17.1.5, 48. **Where:** `OkaySpace.exe`, Settings page

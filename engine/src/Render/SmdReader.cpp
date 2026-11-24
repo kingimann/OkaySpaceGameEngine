@@ -65,6 +65,12 @@ struct Reader {
     int nonmonotonic = 0, unknownSections = 0, vertexAnim = 0, badBoneRefs = 0, extraLinks = 0, zeroNormals = 0, dupFrames = 0, droppedBoneEntries = 0;
     int dupBoneIds = 0;
     std::unordered_map<int, int> boneOfId;        // SMD bone id -> index in `bones`
+    // vertexanimation (a .vta): the vertices of its first frame ("index px py pz nx ny nz"), the base mesh when the file has no
+    // triangles; the later frames (flex shapes) are only counted
+    struct VtaVert { float p[3], n[3]; };
+    std::map<int, VtaVert> vtaBase;
+    int vtaFrames = 0, vtaDupVerts = 0;
+    bool vtaInFirst = false;
 
     static std::string_view StripComment(std::string_view s) {
         const std::size_t p = s.find("//");
@@ -155,7 +161,7 @@ struct Reader {
         Lines lines(text);
         std::string_view raw;      // views into the text: no copy per line
         std::vector<std::string_view> tk;
-        enum Sec { None, Nodes, Skeleton, Triangles, Skip } sec = None;
+        enum Sec { None, Nodes, Skeleton, Triangles, VertexAnim, Skip } sec = None;
         int curTime = -1;
         bool haveTime = false;
         int triState = 0;            // 0 = expecting a material line, 1..3 = vertex lines
@@ -177,11 +183,32 @@ struct Reader {
                 if (kw == "nodes") { sec = Nodes; sawAnything = true; continue; }
                 if (kw == "skeleton") { sec = Skeleton; haveTime = false; sawAnything = true; continue; }
                 if (kw == "triangles") { sec = Triangles; triState = 0; sawAnything = true; continue; }
-                if (kw == "vertexanimation") { sec = Skip; ++vertexAnim; continue; }
+                if (kw == "vertexanimation") { sec = VertexAnim; ++vertexAnim; sawAnything = true; continue; }
                 if (kw == "end") { sec = None; continue; }
                 if (sec == None) { ++unknownSections; sec = Skip; continue; }
             }
             if (sec == Skip) { if (kw == "end") sec = None; continue; }
+            if (sec == VertexAnim) {
+                if (kw == "end") { sec = None; continue; }
+                if (kw == "time") {
+                    long long t = 0;
+                    if (tk.size() < 2 || !ToInt(tk[1], t)) return Fail("bad time line", ln);
+                    ++vtaFrames;
+                    vtaInFirst = vtaFrames == 1 && vertexAnim == 1;
+                    continue;
+                }
+                if (vtaFrames == 0) return Fail("a vertex animation line before any 'time' line", ln);
+                if (!vtaInFirst) continue;   // a flex frame: counted, not read
+                long long id = 0;
+                VtaVert v;
+                float f[6];
+                if (tk.size() < 7 || !ToInt(tk[0], id) || id < 0) return Fail("bad vertex animation line", ln);
+                for (int k = 0; k < 6; ++k) if (!ToFloat(tk[1 + (std::size_t)k], f[k])) return Fail("bad number in a vertex animation line", ln);
+                for (int k = 0; k < 3; ++k) { v.p[k] = f[k]; v.n[k] = f[3 + k]; }
+                if (vtaBase.size() >= kMaxTriangles * 3) return Fail("too many vertex animation vertices", ln);
+                if (!vtaBase.emplace((int)id, v).second) ++vtaDupVerts;
+                continue;
+            }
             if (sec == Nodes) {
                 if (kw == "end") { sec = None; continue; }
                 long long id = 0, par = 0;
@@ -407,6 +434,36 @@ struct Reader {
             }
         }
 
+        // a .vta: no triangles, the first vertex animation frame is the base mesh (index order = corner order, three per triangle)
+        int vtaBuilt = 0, vtaGaps = 0, vtaNotWhole = 0;
+        if (ntri == 0 && !vtaBase.empty()) {
+            const int last = vtaBase.rbegin()->first;
+            if ((std::size_t)last + 1 != vtaBase.size()) vtaGaps = (int)((std::size_t)last + 1 - vtaBase.size());
+            if (vtaGaps || vtaBase.size() % 3) vtaNotWhole = (int)vtaBase.size();   // not a base mesh: skipped with a note, the skeleton is still read
+        }
+        if (ntri == 0 && !vtaBase.empty() && !vtaNotWhole) {
+            ImportedPart part;
+            part.mesh.name = "vta";
+            part.node = 0;
+            WeldMap<6> weld;
+            bool badNormal = false;
+            for (const auto& kv : vtaBase) {
+                Vec3 nrm{kv.second.n[0], kv.second.n[1], kv.second.n[2]};
+                const float nm = nrm.Magnitude();
+                if (!(nm > 1e-6f) || !std::isfinite(nm)) { badNormal = true; ++zeroNormals; nrm = Vec3{0, 0, 1}; } else nrm = nrm * (1.0f / nm);
+                std::uint32_t key[6];
+                const float f[6] = {kv.second.p[0], kv.second.p[1], kv.second.p[2], nrm.x, nrm.y, nrm.z};
+                for (int q = 0; q < 6; ++q) std::memcpy(&key[q], &f[q], 4);
+                bool added = false;
+                const int vi = weld.Get(key, (int)part.mesh.vertices.size(), added);
+                if (added) { part.mesh.vertices.push_back(Vec3{f[0], f[1], f[2]}); part.mesh.normals.push_back(nrm); }
+                part.mesh.triangles.push_back(vi);
+            }
+            if (badNormal) part.mesh.ComputeSmoothNormals();
+            vtaBuilt = (int)(part.mesh.triangles.size() / 3);
+            out.parts.push_back(std::move(part));
+        }
+
         // animation: more than one frame -> one clip
         if (frames.size() > 1 && nb > 0) {
             ImportedClip clip;
@@ -429,7 +486,13 @@ struct Reader {
 
         auto note = [&](const std::string& s) { out.notes.push_back("SMD: " + s); };
         if (!out.clips.empty()) note("frame numbers are turned into seconds at an assumed " + std::to_string((int)kFps) + " frames per second");
-        if (vertexAnim) note("a vertexanimation section (flex / morph frames) is not read");
+        if (vertexAnim && !vtaBuilt) note("a vertexanimation section (flex / morph frames) is not read");
+        if (vtaNotWhole) note("the first vertex animation frame (" + std::to_string(vtaNotWhole) + " vertices, " + std::to_string(vtaGaps) + " index gap(s)) does not list whole triangles, so it is not used as a base mesh");
+        if (vtaBuilt) {
+            note("vertex animation file: its first frame is the base mesh (" + std::to_string(vtaBuilt) + " triangle(s), three vertices per triangle in index order, rigid, no texture coordinates)");
+            if (vtaFrames > 1) note(std::to_string(vtaFrames - 1) + " later vertex animation frame(s) (flex shapes) not read: the engine's model data has no morph targets");
+            if (vtaDupVerts) note(std::to_string(vtaDupVerts) + " vertex index(es) given twice in the first frame: the first one is kept");
+        }
         if (unknownSections) note(std::to_string(unknownSections) + " unknown section(s) skipped");
         if (badParents) note(std::to_string(badParents) + " bone(s) with a missing or looping parent were attached to the root");
         if (dupBoneIds) note(std::to_string(dupBoneIds) + " bone line(s) repeating an earlier bone id ignored");

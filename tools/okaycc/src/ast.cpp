@@ -56,7 +56,9 @@ std::unique_ptr<Type> cloneType(const Type& t) {
         c.mangled = p.mangled;
         c.vslot = p.vslot;
         c.pure = p.pure;
+        c.cmethod = p.cmethod;
         if (p.type) c.type = cloneType(*p.type);
+        if (p.defArg) c.defArg = cloneExpr(*p.defArg);
         n->params.push_back(std::move(c));
     }
     return n;

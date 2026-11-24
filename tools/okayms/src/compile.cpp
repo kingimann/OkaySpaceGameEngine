@@ -35,7 +35,8 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     std::string main_dir;
     {
         const size_t slash = input.name.find_last_of("/\\");
-        if (slash != std::string::npos) main_dir = input.name.substr(0, slash);
+        if (slash != std::string::npos) main_dir = slash == 0 ? std::string("/") : input.name.substr(0, slash);
+        else if (!input.name.empty()) main_dir = ".";  // okay-cl /c file.cpp: the file is in the current directory
     }
     const std::string expanded = pp.run(stripped, main_dir);
     if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);

@@ -1650,7 +1650,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
     okay::platform::Window* window = windowOwner.get();
     if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
-        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Log("could not create the game window: " + pb->LastError());
         pb->Shutdown();
         return 1;
     }
@@ -2089,26 +2089,10 @@ int main(int argc, char** argv) {
         okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
-        auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
+        // Letters by the layout's letter (AZERTY WASD works; layouts without Latin letters fall back to the US place),
+        // digits, Space, modifiers, editing keys, Escape, and the arrows as themselves and as WASD.
         std::vector<char> down;
-        for (char c = 'a'; c <= 'z'; ++c)
-            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works; layouts without Latin letters fall back to the US place
-        for (char c = '0'; c <= '9'; ++c)
-            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);
-        if (keyHeld(PK::Space)) down.push_back(' ');
-        if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
-        if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-        if (keyHeld(PK::LGui)   || keyHeld(PK::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-        // Editing keys for text fields (held-state; edge-detected by the field).
-        if (keyHeld(PK::Backspace)) down.push_back((char)8);
-        if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
-        if (keyHeld(PK::Escape)) down.push_back((char)27);
-        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
-        if (keyHeld(PK::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-        if (keyHeld(PK::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-        if (keyHeld(PK::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-        if (keyHeld(PK::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
-
+        okay::AppendHeldMainKeys(*pb, down);
         okay::AppendExtendedKeys(*pb, down);
         pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         if (consoleOpen) down.clear();   // typing in the console does not move the player
@@ -2207,7 +2191,7 @@ int main(int argc, char** argv) {
             int ow = 0, oh = 0;
             renderer->OutputSize(&ow, &oh);
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
-            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // sdl2: SDL's touch devices; own: none yet
             TouchControls::Sample(scene);
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }

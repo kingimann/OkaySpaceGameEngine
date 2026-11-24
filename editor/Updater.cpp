@@ -5,7 +5,7 @@
 #include "MainShared.hpp"            // SysNoWindow (main.cpp)
 #include "AppRestart.hpp"            // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"           // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/release/updater.md)
-#include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for the update download: WinHTTP / our own client first, curl only as its last fallback
 
 namespace oked {
 
@@ -54,29 +54,20 @@ std::string BustCache(const std::string& url) {
     return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
 }
 
-// Download a URL to a file using whatever HTTP client is on the system. Tries
-// curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
-// curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
-// No-cache headers + a unique query string defeat the CDN cache.
+// Download a URL to a file: the HTTP seam first (WinHTTP on Windows, our own client on Linux when on, curl only as
+// its last fallback), then PowerShell / wget when nothing could fetch it. A clear refusal (a 404, a full disk) is
+// final, so an error page is never cached as a binary. No-cache headers + a unique query string defeat the CDN cache.
+// The checksum list is still REQUIRED by the caller (UpdaterCore.hpp); this only fetches bytes.
 bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
     const std::string out = okay::restart::Utf8(outPath);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    if (okay::http::NativeAvailable()) {   // own client first (opt-in); an unclear answer falls through to curl below
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;   // a drop resumes with Range
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, out, sp);
-        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;   // a clear refusal (404, full disk): curl -f would fail the same way
-    }
-#endif
-    // Arguments, not a shell line: a path with spaces, parentheses or '&' can't
-    // be split or expanded the way the old quoted curl command was.
-    const std::vector<std::string> curl = {
-        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
-        "-A", "OkaySpace-Updater", "-o", out, u};
-    if (okay::restart::RunAndWait(curl) == 0 && fs::exists(outPath)) return true;
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;   // a drop resumes with Range
+    sp.stallSeconds = 0;
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(u, outPath, sp);
+    if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+    if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
 #if defined(_WIN32)
     auto psQuote = [](const std::string& s) {
         std::string o; o.reserve(s.size());

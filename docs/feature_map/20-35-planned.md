@@ -906,13 +906,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 28.1.2 Clone from GitHub - `launcher/main.cpp` - Projects page button
   - 28.1.3 Pull, Commit and Push, Publish to GitHub - `launcher/main.cpp` - project right-click menu: "Git: Pull", "Git: Commit & Push" (message dialog), "Publish to GitHub..." for projects without `.git`
   - 28.1.4 Editor Git panel - `-` - not built
+  - 28.1.5 `okay vc` on the command line - `tools/okay-cli/Git.cpp` - init (project .gitignore and .gitattributes, scene merge and diff drivers), status grouped by scenes, scripts and assets, save, history, undo, branch, switch, sync with any Git remote (see 41.14)
 - **Code:** `launcher/main.cpp`
 - **API:** launcher project context menu
 - **Editor:** launcher Projects page (no editor window)
 - **Docs:** -
 - **Tests:** none
 - **Status:** Partial - the launcher drives git for whole projects; the editor shows nothing about git.
-- **Exists today:** Clone, pull, commit and push, and publish are in `launcher/main.cpp` (read: `GitWorker`, `StartGit`, the "Git:" menu items). No status, no changed-file list, no branches, no `.gitignore` for new projects.
+- **Exists today:** Clone, pull, commit and push, and publish are in `launcher/main.cpp` (read: `GitWorker`, `StartGit`, the "Git:" menu items). The `okay` command line (41.14) has status, branches, history, undo and writes `.gitignore` / `.gitattributes` (`okay vc init`, also run by `okay new`). The editor still shows nothing about git.
 - **Work packages:**
   1. S - New projects get a `.gitignore` (editor view files, autosave and backup files, build output, `.okay/` caches) and a `.gitattributes` marking scenes as text. Depends on: nothing.
   2. M - Editor Git panel: branch name, changed files (`git status --porcelain`), badges in the Project panel. Depends on: package 1.
@@ -932,12 +933,13 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 28.2.1 Diff-friendly scene text - `Scene/SceneSerializer` - human-readable one-record-per-line text; stable object ids (`guid` records, #570); floats written with the fewest digits so saving does not drift (#575)
   - 28.2.2 Structural scene diff (#578) - `Scene/SceneDiff` - `SceneDiff::Compute(base, other)` lists added, removed and modified objects (by guid, else name path), renames, reparents, reorders, per-record and per-field changes (`Light.intensity 1 -> 2`) as text or JSON; `Apply` replays a diff; about 100 ms for 5000 objects (per docs)
   - 28.2.3 Canonical form - `Scene/SceneText` - `SceneText::Canonicalize` gives equal scenes equal text (layout, number spelling, record order, object numbering) so a re-save shows no diff; quoted strings are never touched
+  - 28.2.4 Git diff driver - `tools/okay-cli/Cli.cpp` `SceneDiffDriver` - `okay vc diff-driver`, registered by `okay vc init`: `git diff` of a scene or prefab lists objects and fields (see 41.14)
 - **Code:** `Scene/SceneSerializer`, `Scene/SceneDiff`, `Scene/SceneText`
 - **API:** `SceneDiff::Compute`, `SceneDiff::Apply`, `SceneDiff::Result::ToText`, `ToJson`, `SceneText::Canonicalize`
 - **Editor:** none
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/scene_diff_merge.md`
 - **Tests:** `scene_ids_prefabs`, `scene_diff`, `scene_canonical`
-- **Status:** Partial - the diff and canonical-form libraries are on main (#578) and tested; there is no editor window, no command line tool and no git diff driver.
+- **Status:** Partial - the diff and canonical-form libraries are on main (#578) and tested; `okay vc diff-driver` is the git diff driver (41.14); there is no editor window.
 - **Exists today:** `SceneDiff` and `SceneText::Canonicalize` work on the text of scene and prefab files without building a `Scene`. Plain git text diffs of `.okayscene` are still noisy until a tool calls them. Sibling order is only written when it changed (per `docs/engine/scene_serializer.md`).
 - **Work packages:**
   1. M - Command-line `okay-diff` usable as a git `textconv` or diff driver for scenes and prefabs (uses `Canonicalize` and `SceneDiff`). Depends on: #578 (on main).
@@ -955,7 +957,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** A timeline of how a project or an asset changed, with the ability to restore an older version.
 - **Parts:**
   - 28.3.1 Previous-version backups - `Scene/SceneSerializer` - one `.bak` per saved scene (see 22.4)
-  - 28.3.2 History from git - `-` - not built
+  - 28.3.2 History from git - `tools/okay-cli/Cli.cpp` - `okay vc history [file]` and `okay vc undo <file> [--to ID]` on the command line (41.14); no editor view
 - **Code:** `Scene/SceneSerializer`
 - **API:** none yet
 - **Editor:** none
@@ -980,12 +982,13 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 28.4.1 Additive scene merge - `editor/main.cpp`, `Scene/SceneSerializer` - File > Merge Scene into Current (adds another scene's objects with an offset; not a version-control merge)
   - 28.4.2 Three-way merge (#578) - `Scene/SceneMerge` - `SceneMerge::Merge(base, ours, theirs, options)` merges changes to different objects, records or fields, with policies Mark, PreferOurs, PreferTheirs and a conflict list (field changed, deleted and edited, renamed differently, parent cycle...); the merged text always loads or falls back to ours
+  - 28.4.3 Git merge driver - `tools/okay-cli/Cli.cpp` `SceneMergeDriver` - `okay vc merge-driver %O %A %B %P`, registered by `okay vc init`: migrates both sides, merges with `SceneMerge`, checks the result loads; a clash keeps our side and is listed in plain words (41.14)
 - **Code:** `editor/main.cpp`, `Scene/SceneSerializer`, `Scene/SceneMerge`
 - **API:** `SceneSerializer::MergeFromText`, `MergeFromFile`, `SceneMerge::Merge`, `SceneMerge::Result::ReportText`; File > Merge Scene into Current
 - **Editor:** File > Merge Scene into Current, Project panel "Add to Open Scene"
 - **Docs:** `docs/engine/scene_serializer.md`, `docs/engine/scene_diff_merge.md`
 - **Tests:** `scene_ids_prefabs`, `scene_merge`
-- **Status:** Partial - the three-way merge library is on main (#578) and tested; there is no editor conflict window and no git merge driver (per docs: "Not included"); the only merge in the editor is the additive one.
+- **Status:** Partial - the three-way merge library is on main (#578) and tested, and `okay vc merge-driver` is git's merge driver for scenes and prefabs (41.14, test `okay_cli`); there is no editor conflict window; the only merge in the editor is the additive one.
 - **Exists today:** Merging two scenes by adding objects. A git conflict inside a `.okayscene` leaves conflict markers; loading is all-or-nothing and reports a parse error (#553), so the scene will not open until fixed by hand.
 - **Work packages:**
   1. S - Load error that says "conflict markers found" instead of a generic parse error. Depends on: nothing.

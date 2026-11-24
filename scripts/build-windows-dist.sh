@@ -150,6 +150,9 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/module_sizes.txt" ] && cp "$BUILD_DIR/bin/module_sizes.txt" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
+# okay: the engine's command line (tools/okay-cli): new, open, play, build, test, and version control with git (okay vc).
+# It sits beside the editor and the player so it finds them.
+[ -f "$BUILD_DIR/bin/okay.exe" ] && cp "$BUILD_DIR/bin/okay.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
@@ -282,6 +285,7 @@ Keep SDL2.dll next to it.
 Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
+  okay.exe              the command line: okay new, okay open, okay play, okay vc save ...
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/online/relay.md)
 

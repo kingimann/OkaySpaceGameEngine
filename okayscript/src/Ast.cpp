@@ -6,14 +6,10 @@
 namespace okayscript {
 
 namespace {
-const char* OpText(Tok t) {
-    switch (t) {
-        case Tok::Plus: return "+"; case Tok::Minus: return "-"; case Tok::Star: return "*"; case Tok::Slash: return "/";
-        case Tok::Percent: return "%"; case Tok::Eq: return "=="; case Tok::Ne: return "!="; case Tok::Lt: return "<";
-        case Tok::Gt: return ">"; case Tok::Le: return "<="; case Tok::Ge: return ">="; case Tok::And: return "&&";
-        case Tok::Or: return "||"; case Tok::Not: return "!"; case Tok::BitAnd: return "&"; case Tok::BitOr: return "|";
-        case Tok::BitXor: return "^"; default: return "?";
-    }
+// An operator as written: TokName gives it in quotes ("'+'"); the tree prints it bare.
+std::string OpText(Tok t) {
+    const std::string s = TokName(t);
+    return s.size() > 2 && s.front() == '\'' ? s.substr(1, s.size() - 2) : std::string("?");
 }
 std::string Opt(const ExprPtr& e) { return e ? e->Dump() : std::string("nil"); }
 std::string Quote(const std::string& s) { return "\"" + s + "\""; }
@@ -40,7 +36,7 @@ std::string InterpStringExpr::Dump() const {
 }
 std::string VarExpr::Dump() const { return n; }
 std::string AssignExpr::Dump() const { return "(= " + n + " " + value->Dump() + ")"; }
-std::string UnaryExpr::Dump() const { return std::string("(") + (op == Tok::Minus ? "neg" : OpText(op)) + " " + e->Dump() + ")"; }
+std::string UnaryExpr::Dump() const { return std::string("(") + (op == Tok::Minus ? std::string("neg") : OpText(op)) + " " + e->Dump() + ")"; }
 std::string LogicalExpr::Dump() const { return std::string("(") + OpText(op) + " " + l->Dump() + " " + r->Dump() + ")"; }
 std::string CoalesceExpr::Dump() const { return "(?? " + l->Dump() + " " + r->Dump() + ")"; }
 std::string NullishAssignExpr::Dump() const { return "(?\?= " + n + " " + value->Dump() + ")"; }

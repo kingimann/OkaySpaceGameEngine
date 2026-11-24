@@ -5,6 +5,7 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ModelImportProblem.hpp"
 #include <set>
 #include <map>
 #include <sstream>
@@ -785,6 +786,228 @@ static void UvSetTests() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// FBX 6.0 / 6.1 (2006-2009) and 7.0 (2010): tests/assets/fbx/legacy/, written by scripts/gen_fbx_fixtures.py from the
+// same scenes as the 7.4 / 7.5 fixtures (cube_scene6 and rig_scene6 there), so each old file must import exactly like
+// its newer twin. FBX 5.x is refused with a message that names the version and what to do.
+// ---------------------------------------------------------------------------------------------------------------------
+static std::string Lx(const char* name) { return Fx("legacy/") + name; }
+
+static void SameNodes(const fbx::Scene& a, const fbx::Scene& b) {
+    CHECK(a.nodes.size() == b.nodes.size());
+    for (const fbx::SceneNode& n : a.nodes) {
+        const fbx::SceneNode* m = FindNode(b, n.name.c_str());
+        CHECK(m != nullptr);
+        if (!m) { std::cerr << "    no node " << n.name << "\n"; continue; }
+        const std::string pa = n.parent >= 0 ? a.nodes[(std::size_t)n.parent].name : std::string("(root)");
+        const std::string pb = m->parent >= 0 ? b.nodes[(std::size_t)m->parent].name : std::string("(root)");
+        CHECK(pa == pb);
+        CHECK((n.mesh >= 0) == (m->mesh >= 0));
+        for (int k = 0; k < 16; ++k) CHECK(Near(n.world.m[k], m->world.m[k], 1e-9));
+        for (int k = 0; k < 16; ++k) CHECK(Near(n.geometryToWorld.m[k], m->geometryToWorld.m[k], 1e-9));
+    }
+}
+static void SameMeshes(const fbx::Scene& a, const fbx::Scene& b) {
+    CHECK(a.meshes.size() == b.meshes.size());
+    for (std::size_t i = 0; i < std::min(a.meshes.size(), b.meshes.size()); ++i) {
+        const fbx::Mesh& x = a.meshes[i]; const fbx::Mesh& y = b.meshes[i];
+        CHECK(x.controlPoints == y.controlPoints);
+        CHECK(x.triangleCount() == y.triangleCount());
+        CHECK(x.hasUV == y.hasUV);
+        CHECK(x.parts.size() == y.parts.size());
+        for (std::size_t p = 0; p < std::min(x.parts.size(), y.parts.size()); ++p) {
+            const auto cx = x.parts[p].ExpandCorners(); const auto cy = y.parts[p].ExpandCorners();
+            CHECK(cx.size() == cy.size());
+            bool same = cx.size() == cy.size();
+            for (std::size_t c = 0; same && c < cx.size(); ++c)
+                for (int k = 0; k < 3; ++k) same = same && Near(cx[c].p[k], cy[c].p[k], 1e-7) && Near(cx[c].n[k], cy[c].n[k], 1e-6) && (k > 1 || Near(cx[c].uv[k], cy[c].uv[k], 1e-7)) && cx[c].cp == cy[c].cp;
+            CHECK(same);
+        }
+        CHECK(x.materials.size() == y.materials.size());
+        for (std::size_t s = 0; s < std::min(x.materials.size(), y.materials.size()); ++s) {
+            const int ma = x.materials[s], mb = y.materials[s];
+            CHECK((ma >= 0) == (mb >= 0));
+            if (ma < 0 || mb < 0) continue;
+            const fbx::Material& A = a.materials[(std::size_t)ma]; const fbx::Material& B = b.materials[(std::size_t)mb];
+            CHECK(A.name == B.name);
+            CHECK(A.hasDiffuse == B.hasDiffuse && Near(A.diffuse[0], B.diffuse[0]) && Near(A.diffuse[1], B.diffuse[1]) && Near(A.diffuse[2], B.diffuse[2]));
+            CHECK(A.hasEmissive == B.hasEmissive && Near(A.emissive[0], B.emissive[0]));
+            CHECK(A.hasRoughness == B.hasRoughness && Near(A.roughness, B.roughness));
+            CHECK((A.diffuseTexture >= 0) == (B.diffuseTexture >= 0));
+            if (A.diffuseTexture >= 0 && B.diffuseTexture >= 0) {
+                const fbx::Texture& ta = a.textures[(std::size_t)A.diffuseTexture]; const fbx::Texture& tb = b.textures[(std::size_t)B.diffuseTexture];
+                CHECK(ta.fileName == tb.fileName && ta.relativeFileName == tb.relativeFileName);
+                CHECK(ta.content == tb.content);
+            }
+        }
+        // skin
+        CHECK(x.clusters.size() == y.clusters.size());
+        for (std::size_t c = 0; c < std::min(x.clusters.size(), y.clusters.size()); ++c) {
+            const int ba = x.clusters[c].boneNode, bb = y.clusters[c].boneNode;
+            CHECK(ba >= 0 && bb >= 0);
+            if (ba >= 0 && bb >= 0) CHECK(a.nodes[(std::size_t)ba].name == b.nodes[(std::size_t)bb].name);
+            for (int k = 0; k < 16; ++k) CHECK(Near(x.clusters[c].geometryToBone.m[k], y.clusters[c].geometryToBone.m[k], 1e-9));
+        }
+        CHECK(x.skinWeights.size() == y.skinWeights.size());
+        bool weights = x.skinWeights.size() == y.skinWeights.size();
+        for (std::size_t v = 0; weights && v < x.skinWeights.size(); ++v) {
+            weights = x.skinWeights[v].size() == y.skinWeights[v].size();
+            for (std::size_t k = 0; weights && k < x.skinWeights[v].size(); ++k)
+                weights = x.skinWeights[v][k].cluster == y.skinWeights[v][k].cluster && Near(x.skinWeights[v][k].weight, y.skinWeights[v][k].weight, 1e-6);
+        }
+        CHECK(weights);
+        // blend shapes
+        CHECK(x.channels.size() == y.channels.size());
+        for (std::size_t c = 0; c < std::min(x.channels.size(), y.channels.size()); ++c) {
+            CHECK(x.channels[c].name == y.channels[c].name);
+            CHECK(Near(x.channels[c].weight, y.channels[c].weight));
+            CHECK(x.channels[c].indices == y.channels[c].indices);
+            CHECK(x.channels[c].dp.size() == y.channels[c].dp.size());
+            for (std::size_t k = 0; k < std::min(x.channels[c].dp.size(), y.channels[c].dp.size()); ++k) CHECK(Near(x.channels[c].dp[k], y.channels[c].dp[k], 1e-7));
+        }
+    }
+}
+/// The clips at times where the curves agree: every time for linear and constant curves, the key times for cubic ones
+/// (`cubicNode`: the 6.x file's cubic keys get their tangents from the neighbouring keys, so between keys they may differ).
+static void SameClips(const fbx::Scene& a, const fbx::Scene& b, const char* cubicNode) {
+    CHECK(a.clips.size() == b.clips.size());
+    for (std::size_t c = 0; c < std::min(a.clips.size(), b.clips.size()); ++c) {
+        const fbx::Clip& x = a.clips[c]; const fbx::Clip& y = b.clips[c];
+        CHECK(Near(x.duration, y.duration, 1e-9));
+        CHECK(Near(x.start, y.start, 1e-9));
+        CHECK(x.nodes.size() == y.nodes.size());
+        for (const fbx::NodeAnim& na : x.nodes) {
+            const std::string& name = a.nodes[(std::size_t)na.node].name;
+            const fbx::NodeAnim* nb = nullptr;
+            for (const fbx::NodeAnim& o : y.nodes) if (b.nodes[(std::size_t)o.node].name == name) nb = &o;
+            CHECK(nb != nullptr);
+            if (!nb) continue;
+            const bool cubic = cubicNode && name == cubicNode;
+            for (int step = 0; step <= 8; ++step) {
+                const double t = step * 0.25;
+                const bool atKey = step % 2 == 0;
+                if (!na.translation.empty() && !nb->translation.empty()) {
+                    const fbx::Key3 p = KeyAt(na.translation, t), q = KeyAt(nb->translation, t);
+                    for (int k = 0; k < 3; ++k) CHECK(Near(p.v[k], q.v[k], 1e-5));
+                }
+                if (!na.scale.empty() && !nb->scale.empty()) {
+                    const fbx::Key3 p = KeyAt(na.scale, t), q = KeyAt(nb->scale, t);
+                    for (int k = 0; k < 3; ++k) CHECK(Near(p.v[k], q.v[k], 1e-5));
+                }
+                if ((!cubic || atKey) && !na.rotation.empty() && !nb->rotation.empty()) {
+                    const fbx::Key4 p = KeyAt(na.rotation, t), q = KeyAt(nb->rotation, t);
+                    double d = 0; for (int k = 0; k < 4; ++k) d += p.v[k] * q.v[k];
+                    CHECK(std::fabs(d) > 1 - 1e-6);
+                }
+            }
+        }
+        CHECK(x.blends.size() == y.blends.size());
+        for (std::size_t k = 0; k < std::min(x.blends.size(), y.blends.size()); ++k)
+            for (int step = 0; step <= 8; ++step) {
+                if (x.blends[k].percent.empty() || y.blends[k].percent.empty()) { CHECK(false); break; }
+                CHECK(Near(KeyAt(x.blends[k].percent, step * 0.25).v[0], KeyAt(y.blends[k].percent, step * 0.25).v[0], 1e-4));
+            }
+    }
+}
+
+static void LegacyTests() {
+    struct Pair { const char* old; const char* now; const char* cubic; };
+    const Pair pairs[] = {
+        {"cube61_bin.fbx", "cube_zup_cm_bin.fbx", nullptr}, {"cube61_ascii.fbx", "cube_zup_cm_ascii.fbx", nullptr},
+        {"cube60_ascii.fbx", "cube_zup_cm_ascii.fbx", nullptr},
+        {"cube70_bin.fbx", "cube_zup_cm_bin.fbx", nullptr}, {"cube70_ascii.fbx", "cube_zup_cm_ascii.fbx", nullptr},
+        {"rig61_bin.fbx", "rig_bin75.fbx", "Bone1"}, {"rig61_ascii.fbx", "rig_ascii.fbx", "Bone1"},
+    };
+    for (const Pair& pr : pairs) {
+        RUN_SUITE((std::string("fbx legacy: ") + pr.old + " imports like " + pr.now).c_str());
+        fbx::Scene o, n; std::string eo, en;
+        const bool okO = LoadBuilt(Lx(pr.old), o, &eo), okN = LoadBuilt(Fx(pr.now), n, &en);
+        if (!okO) std::cerr << "    " << pr.old << ": " << eo << "\n";
+        CHECK(okO); CHECK(okN);
+        if (!okO || !okN) continue;
+        CHECK(!o.nodes.empty() && !o.meshes.empty());
+        SameNodes(n, o);
+        SameMeshes(n, o);
+        SameClips(n, o, pr.cubic);
+        CHECK(Near(o.settings.appliedScale, n.settings.appliedScale));
+        CHECK(o.settings.upAxis == n.settings.upAxis && o.settings.frontSign == n.settings.frontSign);
+    }
+
+    RUN_SUITE("fbx legacy: through the importer (scene and single-mesh paths)");
+    // Imported from copies in the temp folder: the import writes an embedded picture next to the file (<name>_tex0.png).
+    const fs::path tmpDir = fs::temp_directory_path() / ("okay_fbx_legacy_import_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(tmpDir);
+    auto Lc = [&](const char* name) {
+        const fs::path to = tmpDir / name;
+        std::error_code ec; fs::copy_file(Lx(name), to, fs::copy_options::overwrite_existing, ec);
+        return to.string();
+    };
+    for (const char* f : {"cube61_bin.fbx", "cube61_ascii.fbx", "rig61_ascii.fbx"}) {
+        Scene s("legacy");
+        bool ok = false;
+        GameObject* r = ImportModelScene(s, Lc(f), &ok);
+        CHECK(r && ok);
+        if (r) { const ImportStats st = Collect(s, r); CHECK(st.meshes >= 1 && st.tris >= 12); }
+        bool mok = false;
+        const Mesh m = ImportModel(Lc(f), &mok);
+        CHECK(mok && !m.vertices.empty() && !m.triangles.empty());
+    }
+    {   // the rig keeps its skin and its clip through the importer
+        Scene s("legacy rig");
+        bool ok = false;
+        GameObject* r = ImportModelScene(s, Lc("rig61_bin.fbx"), &ok);
+        CHECK(r && ok);
+        if (r) {
+            CHECK(r->GetComponent<ModelAnimator>() != nullptr);
+            const ImportStats st = Collect(s, r);
+            CHECK(st.skinned >= 1 && st.joints == 3 && st.blend >= 1);
+        }
+    }
+    { std::error_code ec; fs::remove_all(tmpDir, ec); }
+
+    RUN_SUITE("fbx legacy: FBX 5.x is refused with the version and what to do");
+    for (const char* f : {"old50_ascii.fbx", "old50_bin.fbx"}) {
+        fbx::Scene s; std::string err;
+        CHECK(!fbx::LoadFile(Lx(f), s, &err));
+        std::cout << "  " << f << ": " << err << "\n";
+        CHECK(err.find("5.0") != std::string::npos);
+        CHECK(err.find("FBX 2011") != std::string::npos);
+        Scene sc("old");
+        bool ok = true;
+        GameObject* r = ImportModelScene(sc, Lx(f), &ok);
+        CHECK(!r || !ok);
+        bool mok = true;
+        ImportModel(Lx(f), &mok);
+        CHECK(!mok);
+        const std::string why = DescribeModelImportProblem(Lx(f));
+        std::cout << "  " << f << " (problem): " << why << "\n";
+        CHECK(why.find("FBX 5.0") != std::string::npos);
+        CHECK(why.find("FBX 2011") != std::string::npos);
+    }
+
+    RUN_SUITE("fbx legacy: a file with no objects fails, it does not import as nothing");
+    {
+        const fs::path dir = fs::temp_directory_path() / ("okay_fbx_legacy_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(dir);
+        for (const char* text : {"; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n\tFBXVersion: 6100\n}\nObjects:  {\n}\nConnections:  {\n}\n",
+                                 "; FBX 7.4.0 project file\nObjects:  {\n}\nConnections:  {\n}\n"}) {
+            const std::string p = (dir / "empty_objects.fbx").string();
+            { std::ofstream o(p, std::ios::binary); o << text; }
+            Scene sc("empty");
+            bool ok = true;
+            GameObject* r = ImportModelScene(sc, p, &ok);
+            CHECK(!r || !ok);
+            bool mok = true;
+            ImportModel(p, &mok);
+            CHECK(!mok);
+            const std::string why = DescribeModelImportProblem(p);
+            std::cout << "  empty_objects.fbx (problem): " << why << "\n";
+            CHECK(why.find("no objects") != std::string::npos || why.find("no meshes") != std::string::npos);
+        }
+        std::error_code ec; fs::remove_all(dir, ec);
+    }
+}
+
 int main() {
     InflateTests();
     DirectTests();
@@ -792,6 +1015,7 @@ int main() {
     PbrTests();
     OrphanVideoTest();
     UvSetTests();
+    LegacyTests();
     ExpectedImportTests();
     TEST_MAIN_RESULT();
 }

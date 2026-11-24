@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "FbxSceneInternal.hpp"
+#include "FbxLegacy.hpp"
 
 namespace okay {
 namespace fbx {
@@ -248,13 +249,26 @@ bool PartsOf(Mesh& m, const Limits& lim, std::string& err) {
 } // namespace
 
 namespace {
-bool BuildFrom(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
-    out = Scene();
+bool BuildModern(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
     Builder b(doc, out, opt);
     b.steal = steal;
     const bool ok = b.Run();
     if (!ok) { out = Scene(); if (err) *err = b.err.empty() ? "FBX build failed" : b.err; }
     return ok;
+}
+
+/// The 7.x element tree as it is; FBX 6.x (and 5.x, which is refused) first rewritten in the 7.x layout (FbxLegacy.hpp).
+bool BuildFrom(const Document& doc, Document* steal, Scene& out, std::string* err, const BuildOptions& opt) {
+    out = Scene();
+    std::uint32_t version = 0;
+    const legacy::Layout layout = legacy::LayoutOf(doc, version);
+    if (layout == legacy::Layout::TooOld) { if (err) *err = UnsupportedVersionMessage(version); return false; }
+    if (layout == legacy::Layout::Legacy) {
+        Document up; std::string why;
+        if (!legacy::Upgrade(doc, steal, up, why)) { if (err) *err = why; return false; }
+        return BuildModern(up, steal ? &up : nullptr, out, err, opt);
+    }
+    return BuildModern(doc, steal, out, err, opt);
 }
 } // namespace
 

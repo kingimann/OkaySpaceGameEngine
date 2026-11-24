@@ -124,7 +124,7 @@ static bool EndsWith(const std::string& s, const char* suf) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
-static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture);   // our own reader (okay::fbx)
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture, std::string* err);   // our own reader (okay::fbx)
 static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err);
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
@@ -166,7 +166,9 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
         g_readBy = "the own FBX reader (one mesh)";   // the only FBX reader (ufbx was deleted on 2026-11-23)
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
-        if (fok) { if (ok) *ok = true; return m; }
+        // There is no other FBX reader: a file ours refuses (or that holds no mesh) fails here, as in the scene path.
+        if (ok) *ok = fok;
+        return fok ? m : Mesh();
     }
     // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
     // STL / PLY readers, or Assimp when the build has it. One static mesh.
@@ -1326,10 +1328,10 @@ Mesh TransformedMesh(Mesh m, const Mat4& t) {
 }
 } // namespace
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
-    bool ownOk = false;
-    Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+    bool ownOk = false; std::string err;
+    Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture, &err);
     if (ok) *ok = ownOk;
-    if (!ownOk) Log::Error("model import '", path, "': the own FBX reader could not read this file (there is no other FBX reader)");
+    if (!ownOk) Log::Error("model import '", path, "': ", err.empty() ? std::string("the own FBX reader could not read this file (there is no other FBX reader)") : err);
     return m;
 }
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
@@ -1535,11 +1537,11 @@ bool OwnIsIdentity(const fbx::Mat& m) {
 
 } // namespace
 
-static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture, std::string* errOut) {
     Mesh merged;
     fbx::Scene sc; std::string err;
     // The reader gives polygons; the import triangulates them (each mesh's polygon arrays freed once it has its parts).
-    if (!fbx::LoadFile(path, sc, &err) || !fbx::BuildParts(sc, &err, fbx::Limits(), true)) { if (ok) *ok = false; return merged; }
+    if (!fbx::LoadFile(path, sc, &err) || !fbx::BuildParts(sc, &err, fbx::Limits(), true)) { if (ok) *ok = false; if (errOut) *errOut = err; return merged; }
     for (const fbx::SceneNode& node : sc.nodes) {
         if (node.mesh < 0) continue;
         const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
@@ -1560,6 +1562,9 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
         }
     }
     if (ok) *ok = !merged.vertices.empty();
+    if (merged.vertices.empty() && errOut)
+        *errOut = sc.nodes.empty() ? "the FBX file was read but holds no objects (no models, meshes or bones)"
+                                   : "the FBX file was read but holds no meshes (only empty nodes, bones, cameras, lights or animation)";
     return merged;
 }
 
@@ -1568,6 +1573,11 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
     // The reader gives polygons and animation curves; the import triangulates the polygons (each mesh's polygon arrays
     // freed once it has its parts) and makes the clips' keys.
     if (!fbx::LoadFile(path, sc, err) || !fbx::BuildParts(sc, err, fbx::Limits(), true) || !fbx::BuildClips(sc, err)) { if (ok) *ok = false; return nullptr; }
+    if (sc.nodes.empty()) {   // read, but nothing to make: a failure with its reason, not an empty object
+        if (err) *err = "the FBX file was read but holds no objects (no models, meshes or bones)";
+        if (ok) *ok = false;
+        return nullptr;
+    }
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
     std::unordered_map<std::string, int> nameUse;

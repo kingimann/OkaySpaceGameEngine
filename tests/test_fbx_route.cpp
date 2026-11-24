@@ -101,7 +101,8 @@ static void EveryFbxGoesToOurReader() {
     Log::sink = [&](Log::Level, const std::string& m) { if (m.find("model import '") != std::string::npos) lastLine = m; };
     int read = 0, damaged = 0;
     for (const std::string& path : files) {
-        const bool knownDamaged = fs::path(path).filename() == "transparentTest.fbx";
+        // tests/assets/fbx/legacy/old50_*.fbx are FBX 5.0 files that must be refused (with a message), like the damaged one
+        const bool knownDamaged = fs::path(path).filename() == "transparentTest.fbx" || fs::path(path).filename().string().find("_old50_") != std::string::npos;
         fbx::Scene s; std::string err;
         const bool ours = fbx::LoadFile(path, s, &err) && fbx::BuildParts(s, &err) && fbx::BuildClips(s, &err);
         lastLine.clear();

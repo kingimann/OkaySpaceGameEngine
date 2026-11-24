@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// okay::fbx - our own FBX reader (binary 7.x and ASCII), written from the
+// okay::fbx - our own FBX reader (FBX 6.0 to 7.x, binary and ASCII), written from the
 // public format description. It is the only FBX reader: Render/ModelImport
 // reads every .fbx with it (the vendored ufbx it replaced, and the OKAY_OWN_FBX
 // switch between the two, were deleted on 2026-11-23).
@@ -187,6 +187,14 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
 bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim = Limits());
 /// Picks binary or ASCII from the "Kaydara FBX Binary" magic.
 bool Parse(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim = Limits());
+
+/// Internal (the parsers and the FBX 6.x rewrite): turns the index links recorded in Elem::links_ and PropList::begin_
+/// while a Document is built into its pointers. Run once, after the last element is added.
+void LinkTree(Document& d);
+
+/// What the readers say about a file of a version they do not read (`version` as 7400 is FBX 7.4): which version it is
+/// and what to do (export it again as FBX 2011 or newer). FBX 6.0 to 7.x is read.
+std::string UnsupportedVersionMessage(std::uint32_t version);
 
 /// zlib stream (RFC 1950/1951) decoder, our own. Fails if the output would pass `maxOut`.
 bool Inflate(const std::uint8_t* in, std::size_t n, std::vector<std::uint8_t>& out, std::size_t maxOut);

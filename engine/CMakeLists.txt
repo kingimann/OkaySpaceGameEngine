@@ -464,15 +464,11 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored third-party libraries (stb_truetype, stb_vorbis, dr_libs). Image decoding is
-# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
-target_include_directories(okay_engine PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-)
-# Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
-# is required in addition to `-w`: vendored tables (stb) may initialise `char`
-# arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
-# that `-w` does not downgrade, even though GCC/MinGW accept it.
+# (No vendored single-header libraries are left: image decoding, fonts and audio are our own, and the
+# engine/third_party/stb folder is gone, so there is no include path for it.)
+# Image.cpp keeps the warning settings it had while it compiled the vendored stb tables (`-Wno-narrowing`:
+# Clang for Emscripten/WASM treats a `char` table initialised with 0xFF as a narrowing ERROR that `-w` does
+# not downgrade). Not checked yet whether our own code there still needs them.
 set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).

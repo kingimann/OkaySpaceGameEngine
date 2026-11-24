@@ -26,8 +26,10 @@ endif()
 
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
+# FBX is not in the list: its option (OKAY_OWN_FBX) was deleted with ufbx and our FBX reader is always on. Listing it made the
+# undefined option count as OFF, so no build got OKAY_EXPECT_OWN_READERS (own_stack, own_dispatch_c/_d/_gap went red).
 set(_okay_all_readers_on TRUE)
-foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
+foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
         Q3D RAW IQM COB PMX LWS OGREBIN ZAE XML LXO)
     if(NOT OKAY_OWN_${_f})
         set(_okay_all_readers_on FALSE)

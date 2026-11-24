@@ -57,6 +57,9 @@ struct Rng { std::uint64_t s; std::uint32_t Next() { s ^= s << 13; s ^= s >> 7; 
 static std::vector<std::string> Fixtures() {
     std::vector<std::string> v;
     for (auto& e : fs::directory_iterator(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx")) if (e.path().extension() == ".fbx") v.push_back(e.path().string());
+    // the FBX 6.x / 7.0 files (the 6.x layout goes through the converter, FbxLegacy.hpp); not the FBX 5.0 ones, which are refused
+    for (auto& e : fs::directory_iterator(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx" / "legacy"))
+        if (e.path().extension() == ".fbx" && e.path().filename().string().rfind("old", 0) != 0) v.push_back(e.path().string());
     std::sort(v.begin(), v.end());
     return v;
 }

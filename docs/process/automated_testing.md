@@ -279,6 +279,13 @@ runner, 54 minutes build, 6.6 minutes test) and what `.github/workflows/ci.yml` 
 until a real CI run; the first run after a cache change is cold.** No job, test or lint was removed or loosened, and every job
 still runs on pull requests and on main under the same name. To check it, see `docs/try_it/ci1-ci-speedup.md`.
 
+* **Windows cross-compile (the PR check), 2026-11-24.** The MinGW toolchain comes from `scripts/ci-install-mingw.sh`: only the
+  win32 thread model (the release's, rule 21a; the script fails if the compiler says otherwise), cmake and ninja from the runner
+  image, the .deb files from an Actions cache keyed on the Ubuntu release (`apt-mingw-win32-<codename>-`, not the image version),
+  installed with no network when the cache has them, else downloaded six at a time with retries. `CCACHE_SLOPPINESS=time_macros`
+  lets ccache reuse `editor/main.cpp`, which uses `__TIME__` and was recompiled on every run (about 5 minutes); in this CI build the
+  crash handler's build stamp can therefore be stale (release.yml is unchanged). The job prints `ccache -s` and the slowest
+  build steps. `workflow_dispatch` with `pr_check_only` runs just this job on a branch.
 * **Tests run four at a time:** `ctest -j4 --timeout 300`. Before this the 805 tests ran one by one. A scan of `tests/` found no
   two tests that write the same file or listen on the same port (temp folders are unique, servers use port 0, the few fixed
   ports are each used by one test). Tests that time a real operation against a tight limit are marked `RUN_SERIAL` at the end

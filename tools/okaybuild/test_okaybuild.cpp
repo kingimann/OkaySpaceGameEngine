@@ -2022,11 +2022,66 @@ add_executable(app main.cpp "${CMAKE_BINARY_DIR}/d.cpp")
     o = capture("cd '" + (gRoot / "m").string() + "' && " + gTool + " cmake . -o b.okay 2>&1", &rc);
     check(rc == 2 && o.find("math(EXPR)") != string::npos, "the one division that overflows is an error", o);
 }
+// Round 13: what linking the editor and the player needs. $<TARGET_OBJECTS:lib> puts an OBJECT library's objects into a program,
+// LINKER:-Map=... is the linker's map file in a folder made by file(MAKE_DIRECTORY), and string(MD5) names tests.
+static void testLinkPieces() {
+    printf("test: okay-build cmake: TARGET_OBJECTS, LINKER: options, build-folder folders, string(MD5), cache properties\n");
+    fresh("linkpieces");
+    write("o.cpp", "int gFromObjects = 0;\nstruct Init { Init() { gFromObjects = 42; } } gInit; // only runs when this object is linked in\n");
+    write("main.cpp", "extern int gFromObjects;\nint main(){ return gFromObjects == 42 ? 0 : 1; }\n");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(lp CXX)
+set(KIND "a" CACHE STRING "a kind")
+set_property(CACHE KIND PROPERTY STRINGS a b)
+add_library(objs OBJECT o.cpp)
+add_executable(app main.cpp)
+target_sources(app PRIVATE $<TARGET_OBJECTS:objs>)
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/maps")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/../escape")
+target_link_options(app PRIVATE "LINKER:-Map=${CMAKE_BINARY_DIR}/maps/app.map" "SHELL:-Wl,--as-needed -Wl,--no-undefined")
+string(MD5 empty "")
+string(MD5 abc "abc")
+string(MD5 long "12345678901234567890123456789012345678901234567890123456789012345678901234567890")
+if(NOT empty STREQUAL "d41d8cd98f00b204e9800998ecf8427e" OR NOT abc STREQUAL "900150983cd24fb0d6963f7d28e17f72" OR NOT long STREQUAL "57edf4a22be3c955ac49da2e2107b67a")
+    message(FATAL_ERROR "MD5 gave ${empty} ${abc} ${long}")
+endif()
+enable_testing()
+foreach(x one two)
+    string(MD5 id "${x}")
+    add_test(NAME t_${id} COMMAND app)
+endforeach()
+get_property(tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${tests} APPEND PROPERTY LABELS module:demo)
+set_property(TEST ${tests} APPEND PROPERTY LABELS fast)
+list(LENGTH tests n)
+if(NOT n EQUAL 2)
+    message(FATAL_ERROR "tests in this folder: ${tests}")
+endif()
+)CM");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0, "the CMake checks for MD5 and the folder's tests pass", o);
+    check(o.find("not understood    1 (write outside the build folder x1)") != string::npos, "MD5, set_property(CACHE) and get_property(DIRECTORY TESTS) are understood (the one count is the folder above {bin}, refused on purpose)", o);
+    check(o.find("written 2") != string::npos && o.find("with a name already used") != string::npos && o.find("0 with a name already used") != string::npos, "tests named by MD5 get different names", o);
+    { size_t at = man.find("ctest t_"); int labelled = 0; while (at != string::npos) { size_t e = man.find("\nend\n", at); if (man.substr(at, e - at).find("labels = module:demo fast") != string::npos) ++labelled; at = man.find("ctest t_", e); }
+      check(labelled == 2, "set_property(TEST ... APPEND PROPERTY LABELS) labels both tests", man); }
+    check(man.find("-Wl,-Map={bin}/maps/app.map") != string::npos && man.find("LINKER:") == string::npos, "LINKER:a is written -Wl,a", man);
+    check(man.find("-Wl,--as-needed -Wl,--no-undefined") != string::npos && man.find("SHELL:") == string::npos, "SHELL: words are split", man);
+    check(man.find("folder {bin}/maps") != string::npos && man.find("escape") == string::npos, "file(MAKE_DIRECTORY) in the build folder is carried; one above it is not", man);
+    check(man.find("deps = objs") != string::npos || man.find(" objs\n") != string::npos, "the program depends on the OBJECT library it takes objects from", man);
+    o = sh("-f build.okay graph app", &rc);
+    check(rc == 0 && !fs::exists(gRoot / "build/ctest/maps"), "a read-only command makes no folder", o);
+    o = sh("-f build.okay -v app", &rc);
+    check(rc == 0 && o.find("-Wl,-Map=" + (gRoot / "build/ctest/maps/app.map").string()) != string::npos, "{bin} in a link flag is the build folder", o);
+    check(fs::exists(gRoot / "build/ctest/maps/app.map"), "the linker wrote its map into the folder the build made", o);
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program has the OBJECT library's objects (its static initialiser ran)", o);
+    write("bad.okay", "folder {bin}/../x\ntarget t exe\n  sources = main.cpp\nend\n");
+    o = sh("-f bad.okay targets", &rc); check(rc == 2 && o.find("folder") != string::npos, "folder above {bin} is refused", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2052,5 +2107,6 @@ int main(int argc, char** argv) {
     testConfigureTimeFiles();
     testCmakeModuleCommands();
     testGeneratedFileSafety();
+    testLinkPieces();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

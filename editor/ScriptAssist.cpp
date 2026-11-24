@@ -1871,11 +1871,12 @@ void DrawCodeSnippet(const std::string& code) {
     if (g_codeFont) ImGui::PopFont();
 }
 
-// ---- ImGuiColorTextEdit integration ----------------------------------------
+// ---- The code widget's palette and language ------------------------------------
 // A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
-// 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
-const TextEditor::Palette& OkayScriptPalette() {
-    static const TextEditor::Palette p = { {
+// 0xAABBGGRR), in scripteditor::PaletteIndex order. Known identifiers (our builtins)
+// are purple; calls are yellow.
+const scripteditor::ScriptPalette& OkayScriptPalette() {
+    static const scripteditor::ScriptPalette p = { {
         0xffc6b7a9,  // Default            (169,183,198) soft gray
         0xff3278cc,  // Keyword            (204,120,50)  orange
         0xffbb9768,  // Number             (104,151,187) blue
@@ -1904,13 +1905,12 @@ const TextEditor::Palette& OkayScriptPalette() {
     return p;
 }
 
-// OkayScript language definition: our keywords + every VM builtin as a "known
-// identifier" (yellow, with its signature/doc as the hover tooltip). Regex tokens
-// (double-quoted strings only, numbers, identifiers, punctuation); "//" line
-// comments. Built once.
-const TextEditor::LanguageDefinition& OkayScriptLangDef() {
+// OkayScript's words: our keywords, the built-in types (teal, "X (built-in type)" on
+// hover), and every VM builtin as a known name (its signature and doc as the hover
+// tooltip). "//" and "#" line comments, "/* */" block comments. Built once.
+const scripteditor::LanguageWords& OkayScriptLanguageWords() {
     static bool inited = false;
-    static TextEditor::LanguageDefinition d;
+    static scripteditor::LanguageWords d;
     if (!inited) {
         static const char* kw[] = {
             "if","else","for","while","do","return","break","continue","switch","case","default",
@@ -1922,10 +1922,9 @@ const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "short","ushort","ulong","sbyte","decimal","async","await","params","delegate","event",
             "operator","nameof","when","where","partial",
         };
-        for (auto* k : kw) d.mKeywords.insert(k);
-        // Type names OkayScript understands: teal (TypeName), with a
-        // hover tooltip. Classes / enums declared in the script are added per
-        // editor (SetUserTypes).
+        for (auto* k : kw) d.keywords.push_back(k);
+        // Type names OkayScript understands: teal, with a hover tooltip. Classes /
+        // enums declared in the script are added per editor (SetUserTypes).
         static const char* kTypes[] = {
             "GameObject","Transform","Vector3","Vector2","Quaternion","Color",
             "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
@@ -1936,40 +1935,23 @@ const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "SortedDictionary","IEnumerable",
         };
         for (auto* t : kTypes) {
-            TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (built-in type)";
-            d.mIdentifiers.insert(std::make_pair(std::string(t), id));
-            d.mTypeNames.insert(t);
+            d.types.push_back(t);
+            d.known.push_back(t);
+            d.docs.emplace(t, std::string(t) + " (built-in type)");
         }
-        d.mSemantic = true;
-        // Every completion name (curated API + all VM builtins) becomes a known
-        // identifier; attach the signature + doc so hovering shows it (widget tooltip).
+        // Every completion name (curated API + all VM builtins) is a known name; its
+        // signature + doc is what hovering it shows.
         for (const auto& name : ScriptCompletions()) {
-            TextEditor::Identifier id;
             std::string decl;
             if (const std::string* sg = ScriptSignature(name)) decl = *sg;
             if (const std::string* dc = ScriptDoc(name)) decl += (decl.empty() ? "" : "\n") + *dc;
             if (decl.empty()) decl = "OkayScript builtin";
-            id.mDeclaration = decl;
-            d.mIdentifiers.insert(std::make_pair(name, id));
+            d.known.push_back(name);
+            d.docs.emplace(name, decl);   // a type keeps its own line (emplace does not overwrite)
         }
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[$@]?\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "#.*", TextEditor::PaletteIndex::Comment));   // '#' line comments (after strings, so "#fff" stays a string)
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "'(\\\\.|[^'\\\\])'", TextEditor::PaletteIndex::CharLiteral));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[a-zA-Z_][a-zA-Z0-9_]*", TextEditor::PaletteIndex::Identifier));
-        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
-            "[\\[\\]\\{\\}\\!\\%\\^\\&\\*\\(\\)\\-\\+\\=\\~\\|\\<\\>\\?\\/\\;\\,\\.]", TextEditor::PaletteIndex::Punctuation));
-        d.mCommentStart = "/*";       // C#-style block comments
-        d.mCommentEnd = "*/";
-        d.mSingleLineComment = "//";
-        d.mCaseSensitive = true;
-        d.mAutoIndentation = true;
-        d.mName = "OkayScript";
+        d.lineComments = {"//", "#"};     // '#' comments; a "#" inside a string stays part of the string
+        d.blockStart = "/*";
+        d.blockEnd = "*/";
         inited = true;
     }
     return d;

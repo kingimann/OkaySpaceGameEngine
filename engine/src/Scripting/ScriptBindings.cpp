@@ -133,6 +133,24 @@ const char* ArgKindName(ArgKind k) {
     return "a value";
 }
 
+const char* ArgKindTypeWord(ArgKind k) {
+    switch (k) {
+        case ArgKind::Void: return "void";
+        case ArgKind::Bool: return "bool";
+        case ArgKind::Int: case ArgKind::Enum: return "int";
+        case ArgKind::Float: return "float";
+        case ArgKind::String: return "string";
+        case ArgKind::Vec2: return "Vector2";
+        case ArgKind::Vec3: return "Vector3";
+        case ArgKind::Vec4: return "Vector4";
+        case ArgKind::Quat: return "Quaternion";
+        case ArgKind::Color: return "Color";
+        case ArgKind::Object: return "GameObject";
+        case ArgKind::Component: return "Component";
+    }
+    return nullptr;
+}
+
 void AddClass(ClassBinding c) {
     if (g_building) g_building->push_back(std::move(c));
 }

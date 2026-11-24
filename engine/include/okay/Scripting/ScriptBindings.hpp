@@ -33,6 +33,9 @@ namespace okay::scriptbind {
 enum class ArgKind : std::uint8_t { Void, Bool, Int, Float, String, Vec2, Vec3, Vec4, Quat, Color, Enum, Object, Component };
 /// "a number", "text", "a vector" ... for error messages.
 const char* ArgKindName(ArgKind k);
+/// The kind as a typed-language type name: "int", "float", "string", "Vector3", "GameObject", ... (an enum is "int").
+/// One table for the generated C# API (CSharpApiGen.cpp) and any typed-language signature text. Null when unknown.
+const char* ArgKindTypeWord(ArgKind k);
 
 constexpr int kMaxBoundParams = 8;
 using MethodFn = vs::VsValue (*)(Component& self, const vs::VsValue* args, int argc);

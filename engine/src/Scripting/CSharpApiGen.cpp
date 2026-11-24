@@ -49,24 +49,8 @@ std::string Lit(const std::string& s) {
     return o + "\"";
 }
 
-const char* ArgType(sb::ArgKind k) {
-    switch (k) {
-        case sb::ArgKind::Void: return "void";
-        case sb::ArgKind::Bool: return "bool";
-        case sb::ArgKind::Int: return "int";
-        case sb::ArgKind::Enum: return "int";
-        case sb::ArgKind::Float: return "float";
-        case sb::ArgKind::String: return "string";
-        case sb::ArgKind::Vec2: return "Vector2";
-        case sb::ArgKind::Vec3: return "Vector3";
-        case sb::ArgKind::Vec4: return "Vector4";
-        case sb::ArgKind::Quat: return "Quaternion";
-        case sb::ArgKind::Color: return "Color";
-        case sb::ArgKind::Object: return "GameObject";
-        case sb::ArgKind::Component: return "Component";
-    }
-    return nullptr;
-}
+/// The C# type of a binding kind: the shared table in ScriptBindings (scriptbind::ArgKindTypeWord).
+const char* ArgType(sb::ArgKind k) { return sb::ArgKindTypeWord(k); }
 
 const char* PropType(PropertyType t) {
     switch (t) {

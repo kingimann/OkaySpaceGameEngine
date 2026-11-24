@@ -27,6 +27,28 @@ struct Rig {
 
 int main() {
     RUN_SUITE("script editor adapter");
+    {   // the script editor upgrade: folding on, Lua's block words for a language with "--" comments, the new colours set
+        ScriptEditorCodeEdit s;
+        CHECK(s.Edit().Folding());
+        LanguageWords lua;
+        lua.keywords = {"if", "then", "end"};
+        lua.lineComments = {"--"};
+        lua.blockStart = "--[["; lua.blockEnd = "]]";
+        s.SetLanguage(lua);
+        s.SetText("if a then\n  b()\nend");
+        CHECK(s.Edit().FoldEnd(0) == 2);
+        LanguageWords cs;                                  // no "--": braces only
+        cs.keywords = {"if"}; cs.lineComments = {"//"};
+        s.SetLanguage(cs);
+        CHECK(s.Edit().FoldEnd(0) == -1);
+        ScriptPalette pal{};
+        for (int i = 0; i < kScriptPaletteSize; ++i) pal[(size_t)i] = 0xff000000u | (unsigned)(i * 9);
+        s.SetPalette(pal);
+        const UI::CodePalette& p = s.Edit().Palette();
+        CHECK((p.wordMatch >> 24) != 0 && (p.indentGuide >> 24) != 0 && (p.whitespace >> 24) != 0 && p.fold == pal[(size_t)PaletteIndex::LineNumber]);
+        s.SetWordWrap(true); s.SetShowWhitespace(true); s.SetAutoClose(false);
+        CHECK(s.Edit().WordWrap() && s.Edit().ShowWhitespace() && !s.Edit().AutoClose());
+    }
     {   // text in and out: GetText always ends with a newline, lines and counts agree
         ScriptEditorCodeEdit s;
         s.SetText("a\nbb");

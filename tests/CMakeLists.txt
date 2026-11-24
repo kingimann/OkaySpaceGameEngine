@@ -1037,6 +1037,51 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# OkayScript, the standalone language (okayscript/, docs/scripting/scripting.md "Standalone OkayScript"): its tests link
+# only okayscript_lang, never the engine. Lexer, parser, interpreter, natives and errors run real code and check output.
+foreach(_oks lexer parser interpreter native errors classes)
+    add_executable(test_okayscript_lang_${_oks} ${PROJECT_SOURCE_DIR}/okayscript/tests/test_${_oks}.cpp)
+    target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
+    add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
+endforeach()
+# The same core instantiated for the engine's own value (vs::VsValue), as the engine's OkayScriptVM runs it.
+add_executable(test_okayscript_engine_value test_okayscript_engine_value.cpp)
+target_link_libraries(test_okayscript_engine_value PRIVATE okay::engine okayscript::lang)
+add_test(NAME okayscript_engine_value COMMAND test_okayscript_engine_value)
+# OkayScript hot loops (arithmetic, calls, 50-deep reads) counted with callgrind against a stored baseline; fails at
+# more than 10% slower. Release only (the baseline is for optimised code); skips without valgrind.
+add_executable(bench_okayscript bench_okayscript.cpp)
+target_link_libraries(bench_okayscript PRIVATE okay::engine)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT OKAY_SANITIZE)
+    find_program(OKAY_VALGRIND valgrind)
+    add_test(NAME okayscript_bench
+             COMMAND ${CMAKE_COMMAND} -DVALGRIND=${OKAY_VALGRIND} -DBENCH=$<TARGET_FILE:bench_okayscript>
+                     -DBASELINE=${CMAKE_CURRENT_SOURCE_DIR}/okayscript_bench_baseline.txt -DOUT=${CMAKE_CURRENT_BINARY_DIR}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_bench.cmake)
+    set_tests_properties(okayscript_bench PROPERTIES SKIP_REGULAR_EXPRESSION "okayscript_bench skipped" TIMEOUT 600 RUN_SERIAL TRUE)
+endif()
+# The okayscript CLI: each tests/okayscript_cli/<case> runs the real program and checks stdout, stderr and the exit code.
+file(GLOB _oks_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.out ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.err
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.code)
+set(_oks_names "")
+foreach(_c IN LISTS _oks_cases)
+    get_filename_component(_n ${_c} NAME_WE)
+    list(APPEND _oks_names ${_n})
+endforeach()
+list(REMOVE_DUPLICATES _oks_names)
+foreach(_n IN LISTS _oks_names)
+    add_test(NAME okayscript_cli_${_n}
+             COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:okayscript_cli> -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+                     -DCASE=${_n} -P ${PROJECT_SOURCE_DIR}/okayscript/tests/run_cli_case.cmake)
+endforeach()
+# The language and its CLI do not depend on the engine: no engine include in okayscript/, no engine library anywhere in
+# the link closure of okayscript_lang or the CLI.
+add_test(NAME okayscript_no_engine
+         COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}/okayscript
+                 -DCLOSURE=${CMAKE_BINARY_DIR}/okayscript_link_closure.txt
+                 -P ${PROJECT_SOURCE_DIR}/okayscript/tests/check_no_engine.cmake)
+
 # Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
 add_executable(test_physcore_tree test_physcore_tree.cpp)
 target_link_libraries(test_physcore_tree PRIVATE okay::physcore)

@@ -1,0 +1,6 @@
+# Instructions counted by callgrind inside OkayScriptVM::Load for tests/bench_okayscript.cpp (Release, GCC 13,
+# Linux x86-64), 2026-11-24. The okayscript_bench test fails when a case is more than 10% over its line.
+# For reference, main before the OkayScript core: arith 236238146, calls 1111263748, deep 173342680.
+arith 218440801
+calls 196400852
+deep 100609320

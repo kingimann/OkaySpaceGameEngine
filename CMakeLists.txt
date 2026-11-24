@@ -267,6 +267,10 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 # ---- The engine library ----------------------------------------------
 # Engine modules (docs/design/modular_gameplay_contracts.md): read engine/modules/*/module.okaymodule. Stage 0 only groups
 # files and labels tests (ctest -L module:<name>); the build itself is unchanged.
+# ---- OkayScript: the engine-independent scripting language (library, CLI, tests) ----
+# Before the engine: the engine's OkayScriptVM links okayscript_lang (its lexer lives there).
+add_subdirectory(okayscript)
+
 include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
 okay_modules_read()
 add_subdirectory(engine)

@@ -456,6 +456,8 @@ void NetworkManager::NoteSpawnedPawn(const std::string& netId, GameObject* go) {
 }
 
 bool NetworkManager::ClientMaySendXform(const Client& from, const std::string& id) const {
+    // An object the host handed to a player: only that player moves it.
+    if (auto own = m_netOwners.find(id); own != m_netOwners.end()) return own->second == from.id;
     if (!authoritativeMovement) return true;
     if (id.empty() || m_pawnOwner.count(id)) return false;
     const std::string prefix = "sp/" + std::to_string(from.id) + "/";

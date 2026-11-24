@@ -396,7 +396,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
             {"Key", "space"}, {"KeyDown", "space"}, {"KeyUp", "space"},
             {"Timer", "1"}, {"Wait", "1"}, {"Repeat", "1"}, {"DoN", "1"}, {"Chance", "0.5"}, {"Toggle", "x"}, {"Compare", ">"},
             {"NetGetVar", "x"}, {"NetSetVar", "x"}, {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
-            {"OnNetRpc", "rpc"}, {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
+            {"OnNetRpc", "rpc"}, {"OnNetworkEvent", "event"}, {"NetSendEvent", "event"},
+            {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
         auto it = kDefaults.find(type);
         while (args.size() < n) args.push_back(it != kDefaults.end() ? it->second : std::string());
         (void)err;
@@ -408,7 +409,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
             base == "OnSwipe" ||
-            base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
+            base == "OnNetRpc" || base == "OnNetworkEvent" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
             return MakeNode(base, a, err);
@@ -433,10 +434,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
         type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent" ||
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
-        type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
+        type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent" ||
+        type == "OnPlayerJoined" || type == "OnPlayerLeft" || type == "OnOwnershipChanged" || type == "OnHostMigrated")
         return std::make_unique<EventNode>();
     if (FindQuickBlock(type)) return std::make_unique<EventNode>();   // normally expanded before this (Parse); a bare one just passes flow on
-    if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
+    if (type == "OnEvent" || type == "OnNetRpc" || type == "OnNetworkEvent") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
     // The editor writes the encoded steps as one quoted arg; hand-written files may
     // split them into tokens, so join everything back up first.
@@ -652,6 +654,24 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetStartMatch")  return std::make_unique<NetStartMatchNode>();
     if (type == "NetMatchStarted") return std::make_unique<NetMatchStartedNode>();
     if (type == "NetAllReady")    return std::make_unique<NetAllReadyNode>();
+    if (type == "NetHostOrJoin")  { int p = args.empty() ? 45000 : ArgInt(args[0], 45000); return std::make_unique<NetHostOrJoinNode>(p); }
+    if (type == "NetSendEvent")   { if (!need(1)) return nullptr; return std::make_unique<NetSendEventNode>(args[0]); }
+    if (type == "NetEventSender") return std::make_unique<NetEventSenderNode>();
+    if (type == "NetPlayerCount") return std::make_unique<NetPlayerCountNode>();
+    if (type == "NetPlayerIdAt")  return std::make_unique<NetPlayerIdAtNode>();
+    if (type == "NetPlayerName")  return std::make_unique<NetPlayerNameNode>();
+    if (type == "NetLastError")   return std::make_unique<NetLastErrorNode>();
+    if (type == "NetTime")        return std::make_unique<NetTimeNode>();
+    if (type == "NetPing")        return std::make_unique<NetPingNode>();
+    if (type == "NetIsMine")      return std::make_unique<NetIsMineNode>();
+    if (type == "NetIsPredicted") return std::make_unique<NetIsPredictedNode>();
+    if (type == "NetGiveOwnership") return std::make_unique<NetGiveOwnershipNode>();
+    if (type == "NetRequestOwnership") return std::make_unique<NetRequestOwnershipNode>();
+    if (type == "NetOwner")       return std::make_unique<NetOwnerNode>();
+    if (type == "NetStats")       return std::make_unique<NetStatsNode>();
+    if (type == "NetSimulate")    return std::make_unique<NetSimulateNode>();
+    if (type == "NetShowStats")   return std::make_unique<NetShowStatsNode>();
+    if (type == "NetMigrating")   return std::make_unique<NetMigratingNode>();
     // Steam.
     if (type == "SteamName")        return std::make_unique<SteamNameNode>();
     if (type == "SteamIsUnlocked")  { if (!need(1)) return nullptr; return std::make_unique<SteamUnlockedNode>(args[0]); }

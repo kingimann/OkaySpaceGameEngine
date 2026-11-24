@@ -87,11 +87,15 @@ std::vector<FoundRef> ExtractMaterialRefs(const std::string& text);
 /// Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
 /// quoted strings, `key=value` values and bare words that end in a known asset extension.
 std::vector<FoundRef> ExtractTextRefs(const std::string& text);
+/// `.obj`, `.mtl`, `.fbx` and `.dae`: Wavefront `mtllib` and `map_*` lines (options skipped, spaces
+/// kept) and any other path in the file whose extension is one this engine imports. A binary FBX
+/// keeps those paths as plain text, so the same scan finds them. Spans cover the path text.
+std::vector<FoundRef> ExtractModelRefs(const std::string& text);
 
 struct ScanOptions {
     bool createMetas = true;           ///< write a `.okaymeta` for assets that have none
     bool indexUnmetaed = false;        ///< with createMetas off: still index assets that have no meta (in memory only, nothing is written);
-                                       ///< they get a GUID that lasts for the session and a meta appears only when something is stored (labels, settings, EnsureMeta)
+                                       ///< the GUID is derived from the project path, so a new session finds the same one; a meta appears only when something is stored (labels, settings, EnsureMeta)
     bool detectMoves = true;           ///< follow moved / renamed files by GUID, hash and name
     bool matchByName = true;           ///< last resort: one orphan meta + one new file with the same name and type
     bool verifyHashes = true;          ///< hash every file on a first scan (false: trust a meta's hash when the size matches)
@@ -226,6 +230,14 @@ public:
     bool EnsureMeta(const Guid& guid, std::string* error = nullptr);
     /// Remove the metas of orphaned assets from disk. Returns how many.
     int RemoveOrphanMetas();
+    /// Watch the scanned folder with the operating system (inotify on Linux, ReadDirectoryChangesW
+    /// on Windows). False when nothing was scanned or the watch cannot be opened. The watcher is
+    /// stopped when the database is destroyed.
+    bool StartWatch(std::string* error = nullptr);
+    /// Project-relative paths that changed since the last poll (a file or a folder). Empty when
+    /// nothing changed or no watch is running.
+    std::vector<std::string> PollWatch();
+    void StopWatch();
 
     // --- Labels -------------------------------------------------------------------
     bool SetLabels(const Guid& guid, const std::vector<std::string>& labels, std::string* error = nullptr);

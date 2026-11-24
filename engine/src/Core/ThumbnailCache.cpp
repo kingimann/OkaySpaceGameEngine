@@ -5,6 +5,7 @@
 #include "okay/Audio/AudioClip.hpp"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace okay {
 
@@ -174,6 +175,52 @@ private:
     std::vector<std::string> m_exts;
     std::function<Image(const std::string&)> m_fn;
 };
+// A picture of a .okaydata file: one bar per field line, drawn to fill the preview size
+// the cache asked for, so a small tile and a large tile are the same layout at two scales.
+class DataThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    bool Handles(const std::string& e) const override { return e == "okaydata"; }
+    Image Render(const std::string& absolutePath, std::string* error) override {
+        std::ifstream in(absolutePath);
+        if (!in) { if (error) *error = "cannot read the data file"; return Image(); }
+        std::vector<int> lens;
+        std::string line;
+        while (std::getline(in, line) && lens.size() < 12) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            lens.push_back(static_cast<int>(line.size()));
+        }
+        if (lens.empty()) { if (error) *error = "the data file has no fields"; return Image(); }
+        const int side = PreviewSize();
+        Image img(side, side);
+        img.Fill(Color(0.10f, 0.14f, 0.20f, 1.0f));
+        const int count = static_cast<int>(lens.size());
+        int margin = side / 12;
+        if (margin < 1) margin = 1;
+        if (margin * 2 >= side) margin = 0;
+        const int inner = side - margin * 2;
+        int maxLen = 1;
+        for (int n : lens) if (n > maxLen) maxLen = n;
+        int gap = count > 1 ? std::max(1, side / 48) : 0;
+        int barH = (inner - gap * (count - 1)) / count;
+        if (barH < 1) { gap = 0; barH = std::max(1, inner / count); }
+        const Color bar(0.35f, 0.78f, 0.95f, 1.0f);
+        int y = margin;
+        for (int i = 0; i < count; ++i) {
+            int w = static_cast<int>(static_cast<long long>(inner) * lens[static_cast<std::size_t>(i)] / maxLen);
+            if (w < 1) w = 1;
+            int h = (i == count - 1) ? (side - margin - y) : barH;
+            if (h < 1) h = 1;
+            const int x1 = std::min(side, margin + w);
+            const int y1 = std::min(side, y + h);
+            for (int yy = y; yy < y1; ++yy)
+                for (int x = margin; x < x1; ++x) img.SetPixel(x, yy, bar);
+            y += h + gap;
+        }
+        return img;
+    }
+};
+
 } // namespace
 
 // --- Cache -------------------------------------------------------------------------------------------
@@ -182,6 +229,7 @@ ThumbnailCache::ThumbnailCache(Options options) : m_opt(std::move(options)) {
     m_opt.size = std::max(16, m_opt.size);
     if (m_opt.imageGenerator) m_generators.push_back(std::make_shared<ImageThumbnailGenerator>());
     if (m_opt.audioGenerator) m_generators.push_back(std::make_shared<WaveformThumbnailGenerator>());
+    if (m_opt.dataGenerator) m_generators.push_back(std::make_shared<DataThumbnailGenerator>());
 }
 
 void ThumbnailCache::AddGenerator(std::shared_ptr<ThumbnailGenerator> generator) {
@@ -206,7 +254,7 @@ std::string ThumbnailCache::DiskPathFor(const Guid& guid, std::uint64_t hash) co
 }
 
 bool ThumbnailCache::InMemory(const Guid& guid, std::uint64_t hash) const {
-    return m_index.count(Key{guid, hash}) != 0;
+    return m_index.count(MakeKey(guid, hash)) != 0;
 }
 
 bool ThumbnailCache::OnDisk(const Guid& guid, std::uint64_t hash) const {
@@ -270,7 +318,7 @@ void ThumbnailCache::RemoveStaleOnDisk(const Guid& guid, const std::string& keep
 }
 
 ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, const std::string& path, AssetType kind) {
-    const Key key{guid, hash};
+    const Key key = MakeKey(guid, hash);
     // 1. Memory.
     auto hit = m_index.find(key);
     if (hit != m_index.end()) {
@@ -303,7 +351,10 @@ ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, 
         if (!(*it)->Handles(ext)) continue;
         Image img;
         std::string err;
-        try { img = (*it)->Render(path, &err); } catch (...) { img = Image(); }
+        try {
+            (*it)->SetPreviewSize(m_opt.size);
+            img = (*it)->Render(path, &err);
+        } catch (...) { img = Image(); }
         if (!img.Valid()) {
             ++m_stats.failures;
             return Insert(key, Placeholder(kind, ext, true), true, true, Source::Placeholder);

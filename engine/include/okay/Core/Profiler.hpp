@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <fstream>
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/Jobs.hpp"
 
 namespace okay {
 
@@ -140,6 +141,18 @@ public:
         if (!enabled || !OnOwnerThread()) return;
         if (!std::isfinite(frameMs) || frameMs < 0.0) frameMs = 0.0;   // one bad number must not poison the averages
         lastFrameMs = frameMs;
+        const JobFrameNote jobs = NoteRunningJobs();
+        if (jobs.live) {
+            double busy = jobs.busyMs - m_prevJobBusy;
+            if (busy < 0.0) busy = 0.0;
+            int calls = 0;
+            if (jobs.completed >= m_prevJobDone && jobs.completed - m_prevJobDone < 1000000000ull)
+                calls = static_cast<int>(jobs.completed - m_prevJobDone);
+            m_prevJobBusy = jobs.busyMs;
+            m_prevJobDone = jobs.completed;
+            if (busy > 0.0 || calls > 0)
+                m_build.push_back(Bucket{"Jobs", busy, busy, calls, 0, 0.0});
+        }
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;
         cpuMs = cpu;
@@ -300,6 +313,8 @@ private:
     int     m_count = 0;
     std::chrono::steady_clock::time_point m_frameStart{}, m_epoch{};
     bool    m_haveEpoch = false;
+    double  m_prevJobBusy = 0.0;
+    std::uint64_t m_prevJobDone = 0;
 
     static std::chrono::steady_clock::time_point Now() { return std::chrono::steady_clock::now(); }
     static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }

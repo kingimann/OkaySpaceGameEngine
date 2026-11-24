@@ -841,7 +841,30 @@ bool SaveStore::ExportRaw(const std::string& slot, std::string& bytes, SaveSlotI
     bytes.clear();
     if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
     std::string raw, rerr;
-    if (!savefmt::ReadFileCapped(SlotPath(slot), m_maxBytes, raw, &rerr)) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
+    if (!savefmt::ReadFileCapped(SlotPath(slot), m_maxBytes, raw, &rerr)) {
+        // An older .okaygame slot has no .okayslot yet. Export it in the current container without
+        // writing that file or retiring the legacy one (sync can upload it before anyone saves).
+        if (!LegacyOnly(slot)) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
+        wholescene::State st;
+        SaveSlotInfo meta;
+        bool usedBackup = false;
+        std::string err;
+        if (wholescene::ReadLegacy(LegacySlotPath(slot), slot, st, meta, &usedBackup, &err) != wholescene::LegacyStatus::Ok) {
+            if (error) *error = err.empty() ? "No save in slot \"" + slot + "\"" : err;
+            return false;
+        }
+        SaveDocument doc;
+        wholescene::ToDocument(st, doc);
+        meta.version = 1;
+        meta.wholeScene = true;
+        meta.legacyFile = false;
+        meta.fromBackup = usedBackup;
+        if (meta.kind.empty()) meta.kind = SlotKind::Manual;
+        if (meta.savedAtMs == 0) meta.savedAtMs = meta.savedAt * 1000;
+        bytes = BuildContainer(meta, doc.Serialize());
+        if (info) { *info = meta; info->slot = slot; info->incompatible = meta.version > m_dataVersion; }
+        return true;
+    }
     Parsed p;
     std::string why;
     const FileStatus st = ParseContainer(raw, raw.size(), p, &why);

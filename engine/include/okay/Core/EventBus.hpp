@@ -283,4 +283,20 @@ private:
     std::shared_ptr<int> m_alive;
 };
 
+/// The game paused or resumed. Published by Game on the calling thread when the paused flag changes.
+struct GamePaused { bool paused = false; };
+/// A quit was asked for. `accepted` is false when the quit guard vetoed it. ForceQuit from another
+/// thread does not publish (the bus is not thread safe); RequestQuit does, on its own thread.
+struct GameQuit {
+    std::string reason;
+    int code = 0;
+    bool accepted = true;
+};
+
+/// The bus Game publishes on. One per process. Not thread safe.
+inline EventBus& EngineBus() {
+    static EventBus bus;
+    return bus;
+}
+
 } // namespace okay

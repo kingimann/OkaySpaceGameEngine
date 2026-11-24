@@ -32707,6 +32707,21 @@ void DrawInspector(EditorState& ed) {
     ImGui::Spacing();
     }   // the Dear ImGui card
 
+    // ---- Networked: one tick puts this object on the network (a Network Sync: its transform follows
+    // the peer that owns it, smoothed). Shown once the scene has a Network Manager, or the object syncs.
+    if (go->GetComponent<NetworkSync>() || ed.scene().FindObjectOfType<NetworkManager>()) {
+        bool networked = go->GetComponent<NetworkSync>() != nullptr;
+        if (ImGui::Checkbox("Networked##objnet", &networked)) {
+            ed.PushUndo();
+            if (networked) go->AddComponent<NetworkSync>();
+            else go->RemoveComponent<NetworkSync>();
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Every player sees this object move: its position and rotation follow the player who owns it "
+                              "(the host, unless its Network Sync says otherwise), smoothed between updates.");
+    }
+
     // ---- Prefab instance header, per-property marks and the changes list ------------------
     // "Prefab: <name>" with Open / Select Asset / Revert All / Apply All / Create Variant / Update All / Unpack, then what differs
     // from the prefab per component and field (logic: PrefabEdit.cpp over PrefabTools). Buttons queue; RunPrefabRequests carries
@@ -42298,9 +42313,10 @@ void DrawInspector(EditorState& ed) {
     if (auto* nm = dynamic_cast<NetworkManager*>(curComp)) {
         if (CompHeader("Network Manager", nm, &toRemove)) {
             oked::DrawNetworkManagerAntiCheat(ed, nm);   // one-click anti-cheat while the scene has none
-            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
+            const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play",
+                                   "Host or Join on Play (this PC / LAN test)"};
             int m = (int)nm->autoStart;
-            if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
+            if (ImGui::Combo("Auto Start##nm", &m, modes, 4)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
             oked::FieldTip("Auto Start##nm");
             int port = nm->autoPort;
             ImGui::SetNextItemWidth(120);
@@ -42321,6 +42337,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
             oked::FieldTip("Room (lobby)##nm");
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
+            if (ImGui::TreeNode("Test a bad network##nm")) {
+                ImGui::SliderFloat("Added delay##nm", &nm->simulateLatencyMs, 0.0f, 500.0f, "%.0f ms");
+                ImGui::SliderFloat("Random extra delay##nm", &nm->simulateJitterMs, 0.0f, 200.0f, "%.0f ms");
+                ImGui::SliderFloat("Packets lost##nm", &nm->simulateLossPercent, 0.0f, 50.0f, "%.0f %%");
+                ImGui::TreePop();
+            }
 
             SectionHeader("Host settings");
             static char srvBuf[64]; static NetworkManager* sbound = nullptr;
@@ -45088,7 +45110,11 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
             if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) {
+                // A new one hosts on Play, or joins the copy already hosting on this PC: multiplayer with no setup.
+                go->AddComponent<NetworkManager>()->autoStart = NetworkManager::AutoStart::Auto;
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }

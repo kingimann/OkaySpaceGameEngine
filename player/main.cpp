@@ -2893,6 +2893,16 @@ int main(int argc, char** argv) {
             OkayUI::EndChild();
             OkayUI::End();
         }
+        // The network stats overlay (NetworkManager::showStatsOverlay, net.show_stats, Show Network Stats): top right.
+        if (okay::NetworkManager* netOverlay = okay::NetworkManager::OverlayManager()) {
+            const std::vector<std::string> netLines = netOverlay->StatsLines();
+            if (!netLines.empty()) {
+                int ow = 0, oh = 0; renderer->OutputSize(&ow, &oh);
+                OkayUI::Begin("Network", (float)ow - 344.0f, 24.0f, 320.0f, 44.0f + 18.0f * (float)netLines.size());
+                for (const std::string& nl : netLines) OkayUI::Text(nl.c_str());
+                OkayUI::End();
+            }
+        }
         if (uiFrame) {
             int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
             OkayUI::EndFrameData(uw, uh);

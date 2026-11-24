@@ -4,7 +4,7 @@
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIFilePicker.hpp"
-#include "okay/Components/Animator.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Scripting/ScriptVM.hpp"
 #include <algorithm>
@@ -504,7 +504,7 @@ return S
         Scene scene{"D"};
         GameObject* g = scene.CreateGameObject("Picker");
         g->AddComponent<UIFilePicker>();
-        g->AddComponent<Animator>();
+        g->AddComponent<AnimStateMachine>();   // what the typed table's Animator finds
         auto* sc = g->AddComponent<ScriptComponent>("lua");
         std::string err;
         CHECK(sc->LoadSource(R"LUA(
@@ -514,7 +514,7 @@ function S:Start()
     rootOk = pcall(function() fp:SetRoot("/") end)
     openOk = pcall(function() fp:Open("passwd") end)
     animOk, animErr = pcall(function() GetComponent("Animator"):SetCharacterModel("/etc/passwd") end)
-    rmOk = pcall(function() GetComponent("Animator"):SetRootMotion(false) end)   -- the rest of Animator still works
+    rmOk, rmErr = pcall(function() GetComponent("Animator"):SetRootMotion(false) end)   -- the rest of Animator still works
 end
 return S
 )LUA", &err));
@@ -522,6 +522,7 @@ return S
         scene.Start();
         CHECK(!sc->VM()->GetGlobal("rootOk").AsBool());
         CHECK(!sc->VM()->GetGlobal("openOk").AsBool());
+        if (!sc->VM()->GetGlobal("rmOk").AsBool()) std::cerr << "  allowed call failed: " << sc->VM()->GetGlobal("rmErr").AsString() << "\n";
         CHECK(!sc->VM()->GetGlobal("animOk").AsBool());
         CHECK(sc->VM()->GetGlobal("animErr").AsString().find("SetCharacterModel") != std::string::npos);
         CHECK(sc->VM()->GetGlobal("rmOk").AsBool());

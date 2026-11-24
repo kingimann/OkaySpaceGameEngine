@@ -622,10 +622,10 @@ inline const std::vector<VsDef>& Registry() {
         {"NetJoin",        "Join Game",      CAT_NET, true, {""}, {}, {}, 1, "host [port]"},
         {"NetDisconnect",  "Disconnect",     CAT_NET, true, {""}, {}, {}, 0, nullptr},
         {"NetConnected",   "Is Connected",   CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
-        {"NetIsServer",    "Is Server",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetIsServer",    "Is Host",        CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
         {"NetIsClient",    "Is Client",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
         {"NetPeers",       "Peer Count",     CAT_NET, false, {}, {}, {"Count"}, 0, nullptr},
-        {"NetId",          "My Net Id",      CAT_NET, false, {}, {}, {"Id"}, 0, nullptr},
+        {"NetId",          "My Player Id",   CAT_NET, false, {}, {}, {"Id"}, 0, nullptr},
         {"NetSend",        "Send Message",   CAT_NET, true, {""}, {"Data"}, {}, 1, "channel"},
         {"NetSetVar",      "Set Net Var",    CAT_NET, true, {""}, {"Value"}, {}, 1, "name"},
         {"NetGetVar",      "Get Net Var",    CAT_NET, false, {}, {}, {"Value"}, 1, "name"},
@@ -641,6 +641,30 @@ inline const std::vector<VsDef>& Registry() {
         {"SyncVarSet",     "Set Sync Var",   CAT_NET, true, {""}, {"Value"}, {}, 1, "name"},
         {"SyncVarGet",     "Get Sync Var",   CAT_NET, false, {}, {}, {"Value"}, 1, "name"},
         {"OnNetRpc",       "On Object RPC",  CAT_NET, false, {""}, {}, {"Value"}, 1, "rpc name"},
+        // The easy layer: the same on the host and every client.
+        {"NetHostOrJoin",  "Host or Join",   CAT_NET, true, {""}, {}, {}, 1, "port (45000)"},
+        {"OnPlayerJoined", "On Player Joined", CAT_NET, false, {""}, {}, {}, 0, nullptr},
+        {"OnPlayerLeft",   "On Player Left", CAT_NET, false, {""}, {}, {}, 0, nullptr},
+        {"NetSendEvent",   "Send Network Event", CAT_NET, true, {""}, {"Data"}, {}, 1, "event name"},
+        {"OnNetworkEvent", "On Network Event", CAT_NET, false, {""}, {}, {"Data"}, 1, "event name"},
+        {"NetEventSender", "Event Sender",   CAT_NET, false, {}, {}, {"Player Id"}, 0, nullptr},
+        {"NetPlayerCount", "Player Count",   CAT_NET, false, {}, {}, {"Count"}, 0, nullptr},
+        {"NetPlayerIdAt",  "Player Id At",   CAT_NET, false, {}, {"Index"}, {"Id"}, 0, nullptr},
+        {"NetPlayerName",  "Player Name",    CAT_NET, false, {}, {"Player Id"}, {"Name"}, 0, nullptr},
+        {"NetLastError",   "Network Error",  CAT_NET, false, {}, {}, {"Text"}, 0, nullptr},
+        {"NetTime",        "Network Time",   CAT_NET, false, {}, {}, {"Seconds"}, 0, nullptr},
+        {"NetPing",        "Ping",           CAT_NET, false, {}, {}, {"Ms"}, 0, nullptr},
+        {"NetIsMine",      "Is Mine",        CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetIsPredicted", "Is Locally Predicted", CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetGiveOwnership", "Give Ownership", CAT_NET, true, {""}, {"Player Id"}, {}, 0, nullptr},
+        {"NetRequestOwnership", "Request Ownership", CAT_NET, true, {""}, {}, {}, 0, nullptr},
+        {"NetOwner",       "Owner",          CAT_NET, false, {}, {}, {"Player Id"}, 0, nullptr},
+        {"NetStats",       "Network Stats",  CAT_NET, false, {}, {}, {"Ping ms", "Loss %", "In B/s", "Out B/s"}, 0, nullptr},
+        {"OnOwnershipChanged", "On Ownership Changed", CAT_NET, false, {""}, {}, {}, 0, nullptr},
+        {"NetSimulate",    "Simulate Bad Network", CAT_NET, true, {""}, {"Latency ms", "Jitter ms", "Loss %"}, {}, 0, nullptr},
+        {"NetShowStats",   "Show Network Stats", CAT_NET, true, {""}, {"Show"}, {}, 0, nullptr},
+        {"OnHostMigrated", "On Host Migrated", CAT_NET, false, {""}, {}, {}, 0, nullptr},
+        {"NetMigrating",   "Is Migrating",   CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
         {"SteamName",      "Steam Name",     CAT_NET, false, {}, {}, {"Name"}, 0, nullptr},
         {"SteamIsUnlocked","Achievement Unlocked", CAT_NET, false, {}, {}, {"Bool"}, 1, "achievement id"},
         {"SteamUnlock",    "Unlock Achievement",   CAT_NET, true, {""}, {}, {}, 1, "achievement id"},
@@ -1024,7 +1048,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
         type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" ||
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" || type == "OnQuestCompleted" ||
-        type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent") return type;
+        type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent" ||
+        type == "OnPlayerJoined" || type == "OnPlayerLeft" || type == "OnOwnershipChanged" || type == "OnHostMigrated") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnSequenceEvent") return arg.empty() ? std::string("OnSequenceEvent") : "OnSequenceEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
@@ -1032,6 +1057,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
+    if (type == "OnNetworkEvent") return "OnNetworkEvent:" + tok(arg, "event");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
     if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged" || type == "OnDamaged") return type;
     if (type == "OnButtonClicked") return "OnButtonClicked:" + tok(arg, "Button");
@@ -1099,6 +1125,7 @@ public:
         static const std::map<std::string, std::string> kArg = {
             {"Compare", ">"}, {"Timer", "1"}, {"Const", "0"}, {"OnKey", "space"}, {"OnKeyUp", "space"},
             {"OnTimer", "1"}, {"OnEvent", "Event"}, {"OnNetRpc", "rpc"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"NetSendEvent", "event"}, {"OnNetworkEvent", "event"},
             {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
@@ -1901,6 +1928,18 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetGetVar")     return "net_get(" + q(lit("x")) + ")";
     if (t == "SyncVarGet")    return "net_syncvar_get(" + q(lit("var")) + ")";
     if (t == "OnNetRpc")      return "value";
+    if (t == "OnNetworkEvent") return "data";
+    if (t == "NetEventSender") return "sender";
+    if (t == "NetPlayerCount") return "net.player_count()";
+    if (t == "NetPlayerIdAt") return "net.players()[" + VsInput(g, nodeId, 0, "0") + "]";
+    if (t == "NetPlayerName") return "net.player_name(" + VsInput(g, nodeId, 0, "0") + ")";
+    if (t == "NetLastError")  return "net.error()";
+    if (t == "NetTime")       return "net.time()";
+    if (t == "NetPing")       return "net.ping()";
+    if (t == "NetIsMine")     return "net.is_mine()";
+    if (t == "NetIsPredicted") return "net.is_predicted()";
+    if (t == "NetOwner")      return "net.owner()";
+    if (t == "NetMigrating")  return "net.migrating()";
     if (t == "NetMatchStarted") return "net_match_started()";
     if (t == "NetAllReady")   return "net_all_ready()";
     if (t == "SteamName")     return "steam_name()";
@@ -2226,6 +2265,12 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         out += ind + "net_join(" + q(h) + ", " + VsNum(port, "45000") + ")\n";
     }
     else if (t=="NetDisconnect") out += ind + "net_disconnect()\n";
+    else if (t=="NetHostOrJoin") out += ind + "net.host_or_join(" + VsNum(arg("45000"), "45000") + ")\n";
+    else if (t=="NetGiveOwnership") out += ind + "net.give(\"\", " + in(0, "0") + ")\n";
+    else if (t=="NetRequestOwnership") out += ind + "net.request()\n";
+    else if (t=="NetSimulate")   out += ind + "net.simulate(" + in(0, "0") + ", " + in(1, "0") + ", " + in(2, "0") + ")\n";
+    else if (t=="NetShowStats")  out += ind + "net.show_stats(" + in(0, "true") + ")\n";
+    else if (t=="NetSendEvent")  out += ind + "net.send(" + q(arg("event")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="NetSend")       out += ind + "net_send(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetSetVar")     out += ind + "net_set(" + q(arg("x")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetChat")       out += ind + "net_chat(" + in(0, "\"\"") + ")\n";
@@ -2528,6 +2573,36 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
             for (auto* n : kv.second) chain(n->id, "        ");
             out += "    }\n";
         }
+    }
+    // The easy layer's events: the engine calls on_player_joined(id, name),
+    // on_player_left(id) and on_network_event(name, data, from) on every script.
+    if (!ofType("OnPlayerJoined").empty()) {
+        open("void on_player_joined(value, event_name)");
+        for (auto* n : ofType("OnPlayerJoined")) chain(n->id, "        ");
+        out += "    }\n";
+    }
+    if (!ofType("OnPlayerLeft").empty()) {
+        open("void on_player_left(value)");
+        for (auto* n : ofType("OnPlayerLeft")) chain(n->id, "        ");
+        out += "    }\n";
+    }
+    if (!ofType("OnHostMigrated").empty()) {   // on_host_migrated(previous id of the new host)
+        open("void on_host_migrated(value)");
+        for (auto* n : ofType("OnHostMigrated")) chain(n->id, "        ");
+        out += "    }\n";
+    }
+    if (!ofType("OnNetworkEvent").empty()) {
+        std::map<std::string, std::vector<const VsEditNode*>> byName;
+        for (auto* n : ofType("OnNetworkEvent")) byName[n->arg.empty() ? std::string("event") : n->arg].push_back(n);
+        open("void on_network_event(event_name, data, sender)");
+        for (auto& kv : byName) {
+            std::string nm;   // the name as a string literal
+            for (char c : kv.first) { if (c == '"' || c == '\\') nm += '\\'; nm += c; }
+            out += "        if (event_name == \"" + nm + "\") {\n";
+            for (auto* n : kv.second) chain(n->id, "            ");
+            out += "        }\n";
+        }
+        out += "    }\n";
     }
     // Object RPCs: one OnNetRpc_<name>(value) per name (net_obj_rpc delivers it).
     {

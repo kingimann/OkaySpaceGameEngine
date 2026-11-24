@@ -166,13 +166,8 @@ MenuKb* kbSlot(int id) {
 }
 CurMenu g_curMenu;
 CurMenu g_menuStack[4];
-struct TabSel { int bar = 0; int sel = 0; };
 TabSel g_tabSel[16];
-// The remembered order and widths of a Reorderable tab bar's tabs (the tabs are placed from last frame's widths, so a drag can swap them).
-struct TabOrder { int bar = 0; int n = 0; int ids[32] = {}; float w[32] = {}; unsigned long long lastFrame = 0; };
 TabOrder g_tabOrders[16];
-struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0;
-                   int flags = 0; TabOrder* ord = nullptr; int seen[32] = {}; int nSeen = 0; bool fresh = false; };
 TabBarCtx g_tabBar;
 // Hover delay tracking (IsItemHovered with the Delay / Stationary flags) and the tooltip scope.
 unsigned g_hoverKey = 0; unsigned long long g_hoverFrame = 0; double g_hoverStart = 0.0;
@@ -183,7 +178,6 @@ Theme g_theme;
 
 // Scoped color-override stack: each entry remembers a theme color slot and its prior
 // value, so PopStyleColor can restore it. Reset every BeginFrame to survive imbalance.
-struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
 ColorSave g_colStack[64];
 int       g_colTop = 0;
 // The base-theme value of a colour that was never set (what GetStyleColorVec4 answers; the classic look's default).
@@ -282,13 +276,6 @@ extern int g_ncards;         // defined with the card stack below (reset here in
 
 // Drag & drop: a single int payload. `armed` records a press on a source before it
 // has moved far enough to count as a drag; `active` means a drag is in flight.
-struct DragDrop {
-    bool  active = false;
-    int   payload = 0;
-    bool  armed = false;
-    int   armPayload = 0;
-    float armX = 0, armY = 0;
-};
 DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
@@ -313,10 +300,6 @@ float* floatState(int id, float dflt) {
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 unsigned long long g_frameCount = 0;              // frames begun so far
 // Typed-payload drag and drop (BeginDragDropSource / BeginDragDropTarget), next to the older int-payload one (g_dd).
-struct TypedDrag {
-    bool active = false, armed = false, hasPayload = false; int srcId = 0; float armX = 0, armY = 0;
-    DragPayload pay; char preview[64] = {0};
-};
 TypedDrag g_tdd;
 bool g_tddExt = false, g_tddExtSeen = false, g_tddExtReleased = false;   // the drag came from outside OkayUI (SetExternalDragDrop)
 float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
@@ -914,7 +897,6 @@ bool hit(float x, float y, float w, float h) {
 
 // A float to a pixel coordinate: NaN becomes `nan`, anything huge is clamped (a plain (int) cast
 // of either is undefined behaviour).
-inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 
 constexpr int kMaxHexSlots = 16;
 
@@ -1013,7 +995,7 @@ void BeginFrame(const Input& in) {
     g_tbl.active = false;                  // reset table layout
 }
 
-static float g_btnAlignX = 0.5f;   // StyleVar_ButtonTextAlign (x): 0 left, 0.5 centred, 1 right, inside a 12-pixel padding
+float ui_core::g_btnAlignX = 0.5f;   // StyleVar_ButtonTextAlign (x): 0 left, 0.5 centred, 1 right, inside a 12-pixel padding
 bool Button(int id, float x, float y, float w, float h, const char* label) {
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -2220,7 +2202,7 @@ namespace {
 // between the cells of a formatted drag row and before its label).
 } // namespace
 namespace ui_core { float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -1.0f, g_innerX = -1.0f; }
-namespace {
+namespace ui_core {
 inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) {
     const float h = rowHeight > 0.0f ? rowHeight : (g_textRowH > 0.0f ? g_textRowH : rowH());
@@ -2256,7 +2238,7 @@ struct ParaLines {
 // Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks. With Dear ImGui's text rows (TextRowHeight > 0)
 // the lines of one paragraph are one text line apart (no item spacing between them), and the lines after the first fill the width
 // from the left edge (`maxRest`) even when the first one began after another item on its line.
-void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest = -1.0f) {
+void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest) {
     char line[512]; int n = 0;
     const char* p = text;
     const bool imguiRows = g_textRowH > 0.0f;

@@ -9,6 +9,7 @@
 #include "ConsolePanel.hpp"        // ConsoleLog
 #include "okay/Lua/Lua.hpp"         // okay::lua::kKeywords
 #include "okay/Lua/LuaScriptVM.hpp" // LuaLanguageWords: the bound engine names and their docs for Lua scripts
+#include "ScriptAssistBindings.hpp" // components' members, argument hints and docs from the engine's binding table
 
 namespace oked {
 
@@ -1029,7 +1030,8 @@ const std::unordered_map<std::string, std::string>& ScriptSignatureMap() {
 const std::string* ScriptSignature(const std::string& name) {
     const auto& sig = ScriptSignatureMap();
     auto it = sig.find(name);
-    return it == sig.end() ? nullptr : &it->second;
+    if (it != sig.end()) return &it->second;
+    return BoundMethodSignature(name);   // a bound component method: "Rigidbody3D.AddForce(Vector3, [int])"
 }
 
 // Completion "kind" — drives the little colored tag the popup shows before each item,
@@ -1493,8 +1495,18 @@ static std::vector<std::string> CsOwnMembers(const std::string& src) {
     return out;
 }
 // Everything to offer after `receiver.` (receiver = the expression before the dot).
+static std::vector<std::string> CsMembersForHand(const std::string& src, const std::string& receiver);
 std::vector<std::string> CsMembersFor(const std::string& src, const std::string& receiver) {
     if (receiver.empty()) return {};
+    // An engine component (GetComponent("Light"), GetComponent<Light>(), a variable holding one): its members come from
+    // the binding table the script runs with; names only the C# list below has are added after them.
+    std::vector<std::string> bound = BoundMemberWords(src, receiver);
+    std::vector<std::string> hand = CsMembersForHand(src, receiver);
+    if (bound.empty()) return hand;
+    for (const std::string& h : hand) if (std::find(bound.begin(), bound.end(), h) == bound.end()) bound.push_back(h);
+    return bound;
+}
+static std::vector<std::string> CsMembersForHand(const std::string& src, const std::string& receiver) {
     if (receiver == "this") return CsOwnMembers(src);
     std::string last = receiver;
     if (auto d = receiver.rfind('.'); d != std::string::npos) last = receiver.substr(d + 1);
@@ -1950,6 +1962,13 @@ const scripteditor::LanguageWords& OkayScriptLanguageWords() {
             if (decl.empty()) decl = "OkayScript builtin";
             d.known.push_back(name);
             d.docs.emplace(name, decl);   // a type keeps its own line (emplace does not overwrite)
+        }
+        // Every bound engine component and its members (the binding table): the class names are types, and hovering a
+        // class or a member name shows what it is (the built-ins above keep their own text).
+        for (const auto& kv : BoundDocs()) {
+            if (kv.second.find(" (component)") != std::string::npos && std::find(d.types.begin(), d.types.end(), kv.first) == d.types.end())
+                d.types.push_back(kv.first);
+            d.docs.emplace(kv.first, kv.second);
         }
         d.lineComments = {"//", "#"};     // '#' comments; a "#" inside a string stays part of the string
         d.blockStart = "/*";

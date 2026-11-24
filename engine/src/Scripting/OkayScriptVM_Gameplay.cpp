@@ -29,19 +29,8 @@ void OkayScriptVM::Impl::RegisterDebugBuiltins(BuiltinCtx& c) {
             if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + a[1].AsString()) : std::string{});
             return Value{ok ? 1.0f : 0.0f};
         };
-        // format("hp={} of {}", hp, max) -> fills each {} with the next argument.
-        b["format"] = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{std::string{}};
-            std::string fmt = a[0].AsString(), out;
-            std::size_t arg = 1;
-            for (std::size_t i = 0; i < fmt.size(); ++i) {
-                if (i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}') {
-                    out += (arg < a.size()) ? a[arg++].AsString() : "";
-                    ++i;
-                } else out += fmt[i];
-            }
-            return Value{out};
-        };
+        // format() is the language core's (CoreBuiltins.hpp InstallTextBuiltins, registered later): this copy was
+        // always replaced by the one in OkayScriptVM_Math.cpp.
         b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
 
 }

@@ -331,9 +331,9 @@ compiled or run on this machine).
 Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70
 specific topics in 14 sections, and every node is in the topic you would look in. Nothing was removed and your saved
 graphs are unchanged (a graph stores a node's type, never its topic). Code: `editor/VisualScriptCategories.hpp`,
-`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](visual_scripting_naming.md),
-every node under its topic in [visual_scripting_topics.md](visual_scripting_topics.md), and the before-and-after
-measurement in [visual_script_category_audit.md](visual_script_category_audit.md).
+`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](../visual_scripting_naming.md),
+every node under its topic in [visual_scripting_topics.md](../visual_scripting_topics.md), and the before-and-after
+measurement in [visual_script_category_audit.md](../visual_script_category_audit.md).
 
 **How to reach it.**
 
@@ -388,7 +388,7 @@ how the sidebar looks and feels in the real editor window (font, dot colours, sc
 
 The two tests `templates_work` and `examples_work` run every New Project template and every example scene the way a person
 does (keys, mouse, Play, Stop, save, reopen) and fail when one is broken. What each one checks, how to add a template or an
-example, and the one known failure are in [templates_check.md](process/templates_check.md).
+example, and the one known failure are in [templates_check.md](../process/templates_check.md).
 
 **Commands** (a Linux checkout):
 
@@ -420,7 +420,7 @@ the checks are headless, so every "you should see" line is unverified until you 
 6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
 
 Status: tested on Linux (headless, about 6 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
-of the changed example scenes are in [templates_check.md](process/templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
+of the changed example scenes are in [templates_check.md](../process/templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
 they are headless software renders (meshes only, no on-screen text), not window screenshots.
 
 ## 7f. Crash reports: detailed report, sending, GitHub issues
@@ -428,7 +428,7 @@ they are headless software renders (meshes only, no on-screen text), not window 
 **What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
 scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent
 (names, folders, emails and addresses removed), tells you once that a sent report becomes a **public GitHub issue**, sends it for you (switch **on by
-default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](online/crash_reports.md).
+default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](../online/crash_reports.md).
 
 > **The server half (steps 9 and 10) cannot work until the owner has done two one-time steps, in the browser, in this order:**
 > - **Owner step A:** run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file,
@@ -688,7 +688,7 @@ menu entry was only syntax-checked, not run. The pictures are headless renders, 
 ## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
 
 **What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
-([ui_library.md](ui/in_game_ui.md#ui-component-library); [ui_component_audit.md](ui/in_game_ui.md#in-game-ui-component-library-audit-what-exists-what-is-missing) says what already existed): a range slider
+([ui_library.md](../ui/in_game_ui.md#ui-component-library); [ui_component_audit.md](../ui/in_game_ui.md#in-game-ui-component-library-audit-what-exists-what-is-missing) says what already existed): a range slider
 with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
 
 **Steps.**
@@ -785,7 +785,7 @@ Why: "the character walking is basically running". The player used to move at 4.
 Shift, which is a sprint, so both looked like running (the legs stepped about 270 times a minute for W and 250 for Shift). Now W is a
 real walk (2 m/s, about 125 steps a minute, one foot always on the ground, arms hanging and swinging a little) and Shift is a real run
 (5.5 m/s, about 185 steps a minute, both feet leave the ground, elbows bent, chest leaning forward). The full numbers, the targets and
-the pictures are in [walk_vs_run.md](gameplay/walk_vs_run.md).
+the pictures are in [walk_vs_run.md](../gameplay/walk_vs_run.md).
 
 **A new project.**
 1. Open the launcher (`OkaySpace.exe`) > **Create** > **New Project**. On the first step pick **Third Person** (under **All templates** if the starter
@@ -843,8 +843,8 @@ Windows, and there are no screenshots. Details: `docs/editor/scene_right_click_a
 **What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
 get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
 (cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
-stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics/physics.md#physics-quality-materials-joints-debris-hinges-mesh-colliders-2d-casts-and-step-rate) and
-[physics_plan.md](physics/physics.md#physics-audit-and-plan). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](../physics/physics.md#physics-quality-materials-joints-debris-hinges-mesh-colliders-2d-casts-and-step-rate) and
+[physics_plan.md](../physics/physics.md#physics-audit-and-plan). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
 `Physics/DebrisPool.hpp`.
 
 **How to reach it.**
@@ -893,7 +893,7 @@ editor or player, any real GPU. The 2D step has no Improved solver yet (the sett
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you
 can see it. A **test build** skips all of that: the coordinator builds one branch for you, it is published to its own folder on the update server,
 and your launcher offers it **only if you switched "Get test builds" on**. It never touches the normal "latest" update, and a normal player never
-sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](release/release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
+sees it. It may be broken: that is what a test is. Rules and files: [release_channels.md](../release/release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
 
 **How to try it.**
 
@@ -1021,7 +1021,7 @@ feel with a real pad, whether the preset numbers feel right (they were chosen by
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
 a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
-front of the player, right a camera at the side). Details: [fp_hand.md](gameplay/fp_hand.md).
+front of the player, right a camera at the side). Details: [fp_hand.md](../gameplay/fp_hand.md).
 
 **How to try it (Windows release).**
 
@@ -1424,7 +1424,7 @@ or with a real pad or touch screen.
 
 ## 16. Main menu bar (cleaned up)
 
-What changed and why: [editor_menus.md](editor/editor_menus.md) (the map, and a table of every old item and where it went).
+What changed and why: [editor_menus.md](../editor/editor_menus.md) (the map, and a table of every old item and where it went).
 Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
 
 1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
@@ -1451,11 +1451,11 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 
 Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
-was not clicked is listed in [editor_menus.md](editor/editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
+was not clicked is listed in [editor_menus.md](../editor/editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
 
 ## 17. Hierarchy right-click menus
 
-Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor/editor_menus.md), section 2.
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](../editor/editor_menus.md), section 2.
 
 1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
    Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
@@ -1484,7 +1484,7 @@ Screenshots of the real editor (Linux, virtual display): a picture folder (pictu
 * `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and `-fsyntax-only -Wall -Wextra`: no error and no warning in the
   files changed.
 * **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
-  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor/editor_menus.md) section 3b
+  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](../editor/editor_menus.md) section 3b
   worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
   Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
   Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a
@@ -1929,7 +1929,7 @@ What changes for you:
 ## okay-build: our own replacement for CMake (not part of the Windows release; Linux checkout only, off by default)
 
 CMake stays the default build. okay-build is a second way to build the engine that does not need CMake or Ninja. Nothing in the release
-uses it. Plan and numbers: [own_build_plan.md](platform/own_build_plan.md), section "Round 11".
+uses it. Plan and numbers: [own_build_plan.md](../platform/own_build_plan.md), section "Round 11".
 
 Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a checkout of the repository.
 
@@ -1973,7 +1973,7 @@ Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" des
 What changed for scripts: `other`, `gameObject`, `GameObject.Find(..)`, `FindWithTag(..)`,
 `FindGameObjectsWithTag(..)` and what `Instantiate` / `spawn` return now carry the object's unique id. They still
 print and compare as the name, and a quoted name (`Destroy("Enemy")`) still means the first object with that name.
-Details: [scripting.md](scripting/scripting.md#object-references).
+Details: [scripting.md](../scripting/scripting.md#object-references).
 
 **Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
 to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
@@ -2098,7 +2098,7 @@ them), and pushing the "UI" context also turns on the asset's UI map (`docs/engi
 
 What changed: 20 engine functions are now written once and used by both script languages (and by the visual-script
 Engine API nodes). Before, each language had its own copy and they disagreed. The guide is
-[script_api_registry.md](scripting/script_api_registry.md).
+[script_api_registry.md](../scripting/script_api_registry.md).
 
 Where: the editor, `Tools\OkayEngine.exe`. Open any 3D scene.
 
@@ -2173,7 +2173,7 @@ Unverified: the Settings page and the editor menu were compiled but not looked a
 no other engine's code): a tree that finds touching pairs fast, exact contacts for every shape, a solver that keeps tall
 stacks still, fast bodies that never pass through thin walls, groups of bodies solved on every CPU core, and joints for
 ragdolls (**Ball** and **Cone Twist** with a drive that holds a pose). Plain explanation and numbers:
-[physics_core.md](physics/physics_core.md).
+[physics_core.md](../physics/physics_core.md).
 
 **How to reach it.**
 
@@ -2308,7 +2308,7 @@ Checked by screenshots on Linux (Xvfb) at 1280x800, 1600x900 and 1920x1200; not 
 
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
-Details and the reasons: [security.md](online/security.md). Four protections; two you can see in the Windows release, two are owner steps.
+Details and the reasons: [security.md](../online/security.md). Four protections; two you can see in the Windows release, two are owner steps.
 
 **Script file paths (try it in the editor).**
 
@@ -2370,7 +2370,7 @@ syntax-checked only (not built or run): the three walkthroughs above have not be
 
 ## Team tooling (not part of the Windows release)
 
-How to try the collaboration tools ([collaboration.md](process/collaboration.md)); these run on a Linux checkout and on GitHub, not in
+How to try the collaboration tools ([collaboration.md](../process/collaboration.md)); these run on a Linux checkout and on GitHub, not in
 `OkaySpace.exe`:
 
 1. Open `WORK_BOARD.md` on the `work-board` branch (after the workflow has run once on main): it now has a **Claims** table and

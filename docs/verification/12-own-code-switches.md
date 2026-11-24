@@ -13,7 +13,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Open **Help > About OkaySpace** and read the stack line.
   - **You should see (expected, not yet seen on Windows):** `[okay] stack: platform=sdl2 http=winhttp readers=ufbx+assimp crypto=libsodium ui=imgui` (the readers part may differ). `crypto=` must say libsodium in every release.
   - **Known partial:** a GUI program may not print to the console; the About popup is the sure way.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-OC-002** OKAY_OWN_STACK turns on the own readers
   - **Map:** 3, 40. **Where:** Command Prompt, then editor
@@ -22,7 +22,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Open **Help > About OkaySpace**.
   - **You should see (expected, not yet seen on Windows):** `readers=own(fbx,dae,3ds,...)` in the stack line instead of `ufbx+assimp`.
   - **Known partial:** `OKAY_OWN_STACK=1` does not select the own platform layer on Windows (on purpose) and does not include `OKAY_OWN_WAV`.
-  - **More:** [../../own_stack_rollout.md](../../status/own_stack_rollout.md)
+  - **More:** [../../own_stack_rollout.md](../status/own_stack_rollout.md)
 
 - [ ] **V-OC-003** One own reader: OKAY_OWN_OFF
   - **Map:** 3. **Where:** Command Prompt, then editor
@@ -33,7 +33,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     3. Close the editor, start it again with no variable and import the same file.
   - **You should see (expected, not yet seen on Windows):** a white unit cube both times; only the About line shows which reader ran.
   - **Known partial:** no Console line says which reader read the file. A variable set to `0` wins over `OKAY_OWN_STACK=1`.
-  - **More:** [../../own_off_reader.md](../../content/model_readers.md#our-own-off-reader-off)
+  - **More:** [../../own_off_reader.md](../content/model_readers.md#our-own-off-reader-off)
 
 - [ ] **V-OC-004** Other own readers
   - **Map:** 3. **Where:** Command Prompt, then editor
@@ -43,7 +43,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Import a model of that format (`examples/own_readers/cube.3ds`, `examples/own_readers/skinned_strip.dae`).
   - **You should see (expected, not yet seen on Windows):** the model imports; the About line lists the format under `own(...)`.
   - **Known partial:** the newer readers (AC3D, Ogre, XGL, NFF, IQM, COB and others) have `OKAY_OWN_<NAME>` variables listed in docs/content/own_readers_remaining.md that the startup line does not show.
-  - **More:** [../../own_readers_remaining.md](../../content/own_readers_remaining.md)
+  - **More:** [../../own_readers_remaining.md](../content/own_readers_remaining.md)
 
 - [ ] **V-OC-005** Own WAV decoder
   - **Map:** 7. **Where:** Command Prompt, then editor
@@ -53,7 +53,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Close it, run `set OKAY_OWN_WAV=1`, start the editor, open the same scene and press Play.
   - **You should see (expected, not yet seen on Windows):** the old decoder gives a distorted, buzzy note; the own decoder gives a clean steady tone (about 440 Hz, A). Neither was heard by us.
   - **Known partial:** not part of `OKAY_OWN_STACK=1`; no startup-line entry; streamed large files still use the old parser. The release may not ship the example (PR #887).
-  - **More:** [../../own_wav_decoder.md](../../audio/own_wav_decoder.md)
+  - **More:** [../../own_wav_decoder.md](../audio/own_wav_decoder.md)
 
 - [ ] **V-OC-006** Own HTTP client
   - **Map:** 17.2, 41. **Where:** none on Windows
@@ -61,7 +61,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     1. Nothing to try: Windows uses WinHTTP, `OKAY_OWN_HTTP=1` does nothing there. Check that the stack line says `http=winhttp`.
   - **You should see (expected, not yet seen on Windows):** `http=winhttp` in the About popup.
   - **Known partial:** the own client exists for Linux builds only and is tested on Linux.
-  - **More:** [../../own_http_client.md](../../platform/own_http.md#our-own-http-client-okayownhttp)
+  - **More:** [../../own_http_client.md](../platform/own_http.md#our-own-http-client-okayownhttp)
 
 - [ ] **V-OC-007** Own platform layer
   - **Map:** 37. **Where:** Command Prompt, then the player
@@ -70,7 +70,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Read the stack line (`platform=own` if it took effect).
   - **You should see (expected, not yet seen on Windows):** `platform=own` if the build has it, otherwise `platform=sdl2`. Unverified, not ready; never ship with it.
   - **Known partial:** the Win32 version has only run under wine, never on real Windows.
-  - **More:** [../../own_stack_rollout.md](../../status/own_stack_rollout.md)
+  - **More:** [../../own_stack_rollout.md](../status/own_stack_rollout.md)
 
 - [ ] **V-OC-008** OkayUI backend switch
   - **Map:** 40. **Where:** Command Prompt, then editor
@@ -79,7 +79,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Open **Help > About OkaySpace** (`ui=okayui` if it took effect) and open the Console panel.
   - **You should see (expected, not yet seen on Windows):** the Console, Crash Log and Audio Mixer screens are drawn by OkayUI; everything else is still Dear ImGui.
   - **Known partial:** only five screens are ported, never run in a real window; whether the release has OkayUI compiled in is unverified (the line stays `ui=imgui` if not).
-  - **More:** [../../own_ui_toolkit.md](../../ui/own_ui_toolkit.md)
+  - **More:** [../../own_ui_toolkit.md](../ui/own_ui_toolkit.md)
 
 - [ ] **V-OC-009** Own crypto is not switchable
   - **Map:** 39. **Where:** editor, Help menu
@@ -88,7 +88,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     2. Read the stack line.
   - **You should see (expected, not yet seen on Windows):** `crypto=libsodium` still. Own crypto cannot be switched on (CLAUDE.md rule 18).
   - **Known partial:** nothing to try beyond this; it must stay libsodium in every release.
-  - **More:** [../../crypto.md](../../platform/crypto.md)
+  - **More:** [../../crypto.md](../platform/crypto.md)
 
 - [ ] **V-OC-010** Own script editor (OkayUI CodeEdit) (steps unverified)
   - **Map:** 40, 13. **Where:** `Tools\OkayEngine.exe`, Script Editor window

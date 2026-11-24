@@ -6,7 +6,7 @@ row: | oscript | One table of engine functions for OkayScript and C#: `add_torqu
 
 What changed: 20 engine functions are now written once and used by both script languages (and by the visual-script
 Engine API nodes). Before, each language had its own copy and they disagreed. The guide is
-[script_api_registry.md](scripting/script_api_registry.md).
+[script_api_registry.md](../scripting/script_api_registry.md).
 
 Where: the editor, `Tools\OkayEngine.exe`. Open any 3D scene.
 

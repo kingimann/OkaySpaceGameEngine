@@ -3,6 +3,7 @@
 #include "okayscript/Value.hpp"
 #include <cctype>
 #include <cstdlib>
+#include <vector>
 
 namespace okayscript {
 
@@ -88,6 +89,22 @@ Vec3 Value::AsVec3() const {
     return Vec3::Zero;
 }
 
+namespace {
+// The lists and maps being printed now (outermost first): one that contains itself prints as [...] / {...}, and
+// nesting deeper than kMaxPrintDepth stops there, so printing never overflows the stack.
+thread_local std::vector<const void*> t_printing;
+constexpr std::size_t kMaxPrintDepth = 200;
+struct Printing {
+    bool cycle = false;
+    explicit Printing(const void* p) {
+        cycle = t_printing.size() >= kMaxPrintDepth;
+        for (const void* q : t_printing) if (q == p) cycle = true;
+        if (!cycle) t_printing.push_back(p);
+    }
+    ~Printing() { if (!cycle) t_printing.pop_back(); }
+};
+} // namespace
+
 std::string Value::AsString() const {
     if (auto* s = std::get_if<std::string>(&m_data)) return *s;
     if (auto* b = std::get_if<bool>(&m_data)) return *b ? "true" : "false";
@@ -97,6 +114,8 @@ std::string Value::AsString() const {
     if (auto* c = std::get_if<Color4>(&m_data)) return HexColor(*c);
     if (auto* a = std::get_if<ArrayRef>(&m_data)) {
         if (!*a) return "[]";
+        Printing guard(a->get());
+        if (guard.cycle) return "[...]";
         std::string s = "[";
         for (std::size_t i = 0; i < (*a)->size(); ++i) {
             if (i) s += ", ";
@@ -106,6 +125,8 @@ std::string Value::AsString() const {
     }
     if (auto* m = std::get_if<MapRef>(&m_data)) {
         if (!*m) return "{}";
+        Printing guard(m->get());
+        if (guard.cycle) return "{...}";
         std::string s = "{";
         bool first = true;
         for (auto& kv : **m) {

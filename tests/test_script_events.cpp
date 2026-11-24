@@ -89,5 +89,16 @@ int main() {
         CHECK(scene.Find("A") != nullptr); // still here; no on_trigger defined
     }
 
+    // --- a script function with a builtin's name (shake) is what the engine calls as an event: the script's own
+    //     function wins over the builtin when the engine calls it by name, and when a += listener names it ---
+    {
+        OkayScriptVM vm;
+        CHECK(vm.Load("var hits = 0;\nfunction shake(n) { hits = hits + n; }\nPulse += shake\n"));
+        vm.CallEventWith("shake", vs::VsValue(2.0f));
+        CHECK(vm.GetGlobal("hits").AsFloat() == 2.0f);
+        vm.CallEventArgs("Pulse", {vs::VsValue(3.0f)});   // the listener is the script's shake, not the builtin
+        CHECK(vm.GetGlobal("hits").AsFloat() == 5.0f);
+    }
+
     TEST_MAIN_RESULT();
 }

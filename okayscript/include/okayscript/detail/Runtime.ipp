@@ -49,26 +49,133 @@ void PlaceArgs(const std::vector<std::string>& params, const std::vector<V>& arg
     }
 }
 template <class V> struct PopScope {
-    std::vector<BasicEnvironment<V>>& s;
-    ~PopScope() { s.pop_back(); }
+    BasicRuntime<V>& rt;
+    ~PopScope() { rt.scopes.pop_back(); rt.BumpVars(); }
 };
+
+/// The operand stacks and local slots of the running chunks on one thread. A chunk takes its slots on entry and gives them back on
+/// exit (strictly nested), and slots never move, so a pointer to them stays good while the chunk calls out.
+template <class V> class ValueStack {
+public:
+    V* Take(std::size_t n) {
+        if (n == 0) n = 1;
+        if (m_segs.empty()) m_segs.push_back(Seg(n));
+        Seg* s = &m_segs[m_cur];
+        if (s->used + n > s->size) {
+            if (s->used != 0) ++m_cur;   // this segment stays in use: go on to the next one
+            if (m_cur == m_segs.size()) m_segs.push_back(Seg(n));
+            else if (m_segs[m_cur].size < n) m_segs[m_cur] = Seg(n);
+            s = &m_segs[m_cur];
+        }
+        V* p = s->v.get() + s->used;
+        s->used += n;
+        return p;
+    }
+    void Give(V* p, std::size_t n) {
+        if (n == 0) n = 1;
+        for (std::size_t i = 0; i < n; ++i) p[i] = V{};   // drop what the slots still hold (lists, objects)
+        m_segs[m_cur].used -= n;
+        if (m_segs[m_cur].used == 0 && m_cur > 0) --m_cur;
+    }
+    static ValueStack& ForThisThread() {
+        thread_local ValueStack s;
+        return s;
+    }
+
+private:
+    struct Seg {
+        explicit Seg(std::size_t need) : size(need > 1024 ? need : 1024), v(new V[size]) {}
+        std::size_t size;
+        std::unique_ptr<V[]> v;
+        std::size_t used = 0;
+    };
+    std::vector<Seg> m_segs;
+    std::size_t m_cur = 0;
+};
+
+template <class V> struct StackSlots {
+    ValueStack<V>& st;
+    V* p;
+    std::size_t n;
+    ~StackSlots() { st.Give(p, n); }
+};
+
+/// A function's or lambda's locals while it runs: one value and one state byte per slot (Chunk::slotNames), all
+/// "not declared yet" at the start. Taken from the thread's ValueStack, so they never move while the body calls out.
+template <class V> struct Frame {
+    ValueStack<V>& st;
+    std::size_t n;
+    V* slots = nullptr;
+    unsigned char* state = nullptr;
+    unsigned char fixed[16];
+    std::unique_ptr<unsigned char[]> more;
+    explicit Frame(const Chunk& c) : st(ValueStack<V>::ForThisThread()), n(c.slotNames.size()) {
+        if (!n) return;
+        slots = st.Take(n);
+        if (n > sizeof fixed) { more.reset(new unsigned char[n]); state = more.get(); } else state = fixed;
+        for (std::size_t i = 0; i < n; ++i) state[i] = 0;
+    }
+    ~Frame() { if (n) st.Give(slots, n); }
+    Frame(const Frame&) = delete;
+    Frame& operator=(const Frame&) = delete;
+    /// Hang the slots on the scope the call just opened, so the names are found from the functions it calls.
+    void Attach(BasicEnvironment<V>& e, const Chunk& c) const {
+        if (!n) return;
+        e.chunk = &c;
+        e.slots = slots;
+        e.slotState = state;
+    }
+};
+/// Write v to a declared slot with its type rule (state = kDeclared | kind).
+template <class V> void StoreTypedSlot(V& slot, unsigned char state, const V& v, const std::string& name) {
+    const unsigned char kind = (unsigned char)(state & 0x7F);
+    if (kind & KConst) throw RuntimeError("'" + name + "' is const, so it can't change after it's set", 0);
+    slot = (kind & 0x0F) ? CoerceToKind<V>(kind, v, name) : v;
+}
 } // namespace detail
 
 // ---- Scopes ------------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::Define(const std::string& n, const V& v) {
-    if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);   // keeps Lookup's shortcut true
+    if (scopes.size() > 1 && !localNames.count(n)) { localNames.insert(n); BumpGlobals(); }   // keeps Lookup's shortcut true
     Env& e = scopes.back();
-    e.vars[n] = v;
-    if (!e.kinds.empty()) e.kinds.erase(n);
+    const int slot = e.SlotOf(n);
+    if (slot >= 0) {   // a local of the running function: its slot
+        e.slots[slot] = v;
+        if (e.slotState[slot] != kDeclared) { e.slotState[slot] = kDeclared; BumpVars(); }
+        return;
+    }
+    auto ins = e.vars.try_emplace(n);
+    ins.first->second = v;
+    // A new name may hide one further out, and a dropped type rule changes how it is written: places cached by
+    // bytecode are stale. Setting a name this scope already has changes nothing they rely on.
+    if (ins.second) BumpVars();
+    else if (!e.kinds.empty() && e.kinds.erase(n)) { BumpVars(); BumpGlobals(); }
 }
 template <class V> void BasicRuntime<V>::DefineTyped(const std::string& n, const V& v, unsigned char kind) {
     if (scopes.size() > 1 && !localNames.count(n)) localNames.insert(n);
+    BumpGlobals();   // a type rule may change on a global
     Env& e = scopes.back();
+    const int slot = e.SlotOf(n);
+    if (slot >= 0) {
+        e.slots[slot] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
+        e.slotState[slot] = (unsigned char)(kDeclared | (kind & 0x1F));
+        BumpVars();
+        return;
+    }
     e.vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
     if (kind) e.kinds[n] = kind; else if (!e.kinds.empty()) e.kinds.erase(n);
+    BumpVars();
 }
 namespace detail {
 template <class V> bool AssignIn(BasicEnvironment<V>& e, const std::string& n, const V& v) {
+    if (e.chunk) {
+        const int i = e.SlotOf(n);
+        if (i >= 0 && (e.slotState[i] & kDeclared)) {
+            if (e.slotState[i] == kDeclared) e.slots[i] = v;
+            else StoreTypedSlot<V>(e.slots[i], e.slotState[i], v, n);
+            return true;
+        }
+    }
     auto f = e.vars.find(n);
     if (f == e.vars.end()) return false;
     if (!e.kinds.empty()) {
@@ -92,18 +199,59 @@ template <class V> void BasicRuntime<V>::Assign(const std::string& n, const V& v
     if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
     Global().vars[n] = v;   // a new name becomes a global
 }
-template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n) const {
+namespace detail {
+template <class V> void FillCache(NameCache* c, const BasicEnvironment<V>& e, const std::string& n, const V* p,
+                                  unsigned long long epoch) {
+    if (!c) return;
+    c->epoch = epoch;
+    c->value = const_cast<V*>(p);
+    c->writable = e.kinds.empty() || !e.kinds.count(n);
+}
+inline void FillCache(NameCache* c, void* p, bool writable, unsigned long long epoch) {
+    if (!c) return;
+    c->epoch = epoch;
+    c->value = p;
+    c->writable = writable;
+}
+/// A declared slot named n in e, or -1.
+template <class V> int DeclaredSlot(const BasicEnvironment<V>& e, const std::string& n) {
+    const int i = e.SlotOf(n);
+    return (i >= 0 && (e.slotState[i] & kDeclared)) ? i : -1;
+}
+} // namespace detail
+template <class V> void BasicRuntime<V>::AssignCached(const std::string& n, const V& v, NameCache& cache) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (!detail::AssignIn(*it, n, v)) continue;
+        const int i = it->chunk ? detail::DeclaredSlot(*it, n) : -1;
+        if (i >= 0) detail::FillCache(&cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch);
+        else detail::FillCache(&cache, *it, n, &it->vars.find(n)->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+        return;
+    }
+    if (statics && detail::AssignIn(*statics, n, v)) return;
+    if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
+    auto& slot = Global().vars[n];   // a new name becomes a global
+    slot = v;
+    detail::FillCache(&cache, Global(), n, &slot, GlobalEpochFor(n));
+}
+template <class V> const V* BasicRuntime<V>::Lookup(const std::string& n, NameCache* cache) const {
     if (scopes.size() > 1 && !localNames.count(n)) {
         // Not a local anywhere: only the globals (scopes[0]) and the statics can hold it.
         auto f = scopes.front().vars.find(n);
-        if (f != scopes.front().vars.end()) return &f->second;
+        if (f != scopes.front().vars.end()) { detail::FillCache(cache, scopes.front(), n, &f->second, globalEpoch); return &f->second; }
         if (statics && !statics->vars.empty()) { auto g = statics->vars.find(n); if (g != statics->vars.end()) return &g->second; }
         return nullptr;
     }
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->chunk) {
+            const int i = detail::DeclaredSlot(*it, n);
+            if (i >= 0) { detail::FillCache(cache, &it->slots[i], it->slotState[i] == kDeclared, varEpoch); return &it->slots[i]; }
+        }
         if (it->vars.empty()) continue;
         auto f = it->vars.find(n);
-        if (f != it->vars.end()) return &f->second;
+        if (f != it->vars.end()) {
+            detail::FillCache(cache, *it, n, &f->second, &*it == &scopes.front() ? GlobalEpochFor(n) : varEpoch);
+            return &f->second;
+        }
     }
     if (statics && !statics->vars.empty()) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return &f->second; }
     return nullptr;
@@ -125,6 +273,8 @@ template <class V> bool BasicRuntime<V>::Has(const std::string& n) const {
 
 // ---- Statics -----------------------------------------------------------------------------------------------------
 template <class V> void BasicRuntime<V>::DefineStatic(const std::string& n, const V& v, unsigned char kind) {
+    BumpVars();
+    BumpGlobals();
     if (!statics) statics = std::make_shared<Env>();
     if (statics->vars.count(n)) return;   // only the first run sets it
     statics->vars[n] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, n) : v;
@@ -233,7 +383,7 @@ template <class V> V BasicRuntime<V>::MakeInstance(const std::string& type, std:
     (*inst.AsMap())["__class"] = V{type};
     detail::SelfScope<V> scope(*this, inst, type);
     for (auto& f : c.fields) {
-        V v = f.init ? Eval(*f.init) : DefaultForKind<V>(f.kind);
+        V v = f.init ? EvalCode(*f.init, f.initCode) : DefaultForKind<V>(f.kind);
         if (f.kind & 0x0F) v = CoerceToKind<V>(f.kind, v, f.name);
         (*inst.AsMap())[f.name] = std::move(v);
     }
@@ -281,7 +431,7 @@ template <class V> void BasicRuntime<V>::FireSubs(const std::string& event, std:
         if (!m) continue;
         if (m->count("__fn")) {
             const std::string fn = (*m)["__fn"].AsString();
-            if (functions.count(fn)) Call(fn, args);
+            if (functions.count(fn)) CallFunction(fn, args);   // the script's own function, even when a builtin has its name
             continue;
         }
         if (IsLambda(s.fn)) CallLambda(s.fn, args);
@@ -357,43 +507,74 @@ template <class V> bool BasicRuntime<V>::IsLambda(const V& v) { return detail::I
 
 template <class V>
 V BasicRuntime<V>::Invoke(const FunctionDecl& fn, std::vector<V>& args, const std::vector<std::string>* names) {
+    return Invoke(fn, args.data(), args.size(), names);
+}
+namespace detail {
+/// Parameter i of a call: its slot, value and (for `int dmg`) type rule.
+template <class V> void BindParam(const Chunk& code, Frame<V>& frame, std::size_t i, V&& v, unsigned char kind,
+                                  const std::string& name) {
+    const int at = code.paramSlot[i];
+    if (!kind) { frame.slots[at] = std::move(v); frame.state[at] = kDeclared; return; }
+    frame.slots[at] = (kind & 0x0F) ? CoerceToKind<V>(kind, v, name) : std::move(v);
+    frame.state[at] = (unsigned char)(kDeclared | (kind & 0x1F));
+}
+/// Default argument i (worked out in the called function's frame, so it sees the parameters before it).
+template <class V> V DefaultArg(BasicRuntime<V>& rt, const std::vector<ExprPtr>& defaults, std::vector<ChunkPtr>& code,
+                                std::size_t i) {
+    if (code.size() < defaults.size()) code.resize(defaults.size());
+    return rt.EvalCode(*defaults[i], code[i]);
+}
+} // namespace detail
+
+template <class V>
+V BasicRuntime<V>::Invoke(const FunctionDecl& fn, const V* args, std::size_t argc, const std::vector<std::string>* names) {
     auto what = [&fn] { return fn.name + "()"; };
     detail::CallDepthGuard depthGuard(CallDepth(), limits.maxCallDepth, what);
+    const Chunk& code = CodeFor(fn.params, fn.body, fn.code);
+    detail::Frame<V> frame(code);   // the locals: slots, not a scope map
     const int callerLine = curLine;
     scopes.push_back(Env{});
-    detail::PopScope<V> pop{scopes};
+    frame.Attach(scopes.back(), code);
+    BumpVars();
+    detail::PopScope<V> pop{*this};
     const std::size_t np = fn.params.size();
     if (!names) {
         // Positional arguments (nearly every call): bind them straight, no slot lists.
         for (std::size_t i = 0; i < np; ++i) {
             const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
             V v;
-            if (i < args.size()) v = args[i];
-            else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
+            if (i < argc) v = args[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = detail::DefaultArg(*this, fn.defaults, fn.defaultCode, i);
             else if (k) v = DefaultForKind<V>(k);
-            if (!k) scopes.back().vars[fn.params[i]] = std::move(v);   // parameters are in localNames (CollectLocalNames)
-            else DefineTyped(fn.params[i], v, k);
+            detail::BindParam(code, frame, i, std::move(v), k, fn.params[i]);
         }
     } else {
         std::vector<char> present;
-        std::vector<V> slot;
-        detail::PlaceArgs<V>(fn.params, args, names, present, slot, what());
+        std::vector<V> slot, given(args, args + argc);
+        detail::PlaceArgs<V>(fn.params, given, names, present, slot, what());
         for (std::size_t i = 0; i < np; ++i) {
             const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
             V v;
             if (present[i]) v = slot[i];
-            else if (i < fn.defaults.size() && fn.defaults[i]) v = Eval(*fn.defaults[i]);
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = detail::DefaultArg(*this, fn.defaults, fn.defaultCode, i);
             else v = k ? DefaultForKind<V>(k) : V{};
-            if (!k) Define(fn.params[i], v);
-            else DefineTyped(fn.params[i], v, k);
+            detail::BindParam(code, frame, i, std::move(v), k, fn.params[i]);
         }
     }
+    BumpVars();   // the parameters are new names in this scope
     V ret;
     // A stray break/continue (no loop around it) ends the function, like return.
-    if (RunList(fn.body) == Flow::Return) ret = std::move(retVal);
+    if (RunChunk(code, frame.slots, frame.state) == Flow::Return) ret = std::move(retVal);
     curLine = callerLine;
     if (fn.returnKind & 0x0F) return CoerceToKind<V>(fn.returnKind, ret, what());
     return ret;
+}
+
+template <class V> V BasicRuntime<V>::CallFunction(const std::string& name, std::vector<V>& args,
+                                                   const std::vector<std::string>* names) {
+    auto f = functions.find(name);
+    if (f != functions.end() && !HasMethod(name)) return Invoke(*f->second, args, names);
+    return Call(name, args, names);
 }
 
 template <class V>
@@ -470,16 +651,20 @@ template <class V> V BasicRuntime<V>::CallLambda(const V& f, std::vector<V>& arg
     std::vector<char> present;
     std::vector<V> slot;
     detail::PlaceArgs<V>(ps, args, names, present, slot, "lambda");
+    const Chunk& code = CodeFor(ps, *lb->second.body, *lb->second.code);
+    detail::Frame<V> frame(code);
     scopes.push_back(Env{});
-    detail::PopScope<V> pop{scopes};
+    frame.Attach(scopes.back(), code);
+    BumpVars();
+    detail::PopScope<V> pop{*this};
     for (std::size_t i = 0; i < ps.size(); ++i) {
         V v;
         if (present[i]) v = slot[i];
-        else if (defs && i < defs->size() && (*defs)[i]) v = Eval(*(*defs)[i]);
+        else if (defs && i < defs->size() && (*defs)[i]) v = detail::DefaultArg(*this, *defs, *lb->second.defaultCode, i);
         Define(ps[i], v);
     }
     V ret;
-    if (RunList(*lb->second.body) == Flow::Return) ret = std::move(retVal);
+    if (RunChunk(code, frame.slots, frame.state) == Flow::Return) ret = std::move(retVal);
     curLine = callerLine;
     return ret;
 }

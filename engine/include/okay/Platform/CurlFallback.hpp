@@ -143,26 +143,41 @@ inline RunResult RunCurlProcess(const std::vector<std::string>& args, const RunS
     // list a curl started on another thread at the same moment would also inherit this call's open, inheritable handles
     // (and keep this call's temporary files open and locked until it ends). If the list cannot be set up, curl is not
     // started with inherited handles at all (this call reports not started; the seam treats that as "no curl").
-    STARTUPINFOEXW six{};
+    // The three functions are looked up at run time and the struct and the two values are our own: SDL and winsock headers
+    // included earlier often leave _WIN32_WINNT too low for MinGW to declare them (the MinGW CI job failed on this).
+    // Values from the UpdateProcThreadAttribute and CreateProcess documentation: ProcThreadAttributeHandleList (2) with
+    // the "input" flag (0x20000), and EXTENDED_STARTUPINFO_PRESENT 0x00080000; STARTUPINFOEXW is STARTUPINFOW plus the
+    // attribute-list pointer.
+    struct StartupInfoEx { STARTUPINFOW StartupInfo; void* lpAttributeList; };
+    typedef BOOL(WINAPI * InitListFn)(void*, DWORD, DWORD, SIZE_T*);
+    typedef BOOL(WINAPI * UpdateListFn)(void*, DWORD, DWORD_PTR, void*, SIZE_T, void*, SIZE_T*);
+    typedef void(WINAPI * DeleteListFn)(void*);
+    const DWORD_PTR kHandleListAttr = 0x00020002;
+    const DWORD kExtendedStartupInfo = 0x00080000;
+    StartupInfoEx six{};
     six.StartupInfo = si;
     six.StartupInfo.cb = sizeof(six);
     std::vector<unsigned char> attrBuf;
     DWORD flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
     HANDLE inheritList[3] = {nulIn, outH, nulErr};
     bool listOk = !inherit;
+    DeleteListFn delList = nullptr;
     if (inherit) {
+        const HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+        const InitListFn initList = k32 ? reinterpret_cast<InitListFn>(reinterpret_cast<void*>(GetProcAddress(k32, "InitializeProcThreadAttributeList"))) : nullptr;
+        const UpdateListFn updList = k32 ? reinterpret_cast<UpdateListFn>(reinterpret_cast<void*>(GetProcAddress(k32, "UpdateProcThreadAttribute"))) : nullptr;
+        delList = k32 ? reinterpret_cast<DeleteListFn>(reinterpret_cast<void*>(GetProcAddress(k32, "DeleteProcThreadAttributeList"))) : nullptr;
         SIZE_T need = 0;
-        InitializeProcThreadAttributeList(nullptr, 1, 0, &need);
+        if (initList && updList && delList) initList(nullptr, 1, 0, &need);
         if (need > 0) {
             attrBuf.resize((size_t)need);
-            six.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrBuf.data());
-            if (InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &need)) {
-                if (UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritList,
-                                              sizeof(inheritList), nullptr, nullptr)) {
+            six.lpAttributeList = attrBuf.data();
+            if (initList(six.lpAttributeList, 1, 0, &need)) {
+                if (updList(six.lpAttributeList, 0, kHandleListAttr, inheritList, sizeof(inheritList), nullptr, nullptr)) {
                     listOk = true;
-                    flags |= EXTENDED_STARTUPINFO_PRESENT;
+                    flags |= kExtendedStartupInfo;
                 } else {
-                    DeleteProcThreadAttributeList(six.lpAttributeList);
+                    delList(six.lpAttributeList);
                 }
             }
             if (!listOk) six.lpAttributeList = nullptr;
@@ -170,8 +185,8 @@ inline RunResult RunCurlProcess(const std::vector<std::string>& args, const RunS
     }
     PROCESS_INFORMATION pi{};
     const BOOL ok = listOk && CreateProcessW(nullptr, buf.data(), nullptr, nullptr, inherit, flags, nullptr, nullptr,
-                                             (flags & EXTENDED_STARTUPINFO_PRESENT) ? &six.StartupInfo : &si, &pi);
-    if (six.lpAttributeList) DeleteProcThreadAttributeList(six.lpAttributeList);
+                                             (flags & kExtendedStartupInfo) ? &six.StartupInfo : &si, &pi);
+    if (six.lpAttributeList && delList) delList(six.lpAttributeList);
     if (outH != INVALID_HANDLE_VALUE) CloseHandle(outH);
     if (nulIn != INVALID_HANDLE_VALUE) CloseHandle(nulIn);
     if (nulErr != INVALID_HANDLE_VALUE) CloseHandle(nulErr);

@@ -113,7 +113,7 @@ public:
     bool HasGlobal(const std::string& name) const;
 
     /// Parse `source` (SyntaxError on failure), add its functions, then run its top-level statements (RuntimeError on
-    /// failure). `file` is only used in messages. The parsed program stays alive with the interpreter, so its
+    /// failure). Errors carry the line; `file` is for the caller's messages (FormatError). The parsed program stays alive with the interpreter, so its
     /// functions and lambdas can be called afterwards. Calling Run again adds to the same globals and functions.
     void Run(const std::string& source, const std::string& file = "");
     /// Parse and add the functions without running anything (SyntaxError on failure).

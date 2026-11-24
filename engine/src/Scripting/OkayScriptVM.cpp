@@ -541,6 +541,7 @@ struct IndexCompoundAssignExpr : Expr {
                 case Tok::Minus: next = Value{cur.AsFloat() - rhs.AsFloat()}; break;
                 case Tok::Star:  next = Value{cur.AsFloat() * rhs.AsFloat()}; break;
                 case Tok::Slash: { float d = rhs.AsFloat(); next = Value{d != 0 ? cur.AsFloat() / d : 0.0f}; break; }
+                case Tok::Percent: { float d = rhs.AsFloat(); next = Value{d != 0 ? std::fmod(cur.AsFloat(), d) : 0.0f}; break; }
                 default: next = rhs; break;
             }
             rt.SetMember(a, k, next, true);
@@ -553,6 +554,7 @@ struct IndexCompoundAssignExpr : Expr {
                 case Tok::Minus: return cur.AsFloat() - rhs.AsFloat();
                 case Tok::Star:  return cur.AsFloat() * rhs.AsFloat();
                 case Tok::Slash: { float d = rhs.AsFloat(); return d != 0 ? cur.AsFloat() / d : 0.0f; }
+                case Tok::Percent: { float d = rhs.AsFloat(); return d != 0 ? std::fmod(cur.AsFloat(), d) : 0.0f; }   // xs[i] %= n stored n before
                 default:         return rhs;
             }
         };

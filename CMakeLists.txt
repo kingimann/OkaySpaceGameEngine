@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.903.8
+    VERSION 2.903.9
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for C dependencies built from source (Assimp's bundled zlib and similar)
 

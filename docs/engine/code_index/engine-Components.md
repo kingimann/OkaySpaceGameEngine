@@ -629,7 +629,7 @@ Back to the [code index](../code_index.md). 262 headers, 741 names.
 
 ## `engine/include/okay/Components/NetValidator.hpp`
 
-- `NetValidator` class, line 24
+- `NetValidator` class, line 26
 
 ## `engine/include/okay/Components/NetworkAvatarMotion.hpp`
 

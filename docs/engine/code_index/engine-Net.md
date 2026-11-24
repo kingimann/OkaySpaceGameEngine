@@ -2,7 +2,7 @@
 
 # Code index: engine-Net
 
-Back to the [code index](../code_index.md). 31 headers, 150 names.
+Back to the [code index](../code_index.md). 33 headers, 153 names.
 
 ## `engine/include/okay/Net/AntiCheat.hpp`
 
@@ -107,6 +107,10 @@ Back to the [code index](../code_index.md). 31 headers, 150 names.
 - `GameSession` struct, line 14: One advertised multiplayer session in the Supabase 'game_sessions' table — the
 - `Matchmaking` class, line 41: Supabase-backed matchmaking / server browser. A host advertises its session in
 
+## `engine/include/okay/Net/Net.hpp`
+
+- `Net` class, line 31
+
 ## `engine/include/okay/Net/NetBackend.hpp`
 
 - `NetBackendProvider` enum, line 26: Which online-services provider backs the engine. Native = the built-in
@@ -164,20 +168,21 @@ Back to the [code index](../code_index.md). 31 headers, 150 names.
 
 ## `engine/include/okay/Net/NetSim.hpp`
 
-- `SimSettings` struct, line 21
-- `Simulator` function, line 29
-- `SimulatorActive` function, line 32: True when enabled and at least one knob would change a datagram.
-- `ResetSimulator` function, line 35: Drop any datagrams still waiting. Settings stay as they are.
-- `PumpSimulator` function, line 41: Send due outbound datagrams. Call once a frame.
-- `HoldDatagram` function, line 45: When the simulator is active, take the datagram (send later, send now, or
-- `TakeDatagram` function, line 51: A datagram for the game to read, or the same codes as UdpSocket::RecvFrom
-- `ObjectKey` function, line 55: Row name for a custom message: the synced object id when the channel
-- `NoteObject` function, line 57
-- `NoteWire` function, line 58
-- `ProfileAdvance` function, line 59
-- `TrafficRow` struct, line 61
-- `TrafficSample` struct, line 67
-- `Traffic` function, line 73
+- `SimSettings` struct, line 25
+- `Simulator` function, line 33
+- `SimulatorActive` function, line 36: True when enabled and at least one knob would change a datagram.
+- `SimulatorOverflows` function, line 39: Datagrams dropped because a socket had too many waiting (not simulated loss).
+- `ResetSimulator` function, line 42: Drop any datagrams still waiting. Settings stay as they are.
+- `PumpSimulator` function, line 48: Send due outbound datagrams. Call once a frame.
+- `HoldDatagram` function, line 52: When the simulator is active, take the datagram (send later, send now, or
+- `TakeDatagram` function, line 58: A datagram for the game to read, or the same codes as UdpSocket::RecvFrom
+- `ObjectKey` function, line 62: Row name for a custom message: the synced object id when the channel
+- `NoteObject` function, line 64
+- `NoteWire` function, line 65
+- `ProfileAdvance` function, line 66
+- `TrafficRow` struct, line 68
+- `TrafficSample` struct, line 74
+- `Traffic` function, line 80
 
 ## `engine/include/okay/Net/NetTransport.hpp`
 
@@ -217,6 +222,10 @@ Back to the [code index](../code_index.md). 31 headers, 150 names.
 
 - `RelayLogSafe` function, line 49: A small TURN-style relay so two peers behind NATs can play together without
 - `RelayServer` class, line 51
+
+## `engine/include/okay/Net/Rollback.hpp`
+
+- `Rollback` class, line 45
 
 ## `engine/include/okay/Net/SecureChannel.hpp`
 

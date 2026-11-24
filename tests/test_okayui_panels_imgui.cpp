@@ -59,6 +59,9 @@ void EnableFakeViewports() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.BackendFlags |= ImGuiBackendFlags_PlatformHasViewports | ImGuiBackendFlags_RendererHasViewports;
+    // The main viewport needs a platform handle, as a real backend gives it; without one Dear ImGui's own check fails in a
+    // build with asserts on (Debug, ASan), though a Release build skips it.
+    ImGui::GetMainViewport()->PlatformHandle = &g_osWindows;
     ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
     pio.Platform_CreateWindow = [](ImGuiViewport* v) { g_osWindows[v->ID] = FakeOsWindow{v->Pos, v->Size}; };
     pio.Platform_DestroyWindow = [](ImGuiViewport* v) { g_osWindows.erase(v->ID); };

@@ -1504,33 +1504,8 @@ private:
     // for (i = 0; i < n; ++i) call(&this->field[i])  (from n - 1 down when reverse)
     template <class F>
     std::unique_ptr<Stmt> fieldLoop(const std::string& field, std::uint64_t n, bool reverse, const Pos& p, F call) {
-        auto blk = sBlock(p);
-        std::string iv = "__i" + std::to_string(newN_++);
-        auto decl = std::make_unique<Decl>();
-        decl->name = iv;
-        decl->line = p.line;
-        decl->col = p.col;
-        decl->file = p.file;
-        decl->type = ty(Type::Kind::Int);
-        blk->stmts.push_back(declStmt(std::move(decl)));
-        auto loop = std::make_unique<Stmt>();
-        loop->kind = Stmt::Kind::For;
-        loop->line = p.line;
-        loop->col = p.col;
-        loop->file = p.file;
-        loop->init = sExpr(eAssign(eName(iv, p), eInt(reverse ? n - 1 : 0, p), p), p);
-        loop->expr = reverse ? eBin(">=", eName(iv, p), eInt(0, p), p) : eBin("<", eName(iv, p), eInt(n, p), p);
-        loop->expr2 = eAssign(eName(iv, p), eBin(reverse ? "-" : "+", eName(iv, p), eInt(1, p), p), p);
-        auto idx = std::make_unique<Expr>();
-        idx->kind = Expr::Kind::Index;
-        idx->line = p.line;
-        idx->col = p.col;
-        idx->file = p.file;
-        idx->kids.push_back(eArrow(eName("this", p), field, p));
-        idx->kids.push_back(eName(iv, p));
-        loop->body = sExpr(call(eAddr(std::move(idx), p)), p);
-        blk->stmts.push_back(std::move(loop));
-        return blk;
+        return indexLoop([&] { return eArrow(eName("this", p), field, p); }, n, reverse, p,
+                         [&](std::unique_ptr<Expr> at) { return call(eAddr(std::move(at), p)); });
     }
 
     void finishClass(ClassCtx& c) {
@@ -3761,6 +3736,11 @@ private:
     // call from the element expression. Used for constructors and destructors of an array.
     template <class F>
     std::unique_ptr<Stmt> elementLoop(const std::string& name, std::uint64_t n, bool reverse, const Pos& p, F call) {
+        return indexLoop([&] { return eName(name, p); }, n, reverse, p, call);
+    }
+    // for (i = 0; i < n; ++i) call(base()[i]), from n - 1 down when reverse.
+    template <class B, class F>
+    std::unique_ptr<Stmt> indexLoop(B base, std::uint64_t n, bool reverse, const Pos& p, F call) {
         auto blk = sBlock(p);
         std::string iv = "__i" + std::to_string(newN_++);
         auto decl = std::make_unique<Decl>();
@@ -3784,7 +3764,7 @@ private:
         idx->line = p.line;
         idx->col = p.col;
         idx->file = p.file;
-        idx->kids.push_back(eName(name, p));
+        idx->kids.push_back(base());
         idx->kids.push_back(eName(iv, p));
         loop->body = sExpr(call(std::move(idx)), p);
         blk->stmts.push_back(std::move(loop));

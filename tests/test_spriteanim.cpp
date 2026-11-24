@@ -14,6 +14,27 @@ int main() {
         CHECK(go->GetComponent<SpriteRenderer>() != nullptr);
     }
 
+    // A saved scene that lists the animator before the sprite keeps the one sprite from the file.
+    {
+        const char* text =
+            "okayscene 3\n"
+            "gameobject 0 \"Hero\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "  sprite 64 1 1 1 1 32 32 \"b.png\"\n"
+            "end\n";
+        Scene loaded("File");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        GameObject* go = loaded.Find("Hero");
+        CHECK(go != nullptr);
+        int sprites = 0;
+        if (go) for (auto* s : go->GetComponents<SpriteRenderer>()) { (void)s; ++sprites; }
+        CHECK(sprites == 1);
+        CHECK(go && go->GetComponent<SpriteRenderer>() && go->GetComponent<SpriteRenderer>()->texture == "b.png");
+        CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+    }
+
     // --- Animator drives the SpriteRenderer's texture over time ---
     {
         Scene scene("Anim");

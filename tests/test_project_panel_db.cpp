@@ -94,6 +94,7 @@ int main() {
         CHECK((Names(art) == std::vector<std::string>{"hero.okaymat", "hero.png", "rock.png", "unused.png"}));
         CHECK(art[1].kind == okay::AssetType::Texture && !art[1].guid.IsNull() && !art[1].hasMeta && art[1].size > 0 && art[1].modified > 0);
         CHECK(b.AssetCount() == 8);                                       // every file is in the database, none of it written to disk
+        CHECK(okay::SceneAssetIndex() == &b.Db());                        // scene saves can write a sprite's asset id
         int metas = 0;
         for (fs::recursive_directory_iterator it(p.td.path), end; it != end; ++it) if (it->path().extension() == ".okaymeta") ++metas;
         CHECK(metas == 0);

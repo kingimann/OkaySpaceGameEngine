@@ -56,5 +56,11 @@ int main() {
     CHECK(font.GlyphFor(he) != nullptr);
     CHECK(font.GlyphFor(0x0628) != nullptr);
     CHECK(font.Atlas().Width() >= 256 && font.Atlas().Height() >= 256);
+
+    // A tall bake must not grow the atlas past 8192. Six doublings from 512 used to reach 16384.
+    TtfFont tall;
+    tall.LoadFromFile(face, 360.0f);
+    CHECK(tall.Atlas().Width() <= 8192);
+    CHECK(tall.Atlas().Height() <= 8192);
     TEST_MAIN_RESULT();
 }

@@ -87,9 +87,8 @@ std::vector<FoundRef> ExtractMaterialRefs(const std::string& text);
 /// Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
 /// quoted strings, `key=value` values and bare words that end in a known asset extension.
 std::vector<FoundRef> ExtractTextRefs(const std::string& text);
-/// `.obj`, `.mtl`, `.fbx` and `.dae`: Wavefront `mtllib` and `map_*` lines (options skipped, spaces
-/// kept) and any other path in the file whose extension is one this engine imports. A binary FBX
-/// keeps those paths as plain text, so the same scan finds them. Spans cover the path text.
+/// `.obj`, `.mtl` and `.dae`: Wavefront `mtllib` and `map_*` lines (options skipped, spaces
+/// kept). A binary file is not scanned: splicing a path into it breaks its lengths.
 std::vector<FoundRef> ExtractModelRefs(const std::string& text);
 
 struct ScanOptions {

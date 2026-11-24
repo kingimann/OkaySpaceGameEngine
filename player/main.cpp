@@ -17,6 +17,7 @@
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/AssetDatabase.hpp"   // scene files name assets by id; the index resolves them
 #include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
@@ -1582,6 +1583,18 @@ int main(int argc, char** argv) {
     okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
                         cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
     okay::devlog::HitchWatch hitchWatch;
+    {   // The editor writes a sprite's asset id. The player resolves it from the same folder.
+        static okay::AssetDatabase* index = new okay::AssetDatabase();
+        okay::ScanOptions opt;
+        opt.createMetas = false;
+        opt.indexUnmetaed = true;
+        opt.detectMoves = false;
+        opt.verifyHashes = false;
+        opt.buildDependencies = false;
+        opt.logWarnings = false;
+        index->Scan(baseDir, opt);
+        okay::SetSceneAssetIndex(index);
+    }
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         pb->Log("Could not load " + scenePath + ": " + err);
         okay::Log::Error("[scene] could not load '", scenePath, "': ", err);

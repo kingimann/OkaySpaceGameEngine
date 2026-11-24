@@ -263,6 +263,31 @@ int main() {
         CHECK(hd->Has("mp"));
     }
 
+    // Image::Load, Material::LoadFromFile and the shader file loader go through the process-wide manager.
+    {
+        RUN_SUITE("built-in loads use AssetManager");
+        const fs::path bmp = dir / "one.bmp";
+        const unsigned char bytes[] = {
+            0x42,0x4D, 0x3A,0,0,0, 0,0,0,0, 0x36,0,0,0,
+            0x28,0,0,0, 1,0,0,0, 1,0,0,0, 1,0, 24,0, 0,0,0,0, 4,0,0,0,
+            0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+            0,0,255, 0
+        };
+        std::ofstream(bmp, std::ios::binary).write(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+        const std::string path = bmp.string();
+        const std::size_t before = AssetManager::Instance().CachedCount();
+        Image first, second;
+        CHECK(first.Load(path) && first.Width() == 1 && first.Height() == 1);
+        CHECK(second.Load(path));
+        CHECK(AssetManager::Instance().CachedCount() == before + 1);
+        CHECK(AssetManager::Instance().Find<Image>(path).Ready());
+        Material mat;
+        CHECK(mat.SaveToFile((dir / "box.okaymat").string()));
+        Material loaded;
+        CHECK(Material::LoadFromFile((dir / "box.okaymat").string(), loaded));
+        CHECK(AssetManager::Instance().Find<Material>((dir / "box.okaymat").string()).Ready());
+    }
+
     std::error_code ec; fs::remove_all(dir, ec);
     TEST_MAIN_RESULT();
 }

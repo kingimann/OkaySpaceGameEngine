@@ -3,7 +3,10 @@
 // through the engine's own decoder (VorbisDecoder.cpp, whole file or
 // incrementally through VorbisStream); MP3 through Mp3Decoder.cpp; FLAC through
 // FlacDecoder.cpp.
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Debug/DebugUtil.hpp"
+#include <map>
 #include "okay/Core/FileStamp.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
@@ -106,7 +109,27 @@ bool AudioClip::LoadFLAC(const std::string& path, std::string* error, bool downm
     return true;
 }
 
+namespace {
+thread_local int g_audioDirect = 0;
+debugutil::SpinLock g_audioHoldLock;
+std::map<std::string, AssetHandle<AudioClip>> g_audioHeld;
+}
+
+// Whole-file loads go through AssetManager (cache, ref count, hot reload). Streaming
+// playback stays in AudioStream and is not changed here.
 bool AudioClip::Load(const std::string& path, std::string* error, bool downmix) {
+    if (g_audioDirect == 0 && !downmix) {
+        ++g_audioDirect;
+        auto handle = AssetManager::Instance().Get<AudioClip>(path, error);
+        --g_audioDirect;
+        if (!handle) return false;
+        {
+            debugutil::SpinGuard hold(g_audioHoldLock);
+            g_audioHeld[handle.Path()] = handle;
+        }
+        *this = *handle.Get();
+        return true;
+    }
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
     const std::string ext = LowerExt(path);
     if (ext == "ogg") return LoadOGG(path, error, mono);

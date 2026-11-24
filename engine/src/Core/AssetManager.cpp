@@ -6,14 +6,44 @@
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Render/Mesh.hpp"
+#include "okay/Debug/DebugUtil.hpp"
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include "CoreThreads.hpp"   // our own Mutex/CondVar (no <mutex> under MinGW win32 threads)
 
 namespace okay {
+
+namespace {
+thread_local int g_materialDirect = 0;
+debugutil::SpinLock g_materialHoldLock;
+std::map<std::string, AssetHandle<Material>> g_materialHeld;
+}
+
+bool Material::LoadFromFile(const std::string& path, Material& out) {
+    if (g_materialDirect == 0) {
+        ++g_materialDirect;
+        auto handle = AssetManager::Instance().Get<Material>(path);
+        --g_materialDirect;
+        if (!handle) return false;
+        {
+            debugutil::SpinGuard hold(g_materialHoldLock);
+            g_materialHeld[handle.Path()] = handle;
+        }
+        out = *handle.Get();
+        return true;
+    }
+    std::ifstream f(path);
+    if (!f) return false;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    out = FromText(ss.str());
+    return true;
+}
 
 struct AssetManager::Sync {
     corethreads::Mutex mutex;
@@ -163,6 +193,7 @@ void AssetManager::RegisterDefaultLoaders() {
     RegisterLoader<Image>("Image",
         [](const std::string& p, std::string& e) -> std::shared_ptr<Image> {
             auto a = std::make_shared<Image>();
+            // Image::Load asks the manager unless a load is already in progress (this call).
             return a->Load(p, &e) ? a : nullptr;
         },
         [](const Image& a) { return a.Pixels().size(); });

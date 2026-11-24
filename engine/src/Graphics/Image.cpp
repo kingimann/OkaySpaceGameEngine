@@ -2,26 +2,47 @@
 
 #include "okay/Core/ImageDecode.hpp"
 #include "okay/Core/ImageWrite.hpp"
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Debug/DebugUtil.hpp"
+#include <map>
 
 namespace okay {
 
-bool Image::Load(const std::string& path, std::string* error) {
-    // Our own decoder (Core/ImageDecode): PNG, JPG, BMP, TGA, GIF (first frame), HDR (tone-mapped), PSD.
-    // It refuses absurd sizes and headers that claim far more pixels than the file could hold.
-    // The buffer is always RGBA8.
-    DecodedImage img;
+namespace {
+thread_local int g_imageDirect = 0;
+debugutil::SpinLock g_imageHoldLock;
+std::map<std::string, AssetHandle<Image>> g_imageHeld;
+
+bool LoadImageFile(Image& img, const std::string& path, std::string* error) {
+    DecodedImage dec;
     std::string why;
-    if (!DecodeImageFile(path, img, &why)) {
+    if (!DecodeImageFile(path, dec, &why)) {
         if (why.empty()) why = "load failed";
         if (error) *error = why;
         Log::Warning("[asset] cannot load image '", path, "': ", why);
-        m_w = m_h = 0; m_pixels.clear();
+        img = Image();
         return false;
     }
-    m_w = img.width; m_h = img.height;
-    m_pixels = std::move(img.rgba);
+    img.Set(dec.width, dec.height, std::move(dec.rgba));
     return true;
+}
+}
+
+bool Image::Load(const std::string& path, std::string* error) {
+    if (g_imageDirect == 0) {
+        ++g_imageDirect;
+        auto handle = AssetManager::Instance().Get<Image>(path, error);
+        --g_imageDirect;
+        if (!handle) { *this = Image(); return false; }
+        {
+            debugutil::SpinGuard hold(g_imageHoldLock);
+            g_imageHeld[handle.Path()] = handle;
+        }
+        *this = *handle.Get();
+        return true;
+    }
+    return LoadImageFile(*this, path, error);
 }
 
 bool Image::SavePNG(const std::string& path) const {

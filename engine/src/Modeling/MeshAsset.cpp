@@ -1,4 +1,7 @@
+#include "okay/Core/AssetManager.hpp"
+#include "okay/Debug/DebugUtil.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
+#include <map>
 #include "okay/Modeling/PolyMesh.hpp"
 
 #include <cstring>
@@ -7,6 +10,9 @@
 namespace okay::modeling {
 
 namespace {
+thread_local int g_meshDirect = 0;
+debugutil::SpinLock g_meshHoldLock;
+std::map<std::string, okay::AssetHandle<okay::Mesh>> g_meshHeld;
 bool Exists(const std::string& p) { std::ifstream f(p, std::ios::binary); return f.good(); }
 
 bool LoadOne(const std::string& path, Mesh& out, std::string* texture, std::string* error) {
@@ -26,6 +32,18 @@ bool LoadOne(const std::string& path, Mesh& out, std::string* texture, std::stri
 } // namespace
 
 bool LoadMeshAsset(const std::string& path, Mesh& out, std::string* texture, std::string* error, const std::string& fallbackDir) {
+    if (g_meshDirect == 0 && texture == nullptr && fallbackDir.empty()) {
+        ++g_meshDirect;
+        auto handle = okay::AssetManager::Instance().Get<Mesh>(path, error);
+        --g_meshDirect;
+        if (!handle) return false;
+        {
+            debugutil::SpinGuard hold(g_meshHoldLock);
+            g_meshHeld[handle.Path()] = handle;
+        }
+        out = *handle.Get();
+        return true;
+    }
     if (path.empty()) { if (error) *error = "no mesh file"; return false; }
     if (Exists(path)) return LoadOne(path, out, texture, error);
     if (!fallbackDir.empty()) {

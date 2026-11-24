@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.8
+  The okay command line, OkayScript on its own, and our own FBX and WAV
+  - New: okay.exe (in the Tools folder), the engine's own command line.
+    Make, open, play and build projects, check scenes and Visual Script
+    graphs, run scripts, find and import assets, and save your work with
+    version control (okay vc save, undo, history). Scenes and prefabs
+    merge and compare as scenes, not as raw text.
+  - OkayScript is now a language of its own. The engine uses the same
+    one, and scripts with many function calls run several times faster.
+    Three small script bugs are fixed (%= on a list item, a switch at the
+    top of a file, and a var line followed by a name).
+  - Model and sound files: older FBX files (versions 6.x and 7.0) now
+    open, and FBX and WAV files are read only by our own code. A damaged
+    FBX file can no longer make the import hang.
+  - Downloads: a download that resumed after a cut and then failed its
+    check now starts again from the beginning instead of failing, and a
+    rare problem with cancelled downloads on Windows is fixed.
+
 v2.903.7
   Downloads, our own editor windows and more model readers
   - Downloads and updates: the launcher, editor and player now use one

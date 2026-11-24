@@ -1,0 +1,35 @@
+// <cmath> for okay-cc (ISO/IEC 14882 [cmath.syn], ISO C 7.12). Our own header. Only the functions
+// that need no rounding of their own: absolute value, floor and ceiling (for |x| < 2^52), min and
+// max, and the classification tests. sqrt, sin, cos, exp, log and pow are not here yet (they must
+// round exactly as the C library does; see the compiler plan). Only the double forms exist (one
+// function per name: free functions are not overloaded in this subset).
+#pragma once
+namespace std {
+inline double fabs(double x) { return x < 0 ? -x : (x == 0 ? 0.0 : x); }
+inline double floor(double x) {
+    if (!(x - x == 0)) return x;  // infinity or NaN
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    return t > x ? t - 1.0 : t;
+}
+inline double ceil(double x) {
+    if (!(x - x == 0)) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double t = (double)(long)x;
+    return t < x ? t + 1.0 : t;
+}
+// A NaN argument is treated as missing data: the other one is returned (ISO C 7.12.12.2, F.10.9.2).
+inline double fmin(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return b < a ? b : a;
+}
+inline double fmax(double a, double b) {
+    if (!(a == a)) return b;
+    if (!(b == b)) return a;
+    return a < b ? b : a;
+}
+inline bool isfinite(double x) { return x - x == 0; }
+inline bool isinf(double x) { return x == x && !(x - x == 0); }
+inline bool isnan(double x) { return !(x == x); }
+}  // namespace std

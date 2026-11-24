@@ -1,0 +1,11 @@
+// <cstddef> for okay-cc (ISO/IEC 14882 [cstddef.syn]; System V AMD64 sizes). Our own header.
+#pragma once
+namespace std {
+typedef unsigned long size_t;
+typedef long ptrdiff_t;
+typedef long max_align_t;
+}  // namespace std
+#ifndef NULL
+#define NULL 0
+#endif
+#define offsetof(type, member) ((std::size_t) & (((type *)0)->member))

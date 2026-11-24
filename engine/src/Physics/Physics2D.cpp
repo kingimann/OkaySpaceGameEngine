@@ -1260,7 +1260,7 @@ std::vector<RaycastHit2D> SweepQueryAll(Scene& scene, const Query2& q, const Vec
     }
     float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
     if (!std::isfinite(step) || step <= 0.0f) return hits;
-    for (const Cand& cd : cands) {
+    for (const Cand& cd : cands) { // dup-allow-begin: 2D sweep march uses Vec2 and Query2; the 3D march cannot be the same function
         Vec2 n, p;
         auto touchAt = [&](float t) { return QueryTouch(cd.c, q.Moved(dir * t), n, p); };
         float hitT = cd.t0;
@@ -1296,7 +1296,7 @@ std::vector<RaycastHit2D> SweepQueryAll(Scene& scene, const Query2& q, const Vec
     }
     std::sort(hits.begin(), hits.end(), [](const RaycastHit2D& a, const RaycastHit2D& b) { return a.distance < b.distance; });
     return hits;
-}
+} // dup-allow-end
 
 Query2 BoxQuery(const Vec2& c, const Vec2& half, float angle) {
     Query2 q; q.kind = Query2::Box; q.box = MakeQueryBox(c, half, angle); return q;
@@ -1470,7 +1470,7 @@ RaycastHit2D Physics2D::BoxCast(Scene& scene, const Vec2& center, const Vec2& ha
     return SweepQuery(scene, BoxQuery(center, h, angle), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
-std::vector<RaycastHit2D> Physics2D::BoxCastAll(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+std::vector<RaycastHit2D> Physics2D::BoxCastAll(Scene& scene, const Vec2& center, const Vec2& halfExtents, // dup-allow-begin: same early-out as BoxCast, then the all-hits sweep
                                                const Vec2& direction, float angle, float maxDistance,
                                                GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
     Vec2 dir = direction.Normalized();
@@ -1478,7 +1478,7 @@ std::vector<RaycastHit2D> Physics2D::BoxCastAll(Scene& scene, const Vec2& center
     if (h.x <= 1e-6f && h.y <= 1e-6f)
         return RaycastAll(scene, center, dir, maxDistance, ignore, layerMask, queryTriggers);
     return SweepQueryAll(scene, BoxQuery(center, h, angle), dir, maxDistance, ignore, layerMask, queryTriggers);
-}
+} // dup-allow-end
 
 RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                                     const Vec2& direction, float maxDistance, GameObject* ignore,
@@ -1491,7 +1491,7 @@ RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, 
     return SweepQuery(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
-std::vector<RaycastHit2D> Physics2D::CapsuleCastAll(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+std::vector<RaycastHit2D> Physics2D::CapsuleCastAll(Scene& scene, const Vec2& a, const Vec2& b, float radius, // dup-allow-begin: same early-out as CapsuleCast, then the all-hits sweep
                                                    const Vec2& direction, float maxDistance, GameObject* ignore,
                                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec2 dir = direction.Normalized();
@@ -1499,9 +1499,9 @@ std::vector<RaycastHit2D> Physics2D::CapsuleCastAll(Scene& scene, const Vec2& a,
     if (r <= 1e-6f && (a - b).SqrMagnitude() <= 1e-12f)
         return RaycastAll(scene, a, dir, maxDistance, ignore, layerMask, queryTriggers);
     return SweepQueryAll(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
-}
+} // dup-allow-end
 
-SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float maxDistance,
+SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float maxDistance, // dup-allow-begin: 2D shapes and Vec2; the 3D closest point cannot be the same function
                                         GameObject* ignore, std::uint32_t layerMask) {
     SurfaceQuery2D best;
     if (!(maxDistance >= 0.0f) || !std::isfinite(point.x + point.y)) return best;
@@ -1533,7 +1533,7 @@ SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float ma
             else if (m > 1e-8f) { cp = on + delta * (r / m); d = m - r; }
         } else {
             Vec2 mn, mx; col->WorldAABB(mn, mx);
-            cp = {Mathf::Clamp(point.x, mn.x, mx.x), Mathf::Clamp(point.y, mn.y, mx.y)};
+            cp = {Mathf::Clamp(point.x, mn.x, mx.x), Mathf::Clamp(point.y, mn.y, mx.y)}; // dup-allow: 2D closest point; the 3D one uses Vec3 and different shapes
             d = (point - cp).Magnitude();
         }
         if (!std::isfinite(d) || d > maxDistance) continue;
@@ -1548,7 +1548,7 @@ SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float ma
     }
     if (!any) return SurfaceQuery2D{};
     return best;
-}
+} // dup-allow-end
 
 void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
     Transform* t = rb->transform;

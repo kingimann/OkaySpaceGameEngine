@@ -72,7 +72,7 @@ int main() {
 
     std::string here = OKAY_TESTS_DIR "/test_dof_math.cpp";
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
-    const std::string gl = Slurp(root + "GLRenderer.cpp");
+    const std::string gl = Slurp(root + "GLRenderer.cpp") + Slurp(root + "GLRendererShaders.cpp") + Slurp(root + "GLRendererPasses.cpp") + Slurp(root + "GLRendererResources.cpp") + Slurp(root + "GLRendererInternal.hpp");   // GLRenderer.cpp is split into four files (pure move)
     const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // HLSL text lives in D3D11Hlsl.hpp (moved out, same bytes)
     CHECK(!gl.empty() && !dx.empty());
     if (!gl.empty()) {

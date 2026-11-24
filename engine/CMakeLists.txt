@@ -155,7 +155,7 @@ add_library(okay_engine
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
-    src/VisualScript/VsNodeRegistry.cpp
+    src/Modules/VsNodeRegistry.cpp
     src/VisualScript/VsTypes.cpp
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp

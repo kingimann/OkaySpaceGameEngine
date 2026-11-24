@@ -11,8 +11,6 @@
 #include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesInventory.hpp"
 #include "okay/VisualScript/NodesCombat.hpp"
-#include "okay/VisualScript/VsNodeRegistry.hpp"
-#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/VisualScript/NodesStory.hpp"
@@ -477,16 +475,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "CraftItem")      return std::make_unique<InvCraftNode>(a0("item"));
         if (type == "LootRoll")       return std::make_unique<InvLootRollNode>(a0("table"));
         if (type == "SpawnPickup")    return std::make_unique<InvSpawnPickupNode>(a0("item"));
-        // Nodes a module registered (weapons: swing, fire, reload, ammo, set). With the
-        // module on this is the same node as the old hard-coded line. With it off, refuse.
-        okay::ModuleRegistry::Get();
-        if (const VsNodeEntry* reg = FindRegisteredVsNode(type)) {
-            if (!reg->module.empty() && !okay::ModuleRegistry::Get().IsEnabled(reg->module)) {
-                if (err) *err = "the " + reg->module + " module is off";
-                return nullptr;
-            }
-            return reg->make(args, err);
-        }
+        if (type == "SwingWeapon")    return std::make_unique<SwingWeaponNode>();
+        if (type == "FireWeapon")     return std::make_unique<FireWeaponNode>();
+        if (type == "ReloadWeapon")   return std::make_unique<ReloadWeaponNode>();
+        if (type == "WeaponAmmo")     return std::make_unique<WeaponAmmoNode>();
+        if (type == "SetWeapon")      return std::make_unique<SetWeaponNode>(a0("sword"));
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);

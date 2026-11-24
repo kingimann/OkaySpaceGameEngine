@@ -520,15 +520,19 @@ std::vector<PropertyContributor>& PropertyContributors() {
     static std::vector<PropertyContributor> v;
     return v;
 }
-std::mutex& PropertyContributorLock() {
-    static std::mutex lock;
-    return lock;
+std::atomic<int>& ContributorHeld() {
+    static std::atomic<int> held{0};
+    return held;
 }
+struct ContributorGuard {
+    ContributorGuard() { while (ContributorHeld().exchange(1, std::memory_order_acquire)) {} }
+    ~ContributorGuard() { ContributorHeld().store(0, std::memory_order_release); }
+};
 } // namespace
 
 void AddPropertyContributor(const char* module, void (*fn)()) {
     if (!fn) return;
-    std::lock_guard<std::mutex> guard(PropertyContributorLock());
+    ContributorGuard guard;
     for (const PropertyContributor& c : PropertyContributors()) if (c.fn == fn) return;
     PropertyContributors().push_back({module ? module : "", fn});
 }
@@ -537,7 +541,7 @@ void ApplyPropertyContributors() {
     ModuleRegistry::Get();   // hooks record contributors; this call is what fills the list the first time
     std::vector<PropertyContributor> copy;
     {
-        std::lock_guard<std::mutex> guard(PropertyContributorLock());
+        ContributorGuard guard;
         copy = PropertyContributors();
     }
     for (const PropertyContributor& c : copy) {

@@ -1780,10 +1780,11 @@ function on_trigger()   { /* entered a trigger volume */ }
 - **Builtins:** the maths and conversion builtins (`CoreBuiltins.hpp`) are one set the engine and the CLI both
   register, with the engine's rules (`len(x, y)` is a 2D vector's length; `sqrt(-4)` is nan; `num("12abc")` is 12).
   The CLI adds only input and output: print, println, write, input, exit.
-- **Speed:** `return`, `break` and `continue` are a status the statements hand back, not C++ exceptions; a read of a
-  name that is never a local skips the call stack's scopes (`Program::localNames`). Callgrind counts for
-  `tests/bench_okayscript.cpp` (main before the core / this core): arith 236.2M / 218.4M, calls 1111.3M / 196.4M,
-  deep reads 173.3M / 100.6M; `okayscript_bench` guards them.
+- **Speed:** everything runs as bytecode (`docs/scripting/okayscript_vm.md`; the tree walker is deleted); a
+  function's locals are frame slots; `return`, `break` and `continue` are jumps or a returned status, never C++
+  exceptions. Callgrind counts for `tests/bench_okayscript.cpp` (the tree walker on main / bytecode stage 1 / stage 2):
+  arith 218.4M / 55.4M / 56.2M, calls 196.4M / 139.9M / 68.4M, deep reads 100.6M / 9.2M / 9.0M, list work 133.0M /
+  77.4M / 80.4M, text building 2417.7M / 815.5M / 815.1M; `okayscript_bench` guards them.
 - **Tests:** `okayscript_lang_lexer`, `_parser`, `_interpreter`, `_native`, `_errors` (link only the library);
   `okayscript_cli_<case>` from `tests/okayscript_cli/` (`.okay`, `.args`, `.in`, `.out`, `.err`, `.code`);
   `okayscript_no_engine` (no engine include under `okayscript/`, the CLI links no engine library; CMake also refuses to

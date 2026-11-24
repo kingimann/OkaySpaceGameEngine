@@ -8,6 +8,7 @@ add_library(okayscript_lang STATIC
     src/Lexer.cpp
     src/Value.cpp
     src/Ast.cpp
+    src/Compile.cpp
     src/Parser.cpp
     src/Instantiate.cpp
     src/Stdlib.cpp

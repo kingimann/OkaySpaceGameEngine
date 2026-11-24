@@ -6,95 +6,22 @@
 // [expr.ref], [stmt.return], [dcl.spec.auto], [stmt.ranged], [expr.prim.lambda], and the MSVC name decoration rules
 // (operator codes ?H ?G ?D ?K ?A ?R ?8 ?9 ?M ?O ?Y ?Z ?E ?F ?6 ?B).
 
-#include "check.hpp"
-#include "okayms/coff.hpp"
-#include "okayms/compile.hpp"
-#include "okayms/link.hpp"
+#include "program_check.hpp"
 
-#include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
 
 using okayms_test::Tally;
+using okayms_test::run_shell;
+using okayms_test::wine_exit;
+using okayms_test::write_bytes;
+const okayms_test::ProgramRun kRun{"r21", {}};
 
-int run_shell(const std::string& cmd) {
-    const int rc = std::system(cmd.c_str());
-    if (rc == -1 || !WIFEXITED(rc)) return -1;
-    return WEXITSTATUS(rc);
-}
-
-int wine_exit(const std::string& exe) {
-    return run_shell("WINEDEBUG=-all WINEPREFIX=$HOME/.okayms-wine timeout 60 wine " + exe + " >/dev/null 2>&1");
-}
-
-bool write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
-}
-
-[[maybe_unused]] bool has_symbol(const okayms::ObjectFile& object, const std::string& name) {
-    for (const auto& symbol : object.symbols)
-        if (symbol.name == name) return true;
-    return false;
-}
-
-const char* kChecks = "#define CK(n, c) if (!(c)) return n;\n";
-
-// Builds `source` at each optimization level and runs it; MinGW g++ runs the same text.
 void run_both(Tally& tally, const std::string& name, const std::string& source, int want,
               okayms::ObjectFile* object_out = nullptr) {
-    std::printf("r21 program %s\n", name.c_str());
-    const std::string dir = "/tmp/okayms-r21";
-    run_shell("mkdir -p " + dir);
-    for (int level = 0; level <= 2; ++level) {
-        okayms::CompileInput in;
-        in.source = std::string(kChecks) + source;
-        in.opt_level = level;
-        in.optimize = level > 0;
-        in.include_paths.push_back("tools/okayms/stdinc");
-        in.include_paths.push_back("stdinc");
-        const auto compiled = okayms::compile_c(in);
-        CHECK(tally, compiled.ok());
-        if (!compiled.ok()) {
-            std::fprintf(stderr, "  %s /O%d: %s\n", name.c_str(), level, compiled.error.c_str());
-            continue;
-        }
-        if (object_out != nullptr && level == 0) *object_out = compiled.value.object;
-        const auto linked = okayms::link_executable({compiled.value.object}, {});
-        CHECK(tally, linked.ok());
-        if (!linked.ok()) {
-            std::fprintf(stderr, "  %s\n", linked.error.c_str());
-            continue;
-        }
-        const std::string ok_exe = dir + "/" + name + "-ok" + std::to_string(level) + ".exe";
-        CHECK(tally, write_bytes(ok_exe, linked.value));
-        const int code = wine_exit(ok_exe);
-        CHECK(tally, code == want);
-        if (code != want) std::fprintf(stderr, "  %s /O%d: okay exit %d, wanted %d\n", name.c_str(), level, code, want);
-    }
-    if (run_shell("command -v x86_64-w64-mingw32-g++ >/dev/null") != 0) {
-        std::printf("skipping g++ comparison: MinGW g++ is not installed\n");
-        return;
-    }
-    const std::string src = dir + "/" + name + ".cpp";
-    {
-        std::ofstream out(src.c_str());
-        out << kChecks << "#include <cstdint>\n#include <cstddef>\n" << source << "\nint main() { return entry(); }\n";
-    }
-    const std::string gpp_exe = dir + "/" + name + "-gpp.exe";
-    const int built = run_shell("x86_64-w64-mingw32-g++ -static -fno-exceptions -fno-rtti -w -o " + gpp_exe + " " + src +
-                                " 2>" + dir + "/" + name + ".log");
-    CHECK(tally, built == 0);
-    if (built != 0) return;
-    const int ref = wine_exit(gpp_exe);
-    CHECK(tally, ref == want);
-    if (ref != want) std::fprintf(stderr, "  g++ exit %d, wanted %d (the test itself is wrong)\n", ref, want);
+    okayms_test::run_both(kRun, tally, name, source, want, object_out);
 }
 
 }  // namespace

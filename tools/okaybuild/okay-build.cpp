@@ -136,6 +136,9 @@ struct PackageDecl {
 };
 // A source tree to download, pinned: a git commit (40 hex digits) or a tarball with its SHA-256. Only `okay-build fetch` downloads; a build never does.
 struct FetchDecl { string name, git, commit, url, sha256, dir; int strip = 1; int line = 0; };
+// A file the manifest carries whole (the `cmake` command writes one for each file the CMake code writes while it is read).
+// The build writes it before planning, only when the text differs, so an unchanged file keeps its time stamp.
+struct GenFile { string path, text; int line = 0; };
 struct DistDecl {
     bool on = false; string dir = "dist", launcher, dll, readme, version, textures, fonts;
     vector<string> tools, examples;
@@ -145,7 +148,7 @@ struct Manifest {
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches;
+    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches; vector<GenFile> gens;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -188,7 +191,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH, GENERATE } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -198,6 +201,23 @@ static Manifest parseManifest(const string& file) {
     };
     while (std::getline(in, line)) {
         ++ln;
+        if (mode == GENERATE) { // text = "..." is read raw (a '#' in it is text), with C-style escapes
+            size_t i = line.find_first_not_of(" \t");
+            if (i != string::npos && line.compare(i, 4, "text") == 0) {
+                size_t q = line.find('"', i), e = line.find_last_of('"');
+                if (line.find('=', i) > q || q == string::npos || e == q) throw err("expected: text = \"...\"");
+                string& d = m.gens.back().text;
+                for (size_t k = q + 1; k < e; ++k) {
+                    char c = line[k]; if (c != '\\') { d += c; continue; }
+                    if (++k >= e) throw err("text ends inside an escape");
+                    char x = line[k];
+                    if (x == 'n') d += '\n'; else if (x == 't') d += '\t'; else if (x == 'r') d += '\r'; else if (x == '\\') d += '\\'; else if (x == '"') d += '"';
+                    else if (x == 'x' && k + 2 < e && isxdigit((unsigned char)line[k + 1]) && isxdigit((unsigned char)line[k + 2])) { d += (char)strtol(line.substr(k + 1, 2).c_str(), nullptr, 16); k += 2; }
+                    else throw err(string("unknown escape \\") + x + " in text");
+                }
+                continue;
+            }
+        }
         if (!isCmdLine(line)) line = stripComment(line);
         auto t = tokens(line); if (t.empty()) continue;
         if ((mode == ACTION || mode == BUILDFILE || mode == IMPORTER) && t[0] == "cmd") { // raw rest of line, kept exactly
@@ -248,6 +268,13 @@ static Manifest parseManifest(const string& file) {
                 for (auto& x : m.fetches) if (x.name == t[1]) throw err("duplicate fetch '" + t[1] + "'");
                 FetchDecl f; f.name = t[1]; f.line = ln; f.dir = "_deps/" + t[1] + "-src"; m.fetches.push_back(f); mode = FETCH; continue;
             }
+            if (t[0] == "generate") {
+                if (t.size() != 2) throw err("expected: generate PATH");
+                string gp = cmr::binNormal(t[1]); // one file has one spelling: {bin}/a/../b.cpp is {bin}/b.cpp
+                if (!cmr::inBin(gp)) throw err("generate path '" + t[1] + "' must be a file inside the build folder: {bin}/<path> with no '..' above {bin}");
+                for (auto& x : m.gens) if (x.path == gp) throw err("duplicate generate '" + t[1] + "' (the same file as '" + gp + "')");
+                GenFile g; g.path = gp; g.line = ln; m.gens.push_back(g); mode = GENERATE; continue;
+            }
             if (t[0] == "ctest") {
                 if (t.size() != 2) throw err("expected: ctest NAME");
                 for (auto& x : m.ctests) if (x.name == t[1]) throw err("duplicate ctest '" + t[1] + "'");
@@ -286,11 +313,12 @@ static Manifest parseManifest(const string& file) {
                 CondBlock c; c.opt = t[1]; c.line = ln; if (t.size() == 4) { c.hasEquals = true; c.equals = t[3]; }
                 m.conds.push_back(c); mode = COND; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target, package, config, option, if, pool, action, buildfile or outdir)");
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, package, config, option, if, pool, action, buildfile, generate or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
         auto add = [&](vector<string>& d) { d.insert(d.end(), v.begin(), v.end()); };
+        if (mode == GENERATE) throw err("a generate block holds only text = \"...\" lines");
         if (mode == TC) {
             Toolchain& c = m.tc; auto one = [&](string& d) { c.setKeys.push_back(k); if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
             if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
@@ -532,7 +560,7 @@ struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
     vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
-struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
+struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; vector<std::pair<string, const string*>> gens; /* generate files the planned steps need: full path, text */ };
 static string gBuildDir = ".";
 static string under(const string& rel) { return gBuildDir == "." ? rel : gBuildDir + "/" + rel; }
 static string resolve(const string& dir, const string& p) {
@@ -634,6 +662,35 @@ static vector<RawAction> expandImporters(const Manifest& m) {
     return out;
 }
 
+// Where each generate block's file goes: {bin} is <build dir>/<outdir>/ctest. The path must stay inside that folder after links are
+// followed (a folder in the build tree that links elsewhere is refused), so a manifest cannot write anywhere else.
+static string binTreeOf(const Manifest& m) { return fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string(); }
+static std::map<string, const GenFile*> genFilePaths(const Manifest& m) {
+    std::map<string, const GenFile*> r; if (m.gens.empty()) return r;
+    string tree = binTreeOf(m); std::error_code ec;
+    string realTree = fs::weakly_canonical(tree, ec).generic_string(); if (ec) realTree = tree;
+    for (auto& gf : m.gens) {
+        if (!cmr::inBin(gf.path)) throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") is outside the build folder");
+        string p = (fs::path(tree) / gf.path.substr(6)).lexically_normal().generic_string();
+        string real = fs::weakly_canonical(p, ec).generic_string(); if (ec) real = p;
+        if (p.compare(0, tree.size() + 1, tree + "/") != 0 || real.compare(0, realTree.size() + 1, realTree + "/") != 0)
+            throw Fail("generate '" + gf.path + "' (line " + std::to_string(gf.line) + ") resolves to " + real + ", outside the build folder " + realTree);
+        r[p] = &gf;
+    }
+    return r;
+}
+// A real build writes the generate files its steps need before it runs them; unchanged text is left alone (its time stamp too).
+static void writeGenerated(const Graph& g) {
+    for (auto& [p, text] : g.gens) {
+        string old; bool same = false;
+        { std::ifstream f(p, std::ios::binary); if (f) { old.assign((std::istreambuf_iterator<char>(f)), {}); same = old == *text; } }
+        if (same) continue;
+        std::error_code ec; fs::create_directories(fs::path(p).parent_path(), ec);
+        string tmp = p + ".okaytmp"; { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) throw Fail("cannot write generated file " + p); f << *text; }
+        fs::rename(tmp, p, ec); if (ec) throw Fail("cannot write generated file " + p + ": " + ec.message());
+        forgetHash(p);
+    }
+}
 static Graph plan(const Manifest& m, const vector<string>& want) {
     vector<RawAction> raws = m.actions; { auto more = expandImporters(m); raws.insert(raws.end(), more.begin(), more.end()); }
     std::map<string, const Target*> byName;
@@ -686,20 +743,22 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
     // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
-    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    string binTree = binTreeOf(m);
     auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
+    std::map<string, const GenFile*> genAt = genFilePaths(m); // checked here (inside the build folder); written only by a real build
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
         for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
-        for (auto& s : t.sources) {
+        for (auto& sRaw : t.sources) {
+            const string s = sRaw.compare(0, 6, "{bin}/") == 0 ? fixBin(cmr::binNormal(sRaw)) : fixBin(sRaw); // a source in {bin} is a file the manifest carries (or one an action writes there)
             string srcKey = resolve("", s);
-            if (!produced.count(srcKey) && !fs::exists(s)) {
+            if (!produced.count(srcKey) && !genAt.count(s) && !fs::exists(s)) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
                 throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
             }
             bool isC = fs::path(s).extension() == ".c";
-            string rel = fs::path(s).lexically_normal().generic_string();
+            string rel = sRaw.compare(0, 6, "{bin}/") == 0 ? "_bin/" + sRaw.substr(6) : fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
             a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
@@ -713,9 +772,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + fixBin(pf.second));
-                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(spellMsvc(pf.second, false));
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("/I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("/D" + fixBin(pf.second));
+                for (auto& pf : t.fileFlags) if (pf.first == sRaw) a.argv.push_back(spellMsvc(pf.second, false));
                 a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
@@ -727,9 +786,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + fixBin(pf.second));
-                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(pf.second);
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("-I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                for (auto& pf : t.fileFlags) if (pf.first == sRaw) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
                 if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
                     string root = fs::current_path().generic_string();
@@ -830,6 +889,14 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& a : h.acts) { a.id = remap[a.id]; for (int& d : a.deps) d = remap[d]; }
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
+    }
+    { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
+        std::set<string> compiled; bool anyCompile = false;
+        for (auto& a : g.acts) if (a.kind == "CC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
+        static const std::set<string> headerExt = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp"};
+        for (auto& kv : genAt)
+            if (compiled.count(kv.first) || compiled.count(resolve("", kv.first)) || (anyCompile && headerExt.count(fs::path(kv.first).extension().string())))
+                g.gens.push_back({kv.first, &kv.second->text});
     }
     for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd + (a.salt.empty() ? "" : "\n" + a.salt)); }
     for (auto& a : g.acts) for (int d : a.deps) g.acts[d].rdeps.push_back(a.id);
@@ -2186,7 +2253,7 @@ static string commandLineFor(const Action& a, string& err) {
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g); if (!o.dry) writeGenerated(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
@@ -2338,7 +2405,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     return buildOnWindows(m, want, o);
 #else
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g); if (!o.dry) writeGenerated(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
@@ -2812,19 +2879,40 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
 }
 
 // ---- cmake: read the project's CMakeLists.txt files ourselves (no CMake) and write a build.okay. See cmake_reader.hpp.
+// This program's own path, for the command a manifest runs to write itself again.
+static string selfExe(const char* argv0) {
+#ifdef _WIN32
+    wchar_t b[32768]; DWORD n = GetModuleFileNameW(nullptr, b, 32768);
+    if (n > 0 && n < 32768) return fs::path(std::wstring(b, n)).generic_string();
+#else
+    std::error_code ec; fs::path p = fs::read_symlink("/proc/self/exe", ec); if (!ec && !p.empty()) return p.generic_string();
+#endif
+    return fs::absolute(argv0).lexically_normal().generic_string();
+}
 static int cmdCmake(const string& root, const string& outFile, const vector<std::pair<string, string>>& defs, const string& buildType,
-                    const std::map<string, string>& fetched, bool audit) {
+                    const std::map<string, string>& fetched, bool audit, const string& self, bool regen) {
     cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
     for (auto& d : defs) co.defs[d.first] = d.second;
     co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
     cmr::Report rep; cmr::Tally tally; string text;
     try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
+    if (regen) { // like CMake's own rerun step: when a CMake file or a configure input changes, the next build reads the project again
+        auto sq = [](const string& w) { string r = "'"; for (char c : w) { if (c == '\'') r += "'\\''"; else r += c; } return r + "'"; };
+        string c = sq(self) + " cmake " + sq(co.root) + " -o " + sq(fs::absolute(outFile).lexically_normal().generic_string());
+        for (auto& d : defs) c += " --opt " + sq(d.first + "=" + d.second);
+        if (!buildType.empty()) c += " --build-type " + sq(buildType);
+        for (auto& f : fetched) c += " --fetched " + sq(f.first + "=" + f.second);
+        text += "buildfile\n  cmd = " + c + " >/dev/null\n  inputs =";
+        for (auto& i : rep.inputs) text += " " + qtok(i);
+        text += "\nend\n";
+    }
     { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }
     printf("okay-build cmake: %d of %d targets written (%d skipped), %d of %d tests written -> %s\n", rep.emitted, rep.targetsDeclared, rep.skipped, rep.testsEmitted, rep.testsDeclared, outFile.c_str());
     if (!audit) return 0;
     printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
     printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
     printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
+    printf("generated files   %d (written by the CMake code while it is read; the build writes them)\n", rep.generated);
     if (rep.fetches) printf("downloads         %d fetch block(s) written (run okay-build fetch; nothing is downloaded by a build)\n", rep.fetches);
     printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
     int cmds = 0; for (auto& c : tally.run) cmds += c.second;
@@ -3659,7 +3747,7 @@ int main(int argc, char** argv) {
     if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
     if (const char* e = getenv("OKAY_REMOTE_CACHE")) if (*e) gRemoteDir = fs::absolute(e).string();
     Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
-    bool cmakeAudit = false; string cmakeBuildType; std::map<string, string> cmakeFetched;
+    bool cmakeAudit = false, cmakeRegen = true; string cmakeBuildType; std::map<string, string> cmakeFetched;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
         for (int i = 1; i < argc; ++i) {
@@ -3715,6 +3803,7 @@ int main(int argc, char** argv) {
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
             else if (a == "--audit") cmakeAudit = true;
+            else if (a == "--no-regen") cmakeRegen = false;
             else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);
             else if (a == "-E" && i + 1 < argc) gCtestExc.push_back(argv[++i]);
             else if (a == "-L" && i + 1 < argc) gCtestLabels.push_back(argv[++i]);
@@ -3747,8 +3836,8 @@ int main(int argc, char** argv) {
             return writeNative(want[0], importOut);
         }
         if (cmd == "cmake") {
-            if (want.empty()) throw Fail("usage: okay-build cmake <repo root> [-o build.okay] [--opt NAME=VALUE ...] [--build-type Release|Debug|...] [--fetched NAME=DIR] [--audit]");
-            return cmdCmake(want[0], importOut, optSets, cmakeBuildType, cmakeFetched, cmakeAudit);
+            if (want.empty()) throw Fail("usage: okay-build cmake <repo root> [-o build.okay] [--opt NAME=VALUE ...] [--build-type Release|Debug|...] [--fetched NAME=DIR] [--audit] [--no-regen]");
+            return cmdCmake(want[0], importOut, optSets, cmakeBuildType, cmakeFetched, cmakeAudit, selfExe(argv[0]), cmakeRegen);
         }
         if (cmd == "modules") {
             if (want.empty()) throw Fail("usage: okay-build modules <directory> [-o build.okay]");
@@ -3778,6 +3867,7 @@ int main(int argc, char** argv) {
         if (cmd == "fetch") return cmdFetch(m, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
+            for (auto& gp : genFilePaths(m)) fs::remove(gp.first); // the generate files a build wrote
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;
         }
         if (cmd == "compdb") { writeCompdb(m); return 0; }

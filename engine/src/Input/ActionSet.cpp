@@ -894,13 +894,6 @@ std::string ActionSet::ExportOverrides() const {
             for (std::size_t i = 0; i < b.parts.size(); ++i) s += (i ? "," : "") + b.parts[i];
             s += "\n";
         }
-        const InputActions::Response& r = a.response;
-        if (r.deadzone != 0.0f || r.curve != 1.0f || r.sensitivity != 1.0f || r.invertX || r.invertY) {
-            char buf[160];
-            std::snprintf(buf, sizeof buf, "ovresp %s %g %g %g %d %d\n", a.name.c_str(), r.deadzone, r.curve,
-                          r.sensitivity, r.invertX ? 1 : 0, r.invertY ? 1 : 0);
-            s += buf;
-        }
     }
     for (const std::string& k : m_keep) {   // lines for actions this set cannot take, unless it now has its own line for one
         const std::size_t s1 = k.find(' '), s2 = s1 == std::string::npos ? s1 : k.find(' ', s1 + 1);
@@ -948,28 +941,9 @@ int ActionSet::ImportOverrides(const std::string& text) {
             if (ok && SetBindings(a->name, list)) ++applied;
             continue;
         }
-        if (line.rfind("ovresp ", 0) == 0) {
-            // "ovresp <name> dz curve sens invertX invertY": the five numbers are the last five words, so a name may hold spaces.
-            float dz = 0, curve = 1, sens = 1;
-            int ix = 0, iy = 0;
-            std::size_t cut = line.size();
-            for (int w = 0; w < 5 && cut != std::string::npos; ++w) cut = cut > 0 ? line.rfind(' ', cut - 1) : std::string::npos;
-            if (cut == std::string::npos || cut <= 7) continue;
-            if (std::sscanf(line.c_str() + cut, "%f %f %f %d %d", &dz, &curve, &sens, &ix, &iy) != 5) continue;
-            const std::string name = line.substr(7, cut - 7);
-            ActionDef* a = Find(name);
-            if (!a) {
-                if (std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line);
-                continue;
-            }
-            a->response.deadzone = std::clamp(dz, 0.0f, 0.95f);
-            a->response.curve = std::clamp(curve, 0.1f, 8.0f);
-            a->response.sensitivity = std::clamp(sens, 0.05f, 20.0f);
-            a->response.invertX = ix != 0;
-            a->response.invertY = iy != 0;
-            ++applied;
-            continue;
-        }
+        // Only "ov" and "ovlist" lines live here. Anything else is skipped and not kept, which is how the "ovresp" lines an
+        // earlier version wrote leave a player's file at the next save: an action's response has one store, the pref
+        // "inputresp.<action>" (InputActions::SetResponse), so a second copy here could only be an older value.
         if (line.rfind("ov ", 0) != 0) continue;
         const std::size_t s1 = line.find(' ', 3), s2 = s1 == std::string::npos ? s1 : line.find(' ', s1 + 1);
         if (s2 == std::string::npos) continue;

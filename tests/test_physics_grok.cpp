@@ -1052,19 +1052,28 @@ int main() {
             auto* p = s.CreateGameObject("Player");
             p->transform->localPosition = {0, 0.9f, 0};
             p->AddComponent<BoxCollider3D>()->size = {0.6f, 1.8f, 0.6f};
-            if (which == 0) { auto* c = p->AddComponent<FirstPersonController>(); if (stepOffset >= 0.0f) c->stepOffset = stepOffset; }
-            else { auto* c = p->AddComponent<ThirdPersonController>(); if (stepOffset >= 0.0f) c->stepOffset = stepOffset; }
+            auto set = [stepOffset](auto* c) { if (stepOffset >= 0.0f) c->stepOffset = stepOffset; return c; };
+            ClickToMoveController* ctm = nullptr;
+            switch (which) {
+            case 0: set(p->AddComponent<FirstPersonController>()); break;
+            case 1: set(p->AddComponent<ThirdPersonController>()); break;
+            case 2: set(p->AddComponent<TopDownController>()); break;
+            case 3: set(p->AddComponent<TopDownShooterController>()); break;
+            default: ctm = set(p->AddComponent<ClickToMoveController>()); ctm->usePathfinding = false; ctm->giveUpWhenStuck = false; break;
+            }
             s.Start();
-            Input::FeedKeys({'w'});   // forward is -Z
+            if (ctm) ctm->MoveTo({0.0f, 0.9f, -4.0f});
+            else Input::FeedKeys({'w'});   // forward is -Z
             float highest = 0.0f;
             for (int i = 0; i < 90; ++i) { s.Update(1.0f / 60.0f); highest = std::max(highest, p->transform->Position().y - 0.9f); }
             Input::FeedKeys({});
             const Vec3 at = p->transform->Position();
-            std::printf("%s controller, %s, %.2f ledge: z %+.3f y %+.3f (highest %+.3f above rest)\n", which == 0 ? "first-person" : "third-person",
+            static const char* const kNames[] = {"first-person", "third-person", "top-down", "top-down shooter", "click-to-move"};
+            std::printf("%s controller, %s, %.2f ledge: z %+.3f y %+.3f (highest %+.3f above rest)\n", kNames[which],
                         label, ledgeHeight, at.z, at.y, highest);
             return highest;
         };
-        for (int which = 0; which < 2; ++which) {
+        for (int which = 0; which < 5; ++which) {   // first-, third-person, top-down, top-down shooter, click-to-move
             CHECK(run(which, 0.0f, 0.3f, "stepOffset 0") < 0.05f);
             CHECK(run(which, 0.2f, 0.3f, "stepOffset 0.2") < 0.05f);
             CHECK(run(which, -1.0f, 0.25f, "default stepOffset") > 0.2f);

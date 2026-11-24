@@ -55,6 +55,7 @@ public:
     float acceleration = 70.0f, deceleration = 60.0f;
     float backpedalMultiplier = 0.8f;    ///< speed when moving away from the aim
     bool  cameraRelative = false;        ///< WASD follows the camera yaw instead of world axes
+    float stepOffset = 0.35f;            ///< tallest ledge (metres) climbed when moving with no Rigidbody3D; 0 = none
     bool  driveAnimation = true;
 
     // ---- Aim ----

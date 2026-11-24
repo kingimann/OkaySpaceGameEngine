@@ -2023,6 +2023,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws; if (std::isdigit(in.peek())) { int pc = 1; in >> pc; cm->pickColliders = (pc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int gu = 1; in >> gu; cm->giveUpWhenStuck = (gu != 0); }
                         if (LooksNumeric(in)) in >> cm->stuckTime;
+                        if (LooksNumeric(in)) in >> cm->stepOffset;   // step limit (added later still)
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -3051,6 +3052,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     td->sprintKey = KeyFromToken(sk);
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
+                    if (LooksNumeric(in)) in >> td->stepOffset;   // step limit (added later; older scenes keep the default)
                 } else if (field == "tdsctrl") {
                     auto* ts = go->AddComponent<TopDownShooterController>();
                     KvIn k(in);
@@ -3070,6 +3072,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
+                    k.f("step", ts->stepOffset);   // step limit (added later; older scenes keep the default)
                 } else if (field == "ragdoll") {
                     auto* rd = go->AddComponent<Ragdoll>();
                     KvIn k(in);

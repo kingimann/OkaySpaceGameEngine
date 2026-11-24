@@ -53422,6 +53422,7 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+const char* OkayEditorBuildStamp();   // editor/BuildStamp.cpp: __DATE__ " " __TIME__ kept out of this file so ccache can reuse it
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -53430,7 +53431,7 @@ int main(int argc, char** argv) {
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
-    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, OkayEditorBuildStamp());   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
         if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);

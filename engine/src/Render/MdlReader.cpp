@@ -655,6 +655,7 @@ bool ReadGameStudio7(Br& b, const std::string& baseDir, ImportedModel& out, std:
     if (zeroWord != 0) return fail("the header word at offset 8 is " + std::to_string(zeroWord) + ", not 0 as in every file the layout was worked out from (perhaps bones, which are not understood): refused");
     if (numGroups <= 0 || numGroups > kMaxGsGroups) return fail("bad group count " + std::to_string(numGroups));
     if (dataSize > b.n) return fail("the data size in the header (" + std::to_string(dataSize) + " bytes) is larger than the file");
+    if (dataSize != 0 && dataSize < 48) return fail("the data size in the header (" + std::to_string(dataSize) + " bytes) is smaller than the header");
     if (skinSz < 12 || skinSz > kMaxGsRecord || stSz < 8 || stSz > kMaxGsRecord || triSz < 16 || triSz > kMaxGsRecord || vertSz < 12 || vertSz > kMaxGsRecord ||
         frameSz < 24 || frameSz > kMaxGsRecord || matSz > kMaxGsRecord || (matSz != 0 && matSz < 68))
         return fail("a record size in the header is out of range (skin " + std::to_string(skinSz) + ", skin point " + std::to_string(stSz) + ", triangle " +

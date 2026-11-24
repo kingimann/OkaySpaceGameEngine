@@ -6,6 +6,7 @@
 #include "model_fixture_util.hpp"
 #include "reader_hostile_common.hpp"
 #include "sib_fixtures.hpp"
+#include "alloc_budget.hpp"   // the counting allocator: this is the only source file of test_sib_reader
 #include "okay/Render/ModelData.hpp"
 #include <chrono>
 #include <cmath>
@@ -210,6 +211,45 @@ int main() {
         std::string body = sibfx::Chunk("VRTS", [&] { std::string v; for (float x : rep.pos) fx::PF(v, x); return v; }()) + sibfx::Chunk("FACS", facs);
         ImportedModel r;
         CHECK(!Read(sibfx::File({sibfx::Chunk("SHAP", body)}), r, err) && err.find("triangles (the budget)") != std::string::npos && r.parts.empty());
+    }
+    {   // short faces are not stored, but the texture coordinates and the material runs still count them: face 0 (2 corners)
+        // and face 1 (0 corners) come before the triangle, face 2, which is on material 1 (run from face 2) with uv (0.25, 0.5)
+        sibfx::Shape sh; sh.name = "s"; sh.pos = {0,0,0, 1,0,0, 0,1,0};
+        sibfx::FaceDef f0; f0.v = {0, 1}; f0.uv = {{0.9f, 0.9f}, {0.9f, 0.9f}};
+        sibfx::FaceDef f1;
+        sibfx::FaceDef f2; f2.v = {0, 1, 2}; f2.uv = {{0.25f, 0.5f}, {0.25f, 0.5f}, {0.25f, 0.5f}};
+        sh.faces = {f0, f1, f2};
+        sh.fama = {0, 0, 2, 1};
+        ImportedModel m; std::string err;
+        const bool ok = Read(sibfx::File({sibfx::Matr(1, 1, 1, "A", ""), sibfx::Matr(1, 1, 1, "B", ""), sibfx::Shp(sh)}), m, err);
+        CHECK(ok && m.parts.size() == 1 && m.parts[0].material == 1 && m.parts[0].mesh.triangles.size() == 3 && HasNote(m, "2 face(s) with fewer than 3 corners"));
+        if (ok && m.parts.size() == 1) for (const Vec2& uv : m.parts[0].mesh.uvs) CHECK(Near(uv.x, 0.25f) && Near(uv.y, 0.5f));
+    }
+    {   // a review of #1213: faces with 0 corners were not counted, so a FACS chunk of zeros stored every one of them (200 MB of
+        // zeros used 2 GB). Now a face with fewer than 3 corners is not stored: 6,000,000 empty faces (24 MB) hold almost nothing.
+        const std::string vrts = sibfx::Chunk("VRTS", [] { std::string v; for (float x : {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f}) fx::PF(v, x); return v; }());
+        const std::string file = sibfx::File({sibfx::Chunk("SHAP", vrts + sibfx::Chunk("FACS", std::string(6000000u * 4u, '\0')))});
+        const std::size_t base = budget::PeakReset();
+        ImportedModel m; std::string err;
+        const bool ok = Read(file, m, err);
+        const std::size_t peak = budget::PeakSince(base);
+        std::fprintf(stderr, "  6,000,000 empty faces: %s, peak %zu MB\n", ok ? "read" : "refused", peak >> 20);
+        CHECK(ok ? m.parts.empty() : (!err.empty() && m.parts.empty()));
+        CHECK(peak < 8u * 1024u * 1024u);
+    }
+    {   // the same review: a fanned face was turned into n - 2 triangles before the triangle budget was checked. One face of
+        // 4,000,003 corners (4,000,001 triangles, one over the budget) is refused before its corners or triangles are built.
+        std::string facs; fx::P32(facs, 4000003u);
+        for (std::uint32_t i = 0; i < 4000003u; ++i) fx::P32(facs, i % 3u);
+        const std::string vrts = sibfx::Chunk("VRTS", [] { std::string v; for (float x : {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f}) fx::PF(v, x); return v; }());
+        const std::string file = sibfx::File({sibfx::Chunk("SHAP", vrts + sibfx::Chunk("FACS", facs))});
+        const std::size_t base = budget::PeakReset();
+        ImportedModel m; std::string err;
+        const bool ok = Read(file, m, err);
+        const std::size_t peak = budget::PeakSince(base);
+        std::fprintf(stderr, "  one face of 4,000,003 corners: %s, peak %zu MB\n", ok ? "read" : "refused", peak >> 20);
+        CHECK(!ok && err.find("triangles (the budget)") != std::string::npos && m.parts.empty());
+        CHECK(peak < 8u * 1024u * 1024u);
     }
     std::error_code ec; fs::remove_all(dir, ec);
     TEST_MAIN_RESULT();

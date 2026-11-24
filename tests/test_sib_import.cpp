@@ -1,5 +1,5 @@
 // The import seam routes .sib (slot 32) to our own SIB reader: a synthetic file (tests/sib_fixtures.hpp) goes through
-// ImportModelData; OKAY_OWN_SIB=1/0 switch it on and off, ImportableExtensions follows, flatten works. With -DOKAY_OWN_SIB=ON
+// ImportModelData; OKAY_OWN_SIB=1/0 switch it on and off (the CMake default is ON since 2026-11-24, rules 19d / 19e), ImportableExtensions follows, flatten works. With -DOKAY_OWN_SIB=ON
 // (tests/CMakeLists.txt defines OKAY_EXPECT_OWN_SIB) the reader is the default with nothing set at run time.
 // With OKAY_MODEL_CORPUS set (docs/content/model_corpus.md: the "test" folder of an Assimp checkout, data only) the one real Silo
 // file, models/SIB/heffalump.sib (Richard Mitton, public domain; not in this repository), imports with the numbers worked out
@@ -55,6 +55,14 @@ int main() {
         ImportedModel d; std::string e2;
         CHECK(EffectiveImportBackend(".sib") == ImportBackend::Own);
         CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
+        // a file ours refuses: with the default choice the seam hands it to Assimp when the build has it (like every own reader);
+        // without Assimp the refusal is ours and says why
+        const std::string bad = (dir / "bad.sib").string();
+        { std::ofstream w(bad, std::ios::binary); w << "HEAD not a silo file at all"; }
+        ImportedModel r; std::string e3;
+        const bool read = ImportModelData(bad, r, ImportBackend::Default, false, &e3);
+        if (!AssimpAvailable()) CHECK(!read && e3.find("SIB") != std::string::npos);
+        else CHECK(read ? r.backend != "own" : !e3.empty());
     }
     SetEnv("OKAY_OWN_SIB", "1");
     CHECK(EffectiveImportBackend(".sib") == ImportBackend::Own);

@@ -2560,7 +2560,7 @@ Written from the public description "POV-Ray RAW triangle format" (Paul Bourke):
 *Was `docs/own_sib_reader.md` until 2026-11-20. Written on branch `claude/own-readers-6` (2026-11-16); brought onto main's line
 on 2026-11-23 (branch `claude/third-party-3b`) after the owner's decision "write our own readers", with instances added.*
 
-Status: **side by side, off by default** (`OKAY_OWN_SIB`, slot 32 of the table in `ModelImport.cpp`; Assimp, when built, stays
+Status: **side by side, on by default** (rules 19d and 19e; `OKAY_OWN_SIB`, slot 32 of the table in `ModelImport.cpp`; Assimp, when built, stays
 the fallback). **Written from one sample file**: there is no public description of the Silo format (a web search found only
 that `.sib` is the binary twin of the ASCII `.sia`). Everything marked "guess" below may be wrong for files from other Silo
 versions or with other features.
@@ -2572,7 +2572,7 @@ public domain"), from the `test/models/SIB` data folder of Assimp's repository (
 | File | What |
 |---|---|
 | `engine/src/Render/SibReader.cpp` | `okay::ReadSibFile` / `okay::ReadSibBuffer` (declared in `ModelData.hpp`) |
-| `engine/src/Render/ModelImport.cpp` | The seam: slot 32 (extension `.sib`), `OKAY_OWN_SIB` (CMake option OFF, env `OKAY_OWN_SIB=1/0`) |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 32 (extension `.sib`), `OKAY_OWN_SIB` (CMake option ON, env `OKAY_OWN_SIB=1/0`; a file ours refuses goes to Assimp when it is built) |
 | `tests/test_sib_reader.cpp`, `tests/sib_fixtures.hpp` | Hand-computed checks on synthetic files, instances, every truncation, 30,000 mutations, every aligned word at five extreme values, budgets (`sib_reader`, reader source only) |
 | `tests/test_sib_import.cpp` | The seam routes `.sib`, the switches, flatten; with `OKAY_MODEL_CORPUS` the real file (`sib_import`) |
 

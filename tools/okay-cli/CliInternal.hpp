@@ -21,6 +21,14 @@ bool HasClashMarks(const std::string& text);
 /// The okay program git's drivers should run: one that survives the launcher removing an old version. `okay` on PATH,
 /// else the launcher-level Tools/okay when this one is a kept copy under Versions/<v>/, else this program.
 std::string StableOkayPath();
+/// `s` as a JSON string, quotes included.
+std::string JsonText(const std::string& s);
+/// `okay project|scene|script|vs|asset <sub> ...` (args start after the command). Content.cpp.
+int ProjectMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
+int SceneMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
+int ScriptMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
+int VsMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
+int AssetMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
 /// `okay vc <sub> ...` (args start after "vc").
 int VcMain(const std::vector<std::string>& args, const std::string& project, const Io& io);
 

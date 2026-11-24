@@ -377,32 +377,6 @@ struct UseWalker {
         }
     }
 };
-bool GenWalk(const StmtList& l);
-bool GenWalk(const Stmt& st) {
-    switch (st.kind) {
-        case StmtKind::Yield: return static_cast<const YieldStmt&>(st).generator;
-        case StmtKind::Try: {
-            auto& s = static_cast<const TryStmt&>(st);
-            return GenWalk(s.body) || GenWalk(s.catchB) || GenWalk(s.finallyB);
-        }
-        case StmtKind::Block: return GenWalk(static_cast<const BlockStmt&>(st).body);
-        case StmtKind::If: { auto& s = static_cast<const IfStmt&>(st); return GenWalk(s.thenB) || GenWalk(s.elseB); }
-        case StmtKind::While: return GenWalk(static_cast<const WhileStmt&>(st).body);
-        case StmtKind::DoWhile: return GenWalk(static_cast<const DoWhileStmt&>(st).body);
-        case StmtKind::Switch: {
-            for (auto& c : static_cast<const SwitchStmt&>(st).cases) if (GenWalk(c.body)) return true;
-            return false;
-        }
-        case StmtKind::For: return GenWalk(static_cast<const ForStmt&>(st).body);
-        case StmtKind::ForEach: return GenWalk(static_cast<const ForEachStmt&>(st).body);
-        case StmtKind::Multi: return GenWalk(static_cast<const MultiStmt&>(st).list);
-        default: return false;
-    }
-}
-bool GenWalk(const StmtList& l) {
-    for (auto& s : l) if (GenWalk(*s)) return true;
-    return false;
-}
 } // namespace
 
 void CollectCapturedNames(const std::vector<std::string>& params, const StmtList& body, std::unordered_set<std::string>& out) {
@@ -416,8 +390,6 @@ void CollectCapturedNames(const std::vector<std::string>& params, const StmtList
     for (const std::string& n : names)
         if (captured.count(n) && !statics.count(n)) out.insert(n);
 }
-
-bool IsGeneratorBody(const StmtList& body) { return GenWalk(body); }
 
 } // namespace okayscript
 

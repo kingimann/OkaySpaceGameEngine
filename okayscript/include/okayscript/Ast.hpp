@@ -148,8 +148,6 @@ void CollectBodyLocals(const StmtList& body, std::vector<std::string>& names, st
 /// The locals of a function or lambda (its parameters and the names its body declares) that a lambda inside it uses:
 /// they live in a shared box, so the lambda still has them after the function returns (closures, by reference).
 void CollectCapturedNames(const std::vector<std::string>& params, const StmtList& body, std::unordered_set<std::string>& out);
-/// Whether a function or lambda body is a generator (a `yield <value>` in it, not inside a lambda).
-bool IsGeneratorBody(const StmtList& body);
 
 // ---- Expressions -------------------------------------------------------------------------------------------------
 struct NumberExpr : ExprOf<ExprKind::Number> {

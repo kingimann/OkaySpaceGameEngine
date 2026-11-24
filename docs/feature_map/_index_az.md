@@ -562,6 +562,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - button door (11.5)
 - BVH (6.2)
 - byproduct (11.3)
+- Bytecode compiler and stack machine (13.8.8)
 
 **C**
 

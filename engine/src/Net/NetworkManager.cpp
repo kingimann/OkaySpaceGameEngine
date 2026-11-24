@@ -386,10 +386,14 @@ void NetworkManager::RelayKeepAlive(float dt) {
         return;
     }
     DirectTick(dt);
+    SendDirectAllow(/*always=*/false);   // a host: at once when its accepted players change
     m_relayHelloTimer -= dt;
     if (m_relayHelloTimer > 0.0f) return;
-    // Once a second keeps the NAT open; a player taking the host's place asks four times a second.
-    m_relayHelloTimer = m_relayPromoting ? 0.25f : 1.0f;
+    // Once a second keeps the NAT open. A host that holds a successor key says hello more often, so the relay
+    // (which lets a player take over only after several missed hellos) never takes a hitch for a gone host;
+    // a player taking the host's place asks four times a second.
+    m_relayHelloTimer = m_relayPromoting ? 0.25f
+                      : (m_mode == Mode::Server && m_relaySuccessorKey != 0) ? net::kRelayHostHelloSeconds : 1.0f;
     net::RelayHelloParams hp;
     hp.role = m_mode == Mode::Server ? net::RelayHost : net::RelayClient;
     hp.code = m_relayCode;
@@ -399,10 +403,12 @@ void NetworkManager::RelayKeepAlive(float dt) {
     if (WantDirectNow()) hp.flags |= net::RelayHelloDirect;   // version 5: may the relay pass our address on?
     const std::vector<std::uint8_t> hello = net::BuildRelayHello(hp);
     SendRaw(m_relayEp, hello.data(), hello.size());
+    SendDirectAllow(/*always=*/true);   // and again with each hello, so a lost one is repaired
 }
 
 void NetworkManager::Stop() {
     m_direct.clear();
+    m_directAllowSent.clear();
     if (m_keepRelay) {
         // Host migration through the relay: this peer changes role in place. The socket and the relay
         // registration (slot, cookie, nonce) stay, so the relay and the other players keep knowing it.

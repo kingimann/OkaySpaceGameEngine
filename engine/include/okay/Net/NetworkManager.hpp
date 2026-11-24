@@ -119,8 +119,9 @@ public:
     /// The relay "host:port" HostOnline / JoinCode would use ("" when none is set).
     std::string OnlineRelay() const;
     /// Host a game over the internet through the relay, under a short room code (made up when `code` is
-    /// empty; a made-up code that turns out to be taken is replaced by another). False with LastError() if
-    /// it could not start; RoomCode() is the code to give friends.
+    /// empty; a made-up code that turns out to be taken is replaced by another; a code of your own needs 6 to
+    /// 12 letters and digits, since anyone who guesses it can knock). False with LastError() if it could not
+    /// start; RoomCode() is the code to give friends.
     bool HostOnline(const std::string& code = "");
     /// Join a game by its room code ("K7Q29X"; case, spaces and dashes do not matter), through the relay.
     /// It returns at once; IsConnected() turns true when the host answers, or LastError() says why not
@@ -1196,6 +1197,14 @@ public:
                              std::vector<std::uint8_t>& out) { return TakeFragment(from, data, size, out); }
     /// Feed one piece receipt (FragAck) as if it came from `from` (tests: forged receipts).
     void FeedFragAckForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) { OnFragAck(from, data, size); }
+    /// Tests (relay security): the relay successor key this peer holds (the host's own, or a player's copy from
+    /// the host's list), and a host-role hello sent from this peer's own relay registration (its socket, cookie
+    /// and nonce) carrying `key`, as a player holding the key could send it.
+    std::uint64_t RelaySuccessorKeyForTest() const { return m_mode == Mode::Server ? m_relaySuccessorKey : m_migRelayKey; }
+    void SendRelayHostHelloForTest(std::uint64_t key);
+    /// Tests: the direct paths this peer keeps (one per relay slot) and where each one sends.
+    struct DirectPathInfo { std::uint32_t slot = 0; net::Endpoint ep; std::uint64_t token = 0; bool open = false, failed = false; };
+    std::vector<DirectPathInfo> DirectPathsForTest() const;
     /// Peers with a "put together lately" list (kept only for peers still in the session).
     std::size_t FragDonePeers() const { return m_fragDone.size(); }
     /// Sent pieced messages kept for per-piece resend, and their bytes.
@@ -1300,7 +1309,11 @@ private:
     int m_onlineCodeTries = 0;
     struct DirectPath {               // a punched path to one relay slot (see directConnect)
         std::uint32_t slot = 0;
-        net::Endpoint ep;             // where it answers (the relay's word, then where its probes come from)
+        net::Endpoint ep;             // where it answers: the relay's word (its cookie proved it), or another port
+                                      // at that same address once a probe of ours got an answer from there
+        net::Endpoint alt;            // before it opens: another port at that address its probes came from...
+        bool altProbed = false;       // ...which we probed (only an answer from there moves `ep`)
+        float altReplyTimer = 0.0f;   // at most one probe to `alt` per kProbeEverySeconds
         std::uint64_t token = 0;      // from the relay; both sides prove the path with it
         float age = 0.0f, probeTimer = 0.0f, quiet = 0.0f;
         bool heard = false;           // its probe reached us
@@ -1316,6 +1329,8 @@ private:
     bool OnDirectDatagram(std::uint8_t* b, int n, net::Endpoint& from);   // true: a game datagram, `from` is now the slot
     void SendRaw(const net::Endpoint& to, const void* data, std::size_t size);   // through the NAT model, no latency knobs
     bool WantDirectNow() const;
+    void SendDirectAllow(bool always);   // host: tell the relay which players passed the join (RelayDirectAllow)
+    std::vector<std::uint32_t> m_directAllowSent;   // host: the slots it last named
     bool RelaySwitch(bool asHost);    // host migration on the relay: become host / client without leaving it
     void NoteRelayError();            // a relay session ended: LastError in plain words
     std::string RelayPlainError() const;

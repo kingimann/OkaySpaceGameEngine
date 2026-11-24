@@ -10,6 +10,13 @@
 //   private    directConnect off: the relay passes no address on (the host never learns the client's)
 //   three      a host and two clients, one on a cone router (direct) and one symmetric (relayed): events
 //              and a shared variable reach all three; the host's Stats count 1 direct and 1 relayed
+//   oneside    only the player behind a symmetric router: the host probes the player's moved port before it
+//              sends game traffic there, and the path opens
+//   live       a player holding the successor key asks for a live host's place ten times a second, across a
+//              0.6 s and a 1.5 s host stall: the relay does not let it (review of PR #1240)
+//   forged     punches forged from a third address: the host sends that address nothing, its path stays put
+//   gate       a bare relay client and a wrong-password player get no address; an accepted player gets a
+//              direct path, which the host forgets as soon as the player leaves
 //   migrate    a host and three clients through the relay: the host leaves; the lowest id takes the host's
 //              place on the relay (same room code), the others keep their ids, the shared variable carries
 //              on; then that new host crashes and the next one takes over once the relay sees it silent
@@ -17,7 +24,8 @@
 //              a code that is taken
 //   graph      the Host Online and Join By Code nodes
 //   okay       net.relay, net.host_online, net.join_code, net.room_code, net.path in an .okay script
-//   errors     no relay set, a GitHub relay refused, a bad code, an unreachable relay, a code nobody hosts
+//   errors     no relay set, a GitHub relay refused (any case, a trailing dot), a bad code, a code too short
+//              to host, an unreachable relay, a code nobody hosts
 #include "test_framework.hpp"
 #include "net_test_util.hpp"
 #include <Okay.hpp>
@@ -205,6 +213,157 @@ int main() {
         });
         CHECK(all);
         host.nm->Stop(); a.nm->Stop(); b.nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- oneside
+    // Only the player is behind a symmetric router (a new public port for each destination): the host sees its
+    // probes come from another port than the relay saw, on the same address. It checks that port with a probe of
+    // its own before any game traffic goes there, and the path opens.
+    {
+        Rig rig;
+        Peer host("OneHost"), client("OneSym", net::NatType::Symmetric);
+        CHECK(host.nm->HostViaRelay("127.0.0.1", rig.relay.Port(), "ONES1"));
+        CHECK(client.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "ONES1"));
+        const bool open = rig.Pump({&host, &client}, 600, [&] {
+            return client.nm->Joined() && client.nm->DirectToHost() && host.nm->DirectPeers() == 1;
+        });
+        const auto paths = host.nm->DirectPathsForTest();
+        std::printf("  oneside: direct %d; the host sends to port %u (the relay saw %u)\n", (int)open,
+                    paths.empty() ? 0u : (unsigned)paths[0].ep.port,
+                    (unsigned)net::SimulatedNatPort(client.nm->Socket(), net::Endpoint{0x7F000001u, rig.relay.Port()}));
+        CHECK(open);
+        CHECK(client.nm->SendEvent("ping", "one side"));
+        CHECK(rig.Pump({&host, &client}, 150, [&] { return host.Heard("ping=one side"); }));
+        host.nm->Stop(); client.nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- live (review of #1240, finding 1)
+    // A player holding the successor key asks the relay for the host's place ten times a second while the host is
+    // alive. Its players are on direct paths, so the relay hears the host only through its keepalive hellos. Not
+    // even a 1.5 s host stall (a level load, a hitch) lets the player in: the relay waits until the host has
+    // missed several hellos, and the host says hello more often while it holds a successor key.
+    for (int stallFrames : {0, 30, 75}) {
+        Rig rig;
+        Peer h("LiveHost"), a("LiveEvil"), b("LiveOther");
+        std::vector<Peer*> all = {&h, &a, &b};
+        CHECK(h.nm->HostViaRelay("127.0.0.1", rig.relay.Port(), "LIVE77"));
+        CHECK(a.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "LIVE77"));
+        CHECK(rig.Pump(all, 300, [&] { return a.nm->Joined(); }));
+        CHECK(b.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "LIVE77"));
+        CHECK(rig.Pump(all, 600, [&] {
+            return b.nm->Joined() && a.nm->RelaySuccessorKeyForTest() != 0 && h.nm->DirectPeers() == 2;
+        }));
+        const std::uint64_t key = a.nm->RelaySuccessorKeyForTest();
+        const std::uint32_t hs = rig.relay.HostSlotOf("LIVE77");
+        int takenAt = -1;
+        for (int i = 0; i < 500; ++i) {   // 10 s
+            rig.relay.Poll(kFrame);
+            const bool stalled = stallFrames && i >= 200 && i < 200 + stallFrames;
+            if (!stalled) h.scene->Update(kFrame);
+            a.scene->Update(kFrame);
+            b.scene->Update(kFrame);
+            if (i % 5 == 0) a.nm->SendRelayHostHelloForTest(key);
+            if (i % 20 == 0) h.nm->SendEvent("tick", "x");
+            if (takenAt < 0 && rig.relay.HostSlotOf("LIVE77") != hs) takenAt = i;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::printf("  live: host stalled %.1f s; taken at frame %d; successions %llu; host error \"%s\"\n",
+                    stallFrames * kFrame, takenAt, (unsigned long long)rig.relay.Successions(), h.nm->LastError().c_str());
+        CHECK(takenAt < 0);
+        CHECK(rig.relay.Successions() == 0);
+        CHECK(h.nm->IsServer() && h.nm->LastError().empty());
+        CHECK(b.nm->Joined());
+        h.nm->Stop(); a.nm->Stop(); b.nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- forged (finding 2)
+    // A player knows its own punch token. Punches forged from another address (a victim's: the source of a UDP
+    // datagram can be forged) must not move the host's stream there; the host sends that address nothing at all.
+    {
+        Rig rig;
+        Peer h("PunchHost"), a("PunchPlayer");
+        CHECK(h.nm->HostViaRelay("127.0.0.1", rig.relay.Port(), "PUNCH7"));
+        CHECK(a.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "PUNCH7"));
+        CHECK(rig.Pump({&h, &a}, 600, [&] { return a.nm->Joined() && h.nm->DirectPeers() == 1 && a.nm->DirectToHost(); }));
+        const auto paths = h.nm->DirectPathsForTest();
+        CHECK(paths.size() == 1);
+        if (paths.size() == 1) {
+            const auto path = paths[0];
+            net::UdpSocket victim;
+            CHECK(victim.Open() && victim.Bind(0));
+            const net::Endpoint hostEp{0x7F000001u, h.nm->Socket().LocalPort()};
+            const auto probe = net::BuildRelayPunch(0, path.token, path.slot);
+            const auto answer = net::BuildRelayPunch(1, path.token, path.slot);
+            std::size_t vbytes = 0, sent = 0;
+            for (int i = 0; i < 300; ++i) {   // 6 s
+                if (i % 10 == 0) {
+                    victim.SendTo(hostEp, probe.data(), probe.size());
+                    victim.SendTo(hostEp, answer.data(), answer.size());
+                    sent += probe.size() + answer.size();
+                }
+                rig.relay.Poll(kFrame);
+                h.nm->SendEvent("state", std::string(200, 'x'));   // a game sending its state every frame
+                h.scene->Update(kFrame);
+                a.scene->Update(kFrame);
+                std::uint8_t buf[4096]; net::Endpoint from; int n;
+                while ((n = victim.RecvFrom(buf, sizeof buf, from)) > 0) vbytes += (std::size_t)n;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            const auto now = h.nm->DirectPathsForTest();
+            std::printf("  forged: %zu B of forged punches; the host sent the victim %zu B; path port %u (was %u)\n", sent, vbytes,
+                        now.empty() ? 0u : (unsigned)now[0].ep.port, (unsigned)path.ep.port);
+            CHECK(vbytes == 0);
+            CHECK(now.size() == 1 && now[0].ep == path.ep && now[0].open);
+            CHECK(a.nm->Joined() && a.nm->DirectToHost());
+        }
+        h.nm->Stop(); a.nm->Stop();
+    }
+
+    // ---------------------------------------------------------------- gate (findings 3 and 4)
+    // The room code alone gets nobody the host's address: not a bare relay client that never joins the game,
+    // not a player the game turns away (a wrong password). Only a player the game accepted gets a direct path,
+    // and the host forgets that path as soon as the player leaves.
+    {
+        Rig rig;
+        Peer h("GateHost", net::NatType::PortRestricted);
+        h.nm->password = "secret";
+        CHECK(h.nm->HostViaRelay("127.0.0.1", rig.relay.Port(), "GATE42"));
+        rig.Pump({&h}, 50);
+        nettest::RawRelayPeer stranger(rig.relay.Port());
+        for (int i = 0; i < 200; ++i) {   // 4 s of keepalives from a relay client that never says a word to the game
+            if (i % 10 == 0) stranger.Hello(net::RelayClient, "GATE42", 0, net::RelayHelloDirect);
+            rig.relay.Poll(kFrame);
+            h.scene->Update(kFrame);
+            stranger.Drain();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::printf("  gate: stranger welcomed %d time(s), got %zu address(es); relay sent %llu\n", stranger.welcomes,
+                    stranger.addrs.size(), (unsigned long long)rig.relay.PeerAddrsSent());
+        CHECK(stranger.welcomes > 0 && stranger.hostSlot != 0);
+        CHECK(stranger.addrs.empty());
+        CHECK(rig.relay.PeerAddrsSent() == 0);
+        CHECK(h.nm->DirectPathsForTest().empty());
+        Peer wrong("GateWrong", net::NatType::PortRestricted);
+        wrong.nm->password = "guess";
+        CHECK(wrong.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "GATE42"));
+        rig.Pump({&h, &wrong}, 200, [&] { return wrong.nm->JoinRejected(); });
+        rig.Pump({&h, &wrong}, 100);
+        CHECK(wrong.nm->JoinRejected());
+        CHECK(rig.relay.PeerAddrsSent() == 0 && h.nm->DirectPathsForTest().empty());
+        wrong.nm->Stop();
+        Peer right("GateRight", net::NatType::PortRestricted);
+        right.nm->password = "secret";
+        CHECK(right.nm->JoinViaRelay("127.0.0.1", rig.relay.Port(), "GATE42"));
+        CHECK(rig.Pump({&h, &right}, 600, [&] { return right.nm->Joined() && right.nm->DirectToHost() && h.nm->DirectPeers() == 1; }));
+        CHECK(rig.relay.PeerAddrsSent() >= 2);
+        CHECK(stranger.addrs.empty());
+        right.nm->Stop();
+        int frames = 0;
+        rig.Pump({&h}, 250, [&] { return h.nm->DirectPathsForTest().empty(); }, &frames);
+        std::printf("  gate: the player left; the host forgot its path after %d frames\n", frames);
+        CHECK(h.nm->DirectPathsForTest().empty());
+        CHECK(frames * kFrame <= 2.0f);
+        h.nm->Stop();
     }
 
     // ---------------------------------------------------------------- migrate
@@ -396,6 +555,18 @@ int main() {
         }
         p.nm->relayServer = "relay.github.io:45100";   // never a GitHub address
         CHECK(p.nm->OnlineRelay().empty() || p.nm->OnlineRelay() != p.nm->relayServer);
+        for (const char* gh : {"github.com.:45100", "GitHub.COM.", "relay.GITHUB.io.:1", " github.com. "}) {
+            p.nm->relayServer = gh;   // a trailing dot and any case are the same host
+            if (!p.nm->OnlineRelay().empty()) std::printf("  errors: GitHub host \"%s\" not refused\n", gh);
+            CHECK(p.nm->OnlineRelay().empty());
+        }
+        // A 4- or 5-letter room code is too easy to guess for hosting online (joining one still works).
+        p.nm->relayServer = "127.0.0.1:45100";
+        CHECK(!p.nm->HostOnline("K7Q2"));
+        std::printf("  errors: short code: \"%s\"\n", p.nm->LastError().c_str());
+        CHECK(p.nm->LastError().find("6 to 12") != std::string::npos);
+        CHECK(!p.nm->IsServer());
+        CHECK(!NetworkManager::NormalizeRoomCode("K7Q2").empty());
         p.nm->relayServer = "127.0.0.1:45100";
         CHECK(!p.nm->JoinCode("!?"));
         std::printf("  errors: bad code: \"%s\"\n", p.nm->LastError().c_str());

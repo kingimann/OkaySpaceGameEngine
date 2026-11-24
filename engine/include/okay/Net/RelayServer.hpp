@@ -37,10 +37,12 @@ namespace okay::net {
 ///    quota. Version-1 and -2 hellos (no cookie) are still accepted while
 ///    legacy hellos are on (the default for now), and counted in the log;
 ///  * hellos from unknown senders are rate limited per address;
-///  * version 5: a host and one of its clients that BOTH ask for it (RelayHelloDirect) are told each
+///  * version 5: a host and one of its clients that BOTH ask for it (RelayHelloDirect), and that the host
+///    named in RelayDirectAllow (a player its game accepted: password, ban list, join checks), are told each
 ///    other's public address and a shared token, so they can punch a direct path through their NATs
-///    (no other peer ever learns an address); and a client holding the session's successor key takes
-///    the host's place once the host is gone or silent (host migration through the relay);
+///    (no other peer, and nobody who only knows the room code, ever learns an address); and a client holding
+///    the session's successor key takes the host's place once the host is gone (a bye, or
+///    kRelaySuccessionQuietSeconds of silence: host migration through the relay);
 ///  * each peer's forwarded packets and bytes per second are capped, and so is
 ///    what each peer receives in total from its session;
 ///  * slots are random (not guessable), and peers, sessions and code lengths
@@ -169,6 +171,9 @@ private:
         bool          direct = false;   // its last hello set RelayHelloDirect (version 5)
         std::uint64_t punchToken = 0;   // a client: the token it and its host prove a direct path with
         std::uint32_t punchHost = 0;    // the host slot that token is for (a new host gets a new one)
+        bool          addrSent = false; // the address pair for that token went out...
+        double        addrSentAt = 0.0; // ...at this m_now...
+        Endpoint      addrSentHost;     // ...naming the host at this address
     };
     struct HelloBucket { float tokens = 0.0f; double refilled = 0.0; };
     using FlowBucket = HelloBucket;   // the same token bucket, counting forwarded bytes
@@ -180,6 +185,8 @@ private:
         std::uint64_t successorKey = 0; // version 5: lets a client of the session take over a gone host
         std::uint32_t lastHostSlot = 0; // the slot a returning host gets back
         std::uint32_t opener = 0;       // the IP address that opened it (kMaxSessionsPerAddress)
+        std::vector<std::uint32_t> directAllowed;   // version 5: the client slots the host lets have addresses...
+        std::uint32_t directAllowedBy = 0;          // ...as said by this host slot (a new host starts with none)
         FlowBucket    flow;             // what the whole session may still forward (kSessionBytesPerSecond)
     };
     using PeerMap = std::unordered_map<Endpoint, Peer, EndpointHash>;
@@ -188,6 +195,8 @@ private:
     void  SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::uint32_t hostSlot,
                       std::uint64_t hostKey = 0, std::uint64_t successorKey = 0);
     void  SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session& s);
+    void  HandleDirectAllow(const Endpoint& from, const std::uint8_t* data, std::size_t len);
+    static bool DirectAllowed(const Session& s, std::uint32_t slot);
     bool  TakeSuccession(const Endpoint& from, Peer& peer, Session& s, std::uint64_t key);
     void  SendRefused(const Endpoint& to, std::uint8_t reason);
     void  HandleHello(const Endpoint& from, const std::uint8_t* data, std::size_t len);

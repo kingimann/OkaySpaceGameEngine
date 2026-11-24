@@ -9,9 +9,15 @@
 //   1. A client that wants one and its host both set RelayHelloDirect in their relay hellos
 //      (directConnect). The relay then tells each the other's public address and one random
 //      token (RelayPeerAddr, echoing the hello nonce, so a forged one is dropped).
+//      The host first names the players its game accepted (RelayDirectAllow: password, ban list,
+//      join checks passed); the relay passes addresses on only for those, so nobody who merely knows
+//      the room code learns the host's address.
 //   2. Both send RelayPunch probes straight to that address, ten a second. A probe that carries
-//      the token is answered; where it came from is where the other side really is (a router
-//      that gave it a different port than the relay saw still works one way round).
+//      the token is answered. A punch's source address can be forged and the token alone proves
+//      nothing about where it came from, so a path never moves on a punch: only the address the
+//      relay gave counts, or, before the path opens, another port at that same address (a router
+//      that maps each destination to its own port), and only after a probe of ours sent there was
+//      answered from there. Punches from any other address get no reply at all.
 //   3. An answer means the path works both ways: game datagrams for that peer go straight there
 //      (Transmit) and come back keyed by its relay slot, so everything above sees no change.
 //   4. No answer in punchTimeoutSeconds (a symmetric NAT on both sides, a firewall): the relay
@@ -38,12 +44,18 @@ constexpr float kDirectQuietSeconds = 3.0f;   // an open path silent this long g
 constexpr float kProbeEverySeconds = 0.1f;    // while punching
 constexpr float kKeepEverySeconds = 0.5f;     // once open: keeps the routers' mappings alive
 constexpr int kMaxCodeTries = 5;              // HostOnline: made-up codes tried when one is taken
+constexpr std::size_t kMinHostCodeLength = 6; // HostOnline: a code of one's own (JoinCode still takes 4)
 constexpr char kCodeLetters[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // no 0/O, 1/I
 
-bool GitHubHost(std::string h) {   // rule: nothing a player uses may depend on GitHub
+// Rule: nothing a player uses may depend on GitHub. Names only, in any case and with or without the trailing
+// dot of a fully qualified name ("github.com."); a raw GitHub IP address is not recognised (GitHub's ranges
+// change, and a relay is set by the game's maker, not by a player).
+bool GitHubHost(std::string h) {
     for (char& c : h) c = (char)std::tolower((unsigned char)c);
     const auto colon = h.find(':');
     if (colon != std::string::npos) h.resize(colon);
+    while (!h.empty() && (h.back() == '.' || std::isspace((unsigned char)h.back()))) h.pop_back();
+    while (!h.empty() && std::isspace((unsigned char)h.front())) h.erase(h.begin());
     for (const char* bad : {"github.com", "github.io", "githubusercontent.com"}) {
         const std::string b = bad;
         if (h == b || (h.size() > b.size() && h.compare(h.size() - b.size(), b.size(), b) == 0 && h[h.size() - b.size() - 1] == '.'))
@@ -81,6 +93,7 @@ void NetworkManager::OnRelayPeerAddr(const std::uint8_t* d, std::size_t n) {
     if (!net::ParseRelayPeerAddr(d, n, m_relayNonce, a)) return;   // forged, or not for this attempt
     if (!directConnect || m_relayPromoting) return;
     if (m_mode == Mode::Client && !(m_serverEp == SlotEndpoint(a.slot))) return;   // only our host's
+    if (m_mode == Mode::Server && !m_clients.count(SlotEndpoint(a.slot))) return;   // only a player we accepted
     if (m_mode != Mode::Client && m_mode != Mode::Server) return;
     DirectPath* p = DirectFor(a.slot);
     if (p && p->token == a.token) return;   // the relay repeats itself until we stop asking
@@ -103,19 +116,44 @@ bool NetworkManager::OnDirectDatagram(std::uint8_t* b, int n, net::Endpoint& fro
         const std::uint64_t token = static_cast<std::uint64_t>(net::detail::GetU32LE(b + 2)) |
                                     (static_cast<std::uint64_t>(net::detail::GetU32LE(b + 6)) << 32);
         const std::uint32_t sender = net::detail::GetU32LE(b + 10);
+        auto send = [&](const net::Endpoint& to, std::uint8_t k) {
+            const auto pk = net::BuildRelayPunch(k, token, m_relaySlot);
+            if (!net::HoldDatagram(m_socket, to, pk.data(), pk.size())) m_socket.SendTo(to, pk.data(), pk.size());
+        };
+        auto openPath = [&](DirectPath& p) {
+            if (p.open) return;
+            p.open = true;
+            ++m_punchOpened;
+            OKAY_INFO("net: direct path to relay slot ", p.slot, " is open (", p.age, " s); traffic skips the relay");
+        };
         for (DirectPath& p : m_direct) {
             if (p.failed || p.token != token || p.slot != sender) continue;
-            p.heard = true;
-            p.ep = from;      // where it really is (its router may have given it another port for us)
-            p.quiet = 0.0f;
-            if (kind == 0) {
-                const auto reply = net::BuildRelayPunch(1, p.token, m_relaySlot);
-                if (!net::HoldDatagram(m_socket, p.ep, reply.data(), reply.size())) m_socket.SendTo(p.ep, reply.data(), reply.size());
-            } else if (!p.open) {
-                p.open = true;
-                ++m_punchOpened;
-                OKAY_INFO("net: direct path to relay slot ", p.slot, " is open (", p.age, " s); traffic skips the relay");
+            if (!(from == p.ep)) {
+                // Not where the relay said. Before the path opens, another port at that same address may be the
+                // peer's router mapping us to a port of our own: probe it (one probe for one, at most ten a
+                // second, never bigger) and move only once an answer comes back from it. Anything else, and
+                // anything once the path is open, gets nothing: a forged source must not aim our stream anywhere.
+                if (p.open || from.address != p.ep.address) break;
+                if (kind == 0) {
+                    if (p.altReplyTimer > 0.0f) break;
+                    p.alt = from;
+                    p.altProbed = true;
+                    p.altReplyTimer = kProbeEverySeconds;
+                    send(p.alt, 0);
+                } else if (p.altProbed && from == p.alt) {
+                    p.ep = p.alt;
+                    p.alt = net::Endpoint{};
+                    p.altProbed = false;
+                    p.heard = true;
+                    p.quiet = 0.0f;
+                    openPath(p);
+                }
+                break;
             }
+            p.heard = true;
+            p.quiet = 0.0f;
+            if (kind == 0) send(p.ep, 1);
+            else openPath(p);   // an answer from where we probe
             break;
         }
         return false;   // consumed
@@ -134,12 +172,14 @@ bool NetworkManager::OnDirectDatagram(std::uint8_t* b, int n, net::Endpoint& fro
 void NetworkManager::DirectTick(float dt) {
     for (auto it = m_direct.begin(); it != m_direct.end();) {
         DirectPath& p = *it;
-        // The host forgets a path whose player left (and that is no use any more).
-        if (m_mode == Mode::Server && p.failed && !m_clients.count(SlotEndpoint(p.slot)) && p.age > 30.0f) {
+        // The host forgets a path as soon as its player is gone (left, kicked, timed out): it only ever keeps
+        // paths for players it accepted, at most one each, so the table stays as small as the game.
+        if (m_mode == Mode::Server && !m_clients.count(SlotEndpoint(p.slot))) {
             it = m_direct.erase(it);
             continue;
         }
         p.age += dt;
+        if (p.altReplyTimer > 0.0f) p.altReplyTimer -= dt;
         if (p.failed) { ++it; continue; }
         p.quiet += dt;
         p.probeTimer -= dt;
@@ -160,6 +200,24 @@ void NetworkManager::DirectTick(float dt) {
         }
         ++it;
     }
+}
+
+// Host: the relay passes a player's address on only for the players named here, the ones this game accepted
+// (m_clients holds only players that passed the password, the ban list and the join checks). Sent when the list
+// changes (always false) and with every hello (always true), so a lost frame is repaired; nothing when the host
+// does not allow direct paths (the list is then empty).
+void NetworkManager::SendDirectAllow(bool always) {
+    if (m_mode != Mode::Server || !m_relay || !m_relayWelcomed || m_relayPromoting || m_relayHostKey == 0) return;
+    std::vector<std::uint32_t> slots;
+    if (WantDirectNow())
+        for (const auto& [ep, c] : m_clients)
+            if (ep.port == net::kRelaySlotPort && ep.address != 0) slots.push_back(ep.address);
+    std::sort(slots.begin(), slots.end());
+    if (!always && slots == m_directAllowSent) return;
+    if (always && slots.empty() && m_directAllowSent.empty()) return;   // nobody named, nothing to take back
+    m_directAllowSent = slots;
+    const auto f = net::BuildRelayDirectAllow(m_relayHostKey, slots);
+    SendRaw(m_relayEp, f.data(), f.size());
 }
 
 bool NetworkManager::DirectToHost() const {
@@ -194,6 +252,28 @@ std::string NetworkManager::PathText() const {
     if (m_mode == Mode::Client) return DirectToHost() ? "direct (punched)" : trying ? "relayed (trying direct)" : "relayed";
     if (!m_clients.empty() && RelayedPeers() == 0) return "direct (punched)";
     return trying ? "relayed (trying direct)" : "relayed";
+}
+
+void NetworkManager::SendRelayHostHelloForTest(std::uint64_t key) {
+    if (!m_relay || !m_socket.IsOpen()) return;
+    net::RelayHelloParams hp;
+    hp.role = net::RelayHost;
+    hp.code = m_relayCode;
+    hp.hostKey = key;
+    std::memcpy(hp.cookie.data(), m_relayCookie, hp.cookie.size());
+    hp.nonce = m_relayNonce;
+    const std::vector<std::uint8_t> hello = net::BuildRelayHello(hp);
+    SendRaw(m_relayEp, hello.data(), hello.size());
+}
+
+std::vector<NetworkManager::DirectPathInfo> NetworkManager::DirectPathsForTest() const {
+    std::vector<DirectPathInfo> out;
+    for (const DirectPath& d : m_direct) {
+        DirectPathInfo i;
+        i.slot = d.slot; i.ep = d.ep; i.token = d.token; i.open = d.open; i.failed = d.failed;
+        out.push_back(i);
+    }
+    return out;
 }
 
 // ---- host migration through the relay ----------------------------------------------------------------------
@@ -315,6 +395,11 @@ bool NetworkManager::HostOnline(const std::string& code) {
     const std::string c = code.empty() ? MakeRoomCode() : NormalizeRoomCode(code);
     if (c.empty()) {
         SetError("\"" + code + "\" is not a room code: use 4 to 12 letters and digits, like K7Q29X.");
+        return false;
+    }
+    if (c.size() < kMinHostCodeLength) {   // anyone who guesses the code can knock on the game
+        SetError("\"" + code + "\" is too short to host online (a short code is easy to guess): use 6 to 12 letters and "
+                 "digits, like K7Q29X, or leave it empty for a made-up one.");
         return false;
     }
     if (!HostViaRelay(h, port, c)) return false;

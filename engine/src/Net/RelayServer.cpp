@@ -4,6 +4,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "AntiCheatChecks.hpp"   // shared/: okayac::detail::HmacSha256
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -91,10 +92,14 @@ void RelayServer::SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::u
 }
 
 // Version 5: tell a client and its host each other's public address and a token
-// both prove a direct path with. Only when both asked (RelayHelloDirect), and only
-// between a session's host and its client, so no address goes anywhere else.
+// both prove a direct path with. Only when both asked (RelayHelloDirect), only
+// between a session's host and its client, and only for a client the host named
+// in RelayDirectAllow (its game accepted the player), so nobody who merely knows
+// the room code learns the host's address. Once per token and host address, then
+// at most every kRelayPeerAddrResendSeconds while the client keeps asking.
 void RelayServer::SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session& s) {
     if (!client.direct || client.version < 5 || client.nonce == 0 || s.hostSlot == 0 || client.slot == s.hostSlot) return;
+    if (!DirectAllowed(s, client.slot)) return;
     auto hostEp = m_slotEp.find(s.hostSlot);
     if (hostEp == m_slotEp.end()) return;
     auto host = m_peers.find(hostEp->second);
@@ -102,7 +107,13 @@ void RelayServer::SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session&
     if (client.punchToken == 0 || client.punchHost != s.hostSlot) {
         client.punchToken = NewHostKey();
         client.punchHost = s.hostSlot;
+        client.addrSent = false;
     }
+    if (client.addrSent && client.addrSentHost == hostEp->second && m_now - client.addrSentAt < kRelayPeerAddrResendSeconds)
+        return;
+    client.addrSent = true;
+    client.addrSentAt = m_now;
+    client.addrSentHost = hostEp->second;
     auto frame = [&](std::uint32_t slot, const Endpoint& at, std::uint64_t nonce) {
         Packet f(RelayPeerAddr);
         f.Write(slot);
@@ -120,21 +131,61 @@ void RelayServer::SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session&
     m_peerAddrsSent += 2;
 }
 
+bool RelayServer::DirectAllowed(const Session& s, std::uint32_t slot) {
+    return s.directAllowedBy != 0 && s.directAllowedBy == s.hostSlot &&
+           std::find(s.directAllowed.begin(), s.directAllowed.end(), slot) != s.directAllowed.end();
+}
+
+// Version 5: the host names the clients its game accepted ([u64 host key][u8 count][u32 slot] x count). Only the
+// session's host can (from its address, with its key); the list replaces the last one, and a newly named client
+// is sent the address pair at once.
+void RelayServer::HandleDirectAllow(const Endpoint& from, const std::uint8_t* data, std::size_t len) {
+    if (len < 1 + 8 + 1) return;
+    auto host = m_peers.find(from);
+    if (host == m_peers.end() || host->second.version < 5) return;
+    auto sit = m_sessions.find(host->second.code);
+    if (sit == m_sessions.end()) return;
+    Session& s = sit->second;
+    if (s.hostSlot == 0 || s.hostSlot != host->second.slot || s.hostKey == 0) return;
+    const std::uint64_t key = static_cast<std::uint64_t>(LoadU32LE(data + 1)) |
+                              (static_cast<std::uint64_t>(LoadU32LE(data + 5)) << 32);
+    if (key != s.hostKey) return;
+    const std::size_t count = data[9];
+    if (count > kMaxPeersPerSession || len != 10 + 4 * count) return;
+    if (!WithinRate(host->second, len)) { ++m_droppedRate; return; }
+    std::vector<std::uint32_t> before;
+    if (s.directAllowedBy == s.hostSlot) before.swap(s.directAllowed);
+    s.directAllowed.clear();
+    for (std::size_t i = 0; i < count; ++i) s.directAllowed.push_back(LoadU32LE(data + 10 + 4 * i));
+    s.directAllowedBy = s.hostSlot;
+    for (std::uint32_t slot : s.directAllowed) {
+        if (std::find(before.begin(), before.end(), slot) != before.end()) continue;   // its own hellos carry it on
+        auto ep = m_slotEp.find(slot);
+        if (ep == m_slotEp.end()) continue;
+        auto peer = m_peers.find(ep->second);
+        if (peer == m_peers.end() || peer->second.code != host->second.code) continue;
+        SendPeerAddrs(ep->second, peer->second, s);
+    }
+}
+
 // Version 5: a client of the session presents the successor key in a host-role hello.
-// It becomes the host only when the old one is gone or has been silent a while, so a
-// player holding the key can't push a live host out. Both keys are made new: the old
+// It becomes the host only once the old one is gone: it said bye, or the relay has not
+// heard it for kRelaySuccessionQuietSeconds (several of its hellos missed), so a player
+// holding the key can't push a live host out during a hitch or after a lost hello. Both keys are made new: the old
 // host (should it come back) and anyone who saw the old successor key can't take it back.
 bool RelayServer::TakeSuccession(const Endpoint& from, Peer& peer, Session& s, std::uint64_t key) {
     if (peer.host || peer.hub || peer.version < 5 || s.successorKey == 0 || key != s.successorKey) return false;
     if (s.hostSlot != 0) {
         Peer* old = FindBySlot(s.hostSlot);
-        if (old && old->idle < kRelaySuccessionQuietSeconds) return false;   // the host is alive: not yet
+        if (old && old->idle < kRelaySuccessionQuietSeconds) return false;   // the host may be alive: not yet
         if (old) old->host = false;   // a client from now on (it can only talk to the new host)
         s.lastHostSlot = s.hostSlot;
         s.hostSlot = 0;
     }
     s.hostKey = NewHostKey();
     s.successorKey = NewHostKey();
+    s.directAllowed.clear();   // the new host names its own players
+    s.directAllowedBy = 0;
     peer.host = true;
     ++m_successions;
     if (m_logBudget >= 1.0f) {
@@ -271,6 +322,8 @@ RelayServer::PeerMap::iterator RelayServer::RemovePeer(PeerMap::iterator it) {
         if (s->second.hostSlot == slot) {
             s->second.hostSlot = 0;
             s->second.lastHostSlot = slot;
+            s->second.directAllowed.clear();
+            s->second.directAllowedBy = 0;
             for (auto& [ep, other] : m_peers)
                 if (other.code == it->second.code && other.slot != slot)
                     SendWelcome(ep, other.slot, 0);
@@ -548,6 +601,8 @@ void RelayServer::HandleDatagram(const Endpoint& from, const std::uint8_t* data,
         HandleHello(from, data, len);
     } else if (tag == RelayData) {
         HandleData(from, data, len);
+    } else if (tag == RelayDirectAllow) {
+        HandleDirectAllow(from, data, len);
     } else if (tag == RelayBye) {
         auto it = m_peers.find(from);
         if (it != m_peers.end()) RemovePeer(it);

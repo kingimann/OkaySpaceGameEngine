@@ -118,6 +118,18 @@ inline bool ParseRelayPeerAddr(const std::uint8_t* d, std::size_t n, std::uint64
     return true;
 }
 
+/// A RelayDirectAllow frame (host to relay): the host's key, then the slots it lets the relay pass addresses on for.
+inline std::vector<std::uint8_t> BuildRelayDirectAllow(std::uint64_t hostKey, const std::vector<std::uint32_t>& slots) {
+    std::vector<std::uint8_t> pk;
+    pk.push_back(RelayDirectAllow);
+    detail::PutU32LE(pk, static_cast<std::uint32_t>(hostKey));
+    detail::PutU32LE(pk, static_cast<std::uint32_t>(hostKey >> 32));
+    const std::size_t n = slots.size() < 255 ? slots.size() : 255;
+    pk.push_back(static_cast<std::uint8_t>(n));
+    for (std::size_t i = 0; i < n; ++i) detail::PutU32LE(pk, slots[i]);
+    return pk;
+}
+
 /// A punch datagram (peer to peer): [tag][kind][u64 token][u32 sender's slot].
 inline std::vector<std::uint8_t> BuildRelayPunch(std::uint8_t kind, std::uint64_t token, std::uint32_t senderSlot) {
     std::vector<std::uint8_t> pk;

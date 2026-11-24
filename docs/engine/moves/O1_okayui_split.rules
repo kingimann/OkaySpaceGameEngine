@@ -244,3 +244,5 @@ drop: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ 
 add: ^\s*void\ wrapLines\(const\ char\*\ text,\ float\ maxW,\ const\ unsigned\ char\*\ col,\ float\ maxRest\)\ \{$
 
 # ---- part 3: OkayUI_Tabs.cpp (tab bars: TabBar, BeginTabBar / BeginTabItem, TabItemButton, the dock strip amend)
+
+# ---- part 3: OkayUI_Trees.cpp (collapsing headers and tree nodes)

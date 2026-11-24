@@ -1,0 +1,70 @@
+// <algorithm> for okay-cc (ISO/IEC 14882 [algorithms]). Our own header. Iterators are pointers.
+// One function template per name (this subset does not overload function templates), so min and
+// max take no comparison and sort and stable_sort always take one.
+#pragma once
+namespace std {
+template <typename T>
+const T &min(const T &a, const T &b) {
+    if (b < a) return b;
+    return a;
+}
+template <typename T>
+const T &max(const T &a, const T &b) {
+    if (a < b) return b;
+    return a;
+}
+template <typename T>
+void swap(T &a, T &b) {
+    T t = a;
+    a = b;
+    b = t;
+}
+template <typename It, typename V>
+It find(It first, It last, const V &value) {
+    for (; first != last; ++first)
+        if (*first == value) return first;
+    return last;
+}
+template <typename It, typename Pred>
+It find_if(It first, It last, Pred pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return first;
+    return last;
+}
+template <typename It, typename Pred>
+long count_if(It first, It last, Pred pred) {
+    long n = 0;
+    for (; first != last; ++first)
+        if (pred(*first)) ++n;
+    return n;
+}
+template <typename It, typename V>
+void fill(It first, It last, const V &value) {
+    for (; first != last; ++first) *first = value;
+}
+template <typename It>
+void reverse(It first, It last) {
+    while (first != last) {
+        --last;
+        if (first == last) break;
+        swap(*first, *last);
+        ++first;
+    }
+}
+// Insertion sort: equal elements keep their order (so it is also stable_sort). O(n^2).
+template <typename It, typename Less>
+void stable_sort(It first, It last, Less less) {
+    if (first == last) return;
+    for (It i = first + 1; i != last; ++i) {
+        It j = i;
+        while (j != first && less(*j, *(j - 1))) {
+            swap(*j, *(j - 1));
+            --j;
+        }
+    }
+}
+template <typename It, typename Less>
+void sort(It first, It last, Less less) {
+    stable_sort(first, last, less);
+}
+}  // namespace std

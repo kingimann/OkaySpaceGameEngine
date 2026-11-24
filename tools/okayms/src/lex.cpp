@@ -45,8 +45,15 @@ uint64_t ieee_real(unsigned __int128 sig, int pow10, bool neg, bool single) {
     int bexp = 0;
     if (sig == 0) return neg ? (single ? 0x80000000ull : 0x8000000000000000ull) : 0;
     if (pow10 >= 0) {
-        for (int i = 0; i < pow10; ++i) mag *= 10u;
-        bexp = 0;
+        // Multiplying by ten 300 times does not fit 128 bits: keep the value below 2^123 by moving low bits into the
+        // binary exponent first (the bits dropped are below the 53 kept; rounding can differ in the last place).
+        for (int i = 0; i < pow10; ++i) {
+            while ((mag >> 123) != 0) {
+                mag >>= 1;
+                ++bexp;
+            }
+            mag *= 10u;
+        }
     } else {
         for (int i = 0; i < -pow10; ++i) {
             while (mag < (static_cast<unsigned __int128>(1) << 120)) {
@@ -77,6 +84,10 @@ uint64_t ieee_real(unsigned __int128 sig, int pow10, bool neg, bool single) {
     const int bias = single ? 127 : 1023;
     int encoded = bexp + keep + bias;
     if (encoded <= 0) return neg ? (single ? 0x80000000ull : 0x8000000000000000ull) : 0;
+    if (encoded >= (single ? 255 : 2047)) {  // too big for the format: infinity (IEEE 754 overflow)
+        if (single) return (neg ? 0x80000000ull : 0) | 0x7F800000ull;
+        return (neg ? 0x8000000000000000ull : 0) | 0x7FF0000000000000ull;
+    }
     const uint64_t mant_mask = single ? 0x7FFFFFull : 0xFFFFFFFFFFFFFull;
     const uint64_t mant = static_cast<uint64_t>(mag) & mant_mask;
     if (single) return (neg ? 0x80000000ull : 0) | (static_cast<uint64_t>(encoded) << 23) | mant;
@@ -138,6 +149,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             if (tok.text == "true" || tok.text == "false") {
                 tok.kind = TNumber;
                 tok.number = tok.text == "true" ? 1 : 0;
+                tok.ity = 6;  // a bool literal: its value is an int here, its type for overloading is bool
             }
             i = j;
             tokens.push_back(tok);
@@ -273,6 +285,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             ++i;
             tok.kind = TNumber;
             tok.number = value;
+            tok.ity = 5;  // a character literal: its value is an int here, its type for overloading is char
             tokens.push_back(tok);
             continue;
         }

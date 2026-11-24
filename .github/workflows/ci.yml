@@ -628,7 +628,7 @@ jobs:
         timeout-minutes: 20
         run: |
           bash scripts/ci-apt-cache.sh before
-          bash scripts/ci-install-mingw.sh zip nsis osslsigncode   # TEMP measurement: the release package set
+          bash scripts/ci-install-mingw.sh
 
       - name: Check for newly downloaded apt packages
         id: apt-new
@@ -707,7 +707,7 @@ jobs:
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
-        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/ci-speed-3' }}   # TEMP measurement
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
         with:
           path: .ccache

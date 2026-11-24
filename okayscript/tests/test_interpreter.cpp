@@ -1,6 +1,7 @@
 // Running OkayScript: variables and scopes, arithmetic, comparisons and logic, control flow, functions, lambdas,
 // typed variables, text/list/map methods. Each check runs real code and compares what it printed or left behind.
 #include "TestKit.hpp"
+#include <cstdio>
 
 using oktest::Eval;
 using oktest::Run;
@@ -165,6 +166,66 @@ int main() {
     CHECK_EQ(Run("var s = \"ab\"\nwhile (true) s = s + s"), std::string("ERROR runtime 2: text too long (more than 67108864 characters)"));
     CHECK_EQ(Run("var p = \"x\".PadLeft(1000000000)"), std::string("ERROR runtime 1: text too long (more than 67108864 characters)"));
     CHECK_EQ(Run("var s = \"x\"\nfor (var i = 0; i < 40; i++) s += s"), std::string("ERROR runtime 2: text too long (more than 67108864 characters)"));
+
+    TEST("a lambda kept in a variable it captures is freed (closure-table cycles)");
+    {
+        // `var f = null; f = () => f`: the closure table holds f's box and the box holds f, so before the cycle
+        // collection neither ever went (about 460 bytes each, measured 92 MB peak for 200,000 of them).
+        Interpreter in;
+        okayscript::InstallStandardLibrary(in);
+        in.GetLimits().maxLoopIterations = 0;
+        const auto rssKb = [] {
+            long kb = 0;
+#ifdef __linux__
+            if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+                long pages = 0, res = 0;
+                if (std::fscanf(f, "%ld %ld", &pages, &res) == 2) kb = res * 4;
+                std::fclose(f);
+            }
+#endif
+            return kb;
+        };
+        CHECK_EQ(Run("function make(xs) { var f = null; var data = xs; f = () => f + data.Count; return 1 }\n"
+                     "var t = 0\nfor (var i = 0; i < 2000; i++) t += make(range(1000))\nprint(t)", &in), std::string("2000\n"));
+        const long before = rssKb();
+        CHECK_EQ(Run("function make2() { var f = null; f = () => f; return 1 }\n"
+                     "var t2 = 0\nfor (var i = 0; i < 1000000; i++) t2 += make2()\nprint(t2)", &in), std::string("1000000\n"));
+        CHECK(in.Rt().closures.size() < 1000);   // a million made and dropped: only the last sweep's few remain
+        const long grown = rssKb() - before;
+        std::printf("    self-capturing lambdas: %zu closure entries left, resident memory grew %ld KB\n", in.Rt().closures.size(), grown);
+        CHECK(grown < 20000);                     // was about 460 MB for a million
+        // A generator whose frame holds a list that holds the generator: freed the same way.
+        CHECK_EQ(Run("function sq(n, box) { var i = 0; while (i < n) { yield i; i++ } }\n"
+                     "function mkg() { var l = []; var g = sq(2, l); l.Add(g); return 1 }\n"
+                     "var t3 = 0\nfor (var i = 0; i < 100000; i++) t3 += mkg()\nprint(t3)", &in), std::string("100000\n"));
+        CHECK(in.Rt().generators.size() < 1000);
+    }
+    {   // ...but a lambda or generator still in use keeps its box, even when the box also holds it
+        CHECK_EQ(Run("var keep = []\n"
+                     "function mk(k) { var fact = null; fact = n => n < 2 ? k : n * fact(n - 1); return fact }\n"
+                     "function junk() { var z = null; z = () => z; return 0 }\n"
+                     "function sq(n) { var i = 0; while (i < n) { yield i; i++ } }\n"
+                     "function holder() { var me = null; me = sq(3); var get = () => me; return get }\n"
+                     "for (var i = 0; i < 300; i++) { var f = mk(i); if (i % 100 == 0) keep.Add(f) }\n"
+                     "var h = holder()\nvar g = h()\nprint(g.next())\n"
+                     "for (var i = 0; i < 5000; i++) junk()\n"
+                     "var s = \"\"\nforeach (var f in keep) s += f(4) + \" \"\nprint(s, g.next(), h().next(), g.done())"),
+                 std::string("0\n0 2400 4800  1 2 true\n"));
+    }
+
+    TEST("generators are told apart past 2^24 of them (no float ids)");
+    {
+        Interpreter in;
+        okayscript::InstallStandardLibrary(in);
+        in.Rt().nextGenerator = 16777216;   // a float id made 16777216 and 16777217 the same generator
+        CHECK_EQ(Run("function count(from) { var i = from; while (true) { yield i; i++ } }\n"
+                     "var a = count(1)\nvar b = count(100)\nprint(a.next(), b.next(), a.next(), b.next())", &in),
+                 std::string("1 100 2 101\n"));
+    }
+
+    TEST("a program's own function wins over a library builtin with its name");
+    CHECK_EQ(Run("function sort(a, b, c) { return \"mine\" }\nprint(sort(3, 1, 2))"), std::string("mine\n"));
+    CHECK_EQ(Run("function clock() { return 7 }\nfunction set_of(x) { return \"s\" }\nprint(clock(), set_of([1]))"), std::string("7 s\n"));
 
     TEST("top-level return ends the program; main is not called by Run");
     CHECK_EQ(Run("print(1)\nreturn;\nprint(2)"), std::string("1\n"));

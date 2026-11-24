@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cstdio>
 
 using namespace okay;
 
@@ -71,6 +72,41 @@ int main() {
         std::string err;
         CHECK(vm->Load(src, &err));
         CHECK_NEAR(vm->GetGlobal("s").AsFloat(), 10.0f, 0.001f);
+    }
+
+    // --- a script's own function wins over a builtin with the same name ---
+    // The language core added about 34 builtins (sort, zip, clock, ...). Builtins used to be found first, so a game
+    // script's own `sort` was silently replaced by the library's (its `sort(a, b, c)` returned 1, not "mine").
+    {
+        const char* names[] = {"sort", "zip", "flatten", "set_of", "set_add", "set_has", "set_union", "set_diff",
+                               "set_intersect", "set_remove", "chr", "ord", "long", "int64", "trunc", "cbrt", "log2",
+                               "log10", "is_int", "enumerate", "date_text", "base64_encode", "base64_decode",
+                               "hex_encode", "hex_decode", "url_encode", "url_decode", "utf8_len", "utf8_chars", "now",
+                               "now_ms", "clock", "rand_seed",
+                               // and the engine's older ones
+                               "move", "print", "abs", "len", "to_json"};
+        for (const char* n : names) {
+            const std::string src = std::string("function ") + n + "(a, b, c) { return \"mine\"; }\nvar r = " + n + "(3, 1, 2);\n";
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm->Load(src, &err));
+            const std::string got = vm->GetGlobal("r").AsString();
+            if (got != "mine") std::printf("    %s(...) gave \"%s\" (%s)\n", n, got.c_str(), err.c_str());
+            CHECK(got == "mine");
+        }
+        // Without a script function of that name the builtin still answers; a class's own method wins in it too.
+        const char* src = R"SCRIPT(
+            var s = to_json(sort([3, 1, 2]));
+            class Box { public string clock() { return "box"; } public string Go() { return clock(); } }
+            var b = new Box().Go();
+            var c = typeof(clock());
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK(vm->GetGlobal("s").AsString() == "[1,2,3]");
+        CHECK(vm->GetGlobal("b").AsString() == "box");
+        CHECK(vm->GetGlobal("c").AsString() == "number");
     }
 
     TEST_MAIN_RESULT();

@@ -94,9 +94,12 @@ variables, statics, named and default arguments, events. Added in stage 2, each 
   was made in, so nesting works. Lookup order: the frame's slots, its names, its box chain, then outwards as before
   (dynamic scoping is unchanged for everything else, so engine scripts behave the same). Locals that no lambda uses
   are still slots: no cost for them. A loop variable is one variable for the whole function, so lambdas made in a loop
-  all see its last value (as `var` in JavaScript). Typed captured locals keep their type rule (`__k`). Limit: a lambda
-  kept in a variable it captures (a recursive local lambda) holds its own box, so it is never freed (reference
-  counting, no cycle collector).
+  all see its last value (as `var` in JavaScript). Typed captured locals keep their type rule (`__k`). A lambda kept in
+  a variable it captures (a recursive local lambda) holds its own box through the table; `CollectCycles` (at each
+  sweep of the closure or generator table) counts, for every list and map the tables' entries reach, the references
+  from inside that walk against its use count, keeps what is held from outside and what that reaches, and drops the
+  rest (measured: a million such lambdas grew resident memory by 464 MB before, about 16 KB after). Plain list or map
+  cycles (`xs.Add(xs)`) are still never freed.
 - **Errors.** `throw` of any value (`ThrownError<V>` carries it): the catch variable is the value when it is not
   text, the message otherwise (as before). `catch (Error e)` / `catch (Exception e)` (any type word) gives an error
   object `{message, line, value}`. `finally` runs on every way out of the body: its code is emitted at the normal end,

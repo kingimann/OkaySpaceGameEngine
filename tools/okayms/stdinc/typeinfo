@@ -1,0 +1,36 @@
+// okay-ms own standard header: std::type_info, written from ISO/IEC 14882 [type.info] and [expr.typeid]. Own model:
+// the compiler makes one object per type and file holding a pointer to the type's decorated name as text
+// (".?AVC@@" for a class C, "H" for int), and puts the address of a class's object in the slot before its virtual
+// table, so typeid(*p) finds the dynamic type. name() returns that decorated text (MSVC returns "class C"). Two
+// objects compare equal when their text is equal, so the same type in two files is the same; before() orders by the
+// text. No exceptions: there is no bad_typeid or bad_cast.
+#pragma once
+#include <cstddef>
+namespace std {
+class type_info {
+    const char* name_;
+
+    static int compare_text(const char* a, const char* b) {
+        while (*a != 0 && *a == *b) {
+            ++a;
+            ++b;
+        }
+        return (int)(unsigned char)*a - (int)(unsigned char)*b;
+    }
+
+public:
+    type_info(const type_info&) = delete;
+    type_info& operator=(const type_info&) = delete;
+    const char* name() const { return name_; }
+    const char* raw_name() const { return name_; }
+    bool operator==(const type_info& o) const { return this == &o || compare_text(name_, o.name_) == 0; }
+    bool operator!=(const type_info& o) const { return !(*this == o); }
+    bool before(const type_info& o) const { return compare_text(name_, o.name_) < 0; }
+    // A hash of the text (multiply by 131 and add each byte): equal types give equal values ([type.info] 7).
+    size_t hash_code() const {
+        size_t h = 0;
+        for (const char* p = name_; *p != 0; ++p) h = h * 131u + (unsigned char)*p;
+        return h;
+    }
+};
+}

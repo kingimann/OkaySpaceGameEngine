@@ -168,6 +168,55 @@ void Parser::finish_static_guard(Node* then_block, Node init_stmt, const std::st
     out->kids.push_back(std::move(test));
 }
 
+// Steps over one statement without compiling it (the branch an if constexpr does not take).
+bool Parser::skip_stmt() {
+    auto skip_group = [&](Tok open, Tok close) {
+        int depth = 0;
+        do {
+            if (is(open)) ++depth;
+            else if (is(close)) --depth;
+            next();
+        } while (depth > 0 && !is(TEnd));
+    };
+    if (is(TLBrace)) {
+        skip_group(TLBrace, TRBrace);
+        return true;
+    }
+    if (is(TIf)) {
+        next();
+        if (is(TConst)) next();
+        if (!is(TLParen)) return expect(TLParen, "'('");
+        skip_group(TLParen, TRParen);
+        if (!skip_stmt()) return false;
+        if (accept(TElse)) return skip_stmt();
+        return true;
+    }
+    if (is(TFor) || is(TWhile) || is(TSwitch)) {
+        next();
+        if (!is(TLParen)) return expect(TLParen, "'('");
+        skip_group(TLParen, TRParen);
+        return skip_stmt();
+    }
+    if (is(TDo)) {
+        next();
+        if (!skip_stmt()) return false;
+        if (!accept(TWhile)) return expect(TWhile, "'while'");
+        skip_group(TLParen, TRParen);
+        return expect(TSemi, "';'");
+    }
+    int depth = 0;
+    while (!is(TEnd)) {
+        if (is(TLParen) || is(TLBrace) || is(TLBrack)) ++depth;
+        else if (is(TRParen) || is(TRBrace) || is(TRBrack)) --depth;
+        else if (is(TSemi) && depth == 0) {
+            next();
+            return true;
+        }
+        next();
+    }
+    return expect(TSemi, "';'");
+}
+
 // A statement, preceded by the assignments that give hidden locals their values for references
 // bound to temporaries (a reference parameter given an expression that is not an object).
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
@@ -321,6 +370,37 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Node stmt;
         if (!parse_stmt(&stmt, locals)) return false;
         out->kids.push_back(std::move(stmt));
+        return true;
+    }
+    if (is(TIf) && at + 1 < tokens.size() && tokens[at + 1].kind == TConst) {
+        // if constexpr (cond) ([stmt.if] 2): the condition is a constant; only the branch it picks is compiled, the
+        // other one is stepped over as tokens (in a template it may not compile for these arguments).
+        next();
+        next();
+        if (!expect(TLParen, "'('")) return false;
+        Node cond;
+        if (!parse_expr(0, &cond)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        if (cond.kind != Node::IntLit) {
+            error = "the condition of if constexpr is not a constant here";
+            return false;
+        }
+        const bool taken = cond.number != 0;
+        out->kind = Node::Block;
+        Node chosen;
+        if (taken) {
+            if (!parse_stmt(&chosen, locals)) return false;
+        } else if (!skip_stmt()) {
+            return false;
+        }
+        if (accept(TElse)) {
+            if (!taken) {
+                if (!parse_stmt(&chosen, locals)) return false;
+            } else if (!skip_stmt()) {
+                return false;
+            }
+        }
+        out->kids.push_back(std::move(chosen));
         return true;
     }
     if (is(TIf)) {
@@ -866,7 +946,12 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             // C x = value; with a value that is not an object of a class (std::string s = "abc"; V v = 5;): a converting
             // constructor makes x from it ([dcl.init], copy-initialisation, with the copy elided).
             Type from;
-            if (static_type(init, &from) && !(from.base == 3 && from.pointers == 0 && !from.is_array())) {
+            // An object of another class that a constructor takes (a lambda for std::function) is converted the same
+            // way ([over.match.copy]).
+            if (static_type(init, &from) &&
+                (!(from.base == 3 && from.pointers == 0 && !from.is_array()) ||
+                 (from.struct_id != decl.type.struct_id && !derives_from(from.struct_id, decl.type.struct_id) &&
+                  (converts_by_ctor(decl.type.struct_id, init, from) || has_ctor_template(decl.type.struct_id))))) {
                 ctor_args.push_back(std::move(init));
                 have_ctor_args = true;
                 has_init = false;

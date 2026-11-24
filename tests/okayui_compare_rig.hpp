@@ -206,6 +206,11 @@ struct OkayRig {
 };
 
 // ---- measuring --------------------------------------------------------------------------------------------------------------
+/// The pixel (x, y) is the colour `c`, give or take 2 levels a channel.
+inline bool PixelIs(const Bitmap& b, int x, int y, const std::uint8_t c[3]) {
+    const std::uint8_t* p = &b.rgba[((std::size_t)y * (std::size_t)b.w + (std::size_t)x) * 4];
+    return std::abs(p[0] - c[0]) <= 2 && std::abs(p[1] - c[1]) <= 2 && std::abs(p[2] - c[2]) <= 2;
+}
 struct Diff { double avg = 0.0; double clearly = 0.0; };
 inline Diff Compare(const Bitmap& a, const Bitmap& b) {
     Diff d; double sum = 0.0; std::size_t clear = 0;

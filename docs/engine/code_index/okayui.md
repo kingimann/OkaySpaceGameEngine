@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 12 headers, 638 names.
+Back to the [code index](../code_index.md). 12 headers, 641 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -343,11 +343,12 @@ Back to the [code index](../code_index.md). 12 headers, 638 names.
 ## `okayui/include/okay/UI/OkayUICapture.hpp`
 
 - `CapturedGeometry` struct, line 19: Shapes cut out of the frame: the same vertices, indices and commands GetDrawData gives (indices start at 0 in 'vertices').
-- `BeginCapture` function, line 29: Start taking the shapes drawn from here on out of the frame (main and overlay layer). Nested calls are counted: only the
-- `EndCapture` function, line 33: Stop, move the shapes made since BeginCapture into 'out' (replacing what it held) and remove them from the frame. Windows begun
-- `Capturing` function, line 35: True between BeginCapture and its EndCapture.
-- `TexturePixels` struct, line 39: The pixels behind a DrawCmd::texture: RGBA8, top row first, 'w' x 'h'. 'generation' changes when the pixels change (a font
-- `GetTexturePixels` function, line 40
+- `CaptureFlags` enum, line 33: What BeginCapture takes. Capture_All: the main and the overlay layer (popups, open lists, the foreground list), all of it drawn
+- `BeginCapture` function, line 37: Start taking the shapes drawn from here on out of the frame ('flags': CaptureFlags). Nested calls are counted: only the
+- `EndCapture` function, line 41: Stop, move the shapes made since BeginCapture into 'out' (replacing what it held) and remove them from the frame. Windows begun
+- `Capturing` function, line 43: True between BeginCapture and its EndCapture.
+- `TexturePixels` struct, line 47: The pixels behind a DrawCmd::texture: RGBA8, top row first, 'w' x 'h'. 'generation' changes when the pixels change (a font
+- `GetTexturePixels` function, line 48
 
 ## `okayui/include/okay/UI/OkayUICodeEdit.hpp`
 
@@ -363,6 +364,8 @@ Back to the [code index](../code_index.md). 12 headers, 638 names.
 - `CodeMarker` struct, line 85: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
 - `CodeMove` enum, line 93: Where the caret goes.
 - `CodeEdit` class, line 99
+- `TextBoxPalette` function, line 370: The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
+- `MakeTextBox` function, line 372: Make 'ed' a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
 
 ## `okayui/include/okay/UI/OkayUICompat.hpp`
 

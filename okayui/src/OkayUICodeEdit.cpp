@@ -2,6 +2,7 @@
 #include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstdio>
@@ -1056,6 +1057,32 @@ CodePos CodeEdit::ScreenToPos(float x, float y) const {
     return CodePos{row, ColumnToByte(row, (x - textLeft_ + scrollX_) / charW_)};
 }
 
+std::string CodeEdit::HoverText(float x, float y) const {
+    if (!(x >= item_.x && x < item_.x + item_.w && y >= item_.y && y < item_.y + item_.h)) return std::string();
+    const int row = SafeInt(std::floor((y - view_.y - padY_ + scrollY_) / lineH_));
+    if (row < 0 || row >= (int)lines_.size()) return std::string();
+    for (const CodeMarker& m : markers_) if (m.line == row && !m.message.empty()) return m.message;
+    if (!hoverInfo_ || x < view_.x || x >= view_.x + view_.w || y >= view_.y + view_.h) return std::string();
+    // the cell under the point (not the nearest caret position): its display column, then the character that covers it
+    const float colF = (x - textLeft_ + scrollX_) / charW_;
+    if (colF < 0.0f) return std::string();
+    const std::string& s = lines_[(size_t)row];
+    const int n = (int)s.size();
+    int i = 0, col = 0, hit = -1;
+    while (i < n) {
+        const int next = s[(size_t)i] == '\t' ? nextTab(col, tabSize_) : col + 1;
+        if (colF < (float)next) { hit = i; break; }
+        col = next;
+        i = nextIdx(s, i);
+    }
+    auto isWord = [&](int k) { const unsigned char c = (unsigned char)s[(size_t)k]; return std::isalnum(c) || c == '_' || c >= 0x80; };
+    if (hit < 0 || !isWord(hit)) return std::string();
+    int a = hit, b = hit;
+    while (a > 0 && isWord(a - 1)) --a;
+    while (b < n && isWord(b)) ++b;
+    return hoverInfo_(s.substr((size_t)a, (size_t)(b - a)));
+}
+
 void CodeEdit::Focus() { /* needs the widget id: taken on the next Draw */ wantFocus_ = true; }
 
 void CodeEdit::layout(const Rect& item) {
@@ -1071,7 +1098,7 @@ void CodeEdit::layout(const Rect& item) {
     needH_ = alwaysH_ || contentW_ > vw - (needV_ ? sb : 0.0f);
     if (needH_ && !needV_) needV_ = contentH_ > vh - sb;
     view_ = Rect{item.x + gutterW_, item.y, std::max(0.0f, vw - (needV_ ? sb : 0.0f)), std::max(0.0f, vh - (needH_ ? sb : 0.0f))};
-    textLeft_ = view_.x + 4.0f;
+    textLeft_ = view_.x + textMargin_;
     clampScroll();
     vTrack_ = Rect{view_.x + view_.w, item.y, sb, view_.h};
     hTrack_ = Rect{view_.x, item.y + view_.h, view_.w, sb};
@@ -1409,8 +1436,11 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
                 dl.AddLine(Vec2{x, yy + ((k & 1) ? 0.0f : 2.0f)}, Vec2{xe, yy + ((k & 1) ? 2.0f : 0.0f)}, uc, 1.0f);
             }
         }
-        if (hovered && !in.blocked && in.mouseY >= y && in.mouseY < y + lineH_ && in.mouseX >= item.x && in.mouseX < vend.x)
-            for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) { SetTooltip("%s", m.message.c_str()); break; }
+    }
+    // the tooltip under the pointer: an error's message on its line, else what the host says about the word (SetHoverInfo)
+    if (hovered && !in.blocked && !dragging_) {
+        const std::string tip = HoverText(in.mouseX, in.mouseY);
+        if (!tip.empty()) SetTooltip("%s", tip.c_str());
     }
     // the caret (while composing: the caret inside the preedit) and where the host should put the candidate window
     imeCaret_ = imeComp_ = Rect{};

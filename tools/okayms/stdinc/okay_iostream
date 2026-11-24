@@ -1,0 +1,669 @@
+// okay-ms own standard library: the shared body of <ios> <iosfwd> <ostream> <istream> <sstream> <fstream> <iostream>
+// <iomanip>, written from ISO/IEC 14882 [input.output]. Own minimal version for char only (no wchar_t, no traits or
+// allocator arguments, no locales: imbue() accepts anything and does nothing, no exceptions()).
+// - A stream writes to and reads from a streambuf through two virtual functions of our own (put, get with peek), not the
+//   standard's overflow/underflow protocol.
+// - The string streams are complete for these operations. The file streams (ifstream, ofstream, fstream, in
+//   okay_fstream) and the console objects (cout, cerr, clog, in <iostream>) reach the operating system through
+//   functions that are declared and not defined (__okay_file_*, __okay_console_write): a program that includes
+//   <fstream> or <iostream> links only against a library that defines them; okay-ms's runtime does not yet.
+// - Numbers are written by our own code: integers exactly; floating values with the precision in significant digits
+//   (default 6, like %g) or, with fixed / scientific, digits after the point. The digits come from repeated
+//   multiplication by ten, so the last digit can differ from a correctly rounded result.
+// - The console objects are a separate object in each file that includes <iostream> (no shared state is needed).
+#pragma once
+#include <cstddef>
+#include <string>
+namespace std {
+typedef long long streamsize;
+typedef long long streamoff;
+typedef long long streampos;
+
+class ios_base {
+public:
+    virtual ~ios_base() {}  // the table pointer is in the first class (okay-ms does not add one in a derived class)
+    typedef unsigned fmtflags;
+    typedef unsigned openmode;
+    typedef unsigned iostate;
+    typedef int seekdir;
+    static const fmtflags dec = 1, hex = 2, oct = 4, fixed = 8, scientific = 16, boolalpha = 32, showpoint = 64,
+                          uppercase = 128, left = 256, right = 512, internal = 1024, showpos = 2048, skipws = 4096;
+    static const fmtflags basefield = 7, floatfield = 24, adjustfield = 1792;
+    static const openmode app = 1, ate = 2, binary = 4, in = 8, out = 16, trunc = 32;
+    static const iostate goodbit = 0, badbit = 1, eofbit = 2, failbit = 4;
+    static const seekdir beg = 0, cur = 1, end = 2;
+};
+
+// The device a stream talks to. put writes n bytes and returns how many went; get returns the next byte (0 to 255) and
+// takes it, or -1 at the end; peek is get without taking it; seek and tell move and report the position (-1 when not
+// possible).
+class streambuf {
+public:
+    virtual ~streambuf() {}
+    virtual size_t put(const char* s, size_t n) { (void)s; (void)n; return 0; }
+    virtual int get() { return -1; }
+    virtual int peek() { return -1; }
+    virtual streampos seek(streamoff off, int dir, unsigned which) { (void)off; (void)dir; (void)which; return -1; }
+    virtual streampos tell(unsigned which) { (void)which; return -1; }
+    virtual void sync() {}
+};
+
+class ios : public ios_base {
+protected:
+    streambuf* buf_;
+    iostate state_;
+    fmtflags flags_;
+    streamsize precision_;
+    streamsize width_;
+    char fill_;
+
+public:
+    ios() : buf_(nullptr), state_(0), flags_(dec | skipws), precision_(6), width_(0), fill_(' ') {}
+    bool good() const { return state_ == 0; }
+    bool fail() const { return (state_ & (failbit | badbit)) != 0; }
+    bool bad() const { return (state_ & badbit) != 0; }
+    bool eof() const { return (state_ & eofbit) != 0; }
+    iostate rdstate() const { return state_; }
+    void setstate(iostate s) { state_ |= s; }
+    void clear(iostate s = 0) { state_ = s; }
+    explicit operator bool() const { return !fail(); }
+    bool operator!() const { return fail(); }
+    fmtflags flags() const { return flags_; }
+    fmtflags flags(fmtflags f) {
+        const fmtflags old = flags_;
+        flags_ = f;
+        return old;
+    }
+    fmtflags setf(fmtflags f) {
+        const fmtflags old = flags_;
+        flags_ |= f;
+        return old;
+    }
+    fmtflags setf(fmtflags f, fmtflags mask) {
+        const fmtflags old = flags_;
+        flags_ = (flags_ & ~mask) | (f & mask);
+        return old;
+    }
+    void unsetf(fmtflags f) { flags_ &= ~f; }
+    streamsize precision() const { return precision_; }
+    streamsize precision(streamsize p) {
+        const streamsize old = precision_;
+        precision_ = p;
+        return old;
+    }
+    streamsize width() const { return width_; }
+    streamsize width(streamsize w) {
+        const streamsize old = width_;
+        width_ = w;
+        return old;
+    }
+    char fill() const { return fill_; }
+    char fill(char c) {
+        const char old = fill_;
+        fill_ = c;
+        return old;
+    }
+    streambuf* rdbuf() const { return buf_; }
+    template <typename L>
+    void imbue(const L&) {}
+};
+
+namespace okay_io {
+// Integer text in base 10, 16 or 8 (no sign).
+inline string digits_of(unsigned long long v, int base, bool upper) {
+    char tmp[72];
+    int n = 0;
+    do {
+        const int d = (int)(v % (unsigned long long)base);
+        tmp[n++] = (char)(d < 10 ? '0' + d : (upper ? 'A' : 'a') + d - 10);
+        v /= (unsigned long long)base;
+    } while (v != 0);
+    string out;
+    while (n > 0) out += tmp[--n];
+    return out;
+}
+// v >= 0: the decimal digits of v with `after` digits after the point, rounded half up at that digit.
+inline string fixed_of(double v, int after) {
+    double scale = 1.0;
+    for (int i = 0; i < after; ++i) scale *= 10.0;
+    double whole = v * scale + 0.5;
+    // the integer part of whole, digit by digit (whole can be beyond the range of an integer type)
+    string digits;
+    double p = 1.0;
+    while (p * 10.0 <= whole) p *= 10.0;
+    for (; p >= 1.0; p /= 10.0) {
+        int d = (int)(whole / p);
+        if (d > 9) d = 9;
+        if (d < 0) d = 0;
+        digits += (char)('0' + d);
+        whole -= (double)d * p;
+    }
+    if (digits.empty()) digits = "0";
+    while ((int)digits.size() <= after) digits = string(1, '0') + digits;
+    if (after == 0) return digits;
+    return digits.substr(0, digits.size() - (size_t)after) + "." + digits.substr(digits.size() - (size_t)after);
+}
+inline string float_text(double v, ios_base::fmtflags flags, streamsize precision) {
+    if (v != v) return "nan";
+    string sign;
+    if (v < 0 || (v == 0 && 1.0 / v < 0)) {
+        sign = "-";
+        v = -v;
+    } else if (flags & ios_base::showpos) {
+        sign = "+";
+    }
+    if (v > 1.7976931348623157e308) return sign + "inf";
+    const ios_base::fmtflags ff = flags & ios_base::floatfield;
+    int prec = (int)precision;
+    if (prec < 0) prec = 6;
+    if (ff == ios_base::fixed) return sign + fixed_of(v, prec);
+    // the decimal exponent of v
+    int e = 0;
+    if (v != 0) {
+        double t = v;
+        while (t >= 10.0) {
+            t /= 10.0;
+            ++e;
+        }
+        while (t < 1.0) {
+            t *= 10.0;
+            --e;
+        }
+    }
+    const bool sci = ff == ios_base::scientific;
+    if (!sci && prec == 0) prec = 1;
+    // %g: scientific when the exponent is below -4 or at least the precision ([facet.num.put.virtuals], C 7.21.6.1)
+    if (sci || (ff != ios_base::fixed && v != 0 && (e < -4 || e >= prec))) {
+        double m = v;
+        for (int i = 0; i < e; ++i) m /= 10.0;
+        for (int i = 0; i > e; --i) m *= 10.0;
+        const int after = sci ? prec : prec - 1;
+        string mant = fixed_of(m, after);
+        if (mant.size() > 1 && mant[0] == '1' && mant[1] == '0' && mant.size() > (size_t)(after + 1) && mant[2] != '.') {
+            // rounding made 10.xxx: one more in the exponent
+            m /= 10.0;
+            ++e;
+            mant = fixed_of(m, after);
+        }
+        if (!sci && !(flags & ios_base::showpoint) && mant.find('.') != string::npos) {
+            while (!mant.empty() && mant[mant.size() - 1] == '0') mant.erase(mant.size() - 1);
+            if (!mant.empty() && mant[mant.size() - 1] == '.') mant.erase(mant.size() - 1);
+        }
+        string ex = digits_of((unsigned long long)(e < 0 ? -e : e), 10, false);
+        if (ex.size() < 2) ex = string(1, '0') + ex;
+        return sign + mant + ((flags & ios_base::uppercase) ? "E" : "e") + (e < 0 ? "-" : "+") + ex;
+    }
+    int after = prec - 1 - e;
+    if (after < 0) after = 0;
+    string out = fixed_of(v, after);
+    if (!(flags & ios_base::showpoint) && out.find('.') != string::npos) {
+        while (!out.empty() && out[out.size() - 1] == '0') out.erase(out.size() - 1);
+        if (!out.empty() && out[out.size() - 1] == '.') out.erase(out.size() - 1);
+    }
+    return sign + out;
+}
+}  // namespace okay_io
+
+// One class for reading and writing (okay-ms reads neither multiple nor virtual base classes, so istream and ostream
+// cannot be two bases of iostream): ostream, istream and iostream all name it, and a function that takes an ostream&
+// takes any stream here.
+class iostream : public ios {
+public:
+    iostream() : gcount_(0) {}
+    explicit iostream(streambuf* b) : gcount_(0) { buf_ = b; }
+
+    // Writes text, padded to width() with fill() (on the left unless `left` is set); the width is used once.
+    void put_text(const string& s) {
+        string out = s;
+        if (width_ > 0 && (streamsize)out.size() < width_) {
+            const string pad((size_t)(width_ - (streamsize)out.size()), fill_);
+            if (flags_ & left) out += pad;
+            else out = pad + out;
+        }
+        width_ = 0;
+        if (buf_ == nullptr || buf_->put(out.c_str(), out.size()) != out.size()) setstate(badbit);
+    }
+    iostream& put(char c) {
+        if (buf_ == nullptr || buf_->put(&c, 1) != 1) setstate(badbit);
+        return *this;
+    }
+    iostream& write(const char* s, streamsize n) {
+        if (n > 0 && (buf_ == nullptr || buf_->put(s, (size_t)n) != (size_t)n)) setstate(badbit);
+        return *this;
+    }
+    iostream& flush() {
+        if (buf_ != nullptr) buf_->sync();
+        return *this;
+    }
+    streampos tellp() { return buf_ != nullptr ? buf_->tell(out) : (streampos)-1; }
+    iostream& seekp(streampos pos) {
+        if (buf_ == nullptr || buf_->seek(pos, beg, out) < 0) setstate(failbit);
+        return *this;
+    }
+    iostream& seekp(streamoff off, seekdir dir) {
+        if (buf_ == nullptr || buf_->seek(off, dir, out) < 0) setstate(failbit);
+        return *this;
+    }
+    iostream& operator<<(const char* s) {
+        if (s != nullptr) put_text(string(s));
+        else put_text(string());
+        return *this;
+    }
+    iostream& operator<<(const string& s) {
+        put_text(s);
+        return *this;
+    }
+    iostream& operator<<(char c) {
+        put_text(string(1, c));
+        return *this;
+    }
+    iostream& operator<<(bool b) {
+        if (flags_ & boolalpha) put_text(b ? "true" : "false");
+        else put_text(b ? "1" : "0");
+        return *this;
+    }
+    iostream& operator<<(long long v) {
+        const fmtflags base = flags_ & basefield;
+        if (base == hex || base == oct) {
+            put_text(okay_io::digits_of((unsigned long long)v, base == hex ? 16 : 8, (flags_ & uppercase) != 0));
+        } else {
+            string t;
+            if (v < 0) t = string("-") + okay_io::digits_of(0ull - (unsigned long long)v, 10, false);
+            else t = okay_io::digits_of((unsigned long long)v, 10, false);
+            if (v >= 0 && (flags_ & showpos)) t = string("+") + t;
+            put_text(t);
+        }
+        return *this;
+    }
+    iostream& operator<<(unsigned long long v) {
+        const fmtflags base = flags_ & basefield;
+        put_text(okay_io::digits_of(v, base == hex ? 16 : base == oct ? 8 : 10, (flags_ & uppercase) != 0));
+        return *this;
+    }
+    iostream& operator<<(int v) { return *this << (long long)v; }
+    iostream& operator<<(long v) { return *this << (long long)v; }
+    iostream& operator<<(short v) { return *this << (long long)v; }
+    iostream& operator<<(unsigned v) { return *this << (unsigned long long)v; }
+    iostream& operator<<(unsigned long v) { return *this << (unsigned long long)v; }
+    iostream& operator<<(unsigned short v) { return *this << (unsigned long long)v; }
+    iostream& operator<<(unsigned char v) { return *this << (char)v; }
+    iostream& operator<<(double v) {
+        put_text(okay_io::float_text(v, flags_, precision_));
+        return *this;
+    }
+    iostream& operator<<(float v) { return *this << (double)v; }
+    iostream& operator<<(const void* p) {
+        put_text(string("0x") + okay_io::digits_of((unsigned long long)p, 16, false));
+        return *this;
+    }
+    // Everything the other stream's device has left ([ostream.inserters] 8).
+    iostream& operator<<(streambuf* from) {
+        if (from == nullptr) {
+            setstate(badbit);
+            return *this;
+        }
+        char chunk[256];
+        size_t n = 0;
+        for (int c = from->get(); c >= 0; c = from->get()) {
+            chunk[n++] = (char)c;
+            if (n == sizeof chunk) {
+                write(chunk, (streamsize)n);
+                n = 0;
+            }
+        }
+        if (n > 0) write(chunk, (streamsize)n);
+        return *this;
+    }
+    iostream& operator<<(iostream& (*manip)(iostream&)) { return manip(*this); }
+    iostream& operator<<(ios_base& (*manip)(ios_base&)) {
+        manip(*this);
+        return *this;
+    }
+
+protected:
+    streamsize gcount_;
+
+    int take() {
+        const int c = buf_ != nullptr ? buf_->get() : -1;
+        if (c < 0) setstate(eofbit);
+        return c;
+    }
+    int look() {
+        const int c = buf_ != nullptr ? buf_->peek() : -1;
+        if (c < 0) setstate(eofbit);
+        return c;
+    }
+    void skip_space() {
+        if (!(flags_ & skipws)) return;
+        for (int c = look(); c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; c = look()) take();
+    }
+    // The characters of a number token (sign, digits, point, exponent) as text.
+    string number_text(bool real) {
+        skip_space();
+        string t;
+        int c = look();
+        if (c == '-' || c == '+') {
+            t += (char)take();
+            c = look();
+        }
+        const bool hexbase = (flags_ & basefield) == hex;
+        while (c >= 0) {
+            const bool digit = (c >= '0' && c <= '9') || (hexbase && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')));
+            const bool more = real && (c == '.' || c == 'e' || c == 'E' ||
+                                       ((c == '-' || c == '+') && !t.empty() && (t[t.size() - 1] == 'e' || t[t.size() - 1] == 'E')));
+            if (!digit && !more) break;
+            t += (char)take();
+            c = look();
+        }
+        if (t.empty() || t == "-" || t == "+") setstate(failbit);
+        return t;
+    }
+
+public:
+    streamsize gcount() const { return gcount_; }
+    int get() {
+        gcount_ = 0;
+        const int c = take();
+        if (c < 0) setstate(failbit);
+        else gcount_ = 1;
+        return c;
+    }
+    iostream& get(char& c) {
+        const int v = get();
+        if (v >= 0) c = (char)v;
+        return *this;
+    }
+    int peek() { return look(); }
+    iostream& unget() {
+        setstate(failbit);  // own simplification: a byte cannot be given back
+        return *this;
+    }
+    iostream& ignore(streamsize n = 1, int delim = -1) {
+        gcount_ = 0;
+        while (n-- > 0) {
+            const int c = take();
+            if (c < 0) break;
+            ++gcount_;
+            if (c == delim) break;
+        }
+        return *this;
+    }
+    iostream& read(char* s, streamsize n) {
+        gcount_ = 0;
+        while (gcount_ < n) {
+            const int c = take();
+            if (c < 0) {
+                setstate(failbit);
+                break;
+            }
+            s[gcount_++] = (char)c;
+        }
+        return *this;
+    }
+    iostream& getline(char* s, streamsize n, char delim = '\n') {
+        gcount_ = 0;
+        streamsize k = 0;
+        while (k + 1 < n) {
+            const int c = take();
+            if (c < 0) break;
+            ++gcount_;
+            if (c == delim) break;
+            s[k++] = (char)c;
+        }
+        if (n > 0) s[k] = 0;
+        if (gcount_ == 0) setstate(failbit);
+        return *this;
+    }
+    streampos tellg() { return buf_ != nullptr && !fail() ? buf_->tell(in) : (streampos)-1; }
+    iostream& seekg(streampos pos) {
+        clear(rdstate() & ~eofbit);
+        if (buf_ == nullptr || buf_->seek(pos, beg, in) < 0) setstate(failbit);
+        return *this;
+    }
+    iostream& seekg(streamoff off, seekdir dir) {
+        clear(rdstate() & ~eofbit);
+        if (buf_ == nullptr || buf_->seek(off, dir, in) < 0) setstate(failbit);
+        return *this;
+    }
+    iostream& operator>>(string& s) {
+        skip_space();
+        s.clear();
+        for (int c = look(); c >= 0 && c != ' ' && c != '\t' && c != '\n' && c != '\r'; c = look()) s += (char)take();
+        if (s.empty()) setstate(failbit);
+        return *this;
+    }
+    iostream& operator>>(char& c) {
+        skip_space();
+        const int v = take();
+        if (v < 0) setstate(failbit);
+        else c = (char)v;
+        return *this;
+    }
+    // A number that cannot be read stores 0 and sets failbit ([facet.num.get.virtuals] 3).
+    iostream& operator>>(long long& v) {
+        const string t = number_text(false);
+        if (fail()) {
+            v = 0;
+            return *this;
+        }
+        const bool hexbase = (flags_ & basefield) == hex;
+        size_t i = 0;
+        bool neg = false;
+        if (t[0] == '-' || t[0] == '+') {
+            neg = t[0] == '-';
+            i = 1;
+        }
+        unsigned long long m = 0;
+        for (; i < t.size(); ++i) {
+            const char ch = t[i];
+            const int d = ch <= '9' ? ch - '0' : (ch | 32) - 'a' + 10;
+            m = m * (hexbase ? 16u : 10u) + (unsigned long long)d;
+        }
+        v = neg ? (long long)(0ull - m) : (long long)m;
+        return *this;
+    }
+    iostream& operator>>(int& v) {
+        long long w = 0;
+        *this >> w;
+        v = (int)w;
+        return *this;
+    }
+    iostream& operator>>(unsigned& v) {
+        long long w = 0;
+        *this >> w;
+        v = (unsigned)w;
+        return *this;
+    }
+    iostream& operator>>(unsigned long long& v) {
+        long long w = 0;
+        *this >> w;
+        v = (unsigned long long)w;
+        return *this;
+    }
+    iostream& operator>>(double& v) {
+        const string t = number_text(true);
+        if (fail()) {
+            v = 0;
+            return *this;
+        }
+        // the value of the text, by the same digit loop as from_chars (not correctly rounded)
+        double m = 0;
+        int ex = 0;
+        bool point = false;
+        bool neg = false;
+        size_t i = 0;
+        if (t[0] == '-' || t[0] == '+') {
+            neg = t[0] == '-';
+            i = 1;
+        }
+        for (; i < t.size() && t[i] != 'e' && t[i] != 'E'; ++i) {
+            if (t[i] == '.') {
+                point = true;
+                continue;
+            }
+            m = m * 10.0 + (double)(t[i] - '0');
+            if (point) --ex;
+        }
+        if (i < t.size()) {
+            ++i;
+            bool eneg = false;
+            if (i < t.size() && (t[i] == '-' || t[i] == '+')) eneg = t[i++] == '-';
+            int e = 0;
+            for (; i < t.size(); ++i) e = e * 10 + (t[i] - '0');
+            ex += eneg ? -e : e;
+        }
+        for (; ex > 0; --ex) m *= 10.0;
+        for (; ex < 0; ++ex) m /= 10.0;
+        v = neg ? -m : m;
+        return *this;
+    }
+    iostream& operator>>(float& v) {
+        double d = 0;
+        *this >> d;
+        v = (float)d;
+        return *this;
+    }
+    iostream& operator>>(bool& v) {
+        long long w = 0;
+        *this >> w;
+        v = w != 0;
+        return *this;
+    }
+    iostream& operator>>(iostream& (*manip)(iostream&)) { return manip(*this); }
+};
+typedef iostream ostream;
+typedef iostream istream;
+
+inline istream& getline(istream& is, string& s, char delim) {
+    s.clear();
+    bool any = false;
+    for (int c = is.peek(); c >= 0; c = is.peek()) {
+        is.get();
+        any = true;
+        if (c == delim) break;
+        s += (char)c;
+    }
+    if (!any) is.setstate(ios_base::failbit);
+    return is;
+}
+inline istream& getline(istream& is, string& s) { return getline(is, s, '\n'); }
+
+inline ostream& endl(ostream& os) {
+    os.put('\n');
+    return os.flush();
+}
+inline ostream& ends(ostream& os) { return os.put('\0'); }
+inline ostream& flush(ostream& os) { return os.flush(); }
+inline istream& ws(istream& is) {
+    for (int c = is.peek(); c == ' ' || c == '\t' || c == '\n' || c == '\r'; c = is.peek()) is.get();
+    is.clear(is.rdstate() & ~ios_base::eofbit);
+    return is;
+}
+inline ios_base& dec(ios_base& s) { ((ios*)&s)->setf(ios_base::dec, ios_base::basefield); return s; }
+inline ios_base& hex(ios_base& s) { ((ios*)&s)->setf(ios_base::hex, ios_base::basefield); return s; }
+inline ios_base& oct(ios_base& s) { ((ios*)&s)->setf(ios_base::oct, ios_base::basefield); return s; }
+inline ios_base& fixed(ios_base& s) { ((ios*)&s)->setf(ios_base::fixed, ios_base::floatfield); return s; }
+inline ios_base& scientific(ios_base& s) { ((ios*)&s)->setf(ios_base::scientific, ios_base::floatfield); return s; }
+inline ios_base& defaultfloat(ios_base& s) { ((ios*)&s)->unsetf(ios_base::floatfield); return s; }
+inline ios_base& boolalpha(ios_base& s) { ((ios*)&s)->setf(ios_base::boolalpha); return s; }
+inline ios_base& noboolalpha(ios_base& s) { ((ios*)&s)->unsetf(ios_base::boolalpha); return s; }
+inline ios_base& showpoint(ios_base& s) { ((ios*)&s)->setf(ios_base::showpoint); return s; }
+inline ios_base& uppercase(ios_base& s) { ((ios*)&s)->setf(ios_base::uppercase); return s; }
+inline ios_base& left(ios_base& s) { ((ios*)&s)->setf(ios_base::left, ios_base::adjustfield); return s; }
+inline ios_base& right(ios_base& s) { ((ios*)&s)->setf(ios_base::right, ios_base::adjustfield); return s; }
+inline ios_base& skipws(ios_base& s) { ((ios*)&s)->setf(ios_base::skipws); return s; }
+inline ios_base& noskipws(ios_base& s) { ((ios*)&s)->unsetf(ios_base::skipws); return s; }
+
+// <iomanip>: the manipulators that take an argument ([std.manip]).
+struct okay_setprecision { int n; };
+struct okay_setw { int n; };
+struct okay_setfill { char c; };
+inline okay_setprecision setprecision(int n) { okay_setprecision m; m.n = n; return m; }
+inline okay_setw setw(int n) { okay_setw m; m.n = n; return m; }
+inline okay_setfill setfill(char c) { okay_setfill m; m.c = c; return m; }
+inline ostream& operator<<(ostream& os, okay_setprecision m) { os.precision(m.n); return os; }
+inline ostream& operator<<(ostream& os, okay_setw m) { os.width(m.n); return os; }
+inline ostream& operator<<(ostream& os, okay_setfill m) { os.fill(m.c); return os; }
+
+// <sstream>: a device over a std::string ([stringbuf]).
+class stringbuf : public streambuf {
+    string text_;
+    size_t get_at_;
+    size_t put_at_;
+    bool append_;
+
+public:
+    stringbuf() : get_at_(0), put_at_(0), append_(false) {}
+    explicit stringbuf(const string& s, unsigned mode = ios_base::in | ios_base::out)
+        : text_(s), get_at_(0), put_at_((mode & (ios_base::ate | ios_base::app)) ? s.size() : 0),
+          append_((mode & ios_base::app) != 0) {}
+    string str() const { return text_; }
+    void str(const string& s) {
+        text_ = s;
+        get_at_ = 0;
+        put_at_ = 0;
+    }
+    size_t put(const char* s, size_t n) {
+        if (append_) put_at_ = text_.size();
+        for (size_t i = 0; i < n; ++i) {
+            if (put_at_ < text_.size()) text_[put_at_] = s[i];
+            else text_ += s[i];
+            ++put_at_;
+        }
+        return n;
+    }
+    int get() { return get_at_ < text_.size() ? (int)(unsigned char)text_[get_at_++] : -1; }
+    int peek() { return get_at_ < text_.size() ? (int)(unsigned char)text_[get_at_] : -1; }
+    streampos seek(streamoff off, int dir, unsigned which) {
+        const long long base = dir == ios_base::beg ? 0 : dir == ios_base::end ? (long long)text_.size()
+                                                                            : (long long)((which & ios_base::out) ? put_at_ : get_at_);
+        const long long to = base + off;
+        if (to < 0 || to > (long long)text_.size()) return -1;
+        if (which & ios_base::in) get_at_ = (size_t)to;
+        if (which & ios_base::out) put_at_ = (size_t)to;
+        return to;
+    }
+    streampos tell(unsigned which) { return (streampos)((which & ios_base::out) ? put_at_ : get_at_); }
+};
+
+class ostringstream : public iostream {
+    stringbuf sb_;
+
+public:
+    ostringstream() : sb_(string(), ios_base::out) { buf_ = &sb_; }
+    explicit ostringstream(const string& s, unsigned mode = ios_base::out) : sb_(s, mode | ios_base::out) { buf_ = &sb_; }
+    ostringstream(const ostringstream&) = delete;
+    string str() const { return sb_.str(); }
+    void str(const string& s) { sb_.str(s); }
+    stringbuf* rdbuf() { return &sb_; }
+};
+class istringstream : public iostream {
+    stringbuf sb_;
+
+public:
+    istringstream() : sb_(string(), ios_base::in) { buf_ = &sb_; }
+    explicit istringstream(const string& s, unsigned mode = ios_base::in) : sb_(s, mode | ios_base::in) { buf_ = &sb_; }
+    istringstream(const istringstream&) = delete;
+    string str() const { return sb_.str(); }
+    void str(const string& s) {
+        sb_.str(s);
+        clear();
+    }
+    stringbuf* rdbuf() { return &sb_; }
+};
+class stringstream : public iostream {
+    stringbuf sb_;
+
+public:
+    stringstream() : sb_(string(), ios_base::in | ios_base::out) { buf_ = &sb_; }
+    explicit stringstream(const string& s, unsigned mode = ios_base::in | ios_base::out) : sb_(s, mode) { buf_ = &sb_; }
+    stringstream(const stringstream&) = delete;
+    string str() const { return sb_.str(); }
+    void str(const string& s) {
+        sb_.str(s);
+        clear();
+    }
+    stringbuf* rdbuf() { return &sb_; }
+};
+
+}  // namespace std

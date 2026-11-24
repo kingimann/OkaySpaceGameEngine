@@ -7,6 +7,7 @@
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scripting/ScriptApiRegistry.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
@@ -578,6 +579,42 @@ inline bool IsComponentRef(const Value& v) {
     return v.IsString() && v.AsString().size() > 1 && v.AsString()[0] == '@';
 }
 float RealFps();   // Time.fps and fps(): defined in OkayScriptVM.cpp
+
+// The generic binding layer (okay/Scripting/ScriptBindings.hpp) behind a "@T" reference: the members the hand-written
+// component builtins (OkayScriptVM_Scene.cpp) know come first, anything else reaches the component's generated
+// methods and registry properties here. A wrong type or a refused value throws a ScriptError; false = no such member.
+inline Component* BoundComponentOf(GameObject* g, const std::string& type, const scriptbind::ClassBinding** cls) {
+    if (!g) return nullptr;
+    *cls = scriptbind::FindClass(type);
+    return *cls ? scriptbind::FindComponent(*g, **cls) : nullptr;
+}
+inline bool BoundGet(GameObject* g, const std::string& type, const std::string& prop, Value& out) {
+    const scriptbind::ClassBinding* cls = nullptr;
+    Component* c = BoundComponentOf(g, type, &cls);
+    if (!c) return false;
+    std::string err;
+    const auto r = scriptbind::GetMember(scriptbind::MakeHandle(c, cls), prop, out, err);
+    if (r == scriptbind::Result::Error) throw ScriptError(err);
+    return r == scriptbind::Result::Ok;
+}
+inline bool BoundSet(GameObject* g, const std::string& type, const std::string& prop, const Value& v) {
+    const scriptbind::ClassBinding* cls = nullptr;
+    Component* c = BoundComponentOf(g, type, &cls);
+    if (!c) return false;
+    std::string err;
+    const auto r = scriptbind::SetMember(scriptbind::MakeHandle(c, cls), prop, v, err);
+    if (r == scriptbind::Result::Error) throw ScriptError(err);
+    return r == scriptbind::Result::Ok;
+}
+inline bool BoundCall(GameObject* g, const std::string& type, const std::string& method, const std::vector<Value>& args, Value& out) {
+    const scriptbind::ClassBinding* cls = nullptr;
+    Component* c = BoundComponentOf(g, type, &cls);
+    if (!c) return false;
+    std::string err;
+    const auto r = scriptbind::CallMethod(scriptbind::MakeHandle(c, cls), method, args, out, err);
+    if (r == scriptbind::Result::Error) throw ScriptError(err);
+    return r == scriptbind::Result::Ok;
+}
 
 // A function from the shared table (okay/Scripting/ScriptApiRegistry.hpp) as an OkayScript builtin. It is a
 // named type so RegisterBuiltins can tell a shared function from a second, hand-written copy in the map.

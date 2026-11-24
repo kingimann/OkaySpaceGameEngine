@@ -430,6 +430,13 @@ add_test(NAME script_spawn_path_guard COMMAND test_script_spawn_path_guard)
 add_executable(test_script_components test_script_components.cpp)
 target_link_libraries(test_script_components PRIVATE okay::engine)
 add_test(NAME script_components COMMAND test_script_components)
+add_executable(test_script_bindings test_script_bindings.cpp)
+target_link_libraries(test_script_bindings PRIVATE okay::engine)
+add_test(NAME script_bindings COMMAND test_script_bindings)
+if(OKAY_PYTHON)
+    # The generated script bindings (engine/src/Scripting/ScriptBindingsGenerated.cpp) match the headers.
+    add_test(NAME script_bindings_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_script_bindings.py --check)
+endif()
 
 add_executable(test_scene_load test_scene_load.cpp)
 target_link_libraries(test_scene_load PRIVATE okay::engine)

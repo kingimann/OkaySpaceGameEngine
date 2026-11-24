@@ -679,13 +679,16 @@ private:
             }
         return false;
     }
-    static const char* OperatorText(Tok t) {
+    // The operators a class may define (operator+ ...), as written; "?" for any other token. The text comes from
+    // TokName, the lexer's one table of token spellings ("'+'" without its quotes).
+    static std::string OperatorText(Tok t) {
         switch (t) {
-            case Tok::Plus: return "+"; case Tok::Minus: return "-"; case Tok::Star: return "*"; case Tok::Slash: return "/";
-            case Tok::Percent: return "%"; case Tok::Eq: return "=="; case Tok::Ne: return "!="; case Tok::Lt: return "<";
-            case Tok::Gt: return ">"; case Tok::Le: return "<="; case Tok::Ge: return ">=";
+            case Tok::Plus: case Tok::Minus: case Tok::Star: case Tok::Slash: case Tok::Percent:
+            case Tok::Eq: case Tok::Ne: case Tok::Lt: case Tok::Gt: case Tok::Le: case Tok::Ge: break;
             default: return "?";
         }
+        const std::string s = TokName(t);
+        return s.substr(1, s.size() - 2);
     }
     // `[modifiers] Type Name { get ...` / `{ set ...` with a body or `=>` (not the `{ get; set; }` auto form).
     bool IsPropertyAhead() const {

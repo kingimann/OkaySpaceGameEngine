@@ -46,8 +46,33 @@ bool Dropped() {
     return g_sim.loss > 0.0f && Unit() < g_sim.loss;
 }
 
-void Trim(std::vector<Held>& q) {
-    if (q.size() > 256) q.erase(q.begin(), q.begin() + (q.size() - 256));
+// Each socket may have this many datagrams waiting (in and out each). Past it the oldest of that
+// socket's goes, and counts as an overflow, not as simulated loss. (It was 256 for every socket
+// together, so a busy test lost far more than the loss setting said.)
+constexpr std::size_t kHeldPerSocket = 4096;
+std::size_t g_overflow = 0;
+void Trim(std::vector<Held>& q, const UdpSocket* sock) {
+    if (q.size() <= kHeldPerSocket) return;
+    std::size_t mine = 0;
+    for (const Held& h : q) if (h.sock == sock) ++mine;
+    for (auto it = q.begin(); mine > kHeldPerSocket && it != q.end(); ) {
+        if (it->sock == sock) { it = q.erase(it); --mine; ++g_overflow; }
+        else ++it;
+    }
+}
+
+// Sockets in this process that read through the simulator, with their ports. A datagram to one
+// of them (on this computer) gets its latency and loss when it is read, so it is not given them
+// on the way out as well: two managers in one program then see the setting once, not twice.
+std::vector<std::pair<const UdpSocket*, std::uint16_t>> g_readers;
+void NoteReader(const UdpSocket& socket) {
+    for (auto& r : g_readers) if (r.first == &socket) { r.second = socket.LocalPort(); return; }
+    g_readers.emplace_back(&socket, socket.LocalPort());
+}
+bool SimulatedOnArrival(const Endpoint& to) {
+    if ((to.address >> 24) != 127 || to.port == 0) return false;
+    for (const auto& r : g_readers) if (r.second == to.port) return true;
+    return false;
 }
 
 void SendNow(UdpSocket& socket, const Endpoint& to, const std::uint8_t* data, std::size_t size) {
@@ -65,6 +90,8 @@ TrafficSample g_sample;
 
 SimSettings& Simulator() { return g_sim; }
 
+std::size_t SimulatorOverflows() { return g_overflow; }
+
 bool SimulatorActive() {
     if (!g_sim.enabled) return false;
     return g_sim.latencyMs > 0.0f || g_sim.jitterMs > 0.0f || g_sim.loss > 0.0f || g_sim.duplicate > 0.0f;
@@ -76,6 +103,8 @@ void ResetSimulator() {
 }
 
 void ResetSimulator(const UdpSocket& socket) {
+    g_readers.erase(std::remove_if(g_readers.begin(), g_readers.end(), [&](const auto& r) { return r.first == &socket; }),
+                    g_readers.end());
     auto mine = [&](const Held& h) { return h.sock == &socket; };
     g_out.erase(std::remove_if(g_out.begin(), g_out.end(), mine), g_out.end());
     g_in.erase(std::remove_if(g_in.begin(), g_in.end(), mine), g_in.end());
@@ -96,6 +125,7 @@ void PumpSimulator(UdpSocket& socket) {
 
 bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::size_t size) {
     if (!SimulatorActive() || !data || size == 0) return false;
+    if (SimulatedOnArrival(to)) return false;   // its reader applies the delay and loss: send it as is
     if (Dropped()) return true;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     const double release = Now() + (double)DelaySeconds();
@@ -108,7 +138,7 @@ bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::
         h.bytes.assign(bytes, bytes + size);
         h.release = release;
         g_out.push_back(std::move(h));
-        Trim(g_out);
+        Trim(g_out, &socket);
     }
     if (g_sim.duplicate > 0.0f && Unit() < g_sim.duplicate) {
         Held copy;
@@ -118,12 +148,13 @@ bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::
         copy.release = Now() + (double)DelaySeconds() + 0.001;
         copy.duplicate = true;
         g_out.push_back(std::move(copy));
-        Trim(g_out);
+        Trim(g_out, &socket);
     }
     return true;
 }
 
 int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint& from) {
+    if (socket.IsOpen()) NoteReader(socket);
     if (SimulatorActive()) {
         std::vector<std::uint8_t> tmp(kMaxDatagram);
         Endpoint ep;
@@ -145,7 +176,7 @@ int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint
                 g_in.push_back(std::move(copy));
             }
         }
-        Trim(g_in);
+        Trim(g_in, &socket);
     }
     if (!g_in.empty()) {
         const double now = Now();

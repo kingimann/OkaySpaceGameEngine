@@ -64,8 +64,8 @@ jobs:
         run: python3 scripts/dup_lint.py check --base "$BASE" --head HEAD
 
       - name: "Claims: do not push into another lane's open claim (fatal)"
-        # the lane claims on issue #422 are for the lane branches only (docs/lanes.json: claude/**, claude2/**, claude3/**)
-        if: always() && (startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/heads/claude2/') || startsWith(github.ref, 'refs/heads/claude3/'))
+        # the lane claims on issue #422 are for the lane branches only (docs/lanes.json: claude/**, claude2/**, claude3/**, grok/**)
+        if: always() && (startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/heads/claude2/') || startsWith(github.ref, 'refs/heads/claude3/') || startsWith(github.ref, 'refs/heads/grok/'))
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |

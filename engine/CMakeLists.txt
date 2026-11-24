@@ -98,6 +98,9 @@ add_library(okay_engine
     src/Render/SoftwareRendererPost.cpp
     src/Render/SoftwareRendererMeshes.cpp
     src/Render/GLRenderer.cpp
+    src/Render/GLRendererShaders.cpp
+    src/Render/GLRendererPasses.cpp
+    src/Render/GLRendererResources.cpp
     src/Render/OkayShader.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
@@ -203,6 +206,7 @@ add_library(okay_engine
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
+    src/Components/ActionListOps.cpp
     src/Inventory/InventoryOps.cpp
     src/Combat/WeaponBook.cpp
     src/Components/MeleeAttacker.cpp
@@ -246,6 +250,7 @@ add_library(okay_engine
     src/Components/VoxelEdit.cpp
     src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
+    src/Components/CharacterMotion.cpp
     src/Components/CharacterFirstPerson.cpp
     src/Components/ModelAnimatorPose.cpp
     src/Components/ModelAnimatorUpdate.cpp
@@ -256,6 +261,7 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
+    src/Animation/HumanoidActionsStates.cpp
     src/Animation/HumanoidActionsRuntime.cpp
     src/Animation/RagdollPhysics.cpp
     src/Animation/DynamicCharacter.cpp
@@ -353,6 +359,7 @@ add_library(okay_engine
     src/Render/OffReader.cpp
     src/Render/SmdReader.cpp
     src/Render/Md5Reader.cpp
+    src/Render/Md5CameraReader.cpp
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp

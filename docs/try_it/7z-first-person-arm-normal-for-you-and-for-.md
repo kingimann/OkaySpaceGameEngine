@@ -9,7 +9,7 @@ row: | 7z | First-person arm: looks normal to you and to others; presets to comp
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
 a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
-front of the player, right a camera at the side). Details: [fp_hand.md](gameplay/fp_hand.md).
+front of the player, right a camera at the side). Details: [fp_hand.md](../gameplay/fp_hand.md).
 
 **How to try it (Windows release).**
 

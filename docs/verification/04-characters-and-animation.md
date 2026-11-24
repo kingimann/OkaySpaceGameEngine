@@ -14,7 +14,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     3. Press Ctrl to crouch and Z to go prone (crouch toggles with a tap by default; prone key is Z).
   - **You should see (expected, not yet seen on Windows):** you walk and look in first person; the camera lowers when you crouch and lowers more when prone; running is off while crouched or prone.
   - **Known partial:** map 4.2: prone on first and third person is listed as "verify"; hands-on-ledge IK is not wired.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-CH-002** Third person player
   - **Map:** 4.1, 4.2. **Where:** editor
@@ -33,7 +33,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     3. Press Play, click **Reduce motion** on the panel, click **Done**, and walk again.
   - **You should see (expected, not yet seen on Windows):** with Reduce motion on the bob and sway are gone and there is no dip on landing; off, they come back.
   - **Known partial:** the editor itself has no accessibility window; the switch lives on the game's Settings screen.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-CH-004** Turn interpolation
   - **Map:** 4.1, 6. **Where:** editor
@@ -43,7 +43,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     3. Untick **Smooth the motion** and compare.
   - **You should see (expected, not yet seen on Windows):** with smoothing the motion is even; without it, at 10 steps a second, it visibly steps.
   - **Known partial:** the "before the fix" look needs an older release to compare.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-CH-005** Character from a model file (steps unverified)
   - **Map:** 3, 4. **Where:** editor, Project panel
@@ -79,7 +79,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     3. Import `examples/obj_texture_paths/cube_network.obj` (its texture is a network path; the editor must not wait for a network).
   - **You should see (expected, not yet seen on Windows):** the first cube shows the grid texture; the other two are plain white cubes and the editor stays responsive. No Console message says a texture was refused.
   - **Known partial:** what Import does with the texture after import was not checked; unverified in a real window.
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-CH-S3** Area 3: 3D modeling & import (smoke test, steps unverified)
   - **Map:** [3](../feature_map/03-modeling-import.md), 12 sub-areas, 12 built.

@@ -6,6 +6,7 @@
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -21,6 +22,37 @@ using namespace humanoid;
 
 bool ArFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 } // namespace
+
+// This component as a guest of the scene's physics world: the limbs are bodies in that world and pass through
+// the object's own colliders (the character's capsule, its hit boxes).
+struct ActiveRagdoll::WorldGuest : Physics3D::EngineGuest {
+    const ActiveRagdoll* owner = nullptr;
+    Physics3D* physics = nullptr;         // the scene physics whose world holds the bodies (nullptr: not joined)
+    std::weak_ptr<void> alive;            // expires when that world is destroyed (the scene was cleared)
+
+    bool Joined() const { return physics && !alive.expired(); }
+    bool GuestCollides(const Collider3D* other) const override {
+        const GameObject* self = owner ? owner->gameObject : nullptr;
+        if (!other || !other->gameObject || !self) return true;
+        for (const Transform* t = other->gameObject->transform; t; t = t->Parent())
+            if (t->gameObject == self) return false;
+        return true;
+    }
+};
+
+ActiveRagdoll::ActiveRagdoll() : m_guest(new WorldGuest()) { m_guest->owner = this; }
+
+ActiveRagdoll::~ActiveRagdoll() { LeaveWorld(); }
+
+void ActiveRagdoll::LeaveWorld() {
+    if (m_guest->Joined()) {
+        m_dc.UseWorld(nullptr, {}, 0);   // (destroys its bodies in the scene's world)
+        m_guest->physics->LeaveEngineWorld(m_guest.get());
+    }
+    m_guest->physics = nullptr;
+    m_guest->alive.reset();
+    m_built = false;
+}
 
 bool ActiveRagdoll::SceneWorld::Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const {
     // One nearest-hit query per cast (it was RaycastAll: a scan and a sort per sphere).
@@ -71,6 +103,13 @@ bool ActiveRagdoll::Build() {
     rig.groundY = (footY - rootY) >= -0.05f && (footY - rootY) < 0.3f ? rootY : footY - 0.08f;
     rig.mass = mass;
     m_rootAboveGround = rootY - rig.groundY;
+    // The bodies live in the scene's physics world, so they meet everything in it.
+    LeaveWorld();
+    if (Scene* sc = gameObject->scene()) {
+        m_guest->physics = &sc->physics3D();
+        phys::World* world = m_guest->physics->JoinEngineWorld(m_guest.get(), m_guest->alive);
+        m_dc.UseWorld(world, m_guest->alive, Physics3D::GuestUser(m_guest.get()));
+    }
     ApplyTuning();
     if (!m_dc.Build(rig)) return false;
     for (int b = 0; b < BoneCount; ++b) {
@@ -109,6 +148,7 @@ void ActiveRagdoll::OnEnable() {
 }
 
 void ActiveRagdoll::OnDisable() {
+    if (m_built && m_dc.State() != dyn::CharState::Animated) m_dc.SnapToAnimation();   // nothing drives the bodies now: they leave the world
     if (m_handedOver) HandOver(false);
     // Give the Ragdoll we switched off back.
     if (m_tookOver) {
@@ -169,6 +209,12 @@ void ActiveRagdoll::WritePose() {
     m_wrote = true;
 }
 
+void ActiveRagdoll::FixedUpdate(float step) {
+    if (!m_built) return;
+    if (m_guest->physics && m_guest->alive.expired()) { m_built = false; return; }   // the scene dropped its world
+    m_dc.ControlStep(step);
+}
+
 void ActiveRagdoll::LateUpdate(float dt) {
     if (!m_built || dt <= 0.0f || !std::isfinite(dt)) return;
     ApplyTuning();
@@ -202,7 +248,9 @@ void ActiveRagdoll::LateUpdate(float dt) {
     Vec3 pos[BoneCount]; Quat rot[BoneCount];
     ReadAnimation(pos, rot);
     m_dc.SetAnimationPose(pos, rot);
-    m_dc.Tick(dt, &m_world);
+    // With no scene world the character steps a world of its own; in a scene FixedUpdate does the control steps.
+    if (m_guest->physics) m_dc.BeginFrame(dt, &m_world);
+    else m_dc.Tick(dt, &m_world);
     const dyn::CharState s = m_dc.State();
     if (s != m_lastState) {
         const dyn::CharState was = m_lastState;

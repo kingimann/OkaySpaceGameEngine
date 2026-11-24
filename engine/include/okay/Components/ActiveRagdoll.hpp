@@ -29,6 +29,8 @@ class Scene;
 
 class ActiveRagdoll : public Behaviour {
 public:
+    ActiveRagdoll();
+    ~ActiveRagdoll() override;
     // ---- How it behaves when nothing has happened ----
     /// 0 Reactive: animated until pushed or hit, then physical until it recovers.
     /// 1 Powered: always physical, following the animation with its muscles.
@@ -85,6 +87,8 @@ public:
     bool  Build();
 
     void Start() override;
+    /// The control step: muscles and balance for the physics step that follows it.
+    void FixedUpdate(float step) override;
     void LateUpdate(float dt) override;
     void OnEnable() override;
     void OnDisable() override;
@@ -97,6 +101,7 @@ private:
     void HandOver(bool physical);
     void WatchHealth();
     void TakeOverRagdoll();
+    void LeaveWorld();                // take the bodies out of the scene's physics world
     bool Remote() const;              // a copy another peer owns (NetworkObject)
 
     struct SceneWorld : dyn::ContactWorld {
@@ -104,6 +109,9 @@ private:
         bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const override;
     };
 
+    // The bodies are in the scene's physics world, as its guest (Physics3D::EngineGuest; ActiveRagdoll.cpp).
+    struct WorldGuest;
+    std::unique_ptr<WorldGuest> m_guest;
     dyn::DynamicCharacter m_dc;
     SceneWorld m_world;
     Transform* m_bones[dyn::kBones] = {};

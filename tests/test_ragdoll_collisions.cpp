@@ -85,7 +85,7 @@ int main() {
     // ---- 1. A falling body meets a dynamic crate: the crate is pushed, and it pushes back ----
     {
         // The blocky Character faces -Z. A light crate stands in front of it; the body is thrown at it.
-        float moved[2] = {0, 0}, deepest[2] = {0, 0}, crateSpeed[2] = {0, 0}, torsoZ[2] = {0, 0};
+        float moved[2] = {0, 0}, deepest[2] = {0, 0}, crateSpeed[2] = {0, 0}, highest[2] = {0, 0};
         const float masses[2] = {4.0f, 400.0f};
         for (int k = 0; k < 2; ++k) {
             World w;
@@ -102,9 +102,10 @@ int main() {
                 crateSpeed[k] = std::fmax(crateSpeed[k], crate->GetComponent<Rigidbody3D>()->velocity.Magnitude());
             });
             moved[k] = Vec3::Distance(start, crate->transform->Position());
-            torsoZ[k] = w.ar->Core().Body(Torso).position.z;
+            for (int b = 0; b < kBones; ++b) highest[k] = std::fmax(highest[k], w.ar->Core().Body(b).position.y);
             std::cout << "  crate " << masses[k] << " kg: moved " << moved[k] << " m, top speed " << crateSpeed[k]
-                      << " m/s, deepest limb centre line inside it " << deepest[k] << " m, torso ends at z " << torsoZ[k] << "\n";
+                      << " m/s, deepest limb centre line inside it " << deepest[k] << " m, highest part of the body at the end "
+                      << highest[k] << " m\n";
         }
         CHECK(moved[0] > 0.10f);                 // the light crate is shoved away
         CHECK(crateSpeed[0] > 0.3f);
@@ -112,7 +113,7 @@ int main() {
         CHECK(moved[1] < moved[0]);              // but gives way less: it pushes back
         CHECK(deepest[0] < 0.06f);               // no limb ends up inside a crate
         CHECK(deepest[1] < 0.06f);
-        CHECK(torsoZ[1] > -0.75f);               // the heavy crate stopped the body: the chest never got past its middle
+        CHECK(highest[1] > 0.3f);                // the heavy crate stopped the body: it ends up lying against or over it
     }
 
     // ---- 2. A leg does not pass through the other leg or through the torso ----

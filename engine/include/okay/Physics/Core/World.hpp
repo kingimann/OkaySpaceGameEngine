@@ -220,6 +220,9 @@ public:
     void Wake(BodyId id);
     void Sleep(BodyId id);
     std::uint64_t GetUser(BodyId id) const;
+    /// Two bodies that never collide with each other, whatever their layers (limbs of one ragdoll that overlap in its
+    /// build pose). `collide` true takes the pair off the list again. A destroyed body's pairs are forgotten.
+    void SetBodiesCollide(BodyId a, BodyId b, bool collide);
     /// The pose of the body part way between the last two steps (alpha 0 = previous step, 1 = latest).
     Xf InterpolatedTransform(BodyId id, float alpha) const;
 

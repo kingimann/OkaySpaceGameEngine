@@ -270,6 +270,7 @@ add_library(okay_engine
     src/Animation/HumanoidActionsStates.cpp
     src/Animation/HumanoidActionsRuntime.cpp
     src/Animation/RagdollPhysics.cpp
+    src/Animation/CoreRagdoll.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp

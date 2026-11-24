@@ -471,12 +471,13 @@ int XpbdRagdoll::SphereCount(int body) const {
     return body >= 0 && body < (int)m_bodies.size() ? (int)m_bodies[body].spheres.size() : 0;
 }
 
-bool XpbdRagdoll::SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal) const {
+bool XpbdRagdoll::SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal, Vec3* point) const {
     if (body < 0 || body >= (int)m_bodies.size()) return false;
     const Body& b = m_bodies[body];
     if (sphere < 0 || sphere >= (int)b.spheres.size()) return false;
     if (worldCentre) *worldCentre = b.x + b.q * b.spheres[sphere].local;
     if (normal) *normal = b.spheres[sphere].hasPlane ? b.spheres[sphere].planeNormal : Vec3::Up;
+    if (point) *point = b.x + b.q * b.spheres[sphere].local - (b.spheres[sphere].hasPlane ? b.spheres[sphere].planeNormal : Vec3::Up) * b.spheres[sphere].radius;
     return b.spheres[sphere].touching;
 }
 

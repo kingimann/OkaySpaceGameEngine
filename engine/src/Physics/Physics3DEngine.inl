@@ -320,6 +320,15 @@ struct Physics3D::EngineBridge {
     struct CPairHash { std::size_t operator()(const CPair& p) const { return std::hash<const void*>()(p.first) * 31u ^ std::hash<const void*>()(p.second); } };
     std::vector<CPair> touching;
     std::unordered_set<CPair, CPairHash> touchingSet;
+    // guests (Physics3D::EngineGuest, by GuestUser): engine code with bodies of its own in the world
+    std::unordered_set<std::uint64_t> guests;
+    std::shared_ptr<int> life = std::make_shared<int>(0);   // guests hold a weak reference: it expires with the world
+
+    Physics3D::EngineGuest* GuestOf(phys::ColliderId id) const {
+        if (guests.empty()) return nullptr;
+        const std::uint64_t user = world.GetCollider(id).user;
+        return user && guests.count(user) ? reinterpret_cast<Physics3D::EngineGuest*>((std::uintptr_t)user) : nullptr;
+    }
 
     Collider3D* Back(phys::ColliderId id) const {
         const std::size_t i = phys::IdIndex(id);
@@ -351,6 +360,16 @@ void Physics3D::Clear() {
 }
 
 phys::World* Physics3D::EngineWorld() { return m_engine ? &m_engine->world : nullptr; }
+phys::World* Physics3D::JoinEngineWorld(EngineGuest* guest, std::weak_ptr<void>& alive) {
+    if (!guest) return nullptr;
+    if (!m_engine) m_engine = std::make_unique<EngineBridge>();
+    m_engine->guests.insert(GuestUser(guest));
+    alive = m_engine->life;
+    return &m_engine->world;
+}
+void Physics3D::LeaveEngineWorld(EngineGuest* guest) {
+    if (m_engine) m_engine->guests.erase(GuestUser(guest));
+}
 std::uint32_t Physics3D::EngineBody(const Rigidbody3D* rb) const {
     if (!m_engine) return phys::kInvalidId;
     auto it = m_engine->bodies.find(rb);
@@ -374,7 +393,11 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {
         Collider3D* ca = E.Back(a);
         Collider3D* cb = E.Back(b);
-        if (!ca || !cb) return true;   // a terrain collides with everything solid
+        if (!ca || !cb) {   // a terrain collides with everything solid; a guest's collider (a ragdoll limb) asks its guest
+            if (ca || cb)
+                if (EngineGuest* g = E.GuestOf(ca ? b : a)) return g->GuestCollides(ca ? ca : cb);
+            return true;
+        }
         if (!LayersCollide(ca->layer, cb->layer)) return false;
         return true;   // (a trigger's tag and layer filter is applied in the event pass: the filter can change while the
                        //  pair stays put, and a pair is only offered here when it starts to overlap)

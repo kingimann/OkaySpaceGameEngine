@@ -318,6 +318,15 @@ bool HasMethod(const std::vector<sc::ApiMethod>& list, const std::string& name) 
     return false;
 }
 
+// ---- the generated binding layer (defined after ToVs / FromVs below)
+bool BindIndex(State& L, const LV& self, const std::string& key);
+bool BindNewIndex(State& L, const LV& self, const std::string& key, const LV& val);
+bool BindGetComponent(State& L, GameObject* g, const std::string& name);
+int CompIndex(State& L, int n);
+int CompNewIndex(State& L, int n);
+int CompEq(State& L, int n);
+int CompToString(State& L, int n);
+
 GameObject* ResolveObj(State& L, const LV& v) {
     if (!IsObj(v)) L.Error(std::string("object expected, got ") + LuaTypeWord(L, v));
     GameObject* g = GameObject::FromInstanceId(v.UD()->id);
@@ -356,15 +365,6 @@ int DestroyFn(State& L, int n) {
     if (Scene* s = g->scene()) s->Destroy(g);
     return 0;
 }
-
-// ---- the generated binding layer (defined after ToVs / FromVs below)
-bool BindIndex(State& L, const LV& self, const std::string& key);
-bool BindNewIndex(State& L, const LV& self, const std::string& key, const LV& val);
-bool BindGetComponent(State& L, GameObject* g, const std::string& name);
-int CompIndex(State& L, int n);
-int CompNewIndex(State& L, int n);
-int CompEq(State& L, int n);
-int CompToString(State& L, int n);
 
 // ---- engine objects
 int ObjIndex(State& L, int n) {

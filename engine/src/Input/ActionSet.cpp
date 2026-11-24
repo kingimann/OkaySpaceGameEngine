@@ -885,6 +885,13 @@ std::string ActionSet::ExportOverrides() const {
             for (std::size_t i = 0; i < b.parts.size(); ++i) s += (i ? "," : "") + b.parts[i];
             s += "\n";
         }
+        const InputActions::Response& r = a.response;
+        if (r.deadzone != 0.0f || r.curve != 1.0f || r.sensitivity != 1.0f || r.invertX || r.invertY) {
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "ovresp %s %g %g %g %d %d\n", a.name.c_str(), r.deadzone, r.curve,
+                          r.sensitivity, r.invertX ? 1 : 0, r.invertY ? 1 : 0);
+            s += buf;
+        }
     }
     for (const std::string& k : m_keep) {   // lines for actions this set cannot take, unless it now has its own line for one
         const std::size_t s1 = k.find(' '), s2 = s1 == std::string::npos ? s1 : k.find(' ', s1 + 1);
@@ -930,6 +937,24 @@ int ActionSet::ImportOverrides(const std::string& text) {
                 list.push_back(std::move(b));
             }
             if (ok && SetBindings(a->name, list)) ++applied;
+            continue;
+        }
+        if (line.rfind("ovresp ", 0) == 0) {
+            char name[128];
+            float dz = 0, curve = 1, sens = 1;
+            int ix = 0, iy = 0;
+            if (std::sscanf(line.c_str(), "ovresp %127s %f %f %f %d %d", name, &dz, &curve, &sens, &ix, &iy) != 6) continue;
+            ActionDef* a = Find(name);
+            if (!a) {
+                if (std::find(m_keep.begin(), m_keep.end(), line) == m_keep.end()) m_keep.push_back(line);
+                continue;
+            }
+            a->response.deadzone = std::clamp(dz, 0.0f, 0.95f);
+            a->response.curve = std::clamp(curve, 0.1f, 8.0f);
+            a->response.sensitivity = std::clamp(sens, 0.05f, 20.0f);
+            a->response.invertX = ix != 0;
+            a->response.invertY = iy != 0;
+            ++applied;
             continue;
         }
         if (line.rfind("ov ", 0) != 0) continue;

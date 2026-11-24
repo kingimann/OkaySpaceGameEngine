@@ -113,6 +113,29 @@ int main() {
         Input::FeedGamepadAt(1, {0, 0}, 0);
     }
 
+    RUN_SUITE("response survives save and load");
+    {
+        ActionSet set;
+        ActionDef& look = set.Add("Look", ValueType::Vector2);
+        look.AddBinding("stick:right");
+        set.Rebind("Look", 0, 0, "stick:left");
+        look.response.deadzone = 0.25f;
+        look.response.curve = 2.0f;
+        look.response.sensitivity = 1.5f;
+        look.response.invertY = true;
+        const std::string saved = set.ExportOverrides();
+        look.response = {};
+        set.Rebind("Look", 0, 0, "stick:right");
+        CHECK(set.ImportOverrides(saved) >= 1);
+        const ActionDef* back = set.Find("Look");
+        CHECK(back && back->bindings[0].parts[0] == "stick:left");
+        CHECK(std::fabs(back->response.deadzone - 0.25f) < 1e-4f);
+        CHECK(std::fabs(back->response.curve - 2.0f) < 1e-4f);
+        CHECK(std::fabs(back->response.sensitivity - 1.5f) < 1e-4f);
+        CHECK(back->response.invertY);
+        CHECK(!back->response.invertX);
+    }
+
     RUN_SUITE("controller hot-plug edges");
     {
         int who = -1; bool on = false;

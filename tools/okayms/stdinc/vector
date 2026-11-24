@@ -1,6 +1,6 @@
 // okay-ms own standard header: std::vector, written from ISO/IEC 14882 [vector] (a contiguous sequence that grows
 // by doubling). Own minimal version: no allocator argument, no exceptions (an allocation failure is not checked),
-// iterators are pointers, initializer_list and move construction are supported, no emplace. Storage comes from the global malloc and free
+// iterators are pointers, initializer_list and move construction are supported, emplace_back (no emplace). Storage comes from the global malloc and free
 // (see <cstdlib>); elements are made with placement new and destroyed with an explicit destructor call.
 #pragma once
 #include <cstddef>
@@ -131,6 +131,16 @@ public:
             new (data_ + size_) T(std::move(value));
         }
         ++size_;
+    }
+    // emplace_back ([sequence.reqmts]): the element is made in place from the arguments. The arguments are passed on as
+    // they are written (own version: lvalues, no std::forward of each one); an argument that refers into this vector
+    // must not be used when the storage has to grow.
+    template <typename... A>
+    T& emplace_back(A&&... args) {
+        if (size_ == cap_) grow_to(size_ + 1);
+        new (data_ + size_) T(args...);
+        ++size_;
+        return data_[size_ - 1];
     }
     void pop_back() {
         --size_;

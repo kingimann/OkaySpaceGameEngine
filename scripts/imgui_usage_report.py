@@ -28,8 +28,8 @@ OUT = os.path.join(ROOT, "docs", "imgui_port_report.md")
 EXTS = (".cpp", ".hpp", ".h", ".cc", ".inl")
 
 # Third-party sources that are not ours: not counted.
-SKIP_FILES = ("ImGuiColorTextEdit", "imgui_", "stb_")
-SKIP_DIRS = ("vendor",)   # editor/vendor holds the third-party code editor widget (its own roadmap row)
+SKIP_FILES = ("imgui_", "stb_")
+SKIP_DIRS = ("vendor",)
 
 # ImGui:: call -> OkayUI name when they differ.
 ALIASES = {

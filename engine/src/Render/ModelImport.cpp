@@ -99,7 +99,7 @@ std::string ImportableExtensions() {
     // the Assimp build can read. .dae is added when our own Collada reader is switched on
     // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
-        std::string out = ".obj .gltf .glb .fbx .stl .ply";
+        std::string out = ".obj .gltf .glb .vrm .fbx .stl .ply";   // .vrm: a VRM avatar is a binary glTF 2.0 file
 #ifdef OKAY_HAVE_ASSIMP
         std::string e = assimp_backend::Extensions(), cur;
         e += ' ';
@@ -113,6 +113,10 @@ std::string ImportableExtensions() {
     }();
     std::string res = list;
     for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo", ".ogex", ".mdl", ".bsp", ".pk3"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    // Extensions read by an existing reader under another name (aliases), and .sib (added after main's list was frozen); not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".sib", ".ask", ".scn", ".prj", ".x3db", ".vta", ".md5camera"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -160,6 +164,7 @@ static bool IsModelFile(const std::string& path) {
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     if (!IsModelFile(path)) { if (ok) *ok = false; return Mesh(); }
     std::string p = Lower(path);
+    if (EndsWith(p, ".vrm")) { g_readBy = "the own glTF reader (VRM)"; return LoadGLTF(path, ok, outTexture); }   // glTF 2.0 binary, never version 1
     if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
         g_readBy = "the own OBJ reader";
         return Mesh::LoadOBJ(path, ok, outTexture);
@@ -605,6 +610,12 @@ constexpr bool kOwnCobDefault = true;
 constexpr bool kOwnCobDefault = false;
 #endif
 
+#ifdef OKAY_OWN_SIB_DEFAULT
+constexpr bool kOwnSibDefault = true;
+#else
+constexpr bool kOwnSibDefault = false;
+#endif
+
 #ifdef OKAY_OWN_NDO_DEFAULT
 constexpr bool kOwnNdoDefault = true;
 #else
@@ -709,15 +720,14 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
     {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
     {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
-    // Slot 32 is kept for SIB (no reader yet): an empty row, never reached (OwnSlot returns none of it), so that Q3D and RAW sit at the agreed numbers.
     {"OKAY_OWN_Q3D",     "Q3D",     kOwnQ3dDefault},       // 31
-    {"", "", false},                                       // 32 (SIB, not written yet)
+    {"OKAY_OWN_SIB",     "SIB",     kOwnSibDefault},       // 32 (.sib: Nevercenter Silo)
     {"OKAY_OWN_RAW",     "RAW",     kOwnRawDefault},       // 33
     {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
     {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
     {"OKAY_OWN_NDO",     "NDO",     kOwnNdoDefault},       // 36
     {"OKAY_OWN_OPENGEX", "OpenGEX", kOwnOpengexDefault},   // 37 (.ogex)
-    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38 (.mdl: Quake 1 and Half-Life 1)
+    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38 (.mdl: Quake 1, Half-Life 1, 3D GameStudio MDL3 to MDL7)
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
     {"OKAY_OWN_GLTF1",   "glTF 1.0", kOwnGltf1Default},    // 41: glTF 1.0 (pseudo-extension ".gltf1"; .gltf / .glb files of version 1)
@@ -727,7 +737,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XML",     "XML",     kOwnXmlDefault},       // 45 (.xml: the reader is picked by the root element)
     {"OKAY_OWN_LXO",     "LXO",     kOwnLxoDefault},       // 46 (.lxo: Modo, read by the LWO reader)
 };
-constexpr int kOwnSlots = 47;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL, 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"), 42 is Q3BSP (.bsp, .pk3), 43 to 45 are OGRE binary, ZAE and .xml (the gap batch), 46 is LXO; raise this (and add rows above) when a reader needs a slot beyond 46
+constexpr int kOwnSlots = 47;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 to 33 are Q3D, SIB and RAW, 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL, 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"), 42 is Q3BSP (.bsp, .pk3), 43 to 45 are OGRE binary, ZAE and .xml (the gap batch), 46 is LXO; raise this (and add rows above) when a reader needs a slot beyond 46
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -736,16 +746,16 @@ int OwnSlot(const std::string& ext) {
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
     if (e == ".dae") return 3;
-    if (e == ".3ds") return 4;
+    if (e == ".3ds" || e == ".prj") return 4;   // .prj: a 3D Studio project (main chunk 0xC23D), read by the 3DS reader
     if (e == ".bvh") return 5;
     if (e == ".off") return 6;
-    if (e == ".smd") return 7;
-    if (e == ".md5mesh" || e == ".md5anim") return 8;
+    if (e == ".smd" || e == ".vta") return 7;   // .vta: Valve vertex animation, SMD text (the SMD reader)
+    if (e == ".md5mesh" || e == ".md5anim" || e == ".md5camera") return 8;   // .md5camera: the MD5 camera reader, same switch
     if (e == ".ms3d") return 9;
-    if (e == ".ase") return 10;
+    if (e == ".ase" || e == ".ask") return 10;   // .ask: the same ASCII scene text as .ase
     if (e == ".3mf") return 11;
     if (e == ".amf") return 12;
-    if (e == ".x3d") return 13;
+    if (e == ".x3d" || e == ".x3db") return 13;   // .x3db: the X3D reader (XML encoding; the binary encoding is refused)
     if (e == ".dxf") return 14;
     if (e == ".lwo") return 15;
     if (e == ".blend") return 16;
@@ -764,9 +774,10 @@ int OwnSlot(const std::string& ext) {
     if (e == ".hmp") return 29;
     if (e == ".csm") return 30;
     if (e == ".q3o" || e == ".q3s") return 31;
+    if (e == ".sib") return 32;
     if (e == ".raw") return 33;
     if (e == ".iqm") return 34;
-    if (e == ".cob") return 35;
+    if (e == ".cob" || e == ".scn") return 35;   // .scn: a trueSpace scene, the same Caligari file as .cob
     if (e == ".ndo") return 36;
     if (e == ".ogex") return 37;
     if (e == ".mdl") return 38;
@@ -1040,7 +1051,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 5 ? ReadBvhFile(path, out, &e1)
                   : s == 6 ? ReadOffFile(path, out, &e1)
                   : s == 7 ? ReadSmdFile(path, out, &e1)
-                  : s == 8 ? ReadMd5File(path, out, &e1)
+                  : s == 8 ? (ext == ".md5camera" ? ReadMd5CameraFile(path, out, &e1) : ReadMd5File(path, out, &e1))
                   : s == 9 ? ReadMs3dFile(path, out, &e1)
                   : s == 10 ? ReadAseFile(path, out, &e1)
                   : s == 11 ? Read3mfFile(path, out, &e1, flatten)
@@ -1064,6 +1075,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 29 ? ReadHmpFile(path, out, &e1)
                   : s == 30 ? ReadCsmFile(path, out, &e1)
                   : s == 31 ? ReadQ3dFile(path, out, &e1)
+                  : s == 32 ? ReadSibFile(path, out, &e1)
                   : s == 33 ? ReadRawFile(path, out, &e1)
                   : s == 34 ? ReadIqmFile(path, out, &e1)
                   : s == 35 ? ReadCobFile(path, out, &e1)
@@ -1078,7 +1090,7 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
                   : s == 46 ? ReadLwoFile(path, out, &e1)   // LXOB is read by the LWO reader (LWO2 geometry chunks)
                   : s == 41 ? ReadGltf1File(path, out, &e1)
                   : s == 42 ? ReadQ3bspFile(path, out, &e1)   // a file named *.gltf1: read it as glTF 1.0
-                  : (e1 = "no reader is wired to this slot", false); }, e1);   // every slot but 32 (kept for SIB, which has no reader of ours) is wired above
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // every slot is wired above
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || (s >= 17 && s != 44))) FlattenImportedModel(out);   // ZAE (44) is flattened by the COLLADA reader   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
@@ -2212,7 +2224,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
 static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
-    bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb");
+    bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb") || EndsWith(p, ".vrm");   // .vrm: VRM avatars are binary glTF 2.0
 
     // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
     // compiled in) is the fallback for files ufbx can't read.

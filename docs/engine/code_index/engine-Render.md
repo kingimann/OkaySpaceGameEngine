@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 48 headers, 462 names.
+Back to the [code index](../code_index.md). 48 headers, 466 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -257,85 +257,89 @@ Back to the [code index](../code_index.md). 48 headers, 462 names.
 - `Read3dsBuffer` function, line 154: 3D Studio (.3ds), chunk format. Meshes (points, faces, UVs, smoothing groups -> smooth normals,
 - `ReadBvhBuffer` function, line 159: BVH motion capture (.bvh): the joint hierarchy as nodes (position = OFFSET, no meshes) and the
 - `ReadOffBuffer` function, line 164: OFF (Object File Format, text): one mesh part from 'OFF' / 'NOFF' / 'STOFF' (and 'C' variants) files: vertices,
-- `ReadSmdBuffer` function, line 170: SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
-- `ReadMd5Buffer` function, line 176: MD5 (id Tech 4 / Doom 3): 'meshText' is an md5mesh, 'animText' an md5anim (either may be empty, not both). The joints
-- `ReadMs3dBuffer` function, line 184: MS3D (MilkShape 3D, binary, versions 3 and 4): one skinned part per group (vertices welded on position, normal
-- `ReadAseBuffer` function, line 191: ASE (3ds Max ASCII Scene Export, text; UTF-8 or UTF-16 with a byte order mark): one part per object and material
-- `ReadBlendBuffer` function, line 200: Blender (.blend), Blender 2.4x to 4.x, 32 / 64 bit, little / big endian, plain or gzip (zstd is not supported;
-- `ReadMd2Buffer` function, line 206: MD2 (Quake II model, binary): the first frame of the vertex animation as one static part (vertices welded on
-- `ReadMd3Buffer` function, line 212: MD3 (Quake III Arena model, binary): the first frame of the vertex animation, one static part per surface (vertices
-- `ReadIrrMeshBuffer` function, line 220: Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per '<buffer>' (vertices of type
-- `ReadB3dBuffer` function, line 227: B3D (Blitz3D model, binary): the node tree (position, scale, rotation), one part per TRIS chunk (vertices welded per
-- `ReadXBuffer` function, line 236: DirectX .x (text, binary, and MSZIP-compressed "tzip" / "bzip"; 32 and 64 bit floats): the frame tree as nodes, each
-- `ReadAc3dBuffer` function, line 244: AC3D (.ac, .acc, .ac3d; the "AC3Db" text format, UTF-8 or UTF-16): the OBJECT tree as nodes (loc, rot), one part per
-- `ReadOgreSkeletonXml` function, line 259: OGRE skeleton (.skeleton.xml): the root node "OGRE" and the bones under it as nodes (parent first, local bind pose from
-- `ReadOgreSkeletonBinary` function, line 264: OGRE binary skeleton (.skeleton, little endian, serializer v1.10 and v1.80): the same nodes, bind pose and clips as
-- `ReadXglBuffer` function, line 278: XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
-- `ReadNffBuffer` function, line 292: NFF: Haines' Neutral File Format (polygons, patches, spheres and ellipsoids, cones and cylinders, tet / hex / oct / dod
-- `ReadIqmBuffer` function, line 299: IQM (Inter-Quake Model, version 2, binary): one skinned part per mesh (positions, normals, the first texture coordinate set,
-- `ReadCobBuffer` function, line 306: COB (Caligari trueSpace, binary "B" and ASCII "A" files): the Grou / PolH object tree as nodes (each object's stored world
-- `ReadNdoBuffer` function, line 310: NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
-- `ReadTerragenBuffer` function, line 316: Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
-- `ReadMdcBuffer` function, line 322: MDC (Return to Castle Wolfenstein model, binary, version 2): MD3 with compressed frames. The first frame as one static part per
-- `ReadHmpBuffer` function, line 326: HMP (3D GameStudio terrain model, version HMP7, binary): the height grid as one static part (two triangles per cell, smooth
-- `ReadCsmBuffer` function, line 330: CSM (Character Studio motion capture, text; UTF-8 or UTF-16 with a byte order mark): the markers as empty nodes under one root
-- `ReadPmxBuffer` function, line 337: PMX 2.0 / 2.1 (MikuMikuDance model, binary; UTF-16LE or UTF-8 text; index sizes of 1, 2 or 4 bytes): one skinned part per
-- `ReadObjFile` function, line 348
-- `ReadStlFile` function, line 349
-- `ReadPlyFile` function, line 350
-- `ReadColladaFile` function, line 351
-- `ReadZaeBuffer` function, line 355: ZAE (.zae): a COLLADA document in a ZIP archive (the root document named by manifest.xml, else the .dae nearest the
-- `ReadZaeFile` function, line 356
-- `Read3dsFile` function, line 357
-- `ReadBvhFile` function, line 358
-- `ReadOffFile` function, line 359
-- `ReadSmdFile` function, line 360
-- `ReadMd5File` function, line 362: 'path' is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
-- `ReadMs3dFile` function, line 363
-- `ReadAseFile` function, line 364
-- `ReadBlendFile` function, line 365
-- `ReadMd2File` function, line 366
-- `ReadMd3File` function, line 367
-- `ReadIrrMeshFile` function, line 368
-- `ReadB3dFile` function, line 369
-- `ReadXFile` function, line 370
-- `ReadAc3dFile` function, line 371
-- `ReadOgreXmlFile` function, line 373: Reads the .material files next to the mesh to find the submeshes' materials.
-- `ReadOgreBinaryFile` function, line 375: Reads the .material files next to the mesh, as ReadOgreXmlFile does.
-- `ReadXglFile` function, line 376
-- `ReadIrrSceneFile` function, line 377
-- `ReadNffFile` function, line 378
-- `ReadIqmFile` function, line 379
-- `ReadCobFile` function, line 380
-- `ReadNdoFile` function, line 381
-- `ReadTerragenFile` function, line 382
-- `ReadMdcFile` function, line 383
-- `ReadHmpFile` function, line 384
-- `ReadCsmFile` function, line 385
-- `ReadQ3dFile` function, line 387: Quick3D objects and scenes (.q3o, .q3s): meshes with polygon faces and materials; embedded textures and the scene chunk are not used.
-- `ReadQ3dBuffer` function, line 388
-- `ReadRawFile` function, line 390: Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
-- `ReadRawBuffer` function, line 391
-- `RawFileUnsafeForAssimp` function, line 395: True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
-- `ReadPmxFile` function, line 396
-- `ReadLwsFile` function, line 398: 'path' is a .lws scene or a .mot motion file.
-- `ReadGltf1Buffer` function, line 406: glTF 1.0 ('.gltf' with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
-- `ReadGltf1File` function, line 407
-- `IsGltf1` function, line 409: True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
-- `GltfFileIsVersion1` function, line 412: True when the file at 'path' is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
-- `ReadOgexBuffer` function, line 423: OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
-- `ReadOgexFile` function, line 424
-- `ReadMdlBuffer` function, line 432: MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
-- `ReadMdlFile` function, line 433
-- `ReadQ3bspFile` function, line 436: Quake III Arena maps ('.bsp' version 46, or a '.pk3' zip holding maps/<name>.bsp): the render geometry of every model, one part per
-- `ReadQ3bspBuffer` function, line 437
-- `ImportBackend` enum, line 440
-- `HasOwnReader` function, line 451: True when 'ext' (".stl", any case) has one of our own readers.
-- `SetImportBackend` function, line 455: Choose the backend for one extension (".stl"), or for every format with
-- `EffectiveImportBackend` function, line 458: The backend a read of 'ext' will actually use right now, after defaults and
-- `RunReaderGuarded` function, line 463: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
-- `MergeModelMeshes` function, line 476: One merged Mesh from an ImportedModel (parts concatenated, node transforms
-- `BuildSceneFromModel` function, line 482: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
+- `ReadSmdBuffer` function, line 173: SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
+- `ReadMd5Buffer` function, line 179: MD5 (id Tech 4 / Doom 3): 'meshText' is an md5mesh, 'animText' an md5anim (either may be empty, not both). The joints
+- `ReadMs3dBuffer` function, line 187: MS3D (MilkShape 3D, binary, versions 3 and 4): one skinned part per group (vertices welded on position, normal
+- `ReadAseBuffer` function, line 194: ASE (3ds Max ASCII Scene Export, text; UTF-8 or UTF-16 with a byte order mark): one part per object and material
+- `ReadBlendBuffer` function, line 203: Blender (.blend), Blender 2.4x to 4.x, 32 / 64 bit, little / big endian, plain or gzip (zstd is not supported;
+- `ReadMd2Buffer` function, line 209: MD2 (Quake II model, binary): the first frame of the vertex animation as one static part (vertices welded on
+- `ReadMd3Buffer` function, line 215: MD3 (Quake III Arena model, binary): the first frame of the vertex animation, one static part per surface (vertices
+- `ReadIrrMeshBuffer` function, line 223: Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per '<buffer>' (vertices of type
+- `ReadB3dBuffer` function, line 230: B3D (Blitz3D model, binary): the node tree (position, scale, rotation), one part per TRIS chunk (vertices welded per
+- `ReadXBuffer` function, line 239: DirectX .x (text, binary, and MSZIP-compressed "tzip" / "bzip"; 32 and 64 bit floats): the frame tree as nodes, each
+- `ReadAc3dBuffer` function, line 247: AC3D (.ac, .acc, .ac3d; the "AC3Db" text format, UTF-8 or UTF-16): the OBJECT tree as nodes (loc, rot), one part per
+- `ReadOgreSkeletonXml` function, line 262: OGRE skeleton (.skeleton.xml): the root node "OGRE" and the bones under it as nodes (parent first, local bind pose from
+- `ReadOgreSkeletonBinary` function, line 267: OGRE binary skeleton (.skeleton, little endian, serializer v1.10 and v1.80): the same nodes, bind pose and clips as
+- `ReadXglBuffer` function, line 281: XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
+- `ReadNffBuffer` function, line 295: NFF: Haines' Neutral File Format (polygons, patches, spheres and ellipsoids, cones and cylinders, tet / hex / oct / dod
+- `ReadIqmBuffer` function, line 302: IQM (Inter-Quake Model, version 2, binary): one skinned part per mesh (positions, normals, the first texture coordinate set,
+- `ReadCobBuffer` function, line 309: COB (Caligari trueSpace, binary "B" and ASCII "A" files): the Grou / PolH object tree as nodes (each object's stored world
+- `ReadNdoBuffer` function, line 313: NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
+- `ReadTerragenBuffer` function, line 319: Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
+- `ReadMdcBuffer` function, line 325: MDC (Return to Castle Wolfenstein model, binary, version 2): MD3 with compressed frames. The first frame as one static part per
+- `ReadHmpBuffer` function, line 329: HMP (3D GameStudio terrain model, version HMP7, binary): the height grid as one static part (two triangles per cell, smooth
+- `ReadCsmBuffer` function, line 333: CSM (Character Studio motion capture, text; UTF-8 or UTF-16 with a byte order mark): the markers as empty nodes under one root
+- `ReadPmxBuffer` function, line 340: PMX 2.0 / 2.1 (MikuMikuDance model, binary; UTF-16LE or UTF-8 text; index sizes of 1, 2 or 4 bytes): one skinned part per
+- `ReadObjFile` function, line 351
+- `ReadStlFile` function, line 352
+- `ReadPlyFile` function, line 353
+- `ReadColladaFile` function, line 354
+- `ReadZaeBuffer` function, line 358: ZAE (.zae): a COLLADA document in a ZIP archive (the root document named by manifest.xml, else the .dae nearest the
+- `ReadZaeFile` function, line 359
+- `Read3dsFile` function, line 360
+- `ReadBvhFile` function, line 361
+- `ReadOffFile` function, line 362
+- `ReadSmdFile` function, line 363
+- `ReadMd5File` function, line 365: 'path' is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
+- `ReadMd5CameraBuffer` function, line 370: Doom 3 camera path (.md5camera, MD5Version 10 text): a root node (Z up to Y up) with one "camera" node, and one clip
+- `ReadMd5CameraFile` function, line 371
+- `ReadMs3dFile` function, line 372
+- `ReadAseFile` function, line 373
+- `ReadBlendFile` function, line 374
+- `ReadMd2File` function, line 375
+- `ReadMd3File` function, line 376
+- `ReadIrrMeshFile` function, line 377
+- `ReadB3dFile` function, line 378
+- `ReadXFile` function, line 379
+- `ReadAc3dFile` function, line 380
+- `ReadOgreXmlFile` function, line 382: Reads the .material files next to the mesh to find the submeshes' materials.
+- `ReadOgreBinaryFile` function, line 384: Reads the .material files next to the mesh, as ReadOgreXmlFile does.
+- `ReadXglFile` function, line 385
+- `ReadIrrSceneFile` function, line 386
+- `ReadNffFile` function, line 387
+- `ReadIqmFile` function, line 388
+- `ReadCobFile` function, line 389
+- `ReadNdoFile` function, line 390
+- `ReadSibFile` function, line 395: Silo models ('.sib', Nevercenter), worked out from the one sample file (no public description exists): shapes (positions,
+- `ReadSibBuffer` function, line 396
+- `ReadTerragenFile` function, line 397
+- `ReadMdcFile` function, line 398
+- `ReadHmpFile` function, line 399
+- `ReadCsmFile` function, line 400
+- `ReadQ3dFile` function, line 402: Quick3D objects and scenes (.q3o, .q3s): meshes with polygon faces and materials; embedded textures and the scene chunk are not used.
+- `ReadQ3dBuffer` function, line 403
+- `ReadRawFile` function, line 405: Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
+- `ReadRawBuffer` function, line 406
+- `RawFileUnsafeForAssimp` function, line 410: True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
+- `ReadPmxFile` function, line 411
+- `ReadLwsFile` function, line 413: 'path' is a .lws scene or a .mot motion file.
+- `ReadGltf1Buffer` function, line 421: glTF 1.0 ('.gltf' with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
+- `ReadGltf1File` function, line 422
+- `IsGltf1` function, line 424: True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
+- `GltfFileIsVersion1` function, line 427: True when the file at 'path' is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+- `ReadOgexBuffer` function, line 438: OpenGEX (.ogex, Open Game Engine Exchange, written in OpenDDL text; UTF-8 or UTF-16 with a byte order mark): the node tree
+- `ReadOgexFile` function, line 439
+- `ReadMdlBuffer` function, line 447: MDL (.mdl), two of the formats that use the extension: the Quake 1 model ("IDPO", version 6: the first frame of the vertex
+- `ReadMdlFile` function, line 448
+- `ReadQ3bspFile` function, line 451: Quake III Arena maps ('.bsp' version 46, or a '.pk3' zip holding maps/<name>.bsp): the render geometry of every model, one part per
+- `ReadQ3bspBuffer` function, line 452
+- `ImportBackend` enum, line 455
+- `HasOwnReader` function, line 466: True when 'ext' (".stl", any case) has one of our own readers.
+- `SetImportBackend` function, line 470: Choose the backend for one extension (".stl"), or for every format with
+- `EffectiveImportBackend` function, line 473: The backend a read of 'ext' will actually use right now, after defaults and
+- `RunReaderGuarded` function, line 478: Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
+- `MergeModelMeshes` function, line 491: One merged Mesh from an ImportedModel (parts concatenated, node transforms
+- `BuildSceneFromModel` function, line 497: Build the model as a node hierarchy in 'scene' (MeshRenderers, SkinnedMesh
 
 ## `engine/include/okay/Render/ModelImport.hpp`
 

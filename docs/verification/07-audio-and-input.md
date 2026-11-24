@@ -23,7 +23,7 @@ Areas: 7, 8. Rows ids start `V-AU-`. `V-AU-S<area>` rows are smoke tests built f
     3. Try **Duck music under voice**.
   - **You should see (expected, not yet seen on Windows):** the looping sound gets quieter or silent as you move the sliders; with ducking, music dips when voice plays.
   - **Known partial:** none known.
-  - **More:** [audio.md](../../audio/audio.md)
+  - **More:** [audio.md](../audio/audio.md)
 
 - [ ] **V-AU-003** Spatial sound example
   - **Map:** 7. **Where:** editor, File > Open...
@@ -32,7 +32,7 @@ Areas: 7, 8. Rows ids start `V-AU-`. `V-AU-S<area>` rows are smoke tests built f
     2. Press Play and walk around the sources.
   - **You should see (expected, not yet seen on Windows):** the sound gets louder and pans left or right as you move. Play starts without a pause, and a second Play starts at once. There is no log line that shows sharing of the decoded clip.
   - **Known partial:** the release may not ship `examples` yet (PR #887).
-  - **More:** [../../try_it.md](../../try_it.md)
+  - **More:** [../../try_it.md](../try_it.md)
 
 - [ ] **V-AU-004** Keyboard, mouse and gamepad in Play (steps unverified)
   - **Map:** 8. **Where:** editor, **Help** menu

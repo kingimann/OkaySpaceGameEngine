@@ -36,7 +36,7 @@
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
-#include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for downloads, size probes and previews (only with OKAY_OWN_HTTP)
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client first, curl only as its last fallback (downloads, size probes)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #include "okay/Platform/Achievements.hpp"
@@ -388,35 +388,23 @@ int RunCmd(const std::string& cmd, bool wait) {
 #endif
 }
 
-// Download a URL to a file using whatever HTTP client is on the system.
-bool Download(const std::string& url, const fs::path& out) {
+// Download a URL to a file: the HTTP seam (WinHTTP on Windows, our own client on Linux when on, curl only as its last
+// fallback), then PowerShell / wget when nothing else could fetch it. `onBytes` (optional) gets the bytes so far.
+bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes,
+              const std::function<bool()>& cancelled) {
     std::error_code ec; fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
     const std::string outUtf = okay::restart::Utf8(out);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    // Own client (opt-in): temporary file renamed when complete, resume after a drop, retries with backoff.
-    // A clear refusal (404, full disk, too big) ends it like curl -f; an unclear answer falls through to curl below.
-    if (okay::http::NativeAvailable()) {
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, outUtf, sp);
-        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
-    }
-#else
-    // Native first (no curl process per file; pooled TLS connections). Windows: WinHTTP.
-    if (okay::http::NativeAvailable()) {
-        okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out.string());
-        if (r.reached && r.status >= 200 && r.status < 300 && fs::exists(out, ec)) return true;
-        fs::remove(out, ec);
-    }
-#endif
-    // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
-    const std::vector<std::string> curl = {
-        "curl", "-L", "-s", "-f", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",   // (a stalled transfer ends by itself)
-        "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache", "-o", outUtf, u};
-    if (okay::restart::RunAndWait(curl) == 0 && fs::exists(out)) return true;
+    // Temporary file renamed when complete, resume after a drop, retries with backoff. A clear answer (404, full disk,
+    // too big) ends it like curl -f; only "nothing could fetch it" goes on to the last resort below.
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
+    sp.connectMs = 30000; sp.onBytes = onBytes; sp.cancelled = cancelled;
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(u, out, sp);
+    if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+    if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
+    if (cancelled && cancelled()) return false;   // given up on: no last resort that would write `out` later
 #if defined(_WIN32)
     auto psQuote = [](const std::string& s) {
         std::string o; o.reserve(s.size());
@@ -435,106 +423,20 @@ bool Download(const std::string& url, const fs::path& out) {
 
 // ---- Download manager ------------------------------------------------------
 // A background download queue the Marketplace "Get" flow feeds into: each item
-// downloads to <launcher>/downloads/ via a hidden curl child process, and the
+// downloads to <launcher>/downloads/ through the HTTP seam (NativeFetch.hpp), and the
 // Downloads tab shows live progress, cancel, open-folder and (for .zip) an
 // extract-to-Community action. SDL threads again (no std::thread on MinGW).
 //
-// A download runs on its own SDL thread; the worker owns a child-process handle
-// so a cancel can terminate the in-flight curl. All shared fields are guarded
-// by g_dlMutex; progress is read by polling the growing .part file on disk.
+// A download runs on its own SDL thread; the seam polls the item's cancel flag
+// and reports bytes as they arrive. All shared fields are guarded by g_dlMutex.
 
-// A spawned, hidden child process we can poll and kill.
-struct Proc {
-#if defined(_WIN32)
-    void* h = nullptr;                 // HANDLE
-    bool valid() const { return h != nullptr; }
-#else
-    int pid = -1;
-    bool valid() const { return pid > 0; }
-#endif
-};
-
-Proc SpawnHidden(const std::string& cmd) {
-    Proc p;
-#if defined(_WIN32)
-    std::string full = "cmd /c " + cmd;
-    std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
-    STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi; ZeroMemory(&pi, sizeof(pi));
-    if (CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        CloseHandle(pi.hThread);
-        p.h = pi.hProcess;
-    }
-#else
-    pid_t pid = fork();
-    if (pid == 0) {                    // child: exec the command via /bin/sh
-        execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
-        _exit(127);
-    } else if (pid > 0) {
-        p.pid = pid;
-    }
-#endif
-    return p;
-}
-
-// Returns true while still running; when it has exited, returns false and sets
-// *exitCode to its exit status.
-bool ProcRunning(Proc* p, int* exitCode) {
-    if (!p->valid()) { if (exitCode) *exitCode = -1; return false; }
-#if defined(_WIN32)
-    DWORD code = 0;
-    if (GetExitCodeProcess((HANDLE)p->h, &code)) {
-        if (code == STILL_ACTIVE) return true;
-        if (exitCode) *exitCode = (int)code;
-        CloseHandle((HANDLE)p->h); p->h = nullptr;
-        return false;
-    }
-    return false;
-#else
-    int st = 0;
-    pid_t r = waitpid(p->pid, &st, WNOHANG);
-    if (r == 0) return true;           // still running
-    if (exitCode) *exitCode = (r > 0 && WIFEXITED(st)) ? WEXITSTATUS(st) : -1;
-    p->pid = -1;
-    return false;
-#endif
-}
-
-void ProcKill(Proc* p) {
-    if (!p->valid()) return;
-#if defined(_WIN32)
-    TerminateProcess((HANDLE)p->h, 1);
-    CloseHandle((HANDLE)p->h); p->h = nullptr;
-#else
-    kill(p->pid, SIGTERM);
-    int st = 0; waitpid(p->pid, &st, 0);
-    p->pid = -1;
-#endif
-}
-
-// A HEAD request for the Content-Length (0 if unknown / chunked / failed). Runs
-// hidden and parses the dumped response headers (last Content-Length wins, so a
+// A HEAD request for the Content-Length (0 if unknown / chunked / failed), through
+// the HTTP seam; parses the response headers (last Content-Length wins, so a
 // redirect chain reports the final resource's size).
 long long HeadSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    { std::string own; if (okay::http::OwnHeadDump(url, "OkaySpace-Launcher", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
-#endif
-    std::error_code ec;
-    fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
-#if defined(_WIN32)
-    std::string devnull = "NUL";
-#else
-    std::string devnull = "/dev/null";
-#endif
-    std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
-                      "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
-    RunCmd(cmd, true);
-    std::ifstream f(hdr);
-    std::string dump((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    f.close(); fs::remove(hdr, ec);
+    std::string dump;   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
+    if (!okay::http::HeadDump(url, "OkaySpace-Launcher", dump)) return 0;
     return okay::netguard::ParseLastContentLength(dump);
 }
 
@@ -544,7 +446,6 @@ struct DlItem {
     long long   total = 0, received = 0;
     int         status = 0;            // 0 queued, 1 downloading, 2 done, 3 failed, 4 canceled
     bool        cancelReq = false;
-    Proc        proc;
     okay::thr::Thread* th = nullptr;
 };
 
@@ -552,13 +453,9 @@ std::vector<std::shared_ptr<DlItem>> g_dls;
 okay::thr::Mutex* g_dlMutex = nullptr;
 int g_dlNextId = 1;
 
-long long FileSizeSafe(const std::string& p) {
-    std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
-}
-
 // Hard cap for launcher downloads (2 GiB): a malicious or wrong URL must not
-// be able to fill the user's disk. Enforced both as a curl flag and against
-// the HEAD-probed Content-Length.
+// be able to fill the user's disk. Enforced both as the download's size cap and
+// against the HEAD-probed Content-Length.
 static constexpr long long kMaxDownloadBytes = 2ll << 30;
 
 int DlWorker(void* data) {
@@ -573,52 +470,17 @@ int DlWorker(void* data) {
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    if (okay::http::NativeAvailable()) {   // own client first (opt-in); anything unclear falls through to curl below
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2;   // a drop resumes with Range
-        sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
-        sp.cancelled = [&] { bool c; okay::thr::LockMutex(g_dlMutex); c = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex); return c; };
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);
-        if (r.outcome != okay::http::OwnOutcome::NotHandled) {
-            if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(d->part, ec); set([&]{ d->status = 4; }); return 0; }
-            if (r.outcome == okay::http::OwnOutcome::Ok && r.bytes > 0) {
-                fs::remove(d->dest, ec); fs::rename(d->part, d->dest, ec);
-                set([&]{ d->received = (long long)r.bytes; if (d->total <= 0) d->total = (long long)r.bytes; d->status = ec ? 3 : 2; });
-            } else { fs::remove(d->part, ec); set([&]{ d->status = 3; }); }
-            return 0;
-        }
-    }
-#endif
-    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
-                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
-    Proc p = SpawnHidden(cmd);
-    if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
-    set([&]{ d->proc = p; });
-
-    int code = 0;
-    while (ProcRunning(&p, &code)) {
-        bool cancel = false;
-        okay::thr::LockMutex(g_dlMutex); cancel = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex);
-        if (cancel) {
-            ProcKill(&p);
-            fs::remove(d->part, ec);
-            set([&]{ d->status = 4; d->proc = Proc{}; });
-            return 0;
-        }
-        long long got = FileSizeSafe(d->part);
-        set([&]{ d->received = got; });
-        okay::platform::DelayMs(200);
-    }
-    long long got = FileSizeSafe(d->part);
-    if (code == 0 && got > 0) {
-        fs::remove(d->dest, ec);
-        fs::rename(d->part, d->dest, ec);
-        set([&]{ d->received = got; if (d->total <= 0) d->total = got; d->status = ec ? 3 : 2; d->proc = Proc{}; });
-    } else {
-        fs::remove(d->part, ec);
-        set([&]{ d->status = 3; d->proc = Proc{}; });
-    }
+    // The HTTP seam: WinHTTP / our own client first (a drop resumes with Range), curl only as the last fallback.
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2; sp.stallSeconds = 0;
+    sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
+    sp.cancelled = [&] { bool c; okay::thr::LockMutex(g_dlMutex); c = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex); return c; };
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(d->url, fs::path(d->part), sp);
+    if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(d->part, ec); set([&]{ d->status = 4; }); return 0; }
+    if (r.outcome == okay::http::OwnOutcome::Ok && r.bytes > 0) {
+        fs::remove(d->dest, ec); fs::rename(d->part, d->dest, ec);
+        set([&]{ d->received = (long long)r.bytes; if (d->total <= 0) d->total = (long long)r.bytes; d->status = ec ? 3 : 2; });
+    } else { fs::remove(d->part, ec); set([&]{ d->status = 3; }); }
     return 0;
 }
 
@@ -787,42 +649,22 @@ static fs::path LauncherDirPath() {
 // progress bar can show a percentage. Returns 0 when unknown (indeterminate).
 long long RemoteSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
-    std::error_code ec;
-    fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
-    std::string u = BustCache(url);
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    { std::string own; if (okay::http::OwnHeadDump(u, "", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
-#endif
-#if defined(_WIN32)
-    std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\"";
-#else
-    std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\" 2>/dev/null";
-#endif
-    if (RunCmd(c, true) != 0) { fs::remove(hf, ec); return 0; }
-    std::ifstream f(hf); std::string line; long long sz = 0;
-    while (std::getline(f, line)) {
-        // Case-insensitive "content-length:"; keep the LAST one (after redirects).
-        std::string low = line;
-        for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-        auto p = low.find("content-length:");
-        if (p != std::string::npos) {
-            const long long v = okay::netguard::ParseContentLengthLine(line);
-            if (v > 0) sz = v;
-        }
-    }
-    f.close(); fs::remove(hf, ec);
-    return sz;
+    std::string dump;   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
+    if (!okay::http::HeadDump(BustCache(url), "", dump)) return 0;
+    return okay::netguard::ParseLastContentLength(dump);
 }
 
-// Download helper that runs curl on a short-lived thread while the caller polls
-// the growing output file, publishing byte progress into the update globals so
-// the dialog can show a live MB / percentage bar.
-struct DlMonitor { std::string url; fs::path out; okay::thr::AtomicInt done; okay::thr::AtomicInt ok; };
+// Download helper that runs the download on a short-lived thread while the caller polls
+// its byte count (the seam's progress callback; the file itself only appears when it is
+// complete), publishing byte progress into the update globals so the dialog can show a
+// live MB / percentage bar.
+struct DlMonitor { std::string url; fs::path out; okay::thr::AtomicInt done; okay::thr::AtomicInt ok; okay::thr::AtomicInt bytes; okay::thr::AtomicInt cancel; };
 static okay::thr::AtomicInt g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
 int DlMonitorThread(void* p) {
     std::shared_ptr<DlMonitor>* keep = (std::shared_ptr<DlMonitor>*)p;   // (the thread owns a share: it may outlive a download that was given up on)
     DlMonitor* d = keep->get();
-    bool r = Download(d->url, d->out);
+    bool r = Download(d->url, d->out, [d](uint64_t n) { okay::thr::AtomicSet(&d->bytes, (int)std::min<uint64_t>(n, 0x7fffffffull)); },
+                      [d] { return okay::thr::AtomicGet(&d->cancel) != 0; });
     okay::thr::AtomicSet(&d->ok, r ? 1 : 0);
     okay::thr::AtomicSet(&d->done, 1);
     delete keep;
@@ -834,20 +676,23 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     const long long total = std::min<long long>(RemoteSize(url), 0x7fffffffll);
     okay::thr::AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
     auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
-    okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0);
+    okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0); okay::thr::AtomicSet(&d->bytes, 0); okay::thr::AtomicSet(&d->cancel, 0);
     okay::thr::Thread* th = okay::thr::CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
     const Uint32 t0 = okay::platform::TicksMs32();
     Uint32 lastGrow = t0; long long lastSize = -1;
     while (okay::thr::AtomicGet(&d->done) == 0) {
-        std::error_code ec; auto sz = fs::file_size(out, ec);
-        const long long cur = ec ? 0 : (long long)sz;
+        std::error_code ec; auto sz = fs::file_size(out, ec);   // (the PowerShell / wget last resort writes the file directly)
+        const long long cur = std::max<long long>(ec ? 0 : (long long)sz, (long long)okay::thr::AtomicGet(&d->bytes));
         okay::thr::AtomicSet(&g_upBytesNow, (int)cur);
         const Uint32 now = okay::platform::TicksMs32();
         if (cur != lastSize) { lastSize = cur; lastGrow = now; }
         if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
             okay::thr::AtomicSet(&g_dlStalled, 1);
             okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
-            okay::thr::DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (curl has a speed limit) and frees itself
+            // Cancel the transfer so it can never rename a late file over `out` (Finish checks the cancel right before the
+            // rename); the thread then ends on its own (the seam notices a cancel within about 50 ms) and frees itself.
+            okay::thr::AtomicSet(&d->cancel, 1);
+            okay::thr::DetachThread(th);
             return false;
         }
         okay::platform::DelayMs(90);
@@ -10005,45 +9850,25 @@ static std::string OfficialFetchCover(const og::Manifest& m) {
     return {};
 }
 
-// Download one file to `out`, cancelable: curl as a hidden child process (like the
-// Downloads tab) so Cancel can stop it mid-file, with the launcher's usual
-// Download() as the fallback where curl isn't there. `before` = bytes already
-// done, for the progress bar. Only the URL (checked, percent-encoded) and our own
-// path reach the command line, never a name from the manifest.
+// Download one file to `out`, cancelable, through the HTTP seam (WinHTTP / our own
+// client first, curl only as its last fallback) so Cancel can stop it mid-file, with
+// the launcher's usual Download() as the fallback when nothing could fetch it or the
+// server refused. `before` = bytes already done, for the progress bar. Only the URL
+// (checked, percent-encoded) and our own path are used, never a name from the manifest.
 static bool OfficialFetchFile(const std::string& url, const fs::path& out, long long before) {
     std::error_code ec;
     fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
-#if defined(OKAY_OWN_HTTP_ACTIVE)
-    if (okay::http::NativeAvailable()) {   // own client first (opt-in, retries like curl --retry 2); anything unclear falls through to curl below
-        okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2;
-        sp.onBytes = [&](uint64_t n) { OffLocked([&] { g_off.bytesNow = before + (long long)n; }); };
-        sp.cancelled = [] { return OfficialCancelled(); };
-        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(url, out.string(), sp);
-        if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(out, ec); return false; }
-        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-        if (r.outcome != okay::http::OwnOutcome::NotHandled) {   // a clear refusal: what curl -f reports; the launcher's Download() gets its turn, as after a curl failure
-            if (!Download(url, out.string())) { fs::remove(out, ec); return false; }
-            return fs::exists(out, ec);
-        }
-    }
-#endif
-    int code = -1;
-    Proc p = SpawnHidden("curl -L -s -f --retry 2 -A \"OkaySpace-Launcher\" -o \"" + out.string() + "\" \"" + url + "\"");
-    if (p.valid()) {
-        while (ProcRunning(&p, &code)) {
-            if (OfficialCancelled()) { ProcKill(&p); fs::remove(out, ec); return false; }
-            const long long got = FileSizeSafe(out.string());
-            OffLocked([&] { g_off.bytesNow = before + got; });
-            okay::platform::DelayMs(120);
-        }
-    }
-    if (code != 0) {
-        if (OfficialCancelled()) return false;
-        fs::remove(out, ec);
-        if (!Download(url, out.string())) { fs::remove(out, ec); return false; }
-    }
+    okay::http::OwnDownloadSpec sp;
+    sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2; sp.stallSeconds = 0;
+    sp.onBytes = [&](uint64_t n) { OffLocked([&] { g_off.bytesNow = before + (long long)n; }); };
+    sp.cancelled = [] { return OfficialCancelled(); };
+    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(url, out, sp);
+    if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(out, ec); return false; }
+    if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+    if (OfficialCancelled()) return false;
+    // A clear refusal or no answer: the launcher's Download() gets its turn, as after a failed transfer before.
+    if (!Download(url, out)) { fs::remove(out, ec); return false; }
     return fs::exists(out, ec);
 }
 

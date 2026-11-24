@@ -1,9 +1,12 @@
-// <utility> for okay-cc (ISO/IEC 14882 [utility]). Our own header. move returns an lvalue
-// reference here (there are no rvalue references): a "moved" object is copied.
+// <utility> for okay-cc (ISO/IEC 14882 [utility]). Our own header. move takes an lvalue (a
+// temporary cannot be moved from here) and returns T&&, so a class with a move constructor or a
+// move assignment is moved; forward<T>(x) gives x back as T&&.
 #pragma once
 namespace std {
 template <typename T>
-T &move(T &x) { return x; }
+T &&move(T &x) { return x; }
+template <typename T>
+T &&forward(T &x) { return x; }
 template <typename A, typename B>
 struct pair {
     A first;

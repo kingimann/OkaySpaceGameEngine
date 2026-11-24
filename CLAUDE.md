@@ -251,18 +251,22 @@ then this file gets updated. Keep this file short and true.
     manuals and general compiler ideas, with no code taken from CMake, Ninja, GCC, Clang/LLVM, MSVC, tcc or any other
     project (rule 19a). They stay out of CMake, CI and releases, and nothing in the engine depends on them, until the
     owner says so.
-24d. **Grok has its own lane (owner 2026-11-23: "agree with grok on 422").** Grok works on `grok/*` branches on feature-map
-    areas 1 to 4 (core and scene, rendering and world, modeling and import, characters and cameras): improvements, new
-    features and bug fixes (`Kind: bug` with a failing test first). It claims each piece on #422 like the Claudes
-    (rule 26). Files another lane owns or has an open claim on need an `Agree:` reply. The lane is in `docs/lanes.json`.
+24d. **Grok no longer writes code; its work was taken over** (owner 2026-11-24: "Continue groks work, I don't like how he
+    works", then "I'm gonna have other Claude work on modular system, input system and physics"; this replaces
+    2026-11-23's Grok lane). Grok's open PRs continue on Claude branches with every review finding fixed, and the Grok
+    PRs are closed as superseded: core (#1203, #1211) by the coordinator; modules (#1218), input (#1208) and physics
+    (#1207) by the other Claude, which claims them on #422. Feature-map areas 1 to 4 go back to the Claude lanes. Grok
+    keeps only rule 24: it reads code and reports bugs on #888. No `Agree:` is needed from Grok for any file; the `grok`
+    entry in `docs/lanes.json` stays only so old branch names still check.
 24b. **Exception: experimental Xbox One export through Microsoft's public Windows SDK and UWP tools (owner 2026-11-18:
     "For Xbox I'll allow it").** The Windows SDK, Visual Studio UWP tools, MakeAppx and SignTool are build tools the owner
     installs on their own PC; nothing from them is copied into the repository or shipped. Only the public SDK: no GDKX
     or other restricted Xbox code. Code lives in its own isolated folder behind a CMake option that is OFF by default,
     and existing Windows export must keep working. Say "unverified" for anything not built and packaged on Windows, and
     never claim console hardware support without a test on a real console. Rule 19a still holds for everything else.
-24c. **Exception: C# scripting through the Microsoft .NET runtime (owner 2026-11-19: "Yes go ahead with c#"; the owner also
-    decided to replace our own OkayScript languages with C# and Lua, and Visual Script stays the main way to script).**
+24c. **Exception: C# scripting through the Microsoft .NET runtime (owner 2026-11-19: "Yes go ahead with c#"; on 2026-11-24
+    the owner kept OkayScript: "no i still want c# and lua as alternatives". Visual Script stays the main way to script;
+    OkayScript is our own text language, and C# and Lua are alternatives next to it).**
     The .NET runtime (CoreCLR, MIT licence) may be loaded at run time through its documented hosting API (hostfxr) to run C#
     scripts, and the Roslyn compiler of a .NET SDK the developer installs may be run as a build tool, like MSVC (rule 24b).
     Nothing from the runtime, the SDK or NuGet is copied or linked into the repository; our hosting code and our managed API
@@ -270,8 +274,8 @@ then this file gets updated. Keep this file short and true.
     a game with no C# scripts ships no runtime. Exported C# games ship the runtime files with their MIT notice in
     `docs/status/THIRD_PARTY.md`. Windows only (rule 14). Say "unverified" for anything not built and run on Windows. This allows no
     other SDK or library, and rule 19a still holds for everything else. Lua is written by us from the Lua manual (no Lua
-    code). Our own OkayScript is deleted only after the replacements work and the owner confirms (plan:
-    `docs/scripting_migration.md`).
+    code). OkayScript is not deleted: it is being made a standalone language (`okayscript/`, its own `okayscript` command
+    line, then the engine on it; owner 2026-11-24), and C# and Lua stay as alternatives.
 24d. **Exception: Microsoft's public Windows SDK and Visual Studio build tools for Windows work (owner 2026-11-20: "Yes",
     after "I'm gonna have other guy start working on windows sdk"; widens rule 24b beyond Xbox).** They may be used as build,
     test and debugging tools on Windows machines and CI runners: building and testing Windows programs (including an MSVC

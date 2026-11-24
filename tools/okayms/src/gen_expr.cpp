@@ -851,6 +851,19 @@ bool Gen::gen_expr(const Node& node) {
             sig.params = fn->params;
             sig.vararg = fn->vararg;
         }
+        // A reference parameter of a pointer's signature is passed as its address (the parser took it), and a reference
+        // result comes back as one.
+        if (sig.ret.is_ref) {
+            sig.ret.is_ref = false;
+            sig.ret.rref = false;
+            sig.ret.pointers += 1;
+        }
+        for (Type& param : sig.params)
+            if (param.is_ref) {
+                param.is_ref = false;
+                param.rref = false;
+                param.pointers += 1;
+            }
         const size_t nargs = node.kids.size() - arg0;
         if (!sig.vararg && nargs != sig.params.size()) {
             error = "wrong number of arguments to " + (node.text.empty() ? std::string("function pointer") : node.text);

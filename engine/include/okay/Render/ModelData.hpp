@@ -165,7 +165,10 @@ bool ReadOffBuffer(const std::string& text, ImportedModel& out, std::string* err
 /// SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
 /// skinned part per material (up to four bone weights per vertex, vertices welded, v flipped), the bind pose from the
 /// first frame and, when the file has several frames, one clip ("animation", 30 frames per second assumed). Euler
-/// angles follow Valve's convention. Vertex animation (flex) sections are not read (reported in `out.notes`).
+/// angles follow Valve's convention. Vertex animation (flex) sections of a file with triangles are not read (reported in
+/// `out.notes`). A file with no triangles but a vertexanimation section (a .vta) gives its first frame as the base mesh: the
+/// vertices of that frame, in index order, are the corners of the reference triangles, three per triangle, rigid on the root;
+/// later frames (the flex shapes) are counted in `out.notes`, not read.
 /// `baseDir` ends with a slash or is empty (it prefixes the material names, which are the texture files).
 bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// MD5 (id Tech 4 / Doom 3): `meshText` is an md5mesh, `animText` an md5anim (either may be empty, not both). The joints
@@ -268,7 +271,7 @@ bool ReadOgreSkeletonBinary(const std::string& bytes, ImportedModel& out, std::s
 /// `out.notes`); big-endian files are refused. With `skeletonXml` (the text of the .skeleton.xml the mesh links to;
 /// ReadOgreBinaryFile loads `<link name>.xml` next to the mesh) the 0x4100 / 0x7000 bone assignments skin the parts exactly as
 /// ReadOgreXmlBuffer does. `skeletonXml` may also hold a binary .skeleton (told apart by its first bytes). The file readers find
-/// the binary `<link name>` next to the mesh only with OKAY_OWN_OGRE_SKELBIN=1 (off by default) and when there is no
+/// the binary `<link name>` next to the mesh (on by default; OKAY_OWN_OGRE_SKELBIN=0 switches that off) when there is no
 /// `<link name>.xml`; without a skeleton the mesh stays rigid, with a note.
 bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
                           const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
@@ -360,6 +363,12 @@ bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Doom 3 camera path (.md5camera, MD5Version 10 text): a root node (Z up to Y up) with one "camera" node, and one clip
+/// "camera" with a position and rotation key per frame at the file's frameRate. At each cut the frame before it is held up to
+/// just before the cut, so the camera jumps. The field of view is noted in `out.notes` (there is no camera lens in the model
+/// data). No mesh. Written from the public description of the format (Md5CameraReader.cpp).
+bool ReadMd5CameraBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+bool ReadMd5CameraFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
@@ -379,6 +388,12 @@ bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadIqmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadNdoFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Silo models (`.sib`, Nevercenter), worked out from the one sample file (no public description exists): shapes (positions,
+/// n-gon faces, texture coordinates per corner, a material per face run), materials (diffuse colour, texture file inside the
+/// model's folder) and instances (copies of a shape in their own frame). Lights, groups, mirrors and texture previews are not
+/// read (reported in `out.notes`). See docs/content/model_readers.md (section SIB) for what is an assumption.
+bool ReadSibFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSibBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdcFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadHmpFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);

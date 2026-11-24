@@ -117,17 +117,22 @@ public:
     virtual bool SupportsHotReload() const { return false; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM), plus "csharp" when the
-/// build hosts the .NET runtime (OKAY_WITH_CSHARP, Scripting/CSharpScriptVM.hpp).
+/// Names of the script backends in this build: "okayscript" (our own VM), "lua" (our own Lua interpreter,
+/// okay::lua), plus "csharp" when the build hosts the .NET runtime (OKAY_WITH_CSHARP, Scripting/CSharpScriptVM.hpp).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 
-/// Old scenes and projects may still name a removed third-party backend ("lua").
-/// ("csharp"/"cs" is a language again: the hosted .NET runtime.) Returns a clear "no longer supported" message for those
+/// Old scenes and projects may name a removed third-party backend. None is left: "lua" is our own Lua
+/// interpreter and "csharp"/"cs" the hosted .NET runtime. Returns a clear "no longer supported" message for such
 /// language names, or an empty string for any other name. Loading such a script
 /// fails with this message instead of failing silently.
 std::string RemovedScriptLanguageMessage(const std::string& language);
+
+/// The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
+/// ".okay" and anything else -> "okayscript"; case is ignored, the dot is optional).
+/// The one place the editor and the engine pick a script language from a file name.
+const char* ScriptLanguageForExtension(const std::string& ext);
 
 } // namespace okay

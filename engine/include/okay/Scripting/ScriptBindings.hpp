@@ -110,6 +110,27 @@ Result CallMethod(const vs::VsValue& handle, const std::string& method, const st
 Result CallOn(Component& c, const ClassBinding& cls, const std::string& method, const std::vector<vs::VsValue>& args,
               vs::VsValue& out, std::string& error);
 
+// ---- What scripts must never reach (the generator's DENY_* rules, for other tables) --------------------------------
+/// The rules scripts/gen_script_bindings.py uses to leave a method out (files, network, platform, clipboard). The
+/// generator writes them into ScriptBindingsGenerated.cpp, so a language that also binds another table (Lua and the
+/// typed-language EngineApi) applies the same rules and is no back door around them.
+struct DenyRules {
+    std::vector<std::string> classes;     ///< a whole class: NetworkManager, SteamManager, UIFilePicker, ...
+    std::vector<std::string> methods;     ///< "Class.Method": NavMeshSurface.Save, ...
+    std::vector<std::string> paramWords;  ///< a text parameter named with one of these: path, file, url, ...
+    std::vector<std::string> nameWords;   ///< a method name with one of these words: file, clipboard, server, ...
+};
+/// Defined in ScriptBindingsGenerated.cpp.
+const DenyRules& GeneratedDenyRules();
+/// The lower-case words of a name, as the generator splits them: "filePath" -> file, path; "HTTPServer" -> http, server.
+std::vector<std::string> NameWords(const std::string& name);
+/// True when the generator would not bind any method of class `cls`.
+bool IsDeniedClass(const std::string& cls);
+/// One parameter as the rules see it: is it text, and its name.
+struct DenyParam { bool isText = false; std::string name; };
+/// True when the generator would not bind `cls.method` with these parameters (any one rule is enough).
+bool IsDeniedMethod(const std::string& cls, const std::string& method, const std::vector<DenyParam>& params = {});
+
 // ---- Property values <-> script values (one conversion for OkayScript and visual scripts) ---------------------
 /// A property value as a script value: numbers, true/false, vectors (a Vec2 as (x, y, 0), a Color as (r, g, b)),
 /// an Enum as its option name, anything else as its text.

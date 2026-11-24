@@ -187,9 +187,10 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     // OkayScript gets a reference that carries the object's instance id (it still
     // prints and compares as the name), so a bullet that hits the third "Enemy"
     // acts on that copy, not the first one with the name (#888 Finding 108).
-    // C# gets the same reference (its handler's GameObject parameter is that exact object).
-    // Other languages keep receiving the name.
-    const bool okay = std::strcmp(m_vm->Language(), "okayscript") == 0 || std::strcmp(m_vm->Language(), "csharp") == 0;
+    // C# and Lua get the same reference (a C# handler's GameObject parameter, a Lua GameObject is that exact
+    // object). Other languages keep receiving the name.
+    const bool okay = std::strcmp(m_vm->Language(), "okayscript") == 0 || std::strcmp(m_vm->Language(), "csharp") == 0
+                      || std::strcmp(m_vm->Language(), "lua") == 0;
     vs::VsValue name = (okay && other) ? vs::VsValue::Object(other->InstanceId())
                                        : vs::VsValue(other ? other->name : std::string());
     m_vm->SetGlobal("other", name);

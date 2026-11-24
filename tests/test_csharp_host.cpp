@@ -15,6 +15,7 @@
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Scripting/CSharpBridge.hpp"
+#include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include <cstdlib>
@@ -352,6 +353,31 @@ int main() {
         CHECK(g.find("m[\"Light\"] = () => new Light();") != std::string::npos);
         CHECK(g.find("class Transform :") == std::string::npos);   // hand-written types are not generated again
         CHECK(GenerateApiSource() == g);                          // the same table gives the same text (a stable cache key)
+        {   // the generator's file, network, platform and clipboard rules (#1234 review B1) hold in C#: the C# API is
+            // made from the same binding table, so a denied class has no methods and no denied method appears
+            namespace sb = okay::scriptbind;
+            auto body = [&](const std::string& cls) {
+                const std::size_t a = g.find("public partial class " + cls + " : Component");
+                if (a == std::string::npos) return std::string();
+                const std::size_t b = g.find("public partial class ", a + 1);
+                return g.substr(a, b == std::string::npos ? std::string::npos : b - a);
+            };
+            int leaks = 0;
+            for (const std::string& cls : sb::GeneratedDenyRules().classes) {
+                const std::string t = body(cls);
+                if (t.find("Call(") != std::string::npos || t.find("Call<") != std::string::npos ||
+                    t.find("CallVoid(") != std::string::npos) { std::printf("  C# %s has methods\n", cls.c_str()); ++leaks; }
+            }
+            for (const std::string& cm : sb::GeneratedDenyRules().methods) {
+                const std::size_t dot = cm.find('.');
+                const std::string t = body(cm.substr(0, dot));
+                if (t.find("(\"" + cm.substr(dot + 1) + "\"") != std::string::npos) { std::printf("  C# has %s\n", cm.c_str()); ++leaks; }
+            }
+            for (const char* m : {"ExportHeightmap", "ImportHeightmap", "PasteFromClipboard", "CopyToClipboard", "OpenStream",
+                                  "SaveClipsToFile", "LoadClipsFromFile", "LoadFile"})
+                if (g.find(std::string("(\"") + m + "\"") != std::string::npos) { std::printf("  C# has %s\n", m); ++leaks; }
+            CHECK(leaks == 0);
+        }
         CHECK(!ApiSourceDir().empty());
         // a scene with no C# scripts has no C# sources, so its game ships no runtime
         okay::Scene plain("Plain");

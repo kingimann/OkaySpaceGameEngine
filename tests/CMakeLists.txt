@@ -680,6 +680,22 @@ add_executable(test_csharp_host test_csharp_host.cpp)
 target_link_libraries(test_csharp_host PRIVATE okay::engine)
 target_compile_definitions(test_csharp_host PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME csharp_host COMMAND test_csharp_host)
+# okay::lua, our own Lua 5.4 interpreter: conformance checks written from the reference manual
+# (tests/lua/conformance.lua), errors with line/column, run budget, memory limit, host API and a
+# mutation fuzz. Standalone (only the interpreter sources) so it also builds under sanitizers.
+add_executable(test_lua_core test_lua_core.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaCompiler.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaState.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibBase.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibString.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibTable.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibUtf8.cpp)
+target_compile_features(test_lua_core PRIVATE cxx_std_17)
+target_include_directories(test_lua_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_lua_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME lua_core COMMAND test_lua_core)
+set_tests_properties(lua_core PROPERTIES TIMEOUT 600)
+# Lua game scripts (language "lua") on okay::lua driving GameObjects through the shared engine binding table.
+add_executable(test_lua_script test_lua_script.cpp)
+target_link_libraries(test_lua_script PRIVATE okay::engine)
+add_test(NAME lua_script COMMAND test_lua_script)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)

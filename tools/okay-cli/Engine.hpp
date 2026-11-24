@@ -80,6 +80,15 @@ std::string BinDir(const Plan& p);
 /// What `okay engine doctor` says: every tool found or missing, in plain words with where to get it.
 std::string DoctorText(const Tools& t, const std::string& source, const std::string& sdl2, int* problems);
 
+/// `inner` is the folder `outer` or inside it; `ignoreCase` compares as Windows does ("C:/Games" is "c:/games").
+bool PathWithin(const std::string& inner, const std::string& outer, bool ignoreCase);
+/// Why `okay engine build --clean` may not delete `buildDir`, or "" when it may. It may only when the folder has a
+/// CMakeCache.txt whose CMAKE_HOME_DIRECTORY is `source` (this engine checkout), and holds no CMakeLists.txt,
+/// project.okayproj or Assets folder (a game project with a cache in it is never deleted). Paths are compared as the
+/// file system does: without case when `ignoreCase` (the second form: the host's rule, so Windows ignores case).
+std::string CleanRefusal(const std::string& buildDir, const std::string& source, bool ignoreCase);
+std::string CleanRefusal(const std::string& buildDir, const std::string& source);
+
 /// The help of `okay engine build` and `okay engine doctor`.
 const char* BuildUsage();
 const char* DoctorUsage();

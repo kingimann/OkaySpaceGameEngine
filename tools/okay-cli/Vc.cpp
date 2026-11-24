@@ -42,6 +42,16 @@ std::string VcFolder(const std::string& project) {
     return fs::absolute(project.empty() ? "." : project, ec).string();
 }
 
+/// A file named on the command line: relative names are inside the -C / --project folder when one was given (else
+/// this folder), as every other vc command reads them.
+fs::path FileArg(const std::string& file, const std::string& project) {
+    std::error_code ec;
+    const fs::path f(file);
+    if (f.is_absolute()) return f.lexically_normal();
+    const fs::path base = fs::absolute(project.empty() ? "." : project, ec);
+    return (base / f).lexically_normal();
+}
+
 std::string Canon(const std::string& p) {
     std::error_code ec;
     fs::path c = fs::weakly_canonical(fs::absolute(p, ec), ec);
@@ -494,12 +504,12 @@ int VcResolve(const std::vector<std::string>& args, const std::string& project, 
     const int choices = (cl.Has("mine") ? 1 : 0) + (cl.Has("theirs") ? 1 : 0) + (cl.Has("as-is") ? 1 : 0);
     if (file.empty() || choices != 1) { io.Warn("Say the file and one choice: okay vc resolve <file> --mine | --theirs | --as-is"); return 2; }
     std::error_code ec;
-    const fs::path abs = fs::absolute(file, ec).lexically_normal();
+    const fs::path abs = FileArg(file, project);
     const std::string top = git.TopLevel();
     const std::string rel = RelTo(abs.string(), top);
     if (rel.rfind("..", 0) == 0) { io.Warn(file + " is not inside this project."); return 1; }
     const fs::path report = ClashReportPath(top, rel);
-    const bool unmerged = !Trim(git.Capture({"ls-files", "-u", "--", abs.string()}).out).empty();
+    const bool unmerged = !Trim(git.Capture({"--literal-pathspecs", "ls-files", "-u", "--", abs.string()}).out).empty();
     if (!unmerged && !fs::exists(report, ec)) { io.Say(file + " has no clash to settle."); return 0; }
     std::string said;
     if (cl.Has("as-is")) {
@@ -548,7 +558,8 @@ int VcResolve(const std::vector<std::string>& args, const std::string& project, 
             if (!okayproj::WriteTextAtomic(abs.string(), text, &err)) { io.Warn("Couldn't write " + file + ": " + err); return 1; }
         } else fs::remove(abs, ec);
     }
-    const RunResult r = fs::exists(abs, ec) ? git.Capture({"add", "--", abs.string()}) : git.Capture({"rm", "-q", "--cached", "--ignore-unmatch", "--", abs.string()});
+    const RunResult r = fs::exists(abs, ec) ? git.Capture({"--literal-pathspecs", "add", "--", abs.string()})
+                                          : git.Capture({"--literal-pathspecs", "rm", "-q", "--cached", "--ignore-unmatch", "--", abs.string()});
     if (!r.started || r.exitCode != 0) { io.Warn("Couldn't mark " + file + " as settled." + GitSaid(r)); return 1; }
     fs::remove(report, ec);
     const std::vector<std::string> left = UnmergedFiles(git);
@@ -566,10 +577,9 @@ int VcHistory(const std::vector<std::string>& args, const std::string& project, 
     if (!git.HasCommits()) { io.Say("Nothing has been saved yet."); return 0; }
     int n = 20;
     if (!cl.TryGetInt("count", 1, 100000, n)) { io.Warn("-n needs a number from 1 up."); return 2; }
-    std::vector<std::string> a = {"log", "-n", std::to_string(n), "--date=format:%Y-%m-%d %H:%M", "--format=%h%x1f%ad%x1f%an%x1f%s"};
+    std::vector<std::string> a = {"--literal-pathspecs", "log", "-n", std::to_string(n), "--date=format:%Y-%m-%d %H:%M", "--format=%h%x1f%ad%x1f%an%x1f%s"};
     const std::string file = cl.Positional(0);
-    std::error_code ec;
-    if (!file.empty()) { a.push_back("--follow"); a.push_back("--"); a.push_back(fs::absolute(file, ec).string()); }
+    if (!file.empty()) { a.push_back("--follow"); a.push_back("--"); a.push_back(FileArg(file, project).string()); }
     const RunResult r = git.Capture(a);
     if (!r.started || r.exitCode != 0) { io.Warn("Couldn't read the history." + GitSaid(r)); return 1; }
     std::string t;
@@ -602,7 +612,7 @@ int VcUndo(const std::vector<std::string>& args, const std::string& project, con
     if (file.empty()) { io.Warn("Say which file to put back: okay vc undo Assets/Level.okayscene"); return 2; }
     if (!git.HasCommits()) { io.Warn("Nothing has been saved yet, so there is nothing to go back to."); return 1; }
     std::error_code ec;
-    const fs::path abs = fs::absolute(file, ec).lexically_normal();
+    const fs::path abs = FileArg(file, project);
     if (fs::is_directory(abs, ec)) { io.Warn(file + " is a folder. Undo puts back one file at a time: okay vc undo <file>"); return 1; }
     const std::string given = cl.Get("to", "HEAD");
     const RunResult v = git.Capture({"rev-parse", "-q", "--verify", "--end-of-options", given + "^{commit}"});
@@ -617,7 +627,7 @@ int VcUndo(const std::vector<std::string>& args, const std::string& project, con
                                 : file + " is not in save " + given + ". See okay vc history " + file);
         return 1;
     }
-    const RunResult same = git.Capture({"diff", "--quiet", rev, "--", abs.string()});
+    const RunResult same = git.Capture({"--literal-pathspecs", "diff", "--quiet", rev, "--", abs.string()});
     if (same.exitCode == 0 && fs::exists(abs, ec)) {
         io.Say(file + (given == "HEAD" ? " has no changes since the last save." : " is already the same as in save " + given + "."));
         return 0;
@@ -639,7 +649,7 @@ int VcUndo(const std::vector<std::string>& args, const std::string& project, con
         if (ec) { io.Warn("Couldn't keep a copy of " + file + " first (" + ec.message() + "), so nothing was changed."); return 1; }
         backup = RelTo(dst.string(), folder);
     }
-    const RunResult r = git.Capture({"checkout", rev, "--", abs.string()});
+    const RunResult r = git.Capture({"--literal-pathspecs", "checkout", rev, "--", abs.string()});
     if (!r.started || r.exitCode != 0) { io.Warn("Couldn't put " + file + " back." + GitSaid(r)); return 1; }
     const std::string id = Trim(git.Capture({"rev-parse", "--short", rev}).out);
     io.Say(file + " is back to how it was in save " + id + "." + (backup.empty() ? "" : " Your copy from before is in " + backup + "."));

@@ -2207,7 +2207,7 @@ look on Windows; everything above was checked headless on Linux by `physics_engi
 
 **What it is.** A named material says how a surface feels: grip when still, grip when sliding, bounciness, how two surfaces mix, density, rolling friction, damping
 (mud, sand), grip on slopes, and the sound, effect and surface names a hit should use. Fourteen are always there (Default, Ice, Rubber, Bouncy Ball, Metal, Wood, Stone,
-Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](physics/physics.md#physics-material-how-a-surface-feels).
+Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](../physics/physics.md#physics-material-how-a-surface-feels).
 
 **Steps.**
 1. **File > Open Scene**, pick `examples\physics_materials\physics_materials.okayscene`, press **Play**.
@@ -2226,7 +2226,7 @@ NOT built yet: type the name), Windows, the character controller and vehicles do
 
 **What it is.** Small components you add, tune with plain Inspector numbers and press Play: **Conveyor Belt** (carries what stands on it), **Force Field** (attract, repel, gravity well, whirlpool;
 turn on and off), **Gravity Zone** (a box with its own gravity: floating, moon), **Turntable** (a physical round plate that carries things), **Moving Platform** (glides through up to four points, riders go along),
-**Explosion** (a shove, by timer or from script) and **Breakable** (breaks into pieces when hit hard). The jump pad already existed (Add Component > Gameplay > Jump Pad). Details: [physics_toys.md](physics/physics.md#physics-toys-ready-made-physics-no-code).
+**Explosion** (a shove, by timer or from script) and **Breakable** (breaks into pieces when hit hard). The jump pad already existed (Add Component > Gameplay > Jump Pad). Details: [physics_toys.md](../physics/physics.md#physics-toys-ready-made-physics-no-code).
 
 **Steps.**
 1. **File > Open Scene**, pick `examples\physics_toys\physics_toys.okayscene`, press **Play**. Walk along the row of ten stations (WASD, mouse); each has a text label.
@@ -2246,7 +2246,7 @@ Unverified: Windows and the editor on a screen.
 **What it is.** The Improved physics now keeps a tower of ten crates standing at 30, 50, 60 and 144 steps a second (it fell over at 30 and
 leaned at 50), a fast ball can no longer jump over a thin plate that can move, a 50 kg ball on a chain of light links hangs close to the chain's real
 length, a breakable joint snaps without first stopping the body, and a speed set inside `OnCollisionEnter3D` (a jump pad, a blast) is kept. The
-numbers before and after are in [physics_upgrade.md](physics/physics.md#physics-upgrade-what-exists-what-was-missing-what-changed).
+numbers before and after are in [physics_upgrade.md](../physics/physics.md#physics-upgrade-what-exists-what-was-missing-what-changed).
 
 **Steps.**
 1. Open `Tools\OkayEngine.exe` (or the launcher), **File > Open Scene**, pick `examples\physics\physics_upgrade.okayscene` (it ships in the zip and the installer).

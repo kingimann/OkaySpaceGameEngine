@@ -13,7 +13,7 @@ public:
     CSharpScriptVM();
     ~CSharpScriptVM() override;
     static constexpr const char* kLanguage = "csharp";
-    const char* Language() const override { return kLanguage; }
+    const char* Language() const override { return kLanguage; }   // dup-allow: the IScriptVM overrides every language declares
     std::vector<std::string> BuiltinNames() const override;
 
     bool Load(const std::string& source, std::string* error = nullptr) override;
@@ -24,7 +24,7 @@ public:
     bool HotReload(const std::string& source, std::string* error) override;
     bool SupportsHotReload() const override { return true; }
 
-    void Bind(ScriptHost* host) override;
+    void Bind(ScriptHost* host) override;   // dup-allow: the IScriptVM overrides every language declares
     void CallStart() override;
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;

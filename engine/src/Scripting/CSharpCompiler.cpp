@@ -1,5 +1,6 @@
 #include "okay/Scripting/CSharpCompiler.hpp"
 #include "okay/Scripting/CSharpBridge.hpp"
+#include "okay/Core/StringId.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -22,12 +23,10 @@ namespace okay::csharp {
 namespace fs = std::filesystem;
 
 std::string ContentHash(const std::string& text) {
-    std::uint64_t a = 1469598103934665603ull, b = 0x9E3779B97F4A7C15ull;
-    for (unsigned char c : text) {
-        a ^= c; a *= 1099511628211ull;
-        b ^= (std::uint64_t)(c + 31); b *= 0x100000001B3ull; b ^= b >> 29;
-    }
-    a ^= text.size(); b ^= text.size() * 0x9E3779B97F4A7C15ull;
+    // Two 64-bit hashes of the engine's one string hash (StringId::HashOf): the text, and its length then the text.
+    // A cache key, not a security hash.
+    const std::uint64_t a = StringId::HashOf(text);
+    const std::uint64_t b = StringId::HashOf(std::to_string(text.size()) + "#" + text);
     char buf[40];
     std::snprintf(buf, sizeof buf, "%016llx%016llx", (unsigned long long)a, (unsigned long long)b);
     return buf;

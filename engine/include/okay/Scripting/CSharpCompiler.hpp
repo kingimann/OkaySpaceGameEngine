@@ -18,7 +18,7 @@ struct CompileDiag {
     std::string message;
 };
 
-/// 32 hex characters from the text (two FNV-1a passes). A cache key, not a security hash.
+/// 32 hex characters from the text (two StringId::HashOf hashes). A cache key, not a security hash.
 std::string ContentHash(const std::string& text);
 /// The first `class X : Behaviour` (also `public sealed class X : Behaviour`); "" if none.
 std::string DetectScriptClass(const std::string& source);

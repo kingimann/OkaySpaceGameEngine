@@ -193,6 +193,10 @@ inline float asin(float x) {
 }
 inline float acos(float x) { return (float)(1.5707963267948966 - (double)asin(x)); }
 inline float fabs(float x) { return x < 0.0f ? -x : (x == 0.0f ? 0.0f : x); }
+// fmin and fmax ([c.math], ISO/IEC 9899 7.12.12): a NaN argument is treated as missing data, so the other one is returned.
+inline float fmin(float x, float y) { return (y < x || x != x) ? y : x; }
+inline float fmax(float x, float y) { return (y > x || x != x) ? y : x; }
+inline float fdim(float x, float y) { return x > y ? x - y : 0.0f; }
 inline float floor(float x) { return (float)okay_math::floor_d((double)x); }
 inline float ceil(float x) { return (float)(-okay_math::floor_d(-(double)x)); }
 inline float trunc(float x) { return (float)okay_math::trunc_d((double)x); }

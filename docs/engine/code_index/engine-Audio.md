@@ -2,7 +2,7 @@
 
 # Code index: engine-Audio
 
-Back to the [code index](../code_index.md). 11 headers, 33 names.
+Back to the [code index](../code_index.md). 11 headers, 32 names.
 
 ## `engine/include/okay/Audio/AudioByteSource.hpp`
 
@@ -58,11 +58,10 @@ Back to the [code index](../code_index.md). 11 headers, 33 names.
 
 ## `engine/include/okay/Audio/WavDecoder.hpp`
 
-- `Limits` struct, line 25: Budgets for hostile input. The defaults refuse anything that would need more than about 512 MiB.
-- `Encoding` enum, line 33
-- `WavAudio` struct, line 35
-- `ToS16` function, line 54: Interleaved signed 16-bit samples (what SDL_LoadWAV returns for a 16-bit result): rounds to the
-- `OwnWavEnabled` function, line 58: True when the own decoder is the one AudioClip::LoadWAV should use: the build default
+- `Limits` struct, line 26: Budgets for hostile input. The defaults refuse anything that would need more than about 512 MiB.
+- `Encoding` enum, line 34
+- `WavAudio` struct, line 36
+- `ToS16` function, line 55: Interleaved signed 16-bit samples (the launcher's playback format): rounds to the
 
 ## `engine/include/okay/Audio/WavPlayback.hpp`
 

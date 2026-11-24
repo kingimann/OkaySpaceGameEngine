@@ -537,8 +537,26 @@ private:
             out = -out;
             return true;
         }
-        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0] && e.ty && isFp(*e.ty))
-            return fpConst(*e.kids[0], out);
+        if (e.kind == Expr::Kind::Cast && !e.kids.empty() && e.kids[0] && e.ty && isFp(*e.ty)) {
+            if (!fpConst(*e.kids[0], out)) return false;
+            if (e.ty->kind == Type::Kind::Float) out = static_cast<float>(out);
+            return true;
+        }
+        if (e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.kids[0] && e.kids[1] && e.checked && isFp(*e.checked) &&
+            (e.text == "+" || e.text == "-" || e.text == "*" || e.text == "/")) {
+            // A constant expression in float or double, rounded as the run-time operation would
+            // be (IEEE 754 round to nearest in the operation's type).
+            double a = 0, b = 0;
+            if (!fpConst(*e.kids[0], a) || !fpConst(*e.kids[1], b)) return false;
+            if (e.checked->kind == Type::Kind::Float) {
+                float fa = static_cast<float>(a), fb = static_cast<float>(b);
+                float r = e.text == "+" ? fa + fb : e.text == "-" ? fa - fb : e.text == "*" ? fa * fb : fa / fb;
+                out = r;
+            } else {
+                out = e.text == "+" ? a + b : e.text == "-" ? a - b : e.text == "*" ? a * b : a / b;
+            }
+            return true;
+        }
         std::int64_t v = 0;
         if (constInt(e, v)) {
             out = static_cast<double>(v);
@@ -1007,7 +1025,9 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.fields = p.fields;
-            a.agg = !p.fields.empty();
+            if (a.fields.empty() && e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union))
+                a.fields = layoutOf(e.checked.get());
+            a.agg = !a.fields.empty();
             a.ok = true;
             return a;
         }
@@ -1472,6 +1492,16 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.ok = true;
+            if (e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union)) {
+                // *p of an object is the object (its address), whatever p was lowered from (a
+                // pointer from c ? &x : &y carries no field list).
+                Val v;
+                v.op = p.op;
+                v.fields = p.fields.empty() ? layoutOf(e.checked.get()) : p.fields;
+                v.step = p.step;
+                v.inner = p.inner;
+                return v;
+            }
             Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
             if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // *p of a float or double
             return v;
@@ -1860,6 +1890,15 @@ private:
             if (s->boolean) rhs.op = asBool(rhs.op, rhs.fpw);
             if (s->fpw) {
                 if (rhs.fpw != s->fpw) rhs = cvtFp(rhs, rhs.fpw, s->fpw);
+                if (s->ref) {
+                    // float &r = ...; r = v: a store through the reference (the register holds the
+                    // address; moving v into it lost the store and the address).
+                    storeBits(Operand::vreg(s->reg), rhs.op, s->fpw);
+                    Val out;
+                    out.op = rhs.op;
+                    out.fpw = s->fpw;
+                    return out;
+                }
                 if (s->global) {
                     Inst in;
                     in.op = Inst::Op::GStore;
@@ -2124,7 +2163,9 @@ private:
             if (fnty && argi < static_cast<int>(fnty->params.size())) declared = fnty->params[static_cast<std::size_t>(argi)].type.get();
             int want = declared ? fpWidthOf(declared) : 0;
             if (varExtra && (v.fpw || fpWidthOf(t))) want = 8;
-            if (!declared && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
+            // A float passed to "..." becomes a double (the default argument promotions, ISO C
+            // 6.5.2.2 p7); without a prototype it goes as it is.
+            if (!declared && !varExtra && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
             if (want) {
                 int src = v.fpw ? v.fpw : fpWidthOf(t);
                 if (src != want) v = cvtFp(v, src, want);

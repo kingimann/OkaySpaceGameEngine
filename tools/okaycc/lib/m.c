@@ -6,7 +6,9 @@
  * to double (or float), so it is the correctly rounded result except in rare cases where the true
  * value lies within about 2^-100 of a halfway point. sin and cos reduce the argument with a 106-bit
  * pi/2: for |x| above 2^20 that loses accuracy (not handled yet). sqrt is not here: it is the
- * SQRTSD instruction (__builtin_sqrt), which IEEE 754 rounds exactly. */
+ * SQRTSD instruction (__builtin_sqrt), which IEEE 754 rounds exactly. tan is sin / cos; atan uses
+ * the halving identity and its series; atan2, asin and acos are built on it (asin and acos with
+ * (1 - x)(1 + x) kept exact); log2 is log x / ln 2. */
 
 typedef struct {
     double hi;
@@ -354,6 +356,128 @@ double __okay_pow(double x, double y) {
     return neg ? -r : r;
 }
 
+/* sqrt of a double-double (x > 0): the hardware root, then one Newton step in double-double. */
+static dd ddSqrt(dd x) {
+    if (x.hi <= 0.0) return mk(0.0, 0.0);
+    double s = __builtin_sqrt(x.hi);
+    dd r = ddSub(x, twoProd(s, s));
+    return quickSum(s, r.hi / (2.0 * s));
+}
+/* atan of a double-double. |x| > 1 uses atan x = pi/2 - atan(1/x); then the halving identity
+ * atan x = 2 atan(x / (1 + sqrt(1 + x^2))) three times (|x| <= tan(pi/32)), then the series
+ * x - x^3/3 + x^5/5 - ... */
+static dd atanDD(dd x) {
+    int neg = x.hi < 0;
+    if (neg) x = ddNeg(x);
+    int inv = x.hi > 1.0;
+    if (inv) x = ddDiv(mk(1.0, 0.0), x);
+    int halvings = 3;
+    int h;
+    for (h = 0; h < halvings; h = h + 1) {
+        dd root = ddSqrt(ddAdd(mk(1.0, 0.0), ddMul(x, x)));
+        x = ddDiv(x, ddAdd(mk(1.0, 0.0), root));
+    }
+    dd x2 = ddMul(x, x);
+    dd term = x;
+    dd sum = x;
+    int k;
+    int sign = -1;
+    for (k = 3; k < 200; k = k + 2) {
+        term = ddMul(term, x2);
+        dd add = ddDivD(term, (double)k);
+        if (sign < 0) sum = ddSub(sum, add);
+        else sum = ddAdd(sum, add);
+        sign = -sign;
+        double a = add.hi < 0 ? -add.hi : add.hi;
+        if (a < 1e-36) break;
+    }
+    sum = ddMulD(sum, 8.0); /* 2^halvings */
+    if (inv) sum = ddSub(gPiOver2, sum);
+    if (neg) return ddNeg(sum);
+    return sum;
+}
+/* atan2 of double-doubles y, x (not both zero), by quadrant. */
+static dd atan2DD(dd y, dd x) {
+    dd pi = ddMulD(gPiOver2, 2.0);
+    if (x.hi == 0.0) {
+        if (y.hi > 0) return gPiOver2;
+        return ddNeg(gPiOver2);
+    }
+    dd a = atanDD(ddDiv(y, x));
+    if (x.hi > 0) return a;
+    if (y.hi >= 0) return ddAdd(a, pi);
+    return ddSub(a, pi);
+}
+
+double __okay_tan(double x) {
+    if (isNan(x) || x - x != 0) return qnan();
+    if (x == 0.0) return x;
+    ready();
+    dd v = ddDiv(trigDD(x, 0), trigDD(x, 1));
+    return v.hi + v.lo;
+}
+double __okay_atan(double x) {
+    if (isNan(x)) return x;
+    ready();
+    if (x - x != 0) return x > 0 ? gPiOver2.hi : -gPiOver2.hi;
+    if (x == 0.0) return x;
+    dd v = atanDD(mk(x, 0.0));
+    return v.hi + v.lo;
+}
+double __okay_atan2(double y, double x) {
+    if (isNan(x) || isNan(y)) return qnan();
+    ready();
+    int ysign = (bitsOf(y) >> 63) != 0;
+    int xsign = (bitsOf(x) >> 63) != 0;
+    double pi = gPiOver2.hi * 2.0; /* pi rounded (2 * a double is exact) */
+    if (y == 0.0) {
+        /* atan2(+-0, x): +-0 for x > 0 or +0, +-pi for x < 0 or -0 (C F.10.1.4) */
+        if (xsign) return ysign ? -pi : pi;
+        return y;
+    }
+    if (x == 0.0) return ysign ? -gPiOver2.hi : gPiOver2.hi;
+    if (y - y != 0 || x - x != 0) {
+        /* an infinite argument */
+        double quarter = gPiOver2.hi * 0.5;
+        double r;
+        if (y - y != 0 && x - x != 0) r = xsign ? 3.0 * quarter : quarter;
+        else if (y - y != 0) r = gPiOver2.hi;
+        else r = xsign ? pi : 0.0;
+        return ysign ? -r : r;
+    }
+    dd v = atan2DD(mk(y, 0.0), mk(x, 0.0));
+    return v.hi + v.lo;
+}
+/* asin and acos through atan2 with sqrt((1 - x)(1 + x)) kept in double-double. */
+static dd oneMinusSq(double x) { return ddMul(twoSum(1.0, -x), twoSum(1.0, x)); }
+double __okay_asin(double x) {
+    if (isNan(x) || x > 1.0 || x < -1.0) return qnan();
+    if (x == 0.0) return x;
+    ready();
+    dd v = atan2DD(mk(x, 0.0), ddSqrt(oneMinusSq(x)));
+    if (x == 1.0) v = gPiOver2;
+    if (x == -1.0) v = ddNeg(gPiOver2);
+    return v.hi + v.lo;
+}
+double __okay_acos(double x) {
+    if (isNan(x) || x > 1.0 || x < -1.0) return qnan();
+    if (x == 1.0) return 0.0;
+    ready();
+    dd v;
+    if (x == -1.0) v = ddMulD(gPiOver2, 2.0);
+    else v = atan2DD(ddSqrt(oneMinusSq(x)), mk(x, 0.0));
+    return v.hi + v.lo;
+}
+double __okay_log2(double x) {
+    if (isNan(x)) return x;
+    if (x < 0) return qnan();
+    if (x == 0) return -inf();
+    if (x - x != 0) return x;
+    ready();
+    dd l = ddDiv(logDD(x), gLn2);
+    return l.hi + l.lo;
+}
+
 /* The float functions: the double-double value rounded once to float. */
 float __okay_sinf(float x) {
     double d = (double)x;
@@ -372,3 +496,15 @@ float __okay_logf(float x) { return (float)__okay_log((double)x); }
 float __okay_log10f(float x) { return (float)__okay_log10((double)x); }
 float __okay_expf(float x) { return (float)__okay_exp((double)x); }
 float __okay_powf(float x, float y) { return (float)__okay_pow((double)x, (double)y); }
+float __okay_tanf(float x) {
+    double d = (double)x;
+    if (isNan(d) || d - d != 0) return (float)qnan();
+    if (d == 0.0) return x;
+    ready();
+    return ddToFloat(ddDiv(trigDD(d, 0), trigDD(d, 1)));
+}
+float __okay_atanf(float x) { return (float)__okay_atan((double)x); }
+float __okay_atan2f(float y, float x) { return (float)__okay_atan2((double)y, (double)x); }
+float __okay_asinf(float x) { return (float)__okay_asin((double)x); }
+float __okay_acosf(float x) { return (float)__okay_acos((double)x); }
+float __okay_log2f(float x) { return (float)__okay_log2((double)x); }

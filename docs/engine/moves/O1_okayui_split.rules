@@ -254,3 +254,8 @@ drop: ^\s*unsigned\ h\ =\ 2166136261u;$
 add: ^\s*unsigned\ h\ =\ 2166136261u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\),\ the\ avatar\ colour\ hash$
 drop: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;$
 add: ^\s*if\ \(name\)\ for\ \(const\ char\*\ p\ =\ name;\ \*p;\ \+\+p\)\ h\ =\ \(h\ \^\ \(unsigned\ char\)\*p\)\ \*\ 16777619u;\ \ \ //\ dup\-allow:\ moved\ verbatim\ from\ OkayUI\.cpp\ \(O1\ split\)$
+
+# ---- part 3: OkayUI_Capture.cpp (BeginCapture / EndCapture and GetTexturePixels)
+drop: ^\s*namespace\ \{\ void\ captureFrameEnd\(\)\ \{\ g_cap\.depth\ =\ 0;\ \}\ \}$
+add: ^\s*namespace\ ui_core\ \{\ void\ captureFrameEnd\(\)\ \{\ g_cap\.depth\ =\ 0;\ \}\ \}$
+drop: ^\s*void\ captureFrameEnd\(\);\ \ \ //\ below\ \(Capture\):\ a\ capture\ left\ open\ ends\ with\ the\ frame$

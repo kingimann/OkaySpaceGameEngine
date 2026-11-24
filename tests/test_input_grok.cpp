@@ -2,6 +2,7 @@
 #include "test_framework.hpp"
 #include "okay/Input/ActionSet.hpp"
 #include "okay/Input/ActionEditor.hpp"
+#include "okay/Input/Gestures.hpp"
 #include <cmath>
 #include <string>
 
@@ -110,6 +111,21 @@ int main() {
         CHECK(other > 0.98f);          // pad 2 keeps its own 1, it is not dragged down by pad 1
         Input::FeedGamepadAt(0, {0, 0}, 0);
         Input::FeedGamepadAt(1, {0, 0}, 0);
+    }
+
+    RUN_SUITE("swipe without clearing the touch list");
+    {
+        Gestures::Reset();
+        Input::FeedTouch(1, 0, {100, 300});
+        Gestures::Tick(0.0);
+        Input::FeedTouch(1, 1, {100, 80});
+        Gestures::Tick(0.10);
+        Input::FeedTouch(1, 2, {100, 60});
+        Gestures::Tick(0.12);
+        CHECK(Gestures::Happened("swipe up"));
+        CHECK(Gestures::SwipeDirection() == "up");
+        Input::ClearTypedText();
+        Gestures::Reset();
     }
 
     TEST_MAIN_RESULT();

@@ -348,8 +348,10 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
     if (!t) return;
     t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
     t->position = position;
-    if (state == 2) t->phase = Touch::Phase::Ended;     // t->began stays true when it went down this frame
-    else if (t->phase != Touch::Phase::Began) t->phase = Touch::Phase::Moved;
+    // A later sample is a move even when the press is still marked Began. Otherwise a swipe
+    // never reaches the gesture reader unless something else clears the touch list first.
+    if (state == 2) t->phase = Touch::Phase::Ended;
+    else if (state == 1) t->phase = Touch::Phase::Moved;
 }
 
 float Input::MouseWheel() { return s_mouseWheel; }

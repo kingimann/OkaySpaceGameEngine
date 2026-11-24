@@ -1035,6 +1035,34 @@ add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --wa
 
 # Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
 # physics scenes move bit-for-bit the same with either one (docs/engine/perf_log.md)
+# OkayScript, the standalone language (okayscript/, docs/scripting/scripting.md "Standalone OkayScript"): its tests link
+# only okayscript_lang, never the engine. Lexer, parser, interpreter, natives and errors run real code and check output.
+foreach(_oks lexer parser interpreter native errors)
+    add_executable(test_okayscript_lang_${_oks} ${PROJECT_SOURCE_DIR}/okayscript/tests/test_${_oks}.cpp)
+    target_link_libraries(test_okayscript_lang_${_oks} PRIVATE okayscript::lang)
+    add_test(NAME okayscript_lang_${_oks} COMMAND test_okayscript_lang_${_oks})
+endforeach()
+# The okayscript CLI: each tests/okayscript_cli/<case> runs the real program and checks stdout, stderr and the exit code.
+file(GLOB _oks_cases RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.out ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.err
+     ${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli/*.code)
+set(_oks_names "")
+foreach(_c IN LISTS _oks_cases)
+    get_filename_component(_n ${_c} NAME_WE)
+    list(APPEND _oks_names ${_n})
+endforeach()
+list(REMOVE_DUPLICATES _oks_names)
+foreach(_n IN LISTS _oks_names)
+    add_test(NAME okayscript_cli_${_n}
+             COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:okayscript_cli> -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/okayscript_cli
+                     -DCASE=${_n} -P ${PROJECT_SOURCE_DIR}/okayscript/tests/run_cli_case.cmake)
+endforeach()
+# The language and its CLI do not depend on the engine: no engine include in okayscript/, no engine library linked.
+add_test(NAME okayscript_no_engine
+         COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}/okayscript
+                 "-DLIBS=$<JOIN:$<TARGET_PROPERTY:okayscript_cli,LINK_LIBRARIES>,|>"
+                 -P ${PROJECT_SOURCE_DIR}/okayscript/tests/check_no_engine.cmake)
+
 # Our own physics core (okay::physcore, docs/physics/physics_core.md): links only that small library, not the engine.
 add_executable(test_physcore_tree test_physcore_tree.cpp)
 target_link_libraries(test_physcore_tree PRIVATE okay::physcore)

@@ -161,3 +161,25 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text
 - **Seen as:** "unknown function"; a function behaves differently than the reference says; a function exists in OkayScript but not in a graph node or the typed API
 - **Ask me like:** "work on 13.7.6, add a capsule cast"; "list the built-ins for camera shake"
+
+### 13.8 Standalone OkayScript language and CLI
+- **System:** OkayScript Home: `okayscript/`
+- **What:** OkayScript as a library that needs only the C++17 standard library, so other programs can run it, plus the `okayscript` command-line program that runs `.okay` files. The engine's OkayScriptVM already uses its lexer; its parser and runtime are still the engine's own (moving the engine onto this library is the next step).
+- **Parts:**
+  - 13.8.1 Tokens, lexer, errors - `okayscript/include/okayscript/Token.hpp`, `Lexer.hpp`, `Error.hpp` - moved out of `engine/src/Scripting/OkayScriptVMInternal.hpp`; the engine uses them; SyntaxError and RuntimeError with line and column
+  - 13.8.2 Syntax tree and parser - `okayscript/include/okayscript/Ast.hpp`, `Parser.hpp` - the engine VM's grammar without classes, coroutines, events and scene objects; every node keeps its line; `Dump()` prints the tree's shape
+  - 13.8.3 Values, scopes and the interpreter - `okayscript/include/okayscript/Value.hpp`, `Environment.hpp`, `Interpreter.hpp` - numbers (64-bit), text, lists, maps, lambdas; function-level and dynamic scoping as in the engine; call-depth and loop limits
+  - 13.8.4 Native functions - `okayscript/include/okayscript/Native.hpp` - `Interpreter::Define(name, fn, Arity)`; arity and argument-type errors with the calling line; `Host` hooks for an embedder's own names
+  - 13.8.5 Standard natives - `okayscript/include/okayscript/Stdlib.hpp` - print, println, write, input, len, str, num, type, math, exit, PI
+  - 13.8.6 Command-line runner - `okayscript/cli/main.cpp` - `okayscript file.okay [args]`, `okayscript -e "code"`; runs the top level then `main()`; exit 0 / 1 runtime error / 2 syntax error / 3 usage; errors as `file:line: message`
+- **Code:** `okayscript/`
+- **API:** `okayscript::Interpreter` (`Define`, `Run`, `Call`, `SetGlobal`, `GetGlobal`, `SetHost`, `GetLimits`), `okayscript::Args`, `okayscript::Arity`, `okayscript::InstallStandardLibrary`, `okayscript::ParseSource`
+- **Editor:** none
+- **Docs:** `docs/scripting/scripting.md` ("Standalone OkayScript")
+- **Tests:** `okayscript_lang_lexer`, `okayscript_lang_parser`, `okayscript_lang_interpreter`, `okayscript_lang_native`, `okayscript_lang_errors`, `okayscript_cli_*` (cases in `tests/okayscript_cli/`), `okayscript_no_engine`
+- **Status:** Partial - the standalone language and CLI work and are tested on Linux; the engine uses only the shared lexer so far, its parser and runtime are a second copy until the integration step (docs/status/UNFINISHED.md "OkayScript standalone core"); Windows build unverified
+- **Open:** move the engine's OkayScriptVM onto this parser and runtime (its builtins as natives, its scene names through `Host`); classes and coroutines are not in the standalone language; the engine keeps 32-bit numbers, the library 64-bit
+- **Related:** 13.1, 13.7
+- **Words:** okayscript cli, okayscript.exe, run .okay file, standalone script language, embed OkayScript, native function, register C++ function, okayscript_lang, interpreter library
+- **Seen as:** "okayscript: can't read"; a script works in the CLI but not in the engine (or the other way round); a native says "takes 2 arguments, got 3"
+- **Ask me like:** "work on 13.8.4, add a native"; "move the engine onto okayscript_lang"

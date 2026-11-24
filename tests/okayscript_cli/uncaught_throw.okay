@@ -1,0 +1,11 @@
+function check(hp) {
+    if (hp < 0)
+        throw "hp can't be negative: " + hp
+    return hp
+}
+try {
+    check(-1)
+} catch (e) {
+    print("caught:", e)
+}
+check(-5)

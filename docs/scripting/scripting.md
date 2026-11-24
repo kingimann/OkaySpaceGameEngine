@@ -10,6 +10,7 @@
 
 - [OkayScript](#okayscript-1) (was `docs/scripting.md`)
 - [OkayScript function reference](#okayscript-function-reference) (was `docs/scripting_reference.md`)
+- [Standalone OkayScript](#standalone-okayscript) (internal notes: the engine-independent library and CLI)
 
 ## OkayScript
 
@@ -1742,3 +1743,33 @@ If this object has a collider, define either of these to react to contacts:
 function on_collision() { /* hit a solid */ }
 function on_trigger()   { /* entered a trigger volume */ }
 ```
+
+## Standalone OkayScript
+
+*Internal notes, 2026-11-24 (branch `claude/okayscript-lang-1`; feature map 13.8; open items in `docs/status/UNFINISHED.md`
+"OkayScript standalone core").*
+
+- **Where:** `okayscript/` (library `okayscript_lang`, C++17 standard library only; CLI `okayscript_cli`, program name
+  `okayscript`). Headers in `okayscript/include/okayscript/`: `Token`, `Lexer`, `Error`, `Ast`, `Parser`, `Value`,
+  `Environment`, `Interpreter`, `Native`, `Stdlib`, `OkayScript` (all of them).
+- **Shared with the engine today:** only the lexer. `Tok`, `Token`, `ScriptError` and `Lexer` moved out of
+  `engine/src/Scripting/OkayScriptVMInternal.hpp` unchanged; the engine VM uses them through `using` lines and links
+  `okayscript_lang`. The engine's parser, syntax tree and runtime are still its own.
+- **Language:** the engine VM's grammar and rules without classes, coroutines, events, statics and scene objects.
+  Same rules: blocks open no scope, a call does, and every scope on the stack is visible (dynamic scoping, so lambdas
+  do not capture); a name nobody set reads as 0; `x / 0` is 0; an index outside a list reads as 0; `==` compares text as
+  text, anything else as numbers. Differences from the engine: numbers are 64-bit (the engine: 32-bit floats); a
+  declaration's words stop at the end of its line; `"abc"[1]` gives `"b"`; `m.key = v` sets a map entry; runtime errors
+  carry the line of the statement that failed; `print` of a lambda shows `<function>`.
+- **Natives:** `Interpreter::Define(name, fn, Arity)`. `Args::Number/String/Bool/List/Map(i)` check one argument's type;
+  `Args::Fail` and any C++ exception become a runtime error on the calling line. Natives are found before script
+  functions (engine order). `okayscript::Host` (`ReadName`, `WriteName`, `CallUnknown`) is the seam for an embedder's
+  own names; the engine is meant to fill it in when it moves onto the library.
+- **CLI:** `okayscript file.okay [args]` runs the top level, then `main()` (given the argument list when it has a
+  parameter; the list is also the global `args`); `okayscript -e "code"`. Exit 0, 1 runtime error, 2 syntax error,
+  3 usage or unreadable file, or the code given to `exit(n)`. Errors on stderr as `file:line: message`. The CLI turns
+  the loop limit off; the recursion limit (200 calls deep) stays.
+- **Tests:** `okayscript_lang_lexer`, `_parser`, `_interpreter`, `_native`, `_errors` (link only the library);
+  `okayscript_cli_<case>` from `tests/okayscript_cli/` (`.okay`, `.args`, `.in`, `.out`, `.err`, `.code`);
+  `okayscript_no_engine` (no engine include under `okayscript/`, the CLI links no engine library; CMake also refuses to
+  configure if it does).

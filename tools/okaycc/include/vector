@@ -4,6 +4,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdlib>
+#include <initializer_list>
 #include <new>
 #include <utility>
 namespace std {
@@ -23,6 +24,13 @@ public:
         reserve(n);
         for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(v);
         size_ = n;
+    }
+    vector(initializer_list<T> il) : data_(nullptr), size_(0), cap_(0) {
+        reserve(il.size());
+        for (const T *p = il.begin(); p != il.end(); ++p) {
+            new (data_ + size_) T(*p);
+            ++size_;
+        }
     }
     vector(const vector<T> &o) : data_(nullptr), size_(0), cap_(0) {
         reserve(o.size_);

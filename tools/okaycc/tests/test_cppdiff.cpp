@@ -267,6 +267,10 @@ int main() {
         engineDiff("tests/progs_cpp_engine/mip_main.cpp", "../../engine/src/Texture/Mip.cpp",
                    "../../engine/src/Texture/Texture.cpp");
         engineDiff("tests/progs_cpp_engine/buildinfo_main.cpp", "../../engine/src/Core/BuildInfo.cpp");
+        // Round 19: MipBudget.cpp (priority_queue, nested lambdas, log2) and DynamicTree.cpp
+        // (lambdas in member functions, F&& member templates, initializer-list constructors).
+        engineDiff("tests/progs_cpp_engine/mipbudget_main.cpp", "../../engine/src/Optimize/MipBudget.cpp");
+        engineDiff("tests/progs_cpp_engine/dyntree_main.cpp", "../../engine/src/Physics/Core/DynamicTree.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

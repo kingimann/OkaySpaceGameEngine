@@ -972,7 +972,24 @@ private:
         comma->ival = 7;
         comma->text = tmp;
         comma->ty = cloneType(td);
-        if (T && userCtors_.count(tag)) {
+        bool listCtor = false;
+        if (T)
+            for (const Param& q : T->params)
+                if (q.name == "<ctor>" && q.type && q.type->params.size() == 1 && q.type->params[0].type) {
+                    const Type* pt = q.type->params[0].type.get();
+                    if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (pt->kind == Type::Kind::Struct && (pt->tag.compare(0, 22, "std::initializer_list<") == 0 || pt->tag.compare(0, 17, "initializer_list<") == 0))
+                        listCtor = true;
+                }
+        if (T && userCtors_.count(tag) && listCtor) {
+            // An initializer-list constructor takes the whole list (the checker builds it).
+            auto br = mk(Expr::Kind::Brace);
+            br->ival = 5;
+            br->kids = std::move(args);
+            std::vector<std::unique_ptr<Expr>> one;
+            one.push_back(std::move(br));
+            comma->kids.push_back(ctorCall(tag, eAddr(eName(tmp, pos), pos), std::move(one), pos));
+        } else if (T && userCtors_.count(tag)) {
             comma->kids.push_back(ctorCall(tag, eAddr(eName(tmp, pos), pos), std::move(args), pos));
         } else {
             std::unique_ptr<Expr> seq;
@@ -3433,8 +3450,15 @@ private:
                     return;
                 }
                 std::unique_ptr<Expr> init;
-                if (eatP("=")) init = parseInitializer();
-                else if (isP("{") && type && type->kind != Type::Kind::Function) {
+                if (eatP("=")) {
+                    Pos bp = here();
+                    init = parseInitializer();
+                    // T x = {a, b}; for a class with constructors: copy-list-initialization runs a
+                    // constructor as T x{a, b} does ([dcl.init.list]/3).
+                    if (init && init->kind == Expr::Kind::Brace && type && type->kind == Type::Kind::Struct &&
+                        !type->tag.empty() && userCtors_.count(type->tag))
+                        init = braceTemp(*type, std::move(init->kids), bp);
+                } else if (isP("{") && type && type->kind != Type::Kind::Function) {
                     // T x{a, b}; ([dcl.init.list]): a class from a T{a, b} temporary built in place,
                     // a scalar from its one value, an array from the list.
                     Pos bp = here();

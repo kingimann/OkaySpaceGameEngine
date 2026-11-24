@@ -1787,6 +1787,27 @@ private:
                 err(e.line, e.col, "'" + tag + "' has no constructor");
                 return bad(e.line, e.col);
             }
+            if (e.kids.size() == 3 && e.kids[2] && e.kids[2]->kind == Expr::Kind::Brace && e.kids[2]->ival == 5) {
+                // T{a, b, ...} for a class with an initializer-list constructor ([over.match.list]):
+                // the elements go into a hidden array and the constructor gets
+                // std::initializer_list<E>{array, n} ([dcl.init.list]/5).
+                for (const Param* c : cands) {
+                    if (!c->type || c->type->params.size() != 1 || !c->type->params[0].type) continue;
+                    const Type* pt = c->type->params[0].type.get();
+                    if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (pt->kind != Type::Kind::Struct || (pt->tag.compare(0, 22, "std::initializer_list<") != 0 && pt->tag.compare(0, 17, "initializer_list<") != 0)) continue;
+                    auto list = initList(*e.kids[2], *pt);
+                    if (!list) return bad(e.line, e.col);
+                    e.kids[2] = std::move(list);
+                    c0.text = c->mangled;
+                    return checkCall(e);
+                }
+                // no such constructor: the elements are the arguments
+                auto br = std::move(e.kids[2]);
+                e.kids.pop_back();
+                for (auto& k : br->kids) e.kids.push_back(std::move(k));
+                return checkCall(e);
+            }
             const Param* pick = pickOverload(cands, e, 2);
             c0.text = pick->mangled;
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "throw") {
@@ -2308,6 +2329,62 @@ private:
         for (const Param& p : it->second) cands.push_back(&p);
         const Param* pick = pickOverload(cands, e, 1);
         if (pick) e.kids[0]->text = pick->mangled;
+    }
+
+    // {a, b, ...} as a std::initializer_list<E> (our <initializer_list>: fields b_ and n_): a hidden
+    // array E[n] set from the elements and a hidden list pointing at it. Both live to the end of the
+    // full expression's statement block, like the temporaries of [dcl.init.list]/6.
+    std::unique_ptr<Expr> initList(Expr& br, const Type& il) {
+        auto it = canonStructs().find(il.tag);
+        const Type* elem = nullptr;
+        if (it != canonStructs().end() && it->second)
+            for (const Param& f : it->second->params)
+                if (f.name == "b_" && f.type && f.type->inner) elem = f.type->inner.get();
+        if (!elem) {
+            err(br.line, br.col, "std::initializer_list without its element type");
+            return nullptr;
+        }
+        auto E = cloneType(*elem);
+        E->cnst = false;
+        std::size_t n = br.kids.size();
+        auto arrT = prim(Type::Kind::Array);
+        arrT->inner = cloneType(*E);
+        arrT->bound = mkE(Expr::Kind::Int, br);
+        arrT->bound->ival = n == 0 ? 1 : n;
+        std::string arr = newTemp(*arrT, br, false);
+        std::string lst = newTemp(il, br, false);
+        std::unique_ptr<Expr> seq;
+        auto add = [&](std::unique_ptr<Expr> x) { seq = seq ? eCommaNode(std::move(seq), std::move(x), br) : std::move(x); };
+        for (std::size_t i = 0; i < n; ++i) {
+            auto at = mkE(Expr::Kind::Index, br);
+            at->kids.push_back(mkName(arr, br));
+            auto ix = mkE(Expr::Kind::Int, br);
+            ix->ival = i;
+            at->kids.push_back(std::move(ix));
+            std::unique_ptr<Expr> v = std::move(br.kids[i]);
+            if (v && v->kind == Expr::Kind::Brace && E->kind == Type::Kind::Struct) braceToTemp(*v, *E);
+            if (E->kind == Type::Kind::Struct && !E->tag.empty()) {
+                auto call = mkE(Expr::Kind::Call, br);
+                call->kids.push_back(mkName("\x01" "cinit:" + E->tag, br));
+                call->kids.push_back(eUnary("&", std::move(at), br));
+                call->kids.push_back(std::move(v));
+                add(std::move(call));
+            } else {
+                add(eAssignNode(std::move(at), std::move(v), br));
+            }
+        }
+        auto fld = [&](const char* f) {
+            auto m = mkE(Expr::Kind::Member, br);
+            m->text = ".";
+            m->kids.push_back(mkName(lst, br));
+            m->kids.push_back(mkName(f, br));
+            return m;
+        };
+        auto cnt = mkE(Expr::Kind::Int, br);
+        cnt->ival = n;
+        add(eAssignNode(fld("b_"), mkName(arr, br), br));
+        add(eAssignNode(fld("n_"), std::move(cnt), br));
+        return eCommaNode(std::move(seq), mkName(lst, br), br);
     }
 
     // ---- Lambdas (see LambdaInfo in ast.hpp; [expr.prim.lambda]) ----

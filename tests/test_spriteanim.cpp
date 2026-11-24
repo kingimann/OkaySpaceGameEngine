@@ -6,6 +6,14 @@ using namespace okay;
 int main() {
     RUN_SUITE("spriteanim");
 
+    // Adding an animator also adds the sprite it drives, when the object has none.
+    {
+        Scene scene("Need");
+        GameObject* go = scene.CreateGameObject("Hero");
+        go->AddComponent<SpriteAnimator>();
+        CHECK(go->GetComponent<SpriteRenderer>() != nullptr);
+    }
+
     // --- Animator drives the SpriteRenderer's texture over time ---
     {
         Scene scene("Anim");

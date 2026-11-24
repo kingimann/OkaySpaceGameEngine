@@ -1,6 +1,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/SpriteAnimator.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -290,6 +291,14 @@ std::string GameObject::Path() const {
         if (i > 0) out += '/';
     }
     return out;
+}
+
+namespace {
+// A sprite animator draws through the sprite on the same object. Declared once, for every build.
+struct SpriteAnimatorNeedsRenderer {
+    SpriteAnimatorNeedsRenderer() { RequireComponent<SpriteAnimator, SpriteRenderer>(); }
+};
+const SpriteAnimatorNeedsRenderer kSpriteAnimatorNeedsRenderer;
 }
 
 void GameObject::StripToTransform() {

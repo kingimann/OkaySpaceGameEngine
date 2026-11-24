@@ -5,6 +5,7 @@
 #include "okay/Audio/AudioClip.hpp"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace okay {
 
@@ -174,6 +175,36 @@ private:
     std::vector<std::string> m_exts;
     std::function<Image(const std::string&)> m_fn;
 };
+// A picture of a .okaydata file: one bar per field line, so two files do not share a tile.
+class DataThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    bool Handles(const std::string& e) const override { return e == "okaydata"; }
+    Image Render(const std::string& absolutePath, std::string* error) override {
+        std::ifstream in(absolutePath);
+        if (!in) { if (error) *error = "cannot read the data file"; return Image(); }
+        std::vector<int> lens;
+        std::string line;
+        while (std::getline(in, line) && lens.size() < 12) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == '#') continue;
+            lens.push_back(static_cast<int>(line.size()));
+        }
+        if (lens.empty()) { if (error) *error = "the data file has no fields"; return Image(); }
+        Image img(128, 128);
+        img.Fill(Color(0.10f, 0.14f, 0.20f, 1.0f));
+        int row = 0;
+        for (int n : lens) {
+            const int w = std::min(112, 12 + n);
+            const int y = 8 + row * 10;
+            const Color bar(0.35f, 0.78f, 0.95f, 1.0f);
+            for (int x = 8; x < 8 + w; ++x)
+                for (int dy = 0; dy < 6; ++dy) img.SetPixel(x, y + dy, bar);
+            ++row;
+        }
+        return img;
+    }
+};
+
 } // namespace
 
 // --- Cache -------------------------------------------------------------------------------------------
@@ -182,6 +213,7 @@ ThumbnailCache::ThumbnailCache(Options options) : m_opt(std::move(options)) {
     m_opt.size = std::max(16, m_opt.size);
     if (m_opt.imageGenerator) m_generators.push_back(std::make_shared<ImageThumbnailGenerator>());
     if (m_opt.audioGenerator) m_generators.push_back(std::make_shared<WaveformThumbnailGenerator>());
+    if (m_opt.dataGenerator) m_generators.push_back(std::make_shared<DataThumbnailGenerator>());
 }
 
 void ThumbnailCache::AddGenerator(std::shared_ptr<ThumbnailGenerator> generator) {
@@ -206,7 +238,7 @@ std::string ThumbnailCache::DiskPathFor(const Guid& guid, std::uint64_t hash) co
 }
 
 bool ThumbnailCache::InMemory(const Guid& guid, std::uint64_t hash) const {
-    return m_index.count(Key{guid, hash}) != 0;
+    return m_index.count(MakeKey(guid, hash)) != 0;
 }
 
 bool ThumbnailCache::OnDisk(const Guid& guid, std::uint64_t hash) const {
@@ -270,7 +302,7 @@ void ThumbnailCache::RemoveStaleOnDisk(const Guid& guid, const std::string& keep
 }
 
 ThumbnailCache::Thumb ThumbnailCache::Get(const Guid& guid, std::uint64_t hash, const std::string& path, AssetType kind) {
-    const Key key{guid, hash};
+    const Key key = MakeKey(guid, hash);
     // 1. Memory.
     auto hit = m_index.find(key);
     if (hit != m_index.end()) {

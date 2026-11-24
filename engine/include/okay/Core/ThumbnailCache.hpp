@@ -60,6 +60,7 @@ public:
         std::string tag = "1";                 ///< bump to invalidate every disk entry (generator changed)
         bool imageGenerator = true;            ///< register ImageThumbnailGenerator
         bool audioGenerator = true;            ///< register WaveformThumbnailGenerator
+        bool dataGenerator = true;             ///< register a picture for .okaydata
     };
     struct Stats {
         std::size_t memoryHits = 0, diskHits = 0, generated = 0, placeholders = 0, failures = 0, evictions = 0, diskWrites = 0;
@@ -99,13 +100,26 @@ public:
     const Stats& GetStats() const { return m_stats; }
     void ResetStats() { m_stats = Stats(); }
     const Options& GetOptions() const { return m_opt; }
+    /// Longest side of pictures generated from now on (8..1024). A different size does not reuse
+    /// a picture made at another size.
+    void SetSize(int size) {
+        if (size < 8) size = 8;
+        if (size > 1024) size = 1024;
+        m_opt.size = size;
+    }
 
 private:
     struct Key {
         Guid guid;
         std::uint64_t hash = 0;
-        bool operator<(const Key& o) const { return guid != o.guid ? guid < o.guid : hash < o.hash; }
+        int size = 0;                      ///< preview size this picture was made at
+        bool operator<(const Key& o) const {
+            if (guid != o.guid) return guid < o.guid;
+            if (hash != o.hash) return hash < o.hash;
+            return size < o.size;
+        }
     };
+    Key MakeKey(const Guid& guid, std::uint64_t hash) const { return Key{guid, hash, m_opt.size}; }
     struct Entry { Key key; std::shared_ptr<const Image> image; bool placeholder = false, failed = false; std::size_t bytes = 0; };
     using List = std::list<Entry>;
 

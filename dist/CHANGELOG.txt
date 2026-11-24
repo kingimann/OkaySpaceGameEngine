@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.903.6
+  Bug fixes and more of our own model readers
+  - Fixed from 2.903.5's known problems: the project's module list is
+    saved again, a streamed sound now matches the same sound loaded
+    whole, the picture import filter setting is read again, and the
+    Visual Script checks cover the new On Damaged and On Button Clicked
+    nodes.
+  - Model files: .vrm, .prj, .ask, .scn, .x3db and .vta files open with
+    our own readers, Doom 3 camera paths (.md5camera) are read, and
+    OGRE characters with a separate skeleton file get their bones.
+  - Behind the scenes: more large editor files split by job (no change
+    in behaviour), and broken links in the internal docs fixed.
+
 v2.903.5
   One input system, Windows file copy fix, cleanup
   - Input: one table of actions and one place where key changes are

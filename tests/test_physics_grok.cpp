@@ -118,6 +118,58 @@ int main() {
         CHECK(!skip.hit);   // the trigger is ignored and the box face is 2 units away
     }
 
+    // A low ledge is stepped onto. A tall wall is not. A steep ramp slides; flat ground does not.
+    RUN_SUITE("character step and slope");
+    {
+        auto body = [](Scene& s, const char* name, Vec3 at) {
+            auto* g = s.CreateGameObject(name);
+            g->transform->localPosition = at;
+            g->AddComponent<BoxCollider3D>()->size = {0.5f, 1.8f, 0.5f};
+            return g;
+        };
+        Scene step("step");
+        auto* floor = step.CreateGameObject("Floor");
+        floor->transform->localPosition = {0, -0.5f, 0};
+        floor->AddComponent<BoxCollider3D>()->size = {20, 1, 20};
+        auto* ledge = step.CreateGameObject("Ledge");
+        ledge->transform->localPosition = {1.3f, 0.15f, 0};
+        ledge->AddComponent<BoxCollider3D>()->size = {1.0f, 0.3f, 2.0f};
+        auto* p = body(step, "Player", {0.3f, 0.9f, 0});
+        MovePlayerBody(step, p, {0.9f, 0, 0}, 0.45f, 50.0f);
+        CHECK(p->transform->Position().y > 1.05f);
+        CHECK(p->transform->Position().x > 0.9f);
+
+        Scene wall("wall");
+        auto* floor2 = wall.CreateGameObject("Floor");
+        floor2->transform->localPosition = {0, -0.5f, 0};
+        floor2->AddComponent<BoxCollider3D>()->size = {20, 1, 20};
+        auto* tall = wall.CreateGameObject("Wall");
+        tall->transform->localPosition = {1.3f, 0.6f, 0};
+        tall->AddComponent<BoxCollider3D>()->size = {1.0f, 1.2f, 2.0f};
+        auto* w = body(wall, "Player", {0.3f, 0.9f, 0});
+        MovePlayerBody(wall, w, {0.9f, 0, 0}, 0.25f, 50.0f);
+        CHECK(w->transform->Position().y < 1.0f);
+        CHECK(w->transform->Position().x < 0.7f);
+
+        Scene flat("flat");
+        auto* floor3 = flat.CreateGameObject("Floor");
+        floor3->transform->localPosition = {0, -0.5f, 0};
+        floor3->AddComponent<BoxCollider3D>()->size = {20, 1, 20};
+        auto* f = body(flat, "Player", {0, 0.9f, 0});
+        MovePlayerBody(flat, f, {0, 0, 0}, 0.3f, 40.0f);
+        CHECK(std::fabs(f->transform->Position().x) < 0.05f);
+
+        Scene ramp("ramp");
+        auto* slope = ramp.CreateGameObject("Ramp");
+        slope->transform->localPosition = {0, 0, 0};
+        slope->transform->localRotation = Quat::AngleAxis(55.0f, {0, 0, 1});
+        slope->AddComponent<BoxCollider3D>()->size = {6, 0.2f, 4};
+        auto* r = body(ramp, "Player", {0, 0.5f, 0});
+        float x0 = r->transform->Position().x;
+        MovePlayerBody(ramp, r, {0, 0, 0}, 0.2f, 30.0f);
+        CHECK(r->transform->Position().x < x0 - 0.1f);
+    }
+
     // A resting crate stays awake when the sleep timer is long, and sleeps when it is short.
     RUN_SUITE("sleep timer");
     {

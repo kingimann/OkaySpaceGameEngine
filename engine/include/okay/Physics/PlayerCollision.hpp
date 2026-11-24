@@ -4,6 +4,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -43,6 +44,68 @@ inline void ResolvePlayerBody(Scene& scene, GameObject* self) {
     }
     Vec3 center = self->transform->Position() + Vec3{0.0f, 0.9f, 0.0f};
     shift(center, scene.physics3D().ResolveSphere(scene, center, 0.4f, self));
+}
+
+/// Degrees between `normal` and straight up. A flat floor is 0. A wall is 90.
+inline float GroundSlopeDegrees(const Vec3& normal) {
+    float mag = normal.Magnitude();
+    float up = mag > 1e-6f ? normal.y / mag : 1.0f;
+    if (up > 1.0f) up = 1.0f;
+    if (up < -1.0f) up = -1.0f;
+    return std::acos(up) * (180.0f / 3.14159265f);
+}
+
+/// Move a transform-driven character by `delta`, then push it out of the world.
+/// A ledge no taller than `stepHeight` is stepped onto instead of blocking the move.
+/// Ground steeper than `maxSlopeDegrees` slides the body downhill. A cube or a capsule
+/// body uses the same push-out as ResolvePlayerBody.
+inline void MovePlayerBody(Scene& scene, GameObject* self, const Vec3& delta,
+                           float stepHeight = 0.3f, float maxSlopeDegrees = 46.0f) {
+    if (!self || !self->transform) return;
+    const Vec3 start = self->transform->Position();
+    auto place = [&](const Vec3& p) {
+        self->transform->SetPosition(p);
+        ResolvePlayerBody(scene, self);
+        return self->transform->Position();
+    };
+    auto along = [](const Vec3& a, const Vec3& b) {
+        Vec3 d{b.x - a.x, 0.0f, b.z - a.z};
+        return d.Magnitude();
+    };
+    Vec3 landed = place(start + delta);
+    const Vec3 wish{delta.x, 0.0f, delta.z};
+    const float wishLen = wish.Magnitude();
+    if (stepHeight > 0.02f && wishLen > 1e-4f && along(start, landed) < wishLen * 0.65f) {
+        const Vec3 blocked = landed;
+        Vec3 raised = place(start + Vec3{0.0f, stepHeight, 0.0f} + wish);
+        Vec3 dropped = place(Vec3{raised.x, raised.y - stepHeight, raised.z});
+        float rise = dropped.y - start.y;
+        if (rise <= stepHeight + 0.05f && rise >= -0.08f && along(start, dropped) > along(start, blocked) + 0.02f)
+            landed = dropped;
+        else
+            self->transform->SetPosition(blocked);
+    }
+    Vec3 feet = self->transform->Position();
+    RaycastHit3D ground = scene.physics3D().Raycast(scene, feet + Vec3{0.0f, 0.2f, 0.0f}, {0.0f, -1.0f, 0.0f},
+                                                    0.8f, self, Physics3D::kAllLayers, false);
+    if (ground.hit && GroundSlopeDegrees(ground.normal) > maxSlopeDegrees) {
+        Vec3 n = ground.normal;
+        float mag = n.Magnitude();
+        if (mag > 1e-6f) n = n * (1.0f / mag);
+        Vec3 down{0.0f, -1.0f, 0.0f};
+        Vec3 slide = down - n * Vec3::Dot(down, n);
+        float sl = slide.Magnitude();
+        if (sl > 1e-4f) {
+            // Move along the slope, then sit back on it. A full push-out after a
+            // move into the solid would cancel the slide.
+            Vec3 pos = self->transform->Position() + slide * (0.5f / sl);
+            self->transform->SetPosition(pos);
+            RaycastHit3D seat = scene.physics3D().Raycast(scene, pos + Vec3{0.0f, 0.4f, 0.0f}, {0.0f, -1.0f, 0.0f},
+                                                          1.5f, self, Physics3D::kAllLayers, false);
+            if (seat.hit && seat.distance > 0.05f)
+                self->transform->SetPosition(self->transform->Position() + Vec3{0.0f, -(seat.distance - 0.05f), 0.0f});
+        }
+    }
 }
 
 } // namespace okay

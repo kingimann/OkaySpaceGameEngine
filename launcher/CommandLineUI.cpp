@@ -10,6 +10,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <cstring>
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okaylcli {
 
@@ -140,7 +141,7 @@ void DrawPage(const Host& host) {
     // ---- the output: read-only text, so it can be selected and copied ----
     Place(L.output, origin);
     if (host.mono) ImGui::PushFont(host.mono, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.07f, 0.075f, 0.09f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kDeep);
     // New lines: show the end. For a few frames, because the box learns its new text height a frame late.
     static int s_follow = 0;
     if (s.Revision() != g_seenRevision) s_follow = 3;

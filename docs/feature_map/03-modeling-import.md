@@ -192,7 +192,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.7.3 Make Playable Character - `Render/ModelImport` - MakePlayableCharacter: Third Person player + model + humanoid IK + Look-At; deactivates any other playable avatar
   - 3.7.4 Facing and collider fit - `Render/ModelImport`, `Physics/ColliderFit` - FaceCharacterModel (facing read from left/right bones), FitCharacterCollider, Fit Collider after rescale
   - 3.7.5 Character Model panel and Fix animations - `Render/ModelImport`, `editor/main.cpp` - DescribeCharacterModel slots (imported, built-in or empty), AutoMapLocomotion, FixCharacterAnimations, Add animation files
-  - 3.7.6 Map Humanoid Bones window - `editor/main.cpp`, `Animation/HumanoidBones` - hand-map engine bones on a rig that auto-detect misses
+  - 3.7.6 Map Humanoid Bones window - `editor/main.cpp`, `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only), `Animation/HumanoidBones` - hand-map engine bones on a rig that auto-detect misses
   - 3.7.7 Rig test assets and harness - `tests/rig_harness.hpp` - eleven rigs (Mixamo, VRoid, Character Creator, Daz, UE mannequin, Fox...) walked through the same motions
 - **Code:** `Render/ModelImport`, `Components/Character`, `Physics/ColliderFit`, `Animation/HumanoidBones`, `editor/main.cpp`, `tests/rig_harness.hpp`
 - **API:** `AttachCharacterModel`, `MakePlayableCharacter`, `FaceCharacterModel`, `FitCharacterCollider`, `DescribeCharacterModel`, `EnableBuiltinAnimations`, `Character::BindCustomMesh`; script `set_character_model(path)`

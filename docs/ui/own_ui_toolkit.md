@@ -3344,7 +3344,51 @@ looked at, then pass. Breaking the Find in Files rule on purpose (a search with 
 `okayui_panels_imgui` 155 checks, the five hosted pictures 0.000% different from the old hosting. The Dear ImGui `ImGui::Begin` calls in
 `editor/` went from 49 to 44 (about 40 real windows; the rest are the dock host, popups and the OkayUI-layer host).
 
-**Left (not this step).** The Input panel (`editor/InputDebugger.hpp`) is also drawn by `tools/input_shots.cpp`, so it moves with that
-tool; the Hierarchy, the Inspector, the Scene view and Project Settings > Modules stay as section 27 says.
+**Left (not this step).** The Input panel moved in section 29 together with `tools/input_shots.cpp`; the Hierarchy, the Inspector, the Scene view and Project Settings > Modules stay as section 27 says.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.
+
+## 29. Five more tool windows on OkayUI only: Map Humanoid Bones, Save Manager, Material, Frame time, Input
+
+Section 28's move (`PanelWindow` / `okayuihost::HostPanelWindow`) for five more windows; their Dear ImGui bodies are deleted and the
+editor keeps the work:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Map Humanoid Bones | `DrawBoneMap` (`editor/main.cpp`): applies the map to the Humanoid Retarget or turns on the built-in animations | `BoneMapModel` (the picks by pointer), `kBoneSlotNames`, `BonePickText`, `BoneMapStatus` | `DrawBoneMap` |
+| Save Manager | `DrawSaveManager` (`editor/main.cpp`): finds the files, loads, sets, deletes, clears and saves keys | `SaveManagerModel` / `State` / `Intent`, `SaveKeyRows`, `SaveKeyMatches`, `SaveTypeName`, `SaveRawValue` | `DrawSaveManager` |
+| Material | `DrawMaterialEditor` (`editor/main.cpp`): copies the values back, file dialog, Save, Apply to Selection | `MaterialModel`, `MaterialPreviewColor`, `MaterialBallIn` (the Project panel's material ball uses it too) | `DrawMaterial` |
+| Frame time | `DrawPerfOverlay` (`editor/main.cpp`): the profiler's numbers, Copy report, Open Profiler | `PerfOverlayModel`, `PerfSections`, `PerfTimesText`, `PerfSleepText`, `PerfPlotCaption` ... | `DrawPerfOverlay` |
+| Input | `DrawInputDebugger` (`editor/InputDebugger.hpp`): `FillInputPanel`, `ApplyInputPanelIntent` | `InputPanelModel` / `State` / `Intent`, `InputResponse` | `DrawInputPanel` |
+
+The titles are the Dear ImGui ones ("Frame time###PerfOverlay" included), so saved layouts keep their place. The Save Manager, Frame
+time and Input fill their model only while the window shows (a `fill` callback, as Stats does), as their Dear ImGui bodies did.
+
+**Toolkit and host changes.** `HostPanelWindow` takes window flags and an optional body size: with `ImGuiWindowFlags_AlwaysAutoResize`
+the window fits itself around a body of that size (the Frame time window; its screen reports `contentW` / `contentH` and the host passes
+them on the next frame). `FramedPlot` and `FramedBar` take an optional width. A shared `PickList` (a list box over `ListWindow`) is used
+by the bone slots, the save file and type lists and the action list. The Material texture field takes an image dragged from the Project
+panel (a Dear ImGui drop target over the OkayUI field, as the Inspector's rows do).
+
+**Small differences from the Dear ImGui bodies.** The Save Manager's Reload sits beside the file list (before, the full-width list
+pushed it off the window's edge) and the bodies scroll in a child. The Map Humanoid Bones verdict is worked out before the window is
+drawn, so after a pick it is one frame late; the action button checks the picks again before it does anything. The Input panel's player
+lines keep the player's number; `tools/input_shots.cpp` draws the Input panel with the OkayUI screen and OkayUI's software renderer
+(the "controllers-typed-actions" picture, which was the same section on its own, is gone).
+
+**Tests.** `okayui_editor_panels`: each window's shared rules, golden pictures (`editorpanels_bonemap`, `_bonemap_list`,
+`_savemanager`, `_savemanager_clear`, `_material`, `_perfoverlay`, `_input`, `_input_curves`) and clicks and typing for every control.
+`okayui_panels_imgui` hosts all five in a Dear ImGui window (the picture against the old hosting) and checks that the Frame time window
+fits itself around its body.
+
+Results (Release, headless): `okayui_editor_panels` 479 checks; the eight new goldens failed first (no picture yet), were written and
+looked at, then pass. `okayui_panels_imgui` 174 checks, the five hosted pictures 0.000% different from the old hosting, the Frame time
+window's content 446 x 414 for a 446 x 414 body. The editor (`okay-editor`) builds. `tools/input_shots.sh` was run against that build
+and wrote the Input panel picture from the engine's real input state (outside the repository). The Dear ImGui `ImGui::Begin` calls in
+`editor/` went from 44 to 39.
+
+**Left (not this step).** Navigation: its Bake Settings, Areas and Stats parts are shared with the Inspector's Nav Mesh Surface body, so
+it moves together with the Inspector's navigation bodies (alone it would need a second copy of them). Timeline: its body is a 1,500-line
+custom track grid, key dragging and inspector, a step of its own.
 
 **Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.

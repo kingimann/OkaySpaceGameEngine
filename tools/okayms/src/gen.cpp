@@ -284,7 +284,7 @@ static Node elide_items(const std::vector<StructDef>* structs, const Type& type,
     } else if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
                type.struct_id < static_cast<int>(structs->size())) {
         for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
-            if (field.name == "__vptr") continue;
+            if (field.name.compare(0, 6, "__vptr") == 0) continue;
             if (*pos >= items.size()) break;
             take(field.type);
         }
@@ -325,7 +325,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
                    type.struct_id < static_cast<int>(structs->size())) {
             size_t k = 0;
             for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 if (k >= node.kids.size()) break;
                 const bool agg = field.type.array_len >= 0;
                 const Node& kid = node.kids[k++];
@@ -363,7 +363,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
             const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
             for (size_t i = 0; i < def.fields.size(); ++i) {
                 const Field& field = def.fields[i];
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const bool nested = field.type.array_len >= 0 || (field.type.base == 3 && field.type.pointers == 0);
                 const Node& item = i < node.kids.size() ? node.kids[i] : nested ? empty : zero;
                 if (def.ref_members.count(field.name) > 0 && item.kind != Node::IntLit && item.kind != Node::Block) {

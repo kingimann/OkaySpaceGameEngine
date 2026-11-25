@@ -3,17 +3,24 @@
 // (".?AVC@@" for a class C, "H" for int), and puts the address of a class's object in the slot before its virtual
 // table, so typeid(*p) finds the dynamic type. name() returns that decorated text (MSVC returns "class C"). Two
 // objects compare equal when their text is equal, so the same type in two files is the same; before() orders by the
-// text. Each object also points to the object of the class's base (single inheritance), and dynamic_cast<T*>(p) is
-// __okay_dynamic_cast below: it reads the dynamic type from the slot before p's table and walks up the bases until it
-// meets T. No exceptions: there is no bad_typeid or bad_cast (dynamic_cast to a reference is not supported).
+// text. Each object also points to the list of its class's direct bases (each base's object and its offset in the
+// class, ended by a null entry), and the virtual table of every class has, in the slot before the type information,
+// the offset of the subobject that points at that table inside the whole object. dynamic_cast<T*>(p) is
+// __okay_dynamic_cast below: it finds the whole object and its dynamic type from p's table, then T among the bases.
+// No exceptions: there is no bad_typeid or bad_cast (dynamic_cast to a reference is not supported).
 #pragma once
 #include <cstddef>
 namespace std {
+class type_info;
+struct __okay_base_entry {
+    const type_info* type;
+    long long offset;
+};
 class type_info {
     const char* name_;
 
 public:
-    const type_info* base__;  // the base class's object, or null (okay-ms's dynamic_cast walks these)
+    const __okay_base_entry* bases__;  // the direct bases, or null (okay-ms's dynamic_cast walks these)
 
 private:
 
@@ -40,14 +47,24 @@ public:
         return h;
     }
 };
-// dynamic_cast<T*>(p) for a class with virtual functions ([expr.dynamic.cast] 8): p when the object's dynamic type is T
-// or derives from T, else null. Single inheritance: a base starts where its derived class starts, so the address is
-// the same.
+// The offset of class `target` inside an object whose class is `ti`, or -1 when it is not one of its bases.
+inline long long __okay_base_offset(const type_info* ti, const type_info* target) {
+    if (*ti == *target) return 0;
+    for (const __okay_base_entry* e = ti->bases__; e != 0 && e->type != 0; ++e) {
+        const long long inner = __okay_base_offset(e->type, target);
+        if (inner >= 0) return e->offset + inner;
+    }
+    return -1;
+}
+// dynamic_cast<T*>(p) for a class with virtual functions ([expr.dynamic.cast] 8): the T inside the whole object p is
+// part of (a cast down, or across to another base), or null when the object has no T.
 inline void* __okay_dynamic_cast(const void* obj, const type_info* target) {
     if (obj == 0) return 0;
-    const type_info* const* table = *(const type_info* const* const*)obj;
-    for (const type_info* ti = table[-1]; ti != 0; ti = ti->base__)
-        if (*ti == *target) return (void*)obj;
-    return 0;
+    const long long* table = *(const long long* const*)obj;
+    const type_info* dyn = (const type_info*)table[-1];
+    const char* whole = (const char*)obj - table[-2];
+    const long long at = __okay_base_offset(dyn, target);
+    if (at < 0) return 0;
+    return (void*)(whole + at);
 }
 }

@@ -227,6 +227,13 @@ struct StructDef {
     // classes of one name (Outer1::Entry and Outer2::Entry) are told apart by it: a name used inside a class finds the
     // class nested there first (find_struct), and members of a nested class are decorated with the outer class too.
     int parent = -1;
+    // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
+    // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
+    // body are read through it.
+    int lam_outer = -1;
+    // Any lambda's closure class written in a member function: that class. Its static members are found from the body
+    // without a capture ([expr.prim.lambda.closure] 13, names are looked up in the enclosing scopes).
+    int lam_scope = -1;
 };
 
 struct Global {

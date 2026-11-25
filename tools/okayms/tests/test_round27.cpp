@@ -30,6 +30,8 @@ const okayms_test::ProgramRun kRunThreads{
      "DeleteCriticalSection", "InitializeConditionVariable", "SleepConditionVariableCS", "WakeAllConditionVariable",
      "InitializeSRWLock", "AcquireSRWLockExclusive", "ReleaseSRWLockExclusive", "Sleep", "SwitchToThread",
      "GetCurrentThreadId", "msvcrt.dll:_beginthreadex"}};
+const okayms_test::ProgramRun kRunAtomic{"r27", {"CreateThread", "WaitForMultipleObjects", "CloseHandle", "SwitchToThread"}};
+const okayms_test::ProgramRun kRunShared{"r27", {"CreateThread", "WaitForMultipleObjects", "CloseHandle", "GetExitCodeThread"}};
 const okayms_test::ProgramRun kRunHttp{"r27", {"winhttp.dll:WinHttpCrackUrl"}};
 }  // namespace
 
@@ -530,6 +532,245 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Lambdas in member functions: [this], [&] and [=] reaching the members of the class through the captured pointer,
+// a lambda in a lambda, and a captureless lambda calling a static member function of the class around it.
+static void r27_lambda_this(Tally& tally) {
+    std::printf("r27_lambda_this\n");
+    okayms_test::run_both(kRun, tally, "lambda_this", std::string(kAlloc) + R"OKMS(
+struct Font { int w = 8; int Advance() const { return w + 1; } static int Base() { return 2; }
+  int Line(int glyphs) const { auto lineW = [this](int g) { return g > 0 ? (g - 1) * Advance() + Base() : 0; }; return lineW(glyphs); }
+  int Sum(int n) { int total = 0; auto add = [&](int k) { total += k * w; this->w += 0; }; for (int i = 0; i < n; ++i) add(i); return total; }
+  int Nested() { auto outer = [this]() { auto inner = [this]() { return w * 2; }; return inner() + w; }; return outer(); }
+  int ByValue(int k) { auto f = [=]() { return k + w; }; w = 100; return f(); }
+};
+int entry(void) {
+  Font f;
+  if (f.Line(3) != 20) return 1;
+  if (f.Sum(4) != 48) return 2;
+  if (f.Nested() != 24) return 3;
+  if (f.ByValue(1) != 101) return 4;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// What okay/Render/Mesh.hpp (included by 157 engine files) stopped at: brace elision for std::array elements, a
+// reference member made from a braced list, x = y = v with objects, a local class whose name a member function also has,
+// a range for over a braced list of pointers, a class template derived from a class template, a fold over operator<<, and
+// the algorithms unique, replace, rotate, the heap operations, transform, equal and nth_element.
+static void r27_mesh_pieces(Tally& tally) {
+    std::printf("r27_mesh_pieces\n");
+    okayms_test::run_both(kRun, tally, "mesh_pieces", std::string(kAlloc) + R"OKMS(
+#include <array>
+#include <vector>
+#include <map>
+#include <tuple>
+#include <sstream>
+#include <string>
+#include <algorithm>
+#include <numeric>
+struct V3 { float x, y, z; };
+struct Mesh {
+  std::vector<V3> vertices;
+  static Mesh Grid(int n) { Mesh m; m.vertices.resize((std::size_t)n); return m; }
+  int LocalGrid() const {
+    struct Grid { int cells = 3; int Count() const { return cells; } };
+    Grid g;
+    return g.Count();
+  }
+  void Bounds(V3& lo, V3& hi) const {
+    if (vertices.empty()) { lo = hi = V3{0, 0, 0}; return; }
+    lo = hi = vertices[0];
+  }
+  static int Twice(int v) { return v * 2; }
+  int Apply(int v) const { auto f = [](int x) { return Twice(x) + 1; }; return f(v); }
+};
+template <typename T> struct Base { T v_; Base() : v_() {} Base(T d) : v_(d) {} T get() const { return v_; } };
+template <typename T> struct Derived : Base<T> { Derived() : Base<T>() {} Derived(T d) : Base<T>(d) {} T twice() const { return this->v_ + this->v_; } };
+template <typename... A> std::string join(const A&... args) { std::ostringstream os; (os << ... << args); return os.str(); }
+int entry(void) {
+  std::vector<std::array<int, 3>> groups;
+  int slot = 4, i = 5;
+  groups.push_back({slot, i, 0});
+  ++groups.back()[2];
+  CK(1, groups.size() == 1 && groups[0][0] == 4 && groups[0][1] == 5 && groups[0][2] == 1);
+  std::vector<std::pair<int, int>> cvv;
+  cvv.push_back({1, 2});
+  struct { std::vector<std::pair<int, int>>& second; } cv{cvv};
+  cv.second.push_back({3, 4});
+  CK(2, cvv.size() == 2 && cvv[1].first == 3);
+  Mesh m;
+  V3 lo, hi;
+  m.Bounds(lo, hi);
+  CK(3, lo.x == 0 && hi.z == 0);
+  m.vertices.push_back(V3{1, 2, 3});
+  m.Bounds(lo, hi);
+  CK(4, lo.y == 2 && hi.z == 3);
+  CK(5, m.LocalGrid() == 3 && Mesh::Grid(2).vertices.size() == 2 && m.Apply(5) == 11);
+  std::vector<int> a = {1, 2}, b = {3};
+  int total = 0;
+  for (std::vector<int>* l : {&a, &b}) total += (int)l->size();
+  CK(6, total == 3);
+  Derived<int> d(21);
+  Derived<bool> db(true);
+  CK(7, d.twice() == 42 && d.get() == 21 && db.get());
+  CK(8, join(1, "-", 2.5, '!') == "1-2.5!");
+  std::vector<int> u = {1, 1, 2, 2, 2, 3, 1};
+  u.erase(std::unique(u.begin(), u.end()), u.end());
+  CK(9, u.size() == 4 && u[2] == 3 && u[3] == 1);
+  std::replace(u.begin(), u.end(), 1, 9);
+  CK(10, u[0] == 9 && u[3] == 9);
+  std::vector<int> r = {1, 2, 3, 4, 5};
+  std::rotate(r.begin(), r.begin() + 2, r.end());
+  CK(11, r[0] == 3 && r[4] == 2);
+  std::vector<int> h = {5, 1, 4, 2};
+  std::make_heap(h.begin(), h.end());
+  CK(12, h[0] == 5);
+  std::pop_heap(h.begin(), h.end());
+  CK(13, h.back() == 5 && h[0] == 4);
+  h.back() = 7;
+  std::push_heap(h.begin(), h.end());
+  CK(14, h[0] == 7);
+  std::vector<int> t(3);
+  std::transform(r.begin(), r.begin() + 3, t.begin(), [](int x) { return x * 10; });
+  CK(15, t[0] == 30 && t[2] == 50 && std::equal(t.begin(), t.end(), t.begin()));
+  std::vector<int> nth = {9, 3, 7, 1};
+  std::nth_element(nth.begin(), nth.begin() + 1, nth.end());
+  CK(16, nth[1] == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// The interlocked intrinsics of <intrin.h>, compiled inline as LOCK-prefixed instructions (on stack and global data).
+static void r27_intrinsics(Tally& tally) {
+    std::printf("r27_intrinsics\n");
+    okayms_test::run_both(kRun, tally, "intrinsics", std::string(kAlloc) + R"OKMS(
+#include <intrin.h>
+int entry(void) {
+  long v = 5;
+  if (_InterlockedExchange(&v, 9) != 5 || v != 9) return 1;
+  if (_InterlockedExchangeAdd(&v, 3) != 9 || v != 12) return 2;
+  if (_InterlockedCompareExchange(&v, 20, 11) != 12 || v != 12) return 3;
+  if (_InterlockedCompareExchange(&v, 20, 12) != 12 || v != 20) return 4;
+  if (_InterlockedIncrement(&v) != 21 || _InterlockedDecrement(&v) != 20) return 5;
+  __int64 w = 0x100000000LL;
+  if (_InterlockedExchangeAdd64(&w, -1) != 0x100000000LL || w != 0xFFFFFFFFLL) return 6;
+  if (_InterlockedCompareExchange64(&w, 7, 0xFFFFFFFFLL) != 0xFFFFFFFFLL || w != 7) return 7;
+  if (_InterlockedExchange64(&w, -2) != 7 || w != -2 || _InterlockedIncrement64(&w) != -1) return 8;
+#ifndef __GNUC__  // MinGW's <intrin.h> has no 8-bit and only some 16-bit forms
+  char c = 'a';
+  if (_InterlockedExchange8(&c, 'b') != 'a' || c != 'b') return 9;
+  if (_InterlockedCompareExchange8(&c, 'z', 'b') != 'b' || c != 'z' || _InterlockedExchangeAdd8(&c, 1) != 'z' || c != '{') return 10;
+  short s = -3;
+  if (_InterlockedExchangeAdd16(&s, 1) != -3 || s != -2 || _InterlockedCompareExchange16(&s, 100, -2) != -2 || s != 100) return 11;
+  if (_InterlockedDecrement16(&s) != 99 || _InterlockedExchange16(&s, -7) != 99 || s != -7) return 12;
+#endif
+  long arr[3] = {1, 2, 3};
+  int i = 1;
+  if (_InterlockedExchangeAdd(&arr[i + 1], arr[0] + 10) != 3 || arr[2] != 14) return 13;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// std::atomic on the interlocked instructions: every member on int, bool, an enumeration, pointers, float, 1, 2 and 8
+// byte integers, atomic_flag, and four threads that add 20000 each to shared counters (80000 only if the adds are atomic).
+static void r27_atomic_threads(Tally& tally) {
+    std::printf("r27_atomic_threads\n");
+    okayms_test::run_both(kRunAtomic, tally, "atomic_threads", std::string(kAlloc) + R"OKMS(
+#include <atomic>
+#include <windows.h>
+enum class Mode : unsigned char { A = 1, B = 7 };
+struct Pair { short x; short y; };
+static std::atomic<int> counter{0};
+static std::atomic<long long> wide{0};
+static std::atomic<bool> go{false};
+static DWORD WINAPI Worker(LPVOID p) {
+  (void)p;
+  while (!go.load()) SwitchToThread();
+  for (int i = 0; i < 20000; ++i) {
+    counter.fetch_add(1);
+    ++wide;
+    counter -= 0;
+  }
+  return 0;
+}
+int entry(void) {
+  std::atomic<int> a(5);
+  CK(1, a.load() == 5 && a.exchange(7) == 5 && a == 7);
+  int e = 6;
+  CK(2, !a.compare_exchange_strong(e, 9) && e == 7 && a.compare_exchange_strong(e, 9) && a.load() == 9);
+  CK(3, a.fetch_add(3) == 9 && a.fetch_sub(2) == 12 && a.load() == 10);
+  CK(4, a.fetch_or(5) == 10 && a.fetch_and(6) == 15 && a.fetch_xor(1) == 6 && a.load() == 7);
+  CK(5, ++a == 8 && a++ == 8 && a-- == 9 && --a == 7 && (a += 3) == 10 && (a -= 4) == 6);
+  std::atomic<bool> f(false);
+  CK(6, !f.exchange(true) && f.load() && f);
+  std::atomic<Mode> m(Mode::A);
+  Mode want = Mode::A;
+  CK(7, m.compare_exchange_strong(want, Mode::B) && m.load() == Mode::B);
+  int arr[4] = {0, 1, 2, 3};
+  std::atomic<int*> p(arr);
+  CK(8, p.fetch_add(2) == arr && p.load() == arr + 2 && *p.load() == 2 && (p -= 1) == arr + 1);
+  std::atomic<float> fl(1.5f);
+  CK(9, fl.exchange(2.0f) == 1.5f && fl.load() == 2.0f);
+  std::atomic<unsigned char> uc(250);
+  CK(10, uc.fetch_add(10) == 250 && uc.load() == 4);
+  std::atomic<short> sh(-5);
+  CK(11, sh.fetch_add(2) == -5 && sh.load() == -3);
+  std::atomic<unsigned long long> big(0xFFFFFFFFull);
+  CK(12, big.fetch_add(1) == 0xFFFFFFFFull && big.load() == 0x100000000ull);
+  std::atomic_flag flag = ATOMIC_FLAG_INIT;
+  CK(13, !flag.test_and_set() && flag.test_and_set());
+  flag.clear();
+  CK(14, !flag.test_and_set());
+  HANDLE hs[4];
+  for (int i = 0; i < 4; ++i) hs[i] = CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
+  go.store(true);
+  WaitForMultipleObjects(4, hs, TRUE, INFINITE);
+  for (int i = 0; i < 4; ++i) CloseHandle(hs[i]);
+  CK(15, counter.load() == 80000 && wide.load() == 80000);
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// shared_ptr and weak_ptr copied and locked by four threads at once: the counts stay right (atomic counts).
+static void r27_shared_ptr_threads(Tally& tally) {
+    std::printf("r27_shared_ptr_threads\n");
+    okayms_test::run_both(kRunShared, tally, "shared_ptr_threads", std::string(kAlloc) + R"OKMS(
+#include <memory>
+#include <windows.h>
+struct Obj { int v; };
+static std::shared_ptr<Obj> shared;
+static long volatile_go = 0;
+static DWORD WINAPI Copier(LPVOID p) {
+  (void)p;
+  for (int i = 0; i < 20000; ++i) {
+    std::shared_ptr<Obj> local = shared;
+    std::weak_ptr<Obj> w = local;
+    if (!w.lock()) return 1;
+  }
+  return 0;
+}
+int entry(void) {
+  shared = std::make_shared<Obj>();
+  shared->v = 3;
+  HANDLE hs[4];
+  for (int i = 0; i < 4; ++i) hs[i] = CreateThread(nullptr, 0, Copier, nullptr, 0, nullptr);
+  WaitForMultipleObjects(4, hs, TRUE, INFINITE);
+  DWORD code = 0;
+  for (int i = 0; i < 4; ++i) { GetExitCodeThread(hs[i], &code); CloseHandle(hs[i]); if (code != 0) return 1; }
+  CK(2, shared.use_count() == 1 && shared->v == 3);
+  std::weak_ptr<Obj> w = shared;
+  shared.reset();
+  CK(3, w.expired() && !w.lock());
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -541,5 +782,10 @@ int main(int argc, char** argv) {
     r27_lang(tally);
     r27_unordered_hash(tally);
     r27_lang2(tally);
-    return tally.finish(7);
+    r27_lambda_this(tally);
+    r27_mesh_pieces(tally);
+    r27_intrinsics(tally);
+    r27_atomic_threads(tally);
+    r27_shared_ptr_threads(tally);
+    return tally.finish(12);
 }

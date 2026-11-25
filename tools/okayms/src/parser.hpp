@@ -2082,12 +2082,16 @@ struct Parser {
     // True inside a member function of a class with a data member of this name: the member hides a type of the same
     // name ([basic.scope.hiding]; `duration` in a Tween, `thread` in a watcher, while std::chrono::duration and
     // std::thread are bare type names here).
-    bool member_hides(const std::string& name) const {
+    // `next` is the kind of the token after the name: a name followed by another name is a declaration (`Grid g;` with a
+    // class Grid declared in the function, though the class also has a member function Grid), so it is not hidden.
+    bool member_hides(const std::string& name, Tok next = TEnd) const {
         if (cur_class < 0 || static_cast<size_t>(cur_class) >= structs.size()) return false;
+        if (next == TIdent) return false;
         const StructDef& d = structs[static_cast<size_t>(cur_class)];
         if (find_field_named(d, name) >= 0) return true;
-        // A member function hides it too: `Bounds(lo, hi);` in a Mesh member calls Mesh::Bounds, though a struct Bounds
-        // exists elsewhere.
+        // A member function hides it too when it is called: `Bounds(lo, hi);` in a Mesh member calls Mesh::Bounds,
+        // though a struct Bounds exists elsewhere.
+        if (next != TLParen) return false;
         for (const Method& m : d.methods)
             if (m.name == name) return true;
         return false;
@@ -2100,7 +2104,8 @@ struct Parser {
         if (is(TIdent) && !cur().nsq && cur_locals != nullptr && local_visible(cur().text)) return false;
         // A data member hides a type of the same name inside its class's member functions: `thread = CreateThread(...)`
         // with a member `HANDLE thread` assigns to the member (std::thread is a bare type name here).
-        if (is(TIdent) && !cur().nsq && member_hides(cur().text)) return false;
+        if (is(TIdent) && !cur().nsq && member_hides(cur().text, at + 1 < tokens.size() ? tokens[at + 1].kind : TEnd))
+            return false;
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
@@ -4851,7 +4856,7 @@ struct Parser {
             return false;
         // A local variable or a data member of the same name hides the template ([basic.scope.hiding]): `duration < k`
         // in a Tween member compares its `duration`.
-        if (!tokens[i].nsq && ((cur_locals != nullptr && local_visible(tokens[i].text)) || member_hides(tokens[i].text)))
+        if (!tokens[i].nsq && ((cur_locals != nullptr && local_visible(tokens[i].text)) || member_hides(tokens[i].text, tokens[i + 1].kind)))
             return false;
         return true;
     }
@@ -5275,6 +5280,8 @@ struct Parser {
                 error = "expected a class template body";
                 ok = false;
             }
+            // The base class may itself be an instance made just now (A<T> : B<T>), which used and cleared pending_sym.
+            pending_sym = sym;
             if (ok) ok = parse_struct_body(false, key, &id, as_class, base_id);
             if (ok) ok = apply_ool_statics(name, id);
             if (had) typedefs[name] = old_type;

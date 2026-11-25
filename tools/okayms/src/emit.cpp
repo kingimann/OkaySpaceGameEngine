@@ -420,6 +420,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
+        int lk_op = 0;
+        int lk_width = 0;
+        if (interlocked_intrinsic(fn.name, &lk_op, &lk_width)) continue;  // compiled inline, never called
         // A call names the decorated symbol when the function has one (a namespace function).
         const std::string extern_name = fn.symbol.empty() ? fn.name : fn.symbol;
         if (fn.imported) add_sym("__imp_" + extern_name, 0, 0, kClassExternal, 0);

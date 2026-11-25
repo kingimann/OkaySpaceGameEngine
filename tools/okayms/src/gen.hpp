@@ -5,6 +5,9 @@
 
 namespace okayms {
 namespace compiler {
+// The interlocked intrinsics compiled inline (gen_expr.cpp): op and width of a name, or false.
+bool interlocked_intrinsic(const std::string& name, int* op, int* width);
+
 struct Gen {
     std::vector<FuncDecl>& funcs;
     std::string error;
@@ -143,6 +146,7 @@ struct Gen {
     }
 
     bool gen_expr(const Node& node);
+    bool gen_interlocked(const Node& node, int op, int width);
     bool store_init(const Type& type, int offset, const Node& node);
     bool gen_stmt(const Node& node);
     // A statement that is not generated (a branch with a constant condition) still takes the scope numbers its blocks

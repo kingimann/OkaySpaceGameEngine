@@ -2927,7 +2927,11 @@ private:
             err(e.line, e.col, "dynamic_cast of a class without virtual functions");
             return bad(e.line, e.col);
         }
-        const char* fname = toRef ? "__okay_dyncast_ref" : "__okay_dyncast_ptr";
+        // A reference cast throws std::bad_cast when it fails ([expr.dynamic.cast] p9): through
+        // __okay_throw_bad_cast of our <exception>, when the file has it; else lib/eh.c's
+        // __okay_dyncast_ref ends the program with the message an uncaught one gives.
+        const bool throwing = toRef && scopes_.front().count("__okay_throw_bad_cast");
+        const char* fname = toRef && !throwing ? "__okay_dyncast_ref" : "__okay_dyncast_ptr";
         if (!scopes_.front().count(fname)) {
             auto fn = prim(Type::Kind::Function);
             fn->inner = ptrTo(prim(Type::Kind::Char));
@@ -2973,9 +2977,22 @@ private:
             e.kids.push_back(std::move(call));
             return checkExpr(e);
         }
+        std::unique_ptr<Expr> found = std::move(call);
+        if (throwing) {
+            // (p = __okay_dyncast_ptr(..), p ? p : (__okay_throw_bad_cast(), p))
+            std::string p = newTemp(*ptrTo(prim(Type::Kind::Char)), e, false);
+            auto thrower = mkE(Expr::Kind::Call, e);
+            thrower->kids.push_back(mkName("__okay_throw_bad_cast", e));
+            auto orThrow = eCommaNode(std::move(thrower), mkName(p, e), e);
+            auto pick = mkE(Expr::Kind::Cond, e);
+            pick->kids.push_back(mkName(p, e));
+            pick->kids.push_back(mkName(p, e));
+            pick->kids.push_back(std::move(orThrow));
+            found = eCommaNode(eAssignNode(mkName(p, e), std::move(found), e), std::move(pick), e);
+        }
         auto cast = mkE(Expr::Kind::Cast, e);
         cast->ty = ptrTo(cloneType(*target->inner));  // (T is gone with e.ty)
-        cast->kids.push_back(std::move(call));
+        cast->kids.push_back(std::move(found));
         e.kind = Expr::Kind::Unary;
         e.text = "*";
         e.kids.push_back(std::move(cast));

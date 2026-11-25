@@ -2261,6 +2261,8 @@ private:
                 refT->rref = asMove;
                 refT->inner = ty(Type::Kind::Struct);
                 refT->inner->tag = c.tag;
+                // C(const C &): a const object is copied too ([class.copy.ctor] p7)
+                refT->inner->cnst = !asMove;
                 op.type = std::move(refT);
                 d.params.push_back(std::move(op));
                 memberwiseInits(d, T, asMove, p);

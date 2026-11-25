@@ -435,8 +435,9 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
             if (in.va) s += "  movq %rax, %r11\n  xorl %eax, %eax\n  call *%r11\n";
             else s += "  call *%rax\n";
         } else if (in.func == "syscall") {
-            // Linux syscall. The C arguments are number, a, b, c in rdi, rsi, rdx, rcx.
-            s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  movq %r8, %r10\n  syscall\n";
+            // Linux syscall. The C arguments are number, a, b, c, d, e in rdi, rsi, rdx, rcx, r8, r9.
+            s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  movq %r8, %r10\n"
+                 "  movq %r9, %r8\n  syscall\n";
         } else if (in.func == "__okay_sigreturn") {
             // the restorer of a signal handler (see elf.cpp)
             s += "  leave\n  movl $15, %eax\n  syscall\n";

@@ -705,8 +705,8 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
         } else if (const std::vector<unsigned char>* seq = atomicCode(in.func)) {
             for (unsigned char c : *seq) u8(im, c);
         } else if (in.func == "syscall") {
-            // Linux syscall: C call syscall(number, a, b, c[, d]) is already in rdi, rsi, rdx, rcx
-            // and r8; the kernel takes the fourth argument in r10.
+            // Linux syscall: C call syscall(number, a, b, c[, d[, e]]) is already in rdi, rsi, rdx,
+            // rcx, r8 and r9; the kernel takes the fourth argument in r10 and the fifth in r8.
             movReg(im, Rax, Rdi);
             movReg(im, Rdi, Rsi);
             movReg(im, Rsi, Rdx);
@@ -714,6 +714,9 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
             u8(im, 0x4D);  // mov r10, r8
             u8(im, 0x89);
             u8(im, 0xC2);
+            u8(im, 0x4D);  // mov r8, r9
+            u8(im, 0x89);
+            u8(im, 0xC8);
             u8(im, 0x0F);
             u8(im, 0x05);
         } else if (in.func == "__okay_sigreturn") {

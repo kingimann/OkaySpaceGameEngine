@@ -222,6 +222,22 @@ inline IconEvent ClassifyIconMessage(unsigned ev, unsigned version) {
     }
 }
 
+/// The notify-icon balloon's own messages (the launcher's desktop notifications, launcher/DesktopNotify.hpp), from
+/// Microsoft's documentation: NIN_BALLOONSHOW = WM_USER + 2, NIN_BALLOONHIDE + 3, NIN_BALLOONTIMEOUT + 4,
+/// NIN_BALLOONUSERCLICK + 5. Version 4 sends them in LOWORD(lParam) like the clicks (DecodeIconMessage).
+constexpr unsigned kNinBalloonShow = 0x0402, kNinBalloonHide = 0x0403, kNinBalloonTimeout = 0x0404,
+                   kNinBalloonUserClick = 0x0405;
+enum class BalloonEvent { None, Shown, Closed, Clicked };
+inline BalloonEvent ClassifyBalloonMessage(unsigned ev) {
+    switch (ev) {
+        case kNinBalloonShow:      return BalloonEvent::Shown;
+        case kNinBalloonHide:
+        case kNinBalloonTimeout:   return BalloonEvent::Closed;
+        case kNinBalloonUserClick: return BalloonEvent::Clicked;
+        default:                   return BalloonEvent::None;
+    }
+}
+
 /// A launcher dialog has just started waiting ("Close the editor first" after Exit OkaySpace in the tray menu, or an
 /// update that waits for the editor). A launcher hidden in the tray or minimized draws nothing, so the dialog waited
 /// where nobody could see it and the launcher stayed running with the editor still open (owner bug 2026-11-25: "if i
@@ -254,6 +270,11 @@ public:
     virtual void ShowWindow() = 0;                      // SW_SHOW, SW_RESTORE if minimized, SetForegroundWindow
     virtual int RunMenu(const std::vector<MenuItem>& items) = 0;   // TrackPopupMenu; the chosen id, kIdNone if dismissed
     virtual void Balloon(const std::string& title, const std::string& text) = 0;   // NIF_INFO notification
+    /// A desktop notification (launcher/DesktopNotify.hpp): NIF_INFO with the app's own icon, NIIF_NOSOUND when
+    /// `sound` is off. False = not shown (the caller falls back to the in-app toast).
+    virtual bool Notify(const std::string& title, const std::string& text, bool sound) {
+        (void)sound; Balloon(title, text); return true;
+    }
 };
 
 /// The tray state machine. One per launcher; every call is made on the main thread.
@@ -350,6 +371,12 @@ public:
     }
     /// The launcher is ending (normally or from a crash handler): take the icon away.
     void Shutdown() { RemoveIcon(); }
+    /// A desktop notification through the icon's balloon. False when there is no icon (both tray options off, or the
+    /// shell refused it) or the shell could not show it: the caller then uses the in-app toast.
+    bool Notify(const std::string& title, const std::string& text, bool sound) {
+        if (!m_supported || !m_icon) return false;
+        return m_shell->Notify(title, text, sound);
+    }
     /// True once, right after the first-hide note was shown (so the launcher saves its preferences).
     bool TakeHintJustShown() { const bool v = m_hintJustShown; m_hintJustShown = false; return v; }
 

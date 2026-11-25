@@ -59,8 +59,11 @@ account::AccountService& Account::Get() {
         std::string dir = !ConfigDir().empty() ? ConfigDir() : DefaultDir();
         std::string url = ServerUrl(), key = ApiKey();
         if (!Configured()) {
-            url = EnvOr("OKAY_ACCOUNT_SERVER", OKAY_DEFAULT_ACCOUNT_URL);
-            key = EnvOr("OKAY_ACCOUNT_API_KEY", OKAY_DEFAULT_ACCOUNT_KEY);
+            // As the launcher: only an http(s) address counts, so an empty or junk OKAY_ACCOUNT_SERVER falls back to the
+            // built-in server instead of putting this program on the local (offline) backend while the launcher is online.
+            url = account::detail::ChooseServerUrl(EnvOr("OKAY_ACCOUNT_SERVER", ""), OKAY_DEFAULT_ACCOUNT_URL);
+            key = EnvOr("OKAY_ACCOUNT_API_KEY", "");
+            if (key.empty()) key = OKAY_DEFAULT_ACCOUNT_KEY;
         }
         s = std::make_unique<account::AccountService>(std::filesystem::path(dir), url, key);
     }

@@ -30,12 +30,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #if defined(OKAY_XBOX_UWP)
 #include "okay/Core/Paths.hpp"
 #endif
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -352,6 +354,105 @@ inline std::string PercentEncode(const std::string& in) {
     return o;
 }
 
+/// Why a request got no HTTP answer, in plain words, from the HTTP seam's low-level reason (okay::http::Result::error:
+/// "connect: winhttp error 12029", "curl exit code 6", the own client's "ErrName: message"). The code stays at the end in
+/// brackets so a report can be looked up. Never holds a secret: the seam's reasons carry no header, body or query string,
+/// and any "?..." part is cut anyway. Empty in, empty out. Written from the WinHTTP error-code list (winhttp.h) and
+/// curl's exit-code list.
+inline std::string PlainNetReason(std::string raw) {
+    if (raw.empty()) return {};
+    for (std::size_t q = raw.find('?'); q != std::string::npos; q = raw.find('?')) {   // no query strings in what we show
+        std::size_t e = raw.find_first_of(" \t\r\n", q);
+        raw.erase(q, e == std::string::npos ? std::string::npos : e - q);
+    }
+    for (char& c : raw) if (c == '\r' || c == '\n') c = ' ';
+    if (raw.size() > 160) raw.resize(160);
+    auto code = [&](const char* tag) -> long {   // the number after `tag`, -1 when absent
+        const std::size_t p = raw.find(tag);
+        if (p == std::string::npos) return -1;
+        long v = 0; bool any = false;
+        for (std::size_t i = p + std::strlen(tag); i < raw.size() && raw[i] >= '0' && raw[i] <= '9'; ++i) { v = v * 10 + (raw[i] - '0'); any = true; if (v > 99999) break; }
+        return any ? v : -1;
+    };
+    const char* words = nullptr;
+    const long w = code("winhttp error "), c = code("curl exit code ");
+    switch (w) {
+        case 12002: words = "The server took too long to answer."; break;
+        case 12007: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
+        case 12029: words = "Could not connect to the server (no internet, or a firewall blocks it)."; break;
+        case 12030: case 12031: words = "The connection was cut off before the server answered."; break;
+        case 12152: words = "The server sent an answer that could not be read."; break;
+        case 12037: case 12038: case 12044: case 12045: case 12057: case 12157: case 12169: case 12170: case 12175: case 12179:
+            words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS)."; break;
+        case 12166: case 12167: case 12180: words = "Windows' proxy settings could not be used."; break;
+        default: break;
+    }
+    if (!words) switch (c) {
+        case 6: words = "The server's name could not be looked up (no internet, or DNS is blocked)."; break;
+        case 7: words = "Could not connect to the server (no internet, or a firewall blocks it)."; break;
+        case 28: words = "The server took too long to answer."; break;
+        case 35: case 51: case 58: case 60: words = "The secure connection failed (a certificate or security setting on this PC, or a program that inspects HTTPS)."; break;
+        case 52: case 56: words = "The connection was cut off before the server answered."; break;
+        default: break;
+    }
+    if (!words) {
+        if (raw.find("timeout") != std::string::npos) words = "The server took too long to answer.";
+        else if (raw.find("proxy-auth") != std::string::npos) words = "A proxy on this network wants a password.";
+        else if (raw.find("curl could not be started") != std::string::npos) words = "The backup connection (curl) could not be started.";
+        else if (raw.find("bad-url") != std::string::npos) words = "The account server address is not a valid web address.";
+    }
+    return words ? std::string(words) + " [" + raw + "]" : "[" + raw + "]";
+}
+
+/// The sign-in's "not reached" message: the fixed first line (the launcher's FriendlyError keys on it) plus the reason
+/// in plain words on a second line when the seam gave one.
+inline std::string NotReachedMessage(const std::string& base, const std::string& rawReason) {
+    const std::string why = PlainNetReason(rawReason);
+    return why.empty() ? base : base + "\nDetails: " + why;
+}
+
+/// Write `body` to `path` whole: a temp file beside it (a random name, so two programs writing the same file at once never
+/// share one), then a rename over `path`, so a reader (the launcher and the editor share session.txt) sees the old file
+/// or the new one, never half of one. Windows refuses the rename while another program has the file open, so it is tried
+/// again for about a quarter of a second before the old file is removed to make room. False = not written (the temp
+/// file is removed). Used by AccountService::SaveSession and GameIpc::WriteAtomic.
+inline bool WriteFileAtomic(const fs::path& path, const std::string& body) {
+    std::error_code ec;
+    if (path.has_parent_path()) fs::create_directories(path.parent_path(), ec);
+    const fs::path tmp = path.string() + "." + RandomHex(4) + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc | std::ios::binary);
+        if (!f) return false;
+        f << body;
+        f.flush();
+        if (!f) { f.close(); fs::remove(tmp, ec); return false; }
+    }
+    for (int i = 0; i < 50; ++i) {
+        ec.clear();
+        fs::rename(tmp, path, ec);
+        if (!ec) return true;
+#if defined(_WIN32)
+        Sleep(5);
+#else
+        break;   // POSIX rename replaces an open file: a failure will not go away
+#endif
+    }
+    fs::remove(path, ec); ec.clear();
+    fs::rename(tmp, path, ec);
+    if (ec) { std::error_code e2; fs::remove(tmp, e2); }
+    return !ec;
+}
+
+/// Pick the account server address the way the launcher always has: a configured value (env var or file) counts only
+/// when it is an http(s) address, so an empty or junk value (a stale "Use local (clear)" leftover) falls back to the one
+/// built in instead of knocking the program offline. Trailing spaces and line ends are dropped. Used by the launcher and by
+/// okay::Account::Get (the editor, the player), so both programs talk to the same server.
+inline std::string ChooseServerUrl(std::string configured, const std::string& builtIn) {
+    while (!configured.empty() && (configured.back() == '\r' || configured.back() == '\n' || configured.back() == ' ')) configured.pop_back();
+    while (!configured.empty() && configured.front() == ' ') configured.erase(configured.begin());
+    return configured.rfind("http", 0) == 0 ? configured : builtIn;
+}
+
 } // namespace detail
 
 // ===========================================================================
@@ -385,6 +486,8 @@ struct ApiResponse {
     bool        reached = false;
     long        status  = 0;
     std::string body;
+    std::string error;   ///< when not reached: the HTTP seam's low-level reason (okay::http::Result::error; no secrets), for logs and detail::PlainNetReason
+    bool        maybeSent = false;   ///< when not reached: the request may have reached the server (okay::http::Result::maybeSent)
 };
 
 /// One row of a server leaderboard: the player's name, their score, and their
@@ -419,6 +522,13 @@ public:
         std::error_code ec;
         fs::create_directories(configDir_, ec);
         LoadSession();
+    }
+
+    /// Tests only: send every request to `t` (method, url, header lines, body) instead of the network, so the sign-in and
+    /// session code can be run against a fake server. Empty = the network again.
+    void SetTransportForTest(std::function<okay::http::Result(const std::string&, const std::string&,
+                                                              const std::vector<std::string>&, const std::string&)> t) {
+        transport_ = std::move(t);
     }
 
     /// True when configured to talk to a real (non-local) backend.
@@ -678,16 +788,39 @@ public:
     /// Re-read the access token saved by another instance (same account).
     /// True when it changed.
     bool ReloadSessionToken() const {
-        std::ifstream f(SessionPath());
-        if (!f) return false;
-        std::string user, token, refresh;
-        std::getline(f, user); std::getline(f, token); std::getline(f, refresh);
-        while (!token.empty() && (token.back() == '\r' || token.back() == '\n')) token.pop_back();
-        while (!refresh.empty() && (refresh.back() == '\r' || refresh.back() == '\n')) refresh.pop_back();
-        if (token.empty() || token == session_.token) return false;
-        session_.token = token;
-        if (!refresh.empty()) session_.refreshToken = refresh;
+        Session disk;
+        if (!ReadSessionFile(disk) || disk.token == session_.token) return false;
+        session_.token = disk.token;
+        if (!disk.refreshToken.empty()) session_.refreshToken = disk.refreshToken;
         return true;
+    }
+
+    /// Take the session saved in session.txt as it is now (the launcher and the editor share that file, and either can sign
+    /// in, refresh the token or sign out while the other runs). A different sign-in there replaces ours; no file (signed out
+    /// elsewhere) signs this instance out too, without touching the disk. True when the in-memory session changed. The
+    /// editor's sign-in gate calls it when the file changes (SessionFileStamp), and CheckSession calls it first, so a check
+    /// never uses a token another program has already replaced.
+    bool SyncSessionFromDisk() {
+        Session disk;
+        if (!ReadSessionFile(disk)) {
+            if (!session_.loggedIn) return false;
+            session_ = {};
+            return true;
+        }
+        if (session_.loggedIn && disk.token == session_.token && disk.refreshToken == session_.refreshToken &&
+            disk.username == session_.username) return false;
+        session_ = disk;
+        return true;
+    }
+
+    /// When session.txt was last written (an opaque number; -1 when there is no file). Cheap enough to poll once a
+    /// second: the editor's sign-in gate re-checks when it changes, so a sign-in in the launcher opens the editor.
+    long long SessionFileStamp() const {
+        std::error_code ec;
+        const auto t = fs::last_write_time(SessionPath(), ec);
+        if (ec) return -1;
+        const long long n = (long long)t.time_since_epoch().count();
+        return n == -1 ? -2 : n;
     }
 
     /// The signed-in account's id (the JWT "sub"), "" when unknown. Profiles
@@ -762,21 +895,28 @@ public:
     /// kept, but nothing confirmed it), ServerError (it answered with another
     /// error: kept, not confirmed), NoSession (nobody is signed in). The editor's
     /// sign-in gate (editor/SignInGate.hpp) opens only on Valid.
+    ///
+    /// The launcher and the editor share session.txt, and Supabase refresh tokens work once (each refresh hands out a new
+    /// one). So the check reads the file first (another program may have signed in, refreshed or signed out), and after a
+    /// rejection and a failed refresh it reads it again: when the other program saved a newer sign-in meanwhile, that one
+    /// is checked instead, and the file is never deleted while it holds a sign-in other than the one that was rejected.
     SessionCheck CheckSession() {
+        if (IsOnline()) SyncSessionFromDisk();
         if (!session_.loggedIn) return SessionCheck::NoSession;
         if (!IsOnline()) return SessionCheck::Valid;
-        // Supabase exposes the signed-in user at auth/v1/user; our custom server
-        // uses /verify.
-        ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
-        if (!r.reached) return SessionCheck::Unreachable;
-        if (r.status == 401 || r.status == 403) {    // token expired/revoked
-            // Try to renew from the refresh token before giving up — a 1-hour
-            // Supabase access token expiring shouldn't sign the player out.
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            // Supabase exposes the signed-in user at auth/v1/user; our custom server uses /verify.
+            ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
+            if (!r.reached) return SessionCheck::Unreachable;
+            if (r.status != 401 && r.status != 403)
+                return r.ok ? SessionCheck::Valid : SessionCheck::ServerError;   // any other failure: kept, nothing confirmed it
+            // Token expired/revoked. Try to renew from the refresh token before giving up: a 1-hour Supabase access token
+            // expiring shouldn't sign the player out.
             if (RefreshSupabaseToken()) return SessionCheck::Valid;
-            Logout();
-            return SessionCheck::Rejected;
+            if (ForgetSessionUnlessNewerOnDisk()) return SessionCheck::Rejected;
+            // another program saved a newer sign-in meanwhile: check that one
         }
-        return r.ok ? SessionCheck::Valid : SessionCheck::ServerError;   // any other failure: the session is kept, nothing confirmed it
+        return SessionCheck::Rejected;   // (the newer sign-in on disk is left for its owner)
     }
 
     /// Verify an ARBITRARY access token (not our own session) and, on success, hand
@@ -914,6 +1054,9 @@ private:
         return true;
     }
 
+    /// Tests only (SetTransportForTest): answers requests instead of the network.
+    std::function<okay::http::Result(const std::string&, const std::string&, const std::vector<std::string>&, const std::string&)> transport_;
+
     fs::path    configDir_;
     std::string serverUrl_;
     std::string resetRedirect_;   // see SetResetRedirect
@@ -985,9 +1128,11 @@ private:
     }
 
     // ---- session persistence ------------------------------------------
-    void LoadSession() {
+    /// session.txt as a signed-in Session (user, token, optional refresh token, one per line). False when there is no file
+    /// or it holds no sign-in.
+    bool ReadSessionFile(Session& out) const {
         std::ifstream f(SessionPath());
-        if (!f) return;
+        if (!f) return false;
         std::string user, token, refresh;
         std::getline(f, user);
         std::getline(f, token);
@@ -996,20 +1141,49 @@ private:
             while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
         };
         trim(user); trim(token); trim(refresh);
-        if (!user.empty() && !token.empty()) {
-            // Older sessions may have been saved with the email as the display
-            // name; show only the local-part so the UI never shows a raw email.
-            if (provider_ == Provider::Supabase) user = PublicName(user);
-            session_.loggedIn = true;
-            session_.username = user;
-            session_.token    = token;
-            session_.refreshToken = refresh;
-        }
+        if (user.empty() || token.empty()) return false;
+        // Older sessions may have been saved with the email as the display
+        // name; show only the local-part so the UI never shows a raw email.
+        if (provider_ == Provider::Supabase) user = PublicName(user);
+        out = Session{};
+        out.loggedIn = true;
+        out.username = user;
+        out.token    = token;
+        out.refreshToken = refresh;
+        return true;
     }
 
-    void SaveSession() {
-        std::ofstream f(SessionPath(), std::ios::trunc);
-        f << session_.username << "\n" << session_.token << "\n" << session_.refreshToken << "\n";
+    void LoadSession() {
+        Session disk;
+        if (ReadSessionFile(disk)) session_ = disk;
+    }
+
+    void SaveSession() {   // whole-file and atomic: the other program never reads half a session
+        detail::WriteFileAtomic(SessionPath(), session_.username + "\n" + session_.token + "\n" + session_.refreshToken + "\n");
+    }
+
+    /// Our sign-in was rejected and could not be renewed. When session.txt still holds it (or nothing), sign out (the file
+    /// goes) and return true. When another program has saved a different sign-in there meanwhile, take that one instead,
+    /// leave the file alone and return false, so the editor never signs the launcher out (or the other way round).
+    bool ForgetSessionUnlessNewerOnDisk() {
+        Session disk;
+        if (ReadSessionFile(disk) && disk.token != session_.token) {
+            session_ = disk;
+            return false;
+        }
+        Logout();
+        return true;
+    }
+
+    /// The access token on disk is newer than ours and not about to expire: another program refreshed (Supabase refresh
+    /// tokens work once, so ours is spent). Takes it and returns true.
+    bool AdoptFreshTokenFromDisk() {
+        Session disk;
+        if (!ReadSessionFile(disk) || disk.token == session_.token) return false;
+        const long exp = std::atol(JwtClaim(disk.token, "exp").c_str());
+        if (exp <= 0 || exp - (long)std::time(nullptr) <= 30) return false;
+        session_ = disk;
+        return true;
     }
 
     Result Succeed(const std::string& username, const std::string& token,
@@ -1028,12 +1202,15 @@ private:
     bool RefreshSupabaseToken() {
         if (provider_ != Provider::Supabase || session_.refreshToken.empty() || !IsOnline())
             return false;
+        // Another program (the launcher or the editor) may have refreshed already: then our refresh token is spent, and
+        // using it again fails (or, with Supabase's reuse detection, ends the whole sign-in). Take theirs instead.
+        if (AdoptFreshTokenFromDisk()) return true;
         std::string base = serverUrl_;
         if (!base.empty() && base.back() == '/') base.pop_back();
         ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
                                     "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
                                     /*authToken=*/{});
-        if (!r.ok) return false;
+        if (!r.ok) return AdoptFreshTokenFromDisk();   // the other program won the race a moment ago
         std::string tok = detail::JsonField(r.body, "access_token");
         if (tok.empty()) return false;
         session_.token = tok;
@@ -1128,9 +1305,10 @@ private:
                            "\",\"password\":\"" + detail::JsonEscape(password) + "\"}";
         // No bearer token yet — this is how the player gets one.
         ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
+        if (!r.reached && action == "login") r = RetrySignIn("POST", url, body, r);
 
         if (!r.reached)
-            return Fail("Couldn't reach the account server (offline or unreachable).");
+            return Fail(detail::NotReachedMessage("Couldn't reach the account server (offline or unreachable).", r.error));
         if (!r.ok) {
             std::string serverErr = detail::JsonField(r.body, "error");
             return Fail(serverErr.empty()
@@ -1157,9 +1335,13 @@ private:
         // returns the email when the password is correct (no email enumeration).
         std::string loginId = email;
         if (!signUp && loginId.find('@') == std::string::npos) {
-            ApiResponse rr = HttpRequest("POST", base + "/rest/v1/rpc/email_for_login",
-                "{\"p_username\":\"" + detail::JsonEscape(loginId) +
-                "\",\"p_password\":\"" + detail::JsonEscape(password) + "\"}", /*authToken=*/{});
+            const std::string rpcUrl = base + "/rest/v1/rpc/email_for_login";
+            const std::string rpcBody = "{\"p_username\":\"" + detail::JsonEscape(loginId) +
+                "\",\"p_password\":\"" + detail::JsonEscape(password) + "\"}";
+            ApiResponse rr = HttpRequest("POST", rpcUrl, rpcBody, /*authToken=*/{});
+            if (!rr.reached) rr = RetrySignIn("POST", rpcUrl, rpcBody, rr);   // a read: safe to ask again
+            if (!rr.reached)
+                return Fail(detail::NotReachedMessage("Couldn't reach the account server (offline or unreachable).", rr.error));
             std::string resolved;   // the RPC returns a JSON string (the email) or null
             if (rr.ok) { std::string b = rr.body;
                 std::size_t q = b.find('"');
@@ -1177,9 +1359,10 @@ private:
             body += ",\"data\":{\"username\":\"" + detail::JsonEscape(username) + "\"}";
         body += "}";
         ApiResponse r = HttpRequest("POST", url, body, /*authToken=*/{});
+        if (!r.reached && !signUp) r = RetrySignIn("POST", url, body, r);
 
         if (!r.reached)
-            return Fail("Couldn't reach the account server (offline or unreachable).");
+            return Fail(detail::NotReachedMessage("Couldn't reach the account server (offline or unreachable).", r.error));
         if (!r.ok) {
             // Supabase reports errors as error_description / msg / message / error.
             std::string e = detail::JsonField(r.body, "error_description");
@@ -1207,6 +1390,18 @@ private:
         display = PublicName(display);
         std::string refresh = detail::JsonField(r.body, "refresh_token");
         return Succeed(display, token, refresh);
+    }
+
+    // A sign-in (password grant, or the username lookup) that got no answer is sent once more. Unlike most POSTs that is
+    // safe: signing in twice only makes a second sign-in, nothing happens twice to the account. It covers a kept-alive
+    // connection the server closed while the sign-in window sat idle (WinHTTP then fails the send or the receive and,
+    // because the request may have gone out, the seam does not hand a POST to curl). `first` is the failed answer; when
+    // the second try also fails, the first reason is kept unless the second one says more.
+    ApiResponse RetrySignIn(const std::string& method, const std::string& url, const std::string& body,
+                            const ApiResponse& first) const {
+        ApiResponse again = HttpRequest(method, url, body, /*authToken=*/{});
+        if (!again.reached && again.error.empty()) again.error = first.error;
+        return again;
     }
 
     // `extraHeader` may hold several headers, one per line ("x-upsert: true\n
@@ -1238,10 +1433,16 @@ private:
         for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);   // e.g. PostgREST "Prefer: ..."
         if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
         else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
-        okay::http::Result nr = okay::http::Send(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile,
-                                                 timeoutSec > 0 ? timeoutSec * 1000 : 0);
+        okay::http::Result nr = transport_
+            ? transport_(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string())
+            : okay::http::Send(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile,
+                               timeoutSec > 0 ? timeoutSec * 1000 : 0);
         ApiResponse out;
-        if (!nr.reached) return out;
+        if (!nr.reached) {   // keep the seam's reason (no secrets in it): the sign-in windows show it in plain words
+            out.error = nr.error.empty() ? std::string("no answer") : nr.error;
+            out.maybeSent = nr.maybeSent;
+            return out;
+        }
         out.status = nr.status; out.body = std::move(nr.body);
         out.reached = true;
         out.ok = out.status >= 200 && out.status < 300;

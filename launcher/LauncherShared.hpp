@@ -263,6 +263,7 @@ std::string InviteMessageBody(const std::string& title, const std::string& link)
 bool IsBuiltGame(const fs::path& scene);
 std::string LastOnline(long when);
 void PlayChatChime();
+int MyOnlineStatus();   // your status: okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp)
 std::string PresenceText();
 void RecordPlayed(const std::string& p);
 bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title);

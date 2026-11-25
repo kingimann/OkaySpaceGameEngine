@@ -100,20 +100,30 @@ public:
         return out;
     }
 
-    int UnreadSince(long sinceId, long& newestOut) {
+    // One incoming message, for the launcher's desktop notifications (UnreadSince with `incoming`).
+    struct IncomingMessage { long id = 0; std::string from, body; };
+    // `incoming` (optional): the unread incoming messages themselves (sender and text), oldest first, so a new one can
+    // pop up as "Sam: are you there?". The same query, with the sender and body columns added.
+    int UnreadSince(long sinceId, long& newestOut, std::vector<IncomingMessage>* incoming = nullptr) {
         newestOut = sinceId;
+        if (incoming) incoming->clear();
         if (!acct_.IsLoggedIn()) return 0;
         std::string mine = MyId();
         if (mine.empty()) return 0;
-        auto r = acct_.Api("/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
+        auto r = acct_.Api(incoming ? "/rest/v1/messages?select=id,recipient,sender,body&order=id.desc&limit=60"
+                                    : "/rest/v1/messages?select=id,recipient&order=id.desc&limit=60", "GET");
         if (!r.ok) return 0;
         int n = 0;
         for (const auto& obj : SplitObjects(r.body)) {
             if (Field(obj, "recipient") != mine) continue;   // only messages sent TO me
             long id = std::atol(Field(obj, "id").c_str());
             if (id > newestOut) newestOut = id;
-            if (id > sinceId) ++n;
+            if (id > sinceId) {
+                ++n;
+                if (incoming) incoming->push_back({id, Field(obj, "sender"), Field(obj, "body")});
+            }
         }
+        if (incoming) std::reverse(incoming->begin(), incoming->end());   // newest-first from the server: oldest first
         return n;
     }
 

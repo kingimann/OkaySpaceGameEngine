@@ -5523,7 +5523,23 @@ set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 # closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
 add_executable(test_launcher_tray test_launcher_tray.cpp)
 target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
-target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_tray COMMAND test_launcher_tray)
 set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)
+
+# The launcher's desktop notifications (launcher/DesktopNotify.hpp): pop-up, in-app or tab only (focus, the switches,
+# Do not disturb, presence, blocked and muted senders), bursts, rate limits, the one-at-a-time queue, once per version,
+# where a click goes, and the tray balloon's messages (launcher/TrayLogic.hpp). Headless; no SDL, ImGui or Win32.
+add_executable(test_launcher_notify test_launcher_notify.cpp)
+target_compile_features(test_launcher_notify PRIVATE cxx_std_17)
+target_include_directories(test_launcher_notify PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_notify COMMAND test_launcher_notify)
+set_tests_properties(launcher_notify PROPERTIES TIMEOUT 60)
+# The chat window's Friends list (launcher/FriendsList.hpp): grouping, the friend menu, status, layout. Headless.
+add_executable(test_launcher_friends test_launcher_friends.cpp)
+target_compile_features(test_launcher_friends PRIVATE cxx_std_17)
+target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_friends COMMAND test_launcher_friends)
+set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)

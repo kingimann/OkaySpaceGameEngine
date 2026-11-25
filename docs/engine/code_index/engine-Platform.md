@@ -25,15 +25,15 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `PublicName` function, line 63: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
-- `Session` struct, line 365: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 374: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 384: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 393: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 405: Which backend signs players in.
-- `SessionCheck` enum, line 408: How a check of the saved session with the server went (AccountService::CheckSession).
-- `AccountService` class, line 414: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1260: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 65: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 466: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 475: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 485: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 496: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 508: Which backend signs players in.
+- `SessionCheck` enum, line 511: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 517: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1461: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -92,18 +92,18 @@ Back to the [code index](../code_index.md). 29 headers, 235 names.
 - `CurrentPid` function, line 71
 - `FileFor` function, line 80
 - `WriteAtomic` function, line 82
-- `OneLine` function, line 91
-- `WritePresence` function, line 94: ---- game side -------------------------------------------------------------
-- `ClearPresence` function, line 106
-- `RequestInvite` function, line 113: Ask the launcher to open its invite-friends window for this game.
-- `TakeJoin` function, line 115: A join the launcher asked this game to make (consumes it). False if none.
-- `PlayedWithFile` function, line 126: ---- "Recently played with" (game writes, launcher reads) -------------------
-- `NoTabs` function, line 127
-- `ReadPlayedWith` function, line 129: Everyone in the list, newest first (at most 'max').
-- `RecordPlayedWith` function, line 147: Add / refresh people (same Key() = one entry, newest wins); keeps the newest 100.
-- `ReadPresence` function, line 171: ---- launcher side ---------------------------------------------------------
-- `TakeInviteRequests` function, line 192: Every game asking for the invite window (consumes the requests).
-- `PostJoin` function, line 205: Tell a running game to join 'link'.
+- `OneLine` function, line 83
+- `WritePresence` function, line 86: ---- game side -------------------------------------------------------------
+- `ClearPresence` function, line 98
+- `RequestInvite` function, line 105: Ask the launcher to open its invite-friends window for this game.
+- `TakeJoin` function, line 107: A join the launcher asked this game to make (consumes it). False if none.
+- `PlayedWithFile` function, line 118: ---- "Recently played with" (game writes, launcher reads) -------------------
+- `NoTabs` function, line 119
+- `ReadPlayedWith` function, line 121: Everyone in the list, newest first (at most 'max').
+- `RecordPlayedWith` function, line 139: Add / refresh people (same Key() = one entry, newest wins); keeps the newest 100.
+- `ReadPresence` function, line 163: ---- launcher side ---------------------------------------------------------
+- `TakeInviteRequests` function, line 184: Every game asking for the invite window (consumes the requests).
+- `PostJoin` function, line 197: Tell a running game to join 'link'.
 
 ## `engine/include/okay/Platform/Messages.hpp`
 

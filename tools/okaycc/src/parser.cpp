@@ -57,6 +57,8 @@ public:
             if (isKw("using")) parseUsing();
             else if (isKw("namespace")) parseNamespace(tu);
             else if (isKw("template")) parseTemplate();
+            else if (parseStaticAssert()) {
+            }
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
@@ -255,9 +257,13 @@ private:
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
             isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
-            isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto"))
+            isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto") ||
+            isKwTok(t, "typename"))
             return true;
         if (t.kind == Tok::Ident && ctmpl_.count(t.text)) return true;
+        if (t.kind == Tok::Ident && aliasTmpl_.count(t.text) && &t >= toks_.data() &&
+            &t + 1 < toks_.data() + toks_.size() && isP(*(&t + 1), "<"))
+            return true;
         if (t.kind == Tok::Ident && &t >= toks_.data() && &t < toks_.data() + toks_.size()) {
             std::size_t ti = tmplAfterNs(static_cast<std::size_t>(&t - toks_.data()), true);
             if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) return true;
@@ -359,8 +365,9 @@ private:
         while (j + 2 < toks_.size() && isP(toks_[j + 1], "::") && toks_[j + 2].kind == Tok::Ident) {
             const std::string& nm = toks_[j + 2].text;
             bool last = !(j + 3 < toks_.size() && isP(toks_[j + 3], "::"));
-            if (last || (classes ? ctmpl_.count(nm) : ftmpl_.count(nm))) {
-                if (!(classes ? ctmpl_.count(nm) : ftmpl_.count(nm))) return 0;
+            const bool isT = classes ? (ctmpl_.count(nm) || aliasTmpl_.count(nm)) : (ftmpl_.count(nm) || varTmpl_.count(nm));
+            if (last || isT) {
+                if (!isT) return 0;
                 bool known = knownNs_.count(prefix) > 0;
                 for (std::size_t keep = ns_.size(); keep > 0 && !known; --keep) {
                     std::string q;
@@ -615,6 +622,9 @@ private:
     // The base type with a leading const recorded on it (const B, const char): overload ranking
     // and template deduction need it ([over.ics.rank], [temp.deduct.call]).
     std::unique_ptr<Type> parseBase() {
+        // typename X<T>::type ([temp.res] p3): the word only says a type follows.
+        if (isKw("typename") && i_ + 1 < toks_.size() && (toks_[i_ + 1].kind == Tok::Ident || isP(toks_[i_ + 1], "::")))
+            advance();
         if (isP("::") && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) advance();  // ::T (see isTypeKw)
         std::size_t start = i_;
         auto t = parseBase0();
@@ -721,6 +731,7 @@ private:
             std::size_t ti = tmplAfterNs(i_, true);
             if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) i_ = ti;  // std::vector<int>
         }
+        if (!atEnd() && cur().kind == Tok::Ident && aliasTmpl_.count(cur().text) && nextIs("<")) return useAliasTemplate();
         if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) &&
             (!findTypedef(cur().text) || nextIs("<"))) {
             auto inst = instantiateClass(cur().text);
@@ -1966,7 +1977,10 @@ private:
             tag = instOverrideTag_;
             instOverrideName_.clear();
         }
-        if (!tag.empty() && isKw("final")) advance();  // class C final : B (read, not enforced)
+        if (!tag.empty() && isKw("final")) {
+            finalTags_.insert(tag);  // class C final : B (not enforced; std::is_final reads it)
+            advance();
+        }
         std::string baseTag;
         if (!tag.empty() && !isUnion && isP(":")) {
             advance();
@@ -2173,6 +2187,7 @@ private:
                 cx.cxx = true;
                 continue;
             }
+            if (parseStaticAssert()) continue;
             if ((isKw("public") || isKw("private") || isKw("protected")) && nextIs(":")) {
                 pub = isKw("public");
                 advance();
@@ -2495,6 +2510,7 @@ private:
     };
     std::vector<DeferredBody>* staticDefer_ = nullptr;  // the bodies of the class being parsed
     int localClassN_ = 0;  // local classes renamed apart (parseStructType)
+    std::set<std::string> finalTags_;  // classes declared final
     std::set<std::string> tiDone_;  // type_info objects emitted for vtables (emitClassDecls)
     void skipBraces() {
         int depth = 0;
@@ -2812,6 +2828,115 @@ private:
     std::map<std::string, std::set<std::string>> staticFns_;
     std::vector<std::unique_ptr<Decl>> staticData_;
     std::map<std::string, long> classConsts_;  // Class::N for static integer constants
+    // C::m as a constant: C's own static constant, else one of its base classes' (is_same<T, T>
+    // takes value from integral_constant<bool, true>).
+    bool memberConst(const std::string& q, long& out, int depth = 0) const {
+        auto it = classConsts_.find(q);
+        if (it != classConsts_.end()) {
+            out = it->second;
+            return true;
+        }
+        std::size_t cut = q.rfind("::");
+        if (cut == std::string::npos || depth > 16) return false;
+        std::string cls = q.substr(0, cut);
+        auto st = structs_.find(cls);
+        if (st == structs_.end() || !st->second || st->second->base.empty()) return false;
+        return memberConst(st->second->base + q.substr(cut), out, depth + 1);
+    }
+    // A constant expression evaluated while parsing ([expr.const]): integers, bools, the static
+    // constants of classes (trait values), !, -, ~, the binary operators, ?: and casts. False when
+    // 'e' is not one the parser can work out (the checker sees it then).
+    bool evalConst(const Expr& e, long& out) {
+        switch (e.kind) {
+        case Expr::Kind::Int:
+        case Expr::Kind::Char: out = static_cast<long>(e.ival); return true;
+        case Expr::Kind::Name: {
+            if (e.text.find("::") == std::string::npos && classConst(e.text, out)) return true;
+            if (memberConst(e.text, out)) return true;
+            for (std::size_t keep = ns_.size(); keep > 0; --keep) {
+                std::string q;
+                for (std::size_t k = 0; k < keep; ++k) q += ns_[k] + "::";
+                if (memberConst(q + e.text, out)) return true;
+            }
+            return false;
+        }
+        case Expr::Kind::Unary: {
+            long v = 0;
+            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
+            if (e.text == "!") out = !v;
+            else if (e.text == "-") out = -v;
+            else if (e.text == "~") out = ~v;
+            else if (e.text == "+") out = v;
+            else return false;
+            return true;
+        }
+        case Expr::Kind::Cast: {
+            long v = 0;
+            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
+            out = e.ty && e.ty->kind == Type::Kind::Bool ? (v != 0) : v;
+            return true;
+        }
+        case Expr::Kind::Cond: {
+            long c = 0;
+            if (e.kids.size() != 3 || !e.kids[0] || !evalConst(*e.kids[0], c)) return false;
+            return e.kids[c ? 1 : 2] && evalConst(*e.kids[c ? 1 : 2], out);
+        }
+        case Expr::Kind::Bin: {
+            long a = 0;
+            long b = 0;
+            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1] || !evalConst(*e.kids[0], a)) return false;
+            if (e.text == "&&" && !a) return (out = 0, true);
+            if (e.text == "||" && a) return (out = 1, true);
+            if (!evalConst(*e.kids[1], b)) return false;
+            const std::string& o = e.text;
+            if (o == "&&" || o == "||") out = b != 0;
+            else if (o == "==") out = a == b;
+            else if (o == "!=") out = a != b;
+            else if (o == "<") out = a < b;
+            else if (o == ">") out = a > b;
+            else if (o == "<=") out = a <= b;
+            else if (o == ">=") out = a >= b;
+            else if (o == "+") out = a + b;
+            else if (o == "-") out = a - b;
+            else if (o == "*") out = a * b;
+            else if (o == "/" && b) out = a / b;
+            else if (o == "%" && b) out = a % b;
+            else if (o == "&") out = a & b;
+            else if (o == "|") out = a | b;
+            else if (o == "^") out = a ^ b;
+            else if (o == "<<") out = a << b;
+            else if (o == ">>") out = a >> b;
+            else return false;
+            return true;
+        }
+        default: return false;
+        }
+    }
+    // static_assert(cond, "text"); ([dcl.pre] p10): a condition the parser can work out must hold;
+    // one it cannot is left unchecked.
+    bool parseStaticAssert() {
+        if (!isKw("static_assert")) return false;
+        Pos p = here();
+        advance();
+        expectP("(", "(");
+        auto cond = parseAssign();
+        std::string msg;
+        if (eatP(",")) {
+            while (!atEnd() && cur().kind == Tok::StringLit) {
+                std::string t = cur().text;
+                if (t.size() >= 2 && t.front() == '"' && t.back() == '"') t = t.substr(1, t.size() - 2);
+                msg += t;
+                advance();
+            }
+        }
+        expectP(")", ")");
+        expectP(";", ";");
+        long v = 1;
+        if (cond && evalConst(*cond, v) && v == 0)
+            diags_.error(p.file.empty() ? "t.c" : p.file, p.line, p.col,
+                         "static assertion failed" + (msg.empty() ? std::string() : ": " + msg));
+        return true;
+    }
     std::string bodyClass_;                    // the class of the out-of-class member function being parsed
     // N inside a class or one of its member functions: Class::N, then the enclosing classes.
     bool classConst(const std::string& name, long& out) {
@@ -2913,15 +3038,35 @@ private:
         if (decl->init) decl->isStatic = true;
         else decl->isExtern = true;
         if (decl->init && decl->type && (decl->type->kind == Type::Kind::Int || decl->type->kind == Type::Kind::Long ||
-                                         decl->type->kind == Type::Kind::Short || decl->type->kind == Type::Kind::Char)) {
+                                         decl->type->kind == Type::Kind::Short || decl->type->kind == Type::Kind::Char ||
+                                         decl->type->kind == Type::Kind::Bool)) {
             // static constexpr int N = 8;: an integer constant the class's own code (array
             // lengths, case labels) can use as a constant expression ([expr.const]).
             const Expr* v = decl->init.get();
             if (v->kind == Expr::Kind::Brace && v->kids.size() == 1 && v->kids[0]) v = v->kids[0].get();
-            if (v->kind == Expr::Kind::Int) classConsts_[q] = static_cast<long>(v->ival);
-            else if (v->kind == Expr::Kind::Unary && v->text == "-" && !v->kids.empty() && v->kids[0] &&
-                     v->kids[0]->kind == Expr::Kind::Int)
-                classConsts_[q] = -static_cast<long>(v->kids[0]->ival);
+            long cv = 0;
+            if (evalConst(*v, cv)) {
+                // (also A::value && !B::value, the traits' own expressions: folded to the number)
+                if (decl->type->kind == Type::Kind::Bool) cv = cv != 0;
+                classConsts_[q] = cv;
+                auto lit = std::make_unique<Expr>();
+                lit->kind = Expr::Kind::Int;
+                lit->ival = static_cast<std::uint64_t>(cv < 0 ? -cv : cv);
+                lit->line = v->line;
+                lit->col = v->col;
+                lit->file = v->file;
+                if (cv < 0) {
+                    auto neg = std::make_unique<Expr>();
+                    neg->kind = Expr::Kind::Unary;
+                    neg->text = "-";
+                    neg->line = lit->line;
+                    neg->col = lit->col;
+                    neg->file = lit->file;
+                    neg->kids.push_back(std::move(lit));
+                    lit = std::move(neg);
+                }
+                decl->init = std::move(lit);
+            }
         }
         expectP(";", ";");
         // Before the function being parsed: a class template instance made inside a function body
@@ -2961,6 +3106,145 @@ private:
     };
     std::map<std::string, TDecl> ftmpl_;
     std::map<std::string, TDecl> ctmpl_;
+    struct AliasTmpl {
+        TDecl td;
+        std::size_t at = 0;  // the first token after '='
+    };
+    std::map<std::string, AliasTmpl> aliasTmpl_;  // template <..> using X = type;
+    std::map<std::string, AliasTmpl> varTmpl_;    // template <..> constexpr T x = value;
+    // X<args> of an alias template at the name: the type it stands for.
+    std::unique_ptr<Type> useAliasTemplate() {
+        AliasTmpl at = aliasTmpl_[cur().text];
+        advance();
+        std::vector<TArg> args;
+        parseTemplateArgs(at.td, args);
+        std::size_t after = i_;
+        bool savedHalf = halfGt_;
+        halfGt_ = false;
+        auto es = bindParams(at.td, args);
+        i_ = at.at;
+        eatKw("typename");
+        auto t = parseTypeName();
+        unbindParams(es);
+        i_ = after;
+        halfGt_ = savedHalf;
+        return t;
+    }
+    // Our own type-trait builtins for <type_traits> ([meta.unary.prop], [meta.rel]), worked out from
+    // what the parser knows of the types: __okay_is_base_of(B, D), __okay_is_class(T),
+    // __okay_is_polymorphic(T), __okay_is_abstract(T), __okay_is_final(T), __okay_is_empty(T),
+    // __okay_is_trivially_destructible(T), __okay_is_default_constructible(T),
+    // __okay_is_trivially_copyable(T). Enumerations are ints in okay-cc, so there is no is_enum.
+    std::unique_ptr<Expr> typeTrait() {
+        Token at0 = cur();
+        std::string which = cur().text.substr(10);
+        advance();
+        advance();  // (
+        std::vector<std::unique_ptr<Type>> ts;
+        while (!atEnd() && !isP(")")) {
+            ts.push_back(parseTypeName());
+            if (!eatP(",")) break;
+        }
+        expectP(")", ")");
+        auto clsOf = [&](const Type* t) -> const Type* {
+            if (!t || t->kind != Type::Kind::Struct || t->tag.empty()) return nullptr;
+            auto it = structs_.find(t->tag);
+            return it != structs_.end() && it->second ? it->second.get() : canonOf(t);
+        };
+        long v = 0;
+        const Type* t0 = ts.empty() ? nullptr : ts[0].get();
+        const Type* c0 = clsOf(t0);
+        if (which == "base_of" && ts.size() == 2) {
+            const Type* b = clsOf(ts[0].get());
+            const Type* d = clsOf(ts[1].get());
+            if (b && d) {
+                v = b->tag == d->tag;
+                for (std::string t = d->base; !v && !t.empty();) {
+                    if (t == b->tag) v = 1;
+                    auto it = structs_.find(t);
+                    t = it != structs_.end() && it->second ? it->second->base : std::string();
+                }
+            }
+        } else if (which == "class") {
+            v = c0 != nullptr;
+        } else if (which == "polymorphic") {
+            v = c0 && c0->hasVptr;
+        } else if (which == "abstract") {
+            if (c0)
+                for (const std::string& slot : c0->vslots)
+                    if (slot.empty()) v = 1;  // a pure virtual function left without an overrider
+        } else if (which == "final") {
+            v = c0 && finalTags_.count(c0->tag);
+        } else if (which == "empty") {
+            v = c0 && !c0->hasVptr;
+            if (c0)
+                for (const Param& f : c0->params)
+                    if (f.mangled.empty() && f.type && f.type->kind != Type::Kind::Function && !f.name.empty() &&
+                        f.name[0] != '<')
+                        v = 0;
+        } else if (which == "trivially_destructible") {
+            v = !c0 || !c0->needDtor;
+            if (t0 && t0->kind == Type::Kind::Void) v = 0;
+        } else if (which == "trivially_copyable") {
+            v = !c0 || (!c0->needDtor && !userCtors_.count(c0->tag));
+        } else if (which == "default_constructible") {
+            if (t0 && (t0->kind == Type::Kind::Reference || t0->kind == Type::Kind::Void)) v = 0;
+            else if (!c0) v = 1;
+            else {
+                bool anyCtor = false;
+                for (const Param& f : c0->params)
+                    if (f.name == "<ctor>" && f.type) {
+                        anyCtor = true;
+                        bool all = true;
+                        for (const Param& q : f.type->params)
+                            if (!q.defArg) all = false;
+                        if (all) v = 1;
+                    }
+                if (!anyCtor) v = 1;
+                for (const std::string& slot : c0->vslots)
+                    if (slot.empty()) v = 0;  // abstract
+            }
+        } else {
+            diags_.error(at0.file.empty() ? "t.c" : at0.file, at0.line, at0.column, "unknown type trait '" + at0.text + "'");
+        }
+        auto lit = ex(Expr::Kind::Int, at0);
+        lit->ival = static_cast<std::uint64_t>(v);
+        lit->text = v ? "true" : "false";  // typed bool
+        return lit;
+    }
+    // X<args> of a variable template: its value, worked out now.
+    std::unique_ptr<Expr> useVarTemplate() {
+        Token at0 = cur();
+        AliasTmpl vt = varTmpl_[cur().text];
+        advance();
+        std::vector<TArg> args;
+        parseTemplateArgs(vt.td, args);
+        std::size_t after = i_;
+        bool savedHalf = halfGt_;
+        halfGt_ = false;
+        auto es = bindParams(vt.td, args);
+        i_ = vt.at;
+        auto e = parseAssign();
+        unbindParams(es);
+        i_ = after;
+        halfGt_ = savedHalf;
+        long v = 0;
+        if (!e || !evalConst(*e, v)) {
+            diags_.error(at0.file.empty() ? "t.c" : at0.file, at0.line, at0.column,
+                         "variable template '" + at0.text + "' is not a constant");
+            v = 0;
+        }
+        auto lit = ex(Expr::Kind::Int, at0);
+        lit->ival = static_cast<std::uint64_t>(v);
+        if (v < 0) {
+            lit->ival = static_cast<std::uint64_t>(-v);
+            auto neg = ex(Expr::Kind::Unary, at0);
+            neg->text = "-";
+            neg->kids.push_back(std::move(lit));
+            return neg;
+        }
+        return lit;
+    }
     struct Spec {
         std::size_t start = 0;     // the 'struct' of template <> struct L<float> {
         std::size_t skipFrom = 0;  // its '<'
@@ -3157,9 +3441,21 @@ private:
             }
             a.type = std::move(b);
         } else {
+            // A constant expression ([temp.arg.nontype]): N, -1, Trait<T>::value, !B, A && B, a == b
+            // (a '>' would end the list, [temp.names] p3).
             auto e = parseAdd();
+            while (isP("==") || isP("!=") || isP("&&") || isP("||") || isP("&") || isP("|")) {
+                auto b = ex(Expr::Kind::Bin, cur());
+                b->text = cur().text;
+                advance();
+                b->kids.push_back(std::move(e));
+                b->kids.push_back(parseAdd());
+                e = std::move(b);
+            }
             a.isValue = true;
-            a.value = constOf(*e);
+            long v = 0;
+            if (e && evalConst(*e, v)) a.value = v;
+            else a.value = constOf(*e);
         }
         return a;
     }
@@ -3249,8 +3545,16 @@ private:
                 tp.isType = true;
                 advance();
             } else {
+                // A value parameter: "int N", "std::size_t N", "T v" (of a type parameter before it,
+                // [temp.param] p4): the name is the last identifier before ',', '>' or '='.
                 tp.isType = false;
-                while (!atEnd() && cur().kind != Tok::Ident && !isP(",") && !isP(">")) advance();
+                std::size_t k = i_;
+                while (k < toks_.size() && toks_[k].kind != Tok::End && !isP(toks_[k], ",") && !isP(toks_[k], ">") &&
+                       !isP(toks_[k], "=") && !isP(toks_[k], ">>"))
+                    ++k;
+                if (k > i_ && toks_[k - 1].kind == Tok::Ident) i_ = k - 1;
+                else
+                    while (!atEnd() && cur().kind != Tok::Ident && !isP(",") && !isP(">")) advance();
             }
             if (!atEnd() && cur().kind == Tok::Ident) {
                 tp.name = cur().text;
@@ -3333,6 +3637,39 @@ private:
             else err("expected a class template name");
             i_ = td.end;
             return false;
+        }
+        if (isKw("using") && i_ + 2 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident && isP(toks_[i_ + 2], "=")) {
+            // An alias template ([temp.alias]): template <class T> using X_t = typename X<T>::type;
+            // a use X_t<A> reads the type after '=' with the parameters bound.
+            AliasTmpl at;
+            at.td = td;
+            at.at = i_ + 3;
+            aliasTmpl_[toks_[i_ + 1].text] = at;
+            i_ = td.end;
+            return false;
+        }
+        {
+            // A variable template ([temp.pre] p1): template <class T> inline constexpr bool X_v = ...;
+            // made a constant at each use X_v<A> (only constant ones are supported).
+            int paren = 0;
+            std::size_t eq = 0;
+            for (std::size_t k = td.start; k < td.end; ++k) {
+                if (isP(toks_[k], "(")) ++paren;
+                else if (isP(toks_[k], ")")) --paren;
+                else if (paren == 0 && isP(toks_[k], "{")) break;
+                else if (paren == 0 && isP(toks_[k], "=")) {
+                    eq = k;
+                    break;
+                }
+            }
+            if (eq > td.start && toks_[eq - 1].kind == Tok::Ident && toks_[eq - 1].text != "operator" && paren == 0) {
+                AliasTmpl vt;
+                vt.td = td;
+                vt.at = eq + 1;
+                varTmpl_[toks_[eq - 1].text] = vt;
+                i_ = td.end;
+                return false;
+            }
         }
         std::string name;
         int paren = 0;
@@ -3806,6 +4143,8 @@ private:
             if (isKw("using")) parseUsing();
             else if (isKw("namespace")) parseNamespace(tu);
             else if (isKw("template")) parseTemplate();
+            else if (parseStaticAssert()) {
+            }
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
@@ -3933,6 +4272,7 @@ private:
     void parseExternal(Tu& tu) {
         Guard nest(*this);
         if (!nest) return;
+        if (parseStaticAssert()) return;
         if (tryOutOfClassSpecial()) {
             flushExtras(tu);
             return;
@@ -4793,6 +5133,7 @@ private:
             return s;
         }
         if (isP("{")) return parseCompound();
+        if (parseStaticAssert()) return std::make_unique<Stmt>();
         if (isKw("if")) return parseIf();
         if (isKw("while")) return parseWhile();
         if (isKw("do")) return parseDo();
@@ -4877,6 +5218,7 @@ private:
         s->line = cur().line;
         s->col = cur().column;
         advance();
+        const bool constIf = eatKw("constexpr");
         expectP("(", "(");
         if (hasInitStatement()) {
             // if (init; cond) A else B  is  { init; if (cond) A else B } ([stmt.if] p3): what init
@@ -4919,6 +5261,12 @@ private:
         expectP(")", ")");
         s->thenS = parseStmt();
         if (eatKw("else")) s->elseS = parseStmt();
+        long cv = 0;
+        if (constIf && s->expr && evalConst(*s->expr, cv)) {
+            // if constexpr ([stmt.if] p2): the branch not taken is discarded (read, never checked).
+            std::unique_ptr<Stmt> taken = cv ? std::move(s->thenS) : std::move(s->elseS);
+            return taken ? std::move(taken) : std::make_unique<Stmt>();
+        }
         return s;
     }
 
@@ -6029,6 +6377,31 @@ private:
             }
             if (ti) i_ = ti;
         }
+        if (cur().kind == Tok::Ident && aliasTmpl_.count(cur().text) && nextIs("<") && !isLocalName(cur().text)) {
+            // conditional_t<B, X, Y>::value: a static member of the class the alias names.
+            Token at = cur();
+            auto t = useAliasTemplate();
+            if (t && t->kind == Type::Kind::Struct && isP("::") && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) {
+                advance();
+                auto e = leafName(cur());
+                e->text = t->tag + "::" + cur().text;
+                advance();
+                long cv = 0;
+                if (memberConst(e->text, cv)) {
+                    auto lit = ex(Expr::Kind::Int, at);
+                    lit->ival = static_cast<std::uint64_t>(cv);
+                    return lit;
+                }
+                return e;
+            }
+            err("expected '::' after an alias template in an expression");
+            return zeroAt();
+        }
+        if (cur().kind == Tok::Ident && varTmpl_.count(cur().text) && nextIs("<") && !isLocalName(cur().text)) {
+            tmplQual_.clear();
+            return useVarTemplate();
+        }
+        if (cur().kind == Tok::Ident && cur().text.compare(0, 10, "__okay_is_") == 0 && nextIs("(")) return typeTrait();
         if (isKw("nullptr")) {
             auto e = ex(Expr::Kind::Int, cur());
             e->ival = 0;

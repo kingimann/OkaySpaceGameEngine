@@ -235,6 +235,24 @@ static void expectNewArrayError() {
     ++gOk;
 }
 
+// Round 23: a static_assert whose condition the compiler works out to false is an error.
+static void expectStaticAssert() {
+    okaycc::Diagnostics d;
+    okaycc::compileToObject("template <class T, class U> struct S { static constexpr bool value = false; };\n"
+                            "template <class T> struct S<T, T> { static constexpr bool value = true; };\n"
+                            "static_assert(S<int, int>::value, \"fine\");\n"
+                            "struct A { static_assert(!S<int, int>::value, \"boom\"); };\n"
+                            "int main() { return 0; }\n",
+                            d, "sa.cpp");
+    if (d.ok() || d.format().find("static assertion failed: boom") == std::string::npos ||
+        d.format().find("fine") != std::string::npos) {
+        std::fprintf(stderr, "FAIL static_assert gave: %s\n", d.format().c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
 int main() {
     DIR* dir = opendir("tests/progs_cpp");
     if (!dir) {
@@ -266,6 +284,7 @@ int main() {
     if (!std::getenv("CPPDIFF_ONLY")) {
         linkTwo();
         expectNewArrayError();
+        expectStaticAssert();
         engineDiff("tests/progs_cpp_engine/font_main.cpp", "../../engine/src/Graphics/Font.cpp");
         engineDiff("tests/progs_cpp_engine/focus_main.cpp", "../../engine/src/UI/FocusGraph.cpp");
         // Round 18: Mip.cpp and the Texture.cpp it calls (vector<Surface>, member templates, our libm).

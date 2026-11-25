@@ -332,6 +332,17 @@ std::vector<char*> ArgvOf(const std::vector<std::string>& argv) {
     return av;
 }
 void CloseFd(int& fd) { if (fd >= 0) { ::close(fd); fd = -1; } }
+void ClosePipes(int (&a)[2], int (&b)[2], int (&c)[2]) {
+    CloseFd(a[0]); CloseFd(a[1]); CloseFd(b[0]); CloseFd(b[1]); CloseFd(c[0]); CloseFd(c[1]);
+}
+/// In the child after fork: stdout and stderr go to the two pipes' write ends, stdin is empty.
+void PipesToStd(int (&outP)[2], int (&errP)[2]) {
+    ::dup2(outP[1], 1);
+    ::dup2(errP[1], 2);
+    ::close(outP[0]); ::close(outP[1]); ::close(errP[0]); ::close(errP[1]);
+    const int nul = ::open("/dev/null", O_RDONLY);
+    if (nul >= 0) { ::dup2(nul, 0); if (nul > 2) ::close(nul); }
+}
 } // namespace
 
 RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool capture) {
@@ -342,23 +353,17 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
     int outP[2] = {-1, -1}, errP[2] = {-1, -1}, execP[2] = {-1, -1};
     if (capture && (::pipe(outP) != 0 || ::pipe(errP) != 0)) { CloseFd(outP[0]); CloseFd(outP[1]); return r; }
     // A close-on-exec pipe tells the parent whether exec worked: it reads EOF on success, an errno on failure.
-    if (::pipe(execP) != 0) { CloseFd(outP[0]); CloseFd(outP[1]); CloseFd(errP[0]); CloseFd(errP[1]); return r; }
+    if (::pipe(execP) != 0) { ClosePipes(outP, errP, execP); return r; }
     ::fcntl(execP[1], F_SETFD, FD_CLOEXEC);
     std::vector<char*> av = ArgvOf(argv);
     const pid_t pid = ::fork();
     if (pid < 0) {
-        CloseFd(outP[0]); CloseFd(outP[1]); CloseFd(errP[0]); CloseFd(errP[1]); CloseFd(execP[0]); CloseFd(execP[1]);
+        ClosePipes(outP, errP, execP);
         return r;
     }
     if (pid == 0) {
         ::close(execP[0]);
-        if (capture) {
-            ::dup2(outP[1], 1);
-            ::dup2(errP[1], 2);
-            ::close(outP[0]); ::close(outP[1]); ::close(errP[0]); ::close(errP[1]);
-            const int nul = ::open("/dev/null", O_RDONLY);
-            if (nul >= 0) { ::dup2(nul, 0); if (nul > 2) ::close(nul); }
-        }
+        if (capture) PipesToStd(outP, errP);
         int e = 0;
         if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
         else { ::execv(exe.c_str(), av.data()); e = errno; }
@@ -464,7 +469,7 @@ bool Child::Start(const std::vector<std::string>& argv, const std::string& cwd, 
     if (exe.empty()) { error = "Could not find " + argv[0] + "."; return false; }
     int outP[2] = {-1, -1}, errP[2] = {-1, -1}, execP[2] = {-1, -1};
     if (::pipe(outP) != 0 || ::pipe(errP) != 0 || ::pipe(execP) != 0) {
-        CloseFd(outP[0]); CloseFd(outP[1]); CloseFd(errP[0]); CloseFd(errP[1]); CloseFd(execP[0]); CloseFd(execP[1]);
+        ClosePipes(outP, errP, execP);
         error = "Could not make a pipe.";
         return false;
     }
@@ -474,18 +479,14 @@ bool Child::Start(const std::vector<std::string>& argv, const std::string& cwd, 
     std::vector<char*> av = ArgvOf(argv);
     const pid_t pid = ::fork();
     if (pid < 0) {
-        CloseFd(outP[0]); CloseFd(outP[1]); CloseFd(errP[0]); CloseFd(errP[1]); CloseFd(execP[0]); CloseFd(execP[1]);
+        ClosePipes(outP, errP, execP);
         error = "Could not start " + exe + ".";
         return false;
     }
     if (pid == 0) {
         ::setpgid(0, 0);   // its own process group: Stop ends it and what it started
         ::close(execP[0]);
-        ::dup2(outP[1], 1);
-        ::dup2(errP[1], 2);
-        ::close(outP[0]); ::close(outP[1]); ::close(errP[0]); ::close(errP[1]);
-        const int nul = ::open("/dev/null", O_RDONLY);
-        if (nul >= 0) { ::dup2(nul, 0); if (nul > 2) ::close(nul); }
+        PipesToStd(outP, errP);
         int e = 0;
         if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
         else { ::execv(exe.c_str(), av.data()); e = errno; }

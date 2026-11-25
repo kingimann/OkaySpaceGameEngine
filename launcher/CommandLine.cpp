@@ -3,6 +3,7 @@
 #include "CommandLine.hpp"
 
 #include "CommandTable.hpp"   // tools/okay-cli: okay's commands and sub-commands
+#include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -58,12 +59,9 @@ bool SplitWords(const std::string& line, std::vector<std::string>& words, std::s
 }
 
 namespace {
-std::string Lower(std::string s) {
-    for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    return s;
-}
+using okay::str::LowerAscii;   // engine/include/okay/Core/StringUtil.hpp: the one lower-case helper
 bool IsOkayWord(const std::string& w) {
-    const std::string l = Lower(w);
+    const std::string l = LowerAscii(w);
     return l == "okay" || l == "okay.exe";
 }
 } // namespace
@@ -73,7 +71,7 @@ LineKind Classify(const std::string& line) {
     std::string err;
     if (!SplitWords(line, words, err)) return LineKind::Okay;   // BuildArgv says what is wrong
     if (words.empty()) return LineKind::Empty;
-    if (words.size() == 1 && (Lower(words[0]) == "clear" || Lower(words[0]) == "cls")) return LineKind::Clear;
+    if (words.size() == 1 && (LowerAscii(words[0]) == "clear" || LowerAscii(words[0]) == "cls")) return LineKind::Clear;
     return LineKind::Okay;
 }
 

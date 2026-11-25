@@ -116,8 +116,9 @@ then this file gets updated. Keep this file short and true.
     - **Test builds are automatic.** `.github/workflows/test-build-on-push.yml` starts a test build (`dev-build.yml`,
       the launcher's test channel) on every push to main and for every PR whose checks finish green. Start one by hand
       for anything else the owner should try. Tell the owner what each one has; fix what they find and push again.
-    - **A release gathers many test builds into one big update.** Make one when the owner asks, or when a batch of tested
-      work is ready, and say which. Bump `CMakeLists.txt`, add a `ROADMAP.md` row and a full, plain-language
+    - **A release gathers many test builds into one big update, and only the owner starts one.** (Owner, 2026-11-25: "i
+      will tell you when to send out releases, only send out test builds if i dont say release".) Never dispatch
+      `release.yml` or open a version PR unless the owner said "release" for it; otherwise send test builds. Bump `CMakeLists.txt`, add a `ROADMAP.md` row and a full, plain-language
       `dist/CHANGELOG.txt` block (it IS the launcher's What's New and the GitHub release notes, in full), merge, then
       dispatch `release.yml` (ref `main`, channel `latest`) from a main commit whose full run is green.
     - **The pipeline stays fast.** A slow path to a test build or a release is a bug to fix first (the sharded test job

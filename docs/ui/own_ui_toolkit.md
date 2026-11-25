@@ -3254,3 +3254,47 @@ under them), clicks (Apply, Skybox, typing a width, Remove, the rename popup ove
 collapsed window draw nothing. `okayui_editor_panels`: the Player golden was made again (no steppers), with a check of the field width.
 
 **Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build of `PanelSection`.
+
+## 27. Post-processing, the import settings and Project Settings' Loading screen on OkayUI only
+
+Three more sections moved the way of section 26 (`okayuihost::HostPanelSection`, through `PanelSection` in `editor/OkayPanels.cpp`):
+Lighting > Post-processing, the import settings of a texture, model or sound (in the Project panel and in the Inspector for the selected
+asset), and Project Settings > Loading screen. Their Dear ImGui bodies are deleted from `editor/main.cpp` and `editor/ProjectPanelUI.cpp`;
+the rules stay there (the scene's values in and out, Apply, Revert, the look presets, the file dialog).
+
+**Brought up to date with main first.** The Post-processing port already had main's rows (bloom softness, SSAO power, vignette
+smoothness, the renderer notes and the closing note). The import settings had fallen far behind; the model (`okaypanels::ImportFields`)
+and both bodies now carry what main's panel has:
+
+- a texture's **Kind** (colour, normal map, data), **Filter** with **Anisotropic** (Trilinear with more than one sample) and its
+  **Anisotropy** level, **Mip filter** (while Mipmaps is on), **Compress on the GPU** with its **Format** and note, the "Loaded: ..."
+  line of what is loaded now, and the **Mipmaps and compression** tool (Write, Filter, the three boxes, "Generate mipmaps / compress"
+  and its message; the choices live in `ImportSettingsState`, the host writes the `.dds`);
+- every hint is wrapped at the panel's edge, and every list is as wide as its longest choice, at least 160 pixels and never wider than
+  the room left of its label (`ImportComboWidth`, main's rule; a fixed 160 cut "Load the whole fi");
+- the rules both bodies share are in `shared/EditorPanelModels.hpp`: `ImportTexKindIndex` / `ImportSetTexKind`, `ImportFilterIndex` /
+  `ImportSetFilter` (Anisotropic starts at 8x, Trilinear sets one sample, Point and Bilinear keep the level), `ImportAnisoIndex`;
+- the texture-only keys (normal map, anisotropy, mip filter, compression format) are still kept as extra keys of the `.okaymeta`
+  (`okay::TextureSettings`), written with main's condition, so a settings file round-trips as before.
+- **A bug fixed on the way:** main's texture section had two lists labelled "Filter" in one window (the import filter and the tool's),
+  so they shared one Dear ImGui id. The tool's is "Filter##ddstool" in both bodies now.
+
+The Loading screen port is new: the logo path with its hint, "..." (Browse..., the host opens the file dialog), Clear, Custom splash
+accent with its colour, the two background colours (220 pixels wide, the Inspector's colour row) and Show progress bar.
+
+**Where ImGui is OkayUI** (the editor on OkayUI, window mode's copy of `ProjectPanelUI.cpp`, the port tests): the import settings body is
+drawn straight at the cursor with a placeholder after it (`OKAY_IMGUI_IS_OKAYUI`, set by `OkayUIImGuiNames.hpp`). Window mode's copy
+renames `DrawImportSettings`, so `editor/OkayUIHostPanels.cpp` forwards the renamed screen name to the real one.
+
+**Tests.** `okayui_panels_imgui` hosts the three in a window (the picture against the old hosting, a window in front and a tooltip
+covering them, the Bloom box, the look preset list as an overlay that an ImGui modal closes, scrolling down to Generate, Compress and the
+Loading screen's Browse and logo field). `okayui_editor_panels`: the new rules, every texture row (Kind, Filter to Trilinear hiding
+Anisotropy, Compress hiding Format, Mipmaps hiding Mip filter, the tool's boxes and Generate), the Loading screen (golden, Browse, Clear,
+typing a path, the accent box, missing pointers). `okayui_editor_panels_imgui`: the texture and Loading screen pictures and the same
+clicks in both versions, and their section heights.
+
+**Not done.** The Hierarchy: its OkayUI port is older than main's panel (main draws a recursive tree with search, scene groups, rename,
+menus and drag and drop straight from the scene) and the editor host that filled its model is gone, so wiring it is a larger job of its
+own. Project Settings > Modules is shared with the New Project form (`editor/ModulesPanelUI.hpp`) and stays Dear ImGui.
+
+**Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build.

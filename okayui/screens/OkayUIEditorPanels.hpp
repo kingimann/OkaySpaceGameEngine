@@ -1,6 +1,6 @@
 #pragma once
 // Editor panels drawn with OkayUI (the opt-in "OkayUI (preview)" backend, docs/own_ui_toolkit.md sections 9 to 11): Problems,
-// Stats, History, Project Settings' Tags and Layers, Physics, Player and Rendering sections, the Profiler, the Project panel's import
+// Stats, History, Project Settings' Tags and Layers, Physics, Player, Rendering and Loading screen sections, the Profiler, the Project panel's import
 // settings and the Lighting window's Post-processing section. Same shape as OkayUIPanels.hpp: a plain function takes the panel's model (shared/EditorPanelModels.hpp, the
 // same one the Dear ImGui version in editor/EditorPanelViews.cpp draws) and a rectangle, draws into a bare OkayUI window that fills
 // it, and answers with the model's intent plus the rectangles of what it drew (for the tests). No SDL, no Dear ImGui.
@@ -121,7 +121,8 @@ ProfilerResult DrawProfiler(okaypanels::ProfilerModel& model, float x, float y, 
 
 struct ImportSettingsResult {
     okaypanels::ImportSettingsIntent intent;
-    OkayUI::Rect sizeCombo, filterCombo, wrapCombo, mipmaps;          // texture (zero size when not shown)
+    OkayUI::Rect sizeCombo, kindCombo, filterCombo, anisoCombo, wrapCombo, mipmaps, mipFilterCombo, compress, formatCombo;   // texture (zero size when not shown)
+    OkayUI::Rect ddsOutCombo, ddsFilterCombo, ddsColour, ddsNormal, ddsCutout, generate;   // texture: the tools (mipmaps and compression)
     OkayUI::Rect scale, normalsCombo, smoothing, animations;          // model
     OkayUI::Rect loadCombo, mono;                                     // audio
     OkayUI::Rect apply, revert, popup;                                // the buttons; the failure popup while it is open
@@ -255,5 +256,15 @@ struct FieldListResult {
 /// A component body as field rows (shared/InspectorFieldsModel.hpp): the values are edited in place and the rows marked; tooltips,
 /// prefab marks and pickers ask the list's hooks. `id` names the OkayUI window (one per body drawn).
 FieldListResult DrawFieldList(okaypanels::InspFieldList& list, const char* id, float x, float y, float w, float h);
+
+// ---- Loading screen (Project Settings) -------------------------------------------------------------------------------------------
+
+struct LoadingScreenResult {
+    okaypanels::LoadingScreenIntent intent;
+    OkayUI::Rect logo, browse, clear, accentBox, accent, bgTop, bgBottom, showBar;   // the colour rows: the cells, the swatch and the label
+    float contentHeight = 0.0f;
+};
+
+LoadingScreenResult DrawLoadingScreen(okaypanels::LoadingScreenModel& model, float x, float y, float w, float h);
 
 } // namespace okayuiscreens

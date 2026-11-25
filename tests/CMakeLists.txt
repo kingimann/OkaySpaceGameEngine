@@ -5468,13 +5468,23 @@ add_test(NAME input_grok COMMAND test_input_grok)
 
 # The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
 # completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
-add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp
+add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
                ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
 target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME launcher_cli COMMAND test_launcher_cli)
 set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
+# The Command line page's terminal (launcher/Terminal.cpp, ShellSession in launcher/CommandLine.cpp, okaycli::Pty): the VT
+# parser against byte streams, resizing, selection and copy, the key-to-sequence mapping, and a real /bin/sh on a pseudo
+# terminal (printf, echo, the folder, Tools first on PATH, resize, Ctrl+C stopping sleep, exit). The pty part is POSIX only.
+add_executable(test_launcher_terminal test_launcher_terminal.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+target_compile_features(test_launcher_terminal PRIVATE cxx_std_17)
+target_include_directories(test_launcher_terminal PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                           ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_terminal COMMAND test_launcher_terminal)
+set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 
 # The launcher's system tray (launcher/TrayLogic.hpp: X / minimize / tray menu / double-click / Explorer restart / the
 # slower loop while hidden, through a fake shell) and where its chat is drawn (launcher/ChatPlacement.hpp: in, out,

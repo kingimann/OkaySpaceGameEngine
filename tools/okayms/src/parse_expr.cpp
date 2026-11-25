@@ -1595,15 +1595,24 @@ bool Parser::parse_unary(Node* out) {
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) own = true;
             if (!own) {
+                // `using namespace detail;` inside namespace okay names okay::detail ([namespace.udir] 2): the
+                // namespace is looked for from the namespace being read outward.
+                bool found = false;
                 for (const std::string& ns : using_namespaces) {
-                    const std::string candidate = ns + "::" + name;
-                    bool known = false;
-                    for (const FuncDecl& fd : funcs)
-                        if (fd.name == candidate) known = true;
-                    if (known) {
-                        name = candidate;
-                        break;
+                    std::string open = current_ns;
+                    for (;;) {
+                        const std::string candidate = (open.empty() ? std::string() : open + "::") + ns + "::" + name;
+                        for (const FuncDecl& fd : funcs)
+                            if (fd.name == candidate) found = true;
+                        if (found) {
+                            name = candidate;
+                            break;
+                        }
+                        if (open.empty()) break;
+                        const size_t cut = open.rfind("::");
+                        open = cut == std::string::npos ? std::string() : open.substr(0, cut);
                     }
+                    if (found) break;
                 }
             }
         }
@@ -1698,7 +1707,28 @@ bool Parser::parse_unary(Node* out) {
             }
         }
         if (scope_sid >= 0 && colons != std::string::npos) {
-            const std::string member = name.substr(colons + 2);
+            std::string member = name.substr(colons + 2);
+            // Outer::Inner::name: step into the nested class for each further name ([class.qual]); an enumerator of
+            // an enumeration in it (Scene::RenderSettings::SkyProcedural) is then a member of the innermost class.
+            for (size_t step = member.find("::"); step != std::string::npos; step = member.find("::")) {
+                const std::string part = member.substr(0, step);
+                int nested = -1;
+                for (size_t k = 0; k < structs.size(); ++k)
+                    if (structs[k].name == part && structs[k].parent == scope_sid) nested = static_cast<int>(k);
+                if (nested < 0) break;
+                scope_sid = nested;
+                member = member.substr(step + 2);
+            }
+            if (member.find("::") == std::string::npos && !is(TLParen) && !is(TLt) && enum_values.count(member) > 0 &&
+                !static_member_expr(scope_sid, member, out)) {
+                error.clear();
+                *out = Node{};
+                out->kind = Node::IntLit;
+                out->number = enum_values[member];
+                out->type.base = 1;
+                out->type.enum_id = enum_id_of(member);
+                return parse_postfix(out);
+            }
             if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
                 return parse_postfix(out);
             if (!is(TLParen) && !is(TLt) && static_method_ref(scope_sid, member, out)) return parse_postfix(out);
@@ -2275,6 +2305,23 @@ bool Parser::parse_unary(Node* out) {
                 if (!expect(TRParen, "')'")) return false;
             }
         }
+    } else if (is(TPlus)) {
+        // +x ([expr.unary.op] 7): the value of x, promoted (a char, short or bool becomes an int); an operator+ of a class
+        // with one operand is called.
+        next();
+        Node inner;
+        if (!parse_unary(&inner)) return false;
+        bool done = false;
+        if (!operator_unary(TPlus, false, &inner, &done)) return false;
+        Type it;
+        if (!done && static_type(inner, &it) && it.pointers == 0 && !it.is_array() && !it.is_ref &&
+            (it.base == 2 || it.base == 4)) {
+            Type promoted;
+            promoted.base = 1;
+            inner = cast_node(promoted, std::move(inner));
+        }
+        *out = std::move(inner);
+        return parse_postfix(out);
     } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot) || is(TTilde)) {
         out->kind = Node::Unary;
         out->op = cur().kind;
@@ -2637,8 +2684,22 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     return n.kind == Node::Name || n.kind == Node::Field || n.kind == Node::Index ||
                            (n.kind == Node::Unary && n.op == TStar);
                 };
-                if (cur_locals != nullptr && static_type(mid, &ta) && static_type(els, &tb) && ta.base == 3 &&
-                    ta.pointers == 0 && !ta.is_ref && !ta.is_array() && tb.base == 3 && tb.pointers == 0 && !tb.is_ref &&
+                const bool typed = static_type(mid, &ta) && static_type(els, &tb);
+                ta.is_ref = false;  // a reference names its object ([expr.type] 1)
+                tb.is_ref = false;
+                if (typed && ta.base == 3 && ta.pointers == 0 && !ta.is_array() && tb.base == 3 && tb.pointers == 0 &&
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && lvalue(mid) && lvalue(els)) {
+                    // c ? a : b with two objects of one class is an lvalue ([expr.cond] 4): *(c ? &a : &b).
+                    tern.kids.push_back(node_addr(std::move(mid)));
+                    tern.kids.push_back(node_addr(std::move(els)));
+                    *out = Node{};
+                    out->kind = Node::Unary;
+                    out->op = TStar;
+                    out->kids.push_back(std::move(tern));
+                    continue;
+                }
+                if (cur_locals != nullptr && typed && ta.base == 3 &&
+                    ta.pointers == 0 && !ta.is_array() && tb.base == 3 && tb.pointers == 0 &&
                     ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els))) {
                     Local hidden;
                     hidden.name = "__tn" + std::to_string(tmp_count++);

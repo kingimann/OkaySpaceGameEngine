@@ -314,6 +314,13 @@ public:
     }
     string& append(const char* s) { return append(s, length_of(s)); }
     string& append(const string& other) { return append(other.data_, other.size_); }
+    // append(str, pos, n) ([string.append] 3): at most n characters of str from pos (pos past the end is clamped here,
+    // where the standard throws out_of_range).
+    string& append(const string& other, size_t pos, size_t n = npos) {
+        if (pos > other.size_) pos = other.size_;
+        if (n > other.size_ - pos) n = other.size_ - pos;
+        return append(other.data_ + pos, n);
+    }
     string& append(string_view v) { return append(v.data(), v.size()); }
     string& append(size_t n, char c) {
         reserve_exact(size_ + n);

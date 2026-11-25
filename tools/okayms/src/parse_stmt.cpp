@@ -992,6 +992,14 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             if (!init_list_temp(list_type, &list)) return false;
             ctor_args.push_back(std::move(list));
             have_ctor_args = true;
+        } else if (braced_args && tokens[at + 1].kind != TRBrace && has_nested_braces_ahead() &&
+                   aggregate_with_defaults(type.struct_id, std::vector<Node>(2))) {
+            // S x{{1, 2}, {3, 4}}; for an aggregate whose members have constructors (struct Set { Vec3 a, b; }): the
+            // object is made member by member as S{...} makes it ([dcl.init.aggr]), then x is made from it.
+            Node made;
+            if (!braced_temp(type.struct_id, &made)) return false;
+            ctor_args.push_back(std::move(made));
+            have_ctor_args = true;
         } else {
         next();
         if (braced_args) {

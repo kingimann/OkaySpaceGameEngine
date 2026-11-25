@@ -92,6 +92,14 @@ public:
         return *this;
     }
     basic_ustring__& append(const basic_ustring__& o) { return append(o.data(), o.size()); }
+    basic_ustring__& append(const C* s) { return append(s, length_of(s)); }
+    // append(n, c) ([string.append] 9): n copies of c.
+    basic_ustring__& append(size_t n, C c) {
+        units_.pop_back();
+        for (size_t i = 0; i < n; ++i) units_.push_back(c);
+        units_.push_back((C)0);
+        return *this;
+    }
     basic_ustring__& operator+=(C c) {
         push_back(c);
         return *this;

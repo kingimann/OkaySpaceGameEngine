@@ -516,6 +516,95 @@ int entry(void) {
     }
 }
 
+// Smaller pieces the engine files stopped at: unary +, a member of an anonymous union in a member initializer,
+// make_unique with three arguments, string::append(str, pos, n) and wstring::append(n, c), the default argument of a
+// member function template defined outside its class, S x{{..}, {..}} for an aggregate of classes, Outer::Inner::E
+// for an enumerator, `using namespace detail;` inside a namespace, and c ? a : b with references to class objects.
+static void r28_pieces(Tally& tally) {
+    std::printf("r28_pieces\n");
+    okayms_test::run_both(kRun, tally, "pieces", std::string(kAlloc) + R"OKMS(
+#include <memory>
+#include <string>
+#include <vector>
+int step(int d) { return d * 10; }
+struct Val {
+  int t;
+  union { bool b; long long i; double n; };
+  Val() : i(5) {}
+};
+struct Item {
+  std::string name;
+  int count;
+  bool flag;
+  Item(const std::string& n, int c, bool f) : name(n), count(c), flag(f) {}
+};
+struct Part { int v = 1; };
+struct Holder {
+  Part p;
+  template <typename T> std::vector<T*> All(bool deep = false) const;
+};
+template <typename T> std::vector<T*> Holder::All(bool deep) const {
+  std::vector<T*> r;
+  r.push_back((T*)&p);
+  if (deep) r.push_back((T*)&p);
+  return r;
+}
+struct V2 {
+  float x, y;
+  V2() : x(0), y(0) {}
+  V2(float a, float b) : x(a), y(b) {}
+};
+class Scene {
+public:
+  struct Render {
+    enum Mode { Colour = 0, Procedural = 1 };
+    int mode = Procedural;
+  };
+};
+namespace okay {
+namespace detail {
+inline int Hash(int x) { return x * 7; }
+}
+inline int UseHash(int x) {
+  using namespace detail;
+  return Hash(x) + 1;
+}
+}
+const std::string& pick(bool c, const std::string& a, const std::string& b) { return c ? a : b; }
+int entry(void) {
+  char c = 3;
+  CK(1, step(+1) == 10 && +c == 3 && sizeof(+c) == 4 && -+2 == -2);
+  Val v;
+  CK(2, v.i == 5);
+  std::unique_ptr<Item> it = std::make_unique<Item>(std::string("bolt"), 4, true);
+  std::unique_ptr<int> z = std::make_unique<int>();
+  CK(3, it->name == "bolt" && it->count == 4 && it->flag && *z == 0);
+  std::string d;
+  std::string s = "hello";
+  d.append(s, 1, 3);
+  d.append(s, 4, 99);
+  CK(4, d == "ello");
+  std::wstring w = L"a";
+  w.append(3, L'\\');
+  CK(5, w.size() == 4 && w[3] == L'\\');
+  Holder h;
+  CK(6, h.All<Part>().size() == 1 && h.All<Part>(true).size() == 2);
+  struct Set { V2 a, b; };
+  static const Set k{{1.0f, 2.0f}, {3.0f, 4.0f}};
+  const Set k2{{5.0f, 6.0f}, {7.0f, 8.0f}};
+  CK(7, k.a.y == 2.0f && k.b.x == 3.0f && k2.b.y == 8.0f);
+  Scene::Render r;
+  CK(8, r.mode == Scene::Render::Procedural && Scene::Render::Colour == 0);
+  CK(9, okay::UseHash(3) == 22);
+  const std::string a = "first", b = "second";
+  std::string chosen = a.size() > 3 ? b : a;
+  std::string made = a.size() > 9 ? a.substr(1) : a;
+  CK(10, chosen == "second" && made == "first" && pick(false, a, b) == "second");
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -529,5 +618,6 @@ int main(int argc, char** argv) {
     r28_thread_local_class(tally);
     r28_def_files(tally);
     r28_import_library(tally);
-    return tally.finish(9);
+    r28_pieces(tally);
+    return tally.finish(10);
 }

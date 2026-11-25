@@ -3114,7 +3114,8 @@ struct Parser {
         for (size_t i = first; i < args->size() && i - first < params.size(); ++i) {
             const Type& pt = params[i - first];
             Node& arg = (*args)[i];
-            if (arg.kind == Node::Block && arg.text == "tokbrace") {
+            const bool from_braces = arg.kind == Node::Block && arg.text == "tokbrace";
+            if (from_braces) {
                 const size_t saved = at;
                 at = static_cast<size_t>(arg.number);
                 Node made;
@@ -3136,9 +3137,11 @@ struct Parser {
                 if (!ok) return false;
                 arg = std::move(made);
             }
-            if (pt.pointers > 0 && !pt.is_ref && !pt.is_array() && !(arg.kind == Node::IntLit && arg.number == 0)) {
+            if (pt.pointers > 0 && !pt.is_ref && !pt.is_array() && !(arg.kind == Node::IntLit && arg.number == 0) &&
+                arg.kind != Node::Ternary && !from_braces) {
                 // An integer is not converted to a pointer parameter ([conv.ptr] 1: only a null pointer constant is);
-                // before, f('x') reached a const char* parameter as an address.
+                // before, f('x') reached a const char* parameter as an address. (c ? 0 : p is a pointer; a braced
+                // argument is left as before: see the note on overloads in the plan.)
                 Type from;
                 if (static_type(arg, &from) && from.pointers == 0 && !from.is_array() && !from.is_ref && !from.is_func() &&
                     (from.base == 1 || from.base == 2 || from.base == 4) && !from.is_enum()) {
@@ -4652,10 +4655,46 @@ struct Parser {
                     pre.push_back(std::move(stmt));
                 }
             }
-            for (const Init& init : inits) {
+            for (Init& init : inits) {
                 bool known = init.name == (def.base >= 0 ? structs[static_cast<size_t>(def.base)].name : std::string());
                 for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi)
                     if (def.fields[fi].name == init.name) known = true;
+                std::vector<std::string> path;
+                if (!known && init.args.size() <= 1 && anon_path(cls, init.name, &path)) {
+                    // V() : i(0) with i a member of an anonymous union of V ([class.base.init] 2, [class.union.anon]):
+                    // stored through the hidden member that holds it.
+                    Node target = node_this_field(path[0]);
+                    for (size_t pk = 1; pk < path.size(); ++pk) {
+                        Node step;
+                        step.kind = Node::Field;
+                        step.op = TDot;
+                        step.text = path[pk];
+                        step.kids.push_back(std::move(target));
+                        target = std::move(step);
+                    }
+                    Node member;
+                    member.kind = Node::Field;
+                    member.op = TDot;
+                    member.text = init.name;
+                    member.kids.push_back(std::move(target));
+                    Node value;
+                    if (init.args.empty()) {
+                        value.kind = Node::IntLit;
+                        value.type.base = 1;
+                    } else {
+                        value = std::move(init.args[0]);
+                    }
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.kids.push_back(std::move(member));
+                    assign.kids.push_back(std::move(value));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    pre.push_back(std::move(stmt));
+                    known = true;
+                }
                 if (!known) {
                     error = "no member or base class named " + init.name;
                     return false;
@@ -6399,6 +6438,27 @@ struct Parser {
             m.defaults = decl.param_defaults;
             m.is_static = mt.is_static;
             if (accept(TConst)) m.is_const = true;
+            if (mt.bodyless) {
+                // Defined outside the class: the default arguments are the ones written in the class
+                // ([dcl.fct.default] 4), read from that declaration with the same parameters bound.
+                const size_t def_at = at;
+                at = mt.td.start;
+                if (is(TStatic)) next();
+                Type in_type;
+                bool imp2 = false;
+                bool exp2 = false;
+                Declarator in_decl;
+                if (parse_type(&in_type, &imp2, &exp2) && parse_declarator(in_type, &in_decl) &&
+                    in_decl.params.size() == m.params.size()) {
+                    for (size_t di = 0; di < m.params.size(); ++di)
+                        if (!has_default(m.defaults, di) && has_default(in_decl.param_defaults, di)) {
+                            if (m.defaults.size() < m.params.size()) m.defaults.resize(m.params.size());
+                            m.defaults[di] = in_decl.param_defaults[di];
+                        }
+                }
+                error.clear();
+                at = def_at;
+            }
             if (!is(TLBrace)) {
                 error = "a member function template needs a body in the class";
                 ok = false;

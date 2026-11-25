@@ -52893,6 +52893,7 @@ static long long g_signinStamp = -1;   // session.txt's stamp when the gate last
 static void StartSignInGate() {
     const bool bypass = oked::signin::BypassRequested(std::getenv("OKAY_TEST_NO_SIGNIN"));
     g_signinStamp = okay::Account::Get().SessionFileStamp();
+    if (!bypass) okay::Account::Get().SyncSessionFromDisk();   // what session.txt holds NOW (the launcher may have saved since the service was made)
     g_signin = oked::signin::Start(bypass, !bypass && okay::Account::Get().IsLoggedIn());
     if (bypass) ConsoleLog("Sign-in check is off (OKAY_TEST_NO_SIGNIN=1: tests and CI only).", 1);
     if (g_signin == oked::signin::Phase::Checking) StartSessionCheck();

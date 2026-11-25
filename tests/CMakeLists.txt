@@ -5022,6 +5022,13 @@ target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
 
+# Input pieces that were not connected: the built game's input asset, gesture bindings, mouse side buttons and sideways
+# wheel, the Guide button, punctuation / numpad / lock keys, eight controllers, controller toasts.
+add_executable(test_input_wiring test_input_wiring.cpp)
+target_link_libraries(test_input_wiring PRIVATE okay::engine)
+target_compile_definitions(test_input_wiring PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_wiring COMMAND test_input_wiring)
+
 # The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
 add_executable(test_vs_search_nav test_vs_search_nav.cpp)
 target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)

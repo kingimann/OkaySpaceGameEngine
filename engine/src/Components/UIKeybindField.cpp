@@ -116,6 +116,10 @@ void UIKeybindField::Update(float) {
                 BindAction("mouse:right");
             } else if (part < 0 && Input::GetMouseButtonDown(2)) {
                 BindAction("mouse:middle");
+            } else if (part < 0 && Input::GetMouseButtonDown(3)) {   // the side buttons
+                BindAction("mouse:x1");
+            } else if (part < 0 && Input::GetMouseButtonDown(4)) {
+                BindAction("mouse:x2");
             } else if (Input::GetMouseButtonDown(0) && !m_hover) {
                 m_listening = false;
             }

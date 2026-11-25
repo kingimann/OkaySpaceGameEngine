@@ -32,6 +32,35 @@ struct SimSettings {
 
 SimSettings& Simulator();
 
+// ---- NAT model -----------------------------------------------------------------------------------------
+// A home router in front of one socket, for loopback tests of NAT traversal. Every datagram the socket
+// sends leaves from a mapping: a real socket of this program on its own port, which is the "public
+// address" everyone else (the relay, the other player) sees. Datagrams that arrive on a mapping are let in
+// only as the filter allows; anything sent to the socket's own (private) port is dropped, as on a real
+// router. Written from the NAT behaviour classes in RFC 4787 (mapping and filtering), no outside code.
+enum class NatType : std::uint8_t {
+    None = 0,         ///< no router (the default)
+    FullCone,         ///< one mapping for every destination; anyone may send to it
+    PortRestricted,   ///< one mapping for every destination; only from an address and port it sent to
+                      ///< (the strictest "cone" kind: hole punching still works)
+    Symmetric,        ///< a new mapping (a new public port) for every destination, each only answering
+                      ///< that destination (hole punching between two of these fails)
+};
+/// Put `inside` behind a router of this kind (None takes it away). Its old mappings go.
+void SetSimulatedNat(const UdpSocket& inside, NatType type);
+NatType SimulatedNat(const UdpSocket& inside);
+/// The router makes new mappings (a NAT rebinding): the public ports change and the old ones lead nowhere.
+void RebindSimulatedNat(const UdpSocket& inside);
+/// The public port `inside` reaches `to` from (0 while it has sent nothing there).
+std::uint16_t SimulatedNatPort(const UdpSocket& inside, const Endpoint& to);
+/// Datagrams the routers turned away (unsolicited, or sent to a private address).
+std::size_t SimulatedNatDrops();
+/// Take every socket out from behind its router.
+void ClearSimulatedNats();
+/// Send through `socket`'s router when it has one (true), else do nothing (false). Raw sends that skip the
+/// latency and loss knobs (relay hellos) still go out through the router this way.
+bool SendThroughNat(const UdpSocket& socket, const Endpoint& to, const void* data, std::size_t size);
+
 /// True when enabled and at least one knob would change a datagram.
 bool SimulatorActive();
 

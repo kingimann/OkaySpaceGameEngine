@@ -16,6 +16,7 @@
 //   okay       two .okay scripts: net.host_or_join, net.on (a function name and a lambda),
 //              net.send, on_player_joined / on_player_left, net.players
 #include "test_framework.hpp"
+#include "net_test_util.hpp"
 #include <Okay.hpp>
 #include "okay/Net/Net.hpp"
 #include "okay/Net/NetSim.hpp"
@@ -28,6 +29,8 @@
 #include <vector>
 
 using namespace okay;
+using nettest::ScriptVar;
+using nettest::GraphVar;
 
 namespace {
 // Run both scenes frame by frame until `done` (or `frames` frames). True if done.
@@ -51,14 +54,6 @@ std::uint16_t FreePort() {
     const std::uint16_t p = n->ServerPort();
     n->Stop();
     return p;
-}
-std::string GraphVar(GameObject* go, const char* name) {
-    auto* v = go ? go->GetComponent<VisualScriptComponent>() : nullptr;
-    return v ? v->GetVariable(name).AsString() : std::string();
-}
-std::string ScriptVar(GameObject* go, const char* name) {
-    auto* sc = go ? go->GetComponent<ScriptComponent>() : nullptr;
-    return sc && sc->VM() ? sc->VM()->GetGlobal(name).AsString() : std::string();
 }
 } // namespace
 

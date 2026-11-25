@@ -440,6 +440,7 @@ void NetworkManager::ClientTick(float dt) {
     }
     if (m_relayLost) {   // host gone or changed, or refused (RelayError())
         if (m_reconnectTrying) { FailReconnectTry(); return; }
+        NoteRelayError();   // LastError in plain words ("No game is hosted with code ...")
         if (m_joined && autoReconnect && m_lastConn.kind) {
             m_connectionLost = true;
             m_connectionLostReason = m_relayError.empty() ? "the relay session ended" : m_relayError;

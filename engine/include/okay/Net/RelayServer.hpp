@@ -37,6 +37,12 @@ namespace okay::net {
 ///    quota. Version-1 and -2 hellos (no cookie) are still accepted while
 ///    legacy hellos are on (the default for now), and counted in the log;
 ///  * hellos from unknown senders are rate limited per address;
+///  * version 5: a host and one of its clients that BOTH ask for it (RelayHelloDirect), and that the host
+///    named in RelayDirectAllow (a player its game accepted: password, ban list, join checks), are told each
+///    other's public address and a shared token, so they can punch a direct path through their NATs
+///    (no other peer, and nobody who only knows the room code, ever learns an address); and a client holding
+///    the session's successor key takes the host's place once the host is gone (a bye, or
+///    kRelaySuccessionQuietSeconds of silence: host migration through the relay);
 ///  * each peer's forwarded packets and bytes per second are capped, and so is
 ///    what each peer receives in total from its session;
 ///  * slots are random (not guessable), and peers, sessions and code lengths
@@ -125,6 +131,14 @@ public:
     std::uint64_t RefusedHellos() const { return m_refusedHellos; }
     std::uint64_t CookiesSent() const { return m_cookiesSent; }
     std::uint64_t LegacyHellos() const { return m_legacyHellos; }      ///< v1/v2 hellos from new senders
+    /// Version 5: address pairs sent for direct paths (one per side), and hosts replaced by a successor.
+    std::uint64_t PeerAddrsSent() const { return m_peerAddrsSent; }
+    std::uint64_t Successions() const { return m_successions; }
+    /// The host slot of session `code` (0 when it has none or there is no such session).
+    std::uint32_t HostSlotOf(const std::string& code) const {
+        auto it = m_sessions.find(code);
+        return it != m_sessions.end() ? it->second.hostSlot : 0;
+    }
     std::uint64_t DroppedHellos() const { return m_droppedHellos; }    ///< over an address's hello rate
     /// Hellos seen per protocol version (1..kRelayProtocolVersion; every hello that
     /// parsed, new sender or keepalive, accepted or not), and the peers registered
@@ -154,6 +168,12 @@ private:
         double        refilled = 0.0;   // m_now when the buckets were last topped up
         float         inBytes = 0.0f;   // what it may still receive from its session
         double        inRefilled = 0.0;
+        bool          direct = false;   // its last hello set RelayHelloDirect (version 5)
+        std::uint64_t punchToken = 0;   // a client: the token it and its host prove a direct path with
+        std::uint32_t punchHost = 0;    // the host slot that token is for (a new host gets a new one)
+        bool          addrSent = false; // the address pair for that token went out...
+        double        addrSentAt = 0.0; // ...at this m_now...
+        Endpoint      addrSentHost;     // ...naming the host at this address
     };
     struct HelloBucket { float tokens = 0.0f; double refilled = 0.0; };
     using FlowBucket = HelloBucket;   // the same token bucket, counting forwarded bytes
@@ -162,15 +182,22 @@ private:
         std::uint32_t hostSlot = 0;     // 0 while no host is registered
         std::uint32_t peers = 0;        // registered peers with this code
         std::uint64_t hostKey = 0;      // set when a version-2 host claims the code: protected
+        std::uint64_t successorKey = 0; // version 5: lets a client of the session take over a gone host
         std::uint32_t lastHostSlot = 0; // the slot a returning host gets back
         std::uint32_t opener = 0;       // the IP address that opened it (kMaxSessionsPerAddress)
+        std::vector<std::uint32_t> directAllowed;   // version 5: the client slots the host lets have addresses...
+        std::uint32_t directAllowedBy = 0;          // ...as said by this host slot (a new host starts with none)
         FlowBucket    flow;             // what the whole session may still forward (kSessionBytesPerSecond)
     };
     using PeerMap = std::unordered_map<Endpoint, Peer, EndpointHash>;
 
     Peer* FindBySlot(std::uint32_t slot);
     void  SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::uint32_t hostSlot,
-                      std::uint64_t hostKey = 0);
+                      std::uint64_t hostKey = 0, std::uint64_t successorKey = 0);
+    void  SendPeerAddrs(const Endpoint& clientEp, Peer& client, Session& s);
+    void  HandleDirectAllow(const Endpoint& from, const std::uint8_t* data, std::size_t len);
+    static bool DirectAllowed(const Session& s, std::uint32_t slot);
+    bool  TakeSuccession(const Endpoint& from, Peer& peer, Session& s, std::uint64_t key);
     void  SendRefused(const Endpoint& to, std::uint8_t reason);
     void  HandleHello(const Endpoint& from, const std::uint8_t* data, std::size_t len);
     void  HandleData(const Endpoint& from, const std::uint8_t* data, std::size_t len);
@@ -205,6 +232,7 @@ private:
     double m_now = 0.0;   // seconds of Poll() time, for the rate caps
     std::uint64_t m_droppedRoute = 0, m_droppedRate = 0, m_refusedHellos = 0;
     std::uint64_t m_cookiesSent = 0, m_legacyHellos = 0, m_droppedHellos = 0;
+    std::uint64_t m_peerAddrsSent = 0, m_successions = 0;
     std::array<std::uint64_t, 8> m_helloVersions{};   // by version; a larger one counts as the newest
     std::uint64_t m_legacyLogged = 0;   // m_legacyHellos at the last log line
     double m_legacyLogAt = 60.0, m_helloPruneAt = 10.0;   // m_now of the next legacy count / rate prune

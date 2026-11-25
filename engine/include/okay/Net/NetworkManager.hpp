@@ -1,6 +1,8 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Net/UdpSocket.hpp"
+#include "okay/Net/NetSim.hpp"        // NatType (simulateNat)
+#include "okay/Net/RelayProtocol.hpp"  // kRelaySlotPort
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/AntiCheatLog.hpp"
@@ -83,6 +85,57 @@ public:
     const std::string& RelayError() const { return m_relayError; }
     /// "a.b.c.d:port" of the relay in use ("" when not relayed).
     std::string RelayAddress() const;
+
+    // ---- Direct paths through NATs (hole punching) -----------------------
+    /// Relay sessions: try a direct path between this player and the host (true, the default). The relay
+    /// tells the host this player's public address, and this player the host's (never anyone else's, and
+    /// only when both sides have this on); both then send to each other at once, which opens most home
+    /// routers. Traffic uses the direct path once it answers both ways and goes back to the relay if it
+    /// stops answering; a router that gives a new port to every destination (a symmetric NAT) stays on
+    /// the relay. Off keeps every address private: everything goes through the relay.
+    bool directConnect = true;
+    /// Seconds to try a direct path before staying on the relay.
+    float punchTimeoutSeconds = 5.0f;
+    /// Client: the game reaches its host on a direct path (punched through the routers), not via the relay.
+    /// A direct (non-relayed) session counts as direct too.
+    bool DirectToHost() const;
+    /// Host: clients reached on a direct path (punched) and through the relay.
+    int DirectPeers() const;
+    int RelayedPeers() const;
+    /// "direct", "direct (punched)", "relayed", "relayed (trying direct)" or "" offline: this peer's link to
+    /// its host (on the host, "relayed" while any client is still relayed).
+    std::string PathText() const;
+    /// Direct paths opened, and tries that gave up and stayed on the relay (this session).
+    int PunchesOpened() const { return m_punchOpened; }
+    int PunchesFailed() const { return m_punchFailed; }
+    /// Test a router in front of this peer (NetSim.hpp's NAT model), applied each time its socket opens.
+    net::NatType simulateNat = net::NatType::None;
+
+    // ---- Online play with a room code (one call) -------------------------
+    /// The relay "host[:port]" online play uses (saved with the Network Manager). Empty: the OKAY_RELAY
+    /// environment variable, then the relay this build was made with (OKAY_DEFAULT_RELAY, else the
+    /// launcher's OKAY_DEFAULT_VOICE_RELAY). Never a GitHub address.
+    std::string relayServer;
+    /// The relay "host:port" HostOnline / JoinCode would use ("" when none is set).
+    std::string OnlineRelay() const;
+    /// Host a game over the internet through the relay, under a short room code (made up when `code` is
+    /// empty; a made-up code that turns out to be taken is replaced by another; a code of your own needs 6 to
+    /// 12 letters and digits, since anyone who guesses it can knock). False with LastError() if it could not
+    /// start; RoomCode() is the code to give friends.
+    bool HostOnline(const std::string& code = "");
+    /// Join a game by its room code ("K7Q29X"; case, spaces and dashes do not matter), through the relay.
+    /// It returns at once; IsConnected() turns true when the host answers, or LastError() says why not
+    /// ("No game is hosted with code ...", "Could not reach the relay server ...").
+    bool JoinCode(const std::string& code);
+    /// The room code of this online game ("" when not online).
+    std::string RoomCode() const { return m_relay ? m_relayCode : std::string(); }
+    /// A join link for this online game (okay://join?..., okay/Net/JoinLink.hpp), "" when not online.
+    std::string OnlineJoinLink() const;
+    /// A new random room code: 6 letters and digits, no look-alikes (0/O, 1/I).
+    static std::string MakeRoomCode();
+    /// `code` in the form the relay knows it (upper case, no spaces or dashes); "" if it is not a room
+    /// code (4 to 12 letters and digits).
+    static std::string NormalizeRoomCode(const std::string& code);
     /// Client (direct): "a.b.c.d:port" of the server we connect to, else "".
     std::string ServerAddress() const;
     /// Players in the session: the server counts its clients (+1 for itself unless
@@ -206,6 +259,8 @@ public:
     float RttMs() const { return m_rtt; }
     /// The UDP port the server is bound to (0 if not a server).
     std::uint16_t ServerPort() const { return m_socket.LocalPort(); }
+    /// This peer's socket (tests and tools: the NAT model keys on it).
+    const net::UdpSocket& Socket() const { return m_socket; }
     /// True once a client has completed the join handshake.
     bool Joined() const { return m_joined; }
     /// Number of remote peers currently mirrored into the scene.
@@ -846,6 +901,10 @@ public:
 
     // ---- Stats ----
     struct NetStats {
+        bool  direct = false;        ///< client: a direct path to the host (a direct session, or punched through NATs)
+        bool  relayed = false;       ///< traffic goes through a relay (client: to the host; host: to any client)
+        int   directPeers = 0;       ///< host: clients on a direct path; client: 1 when direct
+        int   relayedPeers = 0;      ///< host: clients still through the relay; client: 1 when relayed
         float rttMs = 0.0f;          ///< round trip to the host; on the host, the average over its clients
         float lossPercent = 0.0f;    ///< pings without an answer, last ~16 s; on the host, the average over its clients (it pings each once a second)
         float bytesInPerSec = 0.0f;  ///< this peer's socket, last full second
@@ -888,7 +947,12 @@ public:
     ///           only fine where they can see each other anyway.
     ///   Always: also over the internet (players then learn each other's addresses; joining a player behind a
     ///           home router usually fails, and the next player is tried).
-    /// Never through a relay, for a dedicated server, with anti-cheat rules, a token verifier or join check on
+    /// Through a relay (HostViaRelay, HostOnline) both Lan and Always migrate the same way, and no address is
+    /// shared: the list names players by their relay slot, the host shares the relay's successor key with
+    /// them, and the lowest id takes the host's place on the relay (the room keeps its code; the relay lets
+    /// it only once the old host is gone or silent). The others stay where they are on the relay and join
+    /// it there; direct paths are then punched to the new host again. Needs a relay of protocol version 5.
+    /// Never for a dedicated server, with anti-cheat rules, a token verifier or join check on
     /// the host (a player can't be trusted to enforce those), with a pinned host key on the client, or with
     /// only one client (nobody to play with). A client with autoReconnect on waits for its host instead when
     /// the host goes silent (a clean leave still migrates).
@@ -915,7 +979,9 @@ public:
     }
     /// The address to reach a listed player at. The host lists a player on its own computer as this
     /// computer (127.x); a player on another computer reaches that one at the host's address instead.
+    /// A relay slot (relay sessions) is kept as it is.
     static net::Endpoint MigrationAddress(const net::Endpoint& listed, const net::Endpoint& hostAsSeen) {
+        if (listed.port == net::kRelaySlotPort || hostAsSeen.port == net::kRelaySlotPort) return listed;
         const bool listedLoop = (listed.address >> 24) == 127, hostLoop = (hostAsSeen.address >> 24) == 127;
         if (listedLoop && !hostLoop && hostAsSeen.address != 0) return net::Endpoint{hostAsSeen.address, listed.port};
         return listed;
@@ -1131,6 +1197,14 @@ public:
                              std::vector<std::uint8_t>& out) { return TakeFragment(from, data, size, out); }
     /// Feed one piece receipt (FragAck) as if it came from `from` (tests: forged receipts).
     void FeedFragAckForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size) { OnFragAck(from, data, size); }
+    /// Tests (relay security): the relay successor key this peer holds (the host's own, or a player's copy from
+    /// the host's list), and a host-role hello sent from this peer's own relay registration (its socket, cookie
+    /// and nonce) carrying `key`, as a player holding the key could send it.
+    std::uint64_t RelaySuccessorKeyForTest() const { return m_mode == Mode::Server ? m_relaySuccessorKey : m_migRelayKey; }
+    void SendRelayHostHelloForTest(std::uint64_t key);
+    /// Tests: the direct paths this peer keeps (one per relay slot) and where each one sends.
+    struct DirectPathInfo { std::uint32_t slot = 0; net::Endpoint ep; std::uint64_t token = 0; bool open = false, failed = false; };
+    std::vector<DirectPathInfo> DirectPathsForTest() const;
     /// Peers with a "put together lately" list (kept only for peers still in the session).
     std::size_t FragDonePeers() const { return m_fragDone.size(); }
     /// Sent pieced messages kept for per-piece resend, and their bytes.
@@ -1225,6 +1299,42 @@ private:
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
     std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
     bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)
+    bool m_relayHeard = false;        // the relay answered this attempt (a cookie or a welcome): it is reachable
+    bool m_keepRelay = false;         // Stop() keeps the socket and the relay registration (host migration)
+    std::uint64_t m_relaySuccessorKey = 0;   // host: the relay's successor key (version 5), shared with players
+    std::uint32_t m_relayNewHost = 0; // client (migrating): the slot the relay now names as host
+    bool m_relayPromoting = false;    // a player taking the host's place on the relay, not confirmed yet
+    float m_relayPromoteWait = 0.0f;
+    bool m_onlineMadeCode = false;    // HostOnline made the code up: a taken one is replaced
+    int m_onlineCodeTries = 0;
+    struct DirectPath {               // a punched path to one relay slot (see directConnect)
+        std::uint32_t slot = 0;
+        net::Endpoint ep;             // where it answers: the relay's word (its cookie proved it), or another port
+                                      // at that same address once a probe of ours got an answer from there
+        net::Endpoint alt;            // before it opens: another port at that address its probes came from...
+        bool altProbed = false;       // ...which we probed (only an answer from there moves `ep`)
+        float altReplyTimer = 0.0f;   // at most one probe to `alt` per kProbeEverySeconds
+        std::uint64_t token = 0;      // from the relay; both sides prove the path with it
+        float age = 0.0f, probeTimer = 0.0f, quiet = 0.0f;
+        bool heard = false;           // its probe reached us
+        bool open = false;            // it answered ours: traffic goes this way
+        bool failed = false;          // gave up (or went quiet): the relay carries it
+    };
+    std::vector<DirectPath> m_direct;
+    int m_punchOpened = 0, m_punchFailed = 0;
+    DirectPath* DirectFor(std::uint32_t slot);
+    const DirectPath* DirectFor(std::uint32_t slot) const;
+    void DirectTick(float dt);
+    void OnRelayPeerAddr(const std::uint8_t* d, std::size_t n);
+    bool OnDirectDatagram(std::uint8_t* b, int n, net::Endpoint& from);   // true: a game datagram, `from` is now the slot
+    void SendRaw(const net::Endpoint& to, const void* data, std::size_t size);   // through the NAT model, no latency knobs
+    bool WantDirectNow() const;
+    void SendDirectAllow(bool always);   // host: tell the relay which players passed the join (RelayDirectAllow)
+    std::vector<std::uint32_t> m_directAllowSent;   // host: the slots it last named
+    bool RelaySwitch(bool asHost);    // host migration on the relay: become host / client without leaving it
+    void NoteRelayError();            // a relay session ended: LastError in plain words
+    std::string RelayPlainError() const;
+    bool RetryOnlineCode();           // HostOnline: a made-up code was taken, try another
     std::string m_relayError;         // why the relay session ended ("" if it didn't)
     float m_relayHelloTimer = 0.0f;   // re-hello cadence (NAT keepalive)
 
@@ -1480,7 +1590,10 @@ private:
         std::unordered_map<std::uint32_t, Vec3> remoteTargets;
         std::unordered_map<std::uint32_t, std::string> known;
         std::string serverName;
+        std::uint64_t relayKey = 0;        // relay sessions: the successor key the host shared
+        std::uint32_t oldHostSlot = 0;     // relay sessions: the old host's slot (the relay may name it a while yet)
     } m_mig;
+    std::uint64_t m_migRelayKey = 0;       // client: the relay successor key from the host's list ("R|" line)
     std::vector<MigPeer> m_migExpect;      // new host: players expected back, with their old ids
     float m_migGrace = 0.0f;               // new host: seconds left to wait for them
     std::uint16_t m_bindPort = 0;          // client: bind this local port (a migrating player keeps its address)
@@ -1491,6 +1604,9 @@ private:
     bool KnockHeeded() const;              // client: our own link to the host is quiet enough to believe a knock
     void MigrationTick(float dt);
     void TryNextHost();
+    void TryNextHostRelay();
+    void HostAfterMigration();
+    void EndMigrationAlone();
     void RestoreCarry();
     void FinishMigration(std::uint32_t newHostOldId);
     bool TakeExpectedId(const net::Endpoint& from, std::uint32_t& id);   // new host: a returning player

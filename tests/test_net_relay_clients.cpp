@@ -103,7 +103,7 @@ int main() {
         CHECK(b.welcome.hostSlot == a.welcome.slot);
         CHECK(relay.LegacyHellos() == 0);
         CHECK(relay.LegacyPeers() == 0);
-        CHECK(relay.HellosByVersion(4) >= 4);                         // hello, cookie'd hello, for both
+        CHECK(relay.HellosByVersion(kRelayProtocolVersion) >= 4);     // hello, cookie'd hello, for both
         CHECK(relay.HellosByVersion(1) == 0 && relay.HellosByVersion(2) == 0 && relay.HellosByVersion(3) == 0);
         relay.Stop();
     }
@@ -165,7 +165,7 @@ int main() {
         }
         CHECK(cn->Joined());
         CHECK(relay.LegacyHellos() == 0 && relay.LegacyPeers() == 0);
-        CHECK(relay.HellosByVersion(4) > 0);
+        CHECK(relay.HellosByVersion(kRelayProtocolVersion) > 0);
     }
 
     TEST_MAIN_RESULT();

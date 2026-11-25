@@ -603,6 +603,84 @@ var asyncLog = [];
     eq("proto getter receiver", kid.twice, 8);
 }
 
+// ---- more: iterator closing, arrays with holes and big indices, classes, numbers, strings, JSON,
+// destructuring order, closures over catch and switch, errors, symbols, bound constructors (sections as above)
+// labelled continue through for-of closes nothing and keeps going
+{ let s = ""; outer: for (const a of [1, 2, 3]) { for (const b of "xy") { if (b === "y") continue outer; s += a + b; } } eq("labelled for-of", s, "1x2x3x"); }
+// break out of nested for-of closes both iterators
+{ const log = []; function* g(n) { try { yield 1; yield 2; } finally { log.push(n); } }
+  out: for (const a of g("a")) { for (const b of g("b")) { break out; } } eq("nested close", log.join(), "b,a"); }
+// return from a for-of inside a function closes the iterator
+{ const log = []; function* g() { try { yield 1; } finally { log.push("closed"); } } function f() { for (const x of g()) return x; } eq("return closes", f() + log.join(), "1closed"); }
+// arrays: holes, for-in over arrays, length non-writable
+{ const a = [1, , 3]; const keys = []; for (const k in a) keys.push(k); eq("forin array", keys.join(), "0,2");
+  const b = [1, 2, 3]; Object.defineProperty(b, "length", {writable: false}); throws("fixed length push", () => b.push(4), TypeError); eq("fixed length", b.length, 3);
+  const c = []; c[5] = 1; eq("hole count", c.filter(() => true).length, 1); eq("hole join", c.join("-"), "-----1");
+  eq("array index string", [10, 20]["1"], 20); const d = [1, 2, 3]; delete d[1]; eq("delete hole", 1 in d, false); eq("delete length", d.length, 3);
+  const big = []; big[2 ** 31] = "x"; eq("big index length", big.length, 2 ** 31 + 1); eq("big index read", big[2 ** 31], "x");
+  big.length = 0; eq("big truncate", big[2 ** 31], undefined); }
+// classes: static inheritance, accessors, symbols as method names, generator methods, super in object literals
+{ class A { static base = "A"; static who() { return this.base; } *[Symbol.iterator]() { yield 1; yield 2; } }
+  class B extends A { static base = "B"; }
+  eq("static this", B.who(), "B"); eq("class iter", [...new B()].join(), "1,2");
+  const proto = { hi() { return "proto"; } }; const obj = { __hi() { return super.hi() + "!"; } }; Object.setPrototypeOf(obj, proto);
+  eq("literal super", obj.__hi(), "proto!"); }
+// getters / setters on classes, Object.entries on class instances, instanceof on primitives
+{ class P { constructor() { this._v = 1; } get v() { return this._v; } set v(x) { this._v = x * 2; } static get s() { return "s"; } }
+  const p = new P(); p.v = 5; eq("accessor", p.v, 10); eq("static getter", P.s, "s"); eq("entries", JSON.stringify(Object.entries(p)), '[["_v",10]]');
+  eq("prim instanceof", 1 instanceof Number, false); }
+// async ordering and errors
+var order = [];
+(async function () { order.push("a1"); await undefined; order.push("a2"); await Promise.resolve(); order.push("a3"); })();
+Promise.resolve().then(() => order.push("p1")).then(() => order.push("p2"));
+order.push("sync");
+// numbers
+eq("toString frac", (0.1).toString(3).slice(0, 6), "0.0022");
+eq("toFixed neg", (-1.005).toFixed(2), "-1.00");
+eq("toFixed big", (123.456).toFixed(10), "123.4560000000");
+eq("toPrecision e", (1e-7).toPrecision(2), "1.0e-7");
+eq("exp small", (0).toExponential(2), "0.00e+0");
+eq("number to string", String(-1e-7) + String(1e100) + String(2 ** -1074), "-1e-71e+1005e-324");
+eq("parse numbers", Number("  0x1f  ") + Number("1e-2") * 100 + Number(".5") * 2, 33);
+eq("int conversions", (2 ** 32 + 5) | 0, 5);
+eq("uint", (-1) >>> 0, 4294967295);
+eq("mod neg zero", Object.is(-4 % 2, -0), true);
+eq("round", Math.round(0.49999999999999994) + Math.round(-0.5000000000000001), -1);
+// strings
+eq("unicode upper", "straße".toUpperCase(), "STRASSE");
+eq("greek", "ΑΒΓ".toLowerCase(), "αβγ");
+eq("split sep", "a, b, c".split(", ").length, 3);
+eq("surrogate slice", "😀x".slice(2), "x");
+eq("replace $", "price".replace("price", "$$5"), "$5");
+eq("template escapes", `A\x42\n`.length, 3);
+eq("raw newline", `a
+b`.charCodeAt(1), 10);
+// JSON
+eq("json nested", JSON.stringify({a: {b: {c: [1, {d: 2}]}}}), '{"a":{"b":{"c":[1,{"d":2}]}}}');
+eq("json unicode", JSON.stringify(" \ud800"), '" \\ud800"');
+eq("json numbers", JSON.parse("[1e2, -0.5, 0]").join(), "100,-0.5,0");
+eq("json keys order", JSON.stringify(JSON.parse('{"b":1,"a":2,"1":3}')), '{"1":3,"b":1,"a":2}');
+// destructuring and default evaluation order
+{ let log = []; const f = (a = log.push("a"), b = log.push("b")) => a + b; f(); eq("default order", log.join(), "a,b");
+  const {x = 1, y = x + 1} = {}; eq("default refers earlier", y, 2);
+  const [first = "d", ...[second, third]] = [undefined, 2, 3]; eq("nested rest", first + second + third, "d23"); }
+// getter on the prototype chain sees the receiver; setters inherited
+{ const base = { set v(x) { this._v = x; } }; const o = Object.create(base); o.v = 3; eq("inherited setter", o._v + Object.keys(o).join(), "3_v"); }
+// closures over catch parameters and switch cases
+{ const fs = []; for (let i = 0; i < 2; i++) { try { throw i; } catch (e) { fs.push(() => e); } } eq("catch closure", fs[0]() + fs[1](), 1);
+  function sw(x) { switch (x) { case 1: { let y = "one"; return () => y; } default: return () => "other"; } } eq("switch closure", sw(1)(), "one"); }
+// typeof on TDZ and const in for-of
+throws("typeof tdz", () => { typeof q; let q; }, ReferenceError);
+{ let total = 0; for (const [k, v] of Object.entries({a: 1, b: 2})) total += v; eq("const destructure loop", total, 3); }
+// error subclass name and stack, cause
+{ class AppError extends Error { get name() { return "AppError"; } } const e = new AppError("boom", {cause: 1}); eq("error subclass", `${e}`, "AppError: boom"); eq("cause", e.cause, 1); }
+// symbol keys survive Object.assign and spread
+{ const s = Symbol("k"); const o = {[s]: 1}; eq("symbol assign", Object.assign({}, o)[s] + {...o}[s], 2); }
+// Map with object keys and iteration after clear
+{ const m = new Map([[{}, 1]]); const it = m.keys(); m.clear(); eq("map clear iter", it.next().done, true); }
+// Function.prototype.bind with new
+{ function P(a, b) { this.s = a + b; } const B = P.bind(null, 1); eq("bound new", new B(2).s, 3); eq("bound name", B.name, "bound P"); }
+
 // ---- eval and Function are not available (sandbox)
 throws("no eval", () => eval("1"), EvalError);
 throws("no Function", () => Function("return 1"), EvalError);
@@ -611,6 +689,7 @@ console.log("conformance checks " + checks + ", failures " + fails);
 
 // called by the test after the promise jobs ran
 function afterJobs() {
+    eq("async order (one job per await, 27.7.5.3)", order.join(), "a1,sync,a2,p1,a3,p2");
     const log = asyncLog.join("|");
     console.log("async log: " + log);
     const want = ["sync", "then 1", "catch no", "async caught bad", "async 15", "finished", "rejected TypeError",

@@ -368,6 +368,15 @@ void HostApi() {
     Value r;
     CHECK(rt.CallHost(rt.GetRef(ref), Value(), {Value::Num(21)}, &r, &err));
     CHECK(r.IsNum() && r.n == 42);
+    // values the host makes between calls do not pile up: 2000 calls with a fresh 2 KB string each
+    rt.Collect();
+    const std::size_t before = rt.BytesInUse();
+    for (int i = 0; i < 2000; ++i) {
+        Value arg = Value::Str(rt.NewStringUtf8(std::string(1000, 'x')));
+        rt.CallHost(rt.GetRef(ref), Value(), {arg}, nullptr, &err);
+    }
+    rt.Collect();
+    CHECK(rt.BytesInUse() < before + (512u << 10));
     CHECK(!rt.Run("box.w = 1;", "h3.js", &err));
     CHECK(err.find("Box has only v") != std::string::npos);
     rt.Unref(ref);
@@ -417,6 +426,27 @@ void Fuzz() {
     }
     CHECK(ran == iters);
     std::cout << "  fuzz: " << ran << " runs, " << failed << " ended in an error (expected for broken input)\n";
+    // Recombined programs: random lines of the conformance script (most of them call its helpers), which reach
+    // the library and the machine with values the hand-written cases never combine.
+    std::string conf = FileText(std::string(OKAY_SOURCE_DIR) + "/tests/javascript/conformance.js");
+    std::vector<std::string> lines;
+    std::string helpers;
+    for (std::size_t at = 0, n = 0; at < conf.size(); ++n) {
+        std::size_t e = conf.find('\n', at);
+        if (e == std::string::npos) e = conf.size();
+        std::string line = conf.substr(at, e - at);
+        if (n < 20) helpers += line + "\n";   // the eq / ok / throws helpers at the top
+        else if (line.find_first_not_of(" ") != std::string::npos) lines.push_back(line);
+        at = e + 1;
+    }
+    int combos = iters / 4;
+    for (int i = 0; i < combos && !lines.empty(); ++i) {
+        std::string prog = helpers;
+        int count = 5 + (int)(rng() % 40);
+        for (int k = 0; k < count; ++k) prog += lines[rng() % lines.size()] + "\n";
+        Run(prog, i % 5 == 0, 300'000, 32u << 20);
+    }
+    std::cout << "  recombined: " << combos << " programs ran\n";
 }
 
 } // namespace

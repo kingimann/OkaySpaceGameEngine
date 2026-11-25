@@ -383,10 +383,17 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     int nf = M.nframes;
     std::size_t nh = M.handlers.size();
     int nd = M.nativeDepth;
+    // At the top level nothing else holds scratch values: what the host made since the last call (keys,
+    // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
+    const bool top = M.nativeDepth == 0 && M.nframes == 0;
     try {
         Value r = Call(fn, thisv, args.data(), (int)args.size());
         Keep(r);
         RunJobs();
+        if (top) {
+            scratch_.clear();
+            Keep(r);   // the host reads it before its next call
+        }
         if (result) *result = r;
         return true;
     } catch (const JsThrow&) {
@@ -400,6 +407,7 @@ bool Runtime::CallHost(const Value& fn, const Value& thisv, const std::vector<Va
     M.nframes = nf;
     M.handlers.resize(nh);
     M.nativeDepth = nd;
+    if (top) scratch_.clear();
     return false;
 }
 
@@ -409,10 +417,17 @@ bool Runtime::ConstructHost(const Value& fn, const std::vector<Value>& args, Val
     int nf = M.nframes;
     std::size_t nh = M.handlers.size();
     int nd = M.nativeDepth;
+    // At the top level nothing else holds scratch values: what the host made since the last call (keys,
+    // converted arguments) is dropped once the arguments are on the value stack, so the list does not grow.
+    const bool top = M.nativeDepth == 0 && M.nframes == 0;
     try {
         Value r = Construct(fn, args.data(), (int)args.size());
         Keep(r);
         RunJobs();
+        if (top) {
+            scratch_.clear();
+            Keep(r);   // the host reads it before its next call
+        }
         if (result) *result = r;
         return true;
     } catch (const JsThrow&) {
@@ -426,6 +441,7 @@ bool Runtime::ConstructHost(const Value& fn, const std::vector<Value>& args, Val
     M.nframes = nf;
     M.handlers.resize(nh);
     M.nativeDepth = nd;
+    if (top) scratch_.clear();
     return false;
 }
 

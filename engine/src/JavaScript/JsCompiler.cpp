@@ -406,6 +406,7 @@ struct Compiler {
         bool hasRest = !fi->params.empty() && fi->params.back()->k == NK::RestElem;
         if (hasRest) p->nparams -= 1;
         if (hasRest || fi->usesArguments) p->flags |= PF_NeedsExtra;
+        if (fi->classCtor && fi->derived && !fi->body) p->flags |= PF_NeedsExtra;   // constructor(...args) { super(...args); }
         std::vector<int> paramSlots;
         for (std::size_t i = 0; i < p->nparams; ++i) paramSlots.push_back(NewSlot());
         if (fi->simpleParams) {

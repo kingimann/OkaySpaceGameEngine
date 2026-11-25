@@ -2,6 +2,7 @@
 // members list, the confirm dialog and the "Banned" list; requests run off-thread. Moved out of launcher/main.cpp
 // unchanged (docs/engine/modularization_plan.md, Part C section 13, batch L7).
 #include "LauncherShared.hpp"
+#include "NavIcons.hpp"   // SlateCombo, the launcher's dropdown
 #include "MemberModerationUI.hpp"
 #include "okay/Platform/Platform.hpp"
 
@@ -161,7 +162,7 @@ void ModDialog() {
         ImGui::InputTextWithHint("##modreason", "Reason (optional, shown to them)", D.reason, 300);
         const auto& durs = mm::Durations();
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##moddur", durs[(std::size_t)std::max(0, std::min(D.dur, (int)durs.size() - 1))].label)) {
+        if (BeginSlateCombo("##moddur", durs[(std::size_t)std::max(0, std::min(D.dur, (int)durs.size() - 1))].label)) {
             for (int i = 0; i < (int)durs.size(); ++i) if (ImGui::Selectable(durs[(std::size_t)i].label, i == D.dur)) D.dur = i;
             ImGui::EndCombo();
         }

@@ -43,6 +43,14 @@ struct Cmd { string name; vector<Arg> args; int line = 0; string file; };
 
 struct ReadError { string msg; };
 struct ScriptStop { int code; }; // script mode: message(FATAL_ERROR) was printed; the script ends with this exit code
+// One execute_process() run in a script: the commands (each one's standard output is the next one's standard input), the folder,
+// the first command's input file, whether standard error goes into `out`, a time limit in seconds (0 = none) and whether the output
+// is also shown as it arrives (echoOut on standard output, echoErr on standard error).
+struct ProcRequest { vector<vector<string>> cmds; string cwd, inFile; bool merge = false; double timeoutSec = 0; bool echoOut = false, echoErr = false; };
+// What came back: the texts, and per command its exit code or, when it ended abnormally (a signal), CMake's text for that in `texts`.
+// `whole` is set when the run as a whole has one result text: a command could not start (whole = the system's reason, startFailed)
+// or the time ran out (whole = "Process terminated due to timeout").
+struct ProcResult { string out, err; vector<int> codes; vector<string> texts; string whole; bool startFailed = false; };
 
 static string lower(string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
 static string upper(string s) { for (auto& c : s) c = (char)toupper((unsigned char)c); return s; }
@@ -282,9 +290,9 @@ struct Interp {
     std::map<string, string> srcProps; // "folder|file|PROP" -> value: a source property belongs to the folder that set it (only targets made there see it)
     string srcKey(const string& folder, const string& file, const string& prop) const { return folder + "|" + file + "|" + prop; }
     bool testingOn = false;
-    // Script mode: how a command is run (okay-build passes its own process runner: argv, folder, standard-input file, whether
-    // standard error goes into the same text as standard output, then the two texts) and how many SEND_ERROR messages were given.
-    std::function<int(const vector<string>&, const string&, const string&, bool, string&, string&)> runProcess;
+    // Script mode: how execute_process() runs its commands (okay-build passes its own process runner, see ProcRequest) and how many
+    // SEND_ERROR messages were given.
+    std::function<void(const ProcRequest&, ProcResult&)> runProcess;
     int scriptErrors = 0;
     void scriptExecute(const Cmd& c, const vector<string>& a);
     void scriptMessage(const Cmd& c, const vector<string>& a);
@@ -1444,18 +1452,26 @@ inline void Interp::scriptFile(const vector<string>& a) {
     doFile(a); // READ, STRINGS, GLOB, RELATIVE_PATH ... read the disk the same way in both modes
 }
 
-// execute_process() in a script runs the command (one COMMAND; several piped together are not done) and fills the variables.
+// execute_process() in a script runs the commands (several COMMANDs are piped together) and fills the variables. Result texts and
+// error messages are CMake's, taken by running `cmake -P` on small scripts on this machine (CMake 3.28): a command that cannot start
+// gives the system's reason ("No such file or directory") for the whole run, a time-out "Process terminated due to timeout", a
+// signal CMake's name for it ("Segmentation fault"). ENCODING only matters on Windows, where CMake converts the output; okay-build
+// passes the bytes through unchanged.
 inline void Interp::scriptExecute(const Cmd& c, const vector<string>& a) {
-    vector<vector<string>> cmds; string cwd, inFile, outFile, errFile, outVar, errVar, resVar, resultsVar, fatal;
-    bool outQuiet = false, errQuiet = false, outStrip = false, errStrip = false; int mode = 0; // 1 command words
+    ProcRequest req; string outFile, errFile, outVar, errVar, resVar, resultsVar, fatal, echoTo = get("CMAKE_EXECUTE_PROCESS_COMMAND_ECHO");
+    bool outQuiet = false, errQuiet = false, outStrip = false, errStrip = false, echoOutVar = false, echoErrVar = false; int mode = 0; // 1 command words
+    auto cmakeError = [&](const string& text) { // CMake's error block; the script stops with exit 1
+        fflush(stdout); fprintf(stderr, "CMake Error at %s:%d (execute_process):\n  %s\n\n\n", c.file.c_str(), c.line, text.c_str()); fflush(stderr); throw ScriptStop{1}; };
+    static const std::set<string> keys = {"WORKING_DIRECTORY", "INPUT_FILE", "OUTPUT_FILE", "ERROR_FILE", "OUTPUT_VARIABLE", "ERROR_VARIABLE", "RESULT_VARIABLE", "RESULTS_VARIABLE",
+        "OUTPUT_QUIET", "ERROR_QUIET", "OUTPUT_STRIP_TRAILING_WHITESPACE", "ERROR_STRIP_TRAILING_WHITESPACE", "TIMEOUT", "ENCODING", "COMMAND_ECHO", "COMMAND_ERROR_IS_FATAL",
+        "ECHO_OUTPUT_VARIABLE", "ECHO_ERROR_VARIABLE"};
     for (size_t k = 0; k < a.size(); ++k) {
         const string& w = a[k]; bool more = k + 1 < a.size();
-        if (w == "COMMAND") { cmds.emplace_back(); mode = 1; continue; }
-        if (mode == 1 && w != "WORKING_DIRECTORY" && w != "INPUT_FILE" && w != "OUTPUT_FILE" && w != "ERROR_FILE" && w != "OUTPUT_VARIABLE" && w != "ERROR_VARIABLE" && w != "RESULT_VARIABLE" && w != "RESULTS_VARIABLE"
-            && w != "OUTPUT_QUIET" && w != "ERROR_QUIET" && w != "OUTPUT_STRIP_TRAILING_WHITESPACE" && w != "ERROR_STRIP_TRAILING_WHITESPACE" && w != "TIMEOUT" && w != "ENCODING" && w != "COMMAND_ECHO" && w != "COMMAND_ERROR_IS_FATAL" && w != "ECHO_OUTPUT_VARIABLE" && w != "ECHO_ERROR_VARIABLE") { cmds.back().push_back(w); continue; }
+        if (w == "COMMAND") { req.cmds.emplace_back(); mode = 1; continue; }
+        if (mode == 1 && !keys.count(w)) { req.cmds.back().push_back(w); continue; }
         mode = 0;
-        if (w == "WORKING_DIRECTORY" && more) cwd = abs(a[++k], curSrc);
-        else if (w == "INPUT_FILE" && more) inFile = abs(a[++k], curSrc);
+        if (w == "WORKING_DIRECTORY" && more) req.cwd = abs(a[++k], curSrc);
+        else if (w == "INPUT_FILE" && more) req.inFile = abs(a[++k], curSrc);
         else if (w == "OUTPUT_FILE" && more) outFile = abs(a[++k], curSrc);
         else if (w == "ERROR_FILE" && more) errFile = abs(a[++k], curSrc);
         else if (w == "OUTPUT_VARIABLE" && more) outVar = a[++k];
@@ -1464,34 +1480,58 @@ inline void Interp::scriptExecute(const Cmd& c, const vector<string>& a) {
         else if (w == "RESULTS_VARIABLE" && more) resultsVar = a[++k];
         else if (w == "OUTPUT_QUIET") outQuiet = true; else if (w == "ERROR_QUIET") errQuiet = true;
         else if (w == "OUTPUT_STRIP_TRAILING_WHITESPACE") outStrip = true; else if (w == "ERROR_STRIP_TRAILING_WHITESPACE") errStrip = true;
+        else if (w == "ECHO_OUTPUT_VARIABLE") echoOutVar = true; else if (w == "ECHO_ERROR_VARIABLE") echoErrVar = true;
         else if (w == "COMMAND_ERROR_IS_FATAL" && more) fatal = a[++k];
-        else { tally.unknown["execute_process(" + w + ") in a script"]++; return; } // TIMEOUT, ENCODING, COMMAND_ECHO, ECHO_*: not done
+        else if (w == "ENCODING" && more) ++k; // NONE, AUTO, ANSI, OEM, UTF8, UTF-8: CMake took an unknown name without a word, so do we
+        else if (w == "COMMAND_ECHO" && more) { echoTo = a[++k]; if (echoTo != "STDOUT" && echoTo != "STDERR" && echoTo != "NONE") cmakeError(" called with '" + echoTo + "' expected STDERR|STDOUT|NONE for COMMAND_ECHO."); }
+        else if (w == "TIMEOUT" && more) {
+            const string& v = a[++k]; char* end = nullptr; double t = strtod(v.c_str(), &end);
+            if (v.empty() || !end || *end) cmakeError("execute_process called with TIMEOUT value that could not be parsed.");
+            req.timeoutSec = t > 0 ? t : 0; // 0 or less: no limit (as CMake)
+        }
+        else { tally.unknown["execute_process(" + w + ") in a script"]++; return; }
     }
-    if (cmds.size() != 1 || cmds[0].empty()) { tally.unknown[cmds.size() > 1 ? "execute_process with several COMMANDs" : "execute_process with no command"]++; return; }
-    if (cmds[0][0] == get("CMAKE_COMMAND")) { tally.unknown["execute_process(cmake) in a script"]++; return; }
+    if (req.cmds.empty()) { tally.unknown["execute_process with no command"]++; return; }
+    for (auto& cmd : req.cmds) if (cmd.empty()) { tally.unknown["execute_process with no command"]++; return; }
+    for (auto& cmd : req.cmds) if (cmd[0] == get("CMAKE_COMMAND")) { tally.unknown["execute_process(cmake) in a script"]++; return; }
     if (!runProcess) throw ReadError{"execute_process: this okay-build cannot run commands from a script"};
-    std::error_code ec; if (!inFile.empty() && !fs::is_regular_file(inFile, ec)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": execute_process: INPUT_FILE " + inFile + " cannot be read"};
-    bool merge = !outVar.empty() && outVar == errVar;
-    string out, err; int rc = runProcess(cmds[0], cwd, inFile, merge, out, err);
+    std::error_code ec; if (!req.inFile.empty() && !fs::is_regular_file(req.inFile, ec)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": execute_process: INPUT_FILE " + req.inFile + " cannot be read"};
+    req.merge = (!outVar.empty() && outVar == errVar) || (!outFile.empty() && outFile == errFile);
+    // output that is not kept goes straight through as it arrives; ECHO_*_VARIABLE shows kept output too
+    req.echoOut = (outVar.empty() && outFile.empty() && !outQuiet) || (echoOutVar && !outVar.empty());
+    req.echoErr = !req.merge && ((errVar.empty() && errFile.empty() && !errQuiet) || (echoErrVar && !errVar.empty()));
+    if (echoTo == "STDOUT" || echoTo == "STDERR") { // COMMAND_ECHO: each command on a line, every word in single quotes (CMake adds no escaping)
+        string text; for (auto& cmd : req.cmds) { for (size_t k = 0; k < cmd.size(); ++k) text += (k ? " '" : "'") + cmd[k] + "'"; text += "\n"; }
+        FILE* to = echoTo == "STDOUT" ? stdout : stderr; fflush(stdout); fputs(text.c_str(), to); fflush(to);
+    }
+    ProcResult res; runProcess(req, res);
+    string& out = res.out; string& err = res.err;
     auto strip = [](string& t) { while (!t.empty() && isspace((unsigned char)t.back())) t.pop_back(); };
     if (outStrip) strip(out); if (errStrip) strip(err);
     auto toFile = [&](const string& p, const string& t) { std::ofstream f(p, std::ios::binary | std::ios::trunc); if (!f || !(f << t)) throw ReadError{"execute_process: cannot write " + p}; };
-    if (!outFile.empty()) toFile(outFile, out); if (!errFile.empty() && !merge) toFile(errFile, err);
-    if (merge) vars[outVar] = out; else { if (!outVar.empty()) vars[outVar] = out; if (!errVar.empty()) vars[errVar] = err; }
-    if (outVar.empty() && outFile.empty() && !outQuiet && !out.empty()) { fputs(out.c_str(), stdout); fflush(stdout); }
-    if (errVar.empty() && errFile.empty() && !errQuiet && !err.empty()) { fputs(err.c_str(), stderr); fflush(stderr); }
-    if (!resVar.empty()) vars[resVar] = std::to_string(rc);
-    if (!resultsVar.empty()) vars[resultsVar] = std::to_string(rc);
-    if ((fatal == "ANY" || fatal == "LAST") && rc != 0) {
-        fflush(stdout); fprintf(stderr, "CMake Error at %s:%d (execute_process):\n  execute_process failed command indexes:\n\n    1: \"Child return code: %d\"\n\n\n", c.file.c_str(), c.line, rc);
-        throw ScriptStop{1};
+    if (!outFile.empty()) toFile(outFile, out); if (!errFile.empty() && !(req.merge && errFile == outFile)) toFile(errFile, req.merge ? string() : err);
+    if (!outVar.empty()) vars[outVar] = out; if (!errVar.empty() && errVar != outVar) vars[errVar] = req.merge ? string() : err;
+    size_t n = req.cmds.size(); res.codes.resize(n, 0); res.texts.resize(n);
+    auto one = [&](size_t k) { return !res.texts[k].empty() ? res.texts[k] : std::to_string(res.codes[k]); };
+    if (!resVar.empty()) vars[resVar] = !res.whole.empty() ? res.whole : one(n - 1);
+    if (!resultsVar.empty()) { string all; for (size_t k = 0; k < n; ++k) all += (k ? ";" : "") + one(k); vars[resultsVar] = !res.whole.empty() ? res.whole : all; }
+    if (fatal == "ANY" || fatal == "LAST") {
+        bool any = fatal == "ANY";
+        if (res.startFailed) cmakeError(string(any ? "execute_process error" : "execute_process Error") + " getting child return code: " + res.whole);
+        if (!res.whole.empty()) cmakeError("execute_process " + res.whole);
+        for (size_t k = any ? 0 : n - 1; k < n; ++k) if (!res.texts[k].empty()) cmakeError(string(any ? "execute_process abnormal exit: " : "execute_process Abnormal exit: ") + res.texts[k]);
+        if (!any && res.codes[n - 1] != 0) cmakeError("execute_process last command failed");
+        if (any) {
+            string list; for (size_t k = 0; k < n; ++k) if (res.codes[k] != 0) list += "\n    " + std::to_string(k + 1) + ": \"Child return code: " + std::to_string(res.codes[k]) + "\"";
+            if (!list.empty()) cmakeError("execute_process failed command indexes:\n" + list + "\n");
+        }
     }
 }
 
 // Runs one script. defs are the -D values (CMake puts them in the cache, where the script reads them); args are the words after
 // the script (CMAKE_ARGV<n> counts from the program name, as in CMake). Returns the exit code `cmake -P` would give.
 template <class Runner>
-static int runCmakeScript(const string& file, const std::map<string, string>& defs, const vector<string>& argvWords, Runner runner) {
+static int runCmakeScript(const string& file, const std::map<string, string>& defs, const vector<string>& argvWords, Runner runner) { // runner: see ProcRequest
     Interp in; std::error_code ec; string cwd = fs::current_path(ec).generic_string();
     in.opt.root = cwd; in.opt.binDir = cwd; in.opt.defs = defs; in.opt.script = true; in.runProcess = runner;
     in.init(); in.vars.erase("CMAKE_BUILD_TYPE"); in.cache.erase("CMAKE_BUILD_TYPE"); // a script has no build type

@@ -73,6 +73,12 @@ static void testMissingHeader() {
     check(o.find("nope.h") != string::npos && o.find("FAILED") != string::npos, "error names header and FAILED", o);
     write("src/main.cpp", "int main(){}\n"); write("build.okay", "target app exe\n sources = src/main.cpp src/ghost.cpp\nend\n");
     o = sh("", &rc); check(rc == 2 && o.find("src/ghost.cpp") != string::npos && o.find("does not exist") != string::npos, "missing source reported at plan time", o);
+    // round 17: like Ninja, a target nobody asked for may lack a source (the real tree's launcher_imgui before `okay-build fetch imgui`)
+    write("build.okay", "fetch imgui\n git = https://example.invalid/imgui.git\n commit = 0123456789012345678901234567890123456789\n dir = _deps/imgui\nend\n"
+          "target ui lib\n sources = _deps/imgui/imgui.cpp\nend\ntarget uiapp exe\n sources = src/main.cpp\n deps = ui\nend\ntarget app exe\n sources = src/main.cpp\nend\n");
+    o = sh("-j1 app", &rc); check(rc == 0 && fs::exists(gRoot / "build/app"), "a wanted target builds although another target's fetched source is missing", o);
+    o = sh("-j1 uiapp", &rc); check(rc == 2 && o.find("target 'ui': source '_deps/imgui/imgui.cpp' does not exist (it comes from fetch 'imgui'") != string::npos, "a target that needs the missing source still gets the error", o);
+    o = sh("-j1", &rc); check(rc == 2 && o.find("does not exist") != string::npos, "building everything still reports it", o);
 }
 static void testCycle() {
     printf("test: cyclic dependency detected\n"); fresh("cyc"); write("a.cpp", "int a(){return 1;}\n");
@@ -680,6 +686,8 @@ static void testWindowsHost() {
     FILE* ff = popen(("file '" + exe.string() + "'").c_str(), "r");
     char fb[256] = {}; if (ff) { size_t n = fread(fb, 1, sizeof fb - 1, ff); pclose(ff); fb[n] = 0; }
     check(std::string(fb).find("PE32+") != std::string::npos, "Windows okay-build is PE32+", fb);
+    { string bytes = readFile(exe); // round 17: `okay-build script` has its own CreateProcessW pipe runner on Windows
+      check(bytes.find("script: not done on Windows yet") == string::npos && bytes.find("Process terminated due to timeout") != string::npos, "the Windows okay-build has script mode (execute_process through CreateProcessW pipes)"); }
     if (!wineProblem().empty()) { skip(4, "okay-build.exe under wine: " + wineProblem()); return; }
     fresh("winhost");
     write("build.okay",
@@ -2650,13 +2658,108 @@ static void testCmakeScriptMode() {
     o = sh("-f build.okay ctest script_reads_note", &rc);
     check(rc == 0 && o.find("PASS script_reads_note") != string::npos && readFile(gRoot / "build/ctest/note.txt") == "from configure", "a file the CMake code wrote at configure time is written before a test that names it runs", o);
 }
+// Round 17: execute_process() with piped COMMANDs, TIMEOUT, ENCODING, COMMAND_ECHO, ECHO_*_VARIABLE, a command that cannot start or is
+// ended by a signal, and COMMAND_ERROR_IS_FATAL with several commands. Every expected text below was taken by running the same script
+// with `cmake -P` (CMake 3.28) on this machine; when cmake is installed the test also runs it and compares the bytes.
+static void testExecutePipelines() {
+    printf("test: okay-build script: execute_process with pipes, TIMEOUT, COMMAND_ECHO, ECHO_*, signals and start failures as cmake -P\n");
+    fresh("pipes");
+    // runs one script with a tool ("okay-build script" or "cmake"), standard output and standard error kept apart
+    auto runWith = [&](const string& tool, const string& file, string& out, string& err) {
+        string cmd = "cd '" + gRoot.string() + "' && " + tool + " -P " + file + " >o.txt 2>e.txt";
+        int rc = WEXITSTATUS(system(cmd.c_str())); out = readFile(gRoot / "o.txt"); err = readFile(gRoot / "e.txt"); return rc;
+    };
+    write("p.cmake", R"(execute_process(COMMAND printf "b\na\nc\n" COMMAND sort COMMAND tr a-z A-Z OUTPUT_VARIABLE o RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "pipe o=[${o}] r=[${r}] rs=[${rs}]")
+execute_process(COMMAND sh -c "echo e1 >&2; exit 3" COMMAND sh -c "cat; echo e2 >&2; exit 0" OUTPUT_VARIABLE o ERROR_VARIABLE e RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "errs o=[${o}] e=[${e}] r=[${r}] rs=[${rs}]")
+execute_process(COMMAND sleep 5 COMMAND sleep 5 TIMEOUT 0.5 RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "timeout r=[${r}] rs=[${rs}]")
+execute_process(COMMAND sleep 0.1 TIMEOUT 0 RESULT_VARIABLE r)
+message(STATUS "no limit r=[${r}]")
+execute_process(COMMAND /no/such/prog RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "nostart r=[${r}] rs=[${rs}]")
+execute_process(COMMAND true COMMAND /no/such/prog RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "nostart2 r=[${r}] rs=[${rs}]")
+execute_process(COMMAND sh -c "exit 127" RESULT_VARIABLE r)
+message(STATUS "exit127 r=[${r}]")
+execute_process(COMMAND sh -c "kill -9 $$" RESULT_VARIABLE r)
+message(STATUS "killed r=[${r}]")
+execute_process(COMMAND sh -c "kill -SEGV $$" COMMAND true RESULT_VARIABLE r RESULTS_VARIABLE rs)
+message(STATUS "segv r=[${r}] rs=[${rs}]")
+execute_process(COMMAND sh -c "echo out1; echo err1 >&2" OUTPUT_VARIABLE o ERROR_VARIABLE e ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
+message(STATUS "echo o=[${o}] e=[${e}]")
+execute_process(COMMAND echo "a b" "it's" COMMAND cat COMMAND_ECHO STDOUT OUTPUT_QUIET)
+execute_process(COMMAND echo hi COMMAND_ECHO STDERR ENCODING UTF8)
+set(CMAKE_EXECUTE_PROCESS_COMMAND_ECHO STDERR)
+execute_process(COMMAND true)
+execute_process(COMMAND true COMMAND_ECHO NONE)
+message(STATUS end)
+)");
+    string out, err; int rc = runWith(gTool + " script", "p.cmake", out, err);
+    auto has = [&](const string& w) { return out.find(w) != string::npos; };
+    check(rc == 0 && has("-- pipe o=[A\nB\nC\n] r=[0] rs=[0;0;0]\n"), "three piped COMMANDs: each one's output is the next one's input; RESULTS_VARIABLE lists every exit code", out + "|err|" + err);
+    check(has("-- errs o=[] e=[e1\ne2\n] r=[0] rs=[3;0]\n"), "standard error of every command goes to ERROR_VARIABLE; RESULT_VARIABLE is the last command's", out);
+    check(has("-- timeout r=[Process terminated due to timeout] rs=[Process terminated due to timeout]\n") && has("-- no limit r=[0]\n"), "TIMEOUT ends the whole pipe with CMake's text; TIMEOUT 0 is no limit", out);
+    check(has("-- nostart r=[No such file or directory] rs=[No such file or directory]\n") && has("-- nostart2 r=[No such file or directory] rs=[No such file or directory]\n") && has("-- exit127 r=[127]\n"),
+          "a program that cannot start gives the system's reason for the whole run (CMake's behaviour), and is told apart from one that exits 127", out);
+    check(has("-- killed r=[Subprocess killed]\n") && has("-- segv r=[0] rs=[Segmentation fault;0]\n"), "a command ended by a signal gives CMake's words for it", out);
+    check(has("out1\n-- echo o=[out1\n] e=[err1\n]\n") && err.find("err1\n") == 0, "ECHO_OUTPUT_VARIABLE and ECHO_ERROR_VARIABLE show the output and keep it", out + "|err|" + err);
+    check(has("'echo' 'a b' 'it's'\n'cat'\nhi\n-- end\n") && err == "err1\n'echo' 'hi'\n'true'\n", "COMMAND_ECHO and CMAKE_EXECUTE_PROCESS_COMMAND_ECHO print each command in single quotes; ENCODING is taken", out + "|err|" + err);
+    struct Bad { string body, err; };
+    const Bad bad[] = {
+        {"execute_process(COMMAND true COMMAND sh -c \"exit 4\" COMMAND sh -c \"exit 5\" COMMAND_ERROR_IS_FATAL ANY)\n",
+         "CMake Error at f.cmake:1 (execute_process):\n  execute_process failed command indexes:\n\n    2: \"Child return code: 4\"\n    3: \"Child return code: 5\"\n\n\n\n"},
+        {"execute_process(COMMAND true COMMAND sh -c \"exit 4\" COMMAND_ERROR_IS_FATAL LAST)\n", "CMake Error at f.cmake:1 (execute_process):\n  execute_process last command failed\n\n\n"},
+        {"execute_process(COMMAND /no/such COMMAND_ERROR_IS_FATAL ANY)\n", "CMake Error at f.cmake:1 (execute_process):\n  execute_process error getting child return code: No such file or directory\n\n\n"},
+        {"execute_process(COMMAND sleep 3 TIMEOUT 0.2 COMMAND_ERROR_IS_FATAL ANY)\n", "CMake Error at f.cmake:1 (execute_process):\n  execute_process Process terminated due to timeout\n\n\n"},
+        {"execute_process(COMMAND sh -c \"kill -9 $$\" COMMAND_ERROR_IS_FATAL LAST)\n", "CMake Error at f.cmake:1 (execute_process):\n  execute_process Abnormal exit: Subprocess killed\n\n\n"},
+        {"execute_process(COMMAND true TIMEOUT abc)\n", "CMake Error at f.cmake:1 (execute_process):\n  execute_process called with TIMEOUT value that could not be parsed.\n\n\n"},
+        {"execute_process(COMMAND true COMMAND_ECHO BOGUS)\n", "CMake Error at f.cmake:1 (execute_process):\n   called with 'BOGUS' expected STDERR|STDOUT|NONE for COMMAND_ECHO.\n\n\n"},
+    };
+    int good = 0; string bads;
+    for (auto& b : bad) { write("f.cmake", b.body + "message(STATUS \"not reached\")\n"); string o2, e2; int r2 = runWith(gTool + " script", "f.cmake", o2, e2); if (r2 == 1 && o2.empty() && e2 == b.err) ++good; else bads += b.body + "  gave " + std::to_string(r2) + " [" + o2 + "] [" + e2 + "]\n"; }
+    check(good == 7, "COMMAND_ERROR_IS_FATAL (ANY lists the failed indexes, LAST, a start failure, a time-out, a signal) and bad TIMEOUT / COMMAND_ECHO values stop with CMake's error text", bads);
+    if (system("cmake --version >/dev/null 2>&1") != 0) { skip(1, "cmake is not installed, so okay-build's output is not compared with it"); return; }
+    string cout_, cerr_; int crc = runWith("cmake", "p.cmake", cout_, cerr_); runWith(gTool + " script", "p.cmake", out, err);
+    int same = crc == rc && cout_ == out && cerr_ == err;
+    for (auto& b : bad) { write("f.cmake", b.body); string o1, e1, o2, e2; int r1 = runWith("cmake", "f.cmake", o1, e1), r2 = runWith(gTool + " script", "f.cmake", o2, e2); same += r1 == r2 && o1 == o2 && e1 == e2; }
+    check(same == 8, "byte for byte the same standard output, standard error and exit code as cmake -P on all 8 scripts", std::to_string(same) + " of 8 the same\ncmake:\n" + cout_ + cerr_ + "okay-build:\n" + out + err);
+}
+
+// Round 17: how ctest judges a test that timed out, was ended by a signal or could not start. Expected results from real CTest 3.28 on
+// the same project: all of these fail whatever WILL_FAIL and the output rules say; a test that exits 124 or 127 is an ordinary exit code.
+static void testCtestEndStates() {
+    printf("test: ctest: a timed-out, crashed or unstartable test fails whatever WILL_FAIL says (as CTest)\n");
+    fresh("ctestend");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(t NONE)\nenable_testing()\n"
+        "add_test(NAME to_wf COMMAND sleep 5)\nset_tests_properties(to_wf PROPERTIES TIMEOUT 1 WILL_FAIL TRUE)\n"
+        "add_test(NAME to_pass COMMAND sh -c \"echo okword; sleep 5\")\nset_tests_properties(to_pass PROPERTIES TIMEOUT 1 PASS_REGULAR_EXPRESSION okword)\n"
+        "add_test(NAME nostart_wf COMMAND /no/such/prog)\nset_tests_properties(nostart_wf PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME segv_wf COMMAND sh -c \"kill -SEGV $$\")\nset_tests_properties(segv_wf PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME segv_pass COMMAND sh -c \"echo okword; kill -SEGV $$\")\nset_tests_properties(segv_pass PROPERTIES PASS_REGULAR_EXPRESSION okword)\n"
+        "add_test(NAME term_wf COMMAND sh -c \"kill -TERM $$\")\nset_tests_properties(term_wf PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME exit124_wf COMMAND sh -c \"exit 124\")\nset_tests_properties(exit124_wf PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME exit127_wf COMMAND sh -c \"exit 127\")\nset_tests_properties(exit127_wf PROPERTIES WILL_FAIL TRUE)\n");
+    int rc; string o = sh("cmake . -o build.okay", &rc);
+    o = sh("-f build.okay ctest -j4 --junit out/e.xml", &rc);
+    auto has = [&](const string& w) { return o.find(w) != string::npos; };
+    check(rc == 1 && has("FAIL to_wf exit 124") && has("(timeout)") && has("FAIL to_pass exit 124"), "a timed-out test fails even with WILL_FAIL or a matching PASS_REGULAR_EXPRESSION", o);
+    check(has("FAIL nostart_wf exit 127") && has("(not run: cannot start (No such file or directory))"), "a program that cannot start is not run and fails, even with WILL_FAIL", o);
+    check(has("FAIL segv_wf exit 128") && has("(crashed: Segmentation fault)") && has("FAIL segv_pass") && has("FAIL term_wf") && has("(crashed: Subprocess terminated)"), "a test ended by a signal fails whatever WILL_FAIL or the output rules say", o);
+    check(has("PASS exit124_wf") && has("PASS exit127_wf") && has("8 tests, 6 failed, 0 skipped"), "exit codes 124 and 127 are ordinary failures that WILL_FAIL turns round (CTest: 2 passed, 6 failed)", o);
+    string x = readFile(gRoot / "out/e.xml");
+    check(x.find("<failure message=\"timed out\">") != string::npos && x.find("<failure message=\"crashed: Segmentation fault\">") != string::npos, "the JUnit file names the reasons", x);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
+        if (string(only) == "r17") { testMissingHeader(); testExecutePipelines(); testCtestEndStates(); testWindowsHost(); printf("okaybuild tests (round 17 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "compilers") { testToolchainOkayCc(); testOkayCcEngineFiles(); testToolchainOkayMs(); printf("okaybuild tests (okay compilers only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); testCtestOutputRules(); testCmakeScriptMode(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); testCtestOutputRules(); testCmakeScriptMode(); testExecutePipelines(); testCtestEndStates(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2690,6 +2793,8 @@ int main(int argc, char** argv) {
     testPostBuild();
     testCtestOutputRules();
     testCmakeScriptMode();
+    testExecutePipelines();
+    testCtestEndStates();
     testImporterTool();
     testToolchainOkayCc();
     testOkayCcEngineFiles();

@@ -261,9 +261,9 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Editor:** GameObject > Player submenu
 - **Docs:** `docs/gameplay/making_a_game.md`, `docs/gameplay/shooter_and_25d_controllers.md`
 - **Tests:** `player`, `make_playable`, `scene_cameras`
-- **Status:** Works - player test checks that the shortcuts build fully wired players; the Mixamo items depend on the network
-- **Open:** the two Mixamo samples rely on a third-party URL and an external curl process (possible fragility)
+- **Status:** Works - player test checks that the shortcuts build fully wired players
+- **Open:** none recorded (the Mixamo sample download items this line used to name are not in `editor/main.cpp` on main, checked 2026-11-24)
 - **Related:** 3.7, 4.1, 15.2
 - **Words:** premade player, Player menu, template, starter
-- **Seen as:** the Mixamo menu item logs "could not download"; a new player has no camera; two players after adding a premade one
+- **Seen as:** a new player has no camera; two players after adding a premade one
 - **Ask me like:** "add a Vehicle driver to the Player menu"; "ship the sample Soldier in the repo instead of downloading"

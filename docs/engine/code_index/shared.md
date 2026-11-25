@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 971 names.
+Back to the [code index](../code_index.md). 67 headers, 972 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -796,8 +796,9 @@ Back to the [code index](../code_index.md). 67 headers, 971 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 30
-- `SharedImGuiEmbed` function, line 137: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `ImGuiEmbed` class, line 31
+- `SharedImGuiEmbed` function, line 138: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `HostPanelSection` function, line 241: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 

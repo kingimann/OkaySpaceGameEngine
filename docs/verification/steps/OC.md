@@ -8,7 +8,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
 - **Steps:**
   1. Start `Tools\OkayEngine.exe` with no variables.
   2. Open **Help > About OkaySpace** and read the stack line.
-- **See:** `[okay] stack: platform=sdl2 http=winhttp readers=ufbx+assimp crypto=libsodium ui=imgui` (the readers part may differ). `crypto=` must say libsodium in every release.
+- **See:** `[okay] stack: platform=sdl2 http=winhttp readers=own(fbx,dae,3ds,...)+assimp crypto=libsodium ui=...` (the readers and ui parts may differ; ufbx was deleted on 2026-11-23, so `ufbx` must not appear). `crypto=` must say libsodium in every release.
 - **Partial:** a GUI program may not print to the console; the About popup is the sure way.
 - **Link:** [../../try_it.md](../../try_it.md)
 

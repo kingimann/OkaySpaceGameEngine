@@ -6047,45 +6047,47 @@ static void RenderJoinRequest(const std::string& game, bool mine, const std::str
         }
     }
 }
-// Under a DM's header: the friend's game, with Join (or Ask to join when it isn't open).
-static void DrawChatGameBar(const okay::Friend* f, const std::string& uid, const std::string& name, float w) {
-    if (!f || !f->online) return;
+// Under a DM's header: the friend's game, with Join (or Ask to join when it isn't open). `origin` is the header's top-left;
+// the bar goes where okay::launcherlayout::LayoutChatTop puts it (it grows with the UI scale). Returns false (and draws
+// nothing) when the friend is not in a game.
+static bool DrawChatGameBar(const okay::Friend* f, const std::string& uid, const std::string& name, ImVec2 origin,
+                            const okay::launcherlayout::ChatHeaderLayout& t) {
+    if (!f || !f->online) return false;
     okay::JoinLink l;
     const bool joinable = okay::JoinLink::Parse(f->sessionCode, l);
     const std::string game = joinable ? l.game : GameFromPlaying(f->playing);
-    if (game.empty()) return;
+    if (game.empty()) return false;
     okay::JoinLink mine;
     const bool together = joinable && okay::JoinLink::Parse(MpMyJoin(), mine) && mine.SameSession(l);
     ImDrawList* d = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = 40.0f;
-    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::SuccessFillU32(0.133f), 8.0f);
-    d->AddRect(p, ImVec2(p.x + w, p.y + h), okaytheme::SuccessFillU32(0.353f), 8.0f);
-    DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + h * 0.5f), 22.0f, okaytheme::SuccessFillU32());
-    const float bw = 116.0f;
+    auto at = [&](float x, float y) { return ImVec2(origin.x + x, origin.y + y); };
+    const okay::launcherlayout::Rect& b = t.barRect;
+    d->AddRectFilled(at(b.x, b.y), at(b.R(), b.B()), okaytheme::SuccessFillU32(0.133f), 8.0f);
+    d->AddRect(at(b.x, b.y), at(b.R(), b.B()), okaytheme::SuccessFillU32(0.353f), 8.0f);
+    DrawGamepadIcon(d, at(t.icon.x + t.icon.w * 0.5f, t.icon.y + t.icon.h * 0.5f), t.icon.w, okaytheme::SuccessFillU32());
     std::string line = "Playing " + game;
     std::string detail = f->playing.size() > 8 + game.size() ? f->playing.substr(8 + game.size()) : std::string();
     while (!detail.empty() && (detail[0] == ' ' || (unsigned char)detail[0] == 0xC2 || (unsigned char)detail[0] == 0xB7)) detail.erase(0, 1);
-    d->AddText(ImVec2(p.x + 42, p.y + 4), okaytheme::SuccessU32(), FitText(line, w - 42 - bw - 16).c_str());
-    d->AddText(ImVec2(p.x + 42, p.y + 21), ImGui::GetColorU32(ImGuiCol_TextDisabled),
-               FitText(together ? std::string("You're in the same match") : !detail.empty() ? detail : joinable ? std::string("Open to friends") : std::string("Not open to join"), w - 42 - bw - 16).c_str());
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 6, p.y + 6));
+    d->AddText(at(t.title.x, t.title.y), okaytheme::SuccessU32(), FitText(line, t.title.w).c_str());
+    d->AddText(at(t.detail.x, t.detail.y), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+               FitText(together ? std::string("You're in the same match") : !detail.empty() ? detail : joinable ? std::string("Open to friends") : std::string("Not open to join"), t.detail.w).c_str());
+    ImGui::SetCursorScreenPos(at(t.button.x, t.button.y));
+    const ImVec2 bsz(t.button.w, t.button.h);
     ImGui::PushID(("gbar" + uid).c_str());
     static std::set<std::string> asked;   // asked once per friend per run
-    if (together) { ImGui::BeginDisabled(); ImGui::Button("Joined", ImVec2(bw, 28)); ImGui::EndDisabled(); }
+    if (together) { ImGui::BeginDisabled(); ImGui::Button("Joined", bsz); ImGui::EndDisabled(); }
     else if (joinable) {
         ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
-        if (ImGui::Button("Join game", ImVec2(bw, 28))) MpJoinFriend(f->sessionCode, name);
+        if (ImGui::Button("Join game", bsz)) MpJoinFriend(f->sessionCode, name);
         ImGui::PopStyleColor(2);
-    } else if (asked.count(uid)) { ImGui::BeginDisabled(); ImGui::Button("Asked", ImVec2(bw, 28)); ImGui::EndDisabled(); }
-    else if (ImGui::Button("Ask to join", ImVec2(bw, 28))) {
+    } else if (asked.count(uid)) { ImGui::BeginDisabled(); ImGui::Button("Asked", bsz); ImGui::EndDisabled(); }
+    else if (ImGui::Button("Ask to join", bsz)) {
         OutboxSend(uid, 0, JoinRequestBody(game)); asked.insert(uid);
         Toast("Asked " + name + " to invite you", 1);
     }
     ImGui::PopID();
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 6));
-    ImGui::Dummy(ImVec2(0, 0));
+    return true;
 }
 // Party invites in chat: "[Party] <party id>" + the inviter. A card with Join party.
 static void DrawPeopleIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
@@ -8285,13 +8287,23 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 }
                 ImGui::EndPopup();
             }
-            ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y + 34));
-            {   // hairline under the header (as in server channels)
-                const ImVec2 lp = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), okaytheme::Ink(16), 1.0f);
+            {   // The header's height and the friend's game bar grow with the UI scale (okay::launcherlayout::LayoutChatTop),
+                // so what follows (search, pins, the message list) always starts below them.
+                float gbw = 116.0f;
+                for (const char* lbl : {"Join game", "Ask to join", "Joined", "Asked"})
+                    gbw = std::max(gbw, okay::launcherlayout::ButtonW(ImGui::CalcTextSize(lbl).x, ImGui::GetStyle().FramePadding.x, 0.0f));
+                const float lineH = ImGui::GetTextLineHeight();
+                const okay::launcherlayout::ChatHeaderLayout top = okay::launcherlayout::LayoutChatTop(hdrW, lineH, lineH * 1.12f, gbw, true);
+                // hairline under the header (as in server channels)
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(hdrPos.x, hdrPos.y + top.headerH), ImVec2(hdrPos.x + hdrW, hdrPos.y + top.headerH),
+                                                    okaytheme::Ink(16), 1.0f);
+                bool barShown = false;
+                if (!selBlocked) if (auto fg = fById.find(selUid); fg != fById.end()) barShown = DrawChatGameBar(fg->second, selUid, selName, hdrPos, top);
+                const float below = barShown ? top.listTop
+                                             : okay::launcherlayout::LayoutChatTop(hdrW, lineH, lineH * 1.12f, gbw, false).listTop;
+                ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y + below));
+                ImGui::Dummy(ImVec2(0, 0));
             }
-            ImGui::Dummy(ImVec2(0, 6));
-            if (!selBlocked) if (auto fg = fById.find(selUid); fg != fById.end()) DrawChatGameBar(fg->second, selUid, selName, hdrW);
             if (showSearch) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
                 ImGui::SetNextItemWidth(-1);
@@ -8661,8 +8673,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                                  okaytheme::WarningFillU32());
                     }
                 }
+                // On my filled bubble: a soft white that still reads 4.5:1 on the fill, in every theme (was the info blue).
+                const ImVec4 mineMeta = okaytheme::OnFillSoft(myBubble);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? okaytheme::WithAlpha(okaytheme::kTextDim, 0.9f)
-                                        : (m.mine ? okaytheme::WithAlpha(okaytheme::Current().info, 0.6f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f))));
+                                        : (m.mine ? mineMeta : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
                 if (m.edited && ImGui::IsItemHovered()) {   // "edited" -> earlier versions
@@ -8675,7 +8689,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (m.mine && !bare) {
                     ImVec2 tmin = ImGui::GetItemRectMin(), tmax = ImGui::GetItemRectMax();
                     const int ds = deliveryState(m.id, m.when);
-                    ImU32 tc = ds == 3 ? ImGui::GetColorU32(okaytheme::Current().info) : okaytheme::TextU32(0.588f);
+                    // On my bubble: sent / delivered in the time's soft white, read in full white (the info blue and the grey
+                    // text colour did not show on the blue bubble).
+                    ImU32 tc = ds == 3 ? okaytheme::OnColorU32() : ImGui::GetColorU32(mineMeta);
                     float bx = tmax.x + 4.0f, by = (tmin.y + tmax.y) * 0.5f;
                     auto tick = [&](float ox) {
                         bdl->AddLine(ImVec2(bx + ox, by + 1), ImVec2(bx + ox + 2.5f, by + 3.5f), tc, 1.3f);
@@ -21099,7 +21115,7 @@ int main(int argc, char** argv) {
                             {   // time (+ edited) tucked bottom-right, small + dim
                                 const float mw = ImGui::CalcTextSize(meta.c_str()).x, room = ImGui::GetContentRegionAvail().x;
                                 if (mw < room) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (room - mw));
-                                ImGui::PushStyleColor(ImGuiCol_Text, mine ? okaytheme::WithAlpha(okaytheme::Current().info, 0.6f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f));
+                                ImGui::PushStyleColor(ImGuiCol_Text, mine ? okaytheme::OnFillSoft(kAccentDim) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f));
                                 ImGui::TextUnformatted(meta.c_str());
                                 ImGui::PopStyleColor();
                             }

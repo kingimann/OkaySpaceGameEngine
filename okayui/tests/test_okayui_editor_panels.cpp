@@ -1399,5 +1399,247 @@ int main() {
         CHECK(res.empty && res.switches.empty());
     }
 
+    // ================= Map Humanoid Bones =================
+    {   // the shared rules: a pick's closed text, the verdict line
+        CHECK(P::BonePickText("", "Bone.000") == "Auto (Bone.000)" && P::BonePickText("-", "x") == "None" && P::BonePickText("joint12", "x") == "joint12");
+        panelfix::BoneMapData d;
+        CHECK(P::BoneMapStatus(d.model) == "Not a humanoid yet: no left thigh");
+        d.model.humanoid = true; d.model.found = 15;
+        CHECK(P::BoneMapStatus(d.model) == "Humanoid: 15/15 bones mapped");
+        CHECK(std::string(P::kBoneSlotNames[0]) == "Hips" && std::string(P::kBoneSlotNames[P::kBoneSlotCount - 1]) == "Right foot");
+    }
+    {   // the window, golden; a pick from a slot's list is written in place; Clear sets every slot to Auto; the action button only works
+        // while the picks make a humanoid
+        panelfix::BoneMapData d;
+        S::BoneMapResult res;
+        P::BoneMapIntent seen;
+        auto r = MakeRig(460, 860, [&](float x, float y, float w, float h) {
+            res = S::DrawBoneMap(d.model, x, y, w, h);
+            seen.changed |= res.intent.changed; seen.apply |= res.intent.apply;
+        });
+        r.Frames(3);
+        CHECK(res.slots.size() == 15 && !res.empty && res.status.y > res.slots[14].y && res.clear.y > res.status.y);
+        CHECK(res.slots[1].x == res.slots[0].x && res.slots[1].y > res.slots[0].y + 20.0f && res.slots[0].x > 16.0f + 100.0f);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_bonemap", r.Draw());
+        r.Click(res.apply); CHECK(!seen.apply);   // not a humanoid: the button is off
+        r.Click(res.slots[9]); r.Frames(2);       // (the list takes its place a frame after it opens)
+        CHECK(res.listRows.size() == 9 && res.popup.h > 0.0f);
+        Check("editorpanels_bonemap_list", r.Draw());
+        r.Click(res.listRows[7]);                // "joint13" (Auto, None, then the bones)
+        r.Frames(1);
+        CHECK(d.picks[9] == "joint13" && seen.changed && res.listRows.empty());   // the list closed
+        seen.changed = false;
+        r.Click(res.clear);
+        CHECK(seen.changed);
+        for (int b = 0; b < P::kBoneSlotCount; ++b) CHECK(d.picks[b].empty());
+        d.model.humanoid = true; d.model.found = 15; r.Frames(1);
+        r.Click(res.apply); CHECK(seen.apply);
+    }
+    {   // a retarget's map says so on its button; no model: only the hint
+        panelfix::BoneMapData d;
+        d.model.forRetarget = true;
+        S::BoneMapResult res;
+        auto r = MakeRig(460, 700, [&](float x, float y, float w, float h) { res = S::DrawBoneMap(d.model, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.apply.w > res.clear.w);
+        P::BoneMapModel none;
+        auto r2 = MakeRig(460, 200, [&](float x, float y, float w, float h) { res = S::DrawBoneMap(none, x, y, w, h); });
+        r2.Frames(2);
+        CHECK(res.empty && res.slots.empty() && res.apply.w == 0);
+    }
+
+    // ================= Save Manager =================
+    {   // the shared rules: the rows sorted by key with their type and payload, the type names, the filter, a stored value
+        const P::SaveManagerModel m = panelfix::Saves();
+        CHECK(m.rows.size() == 5 && m.rows[0].key == "coins" && m.rows[4].key == "spawn");
+        CHECK(m.rows[0].type == 'i' && m.rows[0].payload == "120" && m.rows[3].payload == "Ada");
+        CHECK(std::string(P::SaveTypeName('v')) == "Vector3" && std::string(P::SaveTypeName('s')) == "string" && std::string(P::SaveTypeName('?')) == "string");
+        CHECK(P::SaveKeyMatches("player.name", "NAME") && !P::SaveKeyMatches("coins", "name") && P::SaveKeyMatches("x", "") && P::SaveKeyMatches("x", nullptr));
+        CHECK(P::SaveRawValue('f', "2.5") == "f:2.5");
+        std::vector<std::pair<std::string, std::string>> odd = {{"e", ""}, {"t", "i"}};
+        const std::vector<P::SaveKeyRow> rows = P::SaveKeyRows(odd);
+        CHECK(rows[0].type == 's' && rows[0].payload.empty() && rows[1].type == 'i' && rows[1].payload.empty());
+    }
+    {   // the window, golden; a value typed in comes back with its type; X; a new key; the filter; Clear asks first
+        P::SaveManagerModel m = panelfix::Saves();
+        P::SaveManagerState st;
+        S::SaveManagerResult res;
+        P::SaveManagerIntent seen;
+        auto r = MakeRig(620, 520, [&](float x, float y, float w, float h) {
+            res = S::DrawSaveManager(m, st, x, y, w, h);
+            const P::SaveManagerIntent& in = res.intent;
+            if (in.choose >= 0) seen.choose = in.choose;
+            if (in.edit >= 0) { seen.edit = in.edit; seen.editRaw = in.editRaw; }
+            if (in.remove >= 0) seen.remove = in.remove;
+            if (in.add) { seen.add = true; seen.addKey = in.addKey; seen.addRaw = in.addRaw; }
+            seen.reload |= in.reload; seen.save |= in.save; seen.clearAll |= in.clearAll;
+        });
+        r.Frames(3);
+        CHECK(res.values.size() == 5 && res.removes.size() == 5 && !res.noFile && res.reload.w > 0);
+        CHECK(res.reload.x > res.fileCombo.x + res.fileCombo.w && res.reload.x + res.reload.w <= 620.0f - 16.0f + 0.5f);   // beside the list, inside
+        CHECK(res.save.y > res.add.y && res.count.x > res.clearAll.x);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_savemanager", r.Draw());
+        r.Click(res.values[0]); r.sim.Press(Key_End); r.Frame(); r.sim.Type("5"); r.Frames(2);
+        CHECK(seen.edit == 0 && seen.editRaw == "i:1205");
+        r.Click(res.removes[2]); CHECK(seen.remove == 2);
+        r.Click(res.newKey); r.sim.Type("level"); r.Frame();
+        r.Click(res.newType); r.Frames(2);
+        CHECK(res.listRows.size() == 5);
+        r.Click(res.listRows[1]); CHECK(st.newType == 1);
+        r.Click(res.newValue); r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("3"); r.Frame();
+        r.Click(res.add);
+        CHECK(seen.add && seen.addKey == "level" && seen.addRaw == "i:3" && st.newKey[0] == '\0');
+        seen.add = false;
+        r.Click(res.add); CHECK(!seen.add);       // no key typed: nothing to add
+        r.Click(res.reload); CHECK(seen.reload);
+        r.Click(res.save); CHECK(seen.save);
+        r.Click(res.clearAll); r.Frames(2);       // (the box is centred a frame after it opens)
+        CHECK(res.confirmClear.w > 0 && !seen.clearAll);
+        Check("editorpanels_savemanager_clear", r.Draw());
+        r.Click(res.cancelClear); r.Frames(1);
+        CHECK(!seen.clearAll); CHECK(res.confirmClear.w == 0);
+        r.Click(res.clearAll); r.Frames(2); r.Click(res.confirmClear); CHECK(seen.clearAll);
+        r.Click(res.filter); r.sim.Type("PLAY"); r.Frames(2);
+        CHECK(res.values.size() == 1 && res.rowIndex[0] == 3);
+        r.Click(res.fileCombo); r.Frames(2);
+        CHECK(res.listRows.size() == 3);
+        r.Click(res.listRows[2]); CHECK(seen.choose == 2);
+    }
+    {   // no file chosen yet: the list and the hint only
+        P::SaveManagerModel m = panelfix::Saves();
+        m.selected.clear();
+        P::SaveManagerState st;
+        S::SaveManagerResult res;
+        auto r = MakeRig(620, 300, [&](float x, float y, float w, float h) { res = S::DrawSaveManager(m, st, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.noFile && res.values.empty() && res.reload.w == 0 && res.save.w == 0);
+    }
+
+    // ================= Material =================
+    {   // the shared rules: the preview colour (albedo plus 60% emissive, at most 1) and where the ball goes
+        P::MaterialModel m = panelfix::Material();
+        float c[3]; P::MaterialPreviewColor(m, c);
+        CHECK(std::abs(c[0] - 0.91f) < 1e-5f && std::abs(c[1] - 0.20f) < 1e-5f);
+        m.color[0] = 0.9f; m.emissive[0] = 1.0f; P::MaterialPreviewColor(m, c); CHECK(c[0] == 1.0f);
+        const P::MaterialBall b = P::MaterialBallIn(0.0f, 0.0f, 200.0f, 74.0f);
+        CHECK(b.cx == 100.0f && b.cy == 37.0f && std::abs(b.r - 23.68f) < 1e-4f && b.spotX < b.cx && b.spotY < b.cy && b.glintR < b.spotR);
+    }
+    {   // the window, golden; the fields edit the model in place; "..." asks the host for the file dialog; Apply only with a mesh selected
+        P::MaterialModel m = panelfix::Material();
+        S::MaterialResult res;
+        P::MaterialIntent seen;
+        auto r = MakeRig(460, 520, [&](float x, float y, float w, float h) {
+            res = S::DrawMaterial(m, x, y, w, h);
+            seen.changed |= res.intent.changed; seen.browse |= res.intent.browse; seen.save |= res.intent.save; seen.apply |= res.intent.apply;
+        });
+        r.Frames(3);
+        CHECK(res.preview.h == 74.0f && res.albedo.y > res.preview.y + 74.0f && res.shininess.w > 0 && res.tiling.y > res.texture.y);
+        CHECK(res.browse.x > res.texture.x + 200.0f && res.apply.x > res.save.x);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_material", r.Draw());
+        CHECK(!seen.changed);
+        r.Click(res.apply); CHECK(!seen.apply);
+        r.Click(res.unlit); CHECK(m.unlit && seen.changed);
+        r.Click(res.texture); r.sim.Press(Key_End); r.Frame(); r.sim.Press(Key_Backspace); r.Frame(); r.sim.Press(Key_Backspace); r.Frame(); r.sim.Press(Key_Backspace); r.Frame();
+        r.sim.Type("jpg"); r.Frame();
+        CHECK(m.texture == "Assets/Textures/paint.jpg");
+        r.Click(res.browse); CHECK(seen.browse);
+        r.Click(res.save); CHECK(seen.save);
+        m.canApply = true; r.Frames(1);
+        r.Click(res.apply); CHECK(seen.apply);
+        r.sim.Move(res.specular.x + 2.0f, CY(res.specular)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frames(2);
+        CHECK(m.specular == 0.0f && res.shininess.w == 0);   // no specular: no Shininess
+    }
+
+    // ================= Frame time =================
+    {   // the shared rules: the colours, the lines, the sections biggest first (the Scene view always listed)
+        const P::PerfOverlayModel m = panelfix::Perf();
+        float c[3];
+        P::PerfFpsColor(142.0, c); CHECK(c[1] == 0.85f);
+        P::PerfFpsColor(75.0, c); CHECK(c[0] == 0.95f && c[1] == 0.80f);
+        P::PerfFpsColor(30.0, c); CHECK(c[1] == 0.45f);
+        CHECK(P::PerfTimesText(m) == "7.04 ms avg   95%: 8.90   worst: 14.20   1% low: 74 FPS");
+        CHECK(P::PerfSleepText(m) == "Without the limiter's sleep: 4.10 ms = 244 FPS possible");
+        P::PerfOverlayModel q; CHECK(P::PerfSleepText(q).empty() && P::PerfPlotTop(q) == (float)16.7);
+        CHECK(P::PerfPlotCaption(m) == "last 120 frames, top 17 ms");
+        CHECK(m.sections.size() == 4 && m.sections[0].name == "Sleep" && m.sections[1].name == "Scene view" && m.sections[3].name == "Scripts");
+        const std::vector<P::PerfSection> idle = P::PerfSections({"Scene view", "UI"}, {0.0, 0.0}, 0.0, 0);
+        CHECK(idle.size() == 1 && idle[0].name == "Scene view" && idle[0].share == 0.0f);
+        CHECK(P::PerfSectionBar(m.sections[1]) == "2.40 ms  34%");
+        CHECK(P::PerfViewText(m) == "Scene view 1280x720, scale 1.00");
+    }
+    {   // the window, golden; it says how big it needs to be; the two buttons come back as the intent
+        P::PerfOverlayModel m = panelfix::Perf();
+        S::PerfOverlayResult res;
+        P::PerfOverlayIntent seen;
+        auto r = MakeRig(640, 480, [&](float x, float y, float w, float h) {
+            res = S::DrawPerfOverlay(m, x, y, w, h);
+            seen.copyReport |= res.intent.copyReport; seen.openProfiler |= res.intent.openProfiler;
+        });
+        r.Frames(3);
+        CHECK(res.bars.size() == 4 && res.plot.w == 360.0f && res.bars[0].w == 150.0f);
+        CHECK(res.contentW >= 360.0f && res.contentW < 608.0f && res.contentH > res.openProfiler.y + res.openProfiler.h - 12.0f - 1.0f);
+        CHECK(res.contentH <= res.openProfiler.y + res.openProfiler.h - 12.0f + 0.5f);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_perfoverlay", r.Draw());
+        r.Click(res.copyReport); CHECK(seen.copyReport && !seen.openProfiler);
+        r.Click(res.openProfiler); CHECK(seen.openProfiler);
+        m.plot.clear(); m.collecting = true; r.Frames(2);
+        CHECK(res.plot.w == 0);
+    }
+
+    // ================= Input =================
+    {   // the window, golden; the first three sections open; Clear; the Response curves section edits the chosen action's response
+        P::InputPanelModel m = panelfix::InputPanel();
+        P::InputPanelState st;
+        S::InputPanelResult res;
+        P::InputPanelIntent seen;
+        auto r = MakeRig(620, 760, [&](float x, float y, float w, float h) {
+            res = S::DrawInputPanel(m, st, x, y, w, h);
+            const P::InputPanelIntent& in = res.intent;
+            seen.clearEvents |= in.clearEvents; seen.record |= in.record; seen.stop |= in.stop; seen.replay |= in.replay;
+            seen.copyText |= in.copyText; seen.responseChanged |= in.responseChanged; seen.resetCurve |= in.resetCurve;
+        });
+        r.Frames(3);
+        CHECK(res.headers[1].y > res.headers[0].y + 60.0f && res.events.h > 100.0f && res.headers[3].y > res.events.y + res.events.h);
+        CHECK(res.record.w == 0 && res.deadzone.w == 0);   // the last two start closed
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_input", r.Draw());
+        r.Click(res.clear); CHECK(seen.clearEvents);
+        r.Click(res.headers[0]); r.Click(res.headers[1]); r.Click(res.headers[2]);   // close the first three
+        r.Click(res.headers[3]);
+        CHECK(res.record.w > 0);
+        r.Click(res.record); CHECK(seen.record);
+        r.Click(res.stop); CHECK(seen.stop);
+        r.Click(res.replay); CHECK(seen.replay);
+        r.Click(res.copyText); CHECK(seen.copyText);
+        r.Click(res.headers[4]);
+        CHECK(res.deadzone.w > 0 && res.invertX.w > 0 && res.plot.h == 90.0f);
+        Check("editorpanels_input_curves", r.Draw());
+        CHECK(!seen.responseChanged);
+        r.Click(res.invertY); CHECK(m.response.invertY && seen.responseChanged);
+        r.sim.Move(res.deadzone.x + res.deadzone.w * 0.5f, CY(res.deadzone)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(m.response.deadzone > 0.2f && m.response.deadzone < 0.7f);
+        r.Click(res.reset); CHECK(seen.resetCurve);
+        r.Click(res.action); r.Frames(2);
+        CHECK(res.listRows.size() == 3);
+        r.Click(res.listRows[2]); CHECK(st.action == 2);
+        m.direction = false; r.Frames(2);
+        CHECK(res.invertX.w == 0);
+    }
+    {   // not playing: the hint; no player, no actions
+        P::InputPanelModel m;
+        P::InputPanelState st;
+        st.action = 7;
+        S::InputPanelResult res;
+        auto r = MakeRig(500, 700, [&](float x, float y, float w, float h) { res = S::DrawInputPanel(m, st, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.headers[4].w > 0);
+        r.Click(res.headers[4]);
+        CHECK(st.action == 0); CHECK(res.deadzone.w == 0); CHECK(res.action.w > 0);
+    }
+
     TEST_MAIN_RESULT();
 }

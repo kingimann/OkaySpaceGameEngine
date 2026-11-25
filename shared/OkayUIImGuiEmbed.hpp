@@ -201,16 +201,19 @@ void EmbedBody(ImGuiWindow* win, ImVec2 clipMin, ImVec2 clipMax, const ImRect& o
 /// every overlay the body opened, and NoteActive() while the body is hovered or its window has the keyboard focus (the host gives
 /// OkayUI its keys then). `firstSize`: the size a window with no saved place opens at. `draw(pos, size)` gets OkayUI's pixels (the
 /// main window's). Returns true when the body was drawn this frame (false: closed, collapsed, a tab behind another, or hidden).
+///
+/// `flags` are added to the window's own. `bodySize` (optional): the body is that big instead of the window's free area, so a window
+/// with ImGuiWindowFlags_AlwaysAutoResize fits itself around it (the caller passes the size its body measured on the last frame).
 template <class Region, class Draw>
 bool HostPanelWindow(const char* title, bool* open, const char* itemId, Region& region, ImGuiEmbed& embed, OkayUI::CapturedGeometry& cap,
-                     ImVec2 firstSize, Draw draw) {
+                     ImVec2 firstSize, Draw draw, ImGuiWindowFlags flags = 0, const ImVec2* bodySize = nullptr) {
     if (open && !*open) return false;
-    ImGui::SetNextWindowSize(firstSize, ImGuiCond_FirstUseEver);
+    if (!bodySize) ImGui::SetNextWindowSize(firstSize, ImGuiCond_FirstUseEver);
     bool drawn = false;
-    if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+    if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | flags)) {
         ImGuiWindow* win = ImGui::GetCurrentWindow();
         const ImVec2 p = ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
-        ImVec2 a = ImGui::GetContentRegionAvail();
+        ImVec2 a = bodySize ? *bodySize : ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton(itemId, a);                     // an ImGui item, so ImGui does not move or scroll the window under it
         if (!HiddenInImGui(win)) {

@@ -312,4 +312,57 @@ struct PluginManagerResult {
 /// The three buttons, the note, then a table: the switch, the name with its description or error, the scope, Edit and Open / Close.
 PluginManagerResult DrawPluginManager(const okaypanels::PluginManagerModel& model, float x, float y, float w, float h);
 
+// ---- more tool windows: Map Humanoid Bones, Save Manager, Material, Frame time, Input (own_ui_toolkit.md section 29) -----------
+
+struct BoneMapResult {
+    okaypanels::BoneMapIntent intent;
+    std::vector<OkayUI::Rect> slots;                 // one per slot, its list box (zero size when scrolled out of view)
+    std::vector<OkayUI::Rect> listRows;              // the open list's rows: Auto, None, then the bones (zero size out of view)
+    OkayUI::Rect popup, status, clear, apply;
+    bool empty = false;                              // no model: only the hint line
+};
+/// The model's name and a note, a list per body slot (Auto, None or a bone), the mapper's verdict, Clear and the action button.
+BoneMapResult DrawBoneMap(okaypanels::BoneMapModel& model, float x, float y, float w, float h);
+
+struct SaveManagerResult {
+    okaypanels::SaveManagerIntent intent;
+    OkayUI::Rect fileCombo, reload, filter, table, newKey, newType, newValue, add, save, clearAll, count;
+    std::vector<int> rowIndex;                       // the model row of each values[] entry (the filter hides rows)
+    std::vector<OkayUI::Rect> values, removes;
+    std::vector<OkayUI::Rect> listRows;              // the open file list's rows, or the type list's
+    OkayUI::Rect popup, confirmClear, cancelClear;   // the open list; the "Clear save keys?" box's buttons while it is open
+    bool noFile = false;
+};
+/// The note and the file list (Reload beside it), the key filter, the key table (key, type, value field and X), the new-key row,
+/// Save to disk, Clear all keys (asks first), the key count and the unsaved mark.
+SaveManagerResult DrawSaveManager(const okaypanels::SaveManagerModel& model, okaypanels::SaveManagerState& state, float x, float y, float w, float h);
+
+struct MaterialResult {
+    okaypanels::MaterialIntent intent;
+    OkayUI::Rect preview, albedo, emissive, specular, shininess, unlit, doubleSided, texture, browse, tiling, save, apply;
+};
+/// The path, the preview ball, Albedo and Emissive, Specular (Shininess while it is above 0), Unlit and Double-sided, the texture
+/// field with "...", Tiling, Save and Apply to Selection. The values are edited in place.
+MaterialResult DrawMaterial(okaypanels::MaterialModel& model, float x, float y, float w, float h);
+
+struct PerfOverlayResult {
+    okaypanels::PerfOverlayIntent intent;
+    OkayUI::Rect fps, plot, copyReport, openProfiler;
+    std::vector<OkayUI::Rect> bars;                  // one per section shown
+    float contentW = 0.0f, contentH = 0.0f;          // the size the body needs (the window sizes itself to it)
+};
+/// The FPS and frame times, the graph, the sections' bars, the renderer and Scene view lines, Copy report and Open Profiler.
+PerfOverlayResult DrawPerfOverlay(const okaypanels::PerfOverlayModel& model, float x, float y, float w, float h);
+
+struct InputPanelResult {
+    okaypanels::InputPanelIntent intent;
+    OkayUI::Rect headers[5];                         // Right now, Controllers and typed actions, Last events, Record and replay, Response curves
+    OkayUI::Rect clear, events, record, stop, replay, copyText;
+    OkayUI::Rect action, deadzone, curve, sensitivity, invertX, invertY, reset, plot;   // zero size while their section is closed
+    std::vector<OkayUI::Rect> listRows;              // the open action list's rows
+    float contentHeight = 0.0f;                      // how tall the open sections are (the body scrolls past the window)
+};
+/// The five sections of the Input panel (the first three open at first); the body scrolls.
+InputPanelResult DrawInputPanel(okaypanels::InputPanelModel& model, okaypanels::InputPanelState& state, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

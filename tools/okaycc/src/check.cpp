@@ -284,6 +284,11 @@ private:
         };
         switch (e.kind) {
         case Expr::Kind::Int:
+            if (e.text == "true" || e.text == "false") {
+                r.type = prim(Type::Kind::Bool);  // the boolean literals have type bool ([lex.bool])
+                r.type->unsign = true;            // as the parser spells bool
+                return r;
+            }
             if (e.litRank > 0) r.type = prim(Type::Kind::Long);
             else if (!e.litUnsigned && e.ival > 0x7fffffffull) r.type = prim(Type::Kind::Long);
             else r.type = prim(Type::Kind::Int);
@@ -294,10 +299,15 @@ private:
         case Expr::Kind::Float:
             r.type = prim(e.litRank == 1 ? Type::Kind::Float : Type::Kind::Double);
             return r;
-        case Expr::Kind::Char:
-            r.type = prim(Type::Kind::Int);
-            r.nullc = e.ival == 0;
+        case Expr::Kind::Char: {
+            // 'c' is an int in C (ISO C 6.4.4.4 p10) and a char in C++ ([lex.ccon] p2: os << 'c'
+            // prints the character). C sources are the .c and .h files.
+            bool cSrc = e.file.size() >= 2 && (e.file.compare(e.file.size() - 2, 2, ".c") == 0 ||
+                                              e.file.compare(e.file.size() - 2, 2, ".h") == 0);
+            r.type = prim(cSrc || e.ival > 255 ? Type::Kind::Int : Type::Kind::Char);
+            r.nullc = e.ival == 0 && cSrc;
             return r;
+        }
         case Expr::Kind::String: {
             r.type = prim(Type::Kind::Array);
             r.type->inner = prim(Type::Kind::Char);
@@ -349,6 +359,21 @@ private:
                             return bad(e.line, e.col);
                         }
             }
+            if (std::size_t qcut = e.text.rfind("::"); qcut != std::string::npos) {
+                // C::x where x is a member of a base class of C ([class.member.lookup]):
+                // std::ofstream::app.
+                auto cs = canonStructs().find(e.text.substr(0, qcut));
+                for (int hops = 0; cs != canonStructs().end() && cs->second && !cs->second->base.empty() && hops < 64;
+                     ++hops) {
+                    std::string bq = cs->second->base + e.text.substr(qcut);
+                    ET bs = lookup(bq, e.line, e.col, true);
+                    if (!bs.bad) {
+                        e.text = bq;
+                        return bs;
+                    }
+                    cs = canonStructs().find(cs->second->base);
+                }
+            }
             {
                 // The enclosing namespaces and classes, innermost first; for N::x too (the first
                 // part of a qualified name is looked up the same way, [basic.lookup.qual]).
@@ -359,6 +384,19 @@ private:
                     if (!ns.bad) {
                         e.text = q;
                         return ns;
+                    }
+                    // A class scope includes its base classes' members ([class.member.lookup]):
+                    // a static member of a base, used by name in a derived class's function.
+                    auto cs = canonStructs().find(scope);
+                    for (int hops = 0; cs != canonStructs().end() && cs->second && !cs->second->base.empty() && hops < 64;
+                         ++hops) {
+                        std::string bq = cs->second->base + "::" + e.text;
+                        ET bs = lookup(bq, e.line, e.col, true);
+                        if (!bs.bad) {
+                            e.text = bq;
+                            return bs;
+                        }
+                        cs = canonStructs().find(cs->second->base);
                     }
                     std::size_t cut = scope.rfind("::");
                     if (cut == std::string::npos) break;
@@ -1008,6 +1046,36 @@ private:
         if (st)
             for (const Param& f : st->params)
                 if (f.name == op && !f.mangled.empty()) found = true;
+        if (found && e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.kids[1] && freeOps_.count(op)) {
+            // Member and non-member candidates are considered together ([over.match.oper] p3): an
+            // object on the right that no member operator takes (os << v with a non-member
+            // operator<<(ostream &, const V &)) goes to the non-member one.
+            Expr& rhs = *e.kids[1];
+            ET rt;
+            auto cached = etCache_.find(&rhs);
+            if (cached != etCache_.end()) {
+                rt = copyET(cached->second);
+            } else {
+                ++quiet_;
+                rt = checkExpr(rhs);
+                --quiet_;
+                if (!simpleOperand(rhs)) etCache_[&rhs] = copyET(rt);
+            }
+            const Type* rty = rt.bad || !rt.type ? nullptr : rt.type.get();
+            if (rty && rty->kind == Type::Kind::Struct) {
+                const Type* rc = canonOf(rty);
+                bool fits = false;
+                for (const Param& f : st->params) {
+                    if (f.name != op || f.mangled.empty() || !f.type || f.type->params.size() != 1) continue;
+                    const Type* pt = f.type->params[0].type.get();
+                    while (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (!pt || pt->kind != Type::Kind::Struct) continue;
+                    const Type* pc = canonOf(pt);
+                    if (rc && pc && (rc->tag == pc->tag || derivedFrom(*rc, *pc))) fits = true;
+                }
+                if (!fits) found = false;
+            }
+        }
         const bool refCall = lhs.kind == Expr::Kind::Call ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
                               lhs.kids[0]->kind == Expr::Kind::Call);
@@ -1059,6 +1127,10 @@ private:
         }
         if (probe.bad || !usable || !st) return false;
         if (!found || !probe.lvalue) return false;
+        // The left operand was checked (and rewritten) by the probe: its result is kept, so the
+        // member call below does not check it again. Checked twice per level, a chain such as
+        // os << a << b << ... << z took time exponential in its length.
+        if (!simple) etCache_[e.kids[lhsAt].get()] = copyET(probe);
         auto member = mkE(Expr::Kind::Member, e);
         member->text = ".";
         member->kids.push_back(std::move(e.kids[lhsAt]));
@@ -1134,9 +1206,10 @@ private:
                 bool pc = pt->kind == Type::Kind::Struct, ac = at->kind == Type::Kind::Struct;
                 if (pc != ac) return false;
                 if (pc) {
+                    // the same class, or a class derived from the parameter's ([over.best.ics] p6)
                     const Type* a = canonOf(at);
                     const Type* b = canonOf(pt);
-                    if (!a || !b || a->tag != b->tag) return false;
+                    if (!a || !b || (a->tag != b->tag && !derivedFrom(*a, *b))) return false;
                 }
             }
             return true;
@@ -1213,13 +1286,20 @@ private:
     // e becomes e.operator T() (the first conversion function the class has). Only an lvalue
     // object is converted (a call result is not), and the result is not converted again.
     void convertIfNeeded(Expr& e) {
-        const bool call = e.kind == Expr::Kind::Call ||
-                          (e.kind == Expr::Kind::Unary && e.text == "*" && !e.kids.empty() && e.kids[0] &&
-                           e.kids[0]->kind == Expr::Kind::Call);  // *f(): a call returning T&
-        if (!simpleOperand(e) && !call) return;
+        auto isCall = [](const Expr& x) {
+            return x.kind == Expr::Kind::Call || (x.kind == Expr::Kind::Unary && x.text == "*" && !x.kids.empty() &&
+                                                  x.kids[0] && x.kids[0]->kind == Expr::Kind::Call);  // *f(): T&
+        };
+        // An operator expression (in >> x in "while (in >> x)") may be an operator call on a class:
+        // the probe below rewrites it into one.
+        const bool opExpr = e.kind == Expr::Kind::Bin && e.kids.size() == 2 && e.text != "&&" && e.text != "||" &&
+                            e.text != "==" && e.text != "!=" && e.text != "<" && e.text != ">" && e.text != "<=" &&
+                            e.text != ">=";
+        if (!simpleOperand(e) && !isCall(e) && !opExpr) return;
         ++quiet_;
         ET probe = checkExpr(e);
         --quiet_;
+        const bool call = isCall(e);
         // A call result (f() in "if (f())", [conv] p4 contextual conversion) is converted on a hidden
         // copy: the member call below puts an object result in a hidden local.
         if (!probe.bad && probe.type && probe.type->kind == Type::Kind::Reference && probe.type->inner) {
@@ -1528,6 +1608,20 @@ private:
             const std::string& cn = call.kids[0]->text;
             std::size_t cut = cn.rfind("::");
             if (cut != std::string::npos && cn.compare(0, 2, "_Z") != 0) ns = cn.substr(0, cut);
+            if (cn.compare(0, 3, "_ZN") == 0) {
+                // A constructor or member called by its mangled name (_ZN <class parts> C1 E ...):
+                // the class is the name parts before the constructor's C1.
+                std::size_t k = 3;
+                while (k < cn.size() && cn[k] >= '0' && cn[k] <= '9') {
+                    std::size_t nx = mangledEnd(cn, k);
+                    if (nx == k) break;
+                    k = nx;
+                }
+                if (k < cn.size() && cn[k] == 'C' && k > 3) {
+                    auto ct = typeFromMangle("N" + cn.substr(3, k - 3) + "E");
+                    if (ct && ct->kind == Type::Kind::Struct) ns = ct->tag;
+                }
+            }
         }
         for (std::size_t i = nargs; i < fn.params.size(); ++i) {
             if (!fn.params[i].defArg) break;
@@ -1544,6 +1638,16 @@ private:
                 if (scopes_.front().count(sc + "::" + e.text)) {
                     e.text = sc + "::" + e.text;
                     return;
+                }
+                // and the class's base classes ([class.member.lookup])
+                auto cs = canonStructs().find(sc);
+                for (int hops = 0; cs != canonStructs().end() && cs->second && !cs->second->base.empty() && hops < 64;
+                     ++hops) {
+                    if (scopes_.front().count(cs->second->base + "::" + e.text)) {
+                        e.text = cs->second->base + "::" + e.text;
+                        return;
+                    }
+                    cs = canonStructs().find(cs->second->base);
                 }
                 std::size_t cut = sc.rfind("::");
                 if (cut == std::string::npos) break;
@@ -1572,7 +1676,11 @@ private:
                 ets.push_back(bad(call.line, call.col));  // {a, b}: fits any class parameter
                 continue;
             }
-            ets.push_back(decay(checkExpr(*call.kids[firstArg + i])));
+            Expr& ak = *call.kids[firstArg + i];
+            ET raw = checkExpr(ak);
+            // kept for the argument check that follows (see etCache_)
+            if (!simpleOperand(ak)) etCache_[&ak] = copyET(raw);
+            ets.push_back(decay(std::move(raw)));
         }
         const Param* best = nullptr;
         int bestScore = 1 << 30;
@@ -2412,6 +2520,10 @@ private:
                         selfArg->text = "&";
                         selfArg->line = mem.line;
                         selfArg->col = mem.col;
+                        // The object was checked just above: keep its result for the check of the
+                        // argument &obj below (a chain of calls, a.f().g().h(), is then checked once
+                        // per link instead of twice per link, which was exponential).
+                        if (!simpleOperand(*mem.kids[0])) etCache_[mem.kids[0].get()] = copyET(obj);
                         selfArg->kids.push_back(std::move(mem.kids[0]));
                     }
                     std::unique_ptr<Expr> callee;
@@ -3399,6 +3511,9 @@ private:
     }
 
     void checkStmt(Stmt& s) {
+        // A kept result is only for the expression being checked: nodes of earlier statements may
+        // have been freed and their addresses reused.
+        if (s.kind != Stmt::Kind::Block) etCache_.clear();
         if (!s.file.empty()) file_ = s.file;
         switch (s.kind) {
         case Stmt::Kind::Block: {

@@ -140,7 +140,7 @@ public:
         staticObjs_.clear();
         if (globalInit_.empty() && globalObjs_.empty()) return;
         std::string sfx;
-        for (char ch : (toks_.empty() ? std::string("t") : toks_[0].file)) sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
+        for (char ch : unitFile()) sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
         Pos p{1, 1, toks_.empty() ? std::string() : toks_[0].file};
         auto mk = [&](const std::string& name, std::unique_ptr<Stmt> body) {
             auto d = std::make_unique<Decl>();
@@ -166,13 +166,18 @@ public:
                 if (!call) continue;
                 std::unique_ptr<Stmt> st = sExpr(std::move(call), p);
                 if (!globalObjs_[i].guard.empty()) {
+                    // Built objects only, and once: the flag is cleared, so an inline variable
+                    // that every file's __okay_fini_ sees is destroyed by the first.
                     auto g = std::make_unique<Stmt>();
                     g->kind = Stmt::Kind::If;
                     g->line = p.line;
                     g->col = p.col;
                     g->file = p.file;
                     g->expr = eName(globalObjs_[i].guard, p);
-                    g->thenS = std::move(st);
+                    auto thenB = sBlock(p);
+                    thenB->stmts.push_back(sExpr(eAssign(eName(globalObjs_[i].guard, p), eInt(0, p), p), p));
+                    thenB->stmts.push_back(std::move(st));
+                    g->thenS = std::move(thenB);
                     st = std::move(g);
                 }
                 body->stmts.push_back(std::move(st));
@@ -527,8 +532,7 @@ private:
         while (isKw("mutable") || isKw("noexcept") || isKw("constexpr")) advance();
         std::unique_ptr<Type> ret = eatP("->") ? parseTypeName() : autoType();
         std::string sfx;
-        for (char ch : (toks_.empty() ? std::string("t") : toks_[0].file))
-            sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
+        for (char ch : unitFile()) sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
         // Reserve this lambda's slot before its body is read: a lambda inside the body takes the
         // next one (the index names the closure class and the function).
         std::size_t idx = lambdas_.size();
@@ -832,6 +836,7 @@ private:
             c.cmethod = p.cmethod;
             c.pure = p.pure;
             if (p.type) c.type = cloneType(*p.type);
+            if (p.defArg) c.defArg = cloneExpr(*p.defArg);  // a constructor's default arguments
             out.push_back(std::move(c));
         }
         return out;
@@ -2294,6 +2299,15 @@ private:
         return t;
     }
 
+    // The file this translation unit was compiled from: the last token's (the first token may come
+    // from a header). It names the unit's __okay_init_/__okay_fini_ functions and its closures, which
+    // must differ between the files of one program.
+    std::string unitFile() const {
+        for (std::size_t k = toks_.size(); k-- > 0;)
+            if (!toks_[k].file.empty()) return toks_[k].file;
+        return "t";
+    }
+
     // A member function body whose reading waits for the end of its class (parseStructType).
     struct DeferredBody {
         std::size_t at = 0;           // index of its '{'
@@ -3729,10 +3743,50 @@ private:
             std::string tag = base->tag;
             auto decl = makeDecl(gd, cloneType(*base), nullptr);
             decl->isStatic = st;
+            gd.name = decl->name;  // namespace-qualified: the init and fini functions are at file scope
+            std::string guard;
+            if (inlVar && !st) {
+                // An inline variable of class type ([dcl.inline] p6): one object in the program
+                // (a weak symbol), built by the first file's __okay_init_ to run, which sets a
+                // weak guard flag (Itanium C++ ABI 2.8 guard variables, our own spelling).
+                decl->isInline = true;
+                guard = "__okay_ig_";
+                for (char ch : decl->name) guard += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
+                auto gf = std::make_unique<Decl>();
+                gf->name = guard;
+                gf->line = gd.line;
+                gf->col = gd.col;
+                gf->file = gd.file;
+                gf->type = ty(Type::Kind::Int);
+                gf->isInline = true;
+                tu.decls.push_back(std::move(gf));
+            }
             tu.decls.push_back(std::move(decl));
-            if (classOf(tag)->needCtor)
+            if (!guard.empty()) {
+                auto thenB = sBlock(gp);
+                thenB->stmts.push_back(sExpr(eAssign(eName(guard, gp), eInt(1, gp), gp), gp));
+                if (classOf(tag)->needCtor)
+                    thenB->stmts.push_back(sExpr(ctorCall(tag, eAddr(eName(gd.name, gp), gp), std::move(args), gp), gp));
+                auto notG = eName(guard, gp);
+                auto iff = std::make_unique<Stmt>();
+                iff->kind = Stmt::Kind::If;
+                iff->line = gp.line;
+                iff->col = gp.col;
+                iff->file = gp.file;
+                auto neg = std::make_unique<Expr>();
+                neg->kind = Expr::Kind::Unary;
+                neg->text = "!";
+                neg->line = gp.line;
+                neg->col = gp.col;
+                neg->file = gp.file;
+                neg->kids.push_back(std::move(notG));
+                iff->expr = std::move(neg);
+                iff->thenS = std::move(thenB);
+                globalInit_.push_back(std::move(iff));
+            } else if (classOf(tag)->needCtor) {
                 globalInit_.push_back(sExpr(ctorCall(tag, eAddr(eName(gd.name, gp), gp), std::move(args), gp), gp));
-            if (classOf(tag)->needDtor) globalObjs_.push_back(DVar{gd.name, tag, 0, ""});
+            }
+            if (classOf(tag)->needDtor) globalObjs_.push_back(DVar{gd.name, tag, 0, guard});
             ++globalCount_;
             flushExtras(tu);
             return;
@@ -4886,8 +4940,12 @@ private:
         // construction is a statement of its own) goes in a block around the loop: [stmt.for] p1
         // defines the for statement as { init-statement while (condition) { ... } }.
         std::vector<std::unique_ptr<Stmt>> outer;
+        Pos forPos = here();
         advance();
         expectP("(", "(");
+        // The init-statement's objects are destroyed when the loop ends, not at the end of the
+        // enclosing block (where their names are out of scope): a destructor scope of their own.
+        dscopes_.emplace_back();
         if (eatP(";")) {
             s->init = nullptr;
         } else if (!atEnd() && isTypeKw(cur())) {
@@ -4913,12 +4971,20 @@ private:
         s->body = parseStmt();
         loopBases_.pop_back();
         brkBases_.pop_back();
-        if (outer.empty()) return s;
+        auto ds = pendingDtors(dscopes_.size() - 1, forPos);
+        dscopes_.pop_back();
+        if (outer.empty() && ds.empty()) return s;
+        if (outer.empty() && s->init) {
+            // for (std::string t; ...): the declaration moves into the block so that the
+            // destructor calls after the loop still see it.
+            outer.push_back(std::move(s->init));
+        }
         auto block = std::make_unique<Stmt>();
         block->kind = Stmt::Kind::Block;
         block->line = s->line;
         block->stmts = std::move(outer);
         block->stmts.push_back(std::move(s));
+        for (auto& st : ds) block->stmts.push_back(std::move(st));
         return block;
     }
 
@@ -5142,6 +5208,19 @@ private:
             // A qualified type (N::T): look at what follows the whole name.
             std::size_t qend = 0;
             if (k + 1 < toks_.size() && isP(toks_[k + 1], "::") && qualTypeAt(k, qend) && qend > k) k = qend - 1;
+            else if (std::size_t tn = k + 1 < toks_.size() && isP(toks_[k + 1], "::") ? tmplAfterNs(k, true) : 0) k = tn;
+            if (k + 1 < toks_.size() && isP(toks_[k + 1], "<")) {
+                // (X<A, B>(x)): the template arguments of a class template name come first.
+                int depth = 0;
+                std::size_t j = k + 1;
+                for (; j < toks_.size(); ++j) {
+                    if (isP(toks_[j], "<")) ++depth;
+                    else if (isP(toks_[j], ">") && --depth == 0) break;
+                    else if (isP(toks_[j], ">>") && (depth -= 2) <= 0) break;
+                    else if (isP(toks_[j], ";") || isP(toks_[j], "{")) break;
+                }
+                if (j < toks_.size() && depth <= 0) k = j;
+            }
             // (T(x) ...) and (T{...} ...) are a functional cast or a temporary inside parentheses,
             // not a cast; (T(*)(int)) is still a cast to a pointer to function.
             if (k + 2 < toks_.size() && isP(toks_[k + 1], "{")) return false;
@@ -5632,6 +5711,7 @@ private:
         if (cur().kind == Tok::Ident && (cur().text == "true" || cur().text == "false") && !nextIs("::")) {
             auto e = ex(Expr::Kind::Int, cur());
             e->ival = cur().text == "true" ? 1 : 0;
+            e->text = cur().text;  // the checker types it bool
             advance();
             return e;
         }
@@ -5742,6 +5822,18 @@ private:
                 e->text += "::";
                 e->text += cur().text;
                 advance();
+            }
+            std::size_t last = e->text.rfind("::");
+            if (last != std::string::npos) {
+                // T::x where T is a typedef of a class (std::ios::app with typedef ios_base ios):
+                // the class's own name ([dcl.typedef] p2, [basic.lookup.qual]).
+                std::string prefix = e->text.substr(0, last);
+                std::size_t cut = prefix.rfind("::");
+                const Type* td = nullptr;
+                if (cut == std::string::npos) td = findTypedef(prefix);
+                else if (knownNs_.count(prefix.substr(0, cut))) td = findTypedef(prefix.substr(cut + 2));
+                if (td && td->kind == Type::Kind::Struct && !td->tag.empty() && td->tag != prefix)
+                    e->text = td->tag + e->text.substr(last);
             }
             return e;
         }

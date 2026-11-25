@@ -41,11 +41,15 @@ static std::vector<std::vector<unsigned char>> loadLibc() {
     return objs;
 }
 
-static void diffOne(const std::string& name, const std::string& srcPath, const std::vector<std::string>& inc = {}) {
+// viaObject: always compile to a relocatable object and link it with our C library (the path the
+// engine tests take), not to one executable image.
+static void diffOne(const std::string& name, const std::string& srcPath, const std::vector<std::string>& inc = {},
+                    bool viaObject = false) {
     std::string src = readFile(srcPath);
     okaycc::Diagnostics d;
-    std::vector<unsigned char> bin = okaycc::compileToElf(src, d, srcPath, inc);
-    if (!d.ok() || bin.empty()) {
+    std::vector<unsigned char> bin;
+    if (!viaObject) bin = okaycc::compileToElf(src, d, srcPath, inc);
+    if (viaObject || !d.ok() || bin.empty()) {
         okaycc::Diagnostics d2;
         auto obj = okaycc::compileToObject(src, d2, srcPath, inc);
         auto libc = loadLibc();
@@ -277,6 +281,9 @@ int main() {
         engineDiff("tests/progs_cpp_engine/bc_main.cpp", "../../engine/src/Texture/Bc.cpp");
         // Round 21:
         engineDiff("tests/progs_cpp_engine/wav_main.cpp", "../../engine/src/Audio/WavDecoder.cpp");
+        // Round 22: the streams through an object file. Its vtables (.rodata) sat between .data
+        // items, and their relocations went to the wrong section: every virtual slot was null.
+        diffOne("stream22.cpp (object)", "tests/progs_cpp_std/stream22.cpp", {"include"}, true);
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

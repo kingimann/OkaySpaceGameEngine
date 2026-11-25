@@ -2,6 +2,8 @@
 // char that owns a zero-terminated buffer. No templates (basic_string) yet; iterators are pointers.
 #pragma once
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 namespace std {
@@ -30,6 +32,12 @@ public:
     }
     string(const char *first, const char *last) : p_(nullptr), n_(0), cap_(0) {
         assignChars(first, (unsigned long)(last - first));
+    }
+    // From any input iterators ([string.cons] p16): istreambuf_iterator, vector<char>::iterator.
+    template <typename It>
+    string(It first, It last) : p_(nullptr), n_(0), cap_(0) {
+        release(grow(0));
+        for (; first != last; ++first) push_back((char)*first);
     }
     ~string() { delete[] p_; }
     string &operator=(const string &o) {
@@ -263,4 +271,55 @@ struct hash<string> {
         return h;
     }
 };
+// Numbers to strings and back ([string.conversions]): to_string is printf with %d, %u, %ld, %lu and
+// %f; the sto* functions are strtol, strtoul and strtod (the out_of_range and invalid_argument
+// exceptions are not thrown: a bad string gives 0).
+inline string to_string(int v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%d", v);
+    return string(b);
+}
+inline string to_string(unsigned int v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%u", v);
+    return string(b);
+}
+inline string to_string(long v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%ld", v);
+    return string(b);
+}
+inline string to_string(unsigned long v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%lu", v);
+    return string(b);
+}
+inline string to_string(double v) {
+    char b[400];
+    snprintf(b, sizeof(b), "%f", v);
+    return string(b);
+}
+inline string to_string(float v) { return to_string((double)v); }
+inline long stol(const string &s, unsigned long *idx = nullptr, int base = 10) {
+    char *end = nullptr;
+    long v = strtol(s.c_str(), &end, base);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline int stoi(const string &s, unsigned long *idx = nullptr, int base = 10) { return (int)stol(s, idx, base); }
+inline long stoll(const string &s, unsigned long *idx = nullptr, int base = 10) { return stol(s, idx, base); }
+inline unsigned long stoul(const string &s, unsigned long *idx = nullptr, int base = 10) {
+    char *end = nullptr;
+    unsigned long v = strtoul(s.c_str(), &end, base);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline unsigned long stoull(const string &s, unsigned long *idx = nullptr, int base = 10) { return stoul(s, idx, base); }
+inline double stod(const string &s, unsigned long *idx = nullptr) {
+    char *end = nullptr;
+    double v = strtod(s.c_str(), &end);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline float stof(const string &s, unsigned long *idx = nullptr) { return (float)stod(s, idx); }
 }  // namespace std

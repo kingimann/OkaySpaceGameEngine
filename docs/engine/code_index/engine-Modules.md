@@ -2,11 +2,22 @@
 
 # Code index: engine-Modules
 
-Back to the [code index](../code_index.md). 2 headers, 3 names.
+Back to the [code index](../code_index.md). 3 headers, 11 names.
 
 ## `engine/include/okay/Modules/ModuleManifest.hpp`
 
 - `ModuleManifest` struct, line 10: What one engine module says about itself. The text form is a 'module.okaymodule' file
+
+## `engine/include/okay/Modules/ModuleMenus.hpp`
+
+- `AddComponentRow` struct, line 11
+- `AddComponentRows` function, line 19: Every component the property table can add, minus ones whose module is off.
+- `SceneTemplateEntry` struct, line 21
+- `RegisterSceneTemplate` function, line 27
+- `FindSceneTemplate` function, line 30: The template, or null when it is missing or its module is off.
+- `ModuleAssetNote` struct, line 32
+- `AddModuleAssetScan` function, line 37: A module adds the asset paths its components store, for the scene validator.
+- `CollectModuleAssets` function, line 39
 
 ## `engine/include/okay/Modules/ModuleRegistry.hpp`
 

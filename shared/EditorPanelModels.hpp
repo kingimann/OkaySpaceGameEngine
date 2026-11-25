@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -383,6 +384,22 @@ struct ProfilerSection {
     double min = 0.0, avg = 0.0, max = 0.0;   // self ms over the recorded window
 };
 
+/// One picture of the editor's texture library (Render/TextureAsset.hpp), a row of the Profiler's Textures section.
+struct ProfilerTexture {
+    std::string path;                    // the row shows the file name, the tooltip the whole path
+    int width = 0, height = 0, mipLevels = 0;
+    double megabytes = 0.0;
+    std::string kind;                    // "in memory", "normal", "colour" or "data"
+};
+/// The Textures section: what the host's library says now.
+struct ProfilerTextures {
+    std::string line;                    // the summary line (the library's overlay line)
+    bool overBudget = false;
+    bool hotReload = false;
+    unsigned long long reloads = 0, trimmed = 0;
+    std::vector<ProfilerTexture> rows;
+};
+
 struct ProfilerModel {
     bool* paused = nullptr;              // edited in place (null: not shown)
     int* selected = nullptr;             // the scrubbed frame, edited in place (-1 = the latest)
@@ -394,6 +411,8 @@ struct ProfilerModel {
     double scriptsMs = 0.0, physicsMs = 0.0, renderMs = 0.0;   // the CPU categories' self time
     std::vector<ProfilerSection> sections;                       // the shown frame's sections, in the profiler's order
     bool playing = false;
+    /// Fills the Textures section; asked only while that section is open (null: no Textures section).
+    std::function<void(ProfilerTextures&)> textures;
 };
 
 struct ProfilerIntent {
@@ -477,6 +496,20 @@ inline void ProfilerCells(const ProfilerModel& m, const ProfilerSection& s, char
     std::snprintf(cells[4], 24, "%.3f", s.avg);
     std::snprintf(cells[5], 24, "%.3f", s.max);
 }
+inline const char* kProfilerOverBudget = "Over the texture budget: unused pictures are let go of.";
+inline const char* const kProfilerTextureColumns[5] = {"Texture", "Size", "Mips", "MB", "Kind"};
+/// "Hot reload on, 3 reloaded, 1 let go of for the budget".
+inline std::string ProfilerTexturesNote(const ProfilerTextures& t) {
+    char b[128];
+    std::snprintf(b, sizeof(b), "Hot reload %s, %llu reloaded, %llu let go of for the budget", t.hotReload ? "on" : "off", t.reloads, t.trimmed);
+    return b;
+}
+/// The file name of a path (after the last / or \\).
+inline std::string ProfilerTextureName(const std::string& path) {
+    const std::size_t k = path.find_last_of("/\\");
+    return k == std::string::npos ? path : path.substr(k + 1);
+}
+
 inline std::string ProfilerCsv(const ProfilerModel& m) {
     std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
     for (const ProfilerSection& s : m.sections) {

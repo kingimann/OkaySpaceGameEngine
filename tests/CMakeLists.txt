@@ -9,6 +9,47 @@ endif()
 add_executable(test_modules test_modules.cpp)
 target_link_libraries(test_modules PRIVATE okay::engine)
 add_test(NAME modules COMMAND test_modules)
+
+# module:weapons — visual-script weapon nodes come from the node registry.
+add_executable(test_module_vs_weapons test_module_vs_weapons.cpp)
+target_link_libraries(test_module_vs_weapons PRIVATE okay::engine)
+add_test(NAME module_vs_weapons COMMAND test_module_vs_weapons)
+
+# Review fix: first use of the module registry from many threads at once (uses <thread>, so not built for Windows).
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_module_registry_threads test_module_registry_threads.cpp)
+    target_link_libraries(test_module_registry_threads PRIVATE okay::engine Threads::Threads)
+    add_test(NAME module_registry_threads COMMAND test_module_registry_threads)
+endif()
+
+# module:sky_weather — DayNightCycle's property table is registered by that module.
+add_executable(test_module_props_sky test_module_props_sky.cpp)
+target_link_libraries(test_module_props_sky PRIVATE okay::engine)
+add_test(NAME module_props_sky COMMAND test_module_props_sky)
+
+add_executable(test_module_weapons_save test_module_weapons_save.cpp)
+target_link_libraries(test_module_weapons_save PRIVATE okay::engine)
+add_test(NAME module_weapons_save COMMAND test_module_weapons_save)
+
+add_executable(test_module_weapons_script test_module_weapons_script.cpp)
+target_link_libraries(test_module_weapons_script PRIVATE okay::engine)
+add_test(NAME module_weapons_script COMMAND test_module_weapons_script)
+
+add_executable(test_module_weapons_menu test_module_weapons_menu.cpp)
+target_link_libraries(test_module_weapons_menu PRIVATE okay::engine)
+add_test(NAME module_weapons_menu COMMAND test_module_weapons_menu)
+
+add_executable(test_particles_module_overlay test_particles_module_overlay.cpp)
+target_link_libraries(test_particles_module_overlay PRIVATE okay::engine)
+add_test(NAME particles_module_overlay COMMAND test_particles_module_overlay)
+
+add_executable(test_module_vehicles_save test_module_vehicles_save.cpp)
+target_link_libraries(test_module_vehicles_save PRIVATE okay::engine)
+add_test(NAME module_vehicles_save COMMAND test_module_vehicles_save)
+
+add_executable(test_module_survival_save test_module_survival_save.cpp)
+target_link_libraries(test_module_survival_save PRIVATE okay::engine)
+add_test(NAME module_survival_save COMMAND test_module_survival_save)
 # Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)
@@ -23,6 +64,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
              ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
 endif()
+# Review fix: a record whose module is off, or has no reader, is kept by load then save (all six gated records).
+add_executable(test_module_records_kept test_module_records_kept.cpp)
+target_link_libraries(test_module_records_kept PRIVATE okay::engine)
+add_test(NAME module_records_kept COMMAND test_module_records_kept)
 
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
@@ -1924,7 +1969,7 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
     set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
-# The editor's Crash Log, Audio Mixer and History windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
+# The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows: drawn by OkayUI only, hosted in a Dear ImGui window by okayuihost::HostPanelWindow
 # (shared/OkayUIImGuiEmbed.hpp) in Dear ImGui's draw order. Same picture as before, ImGui windows and tooltips in front cover it, clicks
 # reach it, a collapsed window draws nothing (docs/ui/own_ui_toolkit.md section 24).
 if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)

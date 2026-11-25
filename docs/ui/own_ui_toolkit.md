@@ -3185,3 +3185,38 @@ backend only (24.1). The `OKAY_EDITOR_ON_OKAYUI` path was only compiled as far a
   the mouse, Refresh clicked there, the mouse mapped. `okayui_capture`: `overlayFrom`. `okayui_host`: `Region::Active`. `okayui_panels`:
   the Crash Log selection, Ctrl+C through the host, read only, a reload goes back to the end.
 - **Not verified.** Real OS windows (SDL's or the own backend's multi-window path), Windows, the editor program.
+
+## 25. Problems, Stats and the Profiler on OkayUI only; the Dear ImGui reference bodies leave the editor
+
+The same move as section 24 for three more windows: `DrawProblems` (`editor/ProblemsPanel.cpp`), `DrawStats` and `DrawProfiler`
+(`editor/main.cpp`) build their model (`shared/EditorPanelModels.hpp`) and call the OkayUI window (`editor/OkayPanels.cpp`,
+`okayuihost::HostPanelWindow`); their Dear ImGui bodies are deleted. Each model is filled only while the window shows, as the Dear
+ImGui bodies did (the Stats frame-rate history, the Profiler's `Stat3` feed of the scene's draw counts).
+
+**Checked against main's panels before wiring** (section 23 had left them unwired because main changed them after the port):
+
+- **Problems**: the model's rows, filters, grouping, repeats dropped once, Fix and a click to open match main's panel. New in the
+  editor: the row menu (Go to source, Fix, Copy message) the port always had. The scripted diagnostics demo (`OKAY_UI_DIAG`) takes the
+  row and Fix positions from the OkayUI result (`ProblemsRects`); it no longer scrolls the list to the row first.
+- **Stats**: the same counters, switches and footer. New: the census's "Copy stats" menu.
+- **Profiler**: main had added a **Textures** fold-out (the texture library: summary line, the over-budget warning, the hot-reload
+  note, a table of file, size, mips, MB and kind with the path as a tooltip). Added to the model (`ProfilerTextures`, filled through
+  `ProfilerModel::textures`, asked only while the fold-out is open, as main read the library only then) and to the OkayUI Profiler;
+  without the callback nothing changes, so the `editorpanels_profiler` goldens stay. Test: `okayui_editor_panels` (folded at first and
+  not asked, opened, two rows, the budget warning, folded again and not asked).
+
+**The reference bodies leave the editor.** `editor/EditorPanelViews.cpp` (the Dear ImGui bodies of the ported panels) is no longer in
+`editor/CMakeLists.txt`: the editor called none of them any more. Only the comparison tests compile it, as the reference the ports are
+measured against (`okayui_editor_panels_imgui`, `okayui_hierarchy_imgui`, `okayui_inspector_imgui`).
+
+**Other changes.** `HostWindow` lost its `fitBody` first frame (it drew a Dear ImGui body); the six OkayUI-only windows share one
+definition for both hosts (`PanelWindow`: `HostWindow` in the editor, a plain window in `OKAY_EDITOR_ON_OKAYUI`).
+
+**Tests.** `okayui_panels_imgui` now also hosts Problems, Stats and the Profiler (each picture against the old hosting; Fix and a row
+click, the Occlusion switch, Pause and the scrub position) and `okayui_editor_panels` covers the Textures fold-out.
+
+**Hierarchy: not done in this step.** Main's `DrawHierarchy` is about 590 lines (rename in place, drag and drop with the Scene view
+and the Project panel, prefab rows, diagnostic markers, the context menus); bringing the port's `HierarchyModel` and intents up to it
+is a step of its own.
+
+**Not verified.** Windows, the editor program (not linked or started here), the panels in a real window, the diagnostics demo.

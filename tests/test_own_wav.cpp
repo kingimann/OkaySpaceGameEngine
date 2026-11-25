@@ -36,17 +36,72 @@ static Bytes Fmt(unsigned tag, unsigned ch, std::uint32_t rate, unsigned align, 
     if (!extra.empty() || tag == 0xFFFE || tag == 2 || tag == 0x11) f.insert(f.end(), extra.begin(), extra.end());
     return f;
 }
+// One chunk: tag, size field (the body size unless given), body, pad byte when the body is odd.
+static void Chunk(Bytes& b, const char* tag, const Bytes& body, std::uint32_t sizeField = 0xFFFFFFFEu) {
+    Tag(b, tag); P32(b, sizeField == 0xFFFFFFFEu ? std::uint32_t(body.size()) : sizeField);
+    b.insert(b.end(), body.begin(), body.end()); if (body.size() & 1) b.push_back(0);
+}
 static Bytes Wav(const Bytes& fmt, const Bytes& data, bool dataFirst = false, std::uint32_t dataSizeField = 0xFFFFFFFEu) {
     Bytes b; Tag(b, "RIFF"); P32(b, 0); Tag(b, "WAVE");
-    auto fmtChunk = [&] { Tag(b, "fmt "); P32(b, std::uint32_t(fmt.size())); b.insert(b.end(), fmt.begin(), fmt.end()); if (fmt.size() & 1) b.push_back(0); };
-    auto dataChunk = [&] { Tag(b, "data"); P32(b, dataSizeField == 0xFFFFFFFEu ? std::uint32_t(data.size()) : dataSizeField); b.insert(b.end(), data.begin(), data.end()); if (data.size() & 1) b.push_back(0); };
-    if (dataFirst) { dataChunk(); fmtChunk(); } else { fmtChunk(); dataChunk(); }
+    if (dataFirst) { Chunk(b, "data", data, dataSizeField); Chunk(b, "fmt ", fmt); } else { Chunk(b, "fmt ", fmt); Chunk(b, "data", data, dataSizeField); }
     return b;
 }
 static bool Dec(const Bytes& w, wav::WavAudio& a, std::string* e = nullptr, const wav::Limits* l = nullptr) {
     return wav::DecodeWav(w.data(), w.size(), a, e, l);
 }
 static std::vector<int> S16s(const wav::WavAudio& a) { auto v = wav::ToS16(a); return std::vector<int>(v.begin(), v.end()); }
+
+static std::uint32_t g_rng = 12345;
+static std::uint32_t Rnd() { g_rng = g_rng * 1664525u + 1013904223u; return g_rng >> 8; }
+
+// Builders for longer files (the streaming tests): random bytes, ADPCM blocks with sane headers, fmt extras.
+static Bytes Rand(std::size_t n) { Bytes d; for (std::size_t i = 0; i < n; ++i) d.push_back(Rnd() & 255); return d; }
+static Bytes ImaBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
+    Bytes d;
+    for (unsigned b = 0; b <= blocks; ++b) {
+        const unsigned len = b < blocks ? align : lastLen;
+        if (len == 0) break;
+        Bytes blk = Rand(len);
+        for (unsigned c = 0; c < ch && 4 * c + 3 < len; ++c) { blk[4 * c + 2] = (unsigned char)(Rnd() % 89); blk[4 * c + 3] = 0; }
+        d.insert(d.end(), blk.begin(), blk.end());
+    }
+    return d;
+}
+static Bytes MsBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
+    Bytes d;
+    for (unsigned b = 0; b <= blocks; ++b) {
+        const unsigned len = b < blocks ? align : lastLen;
+        if (len == 0) break;
+        Bytes blk = Rand(len);
+        for (unsigned c = 0; c < ch && c < len; ++c) blk[c] = (unsigned char)(Rnd() % 7);
+        for (unsigned c = 0; c < ch && ch + 2 * c + 1 < len; ++c) { blk[ch + 2 * c] = (unsigned char)(16 + Rnd() % 200); blk[ch + 2 * c + 1] = 0; }
+        d.insert(d.end(), blk.begin(), blk.end());
+    }
+    return d;
+}
+static Bytes MsCoefExtra(unsigned spb) {
+    Bytes x; P16(x, 32); P16(x, spb); P16(x, 7);
+    const int c[7][2] = {{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}};
+    for (auto& p : c) { P16(x, unsigned(p[0]) & 0xFFFF); P16(x, unsigned(p[1]) & 0xFFFF); }
+    return x;
+}
+static Bytes ExtExtra(unsigned validBits, unsigned subTag) {
+    Bytes x; P16(x, 22); P16(x, validBits); P32(x, 0);
+    const unsigned char guid[16] = {(unsigned char)subTag, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71};
+    x.insert(x.end(), guid, guid + 16);
+    return x;
+}
+// RIFF/WAVE with odd-sized unknown chunks (and their pad bytes) before fmt and data, in either order.
+static Bytes OddChunks(const Bytes& fmt, const Bytes& data, bool dataFirst) {
+    Bytes b; Tag(b, "RIFF"); P32(b, 0); Tag(b, "WAVE");
+    Tag(b, "junk"); P32(b, 3); b.push_back(1); b.push_back(2); b.push_back(3); b.push_back(0);
+    Tag(b, "LIST"); P32(b, 5); for (int i = 0; i < 5; ++i) b.push_back((unsigned char)('a' + i)); b.push_back(0);
+    const Bytes odd = {9};
+    if (dataFirst) { Chunk(b, "data", data); Chunk(b, "odd ", odd); Chunk(b, "fmt ", fmt); }
+    else { Chunk(b, "fmt ", fmt); Chunk(b, "odd ", odd); Chunk(b, "data", data); }
+    return b;
+}
+
 
 static void TestPcm() {
     wav::WavAudio a; std::string e;
@@ -196,11 +251,8 @@ static void TestImaAdpcm() {
 // 7: 100 + 7*16 = 212 (delta 614*16>>8 = 38); 0: 212 (delta 34).
 static void TestMsAdpcm() {
     wav::WavAudio a; std::string e;
-    auto ex = [](unsigned spb) { Bytes x; P16(x, 32); P16(x, spb); P16(x, 7);
-        const int c[7][2] = {{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}};
-        for (auto& p : c) { P16(x, unsigned(p[0]) & 0xFFFF); P16(x, unsigned(p[1]) & 0xFFFF); } return x; };
     Bytes m; m.push_back(0); P16(m, 16); P16(m, 100); P16(m, 50); m.push_back(0x1F); m.push_back(0x70);
-    CHECK(Dec(Wav(Fmt(2, 1, 8000, 9, 4, ex(6)), m), a, &e));
+    CHECK(Dec(Wav(Fmt(2, 1, 8000, 9, 4, MsCoefExtra(6)), m), a, &e));
     auto v = S16s(a);
     const int want[6] = {50, 100, 116, 100, 212, 212};
     CHECK(v.size() == 6);
@@ -210,14 +262,14 @@ static void TestMsAdpcm() {
     CHECK(Dec(Wav(Fmt(2, 1, 8000, 9, 4, Bytes{0, 0}), m), a, &e) && S16s(a).size() == 6 && S16s(a)[5] == 212);
     // stereo, blockAlign 15: L pred 0 (256,0) delta 16 s1 100 s2 0; R pred 1 (512,-256) delta 32 s1 200 s2 100; byte 0x2E
     Bytes s; s.push_back(0); s.push_back(1); P16(s, 16); P16(s, 32); P16(s, 100); P16(s, 200); P16(s, 0); P16(s, 100); s.push_back(0x2E);
-    CHECK(Dec(Wav(Fmt(2, 2, 8000, 15, 4, ex(3)), s), a, &e));
+    CHECK(Dec(Wav(Fmt(2, 2, 8000, 15, 4, MsCoefExtra(3)), s), a, &e));
     v = S16s(a);
     const int ws[6] = {0, 100, 100, 200, 132, 236};   // L: 100+2*16 = 132; R: (200*512-100*256)>>8 = 300, minus 2*32 = 236
     CHECK(v.size() == 6);
     for (int i = 0; i < 6 && i < int(v.size()); ++i) CHECK(v[i] == ws[i]);
     // clamping: s1 = 32767, nibble 7, delta 5000 -> 32767 (no wrap)
     Bytes c; c.push_back(0); P16(c, 5000); P16(c, 32767); P16(c, 32767); c.push_back(0x70);
-    CHECK(Dec(Wav(Fmt(2, 1, 8000, 8, 4, ex(4)), c), a, &e) && S16s(a).size() == 4 && S16s(a)[2] == 32767);
+    CHECK(Dec(Wav(Fmt(2, 1, 8000, 8, 4, MsCoefExtra(4)), c), a, &e) && S16s(a).size() == 4 && S16s(a)[2] == 32767);
     // the standard coefficient table, every pair, mono, delta 16, s1 = 1000, s2 = -2000, one nibble 0: the third sample is the prediction.
     // Worked by hand: (1000*c1 - 2000*c2) >> 8 = 1000, 4000, 0, 250, 937 (937.5 floors), 3421 (3421.875), 3343 (3343.75)
     {
@@ -245,9 +297,9 @@ static void TestMsAdpcm() {
     }
     // predictor index outside the table, three channels, wrong bit depth
     Bytes b2 = m; b2[0] = 7;
-    CHECK(!Dec(Wav(Fmt(2, 1, 8000, 9, 4, ex(6)), b2), a, &e));
-    CHECK(!Dec(Wav(Fmt(2, 3, 8000, 30, 4, ex(6)), m), a, &e));
-    CHECK(!Dec(Wav(Fmt(2, 1, 8000, 9, 8, ex(6)), m), a, &e));
+    CHECK(!Dec(Wav(Fmt(2, 1, 8000, 9, 4, MsCoefExtra(6)), b2), a, &e));
+    CHECK(!Dec(Wav(Fmt(2, 3, 8000, 30, 4, MsCoefExtra(6)), m), a, &e));
+    CHECK(!Dec(Wav(Fmt(2, 1, 8000, 9, 8, MsCoefExtra(6)), m), a, &e));
 }
 
 static void TestRefusals() {
@@ -284,8 +336,6 @@ static void TestRefusals() {
     CHECK(Dec(wrap, a));
 }
 
-static std::uint32_t g_rng = 12345;
-static std::uint32_t Rnd() { g_rng = g_rng * 1664525u + 1013904223u; return g_rng >> 8; }
 
 static void TestHostile() {
     // every truncation of every encoding's valid file, then random byte mutations: no crash (the sanitizer job runs this under
@@ -296,9 +346,7 @@ static void TestHostile() {
     { Bytes d; for (int i = 0; i < 24; ++i) P32(d, Rnd()); files.push_back(Wav(Fmt(3, 1, 8000, 4, 32), d)); }
     { Bytes d; for (int i = 0; i < 2 * 8 + 16; ++i) d.push_back(Rnd() & 255); P16(d, 0);
       Bytes x; P16(x, 2); P16(x, 9); files.push_back(Wav(Fmt(0x11, 1, 8000, 8, 4, x), d)); files.push_back(Wav(Fmt(0x11, 2, 8000, 16, 4), d)); }
-    { Bytes x; P16(x, 32); P16(x, 6); P16(x, 7);
-      const int c[7][2] = {{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}};
-      for (auto& p : c) { P16(x, unsigned(p[0]) & 0xFFFF); P16(x, unsigned(p[1]) & 0xFFFF); }
+    { const Bytes x = MsCoefExtra(6);
       Bytes d; for (int i = 0; i < 27; ++i) d.push_back(i % 9 == 0 ? 3 : (Rnd() & 255));
       files.push_back(Wav(Fmt(2, 1, 8000, 9, 4, x), d)); }
     wav::Limits lim; lim.maxOutputSamples = 1 << 20;
@@ -372,54 +420,6 @@ static void TestLoadWavSwitch() {
 // The files are built here: every encoding, several blocks for ADPCM (with a short last block), extensible, chunks in
 // unusual order with odd sizes. Expected samples come from DecodeWav (more than two channels averaged to mono, as
 // AudioStream and AudioClip::LoadWAV both do).
-static Bytes Rand(std::size_t n) { Bytes d; for (std::size_t i = 0; i < n; ++i) d.push_back(Rnd() & 255); return d; }
-static Bytes ImaBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
-    Bytes d;
-    for (unsigned b = 0; b <= blocks; ++b) {
-        const unsigned len = b < blocks ? align : lastLen;
-        if (len == 0) break;
-        Bytes blk = Rand(len);
-        for (unsigned c = 0; c < ch && 4 * c + 3 < len; ++c) { blk[4 * c + 2] = (unsigned char)(Rnd() % 89); blk[4 * c + 3] = 0; }
-        d.insert(d.end(), blk.begin(), blk.end());
-    }
-    return d;
-}
-static Bytes MsBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
-    Bytes d;
-    for (unsigned b = 0; b <= blocks; ++b) {
-        const unsigned len = b < blocks ? align : lastLen;
-        if (len == 0) break;
-        Bytes blk = Rand(len);
-        for (unsigned c = 0; c < ch && c < len; ++c) blk[c] = (unsigned char)(Rnd() % 7);
-        for (unsigned c = 0; c < ch && ch + 2 * c + 1 < len; ++c) { blk[ch + 2 * c] = (unsigned char)(16 + Rnd() % 200); blk[ch + 2 * c + 1] = 0; }
-        d.insert(d.end(), blk.begin(), blk.end());
-    }
-    return d;
-}
-static Bytes MsCoefExtra(unsigned spb) {
-    Bytes x; P16(x, 32); P16(x, spb); P16(x, 7);
-    const int c[7][2] = {{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}};
-    for (auto& p : c) { P16(x, unsigned(p[0]) & 0xFFFF); P16(x, unsigned(p[1]) & 0xFFFF); }
-    return x;
-}
-static Bytes ExtExtra(unsigned validBits, unsigned subTag) {
-    Bytes x; P16(x, 22); P16(x, validBits); P32(x, 0);
-    const unsigned char guid[16] = {(unsigned char)subTag, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71};
-    x.insert(x.end(), guid, guid + 16);
-    return x;
-}
-// RIFF/WAVE with odd-sized unknown chunks (and their pad bytes) before fmt and data, in either order.
-static Bytes OddChunks(const Bytes& fmt, const Bytes& data, bool dataFirst) {
-    Bytes b; Tag(b, "RIFF"); P32(b, 0); Tag(b, "WAVE");
-    Tag(b, "junk"); P32(b, 3); b.push_back(1); b.push_back(2); b.push_back(3); b.push_back(0);
-    Tag(b, "LIST"); P32(b, 5); for (int i = 0; i < 5; ++i) b.push_back((unsigned char)('a' + i)); b.push_back(0);
-    auto fmtChunk = [&] { Tag(b, "fmt "); P32(b, std::uint32_t(fmt.size())); b.insert(b.end(), fmt.begin(), fmt.end()); if (fmt.size() & 1) b.push_back(0); };
-    auto dataChunk = [&] { Tag(b, "data"); P32(b, std::uint32_t(data.size())); b.insert(b.end(), data.begin(), data.end()); if (data.size() & 1) b.push_back(0); };
-    if (dataFirst) { dataChunk(); Tag(b, "odd "); P32(b, 1); b.push_back(9); b.push_back(0); fmtChunk(); }
-    else { fmtChunk(); Tag(b, "odd "); P32(b, 1); b.push_back(9); b.push_back(0); dataChunk(); }
-    return b;
-}
-
 struct StreamCase { const char* name; Bytes file; };
 
 static std::vector<StreamCase> StreamCases() {
@@ -461,7 +461,7 @@ static bool Expected(const Bytes& file, AudioClip& out, std::string* e = nullptr
     return true;
 }
 static bool SameFloats(const float* a, const float* b, std::size_t n) { return n == 0 || std::memcmp(a, b, n * sizeof(float)) == 0; }
-static std::vector<float> ReadAll(AudioStream& s, std::size_t chunk, std::size_t limit) {
+static std::vector<float> ReadStream(AudioStream& s, std::size_t chunk, std::size_t limit) {
     std::vector<float> out, buf(chunk * 2);
     for (;;) {
         const std::size_t n = s.Read(buf.data(), chunk);
@@ -489,7 +489,7 @@ static void TestStreamMatchesWhole() {
         for (std::size_t chunk : {std::size_t(1), std::size_t(333), std::size_t(4096)}) {
             if (!ok) break;
             st->Seek(0);
-            const auto got = ReadAll(*st, chunk, want.samples.size() * 2 + 100);
+            const auto got = ReadStream(*st, chunk, want.samples.size() * 2 + 100);
             if (got.size() != want.samples.size() || !SameFloats(got.data(), want.samples.data(), got.size())) {
                 std::fprintf(stderr, "  case %s: streamed != whole (piece %zu, %zu vs %zu samples)\n", sc.name, chunk, got.size(), want.samples.size());
                 ok = false;
@@ -511,7 +511,7 @@ static void TestStreamMatchesWhole() {
         if (ok) {   // reading on from a seek point continues the same audio to the end
             const std::size_t t = n / 3;
             st->Seek(std::int64_t(t));
-            const auto rest = ReadAll(*st, 1000, want.samples.size() * 2 + 100);
+            const auto rest = ReadStream(*st, 1000, want.samples.size() * 2 + 100);
             if (rest.size() != (n - t) * ch || !SameFloats(rest.data(), want.samples.data() + t * ch, rest.size())) {
                 std::fprintf(stderr, "  case %s: read on after a seek differs\n", sc.name); ok = false;
             }
@@ -552,7 +552,7 @@ static void TestStreamHostile() {
         auto st = AudioStream::OpenMemory(std::make_shared<std::vector<unsigned char>>(f));
         if (!st) { CHECK(!wholeOk); return; }   // the stream refuses nothing that the whole-file decode accepts
         ++opened;
-        const auto got = ReadAll(*st, 37, 1u << 20);
+        const auto got = ReadStream(*st, 37, 1u << 20);
         CHECK(st->TotalFrames() >= 0 && got.size() <= std::size_t(st->TotalFrames()) * std::size_t(st->Channels()));
         if (wholeOk) {
             const bool eq = got.size() == want.samples.size() && SameFloats(got.data(), want.samples.data(), got.size());

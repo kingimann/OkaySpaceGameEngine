@@ -110,7 +110,7 @@ bool ReadLayout(ReadAt&& read, std::uint64_t size, const Limits& L, Layout& lay,
         if (std::memcmp(ck, "fmt ", 4) == 0 && !haveFmt) {
             if (sz < 16 || body + 16 > size) return Fail(error, "fmt chunk too short");
             const std::uint64_t avail = std::min<std::uint64_t>(sz, size - body);
-            unsigned char p[kFmtMax];
+            unsigned char p[kFmtMax] = {};
             const std::size_t n = std::size_t(std::min<std::uint64_t>(avail, kFmtMax));
             if (read(body, p, n) != n) return Fail(error, "fmt chunk too short");
             f.tag = U16(p); f.channels = U16(p + 2); f.rate = U32(p + 4); f.blockAlign = U16(p + 12); f.bits = U16(p + 14);
@@ -213,7 +213,7 @@ bool CheckFormat(Layout& lay, const Limits& L, std::vector<std::string>& warning
 }
 
 // `frames` frames of a flat (non-ADPCM) encoding starting at `d` to interleaved floats.
-void DecodeFlat(const Layout& lay, const unsigned char* d, std::uint64_t frames, float* out) {
+void DecodeFlatFrames(const Layout& lay, const unsigned char* d, std::uint64_t frames, float* out) {
     const std::size_t ch = lay.ch, sb = lay.sampleBytes, stride = lay.stride;
     const Encoding e = lay.enc;
     for (std::uint64_t i = 0; i < frames; ++i) {
@@ -240,7 +240,7 @@ void DecodeFlat(const Layout& lay, const unsigned char* d, std::uint64_t frames,
 
 // One ADPCM block of `len` bytes (a full block, or the short one at the end) to interleaved floats. `out` has room for
 // lay.spb frames. Sets `frames`; counts IMA step indexes above 88 that were clamped in `clamped`.
-bool DecodeBlock(const Layout& lay, const unsigned char* b, std::size_t len, float* out, std::size_t& frames,
+bool DecodeAdpcmBlock(const Layout& lay, const unsigned char* b, std::size_t len, float* out, std::size_t& frames,
                  int& clamped, std::string* error) {
     const Fmt& f = lay.f;
     const std::size_t ch = lay.ch, hdr = lay.hdr;
@@ -333,12 +333,12 @@ bool DecodeWav(const unsigned char* data, std::size_t size, WavAudio& out, std::
     if (lay.frames > L.maxOutputSamples / lay.ch) return Fail(error, "decoded size over the budget");
     out.samples.assign(std::size_t(lay.frames) * lay.ch, 0.0f);
     const unsigned char* d = data + lay.dataOff;
-    if (!lay.Adpcm()) { DecodeFlat(lay, d, lay.frames, out.samples.data()); return true; }
+    if (!lay.Adpcm()) { DecodeFlatFrames(lay, d, lay.frames, out.samples.data()); return true; }
     std::size_t outFrame = 0;
     for (std::uint64_t blk = 0; blk < lay.Blocks(); ++blk) {
         std::size_t got = 0;
         int clamped = 0;
-        if (!DecodeBlock(lay, d + std::size_t(blk) * lay.f.blockAlign, lay.BlockLen(blk), out.samples.data() + outFrame * lay.ch,
+        if (!DecodeAdpcmBlock(lay, d + std::size_t(blk) * lay.f.blockAlign, lay.BlockLen(blk), out.samples.data() + outFrame * lay.ch,
                          got, clamped, error))
             return false;
         for (int i = 0; i < clamped; ++i) out.warnings.push_back(kImaClampWarning);
@@ -376,7 +376,7 @@ struct WavStream::Impl {
         if (src->Read(lay.dataOff + blk * lay.f.blockAlign, raw.data(), len) != len) { Stop("the file ended before its data chunk did"); return false; }
         int clamped = 0;
         std::string e;
-        if (!DecodeBlock(lay, raw.data(), len, pcm.data(), curFrames, clamped, &e)) { curBlock = ~std::uint64_t(0); stopped = true; error = e; return false; }
+        if (!DecodeAdpcmBlock(lay, raw.data(), len, pcm.data(), curFrames, clamped, &e)) { curBlock = ~std::uint64_t(0); stopped = true; error = e; return false; }
         if (clamped && !warnedClamp) { warnings.push_back(kImaClampWarning); warnedClamp = true; }
         curBlock = blk;
         return true;
@@ -390,7 +390,7 @@ struct WavStream::Impl {
                 const std::size_t n = std::size_t(std::min<std::uint64_t>(std::min(maxFrames - done, WindowFrames()), lay.frames - pos));
                 const std::size_t got = src->Read(lay.dataOff + pos * lay.stride, raw.data(), n * lay.stride);
                 const std::size_t frames = got / lay.stride;
-                DecodeFlat(lay, raw.data(), frames, dst + done * ch);
+                DecodeFlatFrames(lay, raw.data(), frames, dst + done * ch);
                 done += frames;
                 pos += frames;
                 if (frames < n) Stop("the file ended before its data chunk did");

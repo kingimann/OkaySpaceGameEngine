@@ -182,6 +182,7 @@ struct Target {
     vector<string> dirIncs, dirDefs, dirOpts, dirLinkOpts;
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
     vector<string> linkProp, ifLinkProp; // LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES as get_target_property reads them, in call order
+    vector<vector<string>> postBuild; string postBuildDir; // add_custom_command(TARGET POST_BUILD): commands (words) and their folder
     std::map<string, string> props;
     bool cxx17 = false, excluded = false;
     string skipReason; // set when the target cannot be written (missing source, needs a download, ...)
@@ -320,6 +321,7 @@ struct Interp {
         if (head == "INSTALL_INTERFACE") { tally.genex["INSTALL_INTERFACE"]++; return ""; }
         if (head == "TARGET_OBJECTS") { tally.genex["TARGET_OBJECTS"]++; return "{TARGET_OBJECTS:" + expand(rest) + "}"; } // the objects of an OBJECT library: linked in whole
         if (head == "TARGET_FILE") { tally.genex["TARGET_FILE"]++; return "{target:" + expand(rest) + "}"; }
+        if (head == "TARGET_FILE_DIR") { tally.genex["TARGET_FILE_DIR"]++; return "{target_dir:" + expand(rest) + "}"; }
         if (head == "TARGET_PROPERTY") {
             tally.genex["TARGET_PROPERTY"]++; auto comma = rest.find(','); string tn = expand(rest.substr(0, comma)), pn = comma == string::npos ? "" : rest.substr(comma + 1);
             Target* t = tgt(tn); if (!t) return ""; vector<string> v;
@@ -936,7 +938,13 @@ inline void Interp::doFind(const string& name, const vector<string>& a) {
             // MinGW: CMake's probe links a pthread_create program without a library when the program linker flags already bring in
             // winpthread (the project's toolchain file does), so Threads::Threads then adds nothing; otherwise it is -lpthread
             if (windows() && get("CMAKE_EXE_LINKER_FLAGS").find("winpthread") != string::npos) t.ifLinks.clear(); targets[t.name] = t; vars["CMAKE_THREAD_LIBS_INIT"] = "-pthread"; vars["Threads_FOUND"] = "TRUE"; vars["THREADS_FOUND"] = "TRUE"; }
-        else if (windows() && p != "PkgConfig" && p != "Python3") {
+        else if (p == "Python3") { // the interpreter is a program of the host (also for a cross build): the first python3 on PATH
+            const char* pe = getenv("PATH"); std::stringstream ss(pe ? pe : ""); string d;
+            while (!found && std::getline(ss, d, ':')) { std::error_code ec; string cand = d + "/python3"; if (!d.empty() && fs::is_regular_file(cand, ec) && (fs::status(cand, ec).permissions() & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) != fs::perms::none) { found = true; vars["Python3_EXECUTABLE"] = cand; } }
+            if (found) { vars["Python3_FOUND"] = "TRUE"; vars["Python3_Interpreter_FOUND"] = "TRUE"; Target t; t.name = "Python3::Interpreter"; t.kind = "imported"; targets[t.name] = t; }
+            else vars["Python3_Interpreter_FOUND"] = "FALSE";
+        }
+        else if (windows() && p != "PkgConfig") {
             // a cross build looks only under the target's roots (CMAKE_PREFIX_PATH, CMAKE_FIND_ROOT_PATH) for the package's own
             // config file (<root>/lib/cmake/<Name>/<Name>Config.cmake or <name>-config.cmake) and runs it, as CMake's config mode does;
             // the host's /usr/include is never used for a Windows program
@@ -1093,6 +1101,24 @@ inline void Interp::builtin(const Cmd& c) {
         vars["PROJECT_SOURCE_DIR"] = curSrc; vars["PROJECT_BINARY_DIR"] = curBin; return;
     }
     if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard") {
+        if (n == "add_custom_command" && a.size() >= 3 && a[0] == "TARGET") { // add_custom_command(TARGET t PRE_BUILD|PRE_LINK|POST_BUILD COMMAND ... [WORKING_DIRECTORY d] ...)
+            Target* t = tgt(a[1]);
+            if (!t || a[2] != "POST_BUILD") { tally.unknown[!t ? "add_custom_command on an unknown target" : "add_custom_command(TARGET " + a[2] + ")"]++; return; }
+            vector<vector<string>> cmds; string dir = curBin; int mode = 0; // 1 COMMAND words, 2 skip one value
+            for (size_t k = 3; k < a.size(); ++k) {
+                const string& w = a[k];
+                if (w == "COMMAND") { cmds.emplace_back(); mode = 1; continue; }
+                if (w == "WORKING_DIRECTORY" && k + 1 < a.size()) { dir = abs(a[++k], curBin); mode = 0; continue; }
+                if (w == "VERBATIM" || w == "USES_TERMINAL" || w == "COMMAND_EXPAND_LISTS") { mode = 0; continue; }
+                if (w == "COMMENT" || w == "BYPRODUCTS" || w == "DEPENDS" || w == "JOB_POOL") { mode = 2; continue; }
+                if (mode == 1) cmds.back().push_back(w);
+            }
+            for (auto& c2 : cmds) if (!c2.empty()) {
+                if (c2[0] == get("CMAKE_COMMAND")) { tally.unknown["add_custom_command(TARGET) running cmake"]++; continue; } // okay-build never runs CMake
+                t->postBuild.push_back(c2);
+            }
+            t->postBuildDir = dir; return;
+        }
         if (n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
         if (n == "add_custom_target" && !a.empty()) { Target t; t.name = a[0]; t.kind = "custom"; t.skipReason = "add_custom_target is not expressed"; targets[t.name] = t; }
         return;
@@ -1524,6 +1550,8 @@ static string emitManifest(Interp& in, Report& rep) {
         out << "\n";
         auto line = [&](const char* k, const vector<string>& v) { if (v.empty()) return; out << "  " << k << " ="; for (auto& w : v) out << " " << qw(w); out << "\n"; };
         { auto on = t.props.find("OUTPUT_NAME"); if (on != t.props.end() && !on->second.empty()) out << "  output_name = " << qw(on->second) << "\n"; }
+        for (auto& pc : t.postBuild) { out << "  post_build ="; for (auto& w : pc) out << " " << qw(srcWord(w, root)); out << "\n"; }
+        if (!t.postBuild.empty()) out << "  post_build_dir = " << qw(srcWord(t.postBuildDir, root)) << "\n";
         if (t.kind == "exe" && in.windows()) { auto w = t.props.find("WIN32_EXECUTABLE"); if (w != t.props.end() && Interp::isTrue(w->second)) out << "  win32_executable = on\n"; }
         line("include", incs); line("define", defs); line("flags", opts); line("link_flags", linkFlags); line("libs", libs); line("deps", r.deps);
         rep.defines += (int)defs.size(); rep.flags += (int)opts.size();

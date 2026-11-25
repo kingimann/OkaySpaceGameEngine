@@ -126,6 +126,9 @@ struct Target {
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
     vector<std::pair<string, string>> fileDepends; // file_depends = SRC FILE...: more inputs of that source's compile (CMake's OBJECT_DEPENDS)
     bool win32Exe = false; // win32_executable = on: a Windows GUI program (-mwindows), CMake's WIN32_EXECUTABLE
+    // post_build = WORD... (one line per command) run after the target is made, in post_build_dir (default: the build folder), each
+    // time it is made again; words may hold {bin}, {src}, {target:NAME} and {target_dir:NAME} (CMake's POST_BUILD custom commands)
+    vector<vector<string>> postBuild; string postBuildDir;
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
@@ -445,6 +448,8 @@ static Manifest parseManifest(const string& file) {
             else if (k == "test") x.isTest = oneFlag(v, "test");
             else if (k == "output_name") { if (v.size() != 1) throw err("output_name takes one value"); x.outName = v[0]; }
             else if (k == "win32_executable") x.win32Exe = oneFlag(v, "win32_executable");
+            else if (k == "post_build") { if (v.empty()) throw err("post_build takes a command"); x.postBuild.push_back(v); }
+            else if (k == "post_build_dir") { if (v.size() != 1) throw err("post_build_dir takes one value"); x.postBuildDir = v[0]; }
             else if (k == "file_flag" || k == "file_define" || k == "file_include" || k == "file_depends") {
                 if (v.size() < 2) throw err(k + " takes a source path and then one or more words");
                 auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : k == "file_depends" ? x.fileDepends : x.fileIncludes;
@@ -893,6 +898,26 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 if (!f.empty() && f[0] != '-' && produced.count(resolve("", f))) a.waitFor.push_back(resolve("", f)); }
         }
         finalAct[n] = add(a); g.targetFinal.push_back({n, finalAct[n]});
+        if (!t.postBuild.empty()) { // one step after the link; it reruns when the linked file changes. Users of the target wait for it.
+            auto fill = [&](string w) {
+                w = fixBin(w);
+                for (size_t at; (at = w.find("{src}")) != string::npos;) w.replace(at, 5, fs::current_path().generic_string());
+                for (const char* key : {"{target_dir:", "{target:"}) for (size_t at; (at = w.find(key)) != string::npos;) {
+                    size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + strlen(key), e - at - strlen(key));
+                    auto it = byName.find(nm); if (it == byName.end()) throw Fail("target '" + t.name + "': post_build names unknown target '" + nm + "'");
+                    fs::path f = fs::absolute(outPath(*it->second)); string r = (string(key) == "{target:" ? f : f.parent_path()).lexically_normal().generic_string();
+                    w.replace(at, e - at + 1, r);
+                }
+                return w;
+            };
+            string dir = t.postBuildDir.empty() ? fs::absolute(under("")).lexically_normal().generic_string() : fill(t.postBuildDir), script = "mkdir -p " + cmr::shellWord(dir) + " && cd " + cmr::shellWord(dir);
+            for (auto& c : t.postBuild) { script += " &&"; for (auto& w : c) script += " " + cmr::shellWord(fill(w)); }
+            Action p; p.kind = "POST"; p.target = t.name; p.desc = "post-build " + t.name; // not "RUN": a step with side effects is never taken from the cache
+            p.output = under(".okaybuild/post/" + m.objSub + t.name + ".stamp"); p.outputs = {p.output};
+            p.argv = {"sh", "-c", script + " && : > " + cmr::shellWord(fs::absolute(p.output).generic_string())};
+            p.inputs = {a.output}; p.deps = {finalAct[n]};
+            int pid = add(p); g.targetFinal.back().second = pid;
+        }
     }
     // raw actions (imported commands and generators): `cd DIR && CMD` through sh.
     // Every declared output is an edge source. `after` names the spelling used in the manifest.

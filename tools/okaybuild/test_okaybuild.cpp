@@ -2325,11 +2325,36 @@ set_target_properties(tool PROPERTIES WIN32_EXECUTABLE FALSE)
     string sub = capture("x86_64-w64-mingw32-objdump -p '" + (gRoot / "build/app.exe").string() + "' 2>&1 | grep -i subsystem", &rc);
     check(sub.find("Windows GUI") != string::npos, "app.exe is a GUI program (-mwindows)", sub);
 }
+// Round 14: add_custom_command(TARGET ... POST_BUILD) (the player's module_sizes.py step) and find_package(Python3 COMPONENTS
+// Interpreter). The step runs after the program is linked, in the target's build folder, each time the program is linked again.
+static void testPostBuild() {
+    printf("test: okay-build cmake: POST_BUILD commands and find_package(Python3)\n");
+    if (system("python3 -c 1 >/dev/null 2>&1") != 0) { printf("  skipped (no python3)\n"); return; }
+    fresh("postbuild");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("sub/CMakeLists.txt", "add_executable(app ${CMAKE_SOURCE_DIR}/main.cpp)\n"
+        "add_custom_command(TARGET app POST_BUILD\n"
+        "    COMMAND ${Python3_EXECUTABLE} -c \"import os,sys; open(sys.argv[1],'a').write(os.path.basename(os.getcwd()) + ' it is \\\"fine\\\"\\\\n')\" $<TARGET_FILE_DIR:app>/post.txt\n"
+        "    COMMAND ${Python3_EXECUTABLE} -c \"print('second step')\"\n"
+        "    VERBATIM)\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(pb CXX)\nfind_package(Python3 COMPONENTS Interpreter REQUIRED)\n"
+        "if(NOT Python3_Interpreter_FOUND OR NOT IS_ABSOLUTE \"${Python3_EXECUTABLE}\")\n  message(FATAL_ERROR \"no python: ${Python3_EXECUTABLE}\")\nendif()\nadd_subdirectory(sub)\n");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("not understood    0") != string::npos, "find_package(Python3) and add_custom_command(TARGET POST_BUILD) are understood", o);
+    check(man.find("post_build = ") != string::npos && man.find("{target_dir:app}/post.txt") != string::npos && man.find("post_build_dir = {bin}/sub") != string::npos, "the manifest carries the steps, the target's folder and $<TARGET_FILE_DIR>", man);
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\n", "after the link the step ran once, in {bin}/sub, with the quotes kept", o + readFile(gRoot / "build/post.txt"));
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\n" && ran(o) == 0, "nothing changed: neither the link nor the step runs", o);
+    write("main.cpp", "int main(){ volatile int x = 0; return x; }\n"); // other code, so the program is linked again
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\nsub it is \"fine\"\n", "a new link runs the step again", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2360,5 +2385,6 @@ int main(int argc, char** argv) {
     testConfigurationFlags();
     testSourcePropertiesPerFolder();
     testMingwToolchainFile();
+    testPostBuild();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

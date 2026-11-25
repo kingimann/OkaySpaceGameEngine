@@ -2,6 +2,7 @@
 // It writes COFF with the compiler in this tree. It does not call okaycc.
 
 #include "okayms/compile.hpp"
+#include "okayms/file_io.hpp"
 #include "okayms/link.hpp"
 
 #include <cctype>
@@ -13,39 +14,19 @@
 
 namespace {
 
+using okayms::file_exists;
+using okayms::read_file;
+using okayms::write_file;
+
 std::string lower_copy(std::string text) {
     for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return text;
-}
-
-bool file_exists(const std::string& path) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    return static_cast<bool>(in);
-}
-
-std::vector<uint8_t> read_file(const std::string& path, std::string* error) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    if (!in) {
-        *error = "cannot open " + path;
-        return {};
-    }
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 std::string read_text(const std::string& path, std::string* error) {
     const std::vector<uint8_t> bytes = read_file(path, error);
     if (!error->empty()) return {};
     return std::string(bytes.begin(), bytes.end());
-}
-
-bool write_file(const std::string& path, const std::vector<uint8_t>& bytes, std::string* error) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    if (!out) {
-        *error = "cannot write " + path;
-        return false;
-    }
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
 }
 
 void fail(const std::string& message) { std::cerr << "okay-cl: " << message << "\n"; }

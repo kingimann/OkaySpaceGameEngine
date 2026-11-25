@@ -9,12 +9,11 @@
 // Own limits: x64 only; no /EXPORT on the command line (a .def file lists the exports); no long-format import members.
 
 #include "okayms/archive.hpp"
+#include "okayms/file_io.hpp"
 #include "okayms/implib.hpp"
 
 #include <cctype>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
@@ -26,16 +25,9 @@ std::string lower_copy(std::string text) {
 }
 
 bool read_file(const std::string& path, std::vector<uint8_t>* out) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    if (!in) return false;
-    out->assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    return true;
-}
-
-bool write_file(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
+    std::string error;
+    *out = okayms::read_file(path, &error);
+    return error.empty();
 }
 
 int fail(const std::string& message) {
@@ -142,6 +134,7 @@ int main(int argc, char** argv) {
     }
     const auto bytes = okayms::write_archive(archive);
     if (!bytes.ok()) return fail(bytes.error);
-    if (!write_file(out_path, bytes.value)) return fail("cannot write " + out_path);
+    std::string write_error;
+    if (!okayms::write_file(out_path, bytes.value, &write_error)) return fail(write_error);
     return 0;
 }

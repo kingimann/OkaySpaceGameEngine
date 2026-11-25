@@ -4,7 +4,7 @@
 >
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
 >
-> **Last checked:** 2026-11-20, paths and links against main.
+> **Last checked:** 2026-11-25 (branch `claude/no-curl-1`: curl removed from every shipped program).
 
 ## Contents
 
@@ -15,7 +15,7 @@
 
 *Was `docs/own_http_client.md` until 2026-11-20.*
 
-Status: **side by side, off by default, Linux only for HTTPS.** The spawned `curl` is still the default on every system except Windows (where WinHTTP is used) and is still the fallback whenever the own client cannot be used. Nothing has been removed. This is the curl row of `docs/status/own_code_roadmap.md`.
+Status (2026-11-25, `claude/no-curl-1`): **THE HTTP client on Linux; no curl anywhere.** No shipped program (engine, launcher, editor, player, shared code) starts the external `curl` program, or wget or PowerShell's `Invoke-WebRequest`, any more: `CurlFallback.hpp` and the last-resort downloads were deleted, and `tests/check_no_curl.cmake` (ctest `no_curl_spawn`) fails if one comes back. Every call goes through the seam `NativeFetch.hpp` (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`): WinHTTP on Windows, our own client on Linux, used by default with no run-time switch (`OKAY_OWN_HTTP=1` is no longer needed, `OKAY_OWN_HTTP=0`, `OKAY_HTTP_CURL` and `OKAY_NO_CURL` do nothing, and the Settings > Experimental "Our own web client" item is gone: there is nothing to switch back to). When the native client gets no answer, the call fails with the reason. Apple, UWP and web builds have no client: every call fails with `NoClientReason()` (Apple builds are parked, CLAUDE.md rule 14). History below that says "curl is the fallback" describes the state before this change. This is the curl row of `docs/status/own_code_roadmap.md`.
 
 ### The decision, in one paragraph
 
@@ -28,7 +28,8 @@ We write the HTTP/1.1 client ourselves. We do **not** write TLS. TLS is taken fr
 | `engine/include/okay/Platform/OwnHttp.hpp` | The pure layer: URL parser, request builder, response parser (status line, headers, Content-Length, chunked, close-delimited), redirects, limits. Talks to an abstract `Stream` and `Connector`; no sockets, no TLS, no OS headers |
 | `engine/include/okay/Platform/OwnHttpNet.hpp` | POSIX transports: non-blocking TCP with deadlines, proxy settings from the environment, CONNECT tunnel, TLS through `libssl` loaded with `dlopen`, and `okay::ownhttp::Perform` that ties them together |
 | `engine/include/okay/Platform/OwnHttpDownload.hpp` | Retries and downloads to a file, on top of `Perform`: `RetryPolicy` and `PerformWithRetry` (backoff with jitter, `Retry-After` in seconds or as an HTTP date, idempotent methods only), `DownloadToFile` (a temporary file unique to each run and locked while in use, SHA-256 while streaming with the engine's own `okay::crypto::Sha256`, expected hash and size, fsync, atomic rename, resume with `Range` and `If-Range` after a drop, progress, cancel). Written from RFC 9110 (sections 9.2.2, 10.2.3, 5.6.7, 13.1.5, 14, 15.3.7) and the POSIX `rename`/`fsync` manual pages; no client code consulted. No `<mutex>` or `<thread>` (waits use `nanosleep`) |
-| `engine/include/okay/Platform/NativeHttp.hpp` | The callers' entry point (`okay::http::Request`, `NativeAvailable`). On POSIX it uses the own client only when built with `-DOKAY_OWN_HTTP=ON` **and** run with `OKAY_OWN_HTTP=1` |
+| `engine/include/okay/Platform/NativeHttp.hpp` | The callers' entry point (`okay::http::Request`, `RequestEx`, `NativeAvailable`, `NoClientReason`). On POSIX it uses the own client whenever built with `-DOKAY_OWN_HTTP=ON` (the default) |
+| `engine/include/okay/Platform/NativeFetch.hpp` | The HTTP seam every caller uses (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`); native client only, no outside program |
 | `engine/include/okay/Platform/OwnHttpInflate.hpp` | Thin wrapper (strict options) over the engine's ONE inflate, `engine/include/okay/Core/Inflate.hpp`, which is also used by PNG, the model readers and the FBX reader (there are no other copies any more). gzip and zlib decoder of our own (compression, not crypto), used only when a caller asks for gzip. Provenance: written from RFC 1950, 1951 and 1952 only, as a table-driven canonical Huffman decoder (first-level lookup on bit-reversed codes, slow path for codes over 10 bits, 64-bit bit buffer). No decoder source (zlib, puff, miniz, stb_image, libdeflate or any other) was consulted. An earlier version was flagged by an outside review as closely following a public reference decoder and was rewritten on 2026-11-14 (`docs/status/provenance_audit.md`); the rewrite has not itself had an outside review yet |
 | `tests/test_inflate_differential.cpp` | The one inflate against a slow reference decoder written fresh from the RFCs (`tests/inflate_reference_slow.hpp`, one bit at a time): valid (Python zlib and hand-built), bit-flipped, truncated and spliced streams must give the same accept/refuse decision and the same bytes in lenient, PNG and strict mode; also checks the first-allocation clamp. `ctest -R inflate_differential` |
 | `tests/test_own_http_inflate.cpp` | The inflate on its own: tables derived from the RFC rule, long Huffman codes, zip-bomb cap with measured peak heap, a differential run against Python zlib (2,400 streams), every prefix refused, fuzz |
@@ -43,10 +44,10 @@ All three headers are header-only. The only link-time addition is `libdl` (`${CM
 
 ### Turning it on
 
-- Build: `-DOKAY_OWN_HTTP=ON` (default `OFF`; ignored on Windows and macOS).
-- Run time: environment variable `OKAY_OWN_HTTP=1`. Without it `okay::http::NativeAvailable()` is false and callers use curl exactly as before. `OKAY_HTTP_CURL=1` still forces curl.
+- Build: `-DOKAY_OWN_HTTP=ON` (the default; ignored on Windows, macOS and the web build). OFF leaves a Linux build with no HTTP client.
+- Run time: nothing. (Until `claude/no-curl-1` it also needed `OKAY_OWN_HTTP=1`; `OKAY_HTTP_CURL=1` forced curl. Both are gone.)
 - `OKAY_OWN_HTTP_LIBSSL=/path/to/libssl.so.3` replaces the library search list (no fallback to the default names when it is set).
-- If the own client gets no HTTP response for any reason (libssl missing, certificate refused, proxy trouble, malformed answer, timeout), `okay::http::Result::reached` stays false, `Result::error` says why, and the existing callers run their curl path. Behaviour and signatures are otherwise those the callers already use: redirects followed, any HTTP status is `reached`, `outFile` streams to disk.
+- If the own client gets no HTTP response for any reason (libssl missing, certificate refused, proxy trouble, malformed answer, timeout), `okay::http::Result::reached` stays false, `Result::error` says why, and the call fails (no other program is tried). Behaviour and signatures are otherwise those the callers already use: redirects followed, any HTTP status is `reached`, `outFile` streams to disk.
 
 ### HAVE / GAP
 
@@ -104,7 +105,7 @@ What is trusted, and therefore outside what this code can guarantee:
 
 ### NOT DONE
 
-- **macOS:** no TLS. `OwnHttpNet.hpp` compiles there (TCP, proxy), but `TlsApi::DefaultNames()` is empty and `NativeHttp` does not enable the client on Apple systems, so macOS keeps spawning curl. A real answer needs Network.framework or Secure Transport (Objective-C or C APIs), which could not be tested here.
+- **macOS:** no TLS. `OwnHttpNet.hpp` compiles there (TCP, proxy), but `TlsApi::DefaultNames()` is empty and `NativeHttp` does not enable the client on Apple systems. Since `claude/no-curl-1` an Apple build has NO HTTP client: every call fails with `NoClientReason()` (chosen over keeping curl because Apple builds are parked, rule 14). A real answer needs Network.framework or Secure Transport (Objective-C or C APIs), which could not be tested here.
 - **Windows** is unchanged (WinHTTP); the own client is not used there.
 - HTTP/2 and HTTP/3, a pool shared between threads, request body streaming, `Expect: 100-continue`.
 - brotli and zstd response bodies; streaming gzip (the encoded body is held in memory).
@@ -114,7 +115,7 @@ What is trusted, and therefore outside what this code can guarantee:
 - A hung resolver is bounded by `resolveMs`, but only the "name does not exist" and "cancelled" cases are tested; a resolver that never answers is not simulated.
 - The connect timeout (`connectMs`) is not tested against a black-holed address (it needs a non-local network); the silence and total limits are.
 - Memory with gzip on: the encoded body is held in memory (capped) and then the decoded body is built, so the peak is about THREE times the cap (the encoded body, the decoder's working buffer and the string copy of the decoded body; each is at most `maxBodyBytes`, 64 MiB by default, so up to about 192 MiB). Without gzip a body in memory is held once.
-- Timeouts and re-sending: on Windows the per-call `timeoutMs` is not applied (WinHTTP keeps its session timeouts, as before this work). With the own client, a request that was written to an open connection and then failed (timeout, reset, bad answer) sets `Result::maybeSent`; `AccountService::HttpRequest` then does NOT send a POST, PUT, PATCH or DELETE again through curl (a GET or HEAD may be repeated). A clean not-reached (DNS failure, connection refused, TLS refused, bad URL) still falls back to curl. A body cut short by a timeout or an early close fails the whole call on the own client (`reached` stays false). On Windows (WinHTTP), `maybeSent` is set for ANY failure after `WinHttpSendRequest` succeeded (timeout, reset, invalid reply, a failed `WinHttpQueryDataAvailable` or `WinHttpReadData`), and a read error or fewer bytes than `Content-Length` also makes the call fail (`reached` false, no partial body). The decision is `okay::http::ShouldFallBackToCurl(method, result)` (tested for every method). Compiled with the MinGW syntax check only: unverified at run time (no Windows machine).
+- Timeouts and re-sending: on Windows the per-call `timeoutMs` is not applied (WinHTTP keeps its session timeouts, as before this work). With the own client, a request that was written to an open connection and then failed (timeout, reset, bad answer) sets `Result::maybeSent`; and nothing sends it again (since `claude/no-curl-1` there is no second route at all; before, a GET or HEAD was repeated through curl and a clean not-reached fell back to curl). A body cut short by a timeout or an early close fails the whole call on the own client (`reached` stays false). On Windows (WinHTTP), `maybeSent` is set for ANY failure after `WinHttpSendRequest` succeeded (timeout, reset, invalid reply, a failed `WinHttpQueryDataAvailable` or `WinHttpReadData`), and a read error or fewer bytes than `Content-Length` also makes the call fail (`reached` false, no partial body). (`ShouldFallBackToCurl` was deleted with the curl fallback.) Compiled with the MinGW syntax check only: unverified at run time (no Windows machine).
 - Memory: the response head and chunk lines are capped, but a body into memory is held whole up to the cap (64 MiB); a download to disk streams, with the cap at 8 GiB. The Windows and curl paths have their own limits; the Windows body loop was not touched.
 - The `own-http` CI job ran and passed on GitHub for PR #850 head `1b455cfa` (including its ASan and UBSan step) and has been green on main since #852. Still unverified: real servers, Windows and macOS. No run with OpenSSL 1.1.x; no clang or MSVC build of the tests; no sanitizer run of the engine-linked `NativeHttp` path (the net test includes `NativeHttp.hpp` standalone).
 - Retries and resume are used by `OwnDownload` (launcher game downloads, official game files, the launcher's `Download()`, the Versions page, the editor update download, each with `retries = 2`); the account calls (`AccountService::HttpRequest`) and PlayFab do not retry (they are POSTs or need their own decision). No caller passes an expected SHA-256 yet: the Versions page still checks the hash from `versions.json` after the download, as before.
@@ -127,6 +128,8 @@ What is trusted, and therefore outside what this code can guarantee:
 
 *Was `docs/own_http_readiness.md` until 2026-11-20.*
 
+**2026-11-25 (`claude/no-curl-1`): the flip happened.** On the owner's rules 17 and 19d (our own part is THE path, no second copy kept) curl was removed from every shipped program: no fallback, no run-time switch. The criteria below were written before that and are kept as the record of what is still unproven (outside review, real servers, Windows run). Everything below that says "curl is the fallback", "opt-in" or "`OKAY_OWN_HTTP=1`" is history.
+
 This page answers one question: what must `okay::ownhttp` do before the default can flip from curl to our own client, what does it do today, and what is left. The client itself is described in `docs/platform/own_http.md`; the removal rules are in `docs/status/own_code_roadmap.md`. Nothing here flips anything: `OKAY_OWN_HTTP` is still OFF by default, every curl path is still in the code (the own client always goes first and curl is the fallback), and Windows still uses WinHTTP. Every call site below that says "own client first" only does so when the program was built with `-DOKAY_OWN_HTTP=ON` and is run with `OKAY_OWN_HTTP=1`.
 
 Status words: **Done** (code and a test that runs), **Partial** (works for the callers we have, with a stated limit), **Missing** (not written). "Proof" is the file that shows it.
@@ -136,7 +139,7 @@ Status words: **Done** (code and a test that runs), **Partial** (works for the c
 **Update 2026-11-23 (`claude/third-party-1`):** rows 1 to 9 now all call the seam in `engine/include/okay/Platform/NativeFetch.hpp`
 (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`) instead of their own curl lines. The seam uses WinHTTP on Windows (all rows,
 PlayFab and the editor update download included) and the own client on Linux when it is on, and starts curl only in
-`CurlFallback.hpp` as the last fallback. `tests/check_curl_seam_wiring.cmake` fails on a curl spawn anywhere else. WinHTTP itself had
+`CurlFallback.hpp` as the last fallback (deleted by `claude/no-curl-1`; `tests/check_no_curl.cmake` now fails on any curl, wget or PowerShell download in shipped code). WinHTTP itself had
 been compiled out of every Windows build from #1001 until this change (its `#if` tested a macro that nothing defined); the
 table below describes the call sites before the seam.
 

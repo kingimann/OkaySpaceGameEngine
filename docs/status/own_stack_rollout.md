@@ -79,7 +79,7 @@ run-time switch still wins, and every third-party fallback is still compiled in.
 |---|---|---|
 | Our FBX reader | `OKAY_OWN_FBX=ON` | `okay::fbx` instead of ufbx (run time: `OKAY_OWN_FBX=0` goes back) |
 | Our readers for COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x | `OKAY_OWN_COLLADA`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`, `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`, `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X` all `ON` | each format reads with ours first (run time: `OKAY_OWN_<FMT>=0`) |
-| Our HTTP client (Linux) | `OKAY_OWN_HTTP=ON`, and the engine gets `OKAY_OWN_HTTP_DEFAULT_ON` | `NativeAvailable()` is true without setting anything; `OKAY_OWN_HTTP=0` or `OKAY_HTTP_CURL=1` goes back to curl. No effect on Windows (WinHTTP stays) or macOS |
+| Our HTTP client (Linux) | Nothing since `claude/no-curl-1` (2026-11-25): it is THE client in every Linux build (`OKAY_OWN_HTTP=ON` is the default), with no run-time switch and no curl to go back to | Windows keeps WinHTTP; macOS has no client |
 | Our platform backend (Linux) | the engine's `okay_platform` gets `OKAY_PLATFORM_DEFAULT_OWN` | `okay::platform::Default()` is the own backend (run time: `OKAY_PLATFORM_BACKEND=sdl2`). **Not set on Windows**: the Win32 backend has never run on real Windows |
 | OkayUI as the launcher and editor UI | the launcher and editor get `OKAY_UI_DEFAULT_BACKEND_OKAYUI` (same as `OKAY_UI_DEFAULT_BACKEND=okayui`) | starts on OkayUI where it is compiled in (run time: `OKAY_UI_BACKEND=imgui`). Only the ported screens change; the rest stays Dear ImGui |
 | Marker | the engine gets `OKAY_OWN_STACK_BUILD` | tests can tell it is a dogfood build |
@@ -97,7 +97,7 @@ developer's own `OKAY_OWN_FBX=0` still wins:
 |---|---|
 | `OKAY_OWN_FBX=1` | our FBX reader |
 | `OKAY_OWN_COLLADA=1`, `OKAY_OWN_3DS=1`, `OKAY_OWN_BVH=1`, `OKAY_OWN_OFF=1`, `OKAY_OWN_SMD=1`, `OKAY_OWN_MD5=1`, `OKAY_OWN_MS3D=1`, `OKAY_OWN_ASE=1`, `OKAY_OWN_3MF=1`, `OKAY_OWN_AMF=1`, `OKAY_OWN_X3D=1`, `OKAY_OWN_DXF=1`, `OKAY_OWN_LWO=1`, `OKAY_OWN_BLEND=1`, `OKAY_OWN_MD2=1`, `OKAY_OWN_MD3=1`, `OKAY_OWN_IRRMESH=1`, `OKAY_OWN_B3D=1`, `OKAY_OWN_X=1` | the other readers (they exist in every build) |
-| `OKAY_OWN_HTTP=1` | our HTTP client, **only in a build made with `-DOKAY_OWN_HTTP=ON`** and only on Linux |
+| (`OKAY_OWN_HTTP=1`) | no longer set or read since `claude/no-curl-1`: our HTTP client is always on in Linux builds |
 | `OKAY_PLATFORM_BACKEND=own` | the own platform backend, **Linux only** |
 | `OKAY_UI_BACKEND=okayui` | OkayUI for the launcher and editor, where compiled in |
 
@@ -163,7 +163,7 @@ Each program writes one line to stderr when it starts, and the editor's About po
 
 * `platform`: the `okay::platform` default (own or sdl2). The editor and launcher still open their windows with SDL
   directly, so `platform=own` there means the seam parts (timers, audio, gamepads, voice) are ours, not the window.
-* `http`: `curl`, `own`, or `winhttp` (Windows).
+* `http`: `own` (Linux), `winhttp` (Windows) or `none` (a build with no HTTP client; `curl` before `claude/no-curl-1`).
 * `readers`: `own(...)` lists the opt-in formats that read with our code now; `ufbx` is shown while FBX is still ufbx;
   `assimp` is shown when Assimp is compiled in. Our always-on readers (glTF, OBJ, STL, PLY) are not listed.
 * `crypto`: what Ed25519 (updates, anti-cheat manifest, host identity) really uses, asked of `okayac::ed25519::UseSodium()` at

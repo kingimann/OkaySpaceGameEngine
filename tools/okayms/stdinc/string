@@ -480,3 +480,4 @@ inline string to_string(long long v) {
 inline string to_string(int v) { return to_string((long long)v); }
 inline string to_string(unsigned v) { return to_string((unsigned long long)v); }
 }
+#include <okay_ustring>

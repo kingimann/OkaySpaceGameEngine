@@ -2134,6 +2134,18 @@ struct Parser {
         const Tok after = tokens[i + 2].kind;
         return after != TIdent && after != TStar && after != TAmp && after != TAndAnd && after != TColonColon;
     }
+    // fn(args) where fn is a static data member of class sid holding an object with operator() (a std::function): a
+    // call of that object ([expr.call], [over.call]), not of a member function.
+    bool static_object_call(int sid, const std::string& name) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
+        const StructDef& def = structs[static_cast<size_t>(sid)];
+        for (const Method& m : def.methods)
+            if (m.name == name) return false;
+        const auto st = def.statics.find(name);
+        if (st == def.statics.end()) return false;
+        const Type& t = st->second.type;
+        return t.base == 3 && t.pointers == 0 && t.struct_id >= 0 && !st->second.has_const;
+    }
     bool class_name_text(const std::string& text) const {
         if (typedefs.find(text) != typedefs.end()) return false;
         const int id = find_struct(text);

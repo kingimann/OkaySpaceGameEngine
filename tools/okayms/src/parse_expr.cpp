@@ -1202,7 +1202,8 @@ bool Parser::parse_unary(Node* out) {
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
-            if (!is(TLParen) && static_member_expr(scope_sid, member, out)) return parse_postfix(out);
+            if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
+                return parse_postfix(out);
             std::vector<TArg> qtargs;
             if (is(TLt)) {
                 int tmpl_owner = -1;
@@ -1213,7 +1214,8 @@ bool Parser::parse_unary(Node* out) {
         }
         if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
-            if (!is(TLParen) && static_member_expr(cur_class, name, out)) return parse_postfix(out);
+            if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
+                return parse_postfix(out);
             bool is_field = false;
             for (const Field& field : def.fields)
                 if (field.name == name) is_field = true;

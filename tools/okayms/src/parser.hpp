@@ -802,8 +802,107 @@ struct Parser {
         std::string target;
         int adj = 0;
         bool rdx = false;
+        int vslot = -1;  // a virtual call thunk (Round 31): the slot, and the table pointer's offset in the object
+        int vptr = 0;
     };
     std::vector<Thunk> thunks{};
+
+    // At '(': `(C::*name)` or `(ns::C::*)`, the declarator of a pointer to a member function ([dcl.mptr]; Round 31).
+    bool memfn_declarator_ahead() const {
+        if (!is(TLParen)) return false;
+        size_t k = at + 1;
+        if (k < tokens.size() && tokens[k].kind == TColonColon) ++k;
+        if (!(k < tokens.size() && tokens[k].kind == TIdent)) return false;
+        while (k + 2 < tokens.size() && tokens[k + 1].kind == TColonColon && tokens[k + 2].kind == TIdent) k += 2;
+        return k + 2 < tokens.size() && tokens[k + 1].kind == TColonColon && tokens[k + 2].kind == TStar;
+    }
+    // The type `R (C::*)(P...) [const]`: a function pointer whose first parameter is C* (const C* for a const member),
+    // marked as a member function pointer (Type::memfn).
+    Type memfn_type(const Type& ret, const Type& cls, const std::vector<Type>& params, bool vararg, bool is_const) {
+        FuncType ft;
+        ft.ret = ret;
+        Type self = cls;
+        self.pointers = 1;
+        self.is_ref = false;
+        self.pconst = is_const;
+        ft.params.push_back(self);
+        for (const Type& p : params) ft.params.push_back(p);
+        ft.vararg = vararg;
+        Type t;
+        t.base = 1;
+        t.pointers = 1;
+        t.func_id = static_cast<int>(func_types.size());
+        func_types.push_back(ft);
+        MemFnType mf;
+        mf.cls = cls;
+        mf.ret = ret;
+        mf.params = params;
+        mf.is_const = is_const;
+        t.memfn = static_cast<int>(memfn_types().size());
+        memfn_types().push_back(mf);
+        return t;
+    }
+    // At '(' of `R (C::*name)(P...) [const]`: reads the declarator; name may be empty.
+    bool parse_memfn_declarator(Type ret, std::string* name, Type* out) {
+        next();  // '('
+        accept(TColonColon);
+        while (is(TIdent) && namespaces.count(cur().text) > 0 && at + 2 < tokens.size() &&
+               tokens[at + 1].kind == TColonColon && tokens[at + 2].kind == TIdent && !class_name_at(at))
+            at += 2;
+        Type cls;
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type_core(&cls, &imp, &exp)) return false;
+        if (!expect(TColonColon, "'::'") || !expect(TStar, "'*'")) return false;
+        while (accept(TConst)) {
+        }
+        if (cls.base != 3 || cls.pointers != 0 || cls.struct_id < 0) {
+            error = "a pointer to member function needs a class";
+            return false;
+        }
+        name->clear();
+        if (is(TIdent)) {
+            *name = cur().text;
+            next();
+        }
+        if (!expect(TRParen, "')'") || !expect(TLParen, "'('")) return false;
+        Declarator fd;
+        if (!parse_param_list(&fd)) return false;
+        bool is_const = false;
+        while (is(TConst) || (is(TIdent) && (cur().text == "noexcept" || cur().text == "volatile"))) {
+            if (is(TConst)) is_const = true;
+            next();
+        }
+        if (is(TAmp) || is(TAndAnd)) next();  // a ref-qualifier: not kept
+        *out = memfn_type(ret, cls, fd.params, fd.vararg, is_const);
+        return true;
+    }
+    // The value of &C::f for a virtual f (Round 31): a thunk that calls the function in f's slot of the object's table,
+    // so the pointer calls the final overrider ([expr.mptr.oper] 6, [class.virtual]), as Microsoft's vcall thunks do.
+    // Named as Microsoft names them (??_9 class @@ $B, the table offset as a decorated number, AA); one per file.
+    std::string vcall_thunk(int sid, const Method& m) {
+        const StructDef& def = structs[static_cast<size_t>(sid)];
+        const int off = m.slot * 8;
+        std::string num;
+        if (off >= 1 && off <= 10) {
+            num = std::string(1, static_cast<char>('0' + off - 1));
+        } else {
+            for (unsigned v = static_cast<unsigned>(off); v != 0; v >>= 4) num.insert(num.begin(), static_cast<char>('A' + (v & 15u)));
+            num += "@";
+            if (off == 0) num = "A@";
+        }
+        const std::string sym = "??_9" + def.symname() + "@@$B" + num + "AA";
+        for (const Thunk& t : thunks)
+            if (t.symbol == sym) return sym;
+        Thunk t;
+        t.symbol = sym;
+        t.vslot = m.slot;
+        const int vf = find_field_named(def, "__vptr");
+        t.vptr = vf >= 0 ? def.fields[static_cast<size_t>(vf)].offset : 0;
+        t.rdx = m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref && !m.ret.is_array() && !fits_register(m.ret);
+        thunks.push_back(t);
+        return sym;
+    }
 
     // A constructor template is a constructor too, before any instance of it is made.
     bool has_ctor_template(int sid) const {
@@ -2306,6 +2405,15 @@ struct Parser {
                     }
                 }
             }
+            if (memfn_declarator_ahead()) {
+                // void (Component::*fn)(const Collision2D&) as a parameter (Physics2D.cpp; Round 31).
+                std::string pname;
+                Type mt;
+                if (!parse_memfn_declarator(pt, &pname, &mt)) return false;
+                out->params.push_back(mt);
+                out->param_names.push_back(pname);
+                continue;
+            }
             if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
                 next();
                 int stars = 0;
@@ -2441,6 +2549,17 @@ struct Parser {
             }
         }
         out->type = base;
+        if (memfn_declarator_ahead()) {
+            // R (C::*f)(P...): a pointer to a member function (Round 31).
+            Type t;
+            if (!parse_memfn_declarator(base, &out->name, &t)) return false;
+            if (out->name.empty()) {
+                error = "expected a name";
+                return false;
+            }
+            out->type = t;
+            return true;
+        }
         if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
             next();
             int stars = 0;
@@ -2705,6 +2824,7 @@ struct Parser {
     bool parse_postfix(Node* out);
     bool member_pointer_ahead() const;
     bool parse_member_pointer(Node* out);
+    bool member_function_pointer(int sid, Node* out);
     bool apply_member_pointer(Node object, bool arrow, Node* out);
     // The class a qualifier names: a class, or a typedef (a template parameter) of a class type.
     int scope_class(const std::string& text) const {
@@ -8381,6 +8501,8 @@ struct Parser {
             fn.thunk_target = t.target;
             fn.thunk_adj = t.adj;
             fn.thunk_rdx = t.rdx;
+            fn.thunk_vslot = t.vslot;
+            fn.thunk_vptr = t.vptr;
             funcs.push_back(std::move(fn));
         }
         // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,

@@ -2579,6 +2579,24 @@ bool Parser::parse_postfix(Node* out) {
             *out = std::move(wrapped);
             continue;
         }
+        if (is(TLParen) && out->kind == Node::Block && out->text == "<memfn-bound>") {
+            // (obj.*pf)(args): a call through the function pointer with the object's address as the first argument.
+            next();
+            Node call;
+            call.kind = Node::Call;
+            Type fpt = out->type;
+            fpt.memfn = -1;
+            call.kids.push_back(std::move(out->kids[0]));
+            call.kids[0] = cast_node(fpt, std::move(call.kids[0]));
+            call.kids.push_back(std::move(out->kids[1]));
+            std::vector<Node> pargs;
+            if (!parse_call_args(&pargs)) return false;
+            for (Node& a : pargs) call.kids.push_back(std::move(a));
+            if (!adjust_fp_args(fpt, &call.kids, 1)) return false;
+            fp_reference_result(fpt, &call);
+            *out = std::move(call);
+            continue;
+        }
         if (is(TLParen)) {
             next();
             {
@@ -3302,7 +3320,11 @@ bool Parser::member_pointer_ahead() const {
     if (tokens[k + 1].kind == TLParen || tokens[k + 1].kind == TLt || tokens[k + 1].kind == TColonColon) return false;
     const StructDef& d = structs[static_cast<size_t>(sid)];
     if (d.statics.count(tokens[k].text) > 0) return false;
-    return find_field_named(d, tokens[k].text) >= 0;
+    if (find_field_named(d, tokens[k].text) >= 0) return true;
+    // &C::f of a member function that is not static: a pointer to a member function (Round 31).
+    for (const Method& m : d.methods)
+        if (m.name == tokens[k].text && !m.is_static) return true;
+    return false;
 }
 
 // &C::m: a constant of type `T C::*`, the member's offset in C (Type::memptr; Microsoft's representation from Round 31,
@@ -3321,11 +3343,8 @@ bool Parser::parse_member_pointer(Node* out) {
     }
     const StructDef& d = structs[static_cast<size_t>(sid)];
     const int fi = find_field_named(d, cur().text);
+    if (fi < 0) return member_function_pointer(sid, out);
     next();
-    if (fi < 0) {
-        error = "no data member for a pointer to member";
-        return false;
-    }
     const Field& f = d.fields[static_cast<size_t>(fi)];
     if (f.type.bits >= 0) {
         error = "a pointer to a bit-field member";
@@ -3346,12 +3365,66 @@ bool Parser::parse_member_pointer(Node* out) {
     return true;
 }
 
+// &C::f for a member function f that is not static ([expr.unary.op] 4; Round 31): a constant of type `R (C::*)(P...)`,
+// the address of f, or of a thunk that makes the virtual call when f is virtual (Microsoft's representation for a class
+// with at most one base). The current token is the name. Of several functions of that name the first is taken (own
+// limit: overloads are not chosen by the target type).
+bool Parser::member_function_pointer(int sid, Node* out) {
+    const std::string name = cur().text;
+    next();
+    const StructDef& d = structs[static_cast<size_t>(sid)];
+    const Method* found = nullptr;
+    for (const Method& m : d.methods)
+        if (m.name == name && !m.is_static) {
+            found = &m;
+            break;
+        }
+    if (found == nullptr) {
+        error = "no member for a pointer to member: " + name;
+        return false;
+    }
+    if (found->this_adj != 0 || found->vt_adj != 0 || (found->owner != sid && base_offset(sid, found->owner) > 0)) {
+        error = "a pointer to a member function of a base that is not first is not supported";
+        return false;
+    }
+    Type cls;
+    cls.base = 3;
+    cls.struct_id = sid;
+    std::vector<Type> params = found->params;
+    const Type mt = memfn_type(found->ret, cls, params, false, found->is_const);
+    Node fn_name;
+    fn_name.kind = Node::Name;
+    fn_name.text = found->is_virtual && found->slot >= 0 ? vcall_thunk(sid, *found) : found->qname;
+    *out = Node{};
+    out->kind = Node::Unary;
+    out->type = mt;
+    out->text = "<static-fn>";
+    out->kids.push_back(std::move(fn_name));
+    return true;
+}
+
 // obj.*pm and ptr->*pm ([expr.mptr.oper]): the member at the offset pm holds, as an lvalue of its type:
 // *(T*)((char*)&obj + pm). A null pm is not checked (undefined behaviour in the standard).
 bool Parser::apply_member_pointer(Node object, bool arrow, Node* out) {
     Node pm;
     if (!parse_unary(&pm)) return false;
     Type pt;
+    if (static_type(pm, &pt) && pt.memfn >= 0 && pt.pointers == 1 && !pt.is_ref) {
+        // (obj.*pf)(args) and (p->*pf)(args) (Round 31): the object's address and the function, called by the
+        // postfix '(' that must follow ([expr.mptr.oper] 6) as a call through the pointer with the object first.
+        const MemFnType mf = memfn_types()[static_cast<size_t>(pt.memfn)];
+        Node self = arrow ? std::move(object) : node_addr(std::move(object));
+        Type cp = mf.cls;
+        cp.pointers = 1;
+        class_ptr_convert(&self, cp);
+        *out = Node{};
+        out->kind = Node::Block;
+        out->text = "<memfn-bound>";
+        out->type = pt;
+        out->kids.push_back(std::move(pm));
+        out->kids.push_back(std::move(self));
+        return true;
+    }
     if (!static_type(pm, &pt) || pt.memptr < 0 || pt.pointers != 0) {
         error = "the right side of .* or ->* is not a pointer to member";
         return false;

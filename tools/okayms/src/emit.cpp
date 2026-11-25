@@ -105,10 +105,24 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         return true;
     };
     for (FuncDecl& fn : funcs) {
-        if (!fn.defined || fn.thunk_target.empty()) continue;
+        if (!fn.defined || (fn.thunk_target.empty() && fn.thunk_vslot < 0)) continue;
         // An adjustor thunk (Round 29): sub rcx (or rdx), imm32; jmp target. The register holds the address of a base
         // subobject; the target wants the address of the whole class.
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        if (fn.thunk_vslot >= 0) {
+            // A virtual call thunk (Round 31): mov rax, [rcx + vptr] (or rdx); jmp qword [rax + slot * 8].
+            gen.b(0x48);
+            gen.b(0x8B);
+            gen.b(fn.thunk_rdx ? 0x82 : 0x81);
+            gen.u32(static_cast<uint32_t>(fn.thunk_vptr));
+            gen.b(0xFF);
+            gen.b(0xA0);
+            gen.u32(static_cast<uint32_t>(fn.thunk_vslot * 8));
+            placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start,
+                              false, fn.is_static, {}});
+            if (!add_unwind(UnwindPrologue{})) return false;
+            continue;
+        }
         gen.b(0x48);
         gen.b(0x81);
         gen.b(fn.thunk_rdx ? 0xEA : 0xE9);
@@ -121,7 +135,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         if (!add_unwind(UnwindPrologue{})) return false;
     }
     for (FuncDecl& fn : funcs) {
-        if (!fn.defined || !fn.thunk_target.empty()) continue;
+        if (!fn.defined || !fn.thunk_target.empty() || fn.thunk_vslot >= 0) continue;
         std::map<std::string, int> name_count;
         for (const Local& local : fn.locals) ++name_count[local.name];
         std::set<std::string> shadowed;

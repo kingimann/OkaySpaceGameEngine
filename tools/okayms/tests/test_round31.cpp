@@ -329,6 +329,81 @@ static void r31_memptr_names(Tally& tally) {
     CHECK(tally, okayms_test::has_symbol(compiled.value.object, "?takec@@YAHPERS@@H@Z"));
 }
 
+// Pointers to member functions ([dcl.mptr], [expr.unary.op] 4, [expr.mptr.oper] 6; Round 31), as Physics2D.cpp,
+// Physics3D.cpp and Scene.cpp use them: `void (Component::*fn)(const Collision2D&)` as a parameter, `&Component::OnHit`
+// of a virtual function (the call reaches the derived class's override through a thunk), a non-virtual one, a const
+// one with a result, `(c->*fn)(info)` and `(obj.*fn)(...)`, null, comparison, a lambda parameter and a local.
+static void r31_memfn(Tally& tally) {
+    std::printf("r31_memfn\n");
+    okayms_test::run_both(kRun, tally, "memfn", std::string(kAlloc) + R"OKMS(
+struct Collision { int force; };
+struct Component {
+  int hits = 0;
+  int awake = 0;
+  virtual ~Component() {}
+  virtual void OnHit(const Collision& c) { hits += c.force; }
+  virtual void Awake() { awake += 1; }
+  void Plain(int k) { hits += k * 1000; }
+  int Twice(int k) const { return k * 2 + hits; }
+};
+struct Player : Component {
+  int special = 0;
+  void OnHit(const Collision& c) override { special += c.force * 10; }
+  void Awake() override { awake += 100; }
+};
+void Dispatch(Component** list, int n, void (Component::*fn)(const Collision&), const Collision& info) {
+  for (int i = 0; i < n; ++i) {
+    Component* c = list[i];
+    if (c) (c->*fn)(info);
+  }
+}
+int entry(void) {
+  Component base;
+  Player player;
+  Component* list[3] = {&base, nullptr, &player};
+  Collision hit{3};
+  Dispatch(list, 3, &Component::OnHit, hit);
+  CK(1, base.hits == 3 && player.hits == 0 && player.special == 30);
+  void (Component::*plain)(int) = &Component::Plain;
+  (base.*plain)(2);
+  (player.*plain)(1);
+  CK(2, base.hits == 2003 && player.hits == 1000);
+  int (Component::*twice)(int) const = &Component::Twice;
+  const Component& cref = base;
+  CK(3, (cref.*twice)(5) == 2013 && (list[2]->*twice)(1) == 1002);
+  auto send = [](Component* c, void (Component::*fn)()) { (c->*fn)(); };
+  send(&base, &Component::Awake);
+  send(&player, &Component::Awake);
+  CK(4, base.awake == 1 && player.awake == 100);
+  void (Component::*none)() = nullptr;
+  void (Component::*awake)() = &Component::Awake;
+  CK(5, !none && none == nullptr && awake != nullptr && awake == &Component::Awake && awake != none);
+  if (awake) (player.*awake)();
+  CK(6, player.awake == 200);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// The decorated name of a function taking a pointer to a member function (P8, the class, E, A or B for the this
+// qualifier, A, the result, the parameters, Z).
+static void r31_memfn_names(Tally& tally) {
+    std::printf("r31_memfn_names\n");
+    okayms::CompileInput in;
+    in.source = "struct S { int a; void f(int) {} int g() const { return a; } };\n"
+                "int take(void (S::*p)(int)) { return p ? 1 : 0; }\n"
+                "int take(int (S::*p)() const) { return p ? 2 : 0; }\n"
+                "int take(int v) { return v; }\n";
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, compiled.ok());
+    if (!compiled.ok()) {
+        std::fprintf(stderr, "  %s\n", compiled.error.c_str());
+        return;
+    }
+    CHECK(tally, okayms_test::has_symbol(compiled.value.object, "?take@@YAHP8S@@EAAXH@Z@Z"));
+    CHECK(tally, okayms_test::has_symbol(compiled.value.object, "?take@@YAHP8S@@EBAHXZ@Z"));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -341,5 +416,7 @@ int main(int argc, char** argv) {
     r31_pieces(tally);
     r31_memptr_repr(tally);
     r31_memptr_names(tally);
-    return tally.finish(8);
+    r31_memfn(tally);
+    r31_memfn_names(tally);
+    return tally.finish(10);
 }

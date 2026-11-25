@@ -63,6 +63,9 @@ inline std::vector<std::string>& enum_names() {
 struct Type;
 // The pointer-to-member types read so far (Type::memptr indexes it): the class, then the member's type.
 std::vector<std::pair<Type, Type>>& memptr_types();
+// The pointer-to-member-function types read so far (Type::memfn indexes it; Round 31), for their decorated names.
+struct MemFnType;
+std::vector<MemFnType>& memfn_types();
 
 struct Type {
     int pointers = 0;
@@ -104,6 +107,11 @@ struct Type {
     // int: the member's offset in C, and -1 for a null member pointer (Microsoft's representation for a class without
     // virtual bases, from Round 31; Round 30 kept the offset plus one and 0 for null).
     int memptr = -1;
+    // A pointer to a member function ([dcl.mptr], `R (C::*)(P...)`; Round 31): its index in memfn_types(), or -1. The
+    // type is also a function pointer (pointers 1, func_id) whose first parameter is `C*`: the value is the address of
+    // the function, or of a thunk that makes the virtual call (Microsoft's representation for a class with one base or
+    // none), and 0 for null.
+    int memfn = -1;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -128,6 +136,13 @@ struct FuncType {
     Type ret{};
     std::vector<Type> params;
     bool vararg = false;
+};
+
+struct MemFnType {
+    Type cls{};
+    Type ret{};
+    std::vector<Type> params;  // without the object parameter
+    bool is_const = false;     // R (C::*)(P...) const
 };
 
 struct Field {
@@ -412,6 +427,10 @@ struct FuncDecl {
     std::string thunk_target;
     int thunk_adj = 0;
     bool thunk_rdx = false;
+    // A virtual call thunk (Round 31, the value of &C::f for a virtual f): the code reads the table pointer at
+    // thunk_vptr in the object (rcx, or rdx as above) and jumps to the function in slot thunk_vslot. -1: not one.
+    int thunk_vslot = -1;
+    int thunk_vptr = 0;
 };
 
 // Where the lines of the preprocessed text came from, for the line table.

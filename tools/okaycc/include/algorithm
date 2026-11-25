@@ -1,7 +1,8 @@
 // <algorithm> for okay-cc (ISO/IEC 14882 [algorithms]). Our own header. Iterators are pointers.
-// One function template per name (this subset does not overload function templates), so min and
-// max take no comparison and sort and stable_sort always take one.
+// Function templates of one name are told apart by their number of parameters only, so sort and
+// stable_sort take an optional comparison but min and max take none.
 #pragma once
+#include <utility>
 namespace std {
 template <typename T>
 const T &min(const T &a, const T &b) {
@@ -66,5 +67,136 @@ void stable_sort(It first, It last, Less less) {
 template <typename It, typename Less>
 void sort(It first, It last, Less less) {
     stable_sort(first, last, less);
+}
+template <typename It>
+void stable_sort(It first, It last) {
+    if (first == last) return;
+    for (It i = first + 1; i != last; ++i) {
+        It j = i;
+        while (j != first && *j < *(j - 1)) {
+            swap(*j, *(j - 1));
+            --j;
+        }
+    }
+}
+template <typename It>
+void sort(It first, It last) {
+    stable_sort(first, last);
+}
+template <typename It, typename V>
+long count(It first, It last, const V &value) {
+    long n = 0;
+    for (; first != last; ++first)
+        if (*first == value) ++n;
+    return n;
+}
+template <typename It, typename Pred>
+bool any_of(It first, It last, Pred pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return true;
+    return false;
+}
+template <typename It, typename Pred>
+bool all_of(It first, It last, Pred pred) {
+    for (; first != last; ++first)
+        if (!pred(*first)) return false;
+    return true;
+}
+template <typename It, typename Pred>
+bool none_of(It first, It last, Pred pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return false;
+    return true;
+}
+// [alg.remove]: the kept elements move to the front in order; the new end is returned.
+template <typename It, typename Pred>
+It remove_if(It first, It last, Pred pred) {
+    It out = first;
+    for (; first != last; ++first)
+        if (!pred(*first)) {
+            if (out != first) *out = std::move(*first);
+            ++out;
+        }
+    return out;
+}
+template <typename It, typename V>
+It remove(It first, It last, const V &value) {
+    It out = first;
+    for (; first != last; ++first)
+        if (!(*first == value)) {
+            if (out != first) *out = std::move(*first);
+            ++out;
+        }
+    return out;
+}
+// [alg.unique]: of each run of equal elements only the first is kept.
+template <typename It>
+It unique(It first, It last) {
+    if (first == last) return last;
+    It out = first;
+    for (It p = first + 1; p != last; ++p)
+        if (!(*out == *p)) {
+            ++out;
+            if (out != p) *out = std::move(*p);
+        }
+    return out + 1;
+}
+template <typename In, typename Out>
+Out copy(In first, In last, Out out) {
+    for (; first != last; ++first, ++out) *out = *first;
+    return out;
+}
+template <typename It>
+It min_element(It first, It last) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (*first < *best) best = first;
+    return best;
+}
+template <typename It>
+It max_element(It first, It last) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (*best < *first) best = first;
+    return best;
+}
+// [lower.bound], [upper.bound]: binary search in a sorted range.
+template <typename It, typename V>
+It lower_bound(It first, It last, const V &value) {
+    long n = last - first;
+    while (n > 0) {
+        long half = n / 2;
+        It mid = first + half;
+        if (*mid < value) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename V>
+It upper_bound(It first, It last, const V &value) {
+    long n = last - first;
+    while (n > 0) {
+        long half = n / 2;
+        It mid = first + half;
+        if (!(value < *mid)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename T>
+const T &clamp(const T &v, const T &lo, const T &hi) {
+    if (v < lo) return lo;
+    if (hi < v) return hi;
+    return v;
 }
 }  // namespace std

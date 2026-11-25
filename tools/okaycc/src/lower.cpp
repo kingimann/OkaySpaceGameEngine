@@ -2417,6 +2417,7 @@ private:
     // dup-allow: lowers the syntax tree to IR, not a string helper (the lint matches the word "lower")
     void lowerLocal(Decl& d) {
         if (!d.type) return;
+        inferBound(d);  // char a[] = "text", int a[] = {1, 2}: the length comes from the initializer
         if (d.isStatic) {
             std::string gname = ".Ls" + std::to_string(strN_++) + "_" + d.name;
             Global g;
@@ -2429,6 +2430,9 @@ private:
                 std::int64_t n = static_cast<std::int64_t>(d.init->ival);
                 if (d.type->kind == Type::Kind::Bool) n = n != 0;
                 putAt(g.bytes, 0, n, sz > 8 ? 8 : sz);
+            } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
+                fillInit(d.type.get(), d.init.get(), g.bytes, 0);  // static char a[] = "text"
+                g.bytes.resize(static_cast<std::size_t>(sz));
             }
             mod_.globals.push_back(std::move(g));
             Sym s;
@@ -2459,6 +2463,20 @@ private:
                 // Elements and fields without an initializer are zero (ISO C 6.7.9p21).
                 zeroMem(Operand::vreg(addr), bytes);
                 initLocalBrace(Operand::vreg(addr), d.type.get(), *d.init, 0);
+            } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
+                // char a[N] = "text" (ISO C 6.7.9p14, [dcl.init.string]): the characters, the
+                // terminating zero if it fits, and zeros after; stored 8 bytes at a time.
+                std::vector<unsigned char> img(static_cast<std::size_t>(bytes), 0);
+                for (std::size_t i = 0; i < d.init->text.size() && i < img.size(); ++i)
+                    img[i] = static_cast<unsigned char>(d.init->text[i]);
+                int off = 0;
+                while (off < bytes) {
+                    int n = bytes - off >= 8 ? 8 : 1;
+                    std::uint64_t v = 0;
+                    for (int k = n - 1; k >= 0; --k) v = (v << 8) | img[static_cast<std::size_t>(off + k)];
+                    storeBits(addAddr(Operand::vreg(addr), off), Operand::number(static_cast<std::int64_t>(v)), n);
+                    off += n;
+                }
             } else if (d.init && d.type->kind == Type::Kind::Struct) {
                 // A struct initialized from another struct or from a call: copy the bytes.
                 Sym* me = find(d.name);

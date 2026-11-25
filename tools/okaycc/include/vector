@@ -156,6 +156,16 @@ public:
         pop_back();
         return pos;
     }
+    // Remove [first, last): the elements after it move down, the last ones are destroyed.
+    T *erase(T *first, T *last) {
+        if (first == last) return first;
+        T *end = data_ + size_;
+        T *to = first;
+        for (T *p = last; p != end; ++p, ++to) *to = std::move(*p);
+        unsigned long gone = (unsigned long)(last - first);
+        for (unsigned long i = 0; i < gone; ++i) pop_back();
+        return first;
+    }
     T *insert(T *pos, const T &v) {
         T keep = v;  // v may be an element of this vector: copy it before anything moves or is freed
         unsigned long at = (unsigned long)(pos - data_);

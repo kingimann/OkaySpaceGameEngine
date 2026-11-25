@@ -5000,7 +5000,9 @@ private:
             e->kids.push_back(std::move(inner));
             return e;
         }
-        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text)) {
+        // A function template's name is a template only where it is called or given template
+        // arguments; `bool forward` or `count = 0` is an ordinary name (a variable of that name).
+        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text) && (nextIs("(") || nextIs("<"))) {
             std::string name = cur().text;
             Token at = cur();
             TDecl td = ftmpl_[name];

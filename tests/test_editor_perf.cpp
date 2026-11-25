@@ -160,5 +160,30 @@ int main() {
         CHECK(full.Line(slow, 900.0, 2, "").find("the log is full") != std::string::npos);
         CHECK(full.Line(slow, 900.0, 3, "").empty() && full.written == 2);
     }
+    RUN_SUITE("the once-a-minute FPS summary (a steady low frame rate shows up, not only frames over 250 ms)");
+    {
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom(nullptr), 60.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("0"), 0.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("1"), 5.0, 1e-9);
+        CHECK_NEAR(perf::FpsSummary::PeriodFrom("x"), 60.0, 1e-9);
+        perf::FpsSummary sum;
+        Profiler::Frame f = MakeFrame(100.0);
+        Add(f, "UI.Diagnostics", 60.0); Add(f, "Render3D", 20.0); Add(f, "Present", 5.0); Add(f, "UI.Hierarchy", 1.0);
+        std::string line;
+        int lines = 0;
+        for (int i = 0; i < 1200; ++i) {   // 100 ms frames (10 FPS) for 120 s: two lines
+            const std::string l = sum.Add(f, 100.0);
+            if (!l.empty()) { ++lines; line = l; }
+        }
+        CHECK(lines == 2);
+        CHECK(line.find("600 frames in 60 s") != std::string::npos);
+        CHECK(line.find("average 10.0 FPS") != std::string::npos);
+        CHECK(line.find("top scopes per frame: UI.Diagnostics 60.0 ms, Render3D 20.0 ms, Present 5.0 ms") != std::string::npos);
+        CHECK(line.find("UI.Hierarchy") == std::string::npos);
+        perf::FpsSummary off; off.periodSeconds = 0.0;
+        bool any = false;
+        for (int i = 0; i < 2000; ++i) any = any || !off.Add(f, 100.0).empty();
+        CHECK(!any);
+    }
     TEST_MAIN_RESULT();
 }

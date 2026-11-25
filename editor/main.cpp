@@ -138,6 +138,7 @@
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "QuitPromptState.hpp"          // the quit prompt's per-frame state (ImGui-free, tested)
 #include "LauncherWatch.hpp"            // close (through the quit prompt) when the launcher that started us has gone
+#include "HangWatchdog.hpp"             // a stuck main loop: okay_hang.txt, and on Windows "Wait / Close" (editor/HangWatchdog.hpp)
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
@@ -2038,6 +2039,21 @@ bool UseOkayUIInspector() {   // okayuibackend::InspectorOn; the variables are r
 // editor (okay_update.log's folder), naming the part of the frame that took the time and what was switched on (editor/EditorPerf.hpp
 // SlowFrameLog). The first few lines go to the Console too. For freezes someone reports from a release: send that file.
 int OkayUIRegionOverflow();
+static std::filesystem::path PerfLogPath() {
+    std::filesystem::path self = okay::restart::CurrentExecutable();
+    if (self.empty()) { const std::string narrow = updater::SelfPath(); if (!narrow.empty()) self = std::filesystem::path(narrow); }
+    return self.empty() ? std::filesystem::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log";
+}
+// Once a minute (OKAY_FPS_SUMMARY_S; 0 = off): the frame rate and where the frames went, so a steady low FPS shows up in the log too
+// (editor/EditorPerf.hpp FpsSummary). Reads the frame the profiler just closed.
+static void NoteFpsSummary(double frameMs) {
+    static okay::editor::perf::FpsSummary s_sum = [] {
+        okay::editor::perf::FpsSummary f; f.periodSeconds = okay::editor::perf::FpsSummary::PeriodFrom(std::getenv("OKAY_FPS_SUMMARY_S")); return f; }();
+    const okay::Profiler& pr = okay::Prof();
+    const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
+    const std::string line = s_sum.Add(f, frameMs);
+    if (!line.empty()) okay::restart::AppendLog(PerfLogPath(), line);
+}
 static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs, bool playing) {
     std::string ctx = playing ? "play" : "edit";
     ctx += UseOkayUIBackend() ? ", OkayUI screens" : ", Dear ImGui";
@@ -2054,9 +2070,7 @@ static void WriteSlowFrame(okay::editor::perf::SlowFrameLog& log, double frameMs
     const okay::Profiler::Frame& f = pr.paused || pr.Count() == 0 ? okay::Profiler::Frame() : pr.FrameAt(pr.Count() - 1);
     const std::string line = log.Line(f, frameMs, (long long)ImGui::GetFrameCount(), ctx);
     if (line.empty()) return;
-    std::filesystem::path self = okay::restart::CurrentExecutable();
-    if (self.empty()) { const std::string narrow = updater::SelfPath(); if (!narrow.empty()) self = std::filesystem::path(narrow); }
-    okay::restart::AppendLog(self.empty() ? std::filesystem::path("okay_editor_perf.log") : self.parent_path() / "okay_editor_perf.log", line);
+    okay::restart::AppendLog(PerfLogPath(), line);
     // The Console gets the first five after start-up (the first frames load fonts and the scene and are always slow; the file has them).
     static int s_shown = 0;
     if (ImGui::GetFrameCount() > 30 && s_shown < 5) { ++s_shown; ConsoleLog("[perf] " + line + (s_shown == 5 ? " (more in okay_editor_perf.log)" : ""), 1); }
@@ -8714,7 +8728,7 @@ void DrawProject(EditorState& ed) {
         }
     }
     g_projectSelected = selected;
-    if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
+    if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) { OKAY_BREADCRUMB("Project open: indexing the assets"); pb.Sync(); }   // first look at the project: index the assets once
     pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
     // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
     // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
@@ -16241,8 +16255,10 @@ void DrawNewProjectPopup(EditorState& ed) {
         g_openScenePath.clear();
         // The project's version is asked about first (File > Open, the chooser, the launcher: they all arrive here); nothing in the
         // project is read for writing until that is answered.
+        OKAY_BREADCRUMB("Project open: version check");
         RunAfterProjectCheck(ed, p, [&ed, p] {
             std::string err;
+            OKAY_BREADCRUMB("Project open: loading the scene");
             if (ed.Load(p, &err)) {
                 AddRecent(p);
                 // Root the Project panel at the project folder (the scene's dir, or its parent when the scene lives in <root>/Assets).
@@ -53949,6 +53965,8 @@ int main(int argc, char** argv) {
     auto shutDown = [&]() {
         if (shutDownDone) return;
         shutDownDone = true;
+        OKAY_BREADCRUMB("Shutdown");   // the hang watchdog keeps watching: a close that hangs is reported too (stopped at the end)
+        okaycrash::ctx::NextFrame();
         if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
         if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
         ImGui::DestroyContext();
@@ -53975,6 +53993,7 @@ int main(int argc, char** argv) {
         okay::pb::DestroyRenderer(renderer);   // its painter owns it
         winSeam.reset();   // destroys the main window (after its renderer)
         sdlSeam->Shutdown();
+        okay::editor::hang::Stop();
     };
 
     bool running = true;
@@ -54017,6 +54036,7 @@ int main(int argc, char** argv) {
     testHooks.Start(sdlSeam, winSeam->Id());
     int testExitCode = 0;
 #endif
+    okay::editor::hang::Start(OKAY_ENGINE_VERSION);   // from here a main loop that stops for OKAY_HANG_REPORT_S (5 s) is reported
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
@@ -55710,6 +55730,7 @@ int main(int argc, char** argv) {
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
             if (frameMs >= s_slowLog.thresholdMs && s_slowLog.thresholdMs > 0.0) WriteSlowFrame(s_slowLog, frameMs, ed.isPlaying());
+            NoteFpsSummary(frameMs);
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;
                 const auto& fr = okay::Prof().Displayed();

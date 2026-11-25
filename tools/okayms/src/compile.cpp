@@ -70,6 +70,19 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         Type int32;
         int32.base = 1;
         parser.typedefs["__int32"] = int32;
+        // char16_t and char32_t ([basic.fundamental] 9) hold UTF-16 and UTF-32 code units: here an unsigned 16-bit and
+        // an unsigned 32-bit integer. wchar_t is 16 bits on Windows (the Microsoft x64 ABI). Own simplification: they are
+        // not types of their own for overloading, and their decorated names are those of unsigned short and unsigned
+        // int (MSVC writes _S, _U and _W).
+        Type u16;
+        u16.base = 4;
+        u16.is_unsigned = true;
+        parser.typedefs["char16_t"] = u16;
+        parser.typedefs["wchar_t"] = u16;
+        Type u32;
+        u32.base = 1;
+        u32.is_unsigned = true;
+        parser.typedefs["char32_t"] = u32;
     }
     if (!parser.parse()) {
         const size_t pos = std::min(parser.at, parser.tokens.size() - 1);

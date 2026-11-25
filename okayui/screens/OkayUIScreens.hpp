@@ -41,6 +41,14 @@ struct WhatsNewModel {
     bool restartNeeded = false;
     std::vector<Release> releases;       // newest first; the first one carries the "Latest" pill
     bool placeholder = false;            // `releases` is the built-in highlights, not fetched notes: say so under them
+    // The two sections, "Releases" and "Test builds" (the launcher turns them on; off, the page is the releases alone, as before).
+    bool showSections = false;
+    int section = 0;                     // 0 Releases, 1 Test builds
+    struct TestBuild { std::string version, date, branch, note; bool installed = false; };
+    enum class TestView { Off, Loading, Failed, Empty, List };
+    TestView testView = TestView::Off;
+    std::vector<TestBuild> testBuilds;   // newest first
+    std::vector<std::string> testNotes;  // the newest test build's notes (dev/NOTES-DEV.txt)
 };
 
 /// What the person did this frame, and where the controls are (screen pixels, for the host and for tests).
@@ -51,6 +59,10 @@ struct WhatsNewResult {
     OkayUI::Rect updateButton;           // whichever of the three update buttons is showing
     OkayUI::Rect firstEarlierHeader;     // the first "Earlier releases" header, zero when there are none
     bool updateButtonEnabled = true;     // false while a check or download runs
+    int sectionClicked = -1;             // 0 / 1: the person picked "Releases" / "Test builds"
+    bool openUpdateSettings = false;     // "Open update settings" (test builds are off)
+    bool checkAgain = false;             // "Check again" (the test builds' list could not be read)
+    OkayUI::Rect sectionButtons[2];      // where the two section buttons are
 };
 
 /// The page's title line, shown above the content. Kept as text so the host and the tests agree on it.

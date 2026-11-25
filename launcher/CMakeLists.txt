@@ -59,6 +59,10 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself
+    CommandLine.cpp       # the Command line page's rules: words, Tab completion, history, running okay (no ImGui; tested by launcher_cli)
+    CommandLineUI.cpp     # the Command line page and the "Open command line" action
+    ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp   # okay's own command list (Tab completion), std only
+    ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp        # okay's one place that starts a program (no shell)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
@@ -84,6 +88,7 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # only the objects the launcher actually uses.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
+    ${CMAKE_SOURCE_DIR}/tools/okay-cli
     ${CMAKE_SOURCE_DIR}/engine/include)
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 # The opt-in OkayUI backend (Settings > Appearance > UI backend): the What's New page has an OkayUI port. Dear ImGui stays the

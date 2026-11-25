@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "CommandTable.hpp"
+
 namespace okaycli {
 
 /// Where the CLI's words go. Tests collect them; the program prints them.
@@ -47,9 +49,7 @@ int SceneMergeDriver(const std::string& basePath, const std::string& oursPath, c
 /// git's diff driver for scenes: `path old-file old-hex old-mode new-file new-hex new-mode` (or `old new`).
 int SceneDiffDriver(const std::vector<std::string>& args, const Io& io);
 
-/// The command names, and a command's sub-command names (none for a command without them), as the help lists them.
-std::vector<std::string> CommandNames();
-std::vector<std::string> SubCommandNames(const std::string& command);
+/// CommandNames(), SubCommandNames() and the tables behind them: CommandTable.hpp.
 /// The Tab-completion script for "bash" or "powershell" ("" for another shell).
 std::string CompletionScript(const std::string& shell);
 

@@ -442,21 +442,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
     if (goBack) { ClosePublicProfile(); s_edit = false; return out; }
 
     // Centered empty state (signed out / not found).
-    auto emptyState = [&](int icon, const char* title, const char* sub) {
-        float aw = ImGui::GetContentRegionAvail().x;
-        ImGui::Dummy(ImVec2(0, 50));
-        ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
-        DrawNavIcon(dl, icon, c, cDim);
-        ImGui::Dummy(ImVec2(0, 70));
-        for (int k = 0; k < 2; ++k) {
-            const char* s = k ? sub : title;
-            float tw = ImGui::CalcTextSize(s).x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
-            if (k) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
-        }
-    };
+    auto emptyState = [&](int icon, const char* title, const char* sub) { EmptyState(icon, title, sub, 50.0f); };
     if (!kDemo && !account.IsLoggedIn()) {
         emptyState(3, "Sign in to view profiles", "Profiles, showcases and friends need an OkaySpace account.");
         return out;

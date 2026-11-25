@@ -177,6 +177,11 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             bool any = false;
             while (j < text.size()) {
                 const char d = text[j];
+                // 50'000'000: a ' between digits only separates them ([lex.icon] 1, C++14).
+                if (d == '\'' && any && j + 1 < text.size() && std::isxdigit(static_cast<unsigned char>(text[j + 1]))) {
+                    ++j;
+                    continue;
+                }
                 int digit = -1;
                 if (d >= '0' && d <= '9') digit = d - '0';
                 else if (base == 16 && d >= 'a' && d <= 'f') digit = d - 'a' + 10;
@@ -264,7 +269,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         if (c == '\'') {
             ++i;
             if (i >= text.size()) {
-                *error = "unterminated character";
+                *error = "unterminated character at line " + std::to_string(line);
                 return {};
             }
             unsigned char value = 0;
@@ -279,7 +284,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 ++i;
             }
             if (i >= text.size() || text[i] != '\'') {
-                *error = "unterminated character";
+                *error = "unterminated character at line " + std::to_string(line);
                 return {};
             }
             ++i;

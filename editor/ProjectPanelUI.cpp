@@ -2,8 +2,13 @@
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
 #include "okay/Render/TextureAsset.hpp"       // TextureSettings (texture-only import keys), textures::Find for the loaded size
 #include "okay/Texture/Export.hpp"             // okay::tex: Make mipmaps / compress (docs/rendering/own_texture_library.md)
+#include "EditorPanelModels.hpp"               // the import settings panel's model (okaypanels::Import*)
+#include "OkayPanels.hpp"                      // oked::DrawImportSettingsOkayUI (its host in the Dear ImGui editor)
 
 #include <imgui.h>
+#ifdef OKAY_IMGUI_IS_OKAYUI
+#include "OkayUIEditorPanels.hpp"              // okayuiscreens::DrawImportSettings: drawn at the cursor where ImGui is OkayUI
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -455,10 +460,11 @@ void DrawDialogs() {
     }
 }
 
-// ---- import settings ------------------------------------------------------------------------------
-// Only settings that an importer really reads are shown. A texture's largest side, a model's scale and normals,
-// and an audio file's loading and channel mix. Quality is not shown: audio is not re-encoded, so that number
-// cannot change the sound (it stays in the file so an older settings file still round-trips).
+// ---- import settings ------------------------------------------------------------------------------------------------
+// Only settings that an importer really reads are shown. A texture's largest side, kind, filter, wrap, mipmaps and compression, a
+// model's scale and normals, and an audio file's loading and channel mix. Quality is not shown: audio is not re-encoded, so that
+// number cannot change the sound (it stays in the file so an older settings file still round-trips). Drawn by OkayUI only
+// (okayuiscreens::DrawImportSettings, hosted by editor/OkayPanels.cpp); the rules are here.
 
 namespace {
 struct ImportEdit {
@@ -467,30 +473,107 @@ struct ImportEdit {
     bool loaded = false;
 };
 ImportEdit g_imp;
+okaypanels::ImportSettingsState g_impState;   // the failure message and the texture tools' choices (shared by both places it shows)
+std::string g_texMsg, g_texMsgFor;            // what the last "Generate mipmaps / compress" said, and for which file
 
-// A grey note under a setting, wrapped at the panel's edge (a plain TextDisabled line ran off the Inspector's right
-// side: "Read while it plays keeps a long file in a small fixed amount" with the rest cut off).
-void Hint(const char* text) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", text);
-    ImGui::PopStyleColor();
+// The texture-only keys (anisotropy, normal map, mip filter, compression format) live in the same texture block of the .okaymeta,
+// kept by ImportSettings as extra keys.
+okay::TextureSettings TextureExtras(const okay::ImportSettings& s) {
+    okay::TextureSettings tx;
+    tx.anisotropy = 8;
+    std::vector<std::pair<std::string, std::string>> ex(s.extra.begin(), s.extra.end());
+    okay::ApplyTextureExtraKeys(tx, ex);
+    return tx;
 }
 
-bool Combo(const char* label, int& value, std::initializer_list<const char*> items) {
-    bool changed = false;
-    std::vector<const char*> v(items);
-    // As wide as its longest choice (a fixed 160 px showed "Load the whole fi"), but never wider than the panel.
-    float widest = 0.0f;
-    for (const char* it : v) widest = std::max(widest, ImGui::CalcTextSize(it).x);
-    const float want = widest + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
-    const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(label, nullptr, true).x - ImGui::GetStyle().ItemInnerSpacing.x;
-    ImGui::SetNextItemWidth(std::max(160.0f, std::min(want, room)));
-    if (ImGui::BeginCombo(label, value >= 0 && value < (int)v.size() ? v[value] : "")) {
-        for (int i = 0; i < (int)v.size(); ++i)
-            if (ImGui::Selectable(v[i], value == i)) { value = i; changed = true; }
-        ImGui::EndCombo();
+// The panel's values (okaypanels::ImportFields) from the engine's settings, and back.
+okaypanels::ImportFields FieldsOf(const okay::ImportSettings& s) {
+    namespace ok = okay;
+    okaypanels::ImportFields f;
+    switch (s.kind) {
+        case ok::AssetType::Texture: {
+            const ok::TextureSettings tx = TextureExtras(s);
+            f.kind = okaypanels::ImportTexture;
+            f.maxSize = s.texture.maxSize;
+            f.sRGB = s.texture.sRGB; f.normalMap = tx.normalMap;
+            f.filter = static_cast<int>(s.texture.filter); f.anisotropy = tx.anisotropy;
+            f.wrap = static_cast<int>(s.texture.wrap);
+            f.mipmaps = s.texture.mipmaps; f.mipFilter = tx.mipFilter;
+            f.compress = s.texture.compress; f.compression = tx.compression;
+            break;
+        }
+        case ok::AssetType::Model:
+            f.kind = okaypanels::ImportModel;
+            f.scale = s.model.scale; f.normals = static_cast<int>(s.model.normals);
+            f.smoothingAngle = s.model.smoothingAngle; f.importAnimations = s.model.importAnimations;
+            break;
+        case ok::AssetType::Audio:
+            f.kind = okaypanels::ImportAudio;
+            f.loadMode = s.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
+            f.forceMono = s.audio.forceMono;
+            break;
+        default: break;
     }
-    return changed;
+    return f;
+}
+
+void WriteFields(const okaypanels::ImportFields& f, okay::ImportSettings& e) {
+    namespace ok = okay;
+    switch (e.kind) {
+        case ok::AssetType::Texture: {
+            ok::TextureSettings tx = TextureExtras(e);
+            const ok::TextureSettings txWas = tx;
+            e.texture.maxSize = f.maxSize;
+            e.texture.sRGB = f.sRGB; tx.normalMap = f.normalMap;
+            e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(std::clamp(f.filter, 0, 2)); tx.anisotropy = f.anisotropy;
+            e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(std::clamp(f.wrap, 0, 2));
+            e.texture.mipmaps = f.mipmaps; tx.mipFilter = f.mipFilter;
+            e.texture.compress = f.compress; tx.compression = f.compression;
+            if (tx != txWas || e.extra.count("anisotropy") || tx.anisotropy != 8 || tx.normalMap || tx.mipFilter || tx.compression)
+                for (const auto& kv : ok::TextureExtraKeys(tx)) e.extra[kv.first] = kv.second;
+            break;
+        }
+        case ok::AssetType::Model:
+            e.model.scale = f.scale;
+            e.model.normals = static_cast<ok::ModelImportSettings::Normals>(std::clamp(f.normals, 0, 2));
+            e.model.smoothingAngle = f.smoothingAngle; e.model.importAnimations = f.importAnimations;
+            break;
+        case ok::AssetType::Audio:
+            e.audio.loadMode = f.loadMode == 1 ? ok::AudioImportSettings::LoadMode::Stream : ok::AudioImportSettings::LoadMode::Decode;
+            e.audio.forceMono = f.forceMono;
+            break;
+        default: break;
+    }
+}
+
+// Texture tools (our own library, okay::tex): write a .dds with mipmaps, uncompressed or block compressed, next to the picture. It
+// does not change the picture or the import settings.
+void GenerateDds(const std::string& assetPath, const okaypanels::ImportSettingsState& st) {
+    okay::tex::TextureBuildOptions bo;
+    bo.compress = st.ddsOut == 1;
+    bo.mip.filter = st.ddsFilter == 0 ? okay::tex::MipFilter::Box : st.ddsFilter == 1 ? okay::tex::MipFilter::Lanczos3 : okay::tex::MipFilter::Kaiser;
+    bo.mip.srgb = st.ddsColour && !st.ddsNormal;
+    bo.mip.normalMap = st.ddsNormal;
+    bo.mip.alphaCoverage = st.ddsCutout;
+    std::string out, terr;
+    if (okay::tex::BuildDdsFile(assetPath, &out, bo, &terr)) g_texMsg = "Wrote " + out;
+    else g_texMsg = terr.empty() ? "Could not write the file." : terr;
+    g_texMsgFor = assetPath;
+}
+
+// The body, drawn by OkayUI. Where ImGui is OkayUI's compatibility layer (the editor on OkayUI, window mode's copy of this file, the
+// port tests) the body is drawn straight at the cursor; in the Dear ImGui editor it is hosted in Dear ImGui's draw order.
+bool DrawImportBody(okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsIntent& intent) {
+#ifdef OKAY_IMGUI_IS_OKAYUI
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    const okayuiscreens::ImportSettingsResult r = okayuiscreens::DrawImportSettings(model, g_impState, p.x, p.y, w, 20000.0f);
+    intent = r.intent;
+    ImGui::Dummy(ImVec2(w, (r.contentHeight > 1.0f && r.contentHeight < 20000.0f) ? r.contentHeight : 8.0f));
+    return true;
+#else
+    return oked::DrawImportSettingsOkayUI("##okayui_import", model, g_impState, intent);
+#endif
 }
 } // namespace
 
@@ -516,144 +599,30 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
         g_imp.loaded = true;
     }
     ok::ImportSettings& e = g_imp.edit;
-    ImGui::TextDisabled("IMPORT SETTINGS");
-    if (e.fromNewerVersion) {
-        Hint("Made by a newer editor. Shown, but not changed here.");
-        return false;
+    if (!e.fromNewerVersion && e.kind != ok::AssetType::Texture && e.kind != ok::AssetType::Model && e.kind != ok::AssetType::Audio) return false;
+    okaypanels::ImportFields fields = FieldsOf(e);
+    okaypanels::ImportSettingsModel model;
+    model.edit = &fields;
+    model.original = FieldsOf(g_imp.original);
+    model.newer = e.fromNewerVersion;
+    model.showSampler = kShowTextureSamplerSettings;
+    if (e.kind == ok::AssetType::Texture) {
+        // What is loaded now: the shared texture asset every renderer draws from.
+        if (ok::TextureHandle h = ok::textures::Find(assetPath)) {
+            char line[160];
+            std::snprintf(line, sizeof(line), "Loaded: %d x %d, %d mip level%s, %.2f MB, %ld handle%s", h->Width(), h->Height(),
+                          h->MipLevels(), h->MipLevels() == 1 ? "" : "s", h->Bytes() / 1048576.0, h.UseCount() - 1, h.UseCount() == 2 ? "" : "s");
+            model.loadedNote = line;
+        }
+        if (g_texMsgFor == assetPath) model.toolMessage = g_texMsg;
     }
-    switch (e.kind) {
-        case ok::AssetType::Texture: {
-            static const int sizes[] = {0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
-            int si = 7;
-            for (int i = 0; i < 11; ++i) if (sizes[i] == e.texture.maxSize) si = i;
-            if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
-            Hint("Bigger pictures are made smaller when loaded.");
-            if (kShowTextureSamplerSettings) {
-            // The texture-only keys (anisotropy, normal map, mip filter, compression format) live in the same texture
-            // block of the .okaymeta, kept by ImportSettings as extra keys.
-            ok::TextureSettings tx;
-            tx.anisotropy = 8;
-            {
-                std::vector<std::pair<std::string, std::string>> ex(e.extra.begin(), e.extra.end());
-                ok::ApplyTextureExtraKeys(tx, ex);
-            }
-            const ok::TextureSettings txWas = tx;
-            int kind = tx.normalMap ? 1 : e.texture.sRGB ? 0 : 2;
-            if (Combo("Kind", kind, {"Colour (sRGB)", "Normal map", "Data (linear: masks, roughness)"})) {
-                tx.normalMap = kind == 1;
-                e.texture.sRGB = kind == 0;
-            }
-            Hint("Colour pictures are filtered in linear light. Normal maps stay unit length in every mip.");
-            // Filter: Point / Bilinear / Trilinear / Anisotropic (trilinear plus an anisotropy level).
-            int fi = static_cast<int>(e.texture.filter);
-            if (e.texture.filter == ok::TextureImportSettings::Filter::Trilinear && tx.anisotropy > 1) fi = 3;
-            if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)", "Anisotropic (sharp at angles)"})) {
-                e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi == 3 ? 2 : fi);
-                if (fi == 3 && tx.anisotropy < 2) tx.anisotropy = 8;
-                if (fi == 2) tx.anisotropy = 1;
-            }
-            if (fi == 3) {
-                static const int levels[] = {2, 4, 8, 16};
-                int li = 2;
-                for (int i = 0; i < 4; ++i) if (levels[i] == tx.anisotropy) li = i;
-                if (Combo("Anisotropy", li, {"2x", "4x", "8x", "16x"})) tx.anisotropy = levels[li];
-            }
-            Hint("Point keeps hard pixel edges. Anisotropic keeps floors sharp far away.");
-            int wi = static_cast<int>(e.texture.wrap);
-            if (Combo("Wrap", wi, {"Repeat", "Clamp", "Mirror"})) e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(wi);
-            Hint("What is drawn past the picture's edge.");
-            ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
-            if (e.texture.mipmaps) {
-                int mf = tx.mipFilter;
-                if (Combo("Mip filter", mf, {"Box (sharp)", "Kaiser (smoother, less shimmer)"})) tx.mipFilter = mf;
-            }
-            Hint("Smaller copies for far away, made by our own filter. Off: always full size.");
-            ImGui::Checkbox("Compress on the GPU", &e.texture.compress);
-            if (e.texture.compress) {
-                int cf = tx.compression;
-                if (Combo("Format", cf, {"Auto (BC1 / BC3 / BC5)", "BC1 (colour, no alpha)", "BC3 (colour + alpha)", "BC4 (one channel)", "BC5 (two channels, normal maps)"}))
-                    tx.compression = cf;
-                Hint("Less video memory, slightly softer. Kept in .okaycache next to the picture. OpenGL and Direct3D 11 keep "
-                     "it compressed; software and Direct3D 12 decode it. BC7 is not written yet.");
-            }
-            if (tx != txWas || e.extra.count("anisotropy") || tx.anisotropy != 8 || tx.normalMap || tx.mipFilter || tx.compression)
-                for (const auto& kv : ok::TextureExtraKeys(tx)) e.extra[kv.first] = kv.second;
-            // What is loaded now: the shared texture asset every renderer draws from.
-            if (ok::TextureHandle h = ok::textures::Find(assetPath)) {
-                char line[160];
-                std::snprintf(line, sizeof(line), "Loaded: %d x %d, %d mip level%s, %.2f MB, %ld handle%s", h->Width(), h->Height(),
-                              h->MipLevels(), h->MipLevels() == 1 ? "" : "s", h->Bytes() / 1048576.0, h.UseCount() - 1, h.UseCount() == 2 ? "" : "s");
-                Hint(line);
-            }
-            }
-            // Texture tools (our own library, okay::tex): write a .dds with mipmaps, uncompressed or block compressed,
-            // next to the picture. It does not change the picture or the import settings above.
-            {
-                ImGui::Separator();
-                ImGui::TextDisabled("MIPMAPS AND COMPRESSION");
-                static int outKind = 1;
-                static int filterKind = 1;
-                static bool colour = true, normal = false, cutout = false;
-                static std::string texMsg, texMsgFor;
-                Combo("Write", outKind, {"Mipmaps (DDS, full quality)", "Mipmaps + compressed (BC1/BC3/BC5 DDS)"});
-                Combo("Filter", filterKind, {"Box (fast)", "Lanczos (sharper)", "Kaiser (smooth)"});
-                ImGui::Checkbox("Colour picture (filter in linear light)", &colour);
-                ImGui::Checkbox("Normal map", &normal);
-                ImGui::Checkbox("Cut-out (keep see-through share)", &cutout);
-                if (ImGui::Button("Generate mipmaps / compress")) {
-                    okay::tex::TextureBuildOptions bo;
-                    bo.compress = outKind == 1;
-                    bo.mip.filter = filterKind == 0 ? okay::tex::MipFilter::Box : filterKind == 1 ? okay::tex::MipFilter::Lanczos3 : okay::tex::MipFilter::Kaiser;
-                    bo.mip.srgb = colour && !normal;
-                    bo.mip.normalMap = normal;
-                    bo.mip.alphaCoverage = cutout;
-                    std::string out, terr;
-                    if (okay::tex::BuildDdsFile(assetPath, &out, bo, &terr)) texMsg = "Wrote " + out;
-                    else texMsg = terr.empty() ? "Could not write the file." : terr;
-                    texMsgFor = assetPath;
-                }
-                Hint("Writes a .dds next to the picture. Open it in any DDS viewer.");
-                if (texMsgFor == assetPath && !texMsg.empty()) ImGui::TextWrapped("%s", texMsg.c_str());
-            }
-            break;
-        }
-        case ok::AssetType::Model: {
-            ImGui::SetNextItemWidth(160);
-            ImGui::DragFloat("Scale", &e.model.scale, 0.01f, 0.0001f, 10000.0f, "%.4f");
-            Hint("Multiplies its size when you add it to a scene.");
-            int ni = static_cast<int>(e.model.normals);
-            if (Combo("Normals", ni, {"From the file", "Calculate (smooth)", "Flat (faceted)"})) e.model.normals = static_cast<ok::ModelImportSettings::Normals>(ni);
-            if (e.model.normals == ok::ModelImportSettings::Normals::Calculate) {
-                ImGui::SetNextItemWidth(160);
-                ImGui::DragFloat("Smoothing angle", &e.model.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg");
-                Hint("Sharper edges stay hard. Not for rigged parts.");
-            } else if (e.model.normals == ok::ModelImportSettings::Normals::Flat) {
-                Hint("Each face shaded alone. Not for rigged parts.");
-            }
-            ImGui::Checkbox("Import animations", &e.model.importAnimations);
-            Hint("Off: no clips, rest pose.");
-            Hint("Used when the model is next added to a scene.");
-            break;
-        }
-        case ok::AssetType::Audio: {
-            int mode = e.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
-            if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
-                e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
-                                             : ok::AudioImportSettings::LoadMode::Decode;
-            Hint("Read while it plays keeps a long file in a small fixed amount of memory.");
-            ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
-            Hint("Left and right become a single channel. Off keeps the recording as it is.");
-            Hint("Used the next time the file is loaded.");
-            break;
-        }
-        default: return false;
-    }
+    okaypanels::ImportSettingsIntent in;
+    if (!DrawImportBody(model, in) || e.fromNewerVersion) return false;
+    if (in.changed) WriteFields(fields, e);
     e.Clamp();
-    const bool dirty = !e.SameAs(g_imp.original);
+    if (in.generate && e.kind == ok::AssetType::Texture) GenerateDds(assetPath, g_impState);
     bool applied = false;
-    static std::string failMsg;
-    ImGui::BeginDisabled(!dirty);
-    if (ImGui::Button("Apply")) {
+    if (in.apply) {
         std::string err;
         if (browser.SetImportSettings(assetPath, e, &err)) {
             g_imp.original = e; applied = true;
@@ -661,15 +630,9 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
                 ok::InvalidateTextureCache(assetPath);   // the asset under this exact path, decoded again in place
                 ok::InvalidateAllTextureCaches();        // and any other name the scene uses for the same file
             }
-        }
-        else { failMsg = err.empty() ? "The settings could not be saved." : err; ImGui::OpenPopup("##impfail"); }
+        } else { g_impState.failMsg = err.empty() ? "The settings could not be saved." : err; g_impState.showFail = true; }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Revert")) e = g_imp.original;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("Saved next to the asset.");
-    if (ImGui::BeginPopup("##impfail")) { ImGui::TextUnformatted(failMsg.c_str()); ImGui::EndPopup(); }
+    if (in.revert) e = g_imp.original;
     return applied;
 }
 

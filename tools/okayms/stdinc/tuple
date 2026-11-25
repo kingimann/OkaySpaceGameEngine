@@ -1,0 +1,79 @@
+// okay-ms own standard header: std::tuple, written from ISO/IEC 14882 [tuple] (a fixed-size list of values of
+// possibly different types). Own design: tuple<H, R...> holds its first value and a tuple<R...> of the others, so the
+// element at position I is reached by stepping I times into the rest; comparison is lexicographic, first element first
+// ([tuple.rel]).
+// Not here (okay-ms has no reference members and no forwarding references yet): std::tie, forward_as_tuple,
+// tuple_cat, apply, allocator constructors, conversions between tuples of different element types and get<T>(t) by type.
+#pragma once
+#include <cstddef>
+#include <utility>
+namespace std {
+
+template <typename... T>
+struct tuple {
+    tuple() {}
+    bool operator==(const tuple&) const { return true; }
+    bool operator!=(const tuple&) const { return false; }
+    bool operator<(const tuple&) const { return false; }
+    void swap(tuple&) {}
+};
+
+template <typename H, typename... R>
+struct tuple<H, R...> {
+    H head__;
+    tuple<R...> tail__;
+
+    tuple() : head__(), tail__() {}
+    tuple(const H& h, const R&... r) : head__(h), tail__(r...) {}
+    tuple(const tuple& o) : head__(o.head__), tail__(o.tail__) {}
+    tuple& operator=(const tuple& o) {
+        head__ = o.head__;
+        tail__ = o.tail__;
+        return *this;
+    }
+
+    bool operator==(const tuple& o) const { return head__ == o.head__ && tail__ == o.tail__; }
+    bool operator!=(const tuple& o) const { return !(*this == o); }
+    bool operator<(const tuple& o) const {
+        if (head__ < o.head__) return true;
+        if (o.head__ < head__) return false;
+        return tail__ < o.tail__;
+    }
+    bool operator>(const tuple& o) const { return o < *this; }
+    bool operator<=(const tuple& o) const { return !(o < *this); }
+    bool operator>=(const tuple& o) const { return !(*this < o); }
+    void swap(tuple& o) {
+        tuple t(o);
+        o = *this;
+        *this = t;
+    }
+};
+
+// The element at position I: its type, and the way to it ([tuple.elem]).
+template <size_t I, typename... T> struct tuple_at__ {};
+template <typename H, typename... R> struct tuple_at__<0, H, R...> {
+    typedef H type;
+    static H& at(tuple<H, R...>& t) { return t.head__; }
+    static const H& at_const(const tuple<H, R...>& t) { return t.head__; }
+};
+template <size_t I, typename H, typename... R> struct tuple_at__<I, H, R...> {
+    typedef typename tuple_at__<I - 1, R...>::type type;
+    static type& at(tuple<H, R...>& t) { return tuple_at__<I - 1, R...>::at(t.tail__); }
+    static const type& at_const(const tuple<H, R...>& t) { return tuple_at__<I - 1, R...>::at_const(t.tail__); }
+};
+
+template <size_t I, typename... T> typename tuple_at__<I, T...>::type& get(tuple<T...>& t) {
+    return tuple_at__<I, T...>::at(t);
+}
+template <size_t I, typename... T> const typename tuple_at__<I, T...>::type& get(const tuple<T...>& t) {
+    return tuple_at__<I, T...>::at_const(t);
+}
+
+template <typename... T> tuple<T...> make_tuple(const T&... v) { return tuple<T...>(v...); }
+
+template <typename Tup> struct tuple_size {};
+template <typename... T> struct tuple_size<tuple<T...>> { static const size_t value = sizeof...(T); };
+template <size_t I, typename Tup> struct tuple_element {};
+template <size_t I, typename... T> struct tuple_element<I, tuple<T...>> { typedef typename tuple_at__<I, T...>::type type; };
+
+}  // namespace std

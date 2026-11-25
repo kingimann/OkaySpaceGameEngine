@@ -1,5 +1,5 @@
 // The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering
-// panels drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
+// panels, and the small tool windows (Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager), drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
 // to 11). Driven headless the way
 // the editor drives them: every control is found by its rectangle in the result and used with synthetic input (clicks, typing,
 // the wheel, right-click menus); golden images (launcher look) pin what is drawn. The Dear ImGui versions are compared against
@@ -1206,6 +1206,197 @@ int main() {
         r.Frames(2);
         CHECK(logo[5] == '\0' && res.logo.w > 0 && res.bgTop.w == 0 && res.showBar.w == 0);
         CHECK(r0.logo.w == 0 && r0.contentHeight > 0.0f);
+    }
+
+    // ================= Keyboard Shortcuts =================
+    {   // the filter rule: any case, keys or description; a section with no match is left out
+        const std::vector<P::ShortcutSection>& all = P::KeyboardShortcuts();
+        CHECK(all.size() == 8 && all[0].rows.size() == 11 && std::string(all[7].title) == "Sprite Editor");
+        CHECK(P::FilterShortcuts(all, "").size() == 8);
+        std::vector<P::ShortcutSection> f = P::FilterShortcuts(all, "KNIFE");
+        CHECK(f.size() == 1 && std::string(f[0].title) == "Mesh edit mode" && f[0].rows.size() == 1 && std::string(f[0].rows[0].keys) == "K");
+        f = P::FilterShortcuts(all, "ctrl+shift+f");
+        CHECK(f.size() == 1 && std::string(f[0].title) == "Script Editor");
+        CHECK(P::FilterShortcuts(all, "zzz").empty() && P::FilterShortcuts(all, nullptr).size() == 8);
+    }
+    {   // the window, golden; typing in the filter narrows the list; the descriptions start at one column
+        P::ShortcutsState st;
+        S::ShortcutsResult res;
+        auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) { res = S::DrawShortcuts(P::KeyboardShortcuts(), st, x, y, w, h); });
+        r.Frames(3);
+        CHECK(res.titles.size() == 8 && res.keys.size() == 55 && res.whats.size() == 55);
+        CHECK(res.titles[0].y > res.filter.y + res.filter.h && res.keys[0].y > res.titles[0].y);
+        CHECK(std::abs(res.whats[0].x - res.whats[5].x) < 0.5f && res.whats[0].x >= res.keys[0].x + 140.0f);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_shortcuts", r.Draw());
+        r.Click(res.filter);
+        r.sim.Type("bevel"); r.Frames(2);
+        CHECK(std::strcmp(st.filter, "bevel") == 0 && res.titles.size() == 2 && res.keys.size() == 2);
+        Check("editorpanels_shortcuts_filtered", r.Draw());
+    }
+
+    // ================= Net =================
+    {   // the window, golden; Simulate and the sliders write through their pointers; the percentages are fractions in the model
+        panelfix::NetData d;
+        S::NetSimResult res;
+        bool changed = false;
+        auto r = MakeRig(560, 480, [&](float x, float y, float w, float h) { res = S::DrawNetSim(d.model, x, y, w, h); changed |= res.intent.changed; });
+        r.Frames(3);
+        CHECK(res.rows.size() == 3 && res.table.h >= 200.0f && res.wire.y > res.duplicate.y);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_net", r.Draw());
+        CHECK(!changed);
+        r.Click(res.simulate); CHECK(!d.enabled && changed);
+        changed = false;
+        r.sim.Move(res.latency.x + 3.0f, CY(res.latency)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(d.latency == 0.0f && changed);
+        d.loss = 0.3f; r.Frames(1);
+        r.sim.Move(res.loss.x + 3.0f, CY(res.loss)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(d.loss == 0.0f && d.jitter == 10.0f);
+        P::NetSimModel none;
+        P::ClampNetSim(none);   // no pointers: nothing to do
+        d.jitter = -5.0f; d.duplicate = 3.0f; d.loss = std::nanf("");
+        P::ClampNetSim(d.model);
+        CHECK(d.jitter == 0.0f && d.duplicate == 1.0f && d.loss == 0.0f);
+        CHECK(P::NetWireText(d.model) == "Wire  in 5.2 KB/s    out 2.1 KB/s");
+    }
+    {   // no simulator values: only the traffic
+        P::NetSimModel m;
+        S::NetSimResult res;
+        auto r = MakeRig(400, 360, [&](float x, float y, float w, float h) { res = S::DrawNetSim(m, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.simulate.w == 0 && res.latency.w == 0 && res.wire.w > 0 && res.rows.empty());
+    }
+
+    // ================= Find in Files =================
+    {   // the shared rules: the status line, a hit's label and preview
+        P::FindInFilesModel m;
+        CHECK(P::FindInFilesStatus(m, "x").find("Type a term") == 0);
+        m.ran = true;
+        CHECK(P::FindInFilesStatus(m, "zap") == "No matches for \"zap\".");
+        m = panelfix::FindHits();
+        CHECK(P::FindInFilesStatus(m, "health") == "3 matches");
+        m.hits.resize(1); CHECK(P::FindInFilesStatus(m, "health") == "1 match");
+        m.hits.resize(P::kFindInFilesCap); CHECK(P::FindInFilesStatus(m, "health") == "200 matches (capped at 200)");
+        const P::FindInFilesModel f = panelfix::FindHits();
+        CHECK(P::FindHitLabel(f.hits[0]) == "Player.okay:12" && P::FindHitLabel(f.hits[2]) == "Hud.cs:7");
+        P::FindHit longHit{"a.okay", 1, std::string(300, 'q')};
+        CHECK(P::FindHitPreview(longHit).size() == 120 && P::FindHitLabel(longHit) == "a.okay:1");
+    }
+    {   // the window, golden; Enter or Search asks for a search only with a term; a click on a hit opens it
+        P::FindInFilesModel m = panelfix::FindHits();
+        P::FindInFilesState st;
+        std::strcpy(st.query, "health");
+        S::FindInFilesResult res;
+        P::FindInFilesIntent seen;
+        auto r = MakeRig(600, 420, [&](float x, float y, float w, float h) {
+            res = S::DrawFindInFiles(m, st, x, y, w, h);
+            seen.search |= res.intent.search;
+            if (res.intent.open >= 0) seen.open = res.intent.open;
+        });
+        r.Frames(3);
+        CHECK(res.hits.size() == 3 && res.search.x > res.query.x + res.query.w && res.search.w == 80.0f);
+        CHECK(res.status.y > res.query.y && res.hits[0].y > res.status.y && res.hits[1].y > res.hits[0].y);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_findinfiles", r.Draw());
+        CHECK(!seen.search && seen.open < 0);
+        r.Click(res.hits[1]); CHECK(seen.open == 1 && !seen.search);
+        r.Click(res.search); CHECK(seen.search);
+        seen = P::FindInFilesIntent();
+        st.query[0] = '\0'; r.Frames(1);
+        r.Click(res.search); CHECK(!seen.search);                 // nothing typed: no search
+        r.Click(res.query); r.sim.Type("die"); r.Frame();
+        CHECK(std::strcmp(st.query, "die") == 0 && !seen.search);   // typing alone does not search
+        r.sim.Press(Key_Enter); r.Frame();
+        CHECK(seen.search);
+    }
+    {   // before the first search: the hint; focusQuery puts the keyboard in the field
+        P::FindInFilesModel m;
+        P::FindInFilesState st;
+        S::FindInFilesResult res;
+        auto r = MakeRig(600, 300, [&](float x, float y, float w, float h) { res = S::DrawFindInFiles(m, st, x, y, w, h); m.focusQuery = false; });
+        r.Frames(2);
+        CHECK(res.hits.empty() && res.status.w > 300.0f);
+        r.sim.Type("abc"); r.Frame();
+        CHECK(st.query[0] == '\0');                                 // no field has the keyboard yet
+        m.focusQuery = true; r.Frame();
+        r.sim.Type("abc"); r.Frame();
+        CHECK(std::strcmp(st.query, "abc") == 0);
+    }
+
+    // ================= Data Asset =================
+    {   // the window, golden; typing edits the field in place; X, Add Field and Save are asked of the host
+        panelfix::DataAssetData d;
+        S::DataAssetResult res;
+        P::DataAssetIntent seen;
+        auto r = MakeRig(560, 320, [&](float x, float y, float w, float h) {
+            res = S::DrawDataAsset(d.model, x, y, w, h);
+            seen.changed |= res.intent.changed; seen.add |= res.intent.add; seen.save |= res.intent.save;
+            if (res.intent.remove >= 0) seen.remove = res.intent.remove;
+        });
+        r.Frames(3);
+        CHECK(res.keys.size() == 3 && res.values.size() == 3 && res.removes.size() == 3);
+        CHECK(res.keys[0].w == 140.0f && res.values[0].x > res.keys[0].x + res.keys[0].w && res.values[0].w == 200.0f);
+        CHECK(res.removes[0].x > res.values[0].x + res.values[0].w && res.add.y > res.keys[2].y && res.save.x > res.add.x);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_dataasset", r.Draw());
+        CHECK(!seen.changed && !seen.add && !seen.save && seen.remove < 0);
+        r.Click(UI::Rect{res.values[1].x + res.values[1].w - 20.0f, res.values[1].y, 10.0f, res.values[1].h});
+        r.sim.Type("0"); r.Frames(2);
+        CHECK(d.fields[1].second == "4.50" && seen.changed && d.fields[1].first == "speed");
+        r.Click(res.removes[2]); CHECK(seen.remove == 2 && d.fields.size() == 3);   // the host erases it
+        r.Click(res.add); CHECK(seen.add);
+        r.Click(res.save); CHECK(seen.save);
+    }
+    {   // no fields; a value longer than the field holds is shown cut, and left alone until typed in
+        panelfix::DataAssetData d;
+        d.fields = {{"long", std::string(400, 'v')}};
+        P::DataAssetModel none; none.path = "x.okaydata";
+        S::DataAssetResult res, r0;
+        auto r = MakeRig(560, 320, [&](float x, float y, float w, float h) {
+            res = S::DrawDataAsset(d.model, x, y, w, 140.0f);
+            r0 = S::DrawDataAsset(none, x, y + 160.0f, w, h - 160.0f);
+        });
+        r.Frames(2);
+        CHECK(res.keys.size() == 1 && d.fields[0].second.size() == 400 && !res.intent.changed);
+        CHECK(r0.keys.empty() && r0.add.w > 0);
+    }
+
+    // ================= Plugin Manager =================
+    {   // the window, golden; every button and switch comes back as the intent (the host does the work)
+        P::PluginManagerModel m = panelfix::Plugins();
+        S::PluginManagerResult res;
+        P::PluginManagerIntent seen;
+        auto r = MakeRig(560, 360, [&](float x, float y, float w, float h) {
+            res = S::DrawPluginManager(m, x, y, w, h);
+            const P::PluginManagerIntent& in = res.intent;
+            seen.newPlugin |= in.newPlugin; seen.reloadAll |= in.reloadAll; seen.openFolder |= in.openFolder;
+            if (in.toggle >= 0) seen.toggle = in.toggle;
+            if (in.edit >= 0) seen.edit = in.edit;
+            if (in.openClose >= 0) seen.openClose = in.openClose;
+        });
+        r.Frames(3);
+        CHECK(res.switches.size() == 3 && res.names.size() == 3 && res.edits.size() == 3 && !res.empty);
+        CHECK(res.openCloses[0].w > 0 && res.openCloses[1].w == 0 && res.openCloses[2].w == 0);
+        CHECK(res.names[1].y > res.names[0].y + 30.0f && res.edits[0].x > res.names[0].x + res.names[0].w);
+        CHECK(res.reloadAll.x > res.newPlugin.x + res.newPlugin.w && res.table.y > res.newPlugin.y);
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("editorpanels_plugins", r.Draw());
+        CHECK(seen.toggle < 0 && seen.edit < 0 && seen.openClose < 0 && !seen.newPlugin);
+        r.Click(res.switches[1]); CHECK(seen.toggle == 1 && !m.rows[1].enabled);   // the model is not changed: the host switches it
+        r.Click(res.edits[2]); CHECK(seen.edit == 2);
+        r.Click(res.openCloses[0]); CHECK(seen.openClose == 0);
+        r.Click(res.newPlugin); CHECK(seen.newPlugin);
+        r.Click(res.reloadAll); CHECK(seen.reloadAll);
+        r.Click(res.openFolder); CHECK(seen.openFolder);
+        CHECK(std::string(P::PluginScopeText(m.rows[2])) == "All projects" && std::string(P::PluginScopeText(m.rows[0])) == "This project");
+    }
+    {   // no plugins: the hint line and an empty table
+        P::PluginManagerModel m;
+        S::PluginManagerResult res;
+        auto r = MakeRig(560, 300, [&](float x, float y, float w, float h) { res = S::DrawPluginManager(m, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.empty && res.switches.empty());
     }
 
     TEST_MAIN_RESULT();

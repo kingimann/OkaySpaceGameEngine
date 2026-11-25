@@ -189,4 +189,45 @@ struct LoadingData {
     LoadingData(const LoadingData&) = delete;
 };
 
+// The Net panel: the simulator on with some delay, three traffic rows.
+struct NetData {
+    bool enabled = true;
+    float latency = 80.0f, jitter = 10.0f, loss = 0.02f, duplicate = 0.0f;
+    NetSimModel model;
+    NetData() {
+        model.enabled = &enabled; model.latencyMs = &latency; model.jitterMs = &jitter; model.loss = &loss; model.duplicate = &duplicate;
+        model.wireInPerSec = 5324.8f; model.wireOutPerSec = 2150.4f;
+        model.rows = {{"player:1", 30.0f, 1840.0f}, {"rpc:Fire", 4.5f, 320.0f}, {"chat", 0.5f, 48.0f}};
+    }
+    NetData(const NetData&) = delete;
+};
+
+// Find in Files after a search for "health".
+inline FindInFilesModel FindHits() {
+    FindInFilesModel m;
+    m.ran = true;
+    m.hits = {{"Assets/Scripts/Player.okay", 12, "var health = 100"},
+              {"Assets/Scripts/Enemy.lua", 40, "if health <= 0 then die() end"},
+              {"Assets\\UI\\Hud.cs", 7, "label.text = $\"HP {health}\";"}};
+    return m;
+}
+
+// A .okaydata file with three fields.
+struct DataAssetData {
+    std::vector<std::pair<std::string, std::string>> fields = {{"maxHealth", "100"}, {"speed", "4.5"}, {"title", "Knight"}};
+    DataAssetModel model;
+    DataAssetData() { model.path = "Assets/Data/knight.okaydata"; model.fields = &fields; }
+    DataAssetData(const DataAssetData&) = delete;
+};
+
+// The Plugin Manager with three plugins: one on with a window, one with an error, one for all projects.
+inline PluginManagerModel Plugins() {
+    PluginManagerModel m;
+    PluginRow a; a.name = "Batch Rename"; a.description = "Rename the selection with a pattern."; a.enabled = true; a.hasWindow = true;
+    PluginRow b; b.name = "Level Stats"; b.error = "line 12: unknown function 'editor_count'";
+    PluginRow c; c.name = "Snap All"; c.description = "Snap every object to the grid."; c.enabled = true; c.user = true;
+    m.rows = {a, b, c};
+    return m;
+}
+
 } // namespace panelfix

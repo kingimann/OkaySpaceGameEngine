@@ -12,6 +12,8 @@
 //   Post-processing Lighting: the look preset, tonemapping, bloom, colour grading, vignette, FXAA, SSAO, depth of field (editor/main.cpp)
 //   Player, Rendering  Project Settings: company, version and window size; ambient light and the skybox (editor/main.cpp)
 //   Loading screen  Project Settings: the editor's startup splash for the project (logo, accent, background, progress bar)
+//   Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager  the small tool windows (editor/main.cpp, NetSimPanel.cpp,
+//                   FindInFiles.cpp, PluginsWindow.cpp)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
@@ -25,6 +27,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace okaypanels {
@@ -735,6 +738,222 @@ struct LoadingScreenIntent {
 
 inline const char* kLoadingScreenNote = "Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.";
 inline const char* kSplashLogoHint = "Logo image (PNG) \xE2\x80\x94 blank = built-in cube";
+
+// ============================================================================================================================
+// Keyboard Shortcuts (Help > Keyboard Shortcuts): every binding in one searchable place, grouped by the panel it applies to
+// ============================================================================================================================
+
+struct ShortcutRow { const char* keys; const char* what; };
+struct ShortcutSection { const char* title; std::vector<ShortcutRow> rows; };
+
+/// The editor's bindings, in the order the window lists them.
+inline const std::vector<ShortcutSection>& KeyboardShortcuts() {
+    static const std::vector<ShortcutSection> s = {
+        {"General", {
+            {"Ctrl+P",        "Play / Stop"},
+            {"Ctrl+S",        "Save scene"},
+            {"Ctrl+Alt+S",    "Save project (everything)"},
+            {"Ctrl+Shift+S",  "Save scene as..."},
+            {"Ctrl+O",        "Open scene"},
+            {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
+            {"Ctrl+B",        "Build Settings (in mesh edit mode: bevel)"},
+            {"Ctrl+C / Ctrl+V","Copy / paste object"},
+            {"Ctrl+D",        "Duplicate selection"},
+            {"Ctrl+Shift+G",  "Group selection"},
+            {"Delete",        "Delete selection"},
+        }},
+        {"Scene view", {
+            {"W / E / R",     "Move / Rotate / Scale tool"},
+            {"X",             "Local / world gizmo space"},
+            {"F",             "Frame (focus) the selection"},
+            {"Shift+I",       "Isolate selection (Esc exits)"},
+            {"Shift+Space",   "Maximize the Scene view / bring the panels back"},
+            {"Ctrl+Alt+1..3", "Save camera bookmark"},
+            {"Ctrl+1..3",     "Recall camera bookmark"},
+            {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
+            {"Ctrl+Wheel",    "Zoom UI authoring view"},
+        }},
+        {"Mesh edit mode", {
+            {"Tab",           "Object / Edit mode"},
+            {"1 / 2 / 3",     "Vertex / Edge / Face select"},
+            {"G / R / S",     "Move / Rotate / Scale the selection"},
+            {"G G",           "Edge slide"},
+            {"Ctrl+R",        "Loop cut (scroll for more cuts)"},
+            {"Ctrl+B",        "Bevel the selected edges"},
+            {"K",             "Knife (Enter cuts)"},
+            {"Alt+Click",     "Select an edge loop"},
+            {"Ctrl+Alt+Click","Select an edge ring"},
+        }},
+        {"Panels & tabs", {
+            {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
+            {"Ctrl+Shift+Tab","Switch panels, going backwards"},
+            {"Middle-click",  "Close a panel tab"},
+            {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
+            {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
+        }},
+        {"Hierarchy", {
+            {"F2",            "Rename object"},
+            {"Ctrl+Click",    "Add/remove from selection"},
+            {"Shift+Click",   "Range select"},
+            {"Ctrl+Up/Down",  "Reorder among siblings"},
+            {"Double-click",  "Frame object (in search results)"},
+        }},
+        {"Script Editor", {
+            {"Ctrl+F",        "Find in this file"},
+            {"Ctrl+Shift+F",  "Find in Files (project-wide)"},
+            {"Ctrl+Click",    "Go to definition"},
+            {"Ctrl+E",        "Command palette"},
+            {"Ctrl+G",        "Go to line"},
+            {"Ctrl+Alt+L",    "Format document"},
+            {"F2",            "Next warning"},
+        }},
+        {"Visual Script graph", {
+            {"Right-click / Space", "Add a node or an action step"},
+            {"Right- / middle-drag", "Pan"},
+            {"Scroll",        "Zoom"},
+            {"Home / F",      "Show all / frame selection"},
+            {"Ctrl+C / Ctrl+V / Ctrl+D","Copy / paste / duplicate"},
+            {"Delete",        "Delete selection"},
+            {"C",             "Comment around selection"},
+        }},
+        {"Sprite Editor", {
+            {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
+            {"Ctrl+Z",        "Undo stroke"},
+        }},
+    };
+    return s;
+}
+
+/// The sections and rows whose keys or description contain `filter` (any case); a section with no match is left out. Empty: all.
+inline std::vector<ShortcutSection> FilterShortcuts(const std::vector<ShortcutSection>& all, const char* filter) {
+    auto lower = [](const char* s) { std::string r(s ? s : ""); for (char& c : r) c = (char)std::tolower((unsigned char)c); return r; };
+    const std::string q = lower(filter);
+    std::vector<ShortcutSection> out;
+    for (const ShortcutSection& sec : all) {
+        ShortcutSection kept{sec.title, {}};
+        for (const ShortcutRow& r : sec.rows)
+            if (q.empty() || lower(r.keys).find(q) != std::string::npos || lower(r.what).find(q) != std::string::npos) kept.rows.push_back(r);
+        if (!kept.rows.empty()) out.push_back(std::move(kept));
+    }
+    return out;
+}
+
+struct ShortcutsState { char filter[48] = ""; };
+
+// ============================================================================================================================
+// Net (View > Panels > Net): the network simulator's switches and the last second's traffic per object
+// ============================================================================================================================
+
+struct NetTrafficRow { std::string name; float messagesPerSec = 0.0f, bytesPerSec = 0.0f; };
+
+struct NetSimModel {
+    bool* enabled = nullptr;                // the simulator's values, edited in place (null: not shown)
+    float* latencyMs = nullptr;
+    float* jitterMs = nullptr;
+    float* loss = nullptr;                  // 0..1 (shown as a percentage)
+    float* duplicate = nullptr;             // 0..1
+    float wireInPerSec = 0.0f, wireOutPerSec = 0.0f;   // bytes
+    std::vector<NetTrafficRow> rows;        // highest bytes/s first
+};
+
+struct NetSimIntent { bool changed = false; };   // a value changed (already written through its pointer, and kept in range)
+
+/// The ranges the simulator accepts: no negative delay, loss and duplicate between 0 and 1. A NaN becomes the lower bound.
+inline void ClampNetSim(NetSimModel& m) {
+    auto clamp = [](float* v, float lo, float hi) { if (v) *v = !(*v >= lo) ? lo : (*v > hi ? hi : *v); };
+    clamp(m.latencyMs, 0.0f, 1e9f); clamp(m.jitterMs, 0.0f, 1e9f);
+    clamp(m.loss, 0.0f, 1.0f); clamp(m.duplicate, 0.0f, 1.0f);
+}
+inline std::string NetWireText(const NetSimModel& m) {
+    char b[96];
+    std::snprintf(b, sizeof b, "Wire  in %.1f KB/s    out %.1f KB/s", m.wireInPerSec / 1024.0f, m.wireOutPerSec / 1024.0f);
+    return b;
+}
+inline const char* kNetSimOffNote = "off = packets go straight to the socket";
+inline const char* kNetTrafficNote = "Last full second. Objects are synced ids, RPC names, or channels.";
+
+// ============================================================================================================================
+// Find in Files (Ctrl+Shift+F in the Script Editor): every project script searched for a term; a hit opens the Script Editor there
+// ============================================================================================================================
+
+struct FindHit { std::string path; int line = 0; std::string preview; };
+
+constexpr std::size_t kFindInFilesCap = 200;   // the search stops at this many hits
+
+struct FindInFilesModel {
+    std::vector<FindHit> hits;
+    bool ran = false;                       // a search has run (the status line says how many it found)
+    bool focusQuery = false;                // put the keyboard in the field this frame (the window was just opened)
+};
+
+struct FindInFilesState { char query[128] = ""; };
+
+struct FindInFilesIntent {
+    bool search = false;                    // Enter in the field or Search, with a term typed: the host runs the search
+    int open = -1;                          // a hit was clicked (index into hits): the host opens the script at that line
+};
+
+/// The line under the field: a hint before the first search, else how many hits (and whether the cap was reached).
+inline std::string FindInFilesStatus(const FindInFilesModel& m, const char* query) {
+    if (!m.ran) return "Type a term and press Enter. Searches .okay / .lua / .cs scripts under Assets.";
+    if (m.hits.empty()) return std::string("No matches for \"") + (query ? query : "") + "\".";
+    char b[64];
+    std::snprintf(b, sizeof b, "%d match%s%s", (int)m.hits.size(), m.hits.size() == 1 ? "" : "es",
+                  m.hits.size() >= kFindInFilesCap ? " (capped at 200)" : "");
+    return b;
+}
+/// A hit's label: the file's name (no folders) and the line, "Player.okay:12".
+inline std::string FindHitLabel(const FindHit& h) {
+    const std::size_t slash = h.path.find_last_of("/\\");
+    return (slash == std::string::npos ? h.path : h.path.substr(slash + 1)) + ":" + std::to_string(h.line);
+}
+/// A hit's preview, at most 120 bytes (the line as it was found, leading blanks dropped by the search).
+inline std::string FindHitPreview(const FindHit& h) { return h.preview.size() > 120 ? h.preview.substr(0, 120) : h.preview; }
+
+// ============================================================================================================================
+// Data Asset: a .okaydata file's key / value fields (the Scriptable Object editor)
+// ============================================================================================================================
+
+struct DataAssetModel {
+    std::string path;
+    std::vector<std::pair<std::string, std::string>>* fields = nullptr;   // edited in place (the keys and values)
+};
+
+struct DataAssetIntent {
+    bool changed = false;                   // a key or value was typed in (already written)
+    int remove = -1;                        // X on a row: the host erases that field
+    bool add = false;                       // Add Field
+    bool save = false;                      // Save
+};
+
+inline const char* kDataAssetScriptNote = "Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)";
+constexpr std::size_t kDataKeySize = 64, kDataValueSize = 192;   // the longest key and value the fields take (bytes, with the end)
+
+// ============================================================================================================================
+// Plugin Manager (Plugins > Plugin Manager): the editor plugins found, each with its switch, scope and Edit / Open buttons
+// ============================================================================================================================
+
+struct PluginRow {
+    std::string name, description, error;  // the error (red) is shown instead of the description
+    bool enabled = false;
+    bool user = false;                      // in the editor's plugins/ folder (all projects), else this project's EditorPlugins/
+    bool hasWindow = false;                 // the plugin draws a window (Open / Close shown)
+    bool windowOpen = false;
+};
+
+struct PluginManagerModel { std::vector<PluginRow> rows; };
+
+struct PluginManagerIntent {
+    bool newPlugin = false, reloadAll = false, openFolder = false;   // the three buttons at the top
+    int toggle = -1;                        // a row's switch was clicked: the host turns that plugin to !enabled
+    int edit = -1;                          // Edit: the host opens the plugin's script
+    int openClose = -1;                     // Open / Close: the host shows or hides the plugin's window
+};
+
+inline const char* kPluginManagerNote = "Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
+                                        "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.";
+inline const char* kPluginManagerEmpty = "No plugins found. Click + New Plugin to start one.";
+inline const char* PluginScopeText(const PluginRow& r) { return r.user ? "All projects" : "This project"; }
 
 } // namespace okaypanels
 

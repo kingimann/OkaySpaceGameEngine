@@ -3697,4 +3697,238 @@ LoadingScreenResult DrawLoadingScreen(LoadingScreenModel& m, float x, float y, f
     return res;
 }
 
+// ---- the small tool windows (docs/ui/own_ui_toolkit.md section 28) ---------------------------------------------------------------
+
+namespace {
+const UI::Color32 kShortcutTitle = UI::RGBA(140, 204, 255);       // ImVec4(0.55, 0.80, 1.00): a section's title
+const unsigned char kShortcutKeys[3] = {217, 230, 184};            // ImVec4(0.85, 0.90, 0.72): the keys
+// The text of a hit or a row a fixed distance from the left of the list (Dear ImGui's SameLine(offset)).
+void AtColumn(float offset) { UI::SameLine(); UI::SetCursorPosX(offset); }
+} // namespace
+
+ShortcutsResult DrawShortcuts(const std::vector<ShortcutSection>& all, ShortcutsState& st, float x, float y, float w, float h) {
+    ShortcutsResult res;
+    st.filter[sizeof(st.filter) - 1] = '\0';
+    UI::BareNextWindow();
+    if (UI::Begin("Shortcuts##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::SetNextItemWidth(UI::GetContentRegionAvail().x);
+        UI::InputTextWithHint("##scfilter", "filter...", st.filter, (int)sizeof(st.filter));
+        res.filter = UI::GetItemRect();
+        Divider();
+        UI::BeginChild("##shortcutlist", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        for (const ShortcutSection& sec : FilterShortcuts(all, st.filter)) {
+            UI::PushStyleColor(UI::Col_Text, kShortcutTitle);
+            UI::SeparatorText(sec.title);
+            UI::PopStyleColor();
+            res.titles.push_back(UI::GetItemRect());
+            for (const ShortcutRow& r : sec.rows) {
+                UI::TextColored(kShortcutKeys[0], kShortcutKeys[1], kShortcutKeys[2], r.keys);
+                res.keys.push_back(UI::GetItemRect());
+                AtColumn(150.0f);
+                UI::TextDisabled(r.what);
+                res.whats.push_back(UI::GetItemRect());
+            }
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+NetSimResult DrawNetSim(NetSimModel& m, float x, float y, float w, float h) {
+    NetSimResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Net##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        const float itemW = ItemWidthFor(w);
+        bool& ch = res.intent.changed;
+        if (m.enabled) {
+            if (FrameCheckbox("Simulate", m.enabled)) ch = true;
+            res.simulate = UI::GetItemRect();
+            UI::SameLine();
+            UI::TextDisabled(kNetSimOffNote);
+        }
+        auto slider = [&](const char* label, float* v, float scale, float hi, const char* fmt, UI::Rect& rect) {
+            if (!v) return;
+            float shown = *v * scale;   // loss and duplicate are fractions, shown as percentages
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::SliderFloat(label, &shown, 0.0f, hi, fmt)) { *v = shown / scale; ch = true; }
+            rect = UI::GetItemRect();
+        };
+        slider("Latency (ms)", m.latencyMs, 1.0f, 500.0f, "%.0f", res.latency);
+        slider("Jitter (ms)", m.jitterMs, 1.0f, 200.0f, "%.0f", res.jitter);
+        slider("Loss (%)", m.loss, 100.0f, 50.0f, "%.1f", res.loss);
+        slider("Duplicate (%)", m.duplicate, 100.0f, 50.0f, "%.1f", res.duplicate);
+        ClampNetSim(m);
+        Divider();
+        UI::Text(NetWireText(m).c_str());
+        res.wire = UI::GetItemRect();
+        UI::TextDisabled(kNetTrafficNote);
+        if (UI::BeginTable("nettraffic", 3, UI::Table_RowBg | UI::Table_NoResize | UI::Table_ScrollY, UI::Vec2{0.0f, 220.0f})) {
+            UI::TableSetupColumn("Object");
+            UI::TableSetupColumn("Msg/s", UI::Col_WidthFixed, 70.0f);
+            UI::TableSetupColumn("B/s", UI::Col_WidthFixed, 80.0f);
+            UI::TableHeadersRow();
+            char b[32];
+            for (const NetTrafficRow& r : m.rows) {
+                UI::TableNextRow();
+                UI::TableSetColumnIndex(0);
+                UI::TextUnformatted(r.name.c_str());
+                res.rows.push_back(UI::GetItemRect());
+                UI::TableSetColumnIndex(1);
+                std::snprintf(b, sizeof b, "%.1f", r.messagesPerSec);
+                UI::TextUnformatted(b);
+                UI::TableSetColumnIndex(2);
+                std::snprintf(b, sizeof b, "%.0f", r.bytesPerSec);
+                UI::TextUnformatted(b);
+            }
+            UI::EndTable();
+        }
+        res.table = UI::GetItemRect();
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+FindInFilesResult DrawFindInFiles(const FindInFilesModel& m, FindInFilesState& st, float x, float y, float w, float h) {
+    FindInFilesResult res;
+    st.query[sizeof(st.query) - 1] = '\0';
+    UI::BareNextWindow();
+    if (UI::Begin("FindInFiles##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        if (m.focusQuery) UI::SetKeyboardFocusHere();
+        const float buttonW = 80.0f;
+        UI::SetNextItemWidth(std::max(UI::GetContentRegionAvail().x - buttonW - g_metrics.itemSpacing.x, 40.0f));
+        bool go = UI::InputTextWithHint("##fifq", "Search every project script...", st.query, (int)sizeof(st.query), UI::InputText_EnterReturnsTrue);
+        res.query = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Search", UI::Vec2{buttonW, 0.0f})) go = true;
+        res.search = UI::GetItemRect();
+        if (go && st.query[0]) res.intent.search = true;
+        Divider();
+        UI::TextDisabled(FindInFilesStatus(m, st.query).c_str());
+        res.status = UI::GetItemRect();
+        UI::BeginChild("##fifres", UI::Vec2{0.0f, 0.0f}, UI::Child_None);
+        res.list = UI::Rect{UI::GetCursorScreenPos().x, UI::GetCursorScreenPos().y, UI::GetContentRegionAvail().x, UI::GetContentRegionAvail().y};
+        MenuLook look_(0.0f);   // the header colours of a hovered row
+        for (std::size_t i = 0; i < m.hits.size(); ++i) {
+            const FindHit& hit = m.hits[i];
+            UI::PushID((int)i);
+            if (UI::Selectable(FindHitLabel(hit).c_str(), false, UI::Selectable_Header, UI::Vec2{0.0f, UI::GetFontSize()})) res.intent.open = (int)i;   // one text line, as Dear ImGui's
+            res.hits.push_back(UI::GetItemRect());
+            if (UI::IsItemHovered()) UI::SetTooltip("%s", hit.path.c_str());
+            AtColumn(180.0f);
+            UI::TextDisabled(FindHitPreview(hit).c_str());
+            UI::PopID();
+        }
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+DataAssetResult DrawDataAsset(DataAssetModel& m, float x, float y, float w, float h) {
+    DataAssetResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("DataAsset##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::TextDisabled(m.path.c_str());
+        UI::TextDisabled(kDataAssetScriptNote);
+        Divider();
+        if (m.fields) {
+            for (std::size_t i = 0; i < m.fields->size(); ++i) {
+                std::pair<std::string, std::string>& f = (*m.fields)[i];
+                UI::PushID((int)i);
+                char k[kDataKeySize]; std::snprintf(k, sizeof k, "%s", f.first.c_str());
+                UI::SetNextItemWidth(140.0f);
+                if (UI::InputText("##k", k, (int)sizeof k)) { f.first = k; res.intent.changed = true; }
+                res.keys.push_back(UI::GetItemRect());
+                UI::SameLine();
+                char v[kDataValueSize]; std::snprintf(v, sizeof v, "%s", f.second.c_str());
+                UI::SetNextItemWidth(200.0f);
+                if (UI::InputText("##v", v, (int)sizeof v)) { f.second = v; res.intent.changed = true; }
+                res.values.push_back(UI::GetItemRect());
+                UI::SameLine();
+                if (LineButton("X")) res.intent.remove = (int)i;
+                res.removes.push_back(UI::GetItemRect());
+                UI::PopID();
+            }
+        }
+        if (UI::Button("Add Field")) res.intent.add = true;
+        res.add = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Save")) res.intent.save = true;
+        res.save = UI::GetItemRect();
+    }
+    UI::End();
+    return res;
+}
+
+PluginManagerResult DrawPluginManager(const PluginManagerModel& m, float x, float y, float w, float h) {
+    PluginManagerResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("PluginManager##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        if (UI::Button("+ New Plugin")) res.intent.newPlugin = true;
+        res.newPlugin = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Reload All")) res.intent.reloadAll = true;
+        res.reloadAll = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::Button("Open Folder")) res.intent.openFolder = true;
+        res.openFolder = UI::GetItemRect();
+        UI::PushTextWrapPos(0.0f);
+        UI::TextDisabled(kPluginManagerNote);
+        UI::PopTextWrapPos();
+        Divider();
+        if (m.rows.empty()) { UI::TextDisabled(kPluginManagerEmpty); res.empty = true; }
+        if (UI::BeginTable("##plugins", 4, UI::Table_RowBg | UI::Table_NoResize)) {
+            UI::TableSetupColumn("On", UI::Col_WidthFixed, 34.0f);
+            UI::TableSetupColumn("Plugin", 0, 3.0f);
+            UI::TableSetupColumn("Scope", 0, 0.9f);
+            UI::TableSetupColumn("", 0, 1.4f);
+            UI::TableHeadersRow();
+            for (std::size_t i = 0; i < m.rows.size(); ++i) {
+                const PluginRow& p = m.rows[i];
+                UI::PushID((int)i);
+                UI::TableNextRow();
+                UI::TableNextColumn();
+                bool on = p.enabled;
+                if (UI::Checkbox("##en", &on)) res.intent.toggle = (int)i;
+                res.switches.push_back(UI::GetItemRect());
+                UI::TableNextColumn();
+                UI::TextUnformatted(p.name.c_str());
+                res.names.push_back(UI::GetItemRect());
+                if (!p.error.empty()) UI::TextColored(242, 115, 107, p.error.c_str());   // ImVec4(0.95, 0.45, 0.42)
+                else if (!p.description.empty()) UI::TextDisabled(p.description.c_str());
+                UI::TableNextColumn();
+                UI::TextDisabled(PluginScopeText(p));
+                UI::TableNextColumn();
+                if (LineButton("Edit")) res.intent.edit = (int)i;
+                res.edits.push_back(UI::GetItemRect());
+                UI::Rect oc;
+                if (p.hasWindow) {
+                    UI::SameLine();
+                    if (LineButton(p.windowOpen ? "Close" : "Open")) res.intent.openClose = (int)i;
+                    oc = UI::GetItemRect();
+                }
+                res.openCloses.push_back(oc);
+                UI::PopID();
+            }
+            UI::EndTable();
+        }
+        res.table = UI::GetItemRect();
+    }
+    UI::End();
+    return res;
+}
+
 } // namespace okayuiscreens

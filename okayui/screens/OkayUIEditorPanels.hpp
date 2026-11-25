@@ -267,4 +267,49 @@ struct LoadingScreenResult {
 
 LoadingScreenResult DrawLoadingScreen(okaypanels::LoadingScreenModel& model, float x, float y, float w, float h);
 
+// ---- the small tool windows: Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager (own_ui_toolkit.md section 28) --
+
+struct ShortcutsResult {
+    OkayUI::Rect filter;
+    std::vector<OkayUI::Rect> titles;                // one per section shown
+    std::vector<OkayUI::Rect> keys;                  // one per row shown, its keys ...
+    std::vector<OkayUI::Rect> whats;                 // ... and its description
+};
+/// The filter field, then each section's title and its rows (keys at the left, what they do at a fixed column), in a scrolling list.
+ShortcutsResult DrawShortcuts(const std::vector<okaypanels::ShortcutSection>& all, okaypanels::ShortcutsState& state,
+                              float x, float y, float w, float h);
+
+struct NetSimResult {
+    okaypanels::NetSimIntent intent;
+    OkayUI::Rect simulate, latency, jitter, loss, duplicate, wire, table;
+    std::vector<OkayUI::Rect> rows;                  // one per traffic row, its name cell
+};
+/// The Simulate switch and four sliders (edited in place, kept in range), the wire totals and the traffic table.
+NetSimResult DrawNetSim(okaypanels::NetSimModel& model, float x, float y, float w, float h);
+
+struct FindInFilesResult {
+    okaypanels::FindInFilesIntent intent;
+    OkayUI::Rect query, search, status, list;
+    std::vector<OkayUI::Rect> hits;                  // one per hit, its file:line label
+};
+/// The search field and Search, the status line and the hits (file:line, then the line's text); a click on a hit opens it.
+FindInFilesResult DrawFindInFiles(const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state, float x, float y, float w, float h);
+
+struct DataAssetResult {
+    okaypanels::DataAssetIntent intent;
+    std::vector<OkayUI::Rect> keys, values, removes; // one per field
+    OkayUI::Rect add, save;
+};
+/// The file's path and the script note, a key field, a value field and X per field, then Add Field and Save.
+DataAssetResult DrawDataAsset(okaypanels::DataAssetModel& model, float x, float y, float w, float h);
+
+struct PluginManagerResult {
+    okaypanels::PluginManagerIntent intent;
+    OkayUI::Rect newPlugin, reloadAll, openFolder, table;
+    std::vector<OkayUI::Rect> switches, names, edits, openCloses;   // one per row (openCloses: zero size when the plugin has no window)
+    bool empty = false;                              // the "No plugins found" line is showing
+};
+/// The three buttons, the note, then a table: the switch, the name with its description or error, the scope, Edit and Open / Close.
+PluginManagerResult DrawPluginManager(const okaypanels::PluginManagerModel& model, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

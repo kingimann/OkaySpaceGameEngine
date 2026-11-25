@@ -1067,11 +1067,13 @@ private:
         // keep the result for the check that follows, and use it only for a class with the operator.
         if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index && e.kind != Expr::Kind::Unary &&
             !((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
-              lhs.kind == Expr::Kind::Call))
+              (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member)))
             return false;  // (*s.begin(), -f(), Name() += x, ++Counter(): operators on a call result)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
-            lhs.kind != Expr::Kind::Unary)
-            return false;
+            lhs.kind != Expr::Kind::Unary &&
+            !(lhs.kind == Expr::Kind::Member && (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign ||
+                                                 e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post)))
+            return false;  // (a member of a call result: St().cats[k] = v, St().flag = true with State &St())
         if (e.kind == Expr::Kind::Call && lhs.text.compare(0, 1, "\x01") == 0) return false;
         ++quiet_;
         ET probe = checkExpr(lhs);
@@ -1118,7 +1120,7 @@ private:
                 if (!fits) found = false;
             }
         }
-        const bool refCall = lhs.kind == Expr::Kind::Call ||
+        const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
                               lhs.kids[0]->kind == Expr::Kind::Call);
         if (!simple && !(found && probe.lvalue && refCall)) {
@@ -1602,6 +1604,19 @@ private:
     }
 
     // A prototype type that names a template parameter ("\x02T", alone or inside an instance tag).
+    // True when every template parameter that 't' names is one of the first 'given' of 'sig' (they
+    // were given explicitly, so 't' takes part in no deduction: [temp.deduct.call] p1, [temp.arg.explicit] p6).
+    static bool onlyGiven(const Type& t, const TemplateSig& sig, std::size_t given) {
+        if ((t.kind == Type::Kind::Struct || t.kind == Type::Kind::Union) && t.tag.size() > 1 && t.tag[0] == '\x02') {
+            for (std::size_t k = 0; k < sig.names.size(); ++k)
+                if (t.tag.compare(1, std::string::npos, sig.names[k]) == 0) return k < given;
+            return false;
+        }
+        if (t.inner && !onlyGiven(*t.inner, sig, given)) return false;
+        for (const Param& p : t.params)
+            if (p.type && !onlyGiven(*p.type, sig, given)) return false;
+        return true;
+    }
     static bool hasPlaceholder(const Type& t) {
         if ((t.kind == Type::Kind::Struct || t.kind == Type::Kind::Union) && t.tag.find('\x02') != std::string::npos)
             return true;
@@ -1821,9 +1836,19 @@ private:
                 return sameType(*bound[i], *r);
             }
         }
+        if (pat.kind == Type::Kind::Reference && pat.inner && a.type && a.type->kind == Type::Kind::Array) {
+            // P is a reference: A is not decayed, so const T& of "abc" makes T char[4]
+            // ([temp.deduct.call] p2-p3).
+            bool saved = keepArray_;
+            keepArray_ = true;
+            bool ok = deduceType(*pat.inner, *a.type, sig, bound);
+            keepArray_ = saved;
+            return ok;
+        }
         ET d = decay(copyET(a));
         return deduceType(pat, *d.type, sig, bound);
     }
+    bool keepArray_ = false;  // deducing through a reference: an array argument stays an array
 
     bool deduceType(const Type& pat, const Type& arg, const TemplateSig& sig,
                     std::vector<std::unique_ptr<Type>>& bound) {
@@ -1831,7 +1856,7 @@ private:
             for (std::size_t i = 0; i < sig.names.size(); ++i) {
                 if (sig.names[i] != pat.tag.substr(1)) continue;
                 std::unique_ptr<Type> a = cloneType(arg);
-                if (a->kind == Type::Kind::Array && a->inner) a = ptrTo(std::move(a->inner));
+                if (a->kind == Type::Kind::Array && a->inner && !keepArray_) a = ptrTo(std::move(a->inner));
                 if (!bound[i]) {
                     bound[i] = std::move(a);
                     return true;
@@ -1963,6 +1988,14 @@ private:
                 continue;
             }
             if (sameType(*pt, *probe.type) || canAssign(*pt, probe)) ok = true;
+            if (pt->kind == Type::Kind::Reference && pt->inner && pt->inner->kind == Type::Kind::Struct &&
+                probe.type->kind == Type::Kind::Struct) {
+                // path(const std::string &) given a std::string ([over.ics.ref]: the reference binds
+                // to the object or to a base of it).
+                const Type* want0 = canonOf(pt->inner.get());
+                const Type* have = canonOf(probe.type.get());
+                if (want0 && have && (want0->tag == have->tag || derivedFrom(*have, *want0))) ok = true;
+            }
         }
         if (!ok) return false;
         std::string tmp = "__cv" + std::to_string(tempN_++);
@@ -2174,6 +2207,19 @@ private:
         }
         if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kTmpl.size(), kTmpl) == 0) {
             std::string name = c0.text.substr(kTmpl.size());
+            if (!funcTemplateSigs().count(name)) {
+                // A static member function template (f or C::f): looked up from the class or
+                // namespace the call is in, outwards ([basic.lookup.unqual], [basic.lookup.qual]).
+                for (std::string sc = inNs_; !sc.empty();) {
+                    if (funcTemplateSigs().count(sc + "::" + name)) {
+                        name = sc + "::" + name;
+                        break;
+                    }
+                    std::size_t cut = sc.rfind("::");
+                    if (cut == std::string::npos) break;
+                    sc = sc.substr(0, cut);
+                }
+            }
             // The function templates of this name (name, name#1, ...): the first whose parameter
             // count fits and whose arguments deduce ([temp.over], [temp.deduct.call]).
             std::vector<std::string> keys;
@@ -2226,7 +2272,8 @@ private:
                     if (c0.kids[i] && c0.kids[i]->ty) b[i] = cloneType(*c0.kids[i]->ty);
                 bool ok = true;
                 for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
-                    if (cand.fn->params[i].type && !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
+                    if (cand.fn->params[i].type && !(hasPlaceholder(*cand.fn->params[i].type) && onlyGiven(*cand.fn->params[i].type, cand, c0.kids.size())) &&
+                        !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
                         ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)
                     if (!b[i]) ok = false;
@@ -2766,6 +2813,16 @@ private:
                 ET ptr = checkExpr(*e.kids[i + 1]);
                 if (ptr.bad) return bad(e.line, e.col);
                 continue;
+            }
+            if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Struct && e.kids[i + 1] &&
+                !(e.kids[i + 1]->kind == Expr::Kind::Comma && (e.kids[i + 1]->ival == 7 || e.kids[i + 1]->ival == 9))) {
+                // A class parameter given a value of another type (f(std::string) called with "abc"):
+                // a temporary made by the converting constructor initializes it ([over.ics.user],
+                // [class.conv.ctor], [dcl.init] p17.6).
+                ET pre = checkExpr(*e.kids[i + 1]);
+                if (pre.bad) return bad(e.line, e.col);
+                if (pre.type && !sameType(*fn.params[i].type, *pre.type) && !derivedFrom(*pre.type, *fn.params[i].type))
+                    convertingTemp(*e.kids[i + 1], *pre.type, *fn.params[i].type);
             }
             if (fn.params[i].type && fn.params[i].type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[i + 1]);
             ET arg = decay(checkExpr(*e.kids[i + 1]));

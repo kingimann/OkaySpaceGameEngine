@@ -163,7 +163,8 @@ static void linkTwo() {
 // Round 17 adds engine/src/UI/FocusGraph.cpp (std::vector, <algorithm>, lambdas, enum class,
 // default member initializers, default arguments, range-for, auto), with our own headers.
 static void engineDiff(const char* driver, const char* engineFile, const char* engineFile2 = nullptr) {
-    std::vector<const char*> files = {driver, engineFile};
+    std::vector<const char*> files = {driver};
+    if (engineFile) files.push_back(engineFile);  // (none: the driver tests a header-only part)
     if (engineFile2) files.push_back(engineFile2);
     std::vector<std::string> inc = {"../../engine/include", "include"};
     std::vector<std::vector<unsigned char>> objs;
@@ -213,7 +214,7 @@ static void engineDiff(const char* driver, const char* engineFile, const char* e
     std::string s2 = readFile(folder + "/o2");
     std::system(("rm -rf " + folder).c_str());
     if (e1 != e2 || s1 != s2 || s1.empty()) {
-        std::fprintf(stderr, "FAIL engine %s okay-cc exit %d [%s] gcc exit %d [%s]\n", engineFile, e1, s1.c_str(), e2,
+        std::fprintf(stderr, "FAIL engine %s okay-cc exit %d [%s] gcc exit %d [%s]\n", engineFile ? engineFile : driver, e1, s1.c_str(), e2,
                      s2.c_str());
         ++okaycc_test::gFail;
         return;
@@ -285,6 +286,8 @@ int main() {
         // items, and their relocations went to the wrong section: every virtual slot was null.
         diffOne("stream22.cpp (object)", "tests/progs_cpp_std/stream22.cpp", {"include"}, true);
         engineDiff("tests/progs_cpp_engine/manifest_main.cpp", "../../engine/src/Modules/ModuleManifest.cpp");
+        // Round 23: Core/Log.hpp, the first header of about a hundred engine files.
+        engineDiff("tests/progs_cpp_engine/log_main.cpp", nullptr);
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

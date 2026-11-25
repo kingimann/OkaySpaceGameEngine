@@ -27,6 +27,20 @@ inline const char* StarterScriptSource(const std::string& lang) {
                "end\n"
                "\n"
                "return Script\n";
+    // JavaScript (our own engine, okay::js): the exported class's fields are the Inspector
+    // settings and the engine calls Start and Update(dt) by name.
+    if (lang == "javascript")
+        return "export default class Script {\n"
+               "    speed = 1;   // settings show in the Inspector\n"
+               "\n"
+               "    // Runs once, before the first frame.\n"
+               "    Start() {\n"
+               "    }\n"
+               "\n"
+               "    // Runs every frame; dt is the time since the last frame.\n"
+               "    Update(dt) {\n"
+               "    }\n"
+               "}\n";
     return "// Runs once, before the first frame.\n"
            "void Start()\n"
            "{\n"

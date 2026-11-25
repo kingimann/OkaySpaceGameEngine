@@ -107,8 +107,8 @@ public:
     virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM) and "lua"
-/// (our own Lua interpreter, okay::lua).
+/// Names of the script backends in this build: "okayscript" (our own VM), "lua"
+/// (our own Lua interpreter, okay::lua) and "javascript" (our own JavaScript engine, okay::js).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
@@ -120,7 +120,7 @@ std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 /// fails with this message instead of failing silently.
 std::string RemovedScriptLanguageMessage(const std::string& language);
 
-/// The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
+/// The language id for a script file's extension (".lua" -> "lua", ".js" -> "javascript", ".cs" -> "cs",
 /// ".okay" and anything else -> "okayscript"; case is ignored, the dot is optional).
 /// The one place the editor and the engine pick a script language from a file name.
 const char* ScriptLanguageForExtension(const std::string& ext);

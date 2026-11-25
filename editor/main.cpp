@@ -784,6 +784,7 @@ int main(int argc, char** argv) {
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
+#include "okay/JavaScript/JavaScriptVM.hpp"   // JavaScript scripts: the same (our own engine, okay::js)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -4130,7 +4131,7 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay" || ext == ".lua") {
+    if (ext == ".okay" || ext == ".lua" || ext == ".js") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
         auto* nsc = go->AddComponent<okay::ScriptComponent>(okay::ScriptLanguageForExtension(ext));
@@ -4213,7 +4214,7 @@ void OpenExternal(const std::string& path) {
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+    return lang == "lua" ? "lua" : lang == "javascript" ? "js" : lang == "csharp" ? "cs" : "okay";
 }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
@@ -7325,7 +7326,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
         extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG", AssetIcon::Image};
     if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV", AssetIcon::Audio};
     if (extLower == ".okay")       return {IM_COL32(120, 180, 255, 255), "OKS", AssetIcon::Script};
-    if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
+    if (extLower == ".lua" || extLower == ".js" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
     if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
@@ -7579,7 +7580,7 @@ static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".ttf"||extLower==".otf"||extLower==".fnt") return "font";
     if (extLower==".wav"||extLower==".ogg"||extLower==".mp3"||extLower==".flac") return "audio";
     if (!extLower.empty() && IsModelExt(extLower)) return "model";
-    if (extLower==".okay"||extLower==".lua"||extLower==".cs"||extLower==".okayvs") return "script";
+    if (extLower==".okay"||extLower==".lua"||extLower==".js"||extLower==".cs"||extLower==".okayvs") return "script";
     return nullptr;
 }
 
@@ -8474,7 +8475,7 @@ static bool IsStartSceneFile(const std::string& scenePath) {
 // Open for the types that have no editor window and points to Open with Default App).
 static bool ProjectOpensInEditor(const std::string& extLower, bool isDir) {
     if (isDir) return true;
-    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".cs", ".okayvs", ".okayseq",
+    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".js", ".cs", ".okayvs", ".okayseq",
                           ".okaydialog", ".okayquest", ".okayitems", ".okayloot", ".okayrecipes", ".okaybt", ".okayclip"})
         if (extLower == e) return true;
     return IsModelExt(extLower);   // a model is imported into the scene
@@ -9514,7 +9515,7 @@ void DrawProject(EditorState& ed) {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
             g_matAssetPath = full; g_matAssetOpen = true;
-        } else if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
+        } else if (ext == ".okay" || ext == ".lua" || ext == ".js" || ext == ".cs") {
             OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
         } else if (ext == ".okayvs") {
             okay::editor::vsed::OpenFile(full);   // open in the in-app node editor
@@ -11421,12 +11422,12 @@ static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it != g_codeEditors.end() && g_codeEditorLang[sc] != sc->Language()) {
         g_codeEditorLang[sc] = sc->Language();
-        it->second->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
+        it->second->SetLanguage(LanguageWordsFor(sc->Language()));
     }
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
         g_codeEditorLang[sc] = sc->Language();
-        te->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
+        te->SetLanguage(LanguageWordsFor(sc->Language()));
         te->SetPalette(OkayScriptPalette());
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
@@ -11481,6 +11482,7 @@ static std::string FormatOkayScript(const std::string& src) {
 // Format Document for the script's language: Lua re-indents by its blocks (LuaScriptVM::Format).
 static std::string FormatScriptFor(const okay::ScriptComponent* sc, const std::string& src) {
     if (sc && sc->Language() == okay::LuaScriptVM::kLanguage) return okay::LuaScriptVM::Format(src);
+    if (sc && sc->Language() == okay::JavaScriptVM::kLanguage) return okay::JavaScriptVM::Format(src);   // by brackets
     return FormatOkayScript(src);
 }
 
@@ -11553,7 +11555,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
     if (langs.size() > 1) {
         std::vector<std::string> labels;
-        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l);
+        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l == "javascript" ? "JavaScript (.js)" : l);
         std::vector<const char*> items;
         for (const auto& l : labels) items.push_back(l.c_str());
         ImGui::SetNextItemWidth(320);
@@ -11739,7 +11741,7 @@ void DrawScriptEditor(EditorState& ed) {
                 for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                     if (!e.is_regular_file()) continue;
                     std::string ext = e.path().extension().string();
-                    if (ext != ".okay" && ext != ".lua" && ext != ".cs") continue;
+                    if (ext != ".okay" && ext != ".lua" && ext != ".js" && ext != ".cs") continue;
                     if (ImGui::Selectable(fs::relative(e.path(), assets, ec).string().c_str()))
                         OpenScriptFileInEditor(e.path().string());
                     if (++shown >= 200) break;
@@ -12862,14 +12864,17 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage) {
+                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage ||
+                    sc->Language() == okay::JavaScriptVM::kLanguage) {
                     // The language's own checker: every error and warning comes from the compiler that runs
                     // the script (the new language: "does nothing" warnings; Lua: syntax errors with line and
                     // column, engine names that do not exist and misspelled handlers).
                     static okay::NextScriptVM s_nextCheck;
                     static okay::LuaScriptVM s_luaCheck;
-                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage
-                        ? static_cast<okay::IScriptVM&>(s_luaCheck) : static_cast<okay::IScriptVM&>(s_nextCheck);
+                    static okay::JavaScriptVM s_jsCheck;
+                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage ? static_cast<okay::IScriptVM&>(s_luaCheck)
+                        : sc->Language() == okay::JavaScriptVM::kLanguage ? static_cast<okay::IScriptVM&>(s_jsCheck)
+                        : static_cast<okay::IScriptVM&>(s_nextCheck);
                     for (auto& d : checker.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
@@ -13027,7 +13032,7 @@ void DrawScriptEditor(EditorState& ed) {
                         for (auto it = fs::recursive_directory_iterator(assets, fs::directory_options::skip_permission_denied, ec);
                              it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
                             const std::string ext = it->path().extension().string();
-                            if (it->is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_sideFiles.push_back(it->path().string());
+                            if (it->is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua" || ext == ".js")) s_sideFiles.push_back(it->path().string());
                             if (s_sideFiles.size() > 2000) break;
                         }
                     std::sort(s_sideFiles.begin(), s_sideFiles.end(), [](const std::string& x, const std::string& y) {
@@ -13134,7 +13139,7 @@ void DrawScriptEditor(EditorState& ed) {
                     if (fs::is_directory(assets, ec))
                         for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                             const std::string ext = e.path().extension().string();
-                            if (e.is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua")) s_files.push_back(e.path().string());
+                            if (e.is_regular_file(ec) && (ext == ".okay" || ext == ".cs" || ext == ".lua" || ext == ".js")) s_files.push_back(e.path().string());
                             if (s_files.size() > 2000) break;
                         }
                 }
@@ -13611,15 +13616,17 @@ void DrawScriptEditor(EditorState& ed) {
             }
             std::vector<std::string> csMembers;
             const bool luaScript = sc->Language() == okay::LuaScriptVM::kLanguage;
+            const bool jsScript = sc->Language() == okay::JavaScriptVM::kLanguage;
             if (luaScript && ws > 0 && t[ws - 1] == ':') {   // obj:Method in Lua
                 int rs = ws - 1; while (rs > 0 && (isWord(t[rs - 1]) || t[rs - 1] == '.')) --rs;
                 receiver.assign(t + rs, t + (ws - 1));
                 recvExpr = receiver;
             }
             static const std::vector<std::string> s_noMembers;
-            const std::vector<std::string>* membersP = luaScript ? &s_noMembers : &ScriptMembers(receiver);
-            if (luaScript) {
-                if (!recvExpr.empty()) csMembers = okay::LuaScriptVM::CompletionMembers(recvExpr);
+            const std::vector<std::string>* membersP = (luaScript || jsScript) ? &s_noMembers : &ScriptMembers(receiver);
+            if (luaScript || jsScript) {
+                if (!recvExpr.empty())
+                    csMembers = luaScript ? okay::LuaScriptVM::CompletionMembers(recvExpr) : okay::JavaScriptVM::CompletionMembers(recvExpr);
                 membersP = &csMembers;
             } else if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
                 csMembers = CsMembersFor(std::string(t), recvExpr);
@@ -13710,7 +13717,9 @@ void DrawScriptEditor(EditorState& ed) {
                 std::vector<std::string> combined;
                 if (!memberMode) {
                     static const std::vector<std::string> s_luaWords = okay::LuaScriptVM::CompletionNames();
-                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords : ScriptCompletions();
+                    static const std::vector<std::string> s_jsWords = okay::JavaScriptVM::CompletionNames();
+                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords
+                             : sc->Language() == okay::JavaScriptVM::kLanguage ? s_jsWords : ScriptCompletions();
                     AddBufferIdentifiers(buf.data(), combined);
                 }
                 const std::vector<std::string>& pool = memberMode ? members : combined;
@@ -27116,16 +27125,24 @@ static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCo
 }
 
 // The Inspector settings of a script: `public` fields for OkayScript; the fields of the
-// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text).
+// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text); the exported class's
+// fields for JavaScript (JavaScriptVM::Settings, the same way).
 static std::vector<ScriptField> ScriptFieldsFor(ScriptComponent* sc, const std::string& src) {
-    if (sc->Language() != okay::LuaScriptVM::kLanguage) return ParseScriptFields(src);
+    const bool js = sc->Language() == okay::JavaScriptVM::kLanguage;
+    if (sc->Language() != okay::LuaScriptVM::kLanguage && !js) return ParseScriptFields(src);
     static std::unordered_map<std::size_t, std::vector<ScriptField>> s_cache;
     const std::size_t h = std::hash<std::string>{}(src);
     auto it = s_cache.find(h);
     if (it != s_cache.end()) return it->second;
     if (s_cache.size() > 64) s_cache.clear();
     std::vector<ScriptField> out;
-    for (const auto& st : okay::LuaScriptVM::Settings(src)) {
+    auto settings = [&]() {
+        std::vector<okay::LuaScriptVM::Setting> v;
+        if (!js) return okay::LuaScriptVM::Settings(src);
+        for (const auto& s : okay::JavaScriptVM::Settings(src)) v.push_back({s.name, s.type, s.defaultText});
+        return v;
+    };
+    for (const auto& st : settings()) {
         ScriptField f;
         f.name = st.name;
         f.type = st.type;

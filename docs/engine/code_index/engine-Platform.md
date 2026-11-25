@@ -232,24 +232,24 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 - `GLAttributes` struct, line 160
 - `GLCurrent` struct, line 167: What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
 - `Window` class, line 172
-- `SampleFormat` enum, line 233: ---- Audio -------------------------------------------------------------------
-- `AudioSpec` struct, line 238
-- `BytesPerSample` function, line 250
-- `AudioDevice` class, line 252
-- `DisplayInfo` struct, line 264: ---- Displays -----------------------------------------------------------------
-- `GamepadAxis` enum, line 275: ---- Game controllers ----------------------------------------------------------
-- `GamepadButton` enum, line 276
-- `Gamepad` class, line 281
-- `InitFlags` struct, line 326: ---- The backend ---------------------------------------------------------------
-- `Backend` class, line 330
-- `WrapSdl2Window` function, line 467: A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
-- `TranslateSdl2Event` function, line 473: Turn one SDL_Event (passed as 'const SDL_Event*') into a platform Event, for code that still polls SDL itself but
-- `TicksMs` function, line 478: ---- Free functions on the default backend ------------------------------------
-- `TicksMs32` function, line 480: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
-- `PerfCounter` function, line 481
-- `PerfFrequency` function, line 482
-- `DelayMs` function, line 483
-- `Log` function, line 485: Log one line through the default backend (stderr when there is none).
+- `SampleFormat` enum, line 236: ---- Audio -------------------------------------------------------------------
+- `AudioSpec` struct, line 241
+- `BytesPerSample` function, line 253
+- `AudioDevice` class, line 255
+- `DisplayInfo` struct, line 267: ---- Displays -----------------------------------------------------------------
+- `GamepadAxis` enum, line 278: ---- Game controllers ----------------------------------------------------------
+- `GamepadButton` enum, line 279
+- `Gamepad` class, line 284
+- `InitFlags` struct, line 329: ---- The backend ---------------------------------------------------------------
+- `Backend` class, line 333
+- `WrapSdl2Window` function, line 470: A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
+- `TranslateSdl2Event` function, line 476: Turn one SDL_Event (passed as 'const SDL_Event*') into a platform Event, for code that still polls SDL itself but
+- `TicksMs` function, line 481: ---- Free functions on the default backend ------------------------------------
+- `TicksMs32` function, line 483: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
+- `PerfCounter` function, line 484
+- `PerfFrequency` function, line 485
+- `DelayMs` function, line 486
+- `Log` function, line 488: Log one line through the default backend (stderr when there is none).
 
 ## `engine/include/okay/Platform/PlayFab/PlayFab.hpp`
 

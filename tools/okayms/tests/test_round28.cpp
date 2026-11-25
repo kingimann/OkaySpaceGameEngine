@@ -517,7 +517,7 @@ int entry(void) {
 }
 
 // Smaller pieces the engine files stopped at: unary +, a member of an anonymous union in a member initializer,
-// make_unique with three arguments, string::append(str, pos, n) and wstring::append(n, c), the default argument of a
+// make_unique with three arguments, string::append(str, pos, n), string::insert(pos, n, c) and wstring::append(n, c), the default argument of a
 // member function template defined outside its class, S x{{..}, {..}} for an aggregate of classes, Outer::Inner::E
 // for an enumerator, `using namespace detail;` inside a namespace, and c ? a : b with references to class objects.
 static void r28_pieces(Tally& tally) {
@@ -583,7 +583,9 @@ int entry(void) {
   std::string s = "hello";
   d.append(s, 1, 3);
   d.append(s, 4, 99);
-  CK(4, d == "ello");
+  std::string ins = "ab";
+  ins.insert(1, 2, '-');
+  CK(4, d == "ello" && ins == "a--b");
   std::wstring w = L"a";
   w.append(3, L'\\');
   CK(5, w.size() == 4 && w[3] == L'\\');

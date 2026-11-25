@@ -460,6 +460,12 @@ public:
     }
     string& insert(size_t pos, const char* s) { return insert(pos, s, length_of(s)); }
     string& insert(size_t pos, const string& s) { return insert(pos, s.data_, s.size_); }
+    // insert(pos, n, c) ([string.insert] 5): n copies of c at pos.
+    string& insert(size_t pos, size_t n, char c) {
+        string run;
+        run.append(n, c);
+        return insert(pos, run.data_, run.size_);
+    }
 
     int compare(const char* s) const {
         size_t i = 0;

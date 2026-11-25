@@ -10,10 +10,10 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | Folder | Files | Names | Page |
 |---|---|---|---|
 | engine-AI | 8 | 41 | [code_index/engine-AI.md](code_index/engine-AI.md) |
-| engine-Animation | 13 | 119 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
+| engine-Animation | 13 | 118 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 32 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
-| engine-Components | 262 | 741 | [code_index/engine-Components.md](code_index/engine-Components.md) |
+| engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
 | engine-Core | 80 | 504 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |

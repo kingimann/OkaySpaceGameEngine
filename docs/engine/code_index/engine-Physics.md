@@ -150,14 +150,14 @@ Back to the [code index](../code_index.md). 30 headers, 154 names.
 - `BodyType` enum, line 55
 - `BodyDef` struct, line 57
 - `ColliderDef` struct, line 73
-- `JointType` enum, line 87
-- `AxisMode` enum, line 88
-- `JointAxis` struct, line 91: One degree of freedom of a joint, measured in the joint frame of body A (axis 0 = X = hinge / twist / slider axis).
-- `JointDef` struct, line 102
-- `SetupJoint` function, line 136: Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
-- `ContactEvent` struct, line 138
-- `WorldStats` struct, line 146
-- `World` class, line 155
+- `JointType` enum, line 92
+- `AxisMode` enum, line 93
+- `JointAxis` struct, line 96: One degree of freedom of a joint, measured in the joint frame of body A (axis 0 = X = hinge / twist / slider axis).
+- `JointDef` struct, line 107
+- `SetupJoint` function, line 145: Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
+- `ContactEvent` struct, line 147
+- `WorldStats` struct, line 155
+- `World` class, line 164
 
 ## `engine/include/okay/Physics/DebrisPool.hpp`
 

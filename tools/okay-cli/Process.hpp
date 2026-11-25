@@ -65,6 +65,47 @@ private:
     Impl* impl_;
 };
 
+/// A program running on a pseudo terminal: what it writes, colours and cursor moves included, is read as one byte
+/// stream for a terminal emulator (launcher/Terminal.hpp), and keys go to it as the bytes a terminal sends. The
+/// launcher's Command line page runs the person's shell this way.
+/// Windows: the pseudo console (ConPTY: CreatePseudoConsole with two pipes, STARTUPINFOEXW with
+/// PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, ResizePseudoConsole, ClosePseudoConsole; Windows 10 1809 or newer, looked up in
+/// kernel32 at run time) and a job object, so Stop and closing the launcher end the shell and what it started.
+/// POSIX: posix_openpt / grantpt / unlockpt, the program in its own session with the terminal as its controlling one,
+/// the size through TIOCSWINSZ. Read never waits (call it once a frame). No thread and no <mutex> (CLAUDE.md rule 21a).
+class Pty {
+public:
+    struct Options {
+        std::vector<std::string> argv;   ///< argv[0] is a full path (never looked up in the current folder)
+        std::string cwd;                 ///< "" = the current folder
+        std::string pathFirst;           ///< put first on PATH for the program ("" = PATH as it is)
+        int cols = 80, rows = 24;
+    };
+    Pty();
+    ~Pty();   ///< a program still running is stopped
+    Pty(const Pty&) = delete;
+    Pty& operator=(const Pty&) = delete;
+
+    /// False with a plain reason when it could not start.
+    bool Start(const Options& options, std::string& error);
+    /// Append what the program wrote since the last call. True while it runs.
+    bool Read(std::string& out);
+    /// Send bytes to the program (keys, typed text, a paste, a terminal's replies). False when it is not running.
+    bool Write(const std::string& bytes);
+    /// The terminal's new size in cells.
+    void Resize(int cols, int rows);
+    /// End it and everything it started.
+    void Stop();
+    bool Running() const;
+    bool Stopped() const;
+    /// Its exit code once it ended (-1 before).
+    int ExitCode() const;
+
+private:
+    struct Impl;
+    Impl* impl_;
+};
+
 /// The full path of a program found on PATH, or "" (Windows also tries ".exe"). Only absolute PATH folders are
 /// searched, so a program in the current folder is never picked up by its bare name.
 std::string FindOnPath(const std::string& program);

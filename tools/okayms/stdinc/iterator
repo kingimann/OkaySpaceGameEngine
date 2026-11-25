@@ -7,7 +7,9 @@
 // - istreambuf_iterator reads through okay-ms's own streambuf (get and peek); include a stream header before using it.
 // - begin, end and size take a container only: okay-ms cannot read a parameter that is a reference to an array
 //   (T (&a)[N]) yet.
-// - No reverse_iterator, insert_iterator, front_insert_iterator, istream_iterator or ostream_iterator.
+// - reverse_iterator (Round 29, [reverse.iterators]) is there; no insert_iterator, front_insert_iterator,
+//   istream_iterator or ostream_iterator.
+// - ostreambuf_iterator writes through okay-ms's own streambuf (put); include a stream header before using it.
 #pragma once
 #include <cstddef>
 #include <type_traits>
@@ -77,6 +79,70 @@ template <typename C> size_t size(const C& c) { return c.size(); }
 
 template <typename It> It make_move_iterator(It it) { return it; }
 
+// Walks a range backwards ([reverse.iterators]): it holds the position after the element it reads, so
+// reverse_iterator(end()) reads the last element and reverse_iterator(begin()) is the end.
+template <typename It>
+class reverse_iterator {
+public:
+    It current__;
+    typedef typename iterator_traits<It>::value_type value_type;
+    typedef typename iterator_traits<It>::difference_type difference_type;
+    typedef typename iterator_traits<It>::pointer pointer;
+    typedef typename iterator_traits<It>::reference reference;
+    typedef typename iterator_traits<It>::iterator_category iterator_category;
+    typedef It iterator_type;
+    reverse_iterator() : current__() {}
+    explicit reverse_iterator(It it) : current__(it) {}
+    It base() const { return current__; }
+    reference operator*() const {
+        It before = current__;
+        --before;
+        return *before;
+    }
+    pointer operator->() const {
+        It before = current__;
+        --before;
+        return &*before;
+    }
+    reference operator[](difference_type n) const { return *(*this + n); }
+    reverse_iterator& operator++() {
+        --current__;
+        return *this;
+    }
+    reverse_iterator operator++(int) {
+        reverse_iterator was = *this;
+        --current__;
+        return was;
+    }
+    reverse_iterator& operator--() {
+        ++current__;
+        return *this;
+    }
+    reverse_iterator operator--(int) {
+        reverse_iterator was = *this;
+        ++current__;
+        return was;
+    }
+    reverse_iterator operator+(difference_type n) const { return reverse_iterator(current__ - n); }
+    reverse_iterator operator-(difference_type n) const { return reverse_iterator(current__ + n); }
+    reverse_iterator& operator+=(difference_type n) {
+        current__ -= n;
+        return *this;
+    }
+    reverse_iterator& operator-=(difference_type n) {
+        current__ += n;
+        return *this;
+    }
+    difference_type operator-(const reverse_iterator& o) const { return o.current__ - current__; }
+    bool operator==(const reverse_iterator& o) const { return current__ == o.current__; }
+    bool operator!=(const reverse_iterator& o) const { return current__ != o.current__; }
+    bool operator<(const reverse_iterator& o) const { return o.current__ < current__; }
+    bool operator>(const reverse_iterator& o) const { return current__ < o.current__; }
+    bool operator<=(const reverse_iterator& o) const { return !(current__ < o.current__); }
+    bool operator>=(const reverse_iterator& o) const { return !(o.current__ < current__); }
+};
+template <typename It> reverse_iterator<It> make_reverse_iterator(It it) { return reverse_iterator<It>(it); }
+
 // Appends to a container through push_back each value assigned through it ([back.insert.iterator]).
 template <typename C>
 class back_insert_iterator {
@@ -120,6 +186,28 @@ public:
     }
     bool operator==(const istreambuf_iterator& o) const { return at_end__() == o.at_end__(); }
     bool operator!=(const istreambuf_iterator& o) const { return at_end__() != o.at_end__(); }
+};
+// Writes each character given to it to a stream's device ([ostreambuf.iterator]): *it = c, ++it, it++.
+template <typename CharT>
+class ostreambuf_iterator {
+public:
+    streambuf* buf__;
+    typedef void value_type;
+    typedef output_iterator_tag iterator_category;
+    ostreambuf_iterator() : buf__(0) {}
+    template <typename S>
+    ostreambuf_iterator(S& stream) : buf__(stream.rdbuf()) {}
+    ostreambuf_iterator& operator=(CharT c) {
+        if (buf__) {
+            const char one = (char)c;
+            buf__->put(&one, 1);
+        }
+        return *this;
+    }
+    ostreambuf_iterator& operator*() { return *this; }
+    ostreambuf_iterator& operator++() { return *this; }
+    ostreambuf_iterator& operator++(int) { return *this; }
+    bool failed() const { return buf__ == 0; }
 };
 
 }  // namespace std

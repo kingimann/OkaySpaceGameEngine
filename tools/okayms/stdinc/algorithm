@@ -1,13 +1,31 @@
 // okay-ms own standard header: min, max, clamp, swap, and the sequence algorithms the engine uses (find, find_if,
 // count, count_if, any_of, all_of, none_of, remove, remove_if, reverse, fill, copy, min_element, max_element,
-// lower_bound, upper_bound, binary_search, sort, stable_sort). Written from the wording of ISO/IEC 14882 [alg.min.max], [alg.clamp],
+// lower_bound, upper_bound, binary_search, sort, stable_sort, and from round 27 the ones listed further down). Written from the wording of ISO/IEC 14882 [alg.min.max], [alg.clamp],
 // [utility.swap], [alg.find], [alg.count], [alg.all.of], [alg.remove], [alg.reverse], [alg.fill], [alg.copy],
 // [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
 // sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
 #pragma once
+#include <initializer_list>
+#include <utility>
 namespace std {
 template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
 template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
+// min({a, b, c}) and max({a, b, c}) ([alg.min.max] 3, 11): the first smallest and the first largest of the list.
+template <typename T> T min(initializer_list<T> list) {
+    const T* best = list.begin();
+    for (const T* p = list.begin() + 1; p < list.end(); ++p)
+        if (*p < *best) best = p;
+    return *best;
+}
+template <typename T> T max(initializer_list<T> list) {
+    const T* best = list.begin();
+    for (const T* p = list.begin() + 1; p < list.end(); ++p)
+        if (*best < *p) best = p;
+    return *best;
+}
+// minmax(a, b) ([alg.min.max] 21): the smaller and the larger (a first when they are equal). Own difference: the pair
+// holds copies, not references (pair<T, T>, where the standard has pair<const T&, const T&>).
+template <typename T> pair<T, T> minmax(const T &a, const T &b) { return b < a ? pair<T, T>(b, a) : pair<T, T>(a, b); }
 template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
 template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
 
@@ -125,6 +143,35 @@ template <typename It, typename V> It upper_bound(It first, It last, const V &va
     }
     return first;
 }
+// The same with a comparison ([lower.bound] 2, [upper.bound] 2): comp(element, value) and comp(value, element).
+template <typename It, typename V, typename Comp> It lower_bound(It first, It last, const V &value, Comp comp) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (comp(*mid, value)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename V, typename Comp> It upper_bound(It first, It last, const V &value, Comp comp) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (!comp(value, *mid)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
 template <typename It, typename Less> void sift_down_(It base, long long root, long long n, Less less) {
     for (;;) {
         long long child = root * 2 + 1;
@@ -184,5 +231,182 @@ template <typename It> void stable_sort(It first, It last) {
     for (It i = first + 1; i < last; ++i) {
         for (It j = i; j > first && *j < *(j - 1); --j) swap(*j, *(j - 1));
     }
+}
+// Round 27, more of the algorithms the engine uses, written from [alg.unique], [alg.replace], [alg.rotate], [alg.equal],
+// [alg.transform], [alg.foreach], [alg.find] (find_if_not), [alg.copy] (copy_if), [alg.fill] (fill_n), [is.sorted],
+// [alg.nth.element], [partial.sort], [alg.heap.operations] and [set.intersection]. nth_element and partial_sort sort the
+// whole range (that meets what both require); the heap operations keep a max-heap by the same sift as sort.
+template <typename It> It unique(It first, It last) {
+    if (first == last) return last;
+    It out = first;
+    for (It at = first + 1; at != last; ++at)
+        if (!(*out == *at)) {
+            ++out;
+            if (out != at) *out = *at;
+        }
+    return out + 1;
+}
+template <typename It, typename Eq> It unique(It first, It last, Eq eq) {
+    if (first == last) return last;
+    It out = first;
+    for (It at = first + 1; at != last; ++at)
+        if (!eq(*out, *at)) {
+            ++out;
+            if (out != at) *out = *at;
+        }
+    return out + 1;
+}
+template <typename It, typename V> void replace(It first, It last, const V &old_value, const V &new_value) {
+    for (; first != last; ++first)
+        if (*first == old_value) *first = new_value;
+}
+template <typename It, typename P, typename V> void replace_if(It first, It last, P pred, const V &new_value) {
+    for (; first != last; ++first)
+        if (pred(*first)) *first = new_value;
+}
+// The element at middle becomes the first; the result is where the old first element ends up.
+template <typename It> It rotate(It first, It middle, It last) {
+    if (first == middle) return last;
+    if (middle == last) return first;
+    reverse(first, middle);
+    reverse(middle, last);
+    reverse(first, last);
+    return first + (last - middle);
+}
+template <typename It1, typename It2> bool equal(It1 first1, It1 last1, It2 first2) {
+    for (; first1 != last1; ++first1, ++first2)
+        if (!(*first1 == *first2)) return false;
+    return true;
+}
+template <typename It1, typename It2> bool equal(It1 first1, It1 last1, It2 first2, It2 last2) {
+    if (last1 - first1 != last2 - first2) return false;
+    return equal(first1, last1, first2);
+}
+template <typename It, typename Out, typename F> Out transform(It first, It last, Out out, F f) {
+    for (; first != last; ++first, ++out) *out = f(*first);
+    return out;
+}
+template <typename It1, typename It2, typename Out, typename F> Out transform(It1 first1, It1 last1, It2 first2, Out out, F f) {
+    for (; first1 != last1; ++first1, ++first2, ++out) *out = f(*first1, *first2);
+    return out;
+}
+template <typename It, typename F> F for_each(It first, It last, F f) {
+    for (; first != last; ++first) f(*first);
+    return f;
+}
+template <typename It, typename P> It find_if_not(It first, It last, P pred) {
+    for (; first != last; ++first)
+        if (!pred(*first)) return first;
+    return last;
+}
+template <typename It, typename Out, typename P> Out copy_if(It first, It last, Out out, P pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) {
+            *out = *first;
+            ++out;
+        }
+    return out;
+}
+template <typename Out, typename N, typename V> Out fill_n(Out out, N n, const V &value) {
+    for (N i = 0; i < n; ++i, ++out) *out = value;
+    return out;
+}
+template <typename It> bool is_sorted(It first, It last) {
+    if (first == last) return true;
+    for (It at = first + 1; at != last; ++at)
+        if (*at < *(at - 1)) return false;
+    return true;
+}
+template <typename It> void nth_element(It first, It nth, It last) {
+    (void)nth;
+    sort(first, last);
+}
+template <typename It, typename Less> void nth_element(It first, It nth, It last, Less less) {
+    (void)nth;
+    sort(first, last, less);
+}
+template <typename It> void partial_sort(It first, It middle, It last) {
+    (void)middle;
+    sort(first, last);
+}
+template <typename It, typename Less> void partial_sort(It first, It middle, It last, Less less) {
+    (void)middle;
+    sort(first, last, less);
+}
+template <typename It, typename Less> void push_heap(It first, It last, Less less) {
+    long long child = (last - first) - 1;
+    while (child > 0) {
+        const long long parent = (child - 1) / 2;
+        if (!less(first[parent], first[child])) return;
+        swap(first[parent], first[child]);
+        child = parent;
+    }
+}
+template <typename It> void push_heap(It first, It last) {
+    long long child = (last - first) - 1;
+    while (child > 0) {
+        const long long parent = (child - 1) / 2;
+        if (!(first[parent] < first[child])) return;
+        swap(first[parent], first[child]);
+        child = parent;
+    }
+}
+template <typename It, typename Less> void pop_heap(It first, It last, Less less) {
+    const long long n = last - first;
+    if (n < 2) return;
+    swap(first[0], first[n - 1]);
+    sift_down_(first, 0, n - 1, less);
+}
+// The forms without a comparator compare with < (the sift of sort's form without one).
+template <typename It> void sift_down_lt_(It base, long long root, long long n) {
+    for (;;) {
+        long long child = root * 2 + 1;
+        if (child >= n) return;
+        if (child + 1 < n && base[child] < base[child + 1]) ++child;
+        if (!(base[root] < base[child])) return;
+        swap(base[root], base[child]);
+        root = child;
+    }
+}
+template <typename It> void pop_heap(It first, It last) {
+    const long long n = last - first;
+    if (n < 2) return;
+    swap(first[0], first[n - 1]);
+    sift_down_lt_(first, 0, n - 1);
+}
+template <typename It> void make_heap(It first, It last) {
+    const long long n = last - first;
+    for (long long i = n / 2 - 1; i >= 0; --i) sift_down_lt_(first, i, n);
+}
+template <typename It> void sort_heap(It first, It last) {
+    for (long long end = (last - first) - 1; end > 0; --end) {
+        swap(first[0], first[end]);
+        sift_down_lt_(first, 0, end);
+    }
+}
+template <typename It, typename Less> void make_heap(It first, It last, Less less) {
+    const long long n = last - first;
+    for (long long i = n / 2 - 1; i >= 0; --i) sift_down_(first, i, n, less);
+}
+template <typename It, typename Less> void sort_heap(It first, It last, Less less) {
+    for (long long end = (last - first) - 1; end > 0; --end) {
+        swap(first[0], first[end]);
+        sift_down_(first, 0, end, less);
+    }
+}
+template <typename It1, typename It2, typename Out> Out set_intersection(It1 first1, It1 last1, It2 first2, It2 last2, Out out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) {
+            ++first1;
+        } else if (*first2 < *first1) {
+            ++first2;
+        } else {
+            *out = *first1;
+            ++out;
+            ++first1;
+            ++first2;
+        }
+    }
+    return out;
 }
 }

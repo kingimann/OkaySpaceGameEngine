@@ -1,0 +1,24 @@
+// okay-ms own standard header: <csignal>, written from ISO/IEC 14882 [csignal.syn] and ISO/IEC 9899 7.14, with the
+// signal numbers Microsoft documents for its C runtime (SIGINT 2, SIGILL 4, SIGFPE 8, SIGSEGV 11, SIGTERM 15,
+// SIGBREAK 21, SIGABRT 22). signal and raise are declared only, with the C names a Windows C runtime DLL exports
+// (msvcrt.dll has both); okay-ms's own runtime does not define them, so a program that calls one links only against a
+// library that does. SIG_DFL, SIG_IGN and SIG_ERR are the handler values 0, 1 and -1 of that runtime.
+#pragma once
+namespace std {
+typedef int sig_atomic_t;
+extern "C" {
+typedef void (*__sighandler_t)(int);
+__sighandler_t signal(int sig, __sighandler_t handler);
+int raise(int sig);
+}
+}
+#define SIGINT 2
+#define SIGILL 4
+#define SIGFPE 8
+#define SIGSEGV 11
+#define SIGTERM 15
+#define SIGBREAK 21
+#define SIGABRT 22
+#define SIG_DFL ((std::__sighandler_t)0)
+#define SIG_IGN ((std::__sighandler_t)1)
+#define SIG_ERR ((std::__sighandler_t)-1)

@@ -5,6 +5,9 @@
 
 namespace okayms {
 namespace compiler {
+// The interlocked intrinsics compiled inline (gen_expr.cpp): op and width of a name, or false.
+bool interlocked_intrinsic(const std::string& name, int* op, int* width);
+
 struct Gen {
     std::vector<FuncDecl>& funcs;
     std::string error;
@@ -77,12 +80,34 @@ struct Gen {
             if (fn.name == name) return &fn;
         return nullptr;
     }
+    // How many blocks out from the current one a local's block is, or -1 when it is not visible here.
+    int scope_distance(int local_scope) const {
+        int walk = scope_depth;
+        int steps = 0;
+        while (walk != local_scope) {
+            if (walk == 0) return -1;
+            walk = scope_parent[static_cast<size_t>(walk)];
+            ++steps;
+        }
+        return steps;
+    }
+    // The local a name means here: of the visible locals of that name, the one of the innermost block (Round 29: a
+    // local of an enclosing block declared later in the text no longer hides the inner block's own one; before, the
+    // last declared visible local was taken). Within one block the last declared.
     Local* find_local(const std::string& name) {
+        Local* best = nullptr;
+        int best_steps = -1;
         for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
             Local& local = locals[static_cast<size_t>(i)];
-            if (local.name == name && scope_visible(local.scope)) return &local;
+            if (local.name != name) continue;
+            const int steps = scope_distance(local.scope);
+            if (steps < 0) continue;
+            if (best == nullptr || steps < best_steps) {
+                best = &local;
+                best_steps = steps;
+            }
         }
-        return nullptr;
+        return best;
     }
 
     void load_slot(int32_t offset, bool pointer) {
@@ -143,6 +168,7 @@ struct Gen {
     }
 
     bool gen_expr(const Node& node);
+    bool gen_interlocked(const Node& node, int op, int width);
     bool store_init(const Type& type, int offset, const Node& node);
     bool gen_stmt(const Node& node);
     // A statement that is not generated (a branch with a constant condition) still takes the scope numbers its blocks
@@ -156,6 +182,7 @@ struct Gen {
     bool gen_addr(const Node& node);
     int size_of(const Type& type) const;
     bool fits_register(const Type& type) const;
+    bool bytes_copyable(int sid) const;
     Global* find_global(const std::string& name);
     // thread_local variables ([basic.stc.thread]), Microsoft x64 TLS: the address of `sym` in this thread's copy is
     // ThreadLocalStoragePointer[_tls_index] (the TEB's TLS array is at gs:[0x58]) plus sym's offset in the .tls section

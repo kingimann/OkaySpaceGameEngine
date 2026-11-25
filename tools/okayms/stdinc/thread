@@ -1,0 +1,109 @@
+// okay-ms own standard header: <thread>, written from ISO/IEC 14882 [thread.threads] on Win32 threads (CreateThread,
+// WaitForSingleObject, okay_win32_sync). A thread runs a copy of the callable it is given; the callable is kept in a
+// std::function<void()> on the heap until the thread has run it. Differences from the standard: the constructor takes
+// the callable only (no extra arguments: bind them in a lambda); destroying a joinable thread does not call terminate
+// (the thread is left running, as if detached); get_id() is the Win32 thread id.
+#pragma once
+#include <chrono>
+#include <functional>
+#include <okay_win32_sync>
+namespace std {
+// The start function of every thread: runs the callable the constructor put on the heap, then frees it.
+inline unsigned __okay_thread_run(void* p) {
+    function<void()>* fn = static_cast<function<void()>*>(p);
+    (*fn)();
+    delete fn;
+    return 0;
+}
+class thread {
+    void* handle_;
+    unsigned id_;
+
+public:
+    class id {
+    public:
+        unsigned v__;
+        id() : v__(0) {}
+        explicit id(unsigned v) : v__(v) {}
+        bool operator==(const id& o) const { return v__ == o.v__; }
+        bool operator!=(const id& o) const { return v__ != o.v__; }
+        bool operator<(const id& o) const { return v__ < o.v__; }
+    };
+    thread() : handle_(0), id_(0) {}
+    template <typename F>
+    explicit thread(F f) : handle_(0), id_(0) {
+        function<void()>* fn = new function<void()>(f);
+        handle_ = CreateThread(0, 0, __okay_thread_run, fn, 0, &id_);
+        if (handle_ == 0) delete fn;
+    }
+    thread(thread&& o) : handle_(o.handle_), id_(o.id_) {
+        o.handle_ = 0;
+        o.id_ = 0;
+    }
+    thread& operator=(thread&& o) {
+        if (handle_ != 0) CloseHandle(handle_);
+        handle_ = o.handle_;
+        id_ = o.id_;
+        o.handle_ = 0;
+        o.id_ = 0;
+        return *this;
+    }
+    ~thread() {
+        if (handle_ != 0) CloseHandle(handle_);
+    }
+    bool joinable() const { return handle_ != 0; }
+    void join() {
+        if (handle_ == 0) return;
+        WaitForSingleObject(handle_, 0xFFFFFFFFu);
+        CloseHandle(handle_);
+        handle_ = 0;
+        id_ = 0;
+    }
+    void detach() {
+        if (handle_ != 0) CloseHandle(handle_);
+        handle_ = 0;
+        id_ = 0;
+    }
+    id get_id() const {
+        id r;
+        r.v__ = id_;
+        return r;
+    }
+    void* native_handle() { return handle_; }
+    void swap(thread& o) {
+        void* h = handle_;
+        handle_ = o.handle_;
+        o.handle_ = h;
+        unsigned i = id_;
+        id_ = o.id_;
+        o.id_ = i;
+    }
+    // The number of logical processors (SYSTEM_INFO.dwNumberOfProcessors, at byte 32 of the x64 structure).
+    static unsigned hardware_concurrency() {
+        unsigned long long info[8];
+        for (int i = 0; i < 8; ++i) info[i] = 0;
+        GetSystemInfo(info);
+        return (unsigned)(info[4] & 0xFFFFFFFFu);
+    }
+};
+
+namespace this_thread {
+inline thread::id get_id() {
+    thread::id r;
+    r.v__ = GetCurrentThreadId();
+    return r;
+}
+inline void yield() { SwitchToThread(); }
+template <typename R, typename Per>
+void sleep_for(const chrono::duration<R, Per>& d) {
+    long long ms = chrono::duration_cast<chrono::milliseconds>(d).count();
+    if (ms < 0) ms = 0;
+    Sleep((unsigned)ms);
+}
+template <typename C, typename D>
+void sleep_until(const chrono::time_point<C, D>& t) {
+    const D left = t - C::now();
+    if (left.count() > 0) sleep_for(left);
+}
+}  // namespace this_thread
+}

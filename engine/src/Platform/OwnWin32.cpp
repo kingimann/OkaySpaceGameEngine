@@ -200,6 +200,9 @@ public:
         FlashWindowEx(&fi);   // its result is the window's previous flash state, not success
         return true;
     }
+    bool SetAlwaysOnTop(bool on) override {   // SetWindowPos (Microsoft's docs): only the z-order changes
+        return SetWindowPos(m_hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != 0;
+    }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!win32icon::ValidIcon(rgba, w, h)) return false;
         // A big icon (Alt+Tab, task bar) and a small one (title bar), each at the size this system asks for.

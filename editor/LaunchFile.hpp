@@ -8,6 +8,7 @@
 //                       else Notepad (Windows), `open -t` (macOS) or the first GUI text editor found (Linux). A script is
 //                       edited, never run, because the editor is named explicitly instead of asked from the file type.
 //   Reveal              the file manager: a folder is opened, a file is shown (selected on Windows and macOS).
+//   OpenLocalUrl        the default web browser on a page this computer serves (http://127.0.0.1:<port>/ only).
 //
 // Windows uses ShellExecuteW with the wide path and a fixed program, so there is no command line to build and nothing in a
 // file name ($, %, a quote, a space) is read by cmd.exe. macOS and Linux start the program with fork and execv, no shell.
@@ -25,6 +26,9 @@ struct Result {
 Result OpenWithDefaultApp(const std::string& path);
 Result OpenInTextEditor(const std::string& path);
 Result Reveal(const std::string& path, bool selectFile);
+/// The default web browser on a page of this computer: only "http://127.0.0.1:<port>/..." with no spaces, quotes or
+/// control characters (Build Settings > Web > Run in browser). Anything else is refused.
+Result OpenLocalUrl(const std::string& url);
 
 } // namespace launch
 } // namespace oked

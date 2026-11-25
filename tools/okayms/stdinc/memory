@@ -1,8 +1,20 @@
-// okay-ms own standard header: std::unique_ptr and std::make_unique, written from ISO/IEC 14882 [unique.ptr]. Own
-// minimal version: one owner, deleted with `delete` (no custom deleter, no array form), moved with std::move, not
-// copyable. std::shared_ptr is not here (it needs a thread-safe reference count, which this compiler cannot make yet).
+// okay-ms own standard header: std::unique_ptr and std::make_unique, written from ISO/IEC 14882 [unique.ptr], and
+// std::shared_ptr, std::weak_ptr, std::make_shared, std::enable_shared_from_this and the pointer casts, written from
+// [util.smartptr.shared], [util.smartptr.weak], [util.smartptr.enab] and [util.smartptr.shared.cast].
+// unique_ptr, own minimal version: one owner, deleted with `delete` (no custom deleter, no array form), moved with
+// std::move, not copyable.
+// shared_ptr, own minimal version: a control block (__sp_count) counts the owners and the weak references; the last
+// owner deletes the object with `delete`, the last reference of either kind deletes the block. Differences from the
+// standard: (the counts are atomic since round 27, see __sp_count); no custom
+// deleter or allocator, no array form; make_shared makes the object and the block separately; okay-ms reads nullptr as
+// the number 0, so the constructor and the comparisons for nullptr take an int; shared_from_this() on an object no
+// shared_ptr owns gives an empty pointer instead of throwing bad_weak_ptr; dynamic_pointer_cast is not here (the
+// compiler has no dynamic_cast yet).
 #pragma once
 #include <cstddef>
+#include <cstdlib>
+#include <intrin.h>
+#include <type_traits>
 #include <utility>
 namespace std {
 template <typename T>
@@ -47,7 +59,248 @@ public:
     bool operator!() const { return p_ == 0; }
     explicit operator bool() const { return p_ != 0; }
 };
-template <typename T> unique_ptr<T> make_unique() { return unique_ptr<T>(new T()); }
-template <typename T, typename A> unique_ptr<T> make_unique(const A& a) { return unique_ptr<T>(new T(a)); }
-template <typename T, typename A, typename B> unique_ptr<T> make_unique(const A& a, const B& b) { return unique_ptr<T>(new T(a, b)); }
+// make_unique ([unique.ptr.create]): the arguments are forwarded to T's constructor, any number of them.
+template <typename T, typename... A> unique_ptr<T> make_unique(A&&... a) { return unique_ptr<T>(new T(std::forward<A>(a)...)); }
+
+// ---- shared ownership ----
+class __sp_count {
+public:
+    long __uses;
+    long __weaks;  // the weak references, plus one held by the owners together while there are any
+    __sp_count() : __uses(1), __weaks(1) {}
+    virtual ~__sp_count() {}
+    virtual void __destroy() = 0;
+    // The counts change with the interlocked intrinsics (<intrin.h>, LOCK-prefixed instructions), so owners on several
+    // threads may copy and drop shared_ptrs of one object ([util.smartptr.shared] 4, no data race on the counts).
+    void __add_use() { _InterlockedIncrement(&__uses); }
+    void __add_weak() { _InterlockedIncrement(&__weaks); }
+    // A new owner only while there is one (weak_ptr::lock): the count goes up from what it was, never from 0.
+    bool __try_add_use() {
+        long seen = _InterlockedCompareExchange(&__uses, 0, 0);
+        while (seen > 0) {
+            const long was = _InterlockedCompareExchange(&__uses, seen + 1, seen);
+            if (was == seen) return true;
+            seen = was;
+        }
+        return false;
+    }
+    long __use_count() const { return _InterlockedCompareExchange((long*)&__uses, 0, 0); }
+    void __release() {
+        if (_InterlockedDecrement(&__uses) == 0) {
+            __destroy();
+            __release_weak();
+        }
+    }
+    void __release_weak() {
+        if (_InterlockedDecrement(&__weaks) == 0) delete this;
+    }
+};
+template <typename Y>
+class __sp_block : public __sp_count {
+public:
+    Y* __obj;
+    explicit __sp_block(Y* p) : __obj(p) {}
+    void __destroy() { delete __obj; }
+};
+// The part of enable_shared_from_this that the shared_ptr constructor fills: a weak reference to the object's block.
+class __esft_base {
+public:
+    void* __wobj;
+    __sp_count* __wc;
+    __esft_base() : __wobj(0), __wc(0) {}
+    __esft_base(const __esft_base&) : __wobj(0), __wc(0) {}
+    __esft_base& operator=(const __esft_base&) { return *this; }
+    // Virtual, so a class derived from enable_shared_from_this that has virtual functions keeps its table pointer at
+    // the start of this base (okay-ms puts it in the first class that has one; it cannot yet add one in a derived class).
+    virtual ~__esft_base() {
+        if (__wc) __wc->__release_weak();
+    }
+};
+
+template <typename T>
+class shared_ptr {
+public:
+    T* __p;
+    __sp_count* __c;
+    typedef T element_type;
+    shared_ptr() : __p(0), __c(0) {}
+    shared_ptr(int null_pointer) : __p(0), __c(0) { (void)null_pointer; }  // shared_ptr<T> p = nullptr;
+    template <typename Y>
+    explicit shared_ptr(Y* p) : __p(p), __c(new __sp_block<Y>(p)) {
+        __hook(p);
+    }
+    shared_ptr(const shared_ptr& o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_use();
+    }
+    shared_ptr(shared_ptr&& o) : __p(o.__p), __c(o.__c) {
+        o.__p = 0;
+        o.__c = 0;
+    }
+    template <typename Y>
+    shared_ptr(const shared_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_use();
+    }
+    template <typename Y>
+    shared_ptr(shared_ptr<Y>&& o) : __p(o.__p), __c(o.__c) {
+        o.__p = 0;
+        o.__c = 0;
+    }
+    // The aliasing constructor: owns what o owns, points at p.
+    template <typename Y>
+    shared_ptr(const shared_ptr<Y>& o, T* p) : __p(p), __c(o.__c) {
+        if (__c) __c->__add_use();
+    }
+    // Used by weak_ptr::lock and shared_from_this: a new owner when the object still lives.
+    shared_ptr(T* p, __sp_count* c, int) : __p(0), __c(0) {
+        if (c && c->__try_add_use()) {
+            __p = p;
+            __c = c;
+        }
+    }
+    ~shared_ptr() {
+        if (__c) __c->__release();
+    }
+    shared_ptr& operator=(const shared_ptr& o) {
+        shared_ptr t(o);
+        swap(t);
+        return *this;
+    }
+    shared_ptr& operator=(shared_ptr&& o) {
+        shared_ptr t(std::move(o));
+        swap(t);
+        return *this;
+    }
+    template <typename Y>
+    shared_ptr& operator=(const shared_ptr<Y>& o) {
+        shared_ptr t(o);
+        swap(t);
+        return *this;
+    }
+    shared_ptr& operator=(int null_pointer) {
+        (void)null_pointer;
+        reset();
+        return *this;
+    }
+    void swap(shared_ptr& o) {
+        T* p = __p;
+        __p = o.__p;
+        o.__p = p;
+        __sp_count* c = __c;
+        __c = o.__c;
+        o.__c = c;
+    }
+    void reset() {
+        shared_ptr t;
+        swap(t);
+    }
+    template <typename Y>
+    void reset(Y* p) {
+        shared_ptr t(p);
+        swap(t);
+    }
+    T* get() const { return __p; }
+    T& operator*() const { return *__p; }
+    T* operator->() const { return __p; }
+    long use_count() const { return __c ? __c->__use_count() : 0; }
+    bool unique() const { return use_count() == 1; }
+    explicit operator bool() const { return __p != 0; }
+    bool operator!() const { return __p == 0; }
+    template <typename Y>
+    bool owner_before(const shared_ptr<Y>& o) const { return __c < o.__c; }
+
+    template <typename Y>
+    void __hook(Y* p) {
+        if constexpr (is_base_of<__esft_base, Y>::value) {
+            __esft_base* e = static_cast<__esft_base*>(p);
+            if (p && !e->__wc) {
+                e->__wobj = static_cast<void*>(p);
+                e->__wc = __c;
+                __c->__add_weak();
+            }
+        }
+    }
+};
+
+template <typename T, typename U> bool operator==(const shared_ptr<T>& a, const shared_ptr<U>& b) { return a.get() == b.get(); }
+template <typename T, typename U> bool operator!=(const shared_ptr<T>& a, const shared_ptr<U>& b) { return a.get() != b.get(); }
+template <typename T, typename U> bool operator<(const shared_ptr<T>& a, const shared_ptr<U>& b) { return a.get() < b.get(); }
+template <typename T> bool operator==(const shared_ptr<T>& a, int) { return a.get() == 0; }
+template <typename T> bool operator!=(const shared_ptr<T>& a, int) { return a.get() != 0; }
+template <typename T> bool operator==(int, const shared_ptr<T>& a) { return a.get() == 0; }
+template <typename T> bool operator!=(int, const shared_ptr<T>& a) { return a.get() != 0; }
+
+template <typename T>
+class weak_ptr {
+public:
+    T* __p;
+    __sp_count* __c;
+    typedef T element_type;
+    weak_ptr() : __p(0), __c(0) {}
+    weak_ptr(const weak_ptr& o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_weak();
+    }
+    template <typename Y>
+    weak_ptr(const weak_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_weak();
+    }
+    template <typename Y>
+    weak_ptr(const shared_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_weak();
+    }
+    ~weak_ptr() {
+        if (__c) __c->__release_weak();
+    }
+    weak_ptr& operator=(const weak_ptr& o) {
+        weak_ptr t(o);
+        swap(t);
+        return *this;
+    }
+    template <typename Y>
+    weak_ptr& operator=(const shared_ptr<Y>& o) {
+        weak_ptr t(o);
+        swap(t);
+        return *this;
+    }
+    void swap(weak_ptr& o) {
+        T* p = __p;
+        __p = o.__p;
+        o.__p = p;
+        __sp_count* c = __c;
+        __c = o.__c;
+        o.__c = c;
+    }
+    void reset() {
+        weak_ptr t;
+        swap(t);
+    }
+    long use_count() const { return __c ? __c->__use_count() : 0; }
+    bool expired() const { return use_count() == 0; }
+    shared_ptr<T> lock() const { return shared_ptr<T>(__p, __c, 0); }
+    template <typename Y>
+    bool owner_before(const weak_ptr<Y>& o) const { return __c < o.__c; }
+};
+
+template <typename T>
+class enable_shared_from_this : public __esft_base {
+public:
+    shared_ptr<T> shared_from_this() { return shared_ptr<T>(static_cast<T*>(__wobj), __wc, 0); }
+    shared_ptr<const T> shared_from_this() const { return shared_ptr<const T>(static_cast<const T*>(__wobj), __wc, 0); }
+    weak_ptr<T> weak_from_this() {
+        weak_ptr<T> w;
+        if (__wc) {
+            w.__p = static_cast<T*>(__wobj);
+            w.__c = __wc;
+            __wc->__add_weak();
+        }
+        return w;
+    }
+};
+
+template <typename T, typename... A> shared_ptr<T> make_shared(A&&... a) { return shared_ptr<T>(new T(std::forward<A>(a)...)); }
+template <typename T, typename U> shared_ptr<T> static_pointer_cast(const shared_ptr<U>& o) {
+    return shared_ptr<T>(o, static_cast<T*>(o.get()));
+}
+template <typename T, typename U> shared_ptr<T> const_pointer_cast(const shared_ptr<U>& o) {
+    return shared_ptr<T>(o, const_cast<T*>(o.get()));
+}
 }

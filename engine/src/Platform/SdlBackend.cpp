@@ -102,6 +102,14 @@ public:
         (void)mode; return false;
 #endif
     }
+    bool SetAlwaysOnTop(bool on) override {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        SDL_SetWindowAlwaysOnTop(m_win, on ? SDL_TRUE : SDL_FALSE);
+        return true;
+#else
+        (void)on; return false;
+#endif
+    }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom((void*)rgba, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);

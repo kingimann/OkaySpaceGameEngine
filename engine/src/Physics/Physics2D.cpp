@@ -1,12 +1,12 @@
 #include "okay/Physics/Physics2D.hpp"
-#include "okay/Physics/BodyPose.hpp"
-#include "okay/Physics/Broadphase.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/ConvexContact2D.hpp"
+#include "okay/Physics/Core/World.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Core/Jobs.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/ComponentCache.hpp"
 #include "okay/Scene/NearestLookup.hpp"
@@ -16,9 +16,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <typeinfo>
-#include <vector>
+#include <functional>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace okay {
 
@@ -31,37 +34,45 @@ struct Contact {
     Vec2  point{0, 0};    // approximate world contact point (for angular response)
 };
 
-// Turning inertia about Z for a body of mass 1, from the collider's real shape (rounded convex pieces weighted by area).
-// 0 when it cannot be worked out (an edge line has no area).
-float PieceInertia(Collider2D* col) {
-    std::vector<shape2d::Piece> ps; shape2d::PiecesOf(col, ps, false);
-    const float kPi = 3.14159265f;
+// One convex piece weighed as a flat plate of even thickness: its area, its centre, and its turning inertia about that
+// centre for a mass of 1.
+struct PieceMassProps { double area = 0, cx = 0, cy = 0, inertia = 0; };
+// False when the piece has no area (a bare point or line).
+bool PieceMass(const shape2d::Piece& p, PieceMassProps& o) {
+    const double kPi = 3.14159265358979;
+    o = PieceMassProps{};
+    if (p.v.size() == 1 && p.r > 0) { o.area = kPi * p.r * p.r; o.cx = p.v[0].x; o.cy = p.v[0].y; o.inertia = 0.5 * p.r * p.r; }
+    else if (p.v.size() == 2 && p.r > 0) {
+        double L = (p.v[1] - p.v[0]).Magnitude(), r = p.r;
+        double ar = 2 * r * L, ac = kPi * r * r;
+        o.area = ar + ac; o.cx = 0.5 * (p.v[0].x + p.v[1].x); o.cy = 0.5 * (p.v[0].y + p.v[1].y);
+        double iRect = (4 * r * r + L * L) / 12.0, iDisc = 0.5 * r * r + 0.25 * L * L;   // the two half discs, parallel-axis approx
+        o.inertia = (ar * iRect + ac * iDisc) / o.area;
+    } else if (p.v.size() >= 3) {
+        double a2 = 0, sx = 0, sy = 0, num = 0, den = 0;
+        for (std::size_t i = 0; i < p.v.size(); ++i) {
+            const Vec2& a = p.v[i]; const Vec2& b = p.v[(i + 1) % p.v.size()];
+            double c = (double)a.x * b.y - (double)b.x * a.y;
+            a2 += c; sx += (a.x + b.x) * c; sy += (a.y + b.y) * c;
+            num += c * ((double)a.x * a.x + a.y * a.y + (double)a.x * b.x + (double)a.y * b.y + (double)b.x * b.x + (double)b.y * b.y);
+            den += c;
+        }
+        if (std::abs(a2) < 1e-12) return false;
+        o.area = std::abs(a2) * 0.5; o.cx = sx / (3 * a2); o.cy = sy / (3 * a2);
+        double iOrigin = num / (6.0 * den);
+        o.inertia = std::max(iOrigin - (o.cx * o.cx + o.cy * o.cy), 1e-9);
+    } else return false;
+    return true;
+}
+
+// Turning inertia about Z, about their shared centre, of a body of mass 1 made of these pieces (each weighted by its
+// area). 0 when it cannot be worked out (edge lines have no area).
+float PiecesInertia(const std::vector<shape2d::Piece>& ps) {
     double areaSum = 0, cx = 0, cy = 0;
-    struct One { double area, cx, cy, iC; };       // area, centroid, inertia about the centroid for unit mass
-    std::vector<One> ones;
+    std::vector<PieceMassProps> ones;
     for (const auto& p : ps) {
-        One o{0, 0, 0, 0};
-        if (p.v.size() == 1 && p.r > 0) { o.area = kPi * p.r * p.r; o.cx = p.v[0].x; o.cy = p.v[0].y; o.iC = 0.5 * p.r * p.r; }
-        else if (p.v.size() == 2 && p.r > 0) {
-            double L = (p.v[1] - p.v[0]).Magnitude(), r = p.r;
-            double ar = 2 * r * L, ac = kPi * r * r;
-            o.area = ar + ac; o.cx = 0.5 * (p.v[0].x + p.v[1].x); o.cy = 0.5 * (p.v[0].y + p.v[1].y);
-            double iRect = (4 * r * r + L * L) / 12.0, iDisc = 0.5 * r * r + 0.25 * L * L;   // the two half discs, parallel-axis approx
-            o.iC = (ar * iRect + ac * iDisc) / o.area;
-        } else if (p.v.size() >= 3) {
-            double a2 = 0, sx = 0, sy = 0, num = 0, den = 0;
-            for (std::size_t i = 0; i < p.v.size(); ++i) {
-                const Vec2& a = p.v[i]; const Vec2& b = p.v[(i + 1) % p.v.size()];
-                double c = (double)a.x * b.y - (double)b.x * a.y;
-                a2 += c; sx += (a.x + b.x) * c; sy += (a.y + b.y) * c;
-                num += c * ((double)a.x * a.x + a.y * a.y + (double)a.x * b.x + (double)a.y * b.y + (double)b.x * b.x + (double)b.y * b.y);
-                den += c;
-            }
-            if (std::abs(a2) < 1e-12) continue;
-            o.area = std::abs(a2) * 0.5; o.cx = sx / (3 * a2); o.cy = sy / (3 * a2);
-            double iOrigin = num / (6.0 * den);
-            o.iC = std::max(iOrigin - (o.cx * o.cx + o.cy * o.cy), 1e-9);
-        } else continue;
+        PieceMassProps o;
+        if (!PieceMass(p, o)) continue;
         ones.push_back(o); areaSum += o.area; cx += o.area * o.cx; cy += o.area * o.cy;
     }
     if (areaSum < 1e-9 || ones.empty()) return 0.0f;
@@ -69,33 +80,9 @@ float PieceInertia(Collider2D* col) {
     double I = 0;
     for (const auto& o : ones) {
         double dx = o.cx - cx, dy = o.cy - cy;
-        I += (o.area / areaSum) * (o.iC + dx * dx + dy * dy);
+        I += (o.area / areaSum) * (o.inertia + dx * dx + dy * dy);
     }
     return (float)I;
-}
-
-// Inverse moment of inertia about Z for a body+collider. 0 when rotation is
-// locked, mass is infinite, or there's no collider to size the inertia from.
-float InvInertia(Rigidbody2D* rb, Collider2D* col) {
-    if (!rb || rb->freezeRotation || !col) return 0.0f;
-    float im = rb->InvMass();
-    if (im <= 0.0f) return 0.0f;
-    float mass = rb->mass, I;
-    if (col->shape() == Collider2D::Shape::Box) {
-        Vec2 he = static_cast<BoxCollider2D*>(col)->HalfExtents();
-        float w = he.x * 2.0f, h = he.y * 2.0f;
-        I = mass * (w * w + h * h) / 12.0f;
-    } else if (col->shape() == Collider2D::Shape::Circle) {
-        float r = static_cast<CircleCollider2D*>(col)->WorldRadius();
-        I = mass * r * r * 0.5f;
-    } else if (float ui = PieceInertia(col); ui > 0.0f) {      // capsule, polygon, composite: from the real shape
-        I = mass * ui;
-    } else {
-        Vec2 mn, mx; col->WorldAABB(mn, mx);
-        float w = mx.x - mn.x, h = mx.y - mn.y;
-        I = mass * (w * w + h * h) / 12.0f;
-    }
-    return I > 1e-8f ? 1.0f / I : 0.0f;
 }
 
 Vec2 ClampVec(const Vec2& v, const Vec2& lo, const Vec2& hi) {
@@ -205,25 +192,6 @@ void AsCircle(Collider2D* col, const Vec2& ref, Vec2& center, float& radius) {
     }
 }
 
-// Should this contact be skipped because it's a one-way edge and the other body
-// is approaching from the pass-through side? Returns true to let it pass.
-bool OneWayPassThrough(Collider2D* a, Collider2D* b) {
-    for (int k = 0; k < 2; ++k) {
-        Collider2D* ec = k == 0 ? a : b;
-        Collider2D* other = k == 0 ? b : a;
-        if (ec->shape() != Collider2D::Shape::Edge) continue;
-        auto* e = static_cast<EdgeCollider2D*>(ec);
-        if (!e->oneWay) continue;
-        Vec2 oc = other->WorldCenter();
-        Vec2 cp = ClosestOnPoly(e->WorldPoints(), false, oc);
-        Vec2 n0 = e->oneWayNormal.Normalized();
-        float ang = e->WorldRotation(), ca = Mathf::Cos(ang), sa = Mathf::Sin(ang);
-        Vec2 n{n0.x * ca - n0.y * sa, n0.x * sa + n0.y * ca};      // the pass-through side turns with the edge
-        if (Vec2::Dot(oc - cp, n) < 0.0f) return true;   // body is below the platform
-    }
-    return false;
-}
-
 // An oriented box: center, half-extents, and its two world-space unit axes.
 struct OBB2 {
     Vec2 c, h, ax, ay;
@@ -274,66 +242,6 @@ Contact TestOBBCircle(const OBB2& box, const Vec2& cc, float r) {
     c.normal = box.ax * c.normal.x + box.ay * c.normal.y;
     c.point  = box.c + box.ax * c.point.x + box.ay * c.point.y;
     return c;
-}
-
-// Pair test through the convex pieces of both colliders (Polygon, Edge, Composite and the capsule-against-box pairs).
-// Normal points A toward B.
-Contact TestPieces(Collider2D* a, Collider2D* b) {
-    std::vector<shape2d::Piece> pa, pb;
-    shape2d::PiecesOf(a, pa); shape2d::PiecesOf(b, pb);
-    Contact best;
-    for (const auto& x : pa) {
-        for (const auto& y : pb) {
-            if (x.mx.x < y.mn.x || x.mn.x > y.mx.x || x.mx.y < y.mn.y || x.mn.y > y.mx.y) continue;
-            ConvexHit2 h = ConvexContact2D([&](const Vec2& d) { return shape2d::Support(x, d); },
-                                            [&](const Vec2& d) { return shape2d::Support(y, d); });
-            if (!h.hit || !std::isfinite(h.penetration)) continue;
-            if (!best.hit || h.penetration > best.penetration) {
-                best.hit = true; best.normal = h.normal; best.penetration = h.penetration; best.point = h.point;
-            }
-        }
-    }
-    return best;
-}
-
-Contact TestColliders(Collider2D* a, Collider2D* b) {
-    using S = Collider2D::Shape;
-    S sa = a->shape(), sb = b->shape();
-    if (shape2d::IsGeneric(a) || shape2d::IsGeneric(b) || a->contactOffset > 0.0f || b->contactOffset > 0.0f ||
-        (sa == S::Capsule && sb == S::Box) || (sa == S::Box && sb == S::Capsule))
-        return TestPieces(a, b);
-
-    // Capsule vs capsule: closest points between the two segments.
-    if (sa == S::Capsule && sb == S::Capsule) {
-        auto* ca = static_cast<CapsuleCollider2D*>(a);
-        auto* cb = static_cast<CapsuleCollider2D*>(b);
-        Vec2 a0, a1, b0, b1; ca->Segment(a0, a1); cb->Segment(b0, b1);
-        Vec2 pa, pb; ClosestSegSeg(a0, a1, b0, b1, pa, pb);
-        return TestCircleCircle(pa, ca->WorldRadius(), pb, cb->WorldRadius());
-    }
-
-    bool aBox = sa == S::Box, bBox = sb == S::Box;
-    if (aBox && bBox) {
-        return TestOBBOBB(MakeOBB(static_cast<BoxCollider2D*>(a)),
-                          MakeOBB(static_cast<BoxCollider2D*>(b)));
-    }
-    if (aBox) { // A box, B circle/capsule
-        auto* box = static_cast<BoxCollider2D*>(a);
-        Vec2 cc; float r; AsCircle(b, box->WorldCenter(), cc, r);
-        return TestOBBCircle(MakeOBB(box), cc, r);
-    }
-    if (bBox) { // A circle/capsule, B box
-        auto* box = static_cast<BoxCollider2D*>(b);
-        Vec2 cc; float r; AsCircle(a, box->WorldCenter(), cc, r);
-        Contact c = TestOBBCircle(MakeOBB(box), cc, r);
-        c.normal = c.normal * -1.0f; // flip to point from A toward B
-        return c;
-    }
-    // Circle/capsule vs circle/capsule.
-    Vec2 ac, bc; float ar, br;
-    AsCircle(a, b->WorldCenter(), ac, ar);
-    AsCircle(b, a->WorldCenter(), bc, br);
-    return TestCircleCircle(ac, ar, bc, br);
 }
 
 // Components a callback removes are skipped (`gone`), so a handler that removes
@@ -387,433 +295,14 @@ bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
 
 } // namespace
 
-#include "Physics2DImproved.inl"   // construction and the 2D collider centre
-
-namespace {
-// The per-collider bounding-box pass runs on EngineJobs() once a scene has this many
-// colliders; below it the job hand-off costs more than it saves (measured with
-// `test_jobs_adoption bench`). Each chunk is kBoundsGrain colliders.
-constexpr std::size_t kParallelBoundsMin = 256;
-constexpr std::size_t kBoundsGrain = 64;
-
-// Collider types whose WorldAABB only reads (their transform chain, their own fields and
-// the scene's quality). Composite colliders (and any type added later) are done on the calling thread.
-bool BoundsAreReadOnly(const Collider2D& c) {
-    const std::type_info& t = typeid(c);
-    return t == typeid(BoxCollider2D) || t == typeid(CircleCollider2D) || t == typeid(CapsuleCollider2D) ||
-           t == typeid(PolygonCollider2D) || t == typeid(EdgeCollider2D);
-}
-} // namespace
-
-void Physics2D::Step(Scene& scene, float dt) {
-    if (dt <= 0.0f) return;
-
-    // Sleeping thresholds: below these speeds for kSleepTime seconds, a dynamic
-    // body sleeps (skipped until woken). Mirrors Box2D's rest optimisation.
-    constexpr float kLinSleep = 0.05f;   // world units / second
-    constexpr float kAngSleep = 2.0f;    // degrees / second
-    constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
-
-    // 1) Integrate dynamic / kinematic bodies.
-    auto bodies = CachedComponents<Rigidbody2D>(scene);
-    for (Rigidbody2D* rb : bodies) {
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-        Transform* t = rb->transform;
-        // A sleeping body stays put until something wakes it. If its velocity was
-        // set directly (script/teleport) it exceeds the threshold -> wake and run.
-        if (rb->bodyType == Rigidbody2D::BodyType::Dynamic && rb->sleeping) {
-            if (rb->velocity.SqrMagnitude() > kLinSleep * kLinSleep ||
-                Mathf::Abs(rb->angularVelocity) > kAngSleep) {
-                rb->WakeUp();
-            } else {
-                rb->ConsumeForce(); rb->ConsumeTorque();   // discard so nothing accrues
-                continue;
-            }
-        }
-        if (rb->bodyType == Rigidbody2D::BodyType::Dynamic) {
-            Vec2 accel = gravity * rb->gravityScale + rb->ConsumeForce() * rb->InvMass();
-            rb->velocity += accel * dt;
-            if (rb->drag > 0.0f) rb->velocity *= 1.0f / (1.0f + rb->drag * dt);
-            // Angular: apply accumulated torque (scaled by inverse inertia) and damp.
-            if (!rb->freezeRotation) {
-                float invI = InvInertia(rb, rb->gameObject->GetComponent<Collider2D>());
-                rb->angularVelocity += rb->ConsumeTorque() * invI * dt * Mathf::Rad2Deg;
-                if (rb->angularDrag > 0.0f) rb->angularVelocity *= 1.0f / (1.0f + rb->angularDrag * dt);
-            } else {
-                rb->ConsumeTorque();   // discard so it doesn't accumulate while frozen
-            }
-        }
-        if (rb->bodyType != Rigidbody2D::BodyType::Static) {
-            if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
-            else MoveBodyWorld(t, Vec3{rb->velocity * dt});
-            if (!rb->freezeRotation && rb->angularVelocity != 0.0f) {
-                if (!t->Parent()) {
-                    Vec3 e = t->localRotation.ToEuler();
-                    e.z += rb->angularVelocity * dt;
-                    t->localRotation = Quat::Euler(e);
-                } else {
-                    Vec3 e = t->Rotation().ToEuler();
-                    e.z += rb->angularVelocity * dt;
-                    t->SetRotation(Quat::Euler(e));
-                }
-            }
-        }
-    }
-
-    // 2) Broad+narrow phase over every collider pair.
-    auto colliders = CachedComponents<Collider2D>(scene);
-    std::set<Pair> current;
-    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
-    // them at once); every raw pointer held across a callback is checked first.
-    Scene::RemovalWatch gone(scene);
-
-    // Precompute world AABBs once per step (were recomputed O(n) times per collider)
-    // and a membership set for the exit-message cleanup (was an O(contacts*n) scan).
-    const std::size_t nc = colliders.size();
-    std::vector<Vec2> aabbMin(nc), aabbMax(nc);
-    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
-    // contact phase: NaN fails every AABB rejection test, so it would "touch"
-    // everything and spread NaN into each body it's resolved against.
-    std::vector<char> finite(nc, 1);
-    std::unordered_set<Collider2D*> aliveSet;
-    aliveSet.reserve(nc * 2 + 1);
-    auto bounds = [&](std::size_t i) {   // writes only slot i
-        colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
-        const Rigidbody2D* r = colliders[i]->gameObject->GetComponent<Rigidbody2D>();
-        finite[i] = std::isfinite(aabbMin[i].x) && std::isfinite(aabbMin[i].y) &&
-                    std::isfinite(aabbMax[i].x) && std::isfinite(aabbMax[i].y) &&
-                    (!r || (std::isfinite(r->velocity.x) && std::isfinite(r->velocity.y) && std::isfinite(r->angularVelocity)));
-    };
-    JobSystem& jobs = EngineJobs();
-    if (nc >= kParallelBoundsMin && jobs.WorkerCount() > 0) {
-        // On the calling thread first: the colliders not known to be read-only, and every world-matrix
-        // cache brought up to date (reading a stale one rebuilds it, and parents are shared). Then the
-        // rest only read, so they can run on any thread; each writes its own slots, so the result is
-        // the same bits whatever the worker count.
-        std::vector<char> onWorkers(nc, 0);
-        for (std::size_t i = 0; i < nc; ++i) {
-            if (BoundsAreReadOnly(*colliders[i])) {
-                onWorkers[i] = 1;
-                if (colliders[i]->transform) colliders[i]->transform->WorldVersion();
-            } else {
-                bounds(i);
-            }
-        }
-        jobs.ParallelFor(0, nc, kBoundsGrain, [&](std::size_t b, std::size_t e) {
-            for (std::size_t i = b; i < e; ++i) if (onWorkers[i]) bounds(i);
-        });
-        for (std::size_t i = 0; i < nc; ++i) aliveSet.insert(colliders[i]);
-    } else {
-        // The serial path is the old single loop, so it costs what it did before the job split.
-        for (std::size_t i = 0; i < nc; ++i) { bounds(i); aliveSet.insert(colliders[i]); }
-    }
-
-    // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in
-    // the order the old all-pairs loop visited them: the solver applies impulses in pair order. The sweep (see
-    // Physics/Broadphase.hpp) finds them without comparing every collider with every other.
-    std::vector<broadphase::Box> boxes(nc);
-    for (std::size_t i = 0; i < nc; ++i) {
-        boxes[i].lo[0] = aabbMin[i].x; boxes[i].lo[1] = aabbMin[i].y;   // z stays 0: every 2D box overlaps on that axis
-        boxes[i].hi[0] = aabbMax[i].x; boxes[i].hi[1] = aabbMax[i].y;
-    }
-    const broadphase::PairList candidatePairs = broadphase::Pairs(boxes, finite);
-    for (const auto& candidate : candidatePairs) {
-        {   // one candidate pair (the block keeps the old nesting depth, so this change stays a small diff)
-            const std::size_t i = candidate.first, j = candidate.second;
-            Collider2D* a = colliders[i];
-            Collider2D* b = colliders[j];
-            if (gone.Gone(a)) continue;   // (the old loop broke out of this a's row: the same pairs are skipped)
-            if (gone.Gone(b)) continue;
-            if (!a->enabled || !b->enabled) continue;
-            if (!a->gameObject->ActiveInHierarchy() || !b->gameObject->ActiveInHierarchy()) continue;
-            if (a->gameObject == b->gameObject) continue;
-            if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
-
-            bool trigger = a->isTrigger || b->isTrigger;
-            // Trigger tag / layer filters: a filtered-out object passes through
-            // silently (no events on either side).
-            if (trigger && (!TriggerAccepts(a, b) || !TriggerAccepts(b, a))) continue;
-
-            Contact c = TestColliders(a, b);
-            if (!c.hit) continue;
-
-            current.insert({a, b});
-
-            Rigidbody2D* ra = a->gameObject->GetComponent<Rigidbody2D>();
-            Rigidbody2D* rb = b->gameObject->GetComponent<Rigidbody2D>();
-            // Relative velocity before the solver changes it (for impact speed).
-            const Vec2 relVelBA = (rb ? rb->velocity : Vec2::Zero) - (ra ? ra->velocity : Vec2::Zero);
-            if (PhysicsDebug::Collect() && (int)m_debugContacts.size() < PhysicsDebug::kMaxContacts)
-                m_debugContacts.push_back({c.point, c.normal, trigger});
-
-            // 3) Resolve solids (skip triggers and pairs without dynamics).
-            if (!trigger && !OneWayPassThrough(a, b)) {
-                // Wake a sleeping body when a moving body (dynamic or kinematic)
-                // runs into it; two bodies both at rest stay asleep.
-                auto awakeMover = [](Rigidbody2D* r) {
-                    return r && !r->sleeping && r->bodyType != Rigidbody2D::BodyType::Static;
-                };
-                if (ra && ra->sleeping && awakeMover(rb)) ra->WakeUp();
-                if (rb && rb->sleeping && awakeMover(ra)) rb->WakeUp();
-                // Both still asleep -> nothing to resolve (resting stack).
-                if (!(ra && ra->sleeping) || !(rb && rb->sleeping)) {
-                float ima = ra ? ra->InvMass() : 0.0f;
-                float imb = rb ? rb->InvMass() : 0.0f;
-                float imSum = ima + imb;
-                if (imSum > 0.0f) {
-                    // Positional correction.
-                    Vec2 correction = c.normal * (c.penetration / imSum);
-                    MoveBodyWorld(a->transform, -Vec3{correction * ima});
-                    MoveBodyWorld(b->transform, Vec3{correction * imb});
-
-                    // Angular terms: lever arms from each body's center to the contact
-                    // point, and inverse inertia. When rotation is locked these are 0,
-                    // so the math collapses to the old linear-only impulse exactly.
-                    float iia = InvInertia(ra, a);
-                    float iib = InvInertia(rb, b);
-                    Vec2 cenA = a->WorldCenter(), cenB = b->WorldCenter();
-                    Vec2 rA = c.point - cenA, rB = c.point - cenB;
-                    auto pointVel = [](const Vec2& v, float wDeg, const Vec2& r) {
-                        float w = wDeg * Mathf::Deg2Rad;            // ω×r in 2D
-                        return v + Vec2{-w * r.y, w * r.x};
-                    };
-                    float rnA = rA.x * c.normal.y - rA.y * c.normal.x;   // cross(r, n)
-                    float rnB = rB.x * c.normal.y - rB.y * c.normal.x;
-                    float denom = imSum + rnA * rnA * iia + rnB * rnB * iib;
-
-                    Vec2 va = ra ? ra->velocity : Vec2::Zero;
-                    Vec2 vb = rb ? rb->velocity : Vec2::Zero;
-                    float wa = ra ? ra->angularVelocity : 0.0f;
-                    float wb = rb ? rb->angularVelocity : 0.0f;
-                    Vec2 rvel = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
-                    float velAlongNormal = Vec2::Dot(rvel, c.normal);
-                    float jImp = 0.0f;
-                    if (velAlongNormal < 0.0f && denom > 0.0f) {
-                        float e = Mathf::Max(ra ? ra->bounciness : 0.0f,
-                                             rb ? rb->bounciness : 0.0f);
-                        // Below a small approach speed, drop restitution so bodies
-                        // settle (and then sleep) instead of buzzing with micro-bounces
-                        //.
-                        if (-velAlongNormal < 0.5f) e = 0.0f;
-                        jImp = -(1.0f + e) * velAlongNormal / denom;
-                        Vec2 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
-                        if (rb) { rb->velocity += impulse * imb; rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
-                    }
-                    // Coulomb friction on the tangential relative velocity at the
-                    // contact point, clamped to friction x the normal impulse. With
-                    // gravity re-pressing each step this also gives resting bodies
-                    // static-like friction, and the lever arm makes off-center drag
-                    // spin the body (so a box thrown along the floor tumbles to rest).
-                    if (jImp > 0.0f) {
-                        wa = ra ? ra->angularVelocity : 0.0f;        // post-normal-impulse
-                        wb = rb ? rb->angularVelocity : 0.0f;
-                        va = ra ? ra->velocity : Vec2::Zero;
-                        vb = rb ? rb->velocity : Vec2::Zero;
-                        Vec2 rv = pointVel(vb, wb, rB) - pointVel(va, wa, rA);
-                        Vec2 tang = rv - c.normal * Vec2::Dot(rv, c.normal);
-                        float tlen = tang.Magnitude();
-                        if (tlen > 1e-4f) {
-                            Vec2 t = tang / tlen;
-                            float rtA = rA.x * t.y - rA.y * t.x;
-                            float rtB = rB.x * t.y - rB.y * t.x;
-                            float denomT = imSum + rtA * rtA * iia + rtB * rtB * iib;
-                            float jt = denomT > 0.0f ? -Vec2::Dot(rv, t) / denomT : 0.0f;
-                            float fa = ra ? ra->friction : 0.4f;
-                            float fb = rb ? rb->friction : 0.4f;
-                            float mu = Mathf::Sqrt((fa < 0 ? 0 : fa) * (fb < 0 ? 0 : fb));
-                            float maxF = mu * jImp;
-                            jt = Mathf::Clamp(jt, -maxF, maxF);
-                            Vec2 fimp = t * jt;
-                            if (ra) { ra->velocity -= fimp * ima; ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
-                            if (rb) { rb->velocity += fimp * imb; rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
-                        }
-                    }
-                }
-                } // both-asleep guard
-            }
-
-            // 4) Fire enter/stay messages.
-            bool wasContact = m_contacts.count({a, b}) != 0;
-            if (trigger) {
-                if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal, gone);
-                } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal, gone);
-                }
-            } else {
-                Collision2D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
-                Collision2D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
-                if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB, gone);
-                } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay2D, forA, gone);
-                    if (!gone.Gone(a) && !gone.Gone(b))
-                        DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB, gone);
-                }
-            }
-        }
-    }
-
-    // 4.5) Joints: positional constraints (after collisions, mirrors Physics3D).
-    for (Joint2D* j : CachedComponents<Joint2D>(scene)) {
-        if (j->broken || !j->gameObject || !j->transform) continue;
-        Rigidbody2D* ra = j->gameObject->GetComponent<Rigidbody2D>();
-        if (!ra) continue;                          // the joint moves THIS body
-        Transform* ta = j->transform;
-        Rigidbody2D* rbB = nullptr; Transform* tb = nullptr;
-        if (!j->connectedBody.empty())
-            if (GameObject* g = CachedPartner(scene, j)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
-        Vec3 pa3 = ta->Position();
-        Vec2 pa{pa3.x, pa3.y};
-        Vec2 pb = j->anchor;
-        if (tb) { Vec3 p = tb->Position(); pb = {p.x, p.y}; }
-        if (!j->initialized) {
-            j->pinOffset = pa - pb;
-            j->restLen = j->autoConfigure ? (pa - pb).Magnitude() : j->distance;
-            j->hingeLocalA = pb - pa;                            // lever COM_A -> pivot, at init
-            j->refAngleA = ta->localRotation.ToEuler().z;
-            j->initialized = true;
-        }
-        float imA = ra->InvMass();
-        float imB = rbB ? rbB->InvMass() : 0.0f;
-        float imSum = imA + imB;
-        if (imSum <= 0.0f) continue;
-        Joint2D::Mode m = (Joint2D::Mode)j->mode;
-
-        if (m == Joint2D::Mode::Pin) {
-            Vec2 target = pb + j->pinOffset;
-            Vec2 err = target - pa;
-            MoveBodyWorld(ta, Vec3{err * (imA / imSum)});
-            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, -Vec3{err * (imB / imSum)});
-            ra->velocity = rbB ? rbB->velocity : Vec2::Zero;   // weld: follow B (anchor -> freeze)
-            if (j->breakable && err.Magnitude() > j->breakForce) j->broken = true;
-        } else if (m == Joint2D::Mode::Hinge) {
-            // Revolute joint: pin a material point of A to the pivot, free to spin.
-            // (B supplies the pivot/linear reference; the reaction is applied to A.)
-            float angleA = ta->localRotation.ToEuler().z;
-            Vec2  rA = Vec2::Rotate(j->hingeLocalA, angleA - j->refAngleA);
-            Vec2  anchorWorld = pa + rA;
-            float iiA = InvInertia(ra, ra->gameObject->GetComponent<Collider2D>());
-            Vec2  vB = rbB ? rbB->velocity : Vec2::Zero;
-
-            // Velocity constraint: cancel the velocity of A's anchor point (vs B).
-            float wA = ra->angularVelocity * Mathf::Deg2Rad;
-            Vec2  vAnchor = ra->velocity + Vec2{-wA * rA.y, wA * rA.x} - vB;
-            float k00 = imA + iiA * rA.y * rA.y;
-            float k01 = -iiA * rA.x * rA.y;
-            float k11 = imA + iiA * rA.x * rA.x;
-            float det = k00 * k11 - k01 * k01;
-            if (Mathf::Abs(det) > 1e-9f) {
-                Vec2 P{ -( k11 * vAnchor.x - k01 * vAnchor.y) / det,
-                        -(-k01 * vAnchor.x + k00 * vAnchor.y) / det };
-                ra->velocity += P * imA;
-                ra->angularVelocity += (rA.x * P.y - rA.y * P.x) * iiA * Mathf::Rad2Deg;
-            }
-            // Motor: drive the spin toward motorSpeed, torque-limited.
-            if (j->useMotor && iiA > 0.0f) {
-                float Cdot = (ra->angularVelocity - j->motorSpeed) * Mathf::Deg2Rad;
-                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt, j->maxMotorTorque * dt);
-                ra->angularVelocity += imp * iiA * Mathf::Rad2Deg;
-            }
-            // Angle limits: clamp the relative angle and kill the outward spin.
-            if (j->useLimits) {
-                float rel = angleA - j->refAngleA;
-                float cl = Mathf::Clamp(rel, j->minAngle, j->maxAngle);
-                if (cl != rel) {
-                    Vec3 e = ta->localRotation.ToEuler();
-                    e.z += (cl - rel);
-                    ta->localRotation = Quat::Euler(e);
-                    if ((rel > j->maxAngle && ra->angularVelocity > 0.0f) ||
-                        (rel < j->minAngle && ra->angularVelocity < 0.0f))
-                        ra->angularVelocity = 0.0f;
-                }
-            }
-            // Positional correction: pull A's anchor point back onto the pivot.
-            Vec2 Cpos = anchorWorld - pb;
-            MoveBodyWorld(ta, -Vec3{Cpos});
-            if (j->breakable && Cpos.Magnitude() > j->breakForce) j->broken = true;
-        } else {
-            Vec2 d = pb - pa; float len = d.Magnitude();
-            Vec2 n = len > 1e-5f ? d / len : Vec2{0, 1};
-            float C = len - j->restLen;                 // +stretched / -compressed
-            Vec2 va = ra->velocity, vb = rbB ? rbB->velocity : Vec2::Zero;
-            float vrelN = Vec2::Dot(vb - va, n);
-            if (m == Joint2D::Mode::Spring) {
-                float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
-                Vec2 imp = n * (f * dt);
-                ra->velocity += imp * imA;
-                if (rbB && imB > 0.0f) rbB->velocity -= imp * imB;
-            } else {                                    // Distance (rigid rod)
-                float jImp = -vrelN / imSum;
-                Vec2 imp = n * jImp;
-                ra->velocity -= imp * imA;
-                if (rbB && imB > 0.0f) rbB->velocity += imp * imB;
-                Vec2 corr = n * C;                       // restore the rest length
-                MoveBodyWorld(ta, Vec3{corr * (imA / imSum)});
-                if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, -Vec3{corr * (imB / imSum)});
-            }
-            if (j->breakable && Mathf::Abs(C) > j->breakForce) j->broken = true;
-        }
-    }
-
-    // 4.75) Sleep bookkeeping: a dynamic body under the speed thresholds for
-    // kSleepTime seconds goes to sleep (zeroed and skipped next step). Any motion
-    // resets the timer. Bodies with allowSleep off never sleep.
-    for (Rigidbody2D* rb : bodies) {
-        if (gone.Gone(rb)) continue;                 // removed by a contact callback
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-        if (rb->bodyType != Rigidbody2D::BodyType::Dynamic) continue;
-        if (!rb->allowSleep) { rb->WakeUp(); continue; }
-        if (rb->sleeping) continue;
-        if (rb->velocity.SqrMagnitude() < kLinSleep * kLinSleep &&
-            Mathf::Abs(rb->angularVelocity) < kAngSleep) {
-            rb->m_sleepTimer += dt;
-            if (rb->m_sleepTimer >= kSleepTime) {
-                rb->sleeping = true;
-                rb->velocity = Vec2::Zero;
-                rb->angularVelocity = 0.0f;
-            }
-        } else {
-            rb->m_sleepTimer = 0.0f;
-        }
-    }
-
-    // 5) Fire exit messages for contacts that ended.
-    for (const Pair& p : m_contacts) {
-        if (current.count(p)) continue;
-        Collider2D* a = p.first;
-        Collider2D* b = p.second;
-        // The colliders may have been destroyed; guard via the live list.
-        if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
-        if (gone.Gone(a) || gone.Gone(b)) continue;
-        if (a->isTrigger || b->isTrigger) {
-            // No overlap any more: report the midpoint between the two centres.
-            Vec2 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
-            Vec2 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f, gone);
-        } else {
-            Collision2D forA = MakeCollision(b, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
-            Collision2D forB = MakeCollision(a, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA, gone);
-            if (!gone.Gone(a) && !gone.Gone(b))
-                DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB, gone);
-        }
-    }
-
-    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
-    if (gone.Any())
-        for (auto it = current.begin(); it != current.end();)
-            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
-    m_contacts.swap(current);
+Vec2 Collider2D::WorldCenter() const {
+    Vec3 p = transform ? transform->Position() : Vec3::Zero;
+    if (offset.x == 0.0f && offset.y == 0.0f) return {p.x, p.y};
+    if (!transform) return {p.x + offset.x, p.y + offset.y};
+    // The offset turns and scales with the object, as a child at that local position would.
+    const Vec3 s = transform->LossyScale();
+    const Vec3 o = transform->Rotation() * Vec3{offset.x * s.x, offset.y * s.y, 0.0f};
+    return {p.x + o.x, p.y + o.y};
 }
 
 // ===================== Scene queries ===================================
@@ -1337,18 +826,16 @@ bool CircleTouch(Collider2D* col, const Vec2& c, float r, Vec2& n, Vec2& point) 
 // Sweep a circle along unit `dir` up to maxDist; the nearest collider it touches.
 // Steps of half the radius (a thin wall can't slip between samples), limited to
 // the stretch of path near any candidate's bounds, each touch refined by
-// bisection. `skipStartOverlaps` ignores colliders already touching at the start.
+// bisection.
 RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const Vec2& dir,
                          float maxDist, GameObject* ignore, std::uint32_t mask,
-                         bool queryTriggers, bool skipStartOverlaps) {
+                         bool queryTriggers) {
     RaycastHit2D best;
     struct Cand { Collider2D* c; float t0, t1; };
     std::vector<Cand> cands;
     float lo = 1e30f, hi = -1e30f;
     for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(col, ignore, mask, queryTriggers)) continue;
-        Vec2 n, p;
-        if (skipStartOverlaps && CircleTouch(col, origin, radius, n, p)) continue;
         Vec2 mn, mx; col->WorldAABB(mn, mx);
         if (!(std::isfinite(mn.x + mn.y + mx.x + mx.y))) continue;   // NaN or infinite bounds: not a place to hit
         mn = mn - Vec2{radius, radius}; mx = mx + Vec2{radius, radius};
@@ -1412,7 +899,7 @@ RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2&
                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec2 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
-    return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers, false);
+    return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
 std::vector<RaycastHit2D> Physics2D::CircleCastAll(Scene& scene, const Vec2& origin, const Vec2& direction,
@@ -1514,30 +1001,6 @@ SurfaceQuery2D Physics2D::ClosestPoint(Scene& scene, const Vec2& point, float ma
     return best;
 }
 
-void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
-    Transform* t = rb->transform;
-    Vec2 motion = rb->velocity * dt;
-    float len = motion.Magnitude();
-    Collider2D* self = rb->gameObject->GetComponent<Collider2D>();
-    if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
-        MoveBodyWorld(t, Vec3{motion});
-        return;
-    }
-    // The body as the circle that fits inside its bounds: a slow body (moving
-    // less than half that per step) can't skip a wall, so it moves normally.
-    Vec2 mn, mx; self->WorldAABB(mn, mx);
-    float r = 0.5f * Mathf::Min(mx.x - mn.x, mx.y - mn.y);
-    if (r < 0.01f) r = 0.01f;
-    if (len <= r * 0.5f) { MoveBodyWorld(t, Vec3{motion}); return; }
-    Vec2 dir = motion / len;
-    RaycastHit2D h = SweepCircle(scene, self->WorldCenter(), r, dir, len, rb->gameObject,
-                                 m_layerMask[self->layer & 31], false, true);
-    float travel = len;
-    // Stop just inside the surface so this step's narrow phase sees the contact.
-    if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
-    MoveBodyWorld(t, Vec3{dir * travel});
-}
-
 const TriggerContact2D* Physics2D::CurrentTrigger() { return g_currentTrigger; }
 
 void Physics2D::RecordQueryRay(const Vec2& origin, const Vec2& direction, float maxDistance,
@@ -1553,3 +1016,5 @@ void Physics2D::RecordQueryRay(const Vec2& origin, const Vec2& direction, float 
 }
 
 } // namespace okay
+
+#include "Physics2DEngine.inl"   // the step: our own physics core runs the 2D scene

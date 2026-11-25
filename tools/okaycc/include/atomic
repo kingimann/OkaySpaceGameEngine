@@ -1,0 +1,197 @@
+// <atomic> for okay-cc (ISO/IEC 14882 [atomics]). Our own header. Every operation is sequentially
+// consistent whatever memory_order is given (a stronger order is always allowed): a load is a plain
+// aligned load and a store is XCHG, which x86-64 orders with every other locked instruction (Intel
+// SDM vol. 3, 8.2: loads are not reordered with other loads, stores not with other stores, and a
+// locked instruction orders both); read-modify-writes are LOCK XADD and LOCK CMPXCHG. The compiler
+// emits those instructions in place of calls to the __okay_atomic_ functions below (codegen.cpp
+// atomicAsm, elf.cpp atomicCode), in the size of T: 1, 2, 4 or 8 bytes.
+#pragma once
+#include <cstddef>
+extern "C" {
+long __okay_atomic_xadd8(void *p, long v);
+int __okay_atomic_xadd4(void *p, int v);
+int __okay_atomic_xadd2(void *p, int v);
+int __okay_atomic_xadd1(void *p, int v);
+int __okay_atomic_xchg2(void *p, int v);
+int __okay_atomic_cas2(void *p, int expected, int desired);
+long __okay_atomic_xchg8(void *p, long v);
+int __okay_atomic_xchg4(void *p, int v);
+int __okay_atomic_xchg1(void *p, int v);
+long __okay_atomic_cas8(void *p, long expected, long desired);
+int __okay_atomic_cas4(void *p, int expected, int desired);
+int __okay_atomic_cas1(void *p, int expected, int desired);
+void __okay_atomic_fence(void);
+}
+namespace std {
+enum memory_order {
+    memory_order_relaxed,
+    memory_order_consume,
+    memory_order_acquire,
+    memory_order_release,
+    memory_order_acq_rel,
+    memory_order_seq_cst
+};
+
+inline void atomic_thread_fence(memory_order) { __okay_atomic_fence(); }
+inline void atomic_signal_fence(memory_order) {}
+
+// The bits of a T as a long, zero-extended, and back (T is 1, 2, 4 or 8 bytes).
+template <typename T>
+long __atomic_bits(T v) {
+    if (sizeof(T) == 8) return *(long *)&v;
+    if (sizeof(T) == 4) return *(unsigned *)&v;
+    if (sizeof(T) == 2) return *(unsigned short *)&v;
+    return *(unsigned char *)&v;
+}
+template <typename T>
+T __atomic_value(long b) {
+    T r = T();
+    if (sizeof(T) == 8) *(long *)&r = b;
+    else if (sizeof(T) == 4) *(unsigned *)&r = (unsigned)b;
+    else if (sizeof(T) == 2) *(unsigned short *)&r = (unsigned short)b;
+    else *(unsigned char *)&r = (unsigned char)b;
+    return r;
+}
+template <typename T>
+long __atomic_exchange(T *p, long b) {
+    if (sizeof(T) == 8) return __okay_atomic_xchg8(p, b);
+    if (sizeof(T) == 4) return (unsigned)__okay_atomic_xchg4(p, (int)b);
+    if (sizeof(T) == 2) return __okay_atomic_xchg2(p, (int)b);
+    return __okay_atomic_xchg1(p, (int)b);
+}
+template <typename T>
+long __atomic_cas(T *p, long expected, long desired) {
+    if (sizeof(T) == 8) return __okay_atomic_cas8(p, expected, desired);
+    if (sizeof(T) == 4) return (unsigned)__okay_atomic_cas4(p, (int)expected, (int)desired);
+    if (sizeof(T) == 2) return __okay_atomic_cas2(p, (int)expected, (int)desired);
+    return __okay_atomic_cas1(p, (int)expected, (int)desired);
+}
+template <typename T>
+long __atomic_add(T *p, long d) {
+    if (sizeof(T) == 8) return __okay_atomic_xadd8(p, d);
+    if (sizeof(T) == 4) return (unsigned)__okay_atomic_xadd4(p, (int)d);
+    if (sizeof(T) == 2) return __okay_atomic_xadd2(p, (int)d);
+    return __okay_atomic_xadd1(p, (int)d);
+}
+
+template <typename T>
+struct atomic {
+    T __v;
+    atomic() : __v() {}
+    atomic(T v) : __v(v) {}
+    bool is_lock_free() const { return true; }
+    T load(memory_order = memory_order_seq_cst) const { return *(volatile T *)&__v; }
+    void store(T v, memory_order = memory_order_seq_cst) { __atomic_exchange(&__v, __atomic_bits(v)); }
+    operator T() const { return load(); }
+    T operator=(T v) {
+        store(v);
+        return v;
+    }
+    T exchange(T v, memory_order = memory_order_seq_cst) {
+        return __atomic_value<T>(__atomic_exchange(&__v, __atomic_bits(v)));
+    }
+    bool compare_exchange_strong(T &expected, T desired, memory_order = memory_order_seq_cst,
+                                 memory_order = memory_order_seq_cst) {
+        long want = __atomic_bits(expected);
+        long old = __atomic_cas(&__v, want, __atomic_bits(desired));
+        if (old == want) return true;
+        expected = __atomic_value<T>(old);
+        return false;
+    }
+    bool compare_exchange_weak(T &expected, T desired, memory_order m1 = memory_order_seq_cst,
+                               memory_order m2 = memory_order_seq_cst) {
+        return compare_exchange_strong(expected, desired, m1, m2);
+    }
+    // Arithmetic and bitwise read-modify-writes (integral T): XADD for + and -, a CAS loop for the rest.
+    T fetch_add(T d, memory_order = memory_order_seq_cst) { return __atomic_value<T>(__atomic_add(&__v, (long)d)); }
+    T fetch_sub(T d, memory_order = memory_order_seq_cst) { return __atomic_value<T>(__atomic_add(&__v, -(long)d)); }
+    T fetch_and(T d, memory_order = memory_order_seq_cst) {
+        T cur = load();
+        while (!compare_exchange_strong(cur, (T)(cur & d))) {
+        }
+        return cur;
+    }
+    T fetch_or(T d, memory_order = memory_order_seq_cst) {
+        T cur = load();
+        while (!compare_exchange_strong(cur, (T)(cur | d))) {
+        }
+        return cur;
+    }
+    T fetch_xor(T d, memory_order = memory_order_seq_cst) {
+        T cur = load();
+        while (!compare_exchange_strong(cur, (T)(cur ^ d))) {
+        }
+        return cur;
+    }
+    T operator++() { return fetch_add(1) + 1; }
+    T operator--() { return fetch_sub(1) - 1; }
+    T operator++(int) { return fetch_add(1); }
+    T operator--(int) { return fetch_sub(1); }
+    T operator+=(T d) { return fetch_add(d) + d; }
+    T operator-=(T d) { return fetch_sub(d) - d; }
+    T operator&=(T d) { return fetch_and(d) & d; }
+    T operator|=(T d) { return fetch_or(d) | d; }
+    T operator^=(T d) { return fetch_xor(d) ^ d; }
+};
+
+// atomic<T *>: fetch_add and fetch_sub step by whole objects ([atomics.types.pointer]).
+template <typename T>
+struct atomic<T *> {
+    T *__v;
+    atomic() : __v(nullptr) {}
+    atomic(T *v) : __v(v) {}
+    bool is_lock_free() const { return true; }
+    T *load(memory_order = memory_order_seq_cst) const { return *(T *volatile *)&__v; }
+    void store(T *v, memory_order = memory_order_seq_cst) { __okay_atomic_xchg8(&__v, (long)v); }
+    operator T *() const { return load(); }
+    T *operator=(T *v) {
+        store(v);
+        return v;
+    }
+    T *exchange(T *v, memory_order = memory_order_seq_cst) { return (T *)__okay_atomic_xchg8(&__v, (long)v); }
+    bool compare_exchange_strong(T *&expected, T *desired, memory_order = memory_order_seq_cst,
+                                 memory_order = memory_order_seq_cst) {
+        long old = __okay_atomic_cas8(&__v, (long)expected, (long)desired);
+        if (old == (long)expected) return true;
+        expected = (T *)old;
+        return false;
+    }
+    bool compare_exchange_weak(T *&expected, T *desired, memory_order m1 = memory_order_seq_cst,
+                               memory_order m2 = memory_order_seq_cst) {
+        return compare_exchange_strong(expected, desired, m1, m2);
+    }
+    T *fetch_add(long n, memory_order = memory_order_seq_cst) {
+        return (T *)__okay_atomic_xadd8(&__v, n * (long)sizeof(T));
+    }
+    T *fetch_sub(long n, memory_order = memory_order_seq_cst) {
+        return (T *)__okay_atomic_xadd8(&__v, -n * (long)sizeof(T));
+    }
+    T *operator++() { return fetch_add(1) + 1; }
+    T *operator--() { return fetch_sub(1) - 1; }
+    T *operator++(int) { return fetch_add(1); }
+    T *operator--(int) { return fetch_sub(1); }
+    T *operator+=(long n) { return fetch_add(n) + n; }
+    T *operator-=(long n) { return fetch_sub(n) - n; }
+};
+
+struct atomic_flag {
+    unsigned char __v;
+    atomic_flag() : __v(0) {}
+    bool test_and_set(memory_order = memory_order_seq_cst) { return __okay_atomic_xchg1(&__v, 1) != 0; }
+    void clear(memory_order = memory_order_seq_cst) { __okay_atomic_xchg1(&__v, 0); }
+    bool test(memory_order = memory_order_seq_cst) const { return *(volatile unsigned char *)&__v != 0; }
+};
+
+// [atomics.flag] p4: a flag set up clear; written as an empty list for the default constructor.
+#define ATOMIC_FLAG_INIT {}
+
+typedef atomic<bool> atomic_bool;
+typedef atomic<char> atomic_char;
+typedef atomic<int> atomic_int;
+typedef atomic<unsigned> atomic_uint;
+typedef atomic<long> atomic_long;
+typedef atomic<unsigned long> atomic_ulong;
+typedef atomic<long long> atomic_llong;
+typedef atomic<unsigned long long> atomic_ullong;
+typedef atomic<unsigned long> atomic_size_t;
+}  // namespace std

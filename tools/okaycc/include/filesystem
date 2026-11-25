@@ -1,0 +1,952 @@
+// <filesystem> for okay-cc (ISO/IEC 14882 [filesystems]). Our own header for POSIX paths ('/' only) on
+// the Linux x86-64 system calls: open 2, close 3, stat 4, lstat 6, rename 82, mkdir 83, rmdir 84,
+// unlink 87, chmod 90, getcwd 79, getdents64 217 (struct stat and struct linux_dirent64 as the
+// kernel's x86-64 ABI lays them out). Each operation has the error_code form and the throwing form
+// (filesystem_error). Not done: symbolic link operations, space(), hard links, resize_file;
+// canonical() does not resolve symbolic links (it is
+// weakly_canonical of an existing path). A path's iterator goes forward only.
+#pragma once
+#include <cstdint>
+#include <chrono>
+#include <cstring>
+#include <string>
+#include <system_error>
+#include <vector>
+#include <__stream>
+extern "C" long syscall(long n, long a, long b, long c);
+namespace std {
+namespace filesystem {
+
+class path {
+public:
+    typedef char value_type;
+    typedef std::string string_type;
+    static constexpr char preferred_separator = '/';
+    path() {}
+    path(const char *s) : __s(s) {}
+    path(const std::string &s) : __s(s) {}
+    path(const path &o) : __s(o.__s) {}
+    path &operator=(const path &o) {
+        __s = o.__s;
+        return *this;
+    }
+    path &operator=(const std::string &s) {
+        __s = s;
+        return *this;
+    }
+    path &operator=(const char *s) {
+        __s = s;
+        return *this;
+    }
+    // [fs.path.append]: an absolute right side replaces; otherwise one separator between.
+    path &operator/=(const path &p) {
+        if (p.is_absolute() || __s.empty()) {
+            if (p.is_absolute() || !p.__s.empty()) __s = p.__s;
+            return *this;
+        }
+        if (__s.back() != '/') __s += "/";
+        __s += p.__s;
+        return *this;
+    }
+    path operator/(const path &p) const {
+        path r(*this);
+        r /= p;
+        return r;
+    }
+    path &operator+=(const path &p) {
+        __s += p.__s;
+        return *this;
+    }
+    path &operator+=(const char *s) {
+        __s += s;
+        return *this;
+    }
+    path &operator+=(const std::string &s) {
+        __s += s;
+        return *this;
+    }
+    path &operator+=(char c) {
+        __s += c;
+        return *this;
+    }
+    const char *c_str() const { return __s.c_str(); }
+    const std::string &native() const { return __s; }
+    std::string string() const { return __s; }
+    std::string u8string() const { return __s; }
+    std::string generic_string() const { return __s; }
+    std::string generic_u8string() const { return __s; }
+    operator std::string() const { return __s; }
+    bool empty() const { return __s.empty(); }
+    void clear() { __s.clear(); }
+    bool is_absolute() const { return !__s.empty() && __s[0] == '/'; }
+    bool is_relative() const { return !is_absolute(); }
+    // filename: the part after the last '/' ("" for "a/"); "." and ".." are filenames too.
+    path filename() const {
+        unsigned long k = __s.rfind('/');
+        if (k == std::string::npos) return path(__s);
+        return path(__s.substr(k + 1));
+    }
+    path parent_path() const {
+        unsigned long k = __s.rfind('/');
+        if (k == std::string::npos) return path();
+        unsigned long e = k;
+        while (e > 0 && __s[e - 1] == '/') --e;  // a/b//c: the separators all go
+        if (e == 0) return path("/");
+        if (k + 1 == __s.size() && false) return path(__s.substr(0, e));
+        return path(__s.substr(0, e));
+    }
+    // stem and extension ([fs.path.decompose]): the extension starts at the last '.' of the
+    // filename, unless the filename is ".", "..", or starts with its only '.'.
+    path extension() const {
+        std::string f = filename().__s;
+        if (f == "." || f == "..") return path();
+        unsigned long k = f.rfind('.');
+        if (k == std::string::npos || k == 0) return path();
+        return path(f.substr(k));
+    }
+    path stem() const {
+        std::string f = filename().__s;
+        if (f == "." || f == "..") return path(f);
+        unsigned long k = f.rfind('.');
+        if (k == std::string::npos || k == 0) return path(f);
+        return path(f.substr(0, k));
+    }
+    bool has_filename() const { return !filename().empty(); }
+    bool has_extension() const { return !extension().empty(); }
+    bool has_stem() const { return !stem().empty(); }
+    bool has_parent_path() const { return !parent_path().empty(); }
+    bool has_root_path() const { return is_absolute(); }
+    bool has_relative_path() const { return !relative_path().empty(); }
+    path root_path() const { return is_absolute() ? path("/") : path(); }
+    path root_directory() const { return root_path(); }
+    path root_name() const { return path(); }
+    path relative_path() const {
+        unsigned long k = 0;
+        while (k < __s.size() && __s[k] == '/') ++k;
+        return path(__s.substr(k));
+    }
+    path &remove_filename() {
+        unsigned long k = __s.rfind('/');
+        if (k == std::string::npos) __s.clear();
+        else __s = __s.substr(0, k + 1);
+        return *this;
+    }
+    path &replace_filename(const path &p) {
+        remove_filename();
+        return *this /= p;
+    }
+    path &replace_extension(const path &e = path()) {
+        std::string ext = extension().__s;
+        if (!ext.empty()) __s = __s.substr(0, __s.size() - ext.size());
+        if (!e.__s.empty()) {
+            if (e.__s[0] != '.') __s += ".";
+            __s += e.__s;
+        }
+        return *this;
+    }
+    path &make_preferred() { return *this; }
+    // [fs.path.generic] normal form: no "." elements, no "x/.." pairs, single separators.
+    path lexically_normal() const {
+        if (__s.empty()) return path();
+        std::vector<std::string> parts;
+        bool abs = is_absolute();
+        unsigned long i = 0;
+        while (i <= __s.size()) {
+            unsigned long j = __s.find('/', i);
+            if (j == std::string::npos) j = __s.size();
+            std::string part = __s.substr(i, j - i);
+            if (part == "..") {
+                if (!parts.empty() && parts.back() != "..") parts.pop_back();
+                else if (!abs) parts.push_back(part);
+            } else if (!part.empty() && part != ".") {
+                parts.push_back(part);
+            }
+            i = j + 1;
+        }
+        std::string out = abs ? "/" : "";
+        for (unsigned long k = 0; k < parts.size(); ++k) {
+            if (k) out += "/";
+            out += parts[k];
+        }
+        // A trailing separator, or a last element "." or "..", leaves an empty filename.
+        unsigned long n = __s.size();
+        bool dirEnd = __s[n - 1] == '/' || (n >= 2 && __s.substr(n - 2) == "/.") || __s == "." ||
+                      (n >= 3 && __s.substr(n - 3) == "/..") || __s == "..";
+        if (dirEnd && !parts.empty() && parts.back() != "..") out += "/";
+        if (out.empty()) out = ".";
+        return path(out);
+    }
+    path lexically_relative(const path &base) const {
+        path a = lexically_normal(), b = base.lexically_normal();
+        if (a.is_absolute() != b.is_absolute()) return path();
+        std::vector<std::string> x = a.__parts(), y = b.__parts();
+        unsigned long k = 0;
+        while (k < x.size() && k < y.size() && x[k] == y[k]) ++k;
+        int up = 0;
+        for (unsigned long j = k; j < y.size(); ++j) {
+            if (y[j] == "..") --up;
+            else if (y[j] != ".") ++up;
+        }
+        if (up < 0) return path();
+        if (up == 0 && k == x.size()) return path(".");
+        std::string out;
+        for (int j = 0; j < up; ++j) out += out.empty() ? ".." : "/..";
+        for (unsigned long j = k; j < x.size(); ++j) {
+            if (!out.empty()) out += "/";
+            out += x[j];
+        }
+        return path(out);
+    }
+    path lexically_proximate(const path &base) const {
+        path r = lexically_relative(base);
+        return r.empty() ? *this : r;
+    }
+    int compare(const path &o) const { return __s.compare(o.__s); }
+    bool operator==(const path &o) const { return __s == o.__s; }
+    bool operator!=(const path &o) const { return !(__s == o.__s); }
+    bool operator<(const path &o) const { return __s < o.__s; }
+    bool operator>(const path &o) const { return o.__s < __s; }
+    std::vector<std::string> __parts() const {
+        std::vector<std::string> out;
+        unsigned long i = 0;
+        while (i < __s.size()) {
+            unsigned long j = __s.find('/', i);
+            if (j == std::string::npos) j = __s.size();
+            if (j > i) out.push_back(__s.substr(i, j - i));
+            i = j + 1;
+        }
+        return out;
+    }
+
+    // The elements of the path, first to last ([fs.path.itr]): the root directory "/" of an
+    // absolute path, then each file name; a run of separators is one; a separator at the end
+    // gives an empty last element.
+    class iterator;
+    typedef iterator const_iterator;
+    iterator begin() const;
+    iterator end() const;
+
+private:
+    std::string __s;
+};
+class path::iterator {
+public:
+    typedef path value_type;
+    typedef long difference_type;
+    typedef const path *pointer;
+    typedef const path &reference;
+    iterator() : __n(0), __pos(1), __len(0) {}
+    iterator(const std::string &s, unsigned long pos) : __s(s), __n(s.size()), __pos(pos), __len(0) { __set(); }
+    const path &operator*() const { return __e; }
+    const path *operator->() const { return &__e; }
+    iterator &operator++() {
+        if (__pos > __n) return *this;
+        if (__pos == __n) {  // past the empty element of a trailing separator
+            __pos = __n + 1;
+            __set();
+            return *this;
+        }
+        unsigned long k = __pos + __len;
+        const bool root = __pos == 0 && __s[0] == '/';
+        while (k < __n && __s[k] == '/') ++k;
+        if (k == __n) k = root || __pos + __len == __n ? __n + 1 : __n;
+        __pos = k;
+        __set();
+        return *this;
+    }
+    iterator operator++(int) {
+        iterator old = *this;
+        ++*this;
+        return old;
+    }
+    bool operator==(const iterator &o) const { return __pos == o.__pos; }
+    bool operator!=(const iterator &o) const { return __pos != o.__pos; }
+
+private:
+    std::string __s;
+    unsigned long __n;
+    unsigned long __pos;  // where the element starts; __n: the empty last element; __n + 1: the end
+    unsigned long __len;
+    path __e;
+    void __set() {
+        if (__pos >= __n) {
+            __len = 0;
+            __e = path();
+        } else if (__pos == 0 && __s[0] == '/') {
+            __len = 1;
+            __e = path("/");
+        } else {
+            unsigned long j = __s.find('/', __pos);
+            if (j == std::string::npos) j = __n;
+            __len = j - __pos;
+            __e = path(__s.substr(__pos, __len));
+        }
+    }
+};
+inline path::iterator path::begin() const { return iterator(__s, __s.empty() ? 1 : 0); }
+inline path::iterator path::end() const { return iterator(__s, __s.size() + 1); }
+inline path u8path(const std::string &s) { return path(s); }
+inline path u8path(const char *s) { return path(s); }
+// os << p writes the path quoted ([fs.path.io], std::quoted with '"' and '\\').
+inline std::ostream &operator<<(std::ostream &os, const path &p) {
+    std::string q = "\"";
+    const std::string &s = p.native();
+    for (unsigned long i = 0; i < s.size(); ++i) {
+        if (s[i] == '"' || s[i] == '\\') q += '\\';
+        q += s[i];
+    }
+    q += '"';
+    return os << q;
+}
+
+class filesystem_error : public system_error {
+public:
+    filesystem_error(const std::string &what, error_code ec) : system_error(ec, "filesystem error: " + what) {}
+    filesystem_error(const std::string &what, const path &p1, error_code ec)
+        : system_error(ec, "filesystem error: " + what + " [" + p1.string() + "]"), __p1(p1) {}
+    filesystem_error(const std::string &what, const path &p1, const path &p2, error_code ec)
+        : system_error(ec, "filesystem error: " + what + " [" + p1.string() + "] [" + p2.string() + "]"), __p1(p1),
+          __p2(p2) {}
+    const path &path1() const { return __p1; }
+    const path &path2() const { return __p2; }
+
+private:
+    path __p1;
+    path __p2;
+};
+
+enum class file_type { none = 0, not_found = -1, regular = 1, directory = 2, symlink = 3, block = 4, character = 5, fifo = 6, socket = 7, unknown = 8 };
+enum class perms : unsigned int {
+    none = 0,
+    owner_read = 0400,
+    owner_write = 0200,
+    owner_exec = 0100,
+    owner_all = 0700,
+    group_read = 040,
+    group_write = 020,
+    group_exec = 010,
+    group_all = 070,
+    others_read = 04,
+    others_write = 02,
+    others_exec = 01,
+    others_all = 07,
+    all = 0777,
+    set_uid = 04000,
+    set_gid = 02000,
+    sticky_bit = 01000,
+    mask = 07777,
+    unknown = 0xFFFF
+};
+enum class perm_options : unsigned int { replace = 1, add = 2, remove = 4, nofollow = 8 };
+enum class copy_options : unsigned int {
+    none = 0,
+    skip_existing = 1,
+    overwrite_existing = 2,
+    update_existing = 4,
+    recursive = 8,
+    copy_symlinks = 16,
+    skip_symlinks = 32,
+    directories_only = 64,
+    create_symlinks = 128,
+    create_hard_links = 256
+};
+enum class directory_options : unsigned int { none = 0, follow_directory_symlink = 1, skip_permission_denied = 2 };
+
+class file_status {
+public:
+    file_status() : __t(file_type::none), __p(perms::unknown) {}
+    explicit file_status(file_type t, perms p = perms::unknown) : __t(t), __p(p) {}
+    file_type type() const { return __t; }
+    perms permissions() const { return __p; }
+    void type(file_type t) { __t = t; }
+    void permissions(perms p) { __p = p; }
+
+private:
+    file_type __t;
+    perms __p;
+};
+
+// The file clock counts nanoseconds since 1970 (a choice of ours; [fs.filesystem.syn] leaves its
+// epoch to the implementation).
+struct __file_clock {
+    typedef long rep;
+    typedef nano period;
+    typedef chrono::nanoseconds duration;
+    typedef chrono::time_point<__file_clock, chrono::nanoseconds> time_point;
+    static constexpr bool is_steady = false;
+    static time_point now() { return time_point(chrono::nanoseconds(__okay_clock_ns(0))); }
+};
+typedef chrono::time_point<__file_clock, chrono::nanoseconds> file_time_type;
+
+// struct stat (x86-64 Linux): st_mode at byte 24, st_size at 48, st_mtime and its nanoseconds at
+// 88 and 96, 144 bytes in all. Returns the negated errno or 0.
+struct __stat {
+    unsigned long dev, ino;
+    unsigned int mode;
+    long size;
+    long mtimeNs;
+};
+inline long __do_stat(const path &p, __stat &out, bool link = false) {
+    unsigned long b[18];
+    for (int i = 0; i < 18; ++i) b[i] = 0;
+    long r = syscall(link ? 6 : 4, (long)p.c_str(), (long)b, 0);
+    if (r < 0) return r;
+    out.dev = b[0];
+    out.ino = b[1];
+    out.mode = (unsigned int)(b[3] & 0xffffffffUL);
+    out.size = (long)b[6];
+    out.mtimeNs = (long)b[11] * 1000000000L + (long)b[12];
+    return 0;
+}
+inline file_type __type_of(unsigned int mode) {
+    switch (mode & 0170000) {
+    case 0100000: return file_type::regular;
+    case 0040000: return file_type::directory;
+    case 0120000: return file_type::symlink;
+    case 0060000: return file_type::block;
+    case 0020000: return file_type::character;
+    case 0010000: return file_type::fifo;
+    case 0140000: return file_type::socket;
+    default: return file_type::unknown;
+    }
+}
+inline void __set(error_code &ec, long r) {
+    if (r < 0) ec.assign((int)-r, system_category());
+    else ec.clear();
+}
+
+inline file_status status(const path &p, error_code &ec) {
+    __stat st;
+    long r = __do_stat(p, st);
+    if (r < 0) {
+        ec.assign((int)-r, system_category());
+        if (r == -2 || r == -20) return file_status(file_type::not_found);
+        return file_status(file_type::none);
+    }
+    ec.clear();
+    return file_status(__type_of(st.mode), (perms)(st.mode & 07777));
+}
+inline file_status status(const path &p) {
+    error_code ec;
+    file_status s = status(p, ec);
+    if (s.type() == file_type::none) throw filesystem_error("status", p, ec);
+    return s;
+}
+inline file_status symlink_status(const path &p, error_code &ec) {
+    __stat st;
+    long r = __do_stat(p, st, true);
+    if (r < 0) {
+        ec.assign((int)-r, system_category());
+        return file_status(r == -2 || r == -20 ? file_type::not_found : file_type::none);
+    }
+    ec.clear();
+    return file_status(__type_of(st.mode), (perms)(st.mode & 07777));
+}
+inline bool status_known(file_status s) { return s.type() != file_type::none; }
+inline bool exists(file_status s) { return status_known(s) && s.type() != file_type::not_found; }
+inline bool is_regular_file(file_status s) { return s.type() == file_type::regular; }
+inline bool is_directory(file_status s) { return s.type() == file_type::directory; }
+inline bool exists(const path &p, error_code &ec) {
+    file_status s = status(p, ec);
+    if (s.type() == file_type::not_found) ec.clear();
+    return exists(s);
+}
+inline bool exists(const path &p) {
+    error_code ec;
+    file_status s = status(p, ec);
+    if (s.type() == file_type::none) throw filesystem_error("exists", p, ec);
+    return exists(s);
+}
+inline bool is_regular_file(const path &p, error_code &ec) { return status(p, ec).type() == file_type::regular; }
+inline bool is_regular_file(const path &p) {
+    error_code ec;
+    return status(p, ec).type() == file_type::regular;
+}
+inline bool is_directory(const path &p, error_code &ec) { return status(p, ec).type() == file_type::directory; }
+inline bool is_directory(const path &p) {
+    error_code ec;
+    return status(p, ec).type() == file_type::directory;
+}
+inline bool is_empty(const path &p, error_code &ec);
+inline unsigned long file_size(const path &p, error_code &ec) {
+    __stat st;
+    long r = __do_stat(p, st);
+    if (r < 0) {
+        ec.assign((int)-r, system_category());
+        return (unsigned long)-1;
+    }
+    if (__type_of(st.mode) != file_type::regular) {
+        ec.assign(__type_of(st.mode) == file_type::directory ? 21 : 95, system_category());
+        return (unsigned long)-1;
+    }
+    ec.clear();
+    return (unsigned long)st.size;
+}
+inline unsigned long file_size(const path &p) {
+    error_code ec;
+    unsigned long n = file_size(p, ec);
+    if (ec) throw filesystem_error("cannot get file size", p, ec);
+    return n;
+}
+inline file_time_type last_write_time(const path &p, error_code &ec) {
+    __stat st;
+    long r = __do_stat(p, st);
+    __set(ec, r);
+    if (r < 0) return file_time_type::min();
+    return file_time_type(chrono::nanoseconds(st.mtimeNs));
+}
+inline file_time_type last_write_time(const path &p) {
+    error_code ec;
+    file_time_type t = last_write_time(p, ec);
+    if (ec) throw filesystem_error("cannot get file time", p, ec);
+    return t;
+}
+inline bool equivalent(const path &a, const path &b, error_code &ec) {
+    __stat x, y;
+    long r = __do_stat(a, x);
+    if (r == 0) r = __do_stat(b, y);
+    __set(ec, r);
+    return r == 0 && x.dev == y.dev && x.ino == y.ino;
+}
+inline bool equivalent(const path &a, const path &b) {
+    error_code ec;
+    bool e = equivalent(a, b, ec);
+    if (ec) throw filesystem_error("cannot check file equivalence", a, b, ec);
+    return e;
+}
+
+inline path current_path(error_code &ec) {
+    char buf[4096];
+    long r = syscall(79, (long)buf, (long)sizeof(buf), 0);
+    __set(ec, r);
+    if (r < 0) return path();
+    return path(buf);
+}
+inline path current_path() {
+    error_code ec;
+    path p = current_path(ec);
+    if (ec) throw filesystem_error("cannot get current path", ec);
+    return p;
+}
+inline void current_path(const path &p, error_code &ec) { __set(ec, syscall(80, (long)p.c_str(), 0, 0)); }
+inline void current_path(const path &p) {
+    error_code ec;
+    current_path(p, ec);
+    if (ec) throw filesystem_error("cannot set current path", p, ec);
+}
+inline path temp_directory_path(error_code &ec) {
+    ec.clear();
+    const char *names[] = {"TMPDIR", "TMP", "TEMP", "TEMPDIR"};
+    for (const char *n : names)
+        if (const char *v = getenv(n)) return path(v);
+    return path("/tmp");
+}
+inline path temp_directory_path() {
+    error_code ec;
+    return temp_directory_path(ec);
+}
+inline path absolute(const path &p, error_code &ec) {
+    ec.clear();
+    if (p.is_absolute() || p.empty()) return p;
+    return current_path(ec) / p;
+}
+inline path absolute(const path &p) {
+    error_code ec;
+    return absolute(p, ec);
+}
+// weakly_canonical ([fs.op.weakly.canonical]) without symbolic links: absolute, then normal.
+inline path weakly_canonical(const path &p, error_code &ec) {
+    path a = absolute(p, ec);
+    path n = a.lexically_normal();
+    std::string s = n.string();
+    if (s.size() > 1 && s.back() == '/') s.pop_back();
+    return path(s);
+}
+inline path weakly_canonical(const path &p) {
+    error_code ec;
+    return weakly_canonical(p, ec);
+}
+inline path canonical(const path &p, error_code &ec) {
+    if (!exists(p, ec)) {
+        if (!ec) ec.assign(2, system_category());
+        return path();
+    }
+    return weakly_canonical(p, ec);
+}
+inline path canonical(const path &p) {
+    error_code ec;
+    path r = canonical(p, ec);
+    if (ec) throw filesystem_error("cannot make canonical path", p, ec);
+    return r;
+}
+inline path relative(const path &p, const path &base, error_code &ec) {
+    return weakly_canonical(p, ec).lexically_relative(weakly_canonical(base, ec));
+}
+inline path relative(const path &p, const path &base = current_path()) {
+    error_code ec;
+    return relative(p, base, ec);
+}
+inline path proximate(const path &p, const path &base = current_path()) {
+    error_code ec;
+    path r = relative(p, base, ec);
+    return r.empty() ? p : r;
+}
+
+inline bool create_directory(const path &p, error_code &ec) {
+    long r = syscall(83, (long)p.c_str(), 0777, 0);
+    if (r == -17 && is_directory(p)) {
+        ec.clear();
+        return false;
+    }
+    __set(ec, r);
+    return r == 0;
+}
+inline bool create_directory(const path &p) {
+    error_code ec;
+    bool made = create_directory(p, ec);
+    if (ec) throw filesystem_error("cannot create directory", p, ec);
+    return made;
+}
+inline bool create_directories(const path &p, error_code &ec) {
+    ec.clear();
+    if (p.empty()) return false;
+    std::string s = p.lexically_normal().string();
+    if (s.size() > 1 && s.back() == '/') s.pop_back();
+    if (is_directory(path(s))) return false;
+    bool made = false;
+    for (unsigned long i = 1; i <= s.size(); ++i) {
+        if (i < s.size() && s[i] != '/') continue;
+        path part(s.substr(0, i));
+        if (part.string() == "." || part.string() == "..") continue;
+        if (is_directory(part)) continue;
+        long r = syscall(83, (long)part.c_str(), 0777, 0);
+        if (r < 0 && r != -17) {
+            __set(ec, r);
+            return false;
+        }
+        if (r == 0) made = true;
+    }
+    return made;
+}
+inline bool create_directories(const path &p) {
+    error_code ec;
+    bool made = create_directories(p, ec);
+    if (ec) throw filesystem_error("cannot create directories", p, ec);
+    return made;
+}
+// remove ([fs.op.remove]): a file or an empty directory; false when nothing was there.
+inline bool remove(const path &p, error_code &ec) {
+    long r = syscall(87, (long)p.c_str(), 0, 0);
+    if (r == -21 || r == -1) r = syscall(84, (long)p.c_str(), 0, 0);
+    if (r == -2) {
+        ec.clear();
+        return false;
+    }
+    __set(ec, r);
+    return r == 0;
+}
+inline bool remove(const path &p) {
+    error_code ec;
+    bool done = remove(p, ec);
+    if (ec) throw filesystem_error("cannot remove", p, ec);
+    return done;
+}
+inline void rename(const path &from, const path &to, error_code &ec) {
+    __set(ec, syscall(82, (long)from.c_str(), (long)to.c_str(), 0));
+}
+inline void rename(const path &from, const path &to) {
+    error_code ec;
+    rename(from, to, ec);
+    if (ec) throw filesystem_error("cannot rename", from, to, ec);
+}
+inline void permissions(const path &p, perms pr, perm_options opt, error_code &ec) {
+    unsigned int want = (unsigned int)pr & 07777;
+    if ((unsigned int)opt & ((unsigned int)perm_options::add | (unsigned int)perm_options::remove)) {
+        file_status s = status(p, ec);
+        if (ec) return;
+        unsigned int cur = (unsigned int)s.permissions() & 07777;
+        want = ((unsigned int)opt & (unsigned int)perm_options::add) ? (cur | want) : (cur & ~want);
+    }
+    __set(ec, syscall(90, (long)p.c_str(), (long)want, 0));
+}
+inline void permissions(const path &p, perms pr, error_code &ec) { permissions(p, pr, perm_options::replace, ec); }
+inline void permissions(const path &p, perms pr, perm_options opt = perm_options::replace) {
+    error_code ec;
+    permissions(p, pr, opt, ec);
+    if (ec) throw filesystem_error("cannot set permissions", p, ec);
+}
+
+inline bool copy_file(const path &from, const path &to, copy_options opt, error_code &ec) {
+    bool there = exists(to, ec);
+    if (there) {
+        unsigned int o = (unsigned int)opt;
+        if (o & (unsigned int)copy_options::skip_existing) return false;
+        if (o & (unsigned int)copy_options::update_existing) {
+            if (!(last_write_time(from, ec) > last_write_time(to, ec))) return false;
+        } else if (!(o & (unsigned int)copy_options::overwrite_existing)) {
+            ec.assign(17, system_category());
+            return false;
+        }
+    }
+    long in = syscall(2, (long)from.c_str(), 0, 0);
+    if (in < 0) {
+        __set(ec, in);
+        return false;
+    }
+    long out = syscall(2, (long)to.c_str(), 1 | 64 | 512, 0644);
+    if (out < 0) {
+        syscall(3, in, 0, 0);
+        __set(ec, out);
+        return false;
+    }
+    char buf[8192];
+    long r = 0;
+    for (;;) {
+        r = syscall(0, in, (long)buf, (long)sizeof(buf));
+        if (r <= 0) break;
+        long done = 0;
+        while (done < r) {
+            long w = syscall(1, out, (long)(buf + done), r - done);
+            if (w <= 0) {
+                r = w < 0 ? w : -5;
+                break;
+            }
+            done += w;
+        }
+        if (r < 0) break;
+    }
+    syscall(3, in, 0, 0);
+    syscall(3, out, 0, 0);
+    __set(ec, r);
+    return r == 0;
+}
+inline bool copy_file(const path &from, const path &to, error_code &ec) {
+    return copy_file(from, to, copy_options::none, ec);
+}
+inline bool copy_file(const path &from, const path &to, copy_options opt = copy_options::none) {
+    error_code ec;
+    bool done = copy_file(from, to, opt, ec);
+    if (ec) throw filesystem_error("cannot copy file", from, to, ec);
+    return done;
+}
+
+class directory_entry {
+public:
+    directory_entry() {}
+    explicit directory_entry(const path &p) : __p(p) {}
+    const path &path() const { return __p; }
+    operator const filesystem::path &() const { return __p; }
+    bool exists() const { return filesystem::exists(__p); }
+    bool is_regular_file() const { return filesystem::is_regular_file(__p); }
+    bool is_directory() const { return filesystem::is_directory(__p); }
+    bool is_regular_file(error_code &ec) const { return filesystem::is_regular_file(__p, ec); }
+    bool is_directory(error_code &ec) const { return filesystem::is_directory(__p, ec); }
+    unsigned long file_size() const { return filesystem::file_size(__p); }
+    unsigned long file_size(error_code &ec) const { return filesystem::file_size(__p, ec); }
+    file_time_type last_write_time() const { return filesystem::last_write_time(__p); }
+    file_status status() const {
+        error_code ec;
+        return filesystem::status(__p, ec);
+    }
+    bool operator==(const directory_entry &o) const { return __p == o.__p; }
+    bool operator<(const directory_entry &o) const { return __p < o.__p; }
+
+private:
+    filesystem::path __p;
+};
+
+// The names in one directory, read whole with getdents64 when the iterator is made ("." and ".."
+// left out), in the order the kernel gives them.
+inline long __list_dir(const path &dir, std::vector<std::string> &names, std::vector<unsigned char> &types) {
+    long fd = syscall(2, (long)dir.c_str(), 0200000 /* O_DIRECTORY */, 0);
+    if (fd < 0) return fd;
+    char buf[8192];
+    for (;;) {
+        long n = syscall(217, fd, (long)buf, (long)sizeof(buf));
+        if (n < 0) {
+            syscall(3, fd, 0, 0);
+            return n;
+        }
+        if (n == 0) break;
+        long off = 0;
+        while (off < n) {
+            unsigned short reclen = (unsigned short)((unsigned char)buf[off + 16] | ((unsigned char)buf[off + 17] << 8));
+            unsigned char type = (unsigned char)buf[off + 18];
+            const char *name = buf + off + 19;
+            if (!(name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))) {
+                names.push_back(std::string(name));
+                types.push_back(type);
+            }
+            if (reclen == 0) break;
+            off += reclen;
+        }
+    }
+    syscall(3, fd, 0, 0);
+    return 0;
+}
+
+class directory_iterator {
+public:
+    directory_iterator() : __i(0) {}
+    explicit directory_iterator(const path &p) : __i(0) {
+        error_code ec;
+        __open(p, ec);
+        if (ec) throw filesystem_error("cannot open directory", p, ec);
+    }
+    directory_iterator(const path &p, error_code &ec) : __i(0) { __open(p, ec); }
+    directory_iterator(const path &p, directory_options, error_code &ec) : __i(0) { __open(p, ec); }
+    directory_iterator(const path &p, directory_options) : __i(0) {
+        error_code ec;
+        __open(p, ec);
+        if (ec) throw filesystem_error("cannot open directory", p, ec);
+    }
+    const directory_entry &operator*() const { return __e; }
+    const directory_entry *operator->() const { return &__e; }
+    directory_iterator &operator++() {
+        ++__i;
+        __load();
+        return *this;
+    }
+    directory_iterator &increment(error_code &ec) {
+        ec.clear();
+        return ++*this;
+    }
+    bool operator==(const directory_iterator &o) const { return __end() == o.__end(); }
+    bool operator!=(const directory_iterator &o) const { return __end() != o.__end(); }
+    directory_iterator begin() const { return *this; }
+    directory_iterator end() const { return directory_iterator(); }
+    bool __end() const { return __i >= __names.size(); }
+
+private:
+    void __open(const path &p, error_code &ec) {
+        __dir = p;
+        std::vector<unsigned char> types;
+        __set(ec, __list_dir(p, __names, types));
+        __load();
+    }
+    void __load() {
+        if (__i < __names.size()) __e = directory_entry(__dir / path(__names[__i]));
+    }
+    path __dir;
+    std::vector<std::string> __names;
+    unsigned long __i;
+    directory_entry __e;
+};
+
+// A walk over a tree: a directory's entries, each directory's own entries right after it
+// (depth first, pre-order, as the kernel lists each directory).
+class recursive_directory_iterator {
+public:
+    recursive_directory_iterator() : __i(0) {}
+    explicit recursive_directory_iterator(const path &p) : __i(0) {
+        error_code ec;
+        __walk(p, ec, true);
+        if (ec) throw filesystem_error("cannot open directory", p, ec);
+        __load();
+    }
+    recursive_directory_iterator(const path &p, error_code &ec) : __i(0) {
+        __walk(p, ec, true);
+        __load();
+    }
+    recursive_directory_iterator(const path &p, directory_options o, error_code &ec) : __i(0) {
+        __walk(p, ec, ((unsigned int)o & (unsigned int)directory_options::skip_permission_denied) == 0);
+        __load();
+    }
+    recursive_directory_iterator(const path &p, directory_options o) : __i(0) {
+        error_code ec;
+        __walk(p, ec, ((unsigned int)o & (unsigned int)directory_options::skip_permission_denied) == 0);
+        if (ec) throw filesystem_error("cannot open directory", p, ec);
+        __load();
+    }
+    const directory_entry &operator*() const { return __e; }
+    const directory_entry *operator->() const { return &__e; }
+    recursive_directory_iterator &operator++() {
+        ++__i;
+        __load();
+        return *this;
+    }
+    recursive_directory_iterator &increment(error_code &ec) {
+        ec.clear();
+        return ++*this;
+    }
+    int depth() const { return __i < __depth.size() ? __depth[__i] : 0; }
+    void disable_recursion_pending() {}
+    bool operator==(const recursive_directory_iterator &o) const { return __end() == o.__end(); }
+    bool operator!=(const recursive_directory_iterator &o) const { return __end() != o.__end(); }
+    recursive_directory_iterator begin() const { return *this; }
+    recursive_directory_iterator end() const { return recursive_directory_iterator(); }
+    bool __end() const { return __i >= __all.size(); }
+
+private:
+    void __walk(const path &dir, error_code &ec, bool strict, int d = 0) {
+        std::vector<std::string> names;
+        std::vector<unsigned char> types;
+        long r = __list_dir(dir, names, types);
+        if (r < 0) {
+            if (d == 0 || strict) __set(ec, r);
+            return;
+        }
+        for (unsigned long k = 0; k < names.size(); ++k) {
+            path child = dir / path(names[k]);
+            __all.push_back(child);
+            __depth.push_back(d);
+            bool isDir = types[k] == 4 || (types[k] == 0 && is_directory(child));  // DT_DIR, or unknown
+            if (isDir) __walk(child, ec, strict, d + 1);
+        }
+    }
+    void __load() {
+        if (__i < __all.size()) __e = directory_entry(__all[__i]);
+    }
+    std::vector<path> __all;
+    std::vector<int> __depth;
+    unsigned long __i;
+    directory_entry __e;
+};
+
+inline bool is_empty(const path &p, error_code &ec) {
+    if (is_directory(p, ec)) {
+        std::vector<std::string> names;
+        std::vector<unsigned char> types;
+        __set(ec, __list_dir(p, names, types));
+        return names.empty();
+    }
+    return file_size(p, ec) == 0;
+}
+inline bool is_empty(const path &p) {
+    error_code ec;
+    bool e = is_empty(p, ec);
+    if (ec) throw filesystem_error("cannot check if empty", p, ec);
+    return e;
+}
+// remove_all: the tree under p, children first; the number of files and directories removed.
+inline unsigned long remove_all(const path &p, error_code &ec) {
+    ec.clear();
+    file_status s = symlink_status(p, ec);
+    if (s.type() == file_type::not_found) {
+        ec.clear();
+        return 0;
+    }
+    if (ec) return (unsigned long)-1;
+    unsigned long n = 0;
+    if (s.type() == file_type::directory) {
+        std::vector<std::string> names;
+        std::vector<unsigned char> types;
+        __set(ec, __list_dir(p, names, types));
+        if (ec) return (unsigned long)-1;
+        for (const std::string &name : names) {
+            unsigned long k = remove_all(p / path(name), ec);
+            if (ec) return (unsigned long)-1;
+            n += k;
+        }
+    }
+    if (remove(p, ec)) ++n;
+    return ec ? (unsigned long)-1 : n;
+}
+inline unsigned long remove_all(const path &p) {
+    error_code ec;
+    unsigned long n = remove_all(p, ec);
+    if (ec) throw filesystem_error("cannot remove all", p, ec);
+    return n;
+}
+}  // namespace filesystem
+}  // namespace std

@@ -70,6 +70,16 @@ struct BodyDef {
     std::uint64_t user = 0;
 };
 
+/// What a scene hands a body every step, in one call (World::Configure): its kind, damping, gravity, locks and flags.
+struct BodySettings {
+    BodyType type = BodyType::Dynamic;
+    float linearDamping = 0.0f, angularDamping = 0.05f;
+    float gravityScale = 1.0f;
+    std::uint8_t lockLinear = 0, lockAngular = 0;   // as in BodyDef
+    bool bullet = false;
+    bool allowSleep = true;
+};
+
 struct ColliderDef {
     Shape shape;
     Xf local;                         // collider frame in the body frame
@@ -78,6 +88,11 @@ struct ColliderDef {
     float restitution = 0.0f;
     float rollingResistance = 0.0f;   // 0..1: how much a rolling round body is slowed (stops a ball rolling forever)
     float contactOffset = 0.0f;       // the collider counts as this much thicker (rests this far off what it touches)
+    /// Share of an overlap its contacts remove per position iteration (0 = the world's positionCorrection); a touching
+    /// pair uses the larger of its two. A light body held by stiff joints (a ragdoll's limb) needs more than the
+    /// world's 0.2: the joints' position pass corrects in full, so with 0.2 a limb pressed into a table by its joints
+    /// stays in it.
+    float positionCorrection = 0.0f;
     bool sensor = false;              // reports overlaps, never pushes
     std::uint32_t layer = 0;          // 0..31
     std::uint32_t mask = 0xFFFFFFFFu; // layers it collides with
@@ -129,6 +144,10 @@ struct JointDef {
     float linearFrequency = 2.0f, linearDampingRatio = 1.0f, linearMaxForce = 1e30f;
     /// Break when the joint needs more than this to hold (N, N*m). Infinite by default.
     float breakForce = 1e30f, breakTorque = 1e30f;
+    /// Share of the joint's drift (anchor gap, limit overshoot) the position pass removes per iteration (1 = all of it).
+    /// A ragdoll's joints use less: corrected in full they push a limb back into a table or the floor faster than its
+    /// contacts push it out (see CoreRagdoll).
+    float positionCorrection = 1.0f;
     std::uint64_t user = 0;
 };
 /// Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
@@ -168,6 +187,10 @@ public:
     bool blockSolver = true;             // solve the 2 to 4 normal points of a manifold together (steadier stacks)
     bool enableSleep = true;
     bool continuous = true;              // speculative contacts sized by each body's motion this step
+    /// Also report solid pairs in which neither body is dynamic (two fixed things, or a kinematic body against a wall).
+    /// Nothing is pushed; the pair is touching while the two overlap, with its events and manifold, like a sensor that
+    /// reports as solid. It is looked at only when one side moved. Off: such pairs do not exist (the 3D rule).
+    bool reportStillPairs = false;
     float linearSlop = 0.002f;           // overlap that is left alone (stops jitter)
     float speculativeDistance = 0.02f;   // contacts closer than this are kept even at rest
     float positionCorrection = 0.2f;     // fraction of the overlap removed per position iteration
@@ -181,6 +204,10 @@ public:
     void SetParallelFor(ParallelFor pf) { m_parallel = std::move(pf); }
     /// Extra pair filter (e.g. the scene's layer matrix): return false to never collide the two.
     std::function<bool(ColliderId, ColliderId)> shouldCollide;
+    /// Asked every step for each solid pair that is close: return false and the pair counts as apart for this step (no
+    /// push, not touching). For contacts that depend on where the two are, such as a one-way platform that lets through
+    /// what comes from its far side. Called from the narrow phase (maybe on several threads: it must only read).
+    std::function<bool(ColliderId, ColliderId)> contactEnabled;
     /// The materials of a touching pair. Unset: friction is the square root of the two frictions, bounciness the larger
     /// of the two, no extra still grip, rolling resistance the larger of the two. `staticFriction` (0 = same as friction)
     /// is the grip while the surfaces are nearly still. Called from the narrow phase (maybe on several threads: it
@@ -206,6 +233,10 @@ public:
     float GetMass(BodyId id) const;
     M33 GetInertiaLocal(BodyId id) const;    // about the centre of mass, body frame
     void SetMass(BodyId id, float mass);     // keep the shape, scale the inertia to this mass (<= 0: from density again)
+    /// Use this inertia (about the centre of mass, body frame) instead of the one worked out from the shapes; an all-zero
+    /// matrix goes back to the shapes'. For bodies whose shapes stand in for something else (a 2D disc is a ball here).
+    void SetInertia(BodyId id, const M33& inertiaLocal);
+    void Configure(BodyId id, const BodySettings& s);   // SetType (when it differs) and the five setters below
     void SetDamping(BodyId id, float linear, float angular);
     void SetGravityScale(BodyId id, float s);
     void SetLocks(BodyId id, std::uint8_t linear, std::uint8_t angular);
@@ -220,6 +251,9 @@ public:
     void Wake(BodyId id);
     void Sleep(BodyId id);
     std::uint64_t GetUser(BodyId id) const;
+    /// Two bodies that never collide with each other, whatever their layers (limbs of one ragdoll that overlap in its
+    /// build pose). `collide` true takes the pair off the list again. A destroyed body's pairs are forgotten.
+    void SetBodiesCollide(BodyId a, BodyId b, bool collide);
     /// The pose of the body part way between the last two steps (alpha 0 = previous step, 1 = latest).
     Xf InterpolatedTransform(BodyId id, float alpha) const;
 

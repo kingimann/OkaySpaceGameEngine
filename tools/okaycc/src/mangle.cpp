@@ -2,6 +2,8 @@
 // Moved out of parser.cpp unchanged (docs/engine/modularization_plan.md, batch T1).
 #include "ast.hpp"
 
+#include <set>
+
 namespace okaycc {
 namespace compiler {
 std::string mangleTag(const std::string& qualified) { return mangleNested(qualified); }
@@ -37,6 +39,18 @@ std::string mangleType(const Type& t) {
         if (t.tag.empty()) return "i";
         if (t.tag.find("::") == std::string::npos) return mangleTag(t.tag);
         return "N" + mangleTag(t.tag) + "E";
+    // An array type is A <length> _ <element>, or A_ <element> with no length ([mangle.array-type]).
+    case Type::Kind::Array:
+        return "A" + std::string(t.unsized || !t.bound ? "" : (t.bound->kind == Expr::Kind::Int ? std::to_string(t.bound->ival) : "")) +
+               "_" + (t.inner ? mangleType(*t.inner) : "i");
+    // A function type is F <return type> <parameter types> E, v for no parameters
+    // ([mangle.function-type]).
+    case Type::Kind::Function: {
+        std::string out = "F" + (t.inner ? std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "v");
+        if (t.params.empty()) out += "v";
+        for (const Param& p : t.params) out += p.type ? std::string(p.type->cnst ? "K" : "") + mangleType(*p.type) : "i";
+        return out + "E";
+    }
     default: return "i";
     }
 }
@@ -106,6 +120,79 @@ std::string mangleSpecial(const std::string& cls, const char* kind, const Type& 
 }
 
 std::string mangleData(const std::string& qualified) { return "_ZN" + mangleNested(qualified) + "E"; }
+
+// ---- Type information objects (RTTI), Itanium C++ ABI 2.9.5 ----
+// Written from the Itanium C++ ABI section 2.9.5 (RTTI layout) and ISO/IEC 14882 [expr.typeid]. The
+// object for type T is _ZTI<T>: three 8-byte words, (1) the type_info vtable slot of the ABI, left zero
+// (nothing calls through it: our <typeinfo> has no virtual functions), (2) the address of the name
+// _ZTS<T>, the mangled type without "_Z" ("i", "3Foo"), as std::type_info::name() returns it with
+// g++, (3) for a class with a base class (single inheritance only), the base's _ZTI, which plays the
+// part of __si_class_type_info::__base_type, else zero. Each object and name is a weak symbol, so every
+// file may define the ones it uses. A vtable's second word holds its class's _ZTI.
+std::string typeInfoSym(const Type& t) {
+    const Type* u = &t;
+    if (u->kind == Type::Kind::Reference && u->inner) u = u->inner.get();  // [expr.typeid] p4-5
+    auto c = cloneType(*u);
+    c->cnst = false;  // only the top-level const is dropped (const char * stays PKc)
+    return "_ZTI" + mangleType(*c);
+}
+
+void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::set<std::string>& done,
+                  int line, int col, const std::string& file) {
+    const Type* u = &t;
+    if (u->kind == Type::Kind::Reference && u->inner) u = u->inner.get();
+    std::string sym = typeInfoSym(*u);
+    if (!done.insert(sym).second) return;
+    std::string base;
+    if (u->kind == Type::Kind::Struct && !u->tag.empty()) {
+        auto it = canonStructs().find(u->tag);
+        if (it != canonStructs().end() && it->second && !it->second->base.empty()) {
+            Type b;
+            b.kind = Type::Kind::Struct;
+            b.tag = it->second->base;
+            base = typeInfoSym(b);
+            makeTypeInfo(b, out, done, line, col, file);
+        }
+    }
+    std::string nameText = sym.substr(4);
+    auto nameDecl = std::make_unique<Decl>();
+    nameDecl->name = "_ZTS" + nameText;
+    nameDecl->line = line;
+    nameDecl->col = col;
+    nameDecl->file = file;
+    nameDecl->isInline = true;
+    auto arr = std::make_unique<Type>();
+    arr->kind = Type::Kind::Array;
+    arr->inner = std::make_unique<Type>();
+    arr->inner->kind = Type::Kind::Char;
+    arr->inner->cnst = true;
+    arr->bound = std::make_unique<Expr>();
+    arr->bound->kind = Expr::Kind::Int;
+    arr->bound->ival = nameText.size() + 1;
+    nameDecl->type = std::move(arr);
+    nameDecl->init = std::make_unique<Expr>();
+    nameDecl->init->kind = Expr::Kind::String;
+    nameDecl->init->text = nameText;
+    out.push_back(std::move(nameDecl));
+    auto ti = std::make_unique<Decl>();
+    ti->name = sym;
+    ti->line = line;
+    ti->col = col;
+    ti->file = file;
+    ti->isInline = true;
+    auto words = std::make_unique<Type>();
+    words->kind = Type::Kind::Array;
+    words->inner = std::make_unique<Type>();
+    words->inner->kind = Type::Kind::Pointer;
+    words->inner->inner = std::make_unique<Type>();
+    words->inner->inner->kind = Type::Kind::Void;
+    words->bound = std::make_unique<Expr>();
+    words->bound->kind = Expr::Kind::Int;
+    words->bound->ival = 3;
+    ti->type = std::move(words);
+    ti->vt = {"", "_ZTS" + nameText, base};
+    out.push_back(std::move(ti));
+}
 
 
 }  // namespace compiler

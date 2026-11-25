@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 80 headers, 503 names.
+Back to the [code index](../code_index.md). 80 headers, 504 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -740,9 +740,10 @@ Back to the [code index](../code_index.md). 80 headers, 503 names.
 - `Substr` function, line 151: The first 'count' code points of 's' after skipping 'start' of them (clamped to the string).
 - `Truncate` function, line 159: At most 'maxCodePoints' code points of 's'.
 - `TruncateBytes` function, line 163: The longest prefix of 's' that is at most 'maxBytes' long and does not cut a character in
-- `ToUtf16` function, line 177: The text as UTF-16. A malformed sequence becomes U+FFFD.
-- `FromUtf16` function, line 196: UTF-16 to UTF-8. A surrogate that has no partner becomes U+FFFD.
-- `ToUtf32` function, line 212: The text as UTF-32 (one element per code point). A malformed sequence becomes U+FFFD.
-- `FromUtf32` function, line 222: UTF-32 to UTF-8. A value that is not a Unicode scalar becomes U+FFFD.
-- `ToWide` function, line 231: The platform's wide string (std::wstring): UTF-16 where wchar_t is 16 bits (Windows API calls
-- `FromWide` function, line 240
+- `CellWidth` function, line 180: How many cells of a fixed-width grid 'cp' takes: 0 for a combining mark or an invisible format character (it sits on
+- `ToUtf16` function, line 195: The text as UTF-16. A malformed sequence becomes U+FFFD.
+- `FromUtf16` function, line 214: UTF-16 to UTF-8. A surrogate that has no partner becomes U+FFFD.
+- `ToUtf32` function, line 230: The text as UTF-32 (one element per code point). A malformed sequence becomes U+FFFD.
+- `FromUtf32` function, line 240: UTF-32 to UTF-8. A value that is not a Unicode scalar becomes U+FFFD.
+- `ToWide` function, line 249: The platform's wide string (std::wstring): UTF-16 where wchar_t is 16 bits (Windows API calls
+- `FromWide` function, line 258

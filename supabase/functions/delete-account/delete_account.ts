@@ -83,6 +83,8 @@ export const STEPS: Step[] = [
   { id: "blocks.blocked", kind: "delete", table: "blocks", filter: eq("blocked") },
   { id: "privacy_settings", kind: "delete", table: "privacy_settings", filter: eq("user_id") },
   { id: "message_pins", kind: "delete", table: "message_pins", filter: eq("pinned_by") },
+  { id: "game_invites.sender", kind: "delete", table: "game_invites", filter: eq("sender") },
+  { id: "game_invites.recipient", kind: "delete", table: "game_invites", filter: eq("recipient") },
   { id: "messages.sent", kind: "delete", table: "messages", filter: eq("sender") },
   { id: "messages.received", kind: "delete", table: "messages", filter: eq("recipient") },
   { id: "friendships.requested", kind: "delete", table: "friendships", filter: eq("requester") },

@@ -137,7 +137,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 | **Input** | Keyboard | Is a key held, pressed or released. |  |
 |  | Mouse & Touch | The mouse position and buttons, the cursor, taps and swipes. | Touch & Gestures |
 |  | Gamepad & Controls | Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use. | Named Actions, Local Players, Controllers |
-| **Online** | Multiplayer | Host or join, browse servers, matchmaking, messages, synced objects, players and matches. | Hosting & Joining, Server Browser, Matchmaking & Relay, Messages & RPC, Synced Objects & Variables, Players & Matches |
+| **Online** | Multiplayer | Host or join, rooms and invites, browse servers, matchmaking, messages, synced objects, players and matches. | Hosting & Joining, Online Rooms & Invites, Server Browser, Matchmaking & Relay, Messages & RPC, Synced Objects & Variables, Players & Matches |
 |  | Steam | Steam achievements, stats, lobbies, friends, cloud files and the workshop. | Achievements & Stats, Lobbies & Friends, Cloud & Workshop |
 |  | Server Security | Anti-cheat: validate what clients send, rate limits, kicks and budgets. |  |
 |  | Accounts & Online Saves | Log in, cloud saves, leaderboards and PlayFab. | Accounts, Cloud Saves, Leaderboards & PlayFab |

@@ -33,6 +33,7 @@ inline std::vector<ExportSection> ExportSections(const std::string& uid) {
         {"follows", either("follows", "follower", "followee")},
         {"messages_sent", eq("messages", "sender")},
         {"group_messages_sent", eq("group_messages", "sender")},
+        {"game_invites", either("game_invites", "sender", "recipient")},
         {"server_channel_messages", eq("channel_messages", "author")},
         {"message_reactions", eq("message_reactions", "reactor")},
         {"forum_threads", eq("forum_threads", "author")},

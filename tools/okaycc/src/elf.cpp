@@ -89,6 +89,30 @@ void opReg(Image& im, int opcode, int dstRm, int srcReg) {
 
 void movReg(Image& im, int dst, int src) { opReg(im, 0x89, dst, src); }
 
+// The atomic operations of okay-cc's <atomic> (codegen.cpp atomicAsm has them as assembly), encoded
+// from the Intel SDM vol. 2: F0 is LOCK, 48 is REX.W, ModRM 37 is [rdi] with rsi, 17 is [rdi] with
+// rdx, F0 (as ModRM) is rax with rsi, C6 is eax with sil, C0 is eax with al; 66 makes an operand 16
+// bits; 0F B6 and 0F B7 zero-extend a byte and a word.
+const std::vector<unsigned char>* atomicCode(const std::string& f) {
+    static const std::map<std::string, std::vector<unsigned char>> table = {
+        {"__okay_atomic_xadd8", {0xF0, 0x48, 0x0F, 0xC1, 0x37, 0x48, 0x89, 0xF0}},
+        {"__okay_atomic_xadd4", {0xF0, 0x0F, 0xC1, 0x37, 0x89, 0xF0}},
+        {"__okay_atomic_xchg8", {0x48, 0x87, 0x37, 0x48, 0x89, 0xF0}},
+        {"__okay_atomic_xchg4", {0x87, 0x37, 0x89, 0xF0}},
+        {"__okay_atomic_xadd2", {0x66, 0xF0, 0x0F, 0xC1, 0x37, 0x0F, 0xB7, 0xC6}},
+        {"__okay_atomic_xadd1", {0xF0, 0x40, 0x0F, 0xC0, 0x37, 0x40, 0x0F, 0xB6, 0xC6}},
+        {"__okay_atomic_xchg2", {0x66, 0x87, 0x37, 0x0F, 0xB7, 0xC6}},
+        {"__okay_atomic_xchg1", {0x40, 0x86, 0x37, 0x40, 0x0F, 0xB6, 0xC6}},
+        {"__okay_atomic_cas2", {0x89, 0xF0, 0x66, 0xF0, 0x0F, 0xB1, 0x17, 0x0F, 0xB7, 0xC0}},
+        {"__okay_atomic_cas8", {0x48, 0x89, 0xF0, 0xF0, 0x48, 0x0F, 0xB1, 0x17}},
+        {"__okay_atomic_cas4", {0x89, 0xF0, 0xF0, 0x0F, 0xB1, 0x17}},
+        {"__okay_atomic_cas1", {0x89, 0xF0, 0xF0, 0x0F, 0xB0, 0x17, 0x0F, 0xB6, 0xC0}},
+        {"__okay_atomic_fence", {0x0F, 0xAE, 0xF0}},
+    };
+    auto it = table.find(f);
+    return it == table.end() ? nullptr : &it->second;
+}
+
 void sext(Image& im, int width, bool uns) {
     if (width != 1 && width != 2 && width != 4) return;
     if (uns && width == 4) {
@@ -678,6 +702,8 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
                                                     0x77, 0x20, 0x4C, 0x8B, 0x7F, 0x28, 0x48, 0x8B, 0x67, 0x30,
                                                     0xFF, 0x67, 0x38};
             for (unsigned char c : restore) u8(im, c);
+        } else if (const std::vector<unsigned char>* seq = atomicCode(in.func)) {
+            for (unsigned char c : *seq) u8(im, c);
         } else if (in.func == "syscall") {
             // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
             movReg(im, Rax, Rdi);
@@ -899,8 +925,14 @@ void emitFunction(Image& im, const Function& f) {
 }
 
 void emitData(Image& im, const Module& m) {
+    // Read-only items first, then the writable ones: each section is one run of bytes
+    // [roStart, roEnd) and [dataStart, dataEnd). Interleaved, a vtable in .rodata between two .data
+    // items fell inside the .data run and its relocations were written for the wrong section (its
+    // slots were null at run time).
+    for (int pass = 0; pass < 2; ++pass)
     for (const Global& g : m.globals) {
         bool ro = g.rodata;
+        if (ro != (pass == 0)) continue;
         if (ro) {
             if (im.roStart == im.roEnd) im.roStart = im.bytes.size();
             else
@@ -920,6 +952,8 @@ void emitData(Image& im, const Module& m) {
             im.fixes.push_back(f);
             u64(im, 0);
         } else if (!g.relocs.empty()) {
+            // Addresses at their offsets; the other bytes as they are (a table of structs mixes
+            // pointers and numbers: { "name", 0.25f, ... }).
             int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
             for (int off = 0; off < total; off += 8) {
                 std::string sym;
@@ -931,8 +965,11 @@ void emitData(Image& im, const Module& m) {
                     f.at = im.bytes.size();
                     f.target = sym;
                     im.fixes.push_back(f);
+                    u64(im, 0);
+                    continue;
                 }
-                u64(im, 0);
+                for (int k = off; k < off + 8 && k < total; ++k)
+                    u8(im, static_cast<std::size_t>(k) < g.bytes.size() ? g.bytes[static_cast<std::size_t>(k)] : 0);
             }
         } else if (!g.bytes.empty()) {
             bool zero = true;

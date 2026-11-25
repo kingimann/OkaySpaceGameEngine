@@ -1,0 +1,24 @@
+// <typeindex> for okay-cc (ISO/IEC 14882 [type.index]). Our own header: a copyable, ordered handle
+// to a type_info, usable as a map or unordered_map key.
+#pragma once
+#include <functional>
+#include <typeinfo>
+namespace std {
+class type_index {
+public:
+    type_index(const type_info &t) : __t(&t) {}
+    const char *name() const { return __t->name(); }
+    size_t hash_code() const { return __t->hash_code(); }
+    bool operator==(const type_index &o) const { return *__t == *o.__t; }
+    bool operator!=(const type_index &o) const { return !(*__t == *o.__t); }
+    bool operator<(const type_index &o) const { return __t->before(*o.__t); }
+    bool operator>(const type_index &o) const { return o.__t->before(*__t); }
+    bool operator<=(const type_index &o) const { return !o.__t->before(*__t); }
+    bool operator>=(const type_index &o) const { return !__t->before(*o.__t); }
+    const type_info *__t;
+};
+template <>
+struct hash<type_index> {
+    unsigned long operator()(const type_index &t) const { return t.hash_code(); }
+};
+}  // namespace std

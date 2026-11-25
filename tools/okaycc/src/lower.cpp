@@ -19,6 +19,24 @@ public:
             if (d && d->function && d->body) lowerFunc(*d);
         return std::move(mod_);
     }
+    // The size of a type for the parser's constant expressions: 0 when it is not known yet (a class
+    // not finished, a template parameter).
+    static int typeSizeFor(const Type& t) {
+        const Type* c = &t;
+        if (c->kind == Type::Kind::Struct || c->kind == Type::Kind::Union) {
+            if (c->tag.empty() || c->tag.find('\x02') != std::string::npos || !canonStructs().count(c->tag)) return 0;
+        }
+        if (c->kind == Type::Kind::Function || c->kind == Type::Kind::Void) return 0;
+        return sizeOf(c);
+    }
+    // The offset of member 'field' in class 'tag' (-1 if none), for the parser's vtable groups.
+    static int memberOffset(const std::string& tag, const std::string& field) {
+        auto it = canonStructs().find(tag);
+        if (it == canonStructs().end() || !it->second) return -1;
+        for (const FieldOff& f : layoutOf(it->second.get()))
+            if (f.name == field) return f.offset;
+        return -1;
+    }
 
 private:
     struct FieldOff {
@@ -164,9 +182,11 @@ private:
         case Type::Kind::Pointer:
         case Type::Kind::Reference: return 8;
         case Type::Kind::Array: {
-            int n = 0;
-            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
-            return n * sizeOf(t->inner.get());
+            // The length is a constant expression ([dcl.array] p1): double s[sizeof(P) / 8 + 1] in a
+            // class was taken as no elements when it was not a literal.
+            std::int64_t n = 0;
+            if (t->bound && !constInt(*t->bound, n)) n = 0;
+            return static_cast<int>(n) * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
             auto fields = layoutOf(t);
@@ -289,6 +309,19 @@ private:
                 f.tag = p.type->inner->tag;
                 if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
                     f.fields = layoutOf(p.type->inner.get());
+            }
+            if (p.name.compare(0, 5, "__mb:") == 0 && p.type) {
+                // The subobject of a base after the primary one (Itanium C++ ABI 2.4 II.3): the
+                // next member may go in its tail padding unless it is POD for the purpose of layout,
+                // so the offset moves on by its data size, not its size.
+                const Type* bc = canonOf(p.type.get());
+                if (bc && bc->nonpod) {
+                    int dsize = 0;
+                    for (const FieldOff& g : f.fields) dsize = std::max(dsize, g.offset + (g.bitWidth > 0 ? 4 : g.width));
+                    out.push_back(std::move(f));
+                    off += dsize;
+                    continue;
+                }
             }
             out.push_back(std::move(f));
             off += f.width;
@@ -464,7 +497,7 @@ private:
 
     // An integer constant expression of a global initializer (ISO C 6.6, C++ [expr.const]):
     // literals, unary and binary operators and casts to an integer type.
-    bool constInt(const Expr& e, std::int64_t& out) {
+    static bool constInt(const Expr& e, std::int64_t& out) {
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
@@ -582,7 +615,7 @@ private:
         init = std::move(lit);
     }
 
-    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
             return true;
@@ -674,6 +707,7 @@ private:
         auto u = static_cast<std::uint64_t>(v);
         for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
     }
+    std::vector<std::pair<int, std::string>>* fillRelocs_ = nullptr;  // the relocations of the global being filled
     void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
         if (!t || !init) return;
         if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
@@ -684,9 +718,9 @@ private:
         }
         if ((t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) && init->kind == Expr::Kind::Brace) {
             auto fields = layoutOf(t);
-            for (std::size_t i = 0; i < init->kids.size() && i < fields.size() && i < t->params.size(); ++i)
-                if (init->kids[i] && t->params[i].type)
-                    fillInit(t->params[i].type.get(), init->kids[i].get(), b, off + fields[i].offset);
+            for (std::size_t i = 0; i < init->kids.size() && i < fields.size(); ++i)
+                if (const Type* ft = init->kids[i] ? fieldTypeOf(t, fields[i].name) : nullptr)
+                    fillInit(ft, init->kids[i].get(), b, off + fields[i].offset);
             return;
         }
         if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Char &&
@@ -714,6 +748,25 @@ private:
                 putAt(b, off, static_cast<std::int64_t>(b64), 8);
             }
             return;
+        }
+        if (t->kind == Type::Kind::Pointer && fillRelocs_) {
+            // An address constant inside constant data (ISO C 6.6 p9): a string literal, &global or
+            // a function's name; 8 bytes the linker fills in.
+            const Expr* x = init;
+            while (x->kind == Expr::Kind::Cast && !x->kids.empty() && x->kids[0]) x = x->kids[0].get();
+            std::string target;
+            if (x->kind == Expr::Kind::String) target = addString(x->text);
+            else if (x->kind == Expr::Kind::Unary && x->text == "&" && !x->kids.empty() && x->kids[0] &&
+                     x->kids[0]->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->kids[0]->text); g && g->global) target = g->gname.empty() ? x->kids[0]->text : g->gname;
+            } else if (x->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->text); g && g->global && g->func) target = g->gname.empty() ? x->text : g->gname;
+            }
+            if (!target.empty()) {
+                putAt(b, off, 0, 8);
+                fillRelocs_->emplace_back(off, target);
+                return;
+            }
         }
         std::int64_t val = 0;
         if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
@@ -785,7 +838,9 @@ private:
             g.size = sizeOf(d.type.get());
             if (g.size < 0) g.size = 0;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            fillRelocs_ = &g.relocs;
             fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+            fillRelocs_ = nullptr;
             if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
         } else if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
@@ -794,6 +849,14 @@ private:
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
             g.size = 8;
             g.reloc = addString(d.init->text);
+        } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "&" && !d.init->kids.empty() &&
+                   d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Name && find(d.init->kids[0]->text) &&
+                   find(d.init->kids[0]->text)->global) {
+            // T *p = &g; an address constant: 8 bytes the linker fills with g's address.
+            g.size = 8;
+            g.bytes.assign(8, 0);
+            Sym* target = find(d.init->kids[0]->text);
+            g.relocs.emplace_back(0, target->gname.empty() ? d.init->kids[0]->text : target->gname);
         } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
             g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
             std::int64_t n = static_cast<std::int64_t>(d.init->ival);
@@ -812,8 +875,15 @@ private:
         if (!d.vt.empty()) {
             g.size = static_cast<int>(d.vt.size()) * 8;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
-            for (std::size_t k = 0; k < d.vt.size(); ++k)
-                if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+            for (std::size_t k = 0; k < d.vt.size(); ++k) {
+                if (d.vt[k].compare(0, 2, "\x01#") == 0) {  // a number: an offset-to-top
+                    std::int64_t n = std::stoll(d.vt[k].substr(2));
+                    for (int b = 0; b < 8; ++b)
+                        g.bytes[k * 8 + static_cast<std::size_t>(b)] = static_cast<std::uint8_t>(static_cast<std::uint64_t>(n) >> (8 * b));
+                } else if (!d.vt[k].empty()) {
+                    g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+                }
+            }
             g.rodata = true;
             g.weakSym = d.isInline;
         }
@@ -836,8 +906,9 @@ private:
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
         }
-        if (s->ref && s->agg) {
-            // A reference to an object: its value is the object's address (as for a local object).
+        if (s->ref && (s->agg || s->array)) {
+            // A reference to an object or an array: its value is the object's address (as for a
+            // local object; an array then decays to a pointer to its first element).
             Val v;
             v.op = Operand::vreg(s->reg);
             v.step = s->step;
@@ -928,6 +999,15 @@ private:
 
     Addr lowerAddr(Expr& e) {
         Addr a;
+        if (e.kind == Expr::Kind::String) {
+            // A string literal is an lvalue array ([lex.string]): its address is where its bytes are
+            // (a reference to it, as a forwarding reference given "text" binds, takes this).
+            a.op = lowerExpr(e).op;
+            a.width = 1;
+            a.agg = true;
+            a.ok = true;
+            return a;
+        }
         if (e.kind == Expr::Kind::Comma && !e.kids.empty() && e.kids.back()) {
             // (x, y): x is evaluated for its effects, the address is y's.
             for (std::size_t i = 0; i + 1 < e.kids.size(); ++i)
@@ -1163,7 +1243,7 @@ private:
                     initLocalBrace(base, t->inner.get(), *init.kids[i], at);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                Val v = toScalar(lowerExpr(*init.kids[i]), t->inner.get());
                 int w = es > 8 ? 8 : es;
                 Operand bits = w < 8 ? narrow(v.op, w, t->inner->unsign) : v.op;
                 storeBits(addAddr(base, at), bits, w);
@@ -1172,12 +1252,12 @@ private:
             auto fields = layoutOf(t);
             for (std::size_t i = 0; i < init.kids.size() && i < fields.size(); ++i) {
                 if (!init.kids[i]) continue;
+                const Type* ft = fieldTypeOf(t, fields[i].name);
                 if (init.kids[i]->kind == Expr::Kind::Brace) {
-                    const Type* ft = i < t->params.size() ? t->params[i].type.get() : nullptr;
                     initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                Val v = toScalar(lowerExpr(*init.kids[i]), ft);
                 int w = fields[i].width > 8 ? 8 : fields[i].width;
                 storeBits(addAddr(base, off + fields[i].offset), v.op, w);
             }
@@ -1502,6 +1582,13 @@ private:
                 v.inner = p.inner;
                 return v;
             }
+            if (e.checked && e.checked->kind == Type::Kind::Array) {
+                // *p of an array (the result of a call returning T(&)[N]) is used through its
+                // address: the array decays to its first element, so nothing is loaded.
+                Val v = p;
+                if (e.checked->inner) v.step = sizeOf(e.checked->inner.get());
+                return v;
+            }
             Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
             if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // *p of a float or double
             return v;
@@ -1566,9 +1653,9 @@ private:
             return {};
         }
         Sym* simple = e.kids[0]->kind == Expr::Kind::Name ? find(e.kids[0]->text) : nullptr;
-        if (!simple || simple->global || simple->array) {
-            // Any other object (a field, an element, *p, a global): x++ is (x += 1) - 1 and ++x is
-            // x += 1, with the object evaluated once.
+        if (!simple || simple->global || simple->array || simple->ref) {
+            // Any other object (a field, an element, *p, a global, what a reference names): x++ is
+            // (x += 1) - 1 and ++x is x += 1, with the object evaluated once.
             auto one = std::make_unique<Expr>();
             one->kind = Expr::Kind::Int;
             one->ival = 1;
@@ -1576,6 +1663,12 @@ private:
             one->col = e.col;
             auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
             one->checked = std::make_unique<Type>();
+            // A pointer moves by the size of what it points to ([expr.pre.incr]): the += below is
+            // lowered as it is, without the checker's p = p + n scaling (++ on an int *& moved 1 byte).
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                int st = valueStep(lhsType.get());
+                if (st > 1) one->ival = static_cast<std::uint64_t>(st);
+            }
             auto asg = std::make_unique<Expr>();
             asg->kind = Expr::Kind::Assign;
             asg->text = e.text == "--" ? "-=" : "+=";
@@ -1586,6 +1679,16 @@ private:
             asg->kids.push_back(std::move(one));
             if (lhsType) asg->checked = cloneType(*lhsType);
             if (pre) return lowerExpr(*asg);
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                // p++ on a pointer: the new value less one step (the value of the += is not scaled
+                // again by a pointer subtraction).
+                Val after = lowerExpr(*asg);
+                int st = valueStep(lhsType.get());
+                int dst = fresh();
+                emitBin(e.text == "--" ? Inst::Op::Add : Inst::Op::Sub, dst, after.op,
+                        Operand::number(st > 1 ? st : 1));
+                return Val{Operand::vreg(dst), after.step, after.inner};
+            }
             auto back = std::make_unique<Expr>();
             back->kind = Expr::Kind::Bin;
             back->text = e.text == "--" ? "+" : "-";
@@ -1655,6 +1758,31 @@ private:
         o.op = Operand::vreg(t);
         o.fpw = dstCode > 0 ? dstCode : 0;
         return o;
+    }
+
+    // The type of data member 'name' of class t (t may be named only: its members are the
+    // finished class's).
+    static const Type* fieldTypeOf(const Type* t, const std::string& name) {
+        const Type* ct = t && t->params.empty() && !t->tag.empty() ? canonOf(t) : t;
+        if (!ct) return nullptr;
+        for (const Param& p : ct->params)
+            if (p.name == name && p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function) return p.type.get();
+        return nullptr;
+    }
+    // A value converted to the arithmetic type of the object it initializes ([conv.fpint],
+    // [conv.double], [conv.bool]): float x[2] = {1, 2} stores 1.0f and 2.0f, not the int bits.
+    Val toScalar(Val v, const Type* to) {
+        if (!to || v.pair) return v;
+        if (to->kind == Type::Kind::Bool) return Val{asBool(v.op, v.fpw), 0, 0};
+        const int dst = fpWidthOf(to);
+        if (dst) return v.fpw == dst ? v : cvtFp(v, v.fpw, dst);
+        if (!v.fpw || !isIntish(*to)) return v;
+        const int iw = sizeOf(to);
+        if (iw < 4) {
+            Val n = cvtFp(v, v.fpw, -4);
+            return Val{narrow(n.op, iw, to->unsign), 0, 0};
+        }
+        return cvtFp(v, v.fpw, -(iw > 8 ? 8 : iw));
     }
 
     Val lowerBin(Expr& e) {
@@ -1845,7 +1973,8 @@ private:
                 }
                 if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
                 storeNamed(*s, result);
-                if (s->global) return Val{result, s->step, s->inner};
+                // (a reference's register holds the referent's address: the value is result)
+                if (s->global || s->ref) return Val{result, s->step, s->inner};
                 return Val{Operand::vreg(s->reg), s->step, s->inner};
             }
             storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);
@@ -2091,6 +2220,15 @@ private:
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
+        }
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "zero:" && e.kids.size() == 2 &&
+            e.kids[1] && e.kids[1]->checked && e.kids[1]->checked->inner) {
+            // The checker's "\x01zero:"(&object): the object's bytes set to zero (value-initialization of
+            // an aggregate made from a braced list, [dcl.init.list] p3, [dcl.init] p8).
+            int bytes = sizeOf(e.kids[1]->checked->inner.get());
+            Val dst = lowerExpr(*e.kids[1]);
+            if (bytes > 0) zeroMem(dst.op, bytes);
+            return Val{Operand::number(0), 0, 0};
         }
         bool direct = false;
         std::string fname;
@@ -2436,12 +2574,17 @@ private:
                 // once in the image like a global's ([basic.start.static]). A value that is not a
                 // constant is reported by fillInit (dynamic initialization of a static local is not
                 // supported); it was silently zero before.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
-                // static const float k = 0.5f, static double s = -1.0: the constant's bits; any
-                // other value is reported by fillInit.
+                // static const float k = 0.5f, static double s = -1.0: the constant's bits;
+                // static const char *hx = "0123": the address of the literal; any other value is
+                // reported by fillInit.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             }
             mod_.globals.push_back(std::move(g));
@@ -2841,7 +2984,8 @@ private:
                     s.reg = plan.regAt;
                     if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
                 }
-                if (s.boolean && s.reg >= 0) {
+                if (s.boolean && !s.ref && s.reg >= 0) {
+                    // A bool parameter is 0 or 1 ([conv.bool]); a bool& parameter is an address.
                     Operand n = asBool(Operand::vreg(s.reg));
                     emitMov(s.reg, n, 1, true);
                 }
@@ -2916,6 +3060,11 @@ Module lowerSource(const std::string& source, Diagnostics& diags, const std::str
 }
 
 void setForceExceptions(bool on) { forceExceptions() = on; }
+
+namespace compiler {
+int memberOffset(const std::string& tag, const std::string& field) { return Lowerer::memberOffset(tag, field); }
+int typeSize(const Type& t) { return Lowerer::typeSizeFor(t); }
+}  // namespace compiler
 
 }  // namespace okaycc
 

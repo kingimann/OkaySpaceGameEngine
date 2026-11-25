@@ -2,16 +2,18 @@
 // minimal version: the elements are kept in a sorted array (found by binary search), so iterators are plain pointers
 // and an insert or erase in the middle moves the elements after it (linear time, where the standard says
 // logarithmic). Iterators and references are invalidated by an insert or erase (the standard keeps them valid).
-// Ordering is by operator< on the element type (no comparator argument). No allocator, no exceptions.
+// Ordering is by the comparator C (std::less<T>, operator< on the element type, unless another is given). No allocator, no exceptions.
 #pragma once
 #include <cstddef>
 #include <initializer_list>
 #include <utility>
 #include <vector>
+#include <iterator>
 namespace std {
-template <typename T>
+template <typename T, typename C = less<T> >
 class set {
     vector<T> items_;
+    C cmp_;
 
     // The index of the first element that is not less than value.
     size_t lower(const T& value) const {
@@ -19,7 +21,7 @@ class set {
         size_t hi = items_.size();
         while (lo < hi) {
             const size_t mid = lo + (hi - lo) / 2;
-            if (items_[mid] < value) lo = mid + 1;
+            if (cmp_(items_[mid], value)) lo = mid + 1;
             else hi = mid;
         }
         return lo;
@@ -36,30 +38,38 @@ public:
     set(initializer_list<T> list) {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }
+    // The elements of [first, last) ([set.cons] 3).
+    template <typename It>
+    set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.begin(); }
     const T* end() const { return items_.end(); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(items_.end()); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(items_.begin()); }
     void clear() { items_.clear(); }
+    void swap(set& other) { items_.swap(other.items_); }
     size_t count(const T& value) const {
         const size_t at = lower(value);
-        return at < items_.size() && !(value < items_[at]) ? 1 : 0;
+        return at < items_.size() && !cmp_(value, items_[at]) ? 1 : 0;
     }
     const T* find(const T& value) const {
         const size_t at = lower(value);
-        if (at < items_.size() && !(value < items_[at])) return items_.begin() + at;
+        if (at < items_.size() && !cmp_(value, items_[at])) return items_.begin() + at;
         return items_.end();
     }
     // The position of the value and whether it was new.
     pair<const T*, bool> insert(const T& value) {
         const size_t at = lower(value);
-        if (at < items_.size() && !(value < items_[at])) return pair<const T*, bool>(items_.begin() + at, false);
+        if (at < items_.size() && !cmp_(value, items_[at])) return pair<const T*, bool>(items_.begin() + at, false);
         items_.insert(items_.begin() + at, value);
         return pair<const T*, bool>(items_.begin() + at, true);
     }
     size_t erase(const T& value) {
         const size_t at = lower(value);
-        if (at < items_.size() && !(value < items_[at])) {
+        if (at < items_.size() && !cmp_(value, items_[at])) {
             items_.erase(items_.begin() + at);
             return 1;
         }

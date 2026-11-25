@@ -172,7 +172,8 @@ now pins them. Pictures of the course: a picture folder (pictures are no longer 
   Probe: `E12c` in `tests/probe_player_audit.cpp`.
 * Scaled colliders ignore the scale in their centre offset (E22): `Collider3D::WorldCenter` (physics header).
 * `Physics3D::Overlap*` / `Sweep` search the whole scene on every call (see above): a one-line change per function to
-  use the cached collider list; routed to the physics lane rather than edited here.
+  use the cached collider list; routed to the physics lane rather than edited here. (Done later on
+  `claude/physics-queries-1`: every 3D query asks a broad phase first; test `physics_query_broadphase`.)
 * No ledge slide-off for the box body (E08). The Scene-view gizmo and the F3 lines were never seen on a real screen.
 * Unverified: everything on Windows, the editor panels (only compiled in the sense of "read"; `editor/main.cpp` was not
   built here), the F3 lines on screen, any picture, real game feel with a keyboard and mouse.

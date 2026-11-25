@@ -1,0 +1,25 @@
+// <ratio> for okay-cc (ISO/IEC 14882 [ratio]). Our own header: a compile-time fraction N/D with the
+// SI prefix names. num and den are as written (not reduced to lowest terms yet).
+#pragma once
+namespace std {
+typedef long intmax_t;
+template <long N, long D = 1>
+struct ratio {
+    static constexpr long num = N;
+    static constexpr long den = D;
+    typedef ratio<N, D> type;
+};
+typedef ratio<1, 1000000000000000000L> atto;
+typedef ratio<1, 1000000000000000L> femto;
+typedef ratio<1, 1000000000000L> pico;
+typedef ratio<1, 1000000000L> nano;
+typedef ratio<1, 1000000L> micro;
+typedef ratio<1, 1000L> milli;
+typedef ratio<1, 100L> centi;
+typedef ratio<1, 10L> deci;
+typedef ratio<10L, 1> deca;
+typedef ratio<100L, 1> hecto;
+typedef ratio<1000L, 1> kilo;
+typedef ratio<1000000L, 1> mega;
+typedef ratio<1000000000L, 1> giga;
+}  // namespace std

@@ -4,10 +4,35 @@
 #include <stdarg.h>
 #endif
 int write(int fd, char *buf, int n);
+/* Where the formatter's characters go (ISO C 7.21.6.1 printf, 7.21.6.5 snprintf): a file
+ * descriptor, or a caller's buffer of __okay_sink_cap bytes (characters past the end are counted,
+ * not stored). The fd sink collects up to 256 characters before one write. */
+int __okay_sink_fd = 1;
+char *__okay_sink_buf = 0;
+unsigned long __okay_sink_cap = 0;
+unsigned long __okay_sink_len = 0;
+static char gOut[256];
+static int gOutN = 0;
+void __okay_sink_flush(void) {
+    int done;
+    int w;
+    done = 0;
+    while (done < gOutN) {
+        w = write(__okay_sink_fd, gOut + done, gOutN - done);
+        if (w <= 0) break;
+        done = done + w;
+    }
+    gOutN = 0;
+}
 int p_char(int c) {
-    char b;
-    b = (char)c;
-    if (write(1, &b, 1) != 1) return 0;
+    if (__okay_sink_buf != 0) {
+        if (__okay_sink_len + 1 < __okay_sink_cap) __okay_sink_buf[__okay_sink_len] = (char)c;
+        __okay_sink_len = __okay_sink_len + 1;
+        return 1;
+    }
+    gOut[gOutN] = (char)c;
+    gOutN = gOutN + 1;
+    if (gOutN == 256) __okay_sink_flush();
     return 1;
 }
 int p_str(char *s) {
@@ -357,189 +382,308 @@ static int fmtDouble(double v, int conv, int prec, int plus, char *out) {
     }
 }
 
-int printf(char *fmt, ...) {
-    va_list ap;
+/* The conversions of ISO C 7.21.6.1: flags - + space # 0, a width and a precision (numbers or *),
+ * the length modifiers hh h l ll j z t L, and d i u o x X c s p f F e E g G %. %n is not done. */
+static int padOut(int c, int k) {
+    int n;
+    n = 0;
+    while (k > 0) {
+        n = n + p_char(c);
+        k = k - 1;
+    }
+    return n;
+}
+int __okay_vformat(char *fmt, va_list ap) {
     int i;
     int n;
     i = 0;
     n = 0;
-    va_start(ap, fmt);
     while (fmt[i] != 0) {
         if (fmt[i] != '%') {
             n = n + p_char(fmt[i]);
             i = i + 1;
-        } else {
+            continue;
+        }
+        i = i + 1;
+        int left;
+        int zero;
+        int plus;
+        int space;
+        int alt;
+        int width;
+        int prec;
+        int lng;
+        left = 0;
+        zero = 0;
+        plus = 0;
+        space = 0;
+        alt = 0;
+        width = 0;
+        prec = -1;
+        lng = 0;
+        while (fmt[i] == '-' || fmt[i] == '0' || fmt[i] == '+' || fmt[i] == ' ' || fmt[i] == '#') {
+            if (fmt[i] == '-') left = 1;
+            if (fmt[i] == '0') zero = 1;
+            if (fmt[i] == '+') plus = 1;
+            if (fmt[i] == ' ') space = 1;
+            if (fmt[i] == '#') alt = 1;
             i = i + 1;
-            {
-                int left;
-                int zero;
-                int width;
-                int islong;
-                left = 0;
-                zero = 0;
-                width = 0;
-                islong = 0;
-                int plus;
-                int prec;
-                plus = 0;
-                prec = -1;
-                while (fmt[i] == '-' || fmt[i] == '0' || fmt[i] == '+' || fmt[i] == ' ') {
-                    if (fmt[i] == '-') left = 1;
-                    if (fmt[i] == '0') zero = 1;
-                    if (fmt[i] == '+') plus = 1;
-                    i = i + 1;
-                }
-                while (fmt[i] >= '0' && fmt[i] <= '9') {
-                    width = width * 10 + (fmt[i] - '0');
-                    i = i + 1;
-                }
-                if (fmt[i] == '.') {
-                    i = i + 1;
-                    prec = 0;
-                    while (fmt[i] >= '0' && fmt[i] <= '9') {
-                        prec = prec * 10 + (fmt[i] - '0');
-                        i = i + 1;
-                    }
-                }
-                while (fmt[i] == 'l' || fmt[i] == 'z') {
-                    islong = 1;
-                    i = i + 1;
-                }
-                if (fmt[i] == 'd' || fmt[i] == 'u' || fmt[i] == 'x') {
-                    char buf[32];
-                    int len;
-                    int k;
-                    unsigned long u;
-                    int neg;
-                    int base;
-                    char *digits;
-                    neg = 0;
-                    base = 10;
-                    digits = "0123456789abcdef";
-                    if (fmt[i] == 'x') base = 16;
-                    if (fmt[i] == 'd') {
-                        long v;
-                        if (islong) v = va_arg(ap, long);
-                        else v = va_arg(ap, int);
-                        if (v < 0) {
-                            neg = 1;
-                            u = (unsigned long)0 - (unsigned long)v;
-                        } else {
-                            u = (unsigned long)v;
-                        }
-                    } else if (islong) {
-                        u = (unsigned long)va_arg(ap, long);
-                    } else {
-                        u = (unsigned long)va_arg(ap, unsigned);
-                    }
-                    len = 0;
-                    if (u == 0) {
-                        buf[0] = '0';
-                        len = 1;
-                    }
-                    while (u != 0) {
-                        buf[len] = digits[u % (unsigned long)base];
-                        len = len + 1;
-                        u = u / (unsigned long)base;
-                    }
-                    if (!neg && plus && fmt[i] == 'd') {
-                        n = n + p_char('+');
-                        width = width - 1;
-                    }
-                    if (neg) {
-                        n = n + p_char('-');
-                    }
-                    k = width - len;
-                    if (neg) k = k - 1;
-                    if (k < 0) k = 0;
-                    if (!left) {
-                        while (k > 0) {
-                            n = n + p_char(zero ? '0' : ' ');
-                            k = k - 1;
-                        }
-                    }
-                    while (len > 0) {
-                        len = len - 1;
-                        n = n + p_char(buf[len]);
-                    }
-                    if (left) {
-                        while (k > 0) {
-                            n = n + p_char(' ');
-                            k = k - 1;
-                        }
-                    }
-                    i = i + 1;
-                } else if (fmt[i] == 's') {
-                    char *str;
-                    int len;
-                    int k;
-                    str = va_arg(ap, char *);
-                    if (str == 0) str = "(null)";
-                    len = 0;
-                    while (str[len] != 0) len = len + 1;
-                    k = width - len;
-                    if (k < 0) k = 0;
-                    if (!left) {
-                        while (k > 0) {
-                            n = n + p_char(' ');
-                            k = k - 1;
-                        }
-                    }
-                    n = n + p_str(str);
-                    if (left) {
-                        while (k > 0) {
-                            n = n + p_char(' ');
-                            k = k - 1;
-                        }
-                    }
-                    i = i + 1;
-                } else if (fmt[i] == 'f' || fmt[i] == 'F' || fmt[i] == 'e' || fmt[i] == 'E' || fmt[i] == 'g' ||
-                           fmt[i] == 'G') {
-                    char nb[1300];
-                    int len;
-                    int k;
-                    int start;
-                    len = fmtDouble(va_arg(ap, double), fmt[i], prec < 0 ? 6 : prec, plus, nb);
-                    if (len > 0 && (nb[len - 1] == 'n' || nb[len - 1] == 'f' || nb[len - 1] == 'N' || nb[len - 1] == 'F'))
-                        zero = 0; /* inf and nan are padded with spaces */
-                    k = width - len;
-                    if (k < 0) k = 0;
-                    start = 0;
-                    if (zero && !left && len > 0 && (nb[0] == '-' || nb[0] == '+')) {
-                        n = n + p_char(nb[0]);
-                        start = 1;
-                    }
-                    if (!left)
-                        while (k > 0) {
-                            n = n + p_char(zero ? '0' : ' ');
-                            k = k - 1;
-                        }
-                    while (start < len) {
-                        n = n + p_char(nb[start]);
-                        start = start + 1;
-                    }
-                    if (left)
-                        while (k > 0) {
-                            n = n + p_char(' ');
-                            k = k - 1;
-                        }
-                    i = i + 1;
-                } else if (fmt[i] == 'c') {
-                n = n + p_char(va_arg(ap, int));
-                i = i + 1;
-            } else if (fmt[i] == '%') {
-                n = n + p_char('%');
-                i = i + 1;
-            } else if (fmt[i] == 0) {
-                n = n + p_char('%');
-            } else {
-                n = n + p_char('%');
-                n = n + p_char(fmt[i]);
-                i = i + 1;
+        }
+        if (fmt[i] == '*') {
+            width = va_arg(ap, int);
+            if (width < 0) {
+                left = 1;
+                width = 0 - width;
             }
+            i = i + 1;
+        } else {
+            while (fmt[i] >= '0' && fmt[i] <= '9') {
+                width = width * 10 + (fmt[i] - '0');
+                i = i + 1;
             }
         }
+        if (fmt[i] == '.') {
+            i = i + 1;
+            prec = 0;
+            if (fmt[i] == '*') {
+                prec = va_arg(ap, int);
+                if (prec < 0) prec = -1;
+                i = i + 1;
+            } else {
+                while (fmt[i] >= '0' && fmt[i] <= '9') {
+                    prec = prec * 10 + (fmt[i] - '0');
+                    i = i + 1;
+                }
+            }
+        }
+        while (fmt[i] == 'l' || fmt[i] == 'z' || fmt[i] == 'j' || fmt[i] == 't' || fmt[i] == 'h' || fmt[i] == 'L') {
+            if (fmt[i] == 'h') lng = lng - 1;
+            else if (fmt[i] != 'L') lng = 1;
+            i = i + 1;
+        }
+        char cv;
+        cv = fmt[i];
+        if (cv == 0) {
+            n = n + p_char('%');
+            break;
+        }
+        i = i + 1;
+        if (cv == 'd' || cv == 'i' || cv == 'u' || cv == 'x' || cv == 'X' || cv == 'o' || cv == 'p') {
+            char buf[40];
+            int len;
+            int k;
+            unsigned long u;
+            int neg;
+            unsigned long base;
+            char *digits;
+            char sign;
+            char *prefix;
+            int plen;
+            int zeros;
+            neg = 0;
+            base = 10;
+            digits = "0123456789abcdef";
+            if (cv == 'x' || cv == 'p') base = 16;
+            if (cv == 'X') {
+                base = 16;
+                digits = "0123456789ABCDEF";
+            }
+            if (cv == 'o') base = 8;
+            if (cv == 'd' || cv == 'i') {
+                long v;
+                if (lng > 0) v = va_arg(ap, long);
+                else v = va_arg(ap, int);
+                if (lng == -1) v = (long)(short)v;
+                if (lng < -1) v = (long)(signed char)v;
+                if (v < 0) {
+                    neg = 1;
+                    u = (unsigned long)0 - (unsigned long)v;
+                } else {
+                    u = (unsigned long)v;
+                }
+            } else if (cv == 'p') {
+                u = (unsigned long)va_arg(ap, char *);
+            } else if (lng > 0) {
+                u = (unsigned long)va_arg(ap, long);
+            } else {
+                u = (unsigned long)va_arg(ap, unsigned);
+                if (lng == -1) u = u & 65535;
+                if (lng < -1) u = u & 255;
+            }
+            if (cv == 'p' && u == 0) {
+                /* glibc prints a null pointer as (nil), padded as a string */
+                k = width - 5;
+                if (!left) n = n + padOut(' ', k);
+                n = n + p_str("(nil)");
+                if (left) n = n + padOut(' ', k);
+                continue;
+            }
+            len = 0;
+            while (u != 0) {
+                buf[len] = digits[u % base];
+                len = len + 1;
+                u = u / base;
+            }
+            /* precision: the least number of digits; 0 with precision 0 prints nothing */
+            zeros = 0;
+            if (prec < 0 && len == 0) zeros = 1;
+            if (prec > len) zeros = prec - len;
+            if (cv == 'o' && alt && zeros == 0 && (len == 0 || buf[len - 1] != '0')) zeros = 1;
+            sign = 0;
+            if (neg) sign = '-';
+            else if ((cv == 'd' || cv == 'i') && plus) sign = '+';
+            else if ((cv == 'd' || cv == 'i') && space) sign = ' ';
+            prefix = "";
+            plen = 0;
+            if (cv == 'p' || (alt && len > 0 && (cv == 'x' || cv == 'X'))) {
+                prefix = cv == 'X' ? "0X" : "0x";
+                plen = 2;
+            }
+            k = width - len - zeros - plen - (sign ? 1 : 0);
+            if (k < 0) k = 0;
+            if (zero && !left && prec < 0) {
+                zeros = zeros + k;
+                k = 0;
+            }
+            if (!left) n = n + padOut(' ', k);
+            if (sign) n = n + p_char(sign);
+            n = n + p_str(prefix);
+            n = n + padOut('0', zeros);
+            while (len > 0) {
+                len = len - 1;
+                n = n + p_char(buf[len]);
+            }
+            if (left) n = n + padOut(' ', k);
+        } else if (cv == 's') {
+            char *str;
+            int len;
+            int k;
+            int j;
+            str = va_arg(ap, char *);
+            if (str == 0) str = "(null)";
+            len = 0;
+            while (str[len] != 0 && (prec < 0 || len < prec)) len = len + 1;
+            k = width - len;
+            if (k < 0) k = 0;
+            if (!left) n = n + padOut(' ', k);
+            j = 0;
+            while (j < len) {
+                n = n + p_char(str[j]);
+                j = j + 1;
+            }
+            if (left) n = n + padOut(' ', k);
+        } else if (cv == 'c') {
+            int k;
+            k = width - 1;
+            if (k < 0) k = 0;
+            if (!left) n = n + padOut(' ', k);
+            n = n + p_char(va_arg(ap, int));
+            if (left) n = n + padOut(' ', k);
+        } else if (cv == 'f' || cv == 'F' || cv == 'e' || cv == 'E' || cv == 'g' || cv == 'G') {
+            char nb[1300];
+            int len;
+            int k;
+            int start;
+            len = fmtDouble(va_arg(ap, double), cv, prec < 0 ? 6 : prec, plus, nb);
+            if (space && !plus && len > 0 && nb[0] != '-') {
+                int m;
+                m = len;
+                while (m > 0) {
+                    nb[m] = nb[m - 1];
+                    m = m - 1;
+                }
+                nb[0] = ' ';
+                len = len + 1;
+            }
+            if (len > 0 && (nb[len - 1] == 'n' || nb[len - 1] == 'f' || nb[len - 1] == 'N' || nb[len - 1] == 'F'))
+                zero = 0; /* inf and nan are padded with spaces */
+            k = width - len;
+            if (k < 0) k = 0;
+            start = 0;
+            if (zero && !left && len > 0 && (nb[0] == '-' || nb[0] == '+' || nb[0] == ' ')) {
+                n = n + p_char(nb[0]);
+                start = 1;
+            }
+            if (!left) n = n + padOut(zero ? '0' : ' ', k);
+            while (start < len) {
+                n = n + p_char(nb[start]);
+                start = start + 1;
+            }
+            if (left) n = n + padOut(' ', k);
+        } else if (cv == '%') {
+            n = n + p_char('%');
+        } else {
+            n = n + p_char('%');
+            n = n + p_char(cv);
+        }
     }
+    return n;
+}
+
+int vprintf(char *fmt, va_list ap) {
+    int n;
+    __okay_sink_buf = 0;
+    __okay_sink_fd = 1;
+    n = __okay_vformat(fmt, ap);
+    __okay_sink_flush();
+    return n;
+}
+int printf(char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vprintf(fmt, ap);
     va_end(ap);
+    return n;
+}
+int vsnprintf(char *buf, unsigned long cap, char *fmt, va_list ap) {
+    int n;
+    char *savedBuf;
+    unsigned long savedCap;
+    unsigned long savedLen;
+    savedBuf = __okay_sink_buf;
+    savedCap = __okay_sink_cap;
+    savedLen = __okay_sink_len;
+    __okay_sink_buf = buf;
+    __okay_sink_cap = cap;
+    __okay_sink_len = 0;
+    n = __okay_vformat(fmt, ap);
+    if (cap > 0) buf[__okay_sink_len < cap ? __okay_sink_len : cap - 1] = 0;
+    __okay_sink_buf = savedBuf;
+    __okay_sink_cap = savedCap;
+    __okay_sink_len = savedLen;
+    return n;
+}
+int snprintf(char *buf, unsigned long cap, char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(buf, cap, fmt, ap);
+    va_end(ap);
+    return n;
+}
+int vsprintf(char *buf, char *fmt, va_list ap) { return vsnprintf(buf, (unsigned long)1 << 62, fmt, ap); }
+int sprintf(char *buf, char *fmt, ...) {
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsprintf(buf, fmt, ap);
+    va_end(ap);
+    return n;
+}
+/* To a file descriptor (stdio.c's fprintf and vfprintf). */
+int __okay_vdprintf(int fd, char *fmt, va_list ap) {
+    int n;
+    int savedFd;
+    char *savedBuf;
+    __okay_sink_flush();
+    savedFd = __okay_sink_fd;
+    savedBuf = __okay_sink_buf;
+    __okay_sink_buf = 0;
+    __okay_sink_fd = fd;
+    n = __okay_vformat(fmt, ap);
+    __okay_sink_flush();
+    __okay_sink_fd = savedFd;
+    __okay_sink_buf = savedBuf;
     return n;
 }

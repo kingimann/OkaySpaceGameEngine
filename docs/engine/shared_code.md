@@ -42,6 +42,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Zip reading (inside the engine) | `engine/src/Render/ZipLite.hpp` | `Archive::Open`, `Archive::Extract` | `Archive a; a.Open(bytes); a.Extract(0, text);` |
 | PNG writing | `Core/ImageWrite.hpp` | `ImageWrite::WritePNG`, `ImageWrite::EncodePNG` | `ImageWrite::WritePNG("shot.png", w, h, 4, rgba);` |
 | BMP writing | `Platform/BmpWriter.hpp` | `okay::platform::WriteBmp32`, `WriteBmp32Bgra` | `platform::WriteBmp32("shot.bmp", rgba, w, h);` |
+| Network tests: a script's or graph's variable, an overlay line | `tests/net_test_util.hpp` | `nettest::ScriptVar`, `nettest::GraphVar`, `nettest::HasLine` | `CHECK(nettest::ScriptVar(go, "code") == "K7Q29X");` |
 | Random numbers | `Core/Random.hpp` | `okay::Random` (`Seed`, `Value`, `Range`) | `Random r(seed); float x = r.Range(-1.0f, 1.0f);` |
 | Noise (Perlin, simplex, value, Worley, fBm) | `Math/Noise.hpp` | `okay::NoiseField` (`Perlin2`, `Perlin3`, `Simplex2`, `Fbm2`) | `NoiseField n(7); float h = n.Fbm2(NoiseType::Perlin, x, z);` |
 | Easing curves | `Math/Easing.hpp` | `okay::Ease`, `Easing::Evaluate`, `Easing::QuadIn` ... | `float k = Easing::Evaluate(Ease::CubicOut, t);` |
@@ -56,6 +57,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Two-bone IK | `Math/TwoBoneIK.hpp` | `okay::SolveTwoBoneIK`, `SolveTwoBoneIKSoft` | `SolveTwoBoneIK(root, upper, lower, target, pole, mid, end);` |
 | Swing and twist split, joint limits | `Animation/JointLimit.hpp` | `okay::TwistAbout` | `float deg; Quat twist = TwistAbout(q, axis, deg);` |
 | Convex contact (GJK, EPA) | `Physics/ConvexContact.hpp` | `okay::ConvexContact`, `convex_detail::Epa` | `ConvexHit hit = ConvexContact(supportA, supportB);` |
+| Engine math to the physics core and back | `Physics/Core/VecConvert.hpp` | `phys::conv::P3`, `E3`, `PQ`, `EQ` (Vec3 / Quat <-> `phys::V3` / `phys::Q`) | `using namespace phys::conv; world.SetLinearVelocity(id, P3(v));` |
 | Grid A* (2D grids, tilemaps, the 3D probe grid) | `AI/GridAStar.hpp`, called through `AI/Navigation.hpp` | `okay::gridastar::Search`, `DenseStore`, `SparseStore`, `GridCell`; `Navigation::GridPath`, `Navigation::TilemapPath` | `auto path = Navigation::GridPath(walkable, w, h, 0, 0, 9, 8, true);` |
 | Ray against a triangle mesh | `Physics/TriMesh.hpp` | `okay::TriMesh::Raycast`, `TriMesh::RayLocal` | `mesh.Raycast(origin, dir, 100.0f, t, normal);` |
 | Quaternion to rotation matrix (any precision) | `Math/Mat4.hpp` | `okay::SetRotationFromUnitQuat`, `Mat4::Rotate` | `rc::M4 r; SetRotationFromUnitQuat(r, x, y, z, w);` |
@@ -69,6 +71,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Curves and splines | `Math/Curves.hpp` | `okay::Curves` (`CubicBezier`, `CatmullRom`, `ArcLength`) | `Vec3 p = Curves::CatmullRom(p0, p1, p2, p3, t);` |
 | Import settings | `Core/ImportSettings.hpp` | `okay::ImportSettings` (`Defaults`, `FromPairs`), `AssetTypeFromPath` | `auto s = ImportSettings::Defaults(AssetTypeFromPath(path));` |
 | An engine function for scripts (OkayScript, C#, visual-script nodes) | `Scripting/ScriptApiRegistry.hpp`; the engine's entries are in `engine/src/Scripting/ScriptApiCore.cpp` ([guide](../scripting/script_api_registry.md)). Do not add a new one to `OkayScriptVM.cpp` or `EngineApi.cpp` | `okay::ScriptApiEntry`, `AddScriptApi`, `ScriptApis`, `ScriptApiError` | `add(Fn("time", "Time", "time", {}, T::Float, fn, "Seconds since the game started."));` |
+| Tests: SQL checks on a local Postgres (skip unless `OKAY_SQL_TEST_PGHOST`, fresh database, load files, count PASS/FAIL) | `tests/scripts/sql_test_lib.sh`, `tests/sql/test_helpers.sql` (paths from the repository root; the older `test_*_sql.sh` scripts still carry their own copies) | `sqltest_begin`, `sqltest_load`, `sqltest_checks`; `t.ok`, `t.as_user`, `t.try`, `t.val` | `sqltest_begin my_sql okay_my_sqltest; sqltest_load -f "$REPO/docs/sql/x.sql"` |
 | Logging | `Core/Log.hpp` | `okay::Log` (`Info`, `Warning`, `Error`), `Log::Category` | `Log::Warning("missing texture: ", path);` |
 | Script-side JSON, hashing, Base64 (Python, JS, shell) | the standard library | `json.dumps`, `hashlib`, `base64`, `zlib.crc32`; `JSON.stringify`; `jq` | `json.dumps(obj)` |
 | okay-ms language tests: build a program with okay-cl at /O0 /O1 /O2, run it under Wine, compare with MinGW g++ | `tools/okayms/tests/program_check.hpp` (paths in this row are from the repository root) | `okayms_test::run_both`, `ProgramRun`, `wine_exit`, `bump_alloc` | `okayms_test::run_both(kRun, tally, "name", source, 0);` |

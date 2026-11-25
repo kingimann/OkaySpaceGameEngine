@@ -574,6 +574,8 @@ inline const char* VsNodeHelpRaw(const char* type) {
         {"NetHostOrJoin",  "Hosts on this port if nobody on this computer is hosting there yet, otherwise joins that game: press Play in two copies of the game for a two-player test with no setup."},
         {"OnPlayerJoined", "Runs on every player when another player joins (a player who joins also gets one run for each player already there). Event Value is the new player's id, Event Name their name."},
         {"OnPlayerLeft",   "Runs on every player when another player leaves, times out or is kicked. Event Value is their id, Event Name their name."},
+        {"NetHostOnline",  "Hosts the game over the internet through the relay server under a short room code (Room, or a new one when empty); Room Code is the code to give friends. Players behind home routers can join with no port forwarding."},
+        {"NetJoinCode",    "Joins the online game with this room code through the relay server. If it cannot, Network Error says why in plain words (no game with that code, the relay cannot be reached)."},
         {"NetSendEvent",   "Sends a named event to every player, this one too: their On Network Event nodes of the same name run with the Data. Reliable: it arrives once, in order with other events."},
         {"OnNetworkEvent", "Runs when a Send Network Event of this name arrives, from any player (this one too). The Data output is what was sent; Event Sender is who sent it."},
         {"NetEventSender", "Inside On Network Event: the id of the player who sent it (0 = the host)."},

@@ -1,7 +1,7 @@
 #pragma once
 // PlayFab (Azure PlayFab) integration via its Client REST API — no SDK needed.
 // HTTPS goes through the engine's HTTP seam (okay::http::Send: WinHTTP on Windows,
-// our own client on Linux when on, curl only as the last fallback), and responses
+// our own client on Linux), and responses
 // are parsed with the account layer's tiny JSON helpers. Blocking calls — do the login once
 // on game start (an On Start Actions list), not every frame.
 //
@@ -220,9 +220,9 @@ private:
     }
 
     // One POST to https://<title>.playfabapi.com<path> through the HTTP seam (okay::http::Send, NativeFetch.hpp):
-    // WinHTTP on Windows, our own client on Linux when on, curl only as its last fallback (the ticket travels in a file
-    // only this user can read, never argv). Any status is an answer (no -f, so error bodies survive). A POST that may
-    // already have reached the server is never sent again through curl (it could register twice or count a statistic twice).
+    // WinHTTP on Windows, our own client on Linux (the ticket never leaves this process). Any status is an answer (no -f,
+    // so error bodies survive). A POST that may already have reached the server is never sent again (it could register
+    // twice or count a statistic twice).
     Resp Post(const std::string& path, const std::string& jsonBody, bool authed = true) const {
         std::string url = "https://" + titleId_ + ".playfabapi.com" + path;
 #ifdef OKAY_PLAYFAB_TESTING

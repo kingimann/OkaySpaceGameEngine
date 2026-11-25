@@ -130,7 +130,6 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
-    src/Components/ActiveRagdoll.cpp
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
@@ -140,6 +139,7 @@ add_library(okay_engine
     src/Net/NetworkManagerEvents.cpp
     src/Net/Net.cpp
     src/Net/NetworkManagerMigration.cpp
+    src/Net/NetworkManagerOnline.cpp
     src/Net/Rollback.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp
@@ -210,6 +210,13 @@ add_library(okay_engine
     src/Script/EngineApi_Ui.cpp
     src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
+    src/Lua/LuaCompiler.cpp
+    src/Lua/LuaState.cpp
+    src/Lua/LuaLibBase.cpp
+    src/Lua/LuaLibString.cpp
+    src/Lua/LuaLibTable.cpp
+    src/Lua/LuaLibUtf8.cpp
+    src/Lua/LuaScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
@@ -270,7 +277,7 @@ add_library(okay_engine
     src/Animation/HumanoidActions.cpp
     src/Animation/HumanoidActionsStates.cpp
     src/Animation/HumanoidActionsRuntime.cpp
-    src/Animation/RagdollPhysics.cpp
+    src/Animation/CoreRagdoll.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
@@ -505,16 +512,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
-# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+# Our own HTTP client, NativeHttp's client on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
 if(OKAY_OWN_STACK)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_STACK_BUILD)   # tests and the startup helper can tell a dogfood build
 endif()
 if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
-    if(OKAY_OWN_STACK)
-        # Dogfood build: own HTTP is ON unless OKAY_OWN_HTTP=0 (otherwise it needs OKAY_OWN_HTTP=1 at run time).
-        target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP_DEFAULT_ON=1)
-    endif()
     target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 

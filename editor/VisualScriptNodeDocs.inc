@@ -15292,6 +15292,41 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "NetHostOnline";
+        d.title = "Host Online";
+        d.description = "Hosts the game over the internet through the relay server under a short room code (Room, or a new one when empty); Room Code is the code to give friends. Players behind home routers can join with no port forwarding.";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Host Online after an event such as On Start or On Update, and wire a value into Room.";
+        d.related = "";
+        d.keywords = "host online";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Host Online runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Host Online finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Room", "Text", "The room code to host under (letters and digits). It is a Text. Unwired, a new code is made up.", "empty text"});
+        d.pins.push_back({false, false, "Room Code", "Text", "What Host Online produces on Room Code. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "NetJoinCode";
+        d.title = "Join By Code";
+        d.description = "Joins the online game with this room code through the relay server. If it cannot, Network Error says why in plain words (no game with that code, the relay cannot be reached).";
+        d.requirements = "No single component is required on this object. Online nodes talk to the session and only do something in Play mode while connected.";
+        d.component = "";
+        d.example = "Put Join By Code after an event such as On Start or On Update, and wire a value into Room.";
+        d.related = "";
+        d.keywords = "join by code";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Join By Code runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Join By Code finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Room", "Text", "The room code the host gave you, such as K7Q29X. It is a Text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "OnNetworkEvent";
         d.title = "On Network Event";
         d.description = "Runs when a Send Network Event of this name arrives, from any player (this one too). The Data output is what was sent; Event Sender is who sent it.";

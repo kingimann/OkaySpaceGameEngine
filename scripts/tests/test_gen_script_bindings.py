@@ -40,7 +40,14 @@ for c in model:
                 check(not (set(g.words(pname)) & g.DENY_PARAM_WORDS), f"{full}: text parameter '{pname}' names a place")
 check(stats["denied"] > 0, "something is denied")
 
-gen = open(g.OUT, encoding="utf-8").read()
+gen_all = open(g.OUT, encoding="utf-8").read()
+# The DENY_* lists as data (GeneratedDenyRules, for Lua and the typed table): every one of them, and no binding there.
+rules = re.search(r"const DenyRules& GeneratedDenyRules\(\) \{.*?\n\}\n", gen_all, re.S)
+check(rules is not None, "the generated file has GeneratedDenyRules()")
+rules_text = rules.group(0) if rules else ""
+for name in sorted(g.DENY_CLASSES | g.DENY_METHODS | g.DENY_PARAM_WORDS | g.DENY_NAME_WORDS):
+    check(f'"{name}"' in rules_text, f"GeneratedDenyRules lists {name}")
+gen = gen_all.replace(rules_text, "")
 check("ExportHeightmap" not in gen and "StartServer" not in gen and "OpenOverlay" not in gen and
       "PasteFromClipboard" not in gen, "known file/network/platform methods are absent from the generated file")
 check(re.search(r"SetPositionCount\(static_cast<int>\(sb::ArgCount\(", gen) is not None, "counts are capped")

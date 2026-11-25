@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 981 names.
+Back to the [code index](../code_index.md). 69 headers, 1007 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -566,6 +566,10 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `HierDrawLock` function, line 496: The padlock left of the eye: amber when locked, a faint hint while the row is hovered, nothing otherwise.
 - `HierDrawDiag` function, line 507: The problems marker (editor/ProblemsPanel.cpp DrawMarker): an amber or red dot with a dark rim and a "!" centred at (cx, cy).
 
+## `shared/ImGuiDropdown.hpp`
+
+- `BeginChevronCombo` function, line 15: Same arguments as ImGui::BeginCombo (the width comes from SetNextItemWidth / the item width), plus the smallest corner
+
 ## `shared/ImGuiPainterRenderer.hpp`
 
 - `OwnRequested` function, line 30: True when OKAY_IMGUI_RENDER is "own" (anything else, or unset, keeps imgui_impl_sdlrenderer2).
@@ -636,6 +640,13 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `ColorByte` function, line 322: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
 - `AddComponentWidth` function, line 331: The button's width: 260 pixels, centred, on a panel wider than 300; otherwise the whole width.
 
+## `shared/JoinPlan.hpp`
+
+- `Candidate` struct, line 19
+- `Action` enum, line 27
+- `Plan` struct, line 37
+- `PlanJoin` function, line 52
+
 ## `shared/LauncherDemo.hpp`
 
 - `IsDemoEnvName` function, line 17: Is 'name' the name of a demo / screenshot variable?
@@ -701,18 +712,39 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/OkayTheme.hpp`
 
-- `kDeep` function, line 15: Surfaces, darkest to lightest.
-- `kSunken` function, line 16
-- `kBase` function, line 17
-- `kRaised` function, line 18
-- `kField` function, line 19
-- `kControl` function, line 20
-- `kText` function, line 22: Text.
-- `kTextDim` function, line 23
-- `Mix` function, line 25
-- `WithAlpha` function, line 28
-- `ApplySlateMetrics` function, line 31: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplySlateColors` function, line 40: The full colour palette for a given accent.
+- `Palette` struct, line 20: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
+- `SlatePalette` function, line 30
+- `MidnightPalette` function, line 41: Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
+- `LightPalette` function, line 52: Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
+- `Current` function, line 62
+- `SetPalette` function, line 73
+- `Ink` function, line 86: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
+- `InkV` function, line 91
+- `Shade` function, line 93: A shadow or a dim layer (black in every theme, lighter on Light).
+- `TextU32` function, line 94
+- `TextDimU32` function, line 95
+- `SuccessU32` function, line 96
+- `DangerU32` function, line 97
+- `WarningU32` function, line 98
+- `InfoU32` function, line 99
+- `OnColorU32` function, line 100
+- `SurfaceU32` function, line 101
+- `SuccessFill` function, line 103: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
+- `DangerFill` function, line 104
+- `WarningFill` function, line 105
+- `SuccessFillU32` function, line 106
+- `DangerFillU32` function, line 107
+- `WarningFillU32` function, line 108
+- `Luminance` function, line 111: WCAG contrast ratio of two opaque colours (1..21).
+- `Contrast` function, line 115
+- `Mix` function, line 120
+- `WithAlpha` function, line 123
+- `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
+- `OnFillSoft` function, line 132: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+- `AccentText` function, line 139: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplySlateMetrics` function, line 146: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
+- `ApplyColors` function, line 155: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplySlateColors` function, line 221: The Slate colours (the editor and the launcher's default theme).
 
 ## `shared/OkayThreads.hpp`
 
@@ -834,23 +866,23 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
 - `Readers` function, line 40
 - `Setting` struct, line 53
-- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, our HTTP client, the okay::platform backend and OkayUI.
-- `Requested` function, line 70: True when OKAY_OWN_STACK is "1" in the environment.
-- `SetIfUnset` function, line 75
-- `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
-- `Info` struct, line 95
-- `FormatLine` function, line 105: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 123: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 130: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 137: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 172
-- `Startup` function, line 176: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
+- `Requested` function, line 69: True when OKAY_OWN_STACK is "1" in the environment.
+- `SetIfUnset` function, line 74
+- `ApplyEnvironment` function, line 85: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
+- `Info` struct, line 94
+- `FormatLine` function, line 104: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 122: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 129: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 136: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 171
+- `Startup` function, line 175: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
-- `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 - `AlternativeExe` struct, line 60: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
 - `Alternative` function, line 64
 - `Context` struct, line 78: What is true on this machine: used to hide items that cannot work here.

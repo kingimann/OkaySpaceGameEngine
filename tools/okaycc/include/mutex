@@ -1,0 +1,97 @@
+// <mutex> for okay-cc (ISO/IEC 14882 [thread.mutex]). Our own header. A program compiled by okay-cc
+// has one thread (there is no <thread> yet), so a mutex has nobody to wait for: lock and unlock
+// only record that it is held, try_lock fails while it is held (the standard's answer for a
+// mutex already owned), and call_once runs its function the first time. When threads come, these
+// become real locks on the futex system call.
+#pragma once
+#include <utility>
+namespace std {
+class mutex {
+public:
+    bool __held;
+    mutex() : __held(false) {}
+    void lock() { __held = true; }
+    bool try_lock() {
+        if (__held) return false;
+        __held = true;
+        return true;
+    }
+    void unlock() { __held = false; }
+};
+class recursive_mutex {
+public:
+    int __depth;
+    recursive_mutex() : __depth(0) {}
+    void lock() { ++__depth; }
+    bool try_lock() {
+        ++__depth;
+        return true;
+    }
+    void unlock() { --__depth; }
+};
+typedef mutex timed_mutex;
+struct defer_lock_t {};
+struct try_to_lock_t {};
+struct adopt_lock_t {};
+static const defer_lock_t defer_lock = {};
+static const try_to_lock_t try_to_lock = {};
+static const adopt_lock_t adopt_lock = {};
+
+template <typename M>
+class lock_guard {
+public:
+    M &__m;
+    explicit lock_guard(M &m) : __m(m) { __m.lock(); }
+    lock_guard(M &m, adopt_lock_t) : __m(m) {}
+    ~lock_guard() { __m.unlock(); }
+};
+template <typename M>
+class unique_lock {
+public:
+    M *__m;
+    bool __owns;
+    unique_lock() : __m(nullptr), __owns(false) {}
+    explicit unique_lock(M &m) : __m(&m), __owns(true) { m.lock(); }
+    unique_lock(M &m, defer_lock_t) : __m(&m), __owns(false) {}
+    unique_lock(M &m, try_to_lock_t) : __m(&m), __owns(m.try_lock()) {}
+    unique_lock(M &m, adopt_lock_t) : __m(&m), __owns(true) {}
+    ~unique_lock() {
+        if (__owns) __m->unlock();
+    }
+    void lock() {
+        __m->lock();
+        __owns = true;
+    }
+    bool try_lock() { return __owns = __m->try_lock(); }
+    void unlock() {
+        __m->unlock();
+        __owns = false;
+    }
+    bool owns_lock() const { return __owns; }
+    explicit operator bool() const { return __owns; }
+    M *mutex() const { return __m; }
+    M *release() {
+        M *m = __m;
+        __m = nullptr;
+        __owns = false;
+        return m;
+    }
+};
+template <typename M>
+class scoped_lock {
+public:
+    M &__m;
+    explicit scoped_lock(M &m) : __m(m) { __m.lock(); }
+    ~scoped_lock() { __m.unlock(); }
+};
+struct once_flag {
+    bool __done;
+    once_flag() : __done(false) {}
+};
+template <typename F>
+void call_once(once_flag &flag, F f) {
+    if (flag.__done) return;
+    f();
+    flag.__done = true;
+}
+}  // namespace std

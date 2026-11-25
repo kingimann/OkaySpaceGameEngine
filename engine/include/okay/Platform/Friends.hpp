@@ -55,6 +55,32 @@ struct FriendEvent {
     long        when = 0;    // unix time
 };
 
+/// One line of the friends' activity panel: the newest of a run of the same event (same person, same kind, same detail), how
+/// many there were in all, and how many in the last 7 days ("played MyGame-7 · 3 times this week").
+struct FeedLine { FriendEvent latest; int count = 1, thisWeek = 0; };
+
+/// The activity panel's lines from the feed (newest first): your own events are left out (the server's activity policy lets
+/// you read your own rows: docs/sql/social.sql "see friends activity"), and repeats are grouped into one line kept at the
+/// newest one's place. `myId` / `myName` say who "you" are (an event with no actor id is matched by name).
+inline std::vector<FeedLine> GroupFeed(const std::vector<FriendEvent>& evs, const std::string& myId, const std::string& myName, long now) {
+    std::vector<FeedLine> out;
+    for (const FriendEvent& e : evs) {
+        if (!myId.empty() && e.actorId == myId) continue;
+        if (e.actorId.empty() && !myName.empty() && e.actor == myName) continue;
+        const std::string who = e.actorId.empty() ? e.actor : e.actorId;
+        FeedLine* same = nullptr;
+        for (FeedLine& l : out) {
+            const std::string lw = l.latest.actorId.empty() ? l.latest.actor : l.latest.actorId;
+            if (lw == who && l.latest.kind == e.kind && l.latest.detail == e.detail) { same = &l; break; }
+        }
+        const bool week = e.when > 0 && now - e.when <= 7L * 86400L;
+        if (same) { ++same->count; if (week) ++same->thisWeek; if (e.when > same->latest.when) same->latest = e; continue; }
+        FeedLine l; l.latest = e; l.thisWeek = week ? 1 : 0;
+        out.push_back(l);
+    }
+    return out;
+}
+
 class Friends {
 public:
     explicit Friends(okay::account::AccountService& acct) : acct_(acct) {}
@@ -208,14 +234,16 @@ public:
     std::vector<FriendEvent> Feed(int limit = 20) {
         std::vector<FriendEvent> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/activity?select=actor,actor_name,kind,detail,created_at"
+        const std::string me = acct_.UserId();   // friends' activity only: the server lets you read your own rows too
+        auto r = acct_.Api("/rest/v1/activity?select=actor,actor_name,kind,detail,created_at" +
+                           (me.empty() ? std::string() : "&actor=neq." + Url(me)) +
                            "&order=created_at.desc&limit=" + std::to_string(limit), "GET");
         if (!r.ok) return out;
         std::vector<std::string> ids;
         for (const auto& obj : SplitObjects(r.body)) {
             FriendEvent e;
             e.actorId = Field(obj, "actor");
-            e.actor  = Field(obj, "actor_name");
+            e.actor  = okay::account::PublicName(Field(obj, "actor_name"));
             e.kind   = Field(obj, "kind");
             e.detail = Field(obj, "detail");
             e.when   = ParseIso(Field(obj, "created_at"));
@@ -240,10 +268,7 @@ public:
                     for (auto& e : evs) if (e.actorId == id) e.actor = un;
                 }
         }
-        for (auto& e : evs) {   // never show a raw email, even when the profile lookup failed
-            const auto at = e.actor.find('@');
-            if (at != std::string::npos && at > 0) e.actor = e.actor.substr(0, at);
-        }
+        for (auto& e : evs) e.actor = okay::account::PublicName(e.actor, e.actorId);   // never a raw email, even when the profile lookup failed
     }
 
 private:
@@ -282,10 +307,10 @@ private:
     }
 
     static void SetFrom(Friend& f, const Profile& p) {
-        f.username = p.username;
+        f.username = okay::account::PublicName(p.username);
         f.playing  = p.playing;
         f.sessionCode = p.sessionCode;
-        f.display  = p.displayName.empty() ? p.username : p.displayName;
+        f.display  = okay::account::PublicName(p.displayName.empty() ? p.username : p.displayName);
         f.avatar   = p.avatar;
         f.bio      = p.bio;
         f.accent       = p.accent;
@@ -342,6 +367,8 @@ private:
         return out;
     }
 
+public:
+    /// "2023-11-14T22:13:20..." (UTC, as PostgREST returns timestamptz) -> unix seconds; 0 when unreadable.
     static long ParseIso(const std::string& ls) {
         if (ls.size() < 19) return 0;
         std::tm tm{};
@@ -355,6 +382,7 @@ private:
 #endif
     }
 
+private:
     // ---- tiny string/JSON helpers ----
     static std::string Trim(const std::string& s) {
         std::size_t a = 0, b = s.size();

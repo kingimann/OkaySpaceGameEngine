@@ -108,8 +108,22 @@ bool decode_escape(const std::string& text, size_t* i, unsigned char* out) {
     if (c == 'n') *out = '\n';
     else if (c == 't') *out = '\t';
     else if (c == 'r') *out = '\r';
-    else if (c == '0') *out = 0;
-    else if (c == 'x') {
+    else if (c == 'a') *out = 7;
+    else if (c == 'b') *out = 8;
+    else if (c == 'f') *out = 12;
+    else if (c == 'v') *out = 11;
+    else if (c >= '0' && c <= '7') {
+        // An octal escape: one to three octal digits ([lex.ccon]), \0 among them.
+        int value = 0;
+        int count = 0;
+        while (count < 3 && *i < text.size() && text[*i] >= '0' && text[*i] <= '7') {
+            value = value * 8 + (text[*i] - '0');
+            ++*i;
+            ++count;
+        }
+        *out = static_cast<unsigned char>(value);
+        return true;
+    } else if (c == 'x') {
         ++*i;
         int value = 0;
         int count = 0;
@@ -141,7 +155,18 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         Token tok;
         tok.line = line;
         tok.adj = c == '>' && i > 0 && text[i - 1] == '>';
-        if (std::isalpha(c) || c == '_') {
+        // An encoding prefix on a string literal ([lex.string]): L"..." and u"..." are UTF-16 (wchar_t is 16 bits on
+        // Windows), U"..." UTF-32, u8"..." UTF-8 (the bytes as written).
+        int str_prefix = 0;
+        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '"') {
+            str_prefix = c == 'U' ? 32 : 16;
+            ++i;
+        } else if (c == 'u' && i + 2 < text.size() && text[i + 1] == '8' && text[i + 2] == '"') {
+            str_prefix = 8;
+            i += 2;
+        }
+        const bool wide_char = (c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'';
+        if (str_prefix == 0 && !wide_char && (std::isalpha(c) || c == '_')) {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
             tok.text = text.substr(i, j - i);
@@ -266,6 +291,55 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
+        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '\'') {
+            // L'x', u'x', U'x' ([lex.ccon]): one code point, given as UTF-8 in the source, as an escape, or as \u / \U /
+            // \x with any number of hex digits. Own simplification: its value is an int here (wchar_t, char16_t and
+            // char32_t are not types of their own in okay-ms either).
+            i += 2;
+            uint32_t cp = 0;
+            if (i < text.size() && text[i] == '\\' && i + 1 < text.size() &&
+                (text[i + 1] == 'u' || text[i + 1] == 'U' || text[i + 1] == 'x')) {
+                i += 2;
+                int count = 0;
+                while (i < text.size() && hex_digit(text[i]) >= 0) {
+                    cp = cp * 16 + static_cast<uint32_t>(hex_digit(text[i]));
+                    ++i;
+                    ++count;
+                }
+                if (count == 0) {
+                    *error = "bad character escape at line " + std::to_string(line);
+                    return {};
+                }
+            } else if (i < text.size() && text[i] == '\\') {
+                ++i;
+                unsigned char value = 0;
+                if (!decode_escape(text, &i, &value)) {
+                    *error = "bad character escape";
+                    return {};
+                }
+                cp = value;
+            } else if (i < text.size()) {
+                const unsigned char b0 = static_cast<unsigned char>(text[i]);
+                int more = 0;
+                cp = b0;
+                if (b0 >= 0xF0 && b0 < 0xF8) { cp = b0 & 0x07; more = 3; }
+                else if (b0 >= 0xE0) { cp = b0 & 0x0F; more = 2; }
+                else if (b0 >= 0xC0) { cp = b0 & 0x1F; more = 1; }
+                ++i;
+                for (int m = 0; m < more && i < text.size(); ++m, ++i) cp = (cp << 6) | (static_cast<unsigned char>(text[i]) & 0x3F);
+            }
+            if (i >= text.size() || text[i] != '\'') {
+                *error = "unterminated character at line " + std::to_string(line);
+                return {};
+            }
+            ++i;
+            if (c != 'U') cp &= 0xFFFF;
+            tok.kind = TNumber;
+            tok.number = cp;
+            tok.ity = 0;
+            tokens.push_back(tok);
+            continue;
+        }
         if (c == '\'') {
             ++i;
             if (i >= text.size()) {
@@ -294,10 +368,42 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if (c == '"') {
+        if (c == '"' || str_prefix != 0) {
             std::string value;
             ++i;
             while (i < text.size() && text[i] != '"') {
+                if (text[i] == '\\' && i + 1 < text.size() && (text[i + 1] == 'u' || text[i + 1] == 'U')) {
+                    // \uXXXX and \UXXXXXXXX ([lex.charset] universal-character-name): the code point, written as UTF-8
+                    // (a wide literal is re-encoded below).
+                    const size_t digits = text[i + 1] == 'u' ? 4 : 8;
+                    uint32_t cp = 0;
+                    size_t k = i + 2;
+                    for (size_t d = 0; d < digits; ++d, ++k) {
+                        const int h = k < text.size() ? hex_digit(text[k]) : -1;
+                        if (h < 0) {
+                            *error = "bad universal character name at line " + std::to_string(line);
+                            return {};
+                        }
+                        cp = cp * 16 + static_cast<uint32_t>(h);
+                    }
+                    i = k;
+                    if (cp < 0x80) {
+                        value.push_back(static_cast<char>(cp));
+                    } else if (cp < 0x800) {
+                        value.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    } else if (cp < 0x10000) {
+                        value.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    } else {
+                        value.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    }
+                    continue;
+                }
                 if (text[i] == '\\') {
                     ++i;
                     unsigned char escaped = 0;
@@ -317,7 +423,94 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             ++i;
             tok.kind = TString;
+            if (str_prefix == 16 || str_prefix == 32) {
+                // The text is read as UTF-8 and written again as UTF-16 (surrogate pairs above U+FFFF) or UTF-32, little
+                // endian, without the terminating zero (the code generator adds one zero byte; the parser one more
+                // unit). A byte that does not start a UTF-8 sequence stands for itself.
+                std::string units;
+                auto put = [&](uint32_t u, int bytes) {
+                    for (int k = 0; k < bytes; ++k) units.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
+                };
+                for (size_t k = 0; k < value.size();) {
+                    const unsigned char b0 = static_cast<unsigned char>(value[k]);
+                    uint32_t cp = b0;
+                    int more = 0;
+                    if (b0 >= 0xF0 && b0 < 0xF8) { cp = b0 & 0x07; more = 3; }
+                    else if (b0 >= 0xE0) { cp = b0 & 0x0F; more = 2; }
+                    else if (b0 >= 0xC0) { cp = b0 & 0x1F; more = 1; }
+                    if (more > 0 && k + static_cast<size_t>(more) < value.size()) {
+                        for (int m = 1; m <= more; ++m) cp = (cp << 6) | (static_cast<unsigned char>(value[k + static_cast<size_t>(m)]) & 0x3F);
+                        k += static_cast<size_t>(more) + 1;
+                    } else {
+                        cp = b0;
+                        k += 1;
+                    }
+                    if (str_prefix == 32) {
+                        put(cp, 4);
+                    } else if (cp >= 0x10000) {
+                        cp -= 0x10000;
+                        put(0xD800 + (cp >> 10), 2);
+                        put(0xDC00 + (cp & 0x3FF), 2);
+                    } else {
+                        put(cp, 2);
+                    }
+                }
+                value = units;
+            }
             tok.text = value;
+            tok.ity = str_prefix == 8 ? 0 : str_prefix;
+            if (i < text.size() && (text[i] == '_' || std::isalpha(static_cast<unsigned char>(text[i]))) && str_prefix == 0) {
+                // A user-defined string literal ([lex.ext] 5): "text"_x is the call operator""_x("text", 4); and in
+                // `operator""_x` the literal operator's name. Both become the function name __okay_udl_x here (own
+                // name; Microsoft decorates the literal operator as ??__K_x).
+                size_t e = i;
+                while (e < text.size() && (text[e] == '_' || std::isalnum(static_cast<unsigned char>(text[e])))) ++e;
+                const std::string suffix = text.substr(i, e - i);
+                i = e;
+                if (!tokens.empty() && tokens.back().kind == TIdent && tokens.back().text == "operator" && value.empty()) {
+                    tokens.back().text = "__okay_udl" + suffix;
+                    continue;
+                }
+                Token name = tok;
+                name.kind = TIdent;
+                name.text = "__okay_udl" + suffix;
+                name.ity = 0;
+                tokens.push_back(name);
+                Token punct = tok;
+                punct.text.clear();
+                punct.ity = 0;
+                punct.kind = TLParen;
+                tokens.push_back(punct);
+                tokens.push_back(tok);
+                punct.kind = TComma;
+                tokens.push_back(punct);
+                Token len = punct;
+                len.kind = TNumber;
+                len.number = value.size();
+                tokens.push_back(len);
+                punct.kind = TRParen;
+                tokens.push_back(punct);
+                continue;
+            }
+            if (!tokens.empty() && tokens.back().kind == TString) {
+                // Adjacent string literals are one literal ([lex.string] 7, translation phase 6), also across lines. A
+                // plain part next to a wide one takes the wide encoding (its bytes are taken as code points).
+                Token& prev = tokens.back();
+                auto widen = [](const std::string& narrow, int width) {
+                    std::string units;
+                    for (unsigned char ch : narrow)
+                        for (int b = 0; b < width / 8; ++b) units.push_back(b == 0 ? static_cast<char>(ch) : '\0');
+                    return units;
+                };
+                if (prev.ity == 0 && tok.ity != 0) {
+                    prev.text = widen(prev.text, tok.ity);
+                    prev.ity = tok.ity;
+                } else if (prev.ity != 0 && tok.ity == 0) {
+                    tok.text = widen(tok.text, prev.ity);
+                }
+                prev.text += tok.text;
+                continue;
+            }
             tokens.push_back(tok);
             continue;
         }

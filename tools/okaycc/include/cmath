@@ -118,4 +118,131 @@ inline bool isnan(double x) { return !(x == x); }
 inline bool signbit(double x) { return (*(unsigned long *)&x >> 63) != 0; }
 inline bool signbit(float x) { return (*(unsigned int *)&x >> 31) != 0; }
 inline bool isnan(float x) { return !(x == x); }
+// Exact operations on the IEEE 754 binary64 fields (sign, 11-bit exponent, 52-bit fraction), our own:
+// ldexp and frexp (C 7.12.6.6, 7.12.6.4) scale by a power of two with one rounding when the result is
+// subnormal (round half to even); fmod (C 7.12.10.1) is exact, by shift-and-subtract on the integer
+// significands; nearbyint and rint (C 7.12.9.3) round to nearest even by adding and taking away 2^52.
+inline unsigned long __okay_bits(double x) { return *(unsigned long *)&x; }
+inline double __okay_from_bits(unsigned long u) { return *(double *)&u; }
+// x = m * 2^(e - 1075) with 2^52 <= m < 2^53 for a finite x that is not zero.
+inline void __okay_split(double x, unsigned long &m, int &e) {
+    unsigned long u = __okay_bits(x);
+    e = (int)((u >> 52) & 2047);
+    m = u & 4503599627370495UL;
+    if (e == 0) {
+        e = 1;
+        while (m < 4503599627370496UL) {
+            m <<= 1;
+            --e;
+        }
+    } else {
+        m |= 4503599627370496UL;
+    }
+}
+// m * 2^(e - 1075), m in [2^52, 2^53), with the sign bit given: rounded once if it is subnormal.
+inline double __okay_join(unsigned long sign, unsigned long m, int e) {
+    if (e >= 2047) return __okay_from_bits(sign | 9218868437227405312UL);  // infinity
+    if (e >= 1) return __okay_from_bits(sign | ((unsigned long)e << 52) | (m & 4503599627370495UL));
+    int shift = 1 - e;
+    if (shift > 54) return __okay_from_bits(sign);
+    unsigned long q = m >> shift;
+    unsigned long rem = m & ((1UL << shift) - 1);
+    unsigned long half = 1UL << (shift - 1);
+    if (rem > half || (rem == half && (q & 1))) ++q;
+    return __okay_from_bits(sign | q);  // a carry into bit 52 is the smallest normal number
+}
+inline double ldexp(double x, int k) {
+    if (x == 0 || !(x - x == 0)) return x;
+    unsigned long m;
+    int e;
+    __okay_split(x, m, e);
+    if (k > 5000) k = 5000;
+    if (k < -5000) k = -5000;
+    return __okay_join(__okay_bits(x) & 9223372036854775808UL, m, e + k);
+}
+inline float ldexp(float x, int k) {
+    if (x == 0 || !(x - x == 0)) return x;
+    // Scale in double (exact for any float and k in range), then one rounding to float.
+    if (k > 400) k = 400;
+    if (k < -400) k = -400;
+    return (float)ldexp((double)x, k);
+}
+inline double frexp(double x, int *exp) {
+    if (x == 0 || !(x - x == 0)) {
+        *exp = 0;
+        return x;
+    }
+    unsigned long m;
+    int e;
+    __okay_split(x, m, e);
+    *exp = e - 1022;
+    return __okay_join(__okay_bits(x) & 9223372036854775808UL, m, 1022);
+}
+inline float frexp(float x, int *exp) { return (float)frexp((double)x, exp); }
+inline double fmod(double x, double y) {
+    if (!(x == x) || !(y == y) || !(x - x == 0) || y == 0) return (x - x) / (y - y);  // NaN
+    if (!(y - y == 0) || x == 0) return x;
+    unsigned long mx, my;
+    int ex, ey;
+    __okay_split(x, mx, ex);
+    __okay_split(y, my, ey);
+    if (ex < ey || (ex == ey && mx < my)) return x;
+    while (ex > ey) {
+        if (mx >= my) mx -= my;
+        mx <<= 1;
+        --ex;
+    }
+    if (mx >= my) mx -= my;
+    unsigned long sign = __okay_bits(x) & 9223372036854775808UL;
+    if (mx == 0) return __okay_from_bits(sign);
+    while (mx < 4503599627370496UL) {
+        mx <<= 1;
+        --ex;
+    }
+    return __okay_join(sign, mx, ex);
+}
+inline float fmod(float x, float y) { return (float)fmod((double)x, (double)y); }
+inline double nearbyint(double x) {
+    if (!(x - x == 0) || x == 0) return x;
+    if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;
+    double r = x > 0 ? (x + 4503599627370496.0) - 4503599627370496.0 : (x - 4503599627370496.0) + 4503599627370496.0;
+    if (r == 0) return x < 0 ? -0.0 : 0.0;
+    return r;
+}
+inline float nearbyint(float x) { return (float)nearbyint((double)x); }
+// nextafter (C 7.12.11.3): the next representable value after x towards y, by one step of the
+// bit pattern (IEEE 754: adjacent values of one sign have adjacent patterns); from zero, the
+// smallest subnormal of y's sign.
+inline double nextafter(double x, double y) {
+    if (!(x == x) || !(y == y)) return x + y;
+    if (x == y) return y;
+    if (x == 0) return y > 0 ? __okay_from_bits(1UL) : __okay_from_bits(9223372036854775809UL);
+    unsigned long b = __okay_bits(x);
+    if ((x < y) == (x > 0)) ++b;
+    else --b;
+    return __okay_from_bits(b);
+}
+inline float nextafter(float x, float y) {
+    if (!(x == x) || !(y == y)) return x + y;
+    if (x == y) return y;
+    unsigned int b;
+    if (x == 0) {
+        b = y > 0 ? 1u : 2147483649u;
+    } else {
+        b = *(unsigned int *)&x;
+        if ((x < y) == (x > 0)) ++b;
+        else --b;
+    }
+    return *(float *)&b;
+}
+inline float nextafterf(float x, float y) { return nextafter(x, y); }
+inline double rint(double x) { return nearbyint(x); }
+inline float rint(float x) { return (float)nearbyint((double)x); }
+inline long lrint(double x) { return (long)nearbyint(x); }
+inline double copysign(double x, double y) {
+    return __okay_from_bits((__okay_bits(x) & 9223372036854775807UL) | (__okay_bits(y) & 9223372036854775808UL));
+}
+inline float copysign(float x, float y) { return (float)copysign((double)x, (double)y); }
+inline double exp2(double x) { return __okay_pow(2.0, x); }
+inline float exp2(float x) { return __okay_powf(2.0f, x); }
 }  // namespace std

@@ -1191,6 +1191,9 @@ panel. The same reference is available inside the editor under
 > Heads up: OkayScript uses **C-style braces `{ }` and semicolons `;`** — not
 > Lua-style `function ... end`. The starter script the editor inserts is already
 > in the right form.
+>
+> Lua scripts (`.lua`, language `lua`) are a separate language on our own Lua 5.4
+> interpreter; they use `function ... end`. See [lua.md](lua.md).
 
 
 ### C#-style syntax

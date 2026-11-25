@@ -221,4 +221,74 @@ inline float hypot(float x, float y) { return (float)okay_math::sqrt_d((double)x
 inline bool isnan(float x) { return x != x; }
 inline bool isfinite(float x) { return x <= 3.40282347e+38f && x >= -3.40282347e+38f; }
 inline bool isinf(float x) { return x > 3.40282347e+38f || x < -3.40282347e+38f; }
+// Round 26, written from ISO/IEC 9899 7.12 and the IEEE-754 binary32 layout: lround and llround (half away from zero),
+// nearbyint and remainder (half to even, the default rounding mode), nextafter (one step of the bit pattern),
+// copysign, ldexp, exp2, cbrt (a power and one Newton step), log1p (a series near zero), tanh.
+namespace okay_math {
+union Bits32 { float f; unsigned u; };
+inline double even_round_d(double x) {  // nearest integer, a tie goes to the even one
+    const double f = floor_d(x);
+    const double diff = x - f;
+    if (diff > 0.5) return f + 1.0;
+    if (diff < 0.5) return f;
+    const double half = f * 0.5;
+    return floor_d(half) == half ? f : f + 1.0;
 }
+}
+inline long lround(float x) { return (long)round(x); }
+inline long long llround(float x) { return (long long)round(x); }
+inline float nearbyint(float x) { return (float)okay_math::even_round_d((double)x); }
+inline float remainder(float x, float y) {
+    const double xd = (double)x, yd = (double)y;
+    if (yd == 0.0 || okay_math::isnan_d(xd) || okay_math::isnan_d(yd)) return (float)okay_math::nan_d();
+    return (float)(xd - okay_math::even_round_d(xd / yd) * yd);
+}
+inline float copysign(float x, float y) {
+    okay_math::Bits32 a, b;
+    a.f = x;
+    b.f = y;
+    a.u = (a.u & 0x7FFFFFFFu) | (b.u & 0x80000000u);
+    return a.f;
+}
+inline float nextafter(float x, float y) {
+    if (x != x || y != y) return x + y;  // a NaN
+    if (x == y) return y;
+    okay_math::Bits32 b;
+    b.f = x;
+    if (x == 0.0f) {
+        b.u = 1u;  // the smallest subnormal, with the sign of the direction
+        return y > 0.0f ? b.f : -b.f;
+    }
+    if ((x < y) == (x > 0.0f)) ++b.u;  // away from zero
+    else --b.u;                        // towards zero
+    return b.f;
+}
+inline float ldexp(float x, int e) { return (float)okay_math::scale2((double)x, e); }
+inline float exp2(float x) { return (float)okay_math::exp_d((double)x * 0.6931471805599453); }
+inline float cbrt(float x) {
+    const double xd = (double)x;
+    if (xd == 0.0 || okay_math::isnan_d(xd)) return x;
+    const double a = okay_math::abs_d(xd);
+    double r = okay_math::pow_d(a, 1.0 / 3.0);
+    r = r - (r * r * r - a) / (3.0 * r * r);
+    return (float)(xd < 0.0 ? -r : r);
+}
+inline float log1p(float x) {
+    const double xd = (double)x;
+    if (okay_math::abs_d(xd) < 1e-4) return (float)(xd - xd * xd * 0.5 + xd * xd * xd / 3.0);
+    return (float)okay_math::log_d(1.0 + xd);
+}
+inline float tanh(float x) {
+    const double xd = (double)x;
+    if (xd > 20.0) return 1.0f;
+    if (xd < -20.0) return -1.0f;
+    const double e2 = okay_math::exp_d(2.0 * xd);
+    return (float)((e2 - 1.0) / (e2 + 1.0));
+}
+}
+// INFINITY, NAN, HUGE_VAL and HUGE_VALF (ISO/IEC 9899 7.12 3-5): built from the bit patterns above. Own difference: they
+// are values computed at run time, not constant expressions (a static initializer cannot use them).
+#define INFINITY ((float)std::okay_math::inf_d())
+#define NAN ((float)std::okay_math::nan_d())
+#define HUGE_VAL (std::okay_math::inf_d())
+#define HUGE_VALF INFINITY

@@ -4,7 +4,8 @@
 #include "ChatText.hpp"
 #include "NetGuard.hpp"                 // okay::netguard: size and host checks for link previews
 #include "okay/Core/ImageDecode.hpp"   // LoadRgbaFile
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client first, curl only as its last fallback
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for link previews: WinHTTP / our own client
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okl {
 
@@ -113,6 +114,7 @@ bool IsEmojiOnly(const std::string& bodyIn, int& count) {
     return count > 0 && count <= 3;
 }
 // Draw emoji `id` centered at `c`, fitting a box of side `s`.
+// theme-allow-begin: an illustration (emoji glyphs), the same in every theme
 void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
     float r = s * 0.46f;
     ImU32 face = IM_COL32(245, 200, 70, 255), dark = IM_COL32(60, 48, 20, 255), white = IM_COL32(250,250,250,255);
@@ -173,6 +175,7 @@ void DrawEmoji(ImDrawList* dl, ImVec2 c, float s, int id) {
         default: break;
     }
 }
+// theme-allow-end
 
 // A heart centered at c with lobe-radius ~r, in an arbitrary color (used for
 // the like toggle, where the color conveys liked/not-liked state).
@@ -362,7 +365,7 @@ static float ChatLayoutTokens(const std::vector<ChatTok>& toks, float avail, boo
                 if (ImGui::InvisibleButton("##spoiler", ImVec2(tw, em))) revealed.insert(sk);
                 const bool h = ImGui::IsItemHovered();
                 ImGui::PopID();
-                dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + em), h ? IM_COL32(92, 100, 122, 255) : IM_COL32(70, 76, 94, 255), 4.0f);
+                dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + em), h ? okaytheme::TextDimU32() : okaytheme::U32(okaytheme::kControl), 4.0f);
                 if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Spoiler: click to reveal"); }
             } else if (eid >= 0) {
                 DrawEmojiToken(dl, ImVec2(p.x + em * 0.5f, p.y + em * 0.5f), em * 1.12f, t.text);
@@ -377,11 +380,11 @@ static float ChatLayoutTokens(const std::vector<ChatTok>& toks, float avail, boo
                 if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", t.text.c_str()); }
                 if (ImGui::IsItemClicked()) OpenExternal(t.text);
             } else {
-                ImU32 col = mention ? IM_COL32(140, 199, 255, 255) : textCol;
+                ImU32 col = mention ? okaytheme::U32(kAccent) : textCol;
                 if (code) {
-                    dl->AddRectFilled(ImVec2(p.x, p.y + 1), ImVec2(p.x + tw, p.y + em - 1), IM_COL32(0, 0, 0, 70), 4.0f);
-                    dl->AddRect(ImVec2(p.x, p.y + 1), ImVec2(p.x + tw, p.y + em - 1), IM_COL32(255, 255, 255, 22), 4.0f);
-                    dl->AddText(g_fontMono ? g_fontMono : ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 4, p.y), IM_COL32(242, 196, 150, 255), t.text.c_str());
+                    dl->AddRectFilled(ImVec2(p.x, p.y + 1), ImVec2(p.x + tw, p.y + em - 1), okaytheme::Shade(70), 4.0f);
+                    dl->AddRect(ImVec2(p.x, p.y + 1), ImVec2(p.x + tw, p.y + em - 1), okaytheme::Ink(22), 4.0f);
+                    dl->AddText(g_fontMono ? g_fontMono : ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 4, p.y), okaytheme::WarningU32(), t.text.c_str());
                 } else {
                     const int v0 = dl->VtxBuffer.Size;
                     dl->AddText(p, col, t.text.c_str());
@@ -409,14 +412,14 @@ static float ChatCodeBlock(const std::string& code, float avail, bool draw) {
     if (draw) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p = ImGui::GetCursorScreenPos();
-        dl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), IM_COL32(0, 0, 0, 80), 8.0f);
-        dl->AddRect(p, ImVec2(p.x + bw, p.y + bh), IM_COL32(255, 255, 255, 20), 8.0f);
+        dl->AddRectFilled(p, ImVec2(p.x + bw, p.y + bh), okaytheme::Shade(80), 8.0f);
+        dl->AddRect(p, ImVec2(p.x + bw, p.y + bh), okaytheme::Ink(20), 8.0f);
         dl->PushClipRect(ImVec2(p.x + 6, p.y), ImVec2(p.x + bw - 6, p.y + bh), true);
         std::size_t s0 = 0; float y = p.y + 7;
         while (true) {
             std::size_t q = code.find('\n', s0);
             std::string ln = code.substr(s0, q == std::string::npos ? std::string::npos : q - s0);
-            dl->AddText(ImVec2(p.x + 10, y), IM_COL32(222, 228, 240, 255), ln.c_str());
+            dl->AddText(ImVec2(p.x + 10, y), okaytheme::TextU32(), ln.c_str());
             y += lh;
             if (q == std::string::npos) break;
             s0 = q + 1;
@@ -433,7 +436,7 @@ static float ChatCodeBlock(const std::string& code, float avail, bool draw) {
 // ---- Link previews ----------------------------------------------------------
 // The first web-page link in a message gets a card (site, title, description,
 // thumbnail) like Messenger/Telegram. Pages are fetched once in the background
-// (curl, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
+// (the HTTP seam, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
 struct LinkPreview { int state = 0; std::string site, title, desc, image; };   // 0 loading, 1 ready, 2 nothing to show
 static okay::thr::Mutex* g_lpMutex = nullptr;
 static std::map<std::string, LinkPreview> g_linkPrev;   // (guarded) by URL
@@ -548,7 +551,7 @@ static int LinkPreviewWorker(void*) {
         // loopback or link-local address (chat links come from other people).
         if (ShellSafeUrl(url) &&
             okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
-            // The HTTP seam: WinHTTP / our own client first, curl only as its last fallback. A clear refusal
+            // The HTTP seam: WinHTTP / our own client. A clear refusal
             // (404, too big) means no preview, as with curl -f.
             std::string html;
             if (okay::http::FetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, html) ==
@@ -611,21 +614,21 @@ static void DrawLinkPreviewCard(const std::string& url, const LinkPreview& lp, f
     if (descSz.y > maxDescH) descSz.y = maxDescH;
     const float h = pad + (imgH > 0 ? imgH + 8 : 0) + siteSz.y + 2 + titleSz.y + (desc.empty() ? 0 : 3 + descSz.y) + pad;
     const bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
-    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? IM_COL32(0, 0, 0, 70) : IM_COL32(0, 0, 0, 50), 8.0f);
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? okaytheme::Shade(70) : okaytheme::Shade(50), 8.0f);
     d->AddRectFilled(p, ImVec2(p.x + 3, p.y + h), ImGui::GetColorU32(kAccent), 8.0f, ImDrawFlags_RoundCornersLeft);
     const float x = p.x + pad + 4;
     if (imgH > 0) {
         d->AddImageRounded((ImTextureID)(intptr_t)tex, ImVec2(x, y), ImVec2(x + tw, y + imgH), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 6.0f);
         y += imgH + 8;
     }
-    d->AddText(f, fs * 0.85f, ImVec2(x, y), IM_COL32(170, 182, 205, 255), lp.site.c_str(), nullptr, tw); y += siteSz.y + 2;
-    d->AddText(f, fs, ImVec2(x, y), IM_COL32(150, 196, 255, 255), lp.title.c_str(), nullptr, tw);
-    d->AddText(f, fs, ImVec2(x + 0.6f, y), IM_COL32(150, 196, 255, 255), lp.title.c_str(), nullptr, tw);   // faux bold
+    d->AddText(f, fs * 0.85f, ImVec2(x, y), okaytheme::TextU32(), lp.site.c_str(), nullptr, tw); y += siteSz.y + 2;
+    d->AddText(f, fs, ImVec2(x, y), okaytheme::InfoU32(), lp.title.c_str(), nullptr, tw);
+    d->AddText(f, fs, ImVec2(x + 0.6f, y), okaytheme::InfoU32(), lp.title.c_str(), nullptr, tw);   // faux bold
     y += titleSz.y;
     if (!desc.empty()) {
         y += 3;
         d->PushClipRect(ImVec2(x, y), ImVec2(x + tw, y + descSz.y), true);
-        d->AddText(f, fs * 0.9f, ImVec2(x, y), IM_COL32(205, 212, 226, 220), desc.c_str(), nullptr, tw);
+        d->AddText(f, fs * 0.9f, ImVec2(x, y), okaytheme::TextU32(0.863f), desc.c_str(), nullptr, tw);
         d->PopClipRect();
     }
     ImGui::SetCursorScreenPos(p);
@@ -714,7 +717,7 @@ void IconTile(const std::string& name, float size) {
     char init[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
     ImVec2 ts = ImGui::CalcTextSize(init);
     dl->AddText(ImVec2(p.x + (size - ts.x) * 0.5f, p.y + (size - ts.y) * 0.5f),
-                ImGui::GetColorU32(ImVec4(0.88f, 0.90f, 0.94f, 1.0f)), init);
+                ImGui::GetColorU32(okaytheme::kText), init);
     ImGui::Dummy(ImVec2(size, size));
 }
 
@@ -795,6 +798,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
 }
 
 // A wide illustrated preview for a template card: a small scene, not a letter tile.
+// theme-allow-begin: an illustration (a template scene), the same in every theme
 void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) {
     const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Main Menu";
     const bool empty = title == "Empty";
@@ -813,6 +817,7 @@ void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2
     const float s = std::min(b.x - a.x, b.y - a.y) * 0.72f;
     TemplateGlyph(d, title, ImVec2(a.x + (b.x - a.x - s) * 0.5f, a.y + (b.y - a.y - s) * 0.36f), s, IM_COL32(248, 250, 255, 235));
 }
+// theme-allow-end
 
 // Decodes an image file to a malloc'd RGBA8 buffer (free with std::free); nullptr on failure.
 unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {

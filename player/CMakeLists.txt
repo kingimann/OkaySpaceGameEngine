@@ -9,15 +9,35 @@
 # okay-player.html/.js/.wasm you can serve in a browser. Build via
 # scripts/build-web.sh (or emcmake cmake ...). Assets are preloaded at build
 # time; drop a game.okayscene next to this CMakeLists or pass --preload-file.
+# The page around it is ours: platform/web/shell.html (loading screen, errors in plain words, full-screen button) and
+# platform/web/okay_web.js (downloads with progress, the game data pack, saves kept in IndexedDB, audio unlock, touch and
+# context-menu manners). The game's files are not baked into the build: scripts/web_package.py packs them beside it, so
+# one player build serves every game (docs/feature_map/18-build-export-release.md 18.2).
 if(EMSCRIPTEN)
     add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
     target_link_libraries(okay-player PRIVATE okay::engine)
-    target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/platform/web)
     target_compile_options(okay-player PRIVATE "-sUSE_SDL=2")
+    set(_okay_web_dir ${CMAKE_SOURCE_DIR}/platform/web)
     target_link_options(okay-player PRIVATE
-        "-sUSE_SDL=2" "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0")
+        "-sUSE_SDL=2" "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0"
+        "-sENVIRONMENT=web"            # browser only: no Node.js or worker start-up code in the .js
+        "-sFORCE_FILESYSTEM=1" "-lidbfs.js"   # okay_web.js writes the game pack into FS and mounts the saves on IDBFS
+        "-sSTACK_SIZE=1048576"         # 1 MB, nearer a desktop thread's stack than Emscripten's 64 KB (deep scene and script recursion)
+        "--pre-js=${_okay_web_dir}/okay_web.js"
+        "--shell-file=${_okay_web_dir}/shell.html")
+    # Release builds are optimised for a small download: -Oz shrinks the program at link time (wasm-opt), Closure
+    # shrinks the JavaScript. OKAY_WEB_CLOSURE=OFF keeps readable JavaScript for debugging.
+    option(OKAY_WEB_CLOSURE "Minify the web player's JavaScript with Closure in release builds" ON)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+        target_link_options(okay-player PRIVATE "-Oz")
+        if(OKAY_WEB_CLOSURE)
+            target_link_options(okay-player PRIVATE "--closure=1")
+        endif()
+    endif()
     set_target_properties(okay-player PROPERTIES
         SUFFIX ".html"
+        LINK_DEPENDS "${_okay_web_dir}/okay_web.js;${_okay_web_dir}/shell.html"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/web)
     return()
 endif()

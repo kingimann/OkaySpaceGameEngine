@@ -22,7 +22,6 @@ int main() {
   std::string s = "a", t = "b";
   std::string f = (n ? s : t) + "k" + (n > 5 ? s + "1" : t + "2");
   std::string g = "k" + (n ? s : std::string()) + (n ? "-" + s : t);
-  printf("%s %s
-", f.c_str(), g.c_str());
+  printf("%s %s\n", f.c_str(), g.c_str());
   printf("[%s] [%s] [%s] [%s] [%s] [%s]\n", a.c_str(), b.c_str(), d.c_str(), e.c_str(), out.c_str(), m.c_str());
 }

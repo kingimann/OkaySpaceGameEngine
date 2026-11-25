@@ -4,11 +4,13 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (Round 29 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-25 (Round 30 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Round 29 (newest, 2026-11-25):** 205 of 475 engine files compile on the Windows survey (138 before the round), 207 on the plain one (97 before); multiple inheritance (several bases, adjustor thunks, `dynamic_cast` across bases) and structured bindings are in; no virtual bases yet. Details: Round 29 at the end.
+**Round 30 (newest, 2026-11-25):** 273 of 475 engine files compile on the Windows survey (205 before the round), 278 on the plain one (207 before); pointers to data members, the COFF relocation overflow form, our own POSIX declaration headers, and five silent wrong-code bugs fixed. Details: Round 30 at the end.
+
+**Round 29 (2026-11-25):** 205 of 475 engine files compile on the Windows survey (138 before the round), 207 on the plain one (97 before); multiple inheritance (several bases, adjustor thunks, `dynamic_cast` across bases) and structured bindings are in; no virtual bases yet. Details: Round 29 at the end.
 
 **Status, 2026-11-25 (Round 27):** okay-ms is a Windows compiler, so the headline count is now the Windows one: with `SURVEY_FLAGS="/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64"` **60** of the 476 `engine/src/**/*.cpp` files compile to an object (34 before this round, same command and file list); without those flags (the non-Windows paths) **50** (40 before). No file stops at `<windows.h>` any more (51 before): okay-ms has its own `<windows.h>`, split by area under `tools/okayms/stdinc/okay_win32/`. `<atomic>` and the `shared_ptr` counts are now atomic between threads (LOCK-prefixed instructions). Next blockers (Windows): `Mesh.hpp:1563` (52), `std::is_invocable_v` in `Jobs.hpp` (25), `SaveData.hpp:357` (20), the okayscript include path (16), `NativeFetch.hpp:341` (12). Still no PDB, no multiple inheritance, no virtual bases, no `.CRT$XCU` startup list. okay-cl still does not define `_WIN32` by itself. Linux with Wine only; nothing was run on Windows. Details: Round 27 at the end.
 
@@ -933,3 +935,60 @@ Not done / unverified / differences (Round 29):
 - The local lookup rule (innermost block first) is still wrong for `int d; { use(d); int d; }` (a use before an inner declaration of the same name in the same block); no engine file was seen doing that.
 - `std::filesystem::file_time_type` is still a `long long` (no clock): `t.time_since_epoch()` stops `UIDataGlue.cpp` and `FileStamp.hpp`.
 - `std::stoi` and the others do not throw.
+
+### Round 30: the next survey blockers, pointers to data members, the relocation overflow form, and five silent wrong-code bugs
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-30`, 2026-11-25. Not run on Windows.
+
+**Survey blockers of Round 29, by files:**
+
+| Files | Blocker | Done |
+|---|---|---|
+| 16 | `UIStyleLib.hpp:409` | a range `for` over a class with no member `begin`/`end` uses the free `begin(r)`/`end(r)` ([stmt.ranged] 1.3; `std::filesystem::directory_iterator`). `const auto& e` over an iterator whose `*it` gives a value is a copy of it |
+| 11 | `Platformer25DController.hpp:288` | a member function hides a namespace function of the same name in an unqualified call, also when the member is declared later in the class (`TryStepUp` beside the free `TryStepUp` of `StepUp.hpp`; `Text(s)` in `ScriptUI.hpp`) |
+| 10 + 7 | `UINavigation.hpp:292`, `VehicleTuning.hpp:118` | **pointers to data members**: `T C::*` (variables, parameters, lambda parameters, struct members, `nullptr`), `&C::m`, `obj.*pm` and `p->*pm` read and written, `static_cast` between a base's and a derived class's member pointers, deduction of `I Owner::*m` in a function template. Own representation: an `int` holding the member's offset plus one, 0 for null (Microsoft keeps the offset and uses -1 for null). Pointers to member functions are not done |
+| 9 | "too many relocations in one section" | the COFF overflow form, from the PE Format's Section Flags (`IMAGE_SCN_LNK_NRELOC_OVFL`): a section with 65535 or more relocations writes 0xFFFF as the count, sets the flag and puts the real count in the first relocation record; `read_coff` (so okay-link and okay-lib) reads it. The count includes that first record (our reading of the spec; not compared with link.exe) |
+| 8 | `DynamicTree.hpp:83` | a braced default argument (`const V3& grow = V3{}`) ended a template's declaration at its `{` |
+| 4 | default arguments of function templates | `FindInTree<T>(go)` with `int depth = 0`: the call pads the arguments it left out |
+| — | `file_time_type` | a `std::chrono::time_point` of our own file clock (100 ns steps since 1601, as Windows keeps file times); `time_point::clock`, and `file_time_type::clock::now()` through a member typedef |
+| 33 (plain) | `<spawn.h>` | our own POSIX declaration headers from POSIX.1-2017: `<spawn.h>`, `<unistd.h>`, `<sys/types.h>`, `<sys/wait.h>`, `<sys/stat.h>`, `<signal.h>`, and the POSIX parts of `<fcntl.h>`, `<csignal>`, `<cstdlib>`, `<cstdio>`, `<ctime>` (only when `_WIN32` is not defined). Declarations only: nothing links on Windows. Constant values POSIX leaves open are our own choice |
+
+**Silent wrong code fixed (each has its own test in `tests/test_round30.cpp`):**
+
+- A name used in a block before an inner declaration of the same name: `int d; { use(d); int d; }` read the inner `d` ([basic.scope.pdecl]). Now each local has a declaration number and each name read by the parser the number reached so far; of two locals of one name the code generator takes one declared before the name.
+- Constructors and destructors: the parser and the code generator numbered their scopes one apart, so two loop variables `i` in sibling loops could be mixed up (found by the engine crypto link test, `HmacSha256`'s constructor, when the rule above was first written).
+- A call through a reference to a function pointer (`Fn& f`, or `F&& f` for a lambda without captures) called the address of the pointer (a crash).
+- Two lambdas of other signatures given to one function template shared one instance (a lambda without captures was keyed as `int*`): the second call ran the first instance.
+- `255.f` and `2.` were read as a number, `.` and a name (an error in most places, `not an address`).
+
+**Other fixes found on the way:** a class's enumerations are member types of the class (`HealthWatch::Event` beside `struct okay::Event`; after the class the name means again what it meant before, so ModelAnimator's `enum Slot` no longer hides `Inventory::Slot`); member types are names in member bodies compiled after the class; `C::E` is a type in `sizeof`; `(std::max)(a, b)`; `c ? "text" : std::string(...)`; `(V{0, 0, 0} - v)` in parentheses; `void Outer::Inner::f()` outside both classes; a local class names its function's static locals; `std::function<...> walk = [&](...) { walk(c); }`; `case K::Key:` with `using K = Def::Kind;`; a member function template with `= {}` for a class-template parameter; calls with more than 16 spilled values (48 now; `PlaceThirdPersonOrbit` has 35 arguments); `std::set_union`, `std::set_difference`, `deque::erase(first, last)`, `directory_entry::is_symlink`, `EOF` after `<sstream>`; `steady_clock::now()` and `system_clock::now()` are member templates, so a file that includes `<chrono>` but does not call them imports nothing.
+
+**Diagnostics:** an error found while generating code now names the file and line of the statement (`okay/Components/Light.hpp:98: not an address: a constant (in __lam53::operator()/1)`), and "not an address" says what the operand was. The survey's first-error places now point at these lines too.
+
+**Survey in parts:** `survey.sh` takes `SURVEY_FILES` (a list of files) so it can run in parts.
+
+Measurement: `tools/okayms/survey.sh`, one file at a time per job, two jobs, 300-second limit, run in parts with `SURVEY_FILES` (a part that reached the 30-minute limit of a session command was finished by a second part with the files it had not reached). "Before" is Round 29's measurement with the Round 29 compiler (commit 8695c998f), the same engine files and the same command; this branch started from that commit, and the survey ran before `origin/main` was merged in.
+
+| Survey | Before (round 29) | After |
+|---|---|---|
+| Windows (default) | 205 of 475 | **273 of 475** |
+| Plain (`SURVEY_PLAIN=1`) | 207 of 475 | **278 of 475** |
+
+No file that compiled before stops compiling (checked file by file in both surveys). Next blockers (the same on both surveys now): `AccountService.hpp:1250` (16, `std::move(nr.body)`: "cannot deduce template arguments of move", not looked at), `HoldPrompt.hpp:98` (11, `keys = localized ? Localize(...) : keys + " or " + alt;`, not looked at), `JointLimit.hpp:114` (10, `limit.type == IKJointLimit::Type::Hinge`: "expected '('" only after other headers; the cause was not found), `SoftwareRenderer.hpp:302` (6), `VisualScriptComponent.hpp:106` (6, the local class in a member function still does not see the static local), `SaveDocument::Writer` (5, "not an address: a call of string"), `FileCopy.hpp:46` (4, a thrown value of unknown type).
+
+Tests: new `tests/test_round30.cpp`, 14 tests (programs built by okay-cl at `/O0`, `/O1`, `/O2`, linked, run under Wine, and built by MinGW g++ and run; a COFF write/read test with 70000 and 65535 relocations; a program with 70000 data relocations written as a COFF file, read back, linked and run): `tests 14, checks passed 198, failed 0`. With the Round 29 compiler and headers: `tests 14, checks passed 66, failed 38` (every program fails to compile, except the five wrong-code programs, which compile and give wrong results or crash: `local_before_shadow` exit 1, `fp_reference` exit 5 (a crash), `lambda_instances` exit 2; and `write_coff` refuses the 70000 relocations). The whole suite (`env -u TMPDIR sh tools/okayms/build.sh`, 72 test programs) passes after the last code change.
+
+Written from ISO/IEC 14882 ([stmt.ranged], [basic.lookup.unqual], [class.member.lookup], [dcl.fct.default], [temp.deduct], [temp.deduct.type], [dcl.enum], [class.nest], [class.local], [dcl.mptr], [expr.unary.op], [expr.mptr.oper], [conv.mem], [expr.static.cast], [expr.prim.paren], [expr.cond], [expr.type.conv], [basic.scope.pdecl], [basic.scope.block], [basic.scope.class], [lex.fcon], [class.temporary], [fs.filesystem.syn], [time.point], [set.union], [set.difference], [sequence.reqmts]), ISO/IEC 9899 7.27, POSIX.1-2017 (`<spawn.h>`, `<unistd.h>`, `<sys/types.h>`, `<sys/wait.h>`, `<sys/stat.h>`, `<signal.h>`, `<fcntl.h>`, `<stdio.h>`, `<time.h>`, `setenv`) and Microsoft's "PE Format" (Section Flags, COFF Relocations) and public name-decoration rules. No code from MSVC, its STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine, glibc or any other project. No cryptography was written (the engine's crypto files are only compiled by the existing link test).
+
+Not done / unverified / differences (Round 30):
+
+- Not run on Windows. The survey objects were not linked or run; the test programs ran under Wine only. link.exe was not tried on an object with the overflow form.
+- The overflow count includes the record that holds it; the PE Format text does not say so in words. Not compared with MSVC or link.exe output.
+- Pointers to data members use our own value (offset plus one, 0 for null), not Microsoft's (offset, -1 for null): an object compiled by MSVC that passes one to okay-ms code would disagree. Their decorated name (`PEQ` class `@@` type) was not compared with MSVC. A member pointer of a base used on a base object that is not at offset 0 of the class named in `&D::m` is not adjusted. Pointers to member functions (`void (Component::*fn)()`, Physics2D/3D, Scene.cpp) are not done.
+- The POSIX headers declare only; nothing links on Windows. Constants POSIX leaves to the system (`WNOHANG`, `F_SETFD`, signal numbers but `SIGKILL`, the status layout) are our own choice.
+- Structured bindings for tuple-like types and `std::stoi` throwing on bad input (goal 4) were not done.
+- Cross-unit `std::chrono::duration` comparisons (`(now - mtime) > std::chrono::seconds(2)`, SceneSerializer.cpp) are not written.
+- A string ternary with one string-literal side is handled only for `std::string`, not for other classes with converting constructors. Both sides' temporaries are made before the choice, as in Round 29's class ternary.
+- A local declared with a lambda initializer is declared before the initializer; other declarations still are after it (`int x = x;` reads an outer `x`).
+- The parenthesized-name rule is only for names ending in `min` or `max`.
+

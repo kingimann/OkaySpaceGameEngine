@@ -87,6 +87,19 @@ private:
     const Type* ret_ = nullptr;
     const Type* method_ = nullptr;
     std::string inNs_;
+    // The scope around 'sc' (N::C is in N). A class template instance's tag and a function
+    // template instance's name are not qualified: they are in the namespace of their template
+    // (instNamespaces), so std::variant<..>'s members find std::variant_npos.
+    static std::string outerScope(const std::string& sc) {
+        int depth = 0;
+        for (std::size_t k = sc.size(); k-- > 1;) {
+            if (sc[k] == '>') ++depth;
+            else if (sc[k] == '<') --depth;
+            else if (depth == 0 && sc[k] == ':' && sc[k - 1] == ':') return sc.substr(0, k - 1);
+        }
+        auto it = instNamespaces().find(sc);
+        return it == instNamespaces().end() ? std::string() : it->second;
+    }
 
     int quiet_ = 0;  // above 0: a probing check that must not report
     void err(int line, int col, const std::string& msg) {
@@ -120,6 +133,10 @@ private:
         auto it = sc.find(name);
         if (it != sc.end()) {
             if (func && it->second.func && it->second.type && type && sameType(*it->second.type, *type)) return;
+            if (func && it->second.func && it->second.type && hasDecltype(it->second.type.get())) {
+                it->second.type = std::move(type);  // its return type is now worked out (checkFunction)
+                return;
+            }
             // A file-scope variable declared (extern, or a static data member in its class) and then
             // defined: the same object ([basic.def]).
             if (!func && !it->second.func && scopes_.size() == 1 && it->second.type && type &&
@@ -370,9 +387,8 @@ private:
                             return ns;
                         }
                     }
-                    std::size_t cut = sc.rfind("::");
-                    if (cut == std::string::npos) break;
-                    sc = sc.substr(0, cut);
+                    sc = outerScope(sc);
+                    if (sc.empty()) break;
                 }
             }
             ET hit = lookup(e.text, e.line, e.col, true);
@@ -427,9 +443,8 @@ private:
                         }
                         cs = canonStructs().find(cs->second->base);
                     }
-                    std::size_t cut = scope.rfind("::");
-                    if (cut == std::string::npos) break;
-                    scope = scope.substr(0, cut);
+                    scope = outerScope(scope);
+                    if (scope.empty()) break;
                 }
             }
             if (tu_) {
@@ -441,9 +456,8 @@ private:
                     std::vector<std::string> tries = {base};
                     for (std::string sc = inNs_; !sc.empty();) {
                         tries.push_back(sc + "::" + base);
-                        std::size_t cut = sc.rfind("::");
-                        if (cut == std::string::npos) break;
-                        sc = sc.substr(0, cut);
+                        sc = outerScope(sc);
+                        if (sc.empty()) break;
                     }
                     for (const std::string& q : tries) {
                         ET hit2 = lookup(q, e.line, e.col, true);
@@ -500,6 +514,7 @@ private:
             if (!need(0) && !(e.text == "sizeof" && e.ty)) return bad(e.line, e.col);
             if (e.text == "!" || e.text == "-" || e.text == "+" || e.text == "~") convertIfNeeded(*e.kids[0]);
             if (e.text == "sizeof") {
+                if (e.ty && hasDecltype(e.ty.get()) && !resolveDecltype(e.ty)) return bad(e.line, e.col);
                 if (e.ty) {
                     if (e.ty->kind == Type::Kind::Void || e.ty->kind == Type::Kind::Function) {
                         err(e.line, e.col, "sizeof this type is not allowed");
@@ -662,6 +677,10 @@ private:
             }
             if (a.type && b.type && isPtr(*a.type) && isPtr(*b.type) && canAssign(*a.type, b)) {
                 r.type = cloneType(*a.type);
+                return r;
+            }
+            if (a.type && b.type && a.type->kind == Type::Kind::Void && b.type->kind == Type::Kind::Void) {
+                r.type = prim(Type::Kind::Void);  // c ? (void)f() : (void)0 ([expr.cond] p2)
                 return r;
             }
             err(e.line, e.col, "branches of '?:' do not have a common type");
@@ -1654,6 +1673,17 @@ private:
                 if (t.tag.compare(1, std::string::npos, sig.names[k]) == 0) return k < given;
             return false;
         }
+        if ((t.kind == Type::Kind::Struct || t.kind == Type::Kind::Union) && t.tag.find('\x02') != std::string::npos) {
+            // An instance written with parameters (tuple<T...>): each <length>\x02<name> in its tag.
+            for (std::size_t at = t.tag.find('\x02'); at != std::string::npos; at = t.tag.find('\x02', at + 1)) {
+                std::size_t b = at;
+                while (b > 0 && t.tag[b - 1] >= '0' && t.tag[b - 1] <= '9') --b;
+                std::size_t n = b < at ? static_cast<std::size_t>(std::stoul(t.tag.substr(b, at - b))) : 0;
+                std::string name = n >= 1 ? t.tag.substr(at + 1, n - 1) : std::string();
+                for (std::size_t k = 0; k < sig.names.size(); ++k)
+                    if (sig.names[k] == name && k >= given) return false;
+            }
+        }
         if (t.inner && !onlyGiven(*t.inner, sig, given)) return false;
         for (const Param& p : t.params)
             if (p.type && !onlyGiven(*p.type, sig, given)) return false;
@@ -1748,9 +1778,8 @@ private:
                     }
                     cs = canonStructs().find(cs->second->base);
                 }
-                std::size_t cut = sc.rfind("::");
-                if (cut == std::string::npos) break;
-                sc = sc.substr(0, cut);
+                sc = outerScope(sc);
+                if (sc.empty()) break;
             }
             return;
         }
@@ -1795,8 +1824,9 @@ private:
                 if (st == funcTemplateSigs().end()) continue;
                 tsig = &st->second;
                 tb.resize(tsig->names.size());
-                total = 1;
+                total = 1;  // scores count twice: a template loses only a tie
             }
+            std::vector<std::size_t> deduced;  // template parameters scored once deduced
             for (std::size_t i = 0; i < nargs && i < c->type->params.size(); ++i) {
                 if (!c->type->params[i].type) continue;
                 if (tsig && hasPlaceholder(*c->type->params[i].type)) {
@@ -1806,6 +1836,7 @@ private:
                         ok = false;
                         break;
                     }
+                    deduced.push_back(i);
                     continue;
                 }
                 int sc = fitScore(*c->type->params[i].type, ets[i]);
@@ -1813,10 +1844,26 @@ private:
                     ok = false;
                     break;
                 }
-                total += sc;
+                total += 2 * sc;
             }
             for (std::size_t k = 0; tsig && ok && k < tb.size(); ++k)
                 if (!tb[k]) ok = false;  // a parameter no argument deduces: not viable
+            if (tsig && ok) {
+                // The deduced parameter types are scored like a non-template's ([over.match.best]
+                // p2.4): const U& with U = W binds a W&& as the copy constructor's const W& does,
+                // and the copy constructor wins the tie.
+                std::vector<TArg> targs;
+                for (auto& b : tb) {
+                    TArg a;
+                    a.type = cloneType(*b);
+                    targs.push_back(std::move(a));
+                }
+                for (std::size_t i : deduced) {
+                    auto pt = substType(*c->type->params[i].type, *tsig, targs);
+                    int sc = pt ? fitScore(*pt, ets[i]) : 0;
+                    if (sc > 0) total += 2 * sc;
+                }
+            }
             if (ok && total < bestScore) {
                 bestScore = total;
                 best = c;
@@ -1900,6 +1947,7 @@ private:
                 if (packPlaceGetsEnd(sig.names[i], arg)) return false;
                 std::unique_ptr<Type> a = cloneType(arg);
                 if (a->kind == Type::Kind::Array && a->inner && !keepArray_) a = ptrTo(std::move(a->inner));
+                if (pat.cnst) a->cnst = false;  // const T& given a const X: T is X ([temp.deduct.call] p4)
                 if (!bound[i]) {
                     bound[i] = std::move(a);
                     return true;
@@ -2465,9 +2513,8 @@ private:
                         name = sc + "::" + name;
                         break;
                     }
-                    std::size_t cut = sc.rfind("::");
-                    if (cut == std::string::npos) break;
-                    sc = sc.substr(0, cut);
+                    sc = outerScope(sc);
+                    if (sc.empty()) break;
                 }
             }
             // The function templates of this name (name, name#1, ...): the first whose parameter
@@ -2494,9 +2541,8 @@ private:
                 for (std::string sc = inNs_; plain.empty() && !sc.empty();) {
                     if (scopes_.front().count(sc + "::" + name) || overloads_.count(sc + "::" + name))
                         plain = sc + "::" + name;
-                    std::size_t cut = sc.rfind("::");
-                    if (cut == std::string::npos) break;
-                    sc = sc.substr(0, cut);
+                    sc = outerScope(sc);
+                    if (sc.empty()) break;
                 }
                 if (plain.empty() && (scopes_.front().count(name) || overloads_.count(name))) plain = name;
                 if (!plain.empty()) {
@@ -3324,18 +3370,16 @@ private:
                     break;
                 }
                 if (scopes_.front().count(sc + "::" + name)) break;  // one function there: lookup takes it
-                std::size_t cut = sc.rfind("::");
-                if (cut == std::string::npos) break;
-                sc = sc.substr(0, cut);
+                sc = outerScope(sc);
+                if (sc.empty()) break;
             }
         }
         if (it == overloads_.end() && name.find("::") == std::string::npos && scopeOf(name) <= 0) {
             std::string scope = inNs_;
             while (!scope.empty() && it == overloads_.end()) {
                 it = overloads_.find(scope + "::" + name);
-                std::size_t cut = scope.rfind("::");
-                if (cut == std::string::npos) break;
-                scope = scope.substr(0, cut);
+                scope = outerScope(scope);
+                if (scope.empty()) break;
             }
         }
         if (it == overloads_.end() && tu_ && name.find("::") == std::string::npos && scopeOf(name) < 0) {
@@ -3576,6 +3620,41 @@ private:
     }  // hidden range-for pointers to an array: its length
     static bool isAuto(const Type* t) { return t && t->kind == Type::Kind::Struct && t->tag == "\x03" "auto"; }
 
+    // decltype(e) in a type ([dcl.type.decltype] p1): a name or member access gives its declared
+    // type; another lvalue gives a reference to its type, any other expression its type. The
+    // expression is checked where the declaration is (its names are in scope). False on a bad e.
+    bool resolveDecltype(std::unique_ptr<Type>& t) {
+        if (!t) return true;
+        if (t->kind == Type::Kind::Struct && t->tag == "\x03" "decltype") {
+            if (!t->bound) return false;
+            bool named = t->bound->kind == Expr::Kind::Name || t->bound->kind == Expr::Kind::Member;
+            ET a = checkExpr(*t->bound);
+            if (a.bad || !a.type) return false;
+            bool cnst = t->cnst;
+            if (!named && a.lvalue && a.type->kind != Type::Kind::Reference) {
+                auto r = prim(Type::Kind::Reference);
+                r->inner = cloneType(*a.type);
+                t = std::move(r);
+            } else {
+                t = cloneType(*a.type);
+            }
+            if (cnst) t->cnst = true;
+            return true;
+        }
+        if (t->inner && !resolveDecltype(t->inner)) return false;
+        for (Param& p : t->params)
+            if (!resolveDecltype(p.type)) return false;
+        return true;
+    }
+    static bool hasDecltype(const Type* t) {
+        if (!t) return false;
+        if (t->kind == Type::Kind::Struct && t->tag == "\x03" "decltype") return true;
+        if (hasDecltype(t->inner.get())) return true;
+        for (const Param& p : t->params)
+            if (hasDecltype(p.type.get())) return true;
+        return false;
+    }
+
     // auto x = e; auto &x = e; ([dcl.spec.auto]): the type of e, without references, arrays decayed.
     // A hidden range-for variable bound to a value that is not an lvalue holds it by value.
     bool deduceAuto(Decl& d) {
@@ -3689,6 +3768,10 @@ private:
         } restoreNs{inNs_, savedNs};
         if (scopes_.size() == 1 && d.name.find("::") != std::string::npos) inNs_ = d.name.substr(0, d.name.rfind("::"));
         if (!d.vt.empty()) return;  // a vtable: already declared
+        if (hasDecltype(d.type.get()) && !d.function && !resolveDecltype(d.type)) {
+            err(d.line, d.col, "decltype of an expression that has no type");
+            d.type = prim(Type::Kind::Int);
+        }
         if (deduceAuto(d)) return;
         if (d.type->kind == Type::Kind::Reference) {
             if (!d.init || !d.type->inner) {
@@ -3745,6 +3828,17 @@ private:
 
     void checkFunction(Decl& d) {
         if (!d.type) return;
+        if (hasDecltype(d.type->inner.get())) {
+            // auto f(T a) -> decltype(a + 1): the parameters are in scope for the return type.
+            scopes_.emplace_back();
+            for (const Param& p : d.type->params)
+                if (!p.name.empty() && p.type) add(p.name, cloneType(*p.type), false, d.line, d.col);
+            if (!resolveDecltype(d.type->inner)) {
+                err(d.line, d.col, "decltype of an expression that has no type");
+                d.type->inner = prim(Type::Kind::Int);
+            }
+            scopes_.pop_back();
+        }
         add(d.name, cloneType(*d.type), true, d.line, d.col);
         if (!d.body) return;
         scopes_.emplace_back();
@@ -3765,6 +3859,7 @@ private:
         // Inside a member function, names are looked up in the class, then in the namespaces
         // around it ([basic.lookup.unqual]): the class tag is the scope.
         if (!d.methodTag.empty()) inNs_ = d.methodTag;
+        else if (inNs_.empty()) inNs_ = outerScope(d.name);  // a function template instance
         if (!d.methodTag.empty() && !d.staticMember) {
             auto it = canonStructs().find(d.methodTag);
             if (it != canonStructs().end()) method_ = it->second.get();
@@ -3785,6 +3880,35 @@ private:
         curFn_ = savedFn;
         fnBase_ = savedBase;
         scopes_.pop_back();
+    }
+
+    // return e; with a class result: copy-construct an object the function does not own, convert
+    // with a converting constructor, and keep a returned temporary alive as the result object.
+    void classReturn(Stmt& s, ET& v) {
+        if (!v.bad && v.type && v.type->kind == Type::Kind::Struct && ret_->kind == Type::Kind::Struct &&
+            hasUserCopy(*v.type) && sameType(*canonOf(ret_), *canonOf(v.type.get())) &&
+            (v.lvalue || subobjectOfTemp(*s.expr)) && !ownLocal(*s.expr)) {
+            // return m; of an object the function does not own (a member, *this, a parameter,
+            // a global, a reference): the result is copy-constructed from it ([stmt.return]
+            // p2, [class.copy.ctor]). It was copied bytewise, so the caller's string shared
+            // the member's buffer and read it after it was freed.
+            std::string tmp = newTemp(*v.type, *s.expr, false);
+            auto ctor = mkE(Expr::Kind::Call, *s.expr);
+            ctor->kids.push_back(mkName("\x01" "ctor:" + v.type->tag, *s.expr));
+            ctor->kids.push_back(eUnary("&", mkName(tmp, *s.expr), *s.expr));
+            ctor->kids.push_back(std::move(s.expr));
+            Expr& at = *ctor;
+            s.expr = eCommaNode(std::move(ctor), mkName(tmp, at), at);
+            v = decay(checkExpr(*s.expr));
+        }
+        if (!v.bad && v.type && ret_->kind == Type::Kind::Struct && !canAssign(*ret_, v) &&
+            convertingTemp(*s.expr, *v.type, *ret_)) {
+            // return d; for a class with a converting constructor ([stmt.return] p2, copy-initialization).
+            v = decay(checkExpr(*s.expr));
+        }
+        if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
+            consumed(*s.expr);  // returned: it is the result object
+        }
     }
 
     void checkCond(Expr& e) {
@@ -4003,15 +4127,19 @@ private:
             }
             if (isAuto(ret_) && curFn_ && curFn_->type) {
                 // A deduced return type ([dcl.spec.auto]): the type of the first return.
+                ET v;
                 if (!s.expr) {
                     curFn_->type->inner = prim(Type::Kind::Void);
                 } else {
-                    ET v = decay(checkExpr(*s.expr));
+                    v = decay(checkExpr(*s.expr));
                     curFn_->type->inner = v.type ? cloneType(*v.type) : prim(Type::Kind::Int);
                 }
                 ret_ = curFn_->type->inner.get();
                 if (scopes_.front().count(curFn_->name))
                     scopes_.front()[curFn_->name].type = cloneType(*curFn_->type);
+                // A class result is built as with a written return type (auto f() { return
+                // std::string("tag"); } destroyed the temporary it returned: an empty string).
+                if (s.expr && ret_->kind == Type::Kind::Struct) classReturn(s, v);
                 break;
             }
             if (ret_->kind == Type::Kind::Void) {
@@ -4031,30 +4159,7 @@ private:
             } else {
                 if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
                 ET v = decay(checkExpr(*s.expr));
-                if (!v.bad && v.type && v.type->kind == Type::Kind::Struct && ret_->kind == Type::Kind::Struct &&
-                    hasUserCopy(*v.type) && sameType(*canonOf(ret_), *canonOf(v.type.get())) &&
-                    (v.lvalue || subobjectOfTemp(*s.expr)) && !ownLocal(*s.expr)) {
-                    // return m; of an object the function does not own (a member, *this, a parameter,
-                    // a global, a reference): the result is copy-constructed from it ([stmt.return]
-                    // p2, [class.copy.ctor]). It was copied bytewise, so the caller's string shared
-                    // the member's buffer and read it after it was freed.
-                    std::string tmp = newTemp(*v.type, *s.expr, false);
-                    auto ctor = mkE(Expr::Kind::Call, *s.expr);
-                    ctor->kids.push_back(mkName("\x01" "ctor:" + v.type->tag, *s.expr));
-                    ctor->kids.push_back(eUnary("&", mkName(tmp, *s.expr), *s.expr));
-                    ctor->kids.push_back(std::move(s.expr));
-                    Expr& at = *ctor;
-                    s.expr = eCommaNode(std::move(ctor), mkName(tmp, at), at);
-                    v = decay(checkExpr(*s.expr));
-                }
-                if (!v.bad && v.type && ret_->kind == Type::Kind::Struct && !canAssign(*ret_, v) &&
-                    convertingTemp(*s.expr, *v.type, *ret_)) {
-                    // return d; for a class with a converting constructor ([stmt.return] p2, copy-initialization).
-                    v = decay(checkExpr(*s.expr));
-                }
-                if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
-                    consumed(*s.expr);  // returned: it is the result object
-                }
+                classReturn(s, v);
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
             }
             break;

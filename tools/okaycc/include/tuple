@@ -1,6 +1,6 @@
 // <tuple> for okay-cc (ISO/IEC 14882 [tuple]). Our own header. A tuple is its first element and
 // the tuple of the rest (tuple<H, T...> holds an H and a tuple<T...>); okay-cc copies the
-// templates with a pack once per pack length (src/packs.cpp), so a tuple holds at most seven
+// templates with a pack once per pack length (src/packs.cpp), so a tuple holds at most fifteen
 // elements here. get<I> walks down I links through __tuple_at, which is written out for each index
 // (a partial specialization with a value parameter is not matched by okay-cc yet). Comparisons are
 // member operators, element by element ([tuple.rel]).
@@ -85,6 +85,14 @@ __OKAY_TUPLE_AT(3, 2)
 __OKAY_TUPLE_AT(4, 3)
 __OKAY_TUPLE_AT(5, 4)
 __OKAY_TUPLE_AT(6, 5)
+__OKAY_TUPLE_AT(7, 6)
+__OKAY_TUPLE_AT(8, 7)
+__OKAY_TUPLE_AT(9, 8)
+__OKAY_TUPLE_AT(10, 9)
+__OKAY_TUPLE_AT(11, 10)
+__OKAY_TUPLE_AT(12, 11)
+__OKAY_TUPLE_AT(13, 12)
+__OKAY_TUPLE_AT(14, 13)
 #undef __OKAY_TUPLE_AT
 
 template <size_t I, typename Tup>

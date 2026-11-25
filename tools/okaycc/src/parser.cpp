@@ -32,6 +32,7 @@ struct Mod {
     bool unsized = false;
     bool variadic = false;
     std::vector<Param> params;
+    std::unique_ptr<Type> trailing;  // auto f(..) -> T: the return type ([dcl.fct] p2)
 };
 
 struct Parsed {
@@ -270,7 +271,7 @@ private:
             isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
             isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto") ||
-            isKwTok(t, "typename"))
+            isKwTok(t, "typename") || isKwTok(t, "decltype"))
             return true;
         if (t.kind == Tok::Ident && ctmpl_.count(t.text)) {
             // A class template's name starts a type when its arguments follow. Followed by '=',
@@ -279,10 +280,13 @@ private:
             const bool inStream = &t >= toks_.data() && &t + 1 < toks_.data() + toks_.size();
             if (!inStream) return true;
             const Token& n = *(&t + 1);
-            if (!(isP(n, "=") || isP(n, ";") || isP(n, ".") || isP(n, "->") || isP(n, "[") || isP(n, "+=") ||
-                  isP(n, "-=") || isP(n, "*=") || isP(n, "/=") || isP(n, "++") || isP(n, "--") || isP(n, ")") ||
-                  isP(n, ",")))
-                return true;
+            static const char* const kNotAType[] = {"=", ";", ".", "->", "[", "]", "+=", "-=", "*=", "/=", "++",
+                                                     "--", ")", ",", ">", ">=", "<=", "==", "!=", "?", ":", "&&",
+                                                     "||", "+", "-", "/", "%", "|", "^", "}"};
+            bool name = false;
+            for (const char* p : kNotAType)
+                if (isP(n, p)) name = true;
+            if (!name) return true;
         }
         if (t.kind == Tok::Ident && aliasTmpl_.count(t.text) && &t >= toks_.data() &&
             &t + 1 < toks_.data() + toks_.size() && isP(*(&t + 1), "<"))
@@ -410,6 +414,20 @@ private:
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") && !isKw("try") && !isKw("throw") &&
                !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto") &&
                !isKw("new") && !isKw("delete") && !isKw("this");  // this->x = v; starts an expression
+    }
+    // noexcept or noexcept(expr) after a parameter list ([except.spec]): not enforced here.
+    void skipNoexcept() {
+        while (isKw("noexcept")) {
+            advance();
+            if (isP("(")) {
+                int depth = 0;
+                do {
+                    if (isP("(")) ++depth;
+                    else if (isP(")")) --depth;
+                    advance();
+                } while (!atEnd() && depth > 0);
+            }
+        }
     }
     bool eatP(const char* s) {
         if (!isP(s)) return false;
@@ -665,6 +683,23 @@ private:
 
     std::unique_ptr<Type> parseBase0() {
         if (eatKw("auto")) return autoType();
+        if (isKw("decltype") && nextIs("(")) {
+            // decltype(auto) ([dcl.type.auto.deduct] p5): deduced from the initializer or the
+            // returns, here as auto (a reference result is not kept). decltype(e) ([dcl.type.decltype]):
+            // the type of e, worked out by the checker where the declaration is checked.
+            advance();
+            advance();
+            if (isKw("auto") && nextIs(")")) {
+                advance();
+                advance();
+                return autoType();
+            }
+            auto t = ty(Type::Kind::Struct);
+            t->tag = "\x03" "decltype";
+            t->bound = parseExpr();
+            expectP(")", ")");
+            return t;
+        }
         if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
         if (isKw("enum")) return parseEnum();
         if (eatKw("bool")) {
@@ -713,6 +748,11 @@ private:
             if (eatKw("const") || eatKw("volatile") || eatKw("constexpr") || eatKw("inline")) {
                 qualOnly = true;
                 continue;
+            }
+            if (!any && isKw("decltype") && nextIs("(")) {
+                auto t = parseBase0();  // const decltype(x)
+                if (t && qualOnly) t->cnst = true;
+                return t;
             }
             // const typename X<T>::type: the word only says a type follows ([temp.res] p3).
             if (!any && qualOnly && isKw("typename") && i_ + 1 < toks_.size() &&
@@ -839,10 +879,8 @@ private:
             advance();
             if (eatP("=")) {
                 auto e = parseAssign();
-                if (e && e->kind == Expr::Kind::Int) next = static_cast<std::int64_t>(e->ival);
-                else if (e && e->kind == Expr::Kind::Unary && e->text == "-" && !e->kids.empty() && e->kids[0] &&
-                         e->kids[0]->kind == Expr::Kind::Int)
-                    next = -static_cast<std::int64_t>(e->kids[0]->ival);
+                long v = 0;  // any integral constant expression ([dcl.enum] p2): 'A', 1 << 3, Other + 1
+                if (e && evalConst(*e, v)) next = static_cast<std::int64_t>(v);
                 else err("enumerator is not a constant");
             }
             if (!scoped) {
@@ -2300,6 +2338,7 @@ private:
                 advance();
                 parseParams(cd.params);
                 cx.cxx = true;
+                skipNoexcept();  // C(C&&) noexcept : ... { }
                 parseInitList(cd);
                 Param cp;
                 cp.name = "<ctor>";
@@ -2721,14 +2760,15 @@ private:
             d.col = cur().column;
             d.file = cur().file;
             advance();
-            if (d.name == "operator" && !atEnd() && cur().kind == Tok::Punct) {
+            auto operatorSymbol = [&]() {
                 // operator+, operator==, operator[], operator() and the other overloadable symbols.
                 std::string op = cur().text;
                 advance();
                 if (op == "(" && eatP(")")) op = "()";
                 else if (op == "[" && eatP("]")) op = "[]";
                 d.name += op;
-            }
+            };
+            if (d.name == "operator" && !atEnd() && cur().kind == Tok::Punct) operatorSymbol();
             while (eatP("::")) {
                 if (atEnd() || cur().kind != Tok::Ident) {
                     err("expected a name");
@@ -2737,6 +2777,10 @@ private:
                 d.name += "::";
                 d.name += cur().text;
                 advance();
+                // C::operator=(..) defined outside its class ([class.mfct] p2).
+                if (d.name.size() >= 10 && d.name.compare(d.name.size() - 10, 10, "::operator") == 0 && !atEnd() &&
+                    cur().kind == Tok::Punct && !isP("::"))
+                    operatorSymbol();
             }
         } else if (needName) {
             err("expected a name");
@@ -2760,6 +2804,10 @@ private:
                 Mod m;
                 m.kind = Mod::Kind::Func;
                 m.variadic = parseParams(m.params);
+                std::size_t back = i_;
+                skipNoexcept();
+                if (eatP("->")) m.trailing = parseTypeName();  // auto f(int a) -> decltype(a * 2)
+                else i_ = back;
                 d.mods.push_back(std::move(m));
                 continue;
             }
@@ -2861,7 +2909,8 @@ private:
                 t->unsized = m.unsized || !t->bound;
             } else {
                 t->kind = Type::Kind::Function;
-                t->inner = std::move(base);
+                bool autoBase = base && base->kind == Type::Kind::Struct && base->tag == "\x03" "auto";
+                t->inner = m.trailing && autoBase ? std::move(m.trailing) : std::move(base);
                 t->params = std::move(m.params);
                 t->variadic = m.variadic;
             }
@@ -3222,6 +3271,7 @@ private:
         std::vector<TParam> params;
         std::size_t start = 0;
         std::size_t end = 0;
+        std::string ns;  // the namespace it is declared in (N::M), for names its instances use
     };
     std::map<std::string, TDecl> ftmpl_;
     std::map<std::string, TDecl> ctmpl_;
@@ -3675,6 +3725,7 @@ private:
             return false;
         }
         TDecl td;
+        for (const std::string& n : ns_) td.ns += (td.ns.empty() ? "" : "::") + n;
         bool closedByShift = false;  // "class D = default_delete<T>>": the '>>' also ends the list
         while (!atEnd() && !isP(">") && !closedByShift) {
             TParam tp;
@@ -3943,6 +3994,16 @@ private:
             tag += argMangle(args[i]);
         }
         tag += ">";
+        if (tag.find('\x02') != std::string::npos && !structs_.count(tag)) {
+            // An instance that depends on template parameters (tuple<T &...> in tie's prototype,
+            // tuple<H, T...> in a partial specialization's pattern): only the tag is needed, for
+            // deduction and matching; its members are made per real instance. (Making each such
+            // class, with the tail classes it holds, for every pack length took seconds a file.)
+            auto dep = ty(Type::Kind::Struct);
+            dep->tag = tag;
+            return dep;
+        }
+        if (!td.ns.empty()) instNamespaces()[tag] = td.ns;
         if (instInProgress_.count(tag)) {
             // The class names itself (Node<T> *next inside Node<T>): the tag stands for it.
             auto self = ty(Type::Kind::Struct);
@@ -4174,6 +4235,7 @@ private:
         TDecl td = it->second;
         std::size_t saved = i_;
         auto es = bindParams(td, r.args);
+        if (!td.ns.empty()) instNamespaces()[r.name] = td.ns;
         instFnName_ = r.name;
         i_ = td.start;
         std::size_t mark = tu.decls.size();
@@ -6185,6 +6247,19 @@ private:
                     else if (isP(toks_[j], ";") || isP(toks_[j], "{")) break;
                 }
                 if (j < toks_.size() && depth <= 0) k = j;
+                if (k + 2 < toks_.size() && isP(toks_[k + 1], "::") && toks_[k + 2].kind == Tok::Ident) {
+                    // (X<T>::name ...): a member type is a cast only where a type may end, and
+                    // before ')' only when an operand follows; (is_same<U, T>::value ? 1 : 0) is
+                    // an expression.
+                    while (k + 2 < toks_.size() && isP(toks_[k + 1], "::") && toks_[k + 2].kind == Tok::Ident) k += 2;
+                    if (k + 1 >= toks_.size()) return false;
+                    const Token& n = toks_[k + 1];
+                    if (isP(n, "*") || isP(n, "&") || isP(n, "&&")) return true;
+                    if (!isP(n, ")") || k + 2 >= toks_.size()) return false;
+                    const Token& a = toks_[k + 2];
+                    return a.kind == Tok::Ident || a.kind == Tok::Int || a.kind == Tok::Float || isP(a, "(") ||
+                           isKwTok(a, "this");
+                }
             }
             // (T(x) ...) and (T{...} ...) are a functional cast or a temporary inside parentheses,
             // not a cast; (T(*)(int)) is still a cast to a pointer to function.
@@ -6836,6 +6911,12 @@ private:
                     e->text = instTd->tag + "::" + cur().text;
                     advance();
                     return e;
+                }
+                if (isP("{") && instTd->kind == Type::Kind::Struct && !instTd->tag.empty()) {
+                    // Name<args>{...}: a temporary of the instance, list-initialized ([expr.type.conv]).
+                    Pos pos = here();
+                    auto list = parseInitializer();
+                    return braceTemp(*instTd, std::move(list->kids), pos);
                 }
                 if (!isP("(") || instTd->kind != Type::Kind::Struct) {
                     i_ = saved;

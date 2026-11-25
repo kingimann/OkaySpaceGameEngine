@@ -164,9 +164,11 @@ private:
         case Type::Kind::Pointer:
         case Type::Kind::Reference: return 8;
         case Type::Kind::Array: {
-            int n = 0;
-            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
-            return n * sizeOf(t->inner.get());
+            // The length is a constant expression ([dcl.array] p1): double s[sizeof(P) / 8 + 1] in a
+            // class was taken as no elements when it was not a literal.
+            std::int64_t n = 0;
+            if (t->bound && !constInt(*t->bound, n)) n = 0;
+            return static_cast<int>(n) * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
             auto fields = layoutOf(t);
@@ -464,7 +466,7 @@ private:
 
     // An integer constant expression of a global initializer (ISO C 6.6, C++ [expr.const]):
     // literals, unary and binary operators and casts to an integer type.
-    bool constInt(const Expr& e, std::int64_t& out) {
+    static bool constInt(const Expr& e, std::int64_t& out) {
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
@@ -582,7 +584,7 @@ private:
         init = std::move(lit);
     }
 
-    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
             return true;

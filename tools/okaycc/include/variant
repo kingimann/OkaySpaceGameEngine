@@ -1,0 +1,119 @@
+// <variant> for okay-cc (ISO/IEC 14882 [variant]). Our own header. A variant holds its index and
+// raw storage as large as all its alternatives together (an upper bound of the largest; aligned
+// for double); the alternative there is built with placement new and destroyed by its index. Work
+// that depends on the index walks the pack with a comma fold and a counter (okay-cc copies the
+// class once per pack length, src/packs.cpp: at most fifteen alternatives). A value converts to
+// the alternative of exactly its type ([variant.ctor] chooses by overload resolution; here a
+// value of no alternative's type leaves the variant without a value, index() == variant_npos).
+// Not done: visit, emplace, get<I> and get_if<I> by index, comparisons, moves (a move copies).
+#pragma once
+#include <cstddef>
+#include <exception>
+#include <new>
+#include <type_traits>
+#include <utility>
+namespace std {
+struct monostate {
+    bool operator==(const monostate &) const { return true; }
+    bool operator!=(const monostate &) const { return false; }
+    bool operator<(const monostate &) const { return false; }
+};
+
+class bad_variant_access : public exception {
+public:
+    const char *what() const { return "bad variant access"; }
+};
+
+static const unsigned long variant_npos = (unsigned long)-1;
+
+// __vindex<U, variant<T...>>::value(): the index of the alternative of type U, or -1.
+template <typename U, typename V>
+struct __vindex;
+
+template <typename... T>
+class variant {
+public:
+    int __i;
+    double __s[(sizeof(char) + ... + sizeof(T)) / sizeof(double) + 1];
+
+    variant() : __i(0) {
+        int j = 0;
+        ((j++ == 0 ? (void)new ((void *)__s) T() : (void)0), ...);
+    }
+    variant(const variant<T...> &o) : __i(o.__i) { __copy(o); }
+    template <typename U>
+    variant(const U &u) : __i(__vindex<U, variant<T...>>::value()) {
+        if (__i >= 0) new ((void *)__s) U(u);
+    }
+    ~variant() { __destroy(); }
+    variant<T...> &operator=(const variant<T...> &o) {
+        if (this != &o) {
+            __destroy();
+            __i = o.__i;
+            __copy(o);
+        }
+        return *this;
+    }
+    template <typename U>
+    variant<T...> &operator=(const U &u) {
+        int k = __vindex<U, variant<T...>>::value();
+        if (k >= 0 && k == __i) {
+            *(U *)(void *)__s = u;
+            return *this;
+        }
+        __destroy();
+        __i = k;
+        if (k >= 0) new ((void *)__s) U(u);
+        return *this;
+    }
+    unsigned long index() const { return __i < 0 ? variant_npos : (unsigned long)__i; }
+    bool valueless_by_exception() const { return __i < 0; }
+    void swap(variant<T...> &o) {
+        variant<T...> t(o);
+        o = *this;
+        *this = t;
+    }
+
+    void __copy(const variant<T...> &o) {
+        int j = 0;
+        ((j++ == __i ? (void)new ((void *)__s) T(*(const T *)(const void *)o.__s) : (void)0), ...);
+    }
+    void __destroy() {
+        int j = 0;
+        ((j++ == __i ? (void)((T *)(void *)__s)->~T() : (void)0), ...);
+        __i = -1;
+    }
+};
+
+template <typename U, typename... T>
+struct __vindex<U, variant<T...>> {
+    static int value() {
+        int j = 0;
+        int r = -1;
+        ((r = (r < 0 && is_same<U, T>::value) ? j : r, ++j), ...);
+        return r;
+    }
+};
+
+template <typename V>
+struct variant_size;
+template <typename... T>
+struct variant_size<variant<T...>> : integral_constant<size_t, sizeof...(T)> {};
+
+template <typename U, typename V>
+bool holds_alternative(const V &v) {
+    return v.__i >= 0 && v.__i == __vindex<U, V>::value();
+}
+// get_if<U>(&v): the alternative of type U, or null if v holds another.
+template <typename U, typename V>
+U *get_if(V *v) {
+    if (!v || v->__i < 0 || v->__i != __vindex<U, typename remove_cv<V>::type>::value()) return nullptr;
+    return (U *)(void *)v->__s;
+}
+// get<U>(v): the alternative of type U; bad_variant_access if v holds another.
+template <typename U, typename V>
+U &get(V &v) {
+    if (v.__i < 0 || v.__i != __vindex<U, typename remove_cv<V>::type>::value()) throw bad_variant_access();
+    return *(U *)(void *)v.__s;
+}
+}  // namespace std

@@ -22,6 +22,10 @@ namespace compiler {
 namespace {
 
 const int kMaxPack = 8;
+// A primary class template with a pack (expandPrimaryClass) takes up to kMaxClassPack - 1 types
+// (variant<monostate, bool, int, ...> of the script values has twelve), and the templates that
+// name such a class are copied up to that length too.
+const int kMaxClassPack = 16;
 
 bool isPunct(const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; }
 bool isWord(const Token& t, const char* s) { return t.isName() && t.text == s; }
@@ -123,17 +127,29 @@ private:
     }
 
     // The list element around d[i]: [a, b), stopping at a ',' or an unmatched bracket at depth 0.
+    // Brackets and angle brackets are counted apart, and angle brackets only outside brackets: a
+    // '<' inside (r < 0 && is_same<U, T>::value) is never taken for the start of the element.
     std::size_t elemStart(const std::vector<Token>& d, std::size_t i) const {
-        int depth = 0;
+        int paren = 0;
+        int angle = 0;
         std::size_t j = i;
         while (j > 0) {
             const Token& t = d[j - 1];
-            if (isClose(t) || isPunct(t, ">")) ++depth;
-            else if (isPunct(t, ">>")) depth += 2;
-            else if (isOpen(t) || isPunct(t, "<")) {
-                if (depth == 0) break;
-                --depth;
-            } else if (depth == 0 && (isPunct(t, ",") || isPunct(t, ";"))) break;
+            if (isClose(t)) {
+                ++paren;
+            } else if (isOpen(t)) {
+                if (paren == 0) break;
+                --paren;
+            } else if (paren == 0 && isPunct(t, ">")) {
+                ++angle;
+            } else if (paren == 0 && isPunct(t, ">>")) {
+                angle += 2;
+            } else if (paren == 0 && isPunct(t, "<")) {
+                if (angle == 0) break;  // the '<' of the argument list the element is in (Foo<T...>)
+                --angle;
+            } else if (paren == 0 && angle == 0 && (isPunct(t, ",") || isPunct(t, ";"))) {
+                break;
+            }
             --j;
         }
         return j;
@@ -332,11 +348,11 @@ bool tooLong(const std::vector<Token>& d, const std::map<std::string, std::size_
 
 // A primary class template whose last parameter is a type pack (template <class H, class... T>
 // struct tuple, [temp.variadic] p1, [temp.class]) at toks[i..end). There can be only one primary
-// template of a name, so it becomes one with kMaxPack defaulted parameters in place of the pack
+// template of a name, so it becomes one with kMaxClassPack defaulted parameters in place of the pack
 // (each default the type ::__okay_pack_end, a type no program names), and every pack length
-// 0..kMaxPack-1 becomes a partial specialization ([temp.spec.partial]) whose missing arguments are
+// 0..kMaxClassPack-1 becomes a partial specialization ([temp.spec.partial]) whose missing arguments are
 // those defaults: tuple<int, char> is tuple<int, char, __okay_pack_end, ...> and picks the copy of
-// length 2. A pack may so hold at most kMaxPack - 1 types. A declaration without a body declares
+// length 2. A pack may so hold at most kMaxClassPack - 1 types. A declaration without a body declares
 // only the primary; the partial specializations a program writes for it are then copied per length as before. Returns false (left alone) for a
 // value or template pack or a pack that is not last.
 bool expandPrimaryClass(const std::vector<Token>& toks, std::size_t i, std::size_t gt, std::size_t end,
@@ -361,12 +377,12 @@ bool expandPrimaryClass(const std::vector<Token>& toks, std::size_t i, std::size
         fixedNames.push_back(paramName(toks, params[p].first, params[p].second));
         if (fixedNames.back().empty()) return false;
     }
-    arity = fixedNames.size() + kMaxPack;
+    arity = fixedNames.size() + kMaxClassPack;
     const Token& at = toks[i];
     auto packName = [&](int j) { return like(at, Tok::Ident, pack + "__pk" + std::to_string(j)); };
-    // The primary: the header with the pack's place taken by kMaxPack defaulted parameters.
+    // The primary: the header with the pack's place taken by kMaxClassPack defaulted parameters.
     std::vector<Token> head(toks.begin() + static_cast<long>(i), toks.begin() + static_cast<long>(last.first));
-    for (int j = 0; j < kMaxPack; ++j) {
+    for (int j = 0; j < kMaxClassPack; ++j) {
         if (j > 0) head.push_back(like(at, Tok::Punct, ","));
         head.push_back(like(at, Tok::Keyword, "class"));
         head.push_back(packName(j));
@@ -386,7 +402,7 @@ bool expandPrimaryClass(const std::vector<Token>& toks, std::size_t i, std::size
     // One partial specialization per pack length. A pack place never takes __okay_pack_end in
     // matching or deduction (packPlaceGetsEnd), so only the copy of the right length matches.
     std::vector<Token> decl(toks.begin() + static_cast<long>(i), toks.begin() + static_cast<long>(end));
-    for (int k = 0; k < kMaxPack; ++k) {
+    for (int k = 0; k < kMaxClassPack; ++k) {
         Expander ex(packs, k);
         std::vector<Token> copy = ex.run(decl);
         // The copy's header ends at the '>' before the class key; its name follows the key.
@@ -482,7 +498,11 @@ std::vector<Token> expandPacks(const std::vector<Token>& toks) {
         }
         std::size_t end = declEnd(toks, gt + 1);
         std::vector<Token> decl(toks.begin() + static_cast<long>(i), toks.begin() + static_cast<long>(end));
-        for (int k = kMaxPack; k >= 0; --k) {
+        int most = kMaxPack;
+        for (std::size_t k = 0; k + 1 < decl.size(); ++k)
+            if (decl[k].kind == Tok::Ident && isPunct(decl[k + 1], "<") && primaryArity.count(decl[k].text))
+                most = kMaxClassPack;
+        for (int k = most; k >= 0; --k) {
             Expander ex(packs, k);
             std::vector<Token> copy = ex.run(decl);
             if (tooLong(copy, primaryArity)) continue;

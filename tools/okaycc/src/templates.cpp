@@ -30,6 +30,11 @@ std::vector<InstReq>& instRequests() {
     return v;
 }
 
+std::map<std::string, std::string>& instNamespaces() {
+    static std::map<std::string, std::string> m;
+    return m;
+}
+
 bool& ehActive() {
     static bool on = false;
     return on;
@@ -240,7 +245,7 @@ std::unique_ptr<Type> typeFromMangle(const std::string& m) {
     }
     switch (c) {
     case 'v': return make(Type::Kind::Void);
-    case 'b': return make(Type::Kind::Bool);
+    case 'b': { auto t = make(Type::Kind::Bool); t->unsign = true; return t; }  // as the parser makes bool
     case 'c': return make(Type::Kind::Char);
     case 'h': { auto t = make(Type::Kind::Char); t->unsign = true; return t; }
     case 's': return make(Type::Kind::Short);

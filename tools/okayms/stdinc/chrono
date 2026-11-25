@@ -81,6 +81,9 @@ public:
 struct steady_clock {
     typedef nanoseconds duration;
     typedef time_point<steady_clock, nanoseconds> time_point_type;
+    // now() is a function template (made only where it is called; Round 30): okay-ms emits every inline function of a
+    // file, so a plain inline now() made every file that includes <chrono> (and <filesystem>) import the counter.
+    template <class Unused = void>
     static time_point<steady_clock, nanoseconds> now() {
         long long counter = 0;
         long long frequency = 1;
@@ -96,6 +99,7 @@ struct steady_clock {
 };
 struct system_clock {
     typedef nanoseconds duration;
+    template <class Unused = void>
     static time_point<system_clock, nanoseconds> now() {
         unsigned long long ft = 0;
         GetSystemTimeAsFileTime(&ft);

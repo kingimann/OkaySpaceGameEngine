@@ -9,13 +9,13 @@
 
 #include "program_check.hpp"
 
+#include <algorithm>
 #include <string>
 
 namespace {
 using okayms_test::Tally;
 const okayms_test::ProgramRun kRun{"r30", {}};
-const okayms_test::ProgramRun kRunClock{
-    "r30", {"GetSystemTimeAsFileTime", "QueryPerformanceCounter", "QueryPerformanceFrequency"}};
+const okayms_test::ProgramRun kRunClock{"r30", {"GetSystemTimeAsFileTime"}};
 }  // namespace
 
 static const char* kAlloc = okayms_test::bump_alloc();
@@ -299,6 +299,22 @@ static void r30_local_before_shadow(Tally& tally) {
     std::printf("r30_local_before_shadow\n");
     okayms_test::run_both(kRun, tally, "local_before_shadow", std::string(kAlloc) + R"OKMS(
 int use(int v) { return v + 1; }
+// Sibling loops with their own i in a constructor (HmacSha256's constructor in Sha256.hpp): the constructor's body had
+// scope numbers one apart from the code generator's, so the later rule picked the wrong i (found by the engine crypto
+// link test while this round's rule was written).
+struct Pads {
+  unsigned char a[8], b[8];
+  Pads(unsigned long long n) {
+    unsigned char k[8] = {0};
+    if (n > 8) k[0] = 9;
+    else for (unsigned long long i = 0; i < n; ++i) k[i] = (unsigned char)(i + 1);
+    unsigned char pad[8];
+    for (int i = 0; i < 8; ++i) pad[i] = k[i] ^ 0x36;
+    for (int i = 0; i < 8; ++i) a[i] = pad[i];
+    for (int i = 0; i < 8; ++i) pad[i] = k[i] ^ 0x5c;
+    for (int i = 0; i < 8; ++i) b[i] = pad[i];
+  }
+};
 int entry(void) {
   int d = 1;
   int x = 0;
@@ -322,6 +338,8 @@ int entry(void) {
     CK(3, k == 15 && y == 14);
   }
   CK(4, k == 7);
+  Pads p(3);
+  CK(5, p.a[0] == (1 ^ 0x36) && p.a[3] == 0x36 && p.b[2] == (3 ^ 0x5c) && p.b[7] == 0x5c);
   return 0;
 }
 )OKMS", 0);
@@ -364,6 +382,68 @@ int entry(void) {
   CK(1, a == 6.0);
   CK(2, b == 0.5);
   CK(3, c == (1LL << 40));
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Smaller pieces found on the way: "255.f" and "2." are floating literals ([lex.fcon]; "255.f" was read as 255 . f);
+// `c ? "text" : std::string(...)` is a std::string ([expr.cond]); a member function template with a braced default
+// argument of a class-template type (MatchResults.hpp's `const std::vector<std::uint32_t>& winners = {}`); an
+// enumeration of one class no longer hides a nested class of the same name in another class (ModelAnimator's
+// `enum Slot` against Inventory::Slot{}).
+static void r30_pieces(Tally& tally) {
+    std::printf("r30_pieces\n");
+    okayms_test::run_both(kRun, tally, "pieces", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <vector>
+#include <cstdint>
+float clampf(float v) { return v < 0.f ? 0.f : (v > 255.f ? 255.f : v); }
+int pick_len(bool kb, bool any, int c) {
+  std::string j = kb ? "keyboard" : any ? "any" : "pad" + std::to_string(c);
+  return (int)j.size() * 10 + j[0] - 'a';
+}
+struct Report {
+  int n = 0;
+  template <class Roster>
+  static Report From(const Roster& roster, std::uint32_t host, const std::vector<std::uint32_t>& winners = {}) {
+    Report r;
+    r.n = (int)roster.size() * 100 + (int)winners.size() * 10 + (int)host;
+    return r;
+  }
+};
+struct Animator { enum Slot { SlotIdle, SlotWalk, SlotCount }; int s = SlotWalk; };
+struct Inventory {
+  struct Slot { std::string item; int count = 0; };
+  std::vector<Slot> slots;
+  int Remove(const std::string& item, int n) {
+    for (auto& s : slots) {
+      if (n <= 0) break;
+      if (s.item != item) continue;
+      int take = s.count < n ? s.count : n;
+      s.count -= take; n -= take;
+      if (s.count <= 0) s = Slot{};
+    }
+    return n;
+  }
+};
+int entry(void) {
+  auto cl = [](float v) { return v < 0.f ? 0.f : (v > 255.f ? 255.f : v); };
+  CK(1, cl(-3.0f) == 0.0f && cl(300.0f) == 255.0f && cl(7.0f) == 7.0f && clampf(300.f) == 255.f);
+  double d = 5.;
+  CK(2, d == 5.0 && 1.e2 == 100.0 && 3.F == 3.0f && sizeof(2.f) == 4 && sizeof(2.) == 8);
+  CK(3, pick_len(true, false, 3) == 80 + 'k' - 'a' && pick_len(false, true, 3) == 30 &&
+            pick_len(false, false, 12) == 50 + 'p' - 'a');
+  std::vector<int> roster{1, 2};
+  std::vector<std::uint32_t> w{7, 8, 9};
+  CK(4, Report::From(roster, 4).n == 204 && Report::From(roster, 1, w).n == 231);
+  Inventory inv;
+  Inventory::Slot a;
+  a.item = "x";
+  a.count = 3;
+  inv.slots.push_back(a);
+  Animator an;
+  CK(5, inv.Remove("x", 5) == 2 && inv.slots[0].count == 0 && inv.slots[0].item.empty() && an.s == 1);
   return 0;
 }
 )OKMS", 0);
@@ -439,7 +519,8 @@ static void r30_reloc_overflow(Tally& tally) {
 }
 
 // A program whose data section has more than 65535 relocations (a table of 70000 function addresses), compiled by
-// okay-cl, linked by okay-link through the overflow form and run (the QuestLog.cpp class of survey failures).
+// okay-cl, written as a COFF object (the overflow form), read back, linked by okay-link and run (the QuestLog.cpp class of
+// survey failures: okay-cl refused to write such an object).
 static void r30_big_reloc_program(Tally& tally) {
     std::printf("r30_big_reloc_program\n");
     std::string src = std::string(kAlloc) + "int one(void) { return 1; }\nint two(void) { return 2; }\n"
@@ -447,7 +528,27 @@ static void r30_big_reloc_program(Tally& tally) {
     for (int i = 0; i < 70000; ++i) src += (i % 7 == 0) ? "two," : "one,";
     src += "};\nint entry(void) {\n  long long sum = 0;\n  for (int i = 0; i < 70000; ++i) sum += table[i]();\n"
            "  CK(1, sum == 80000);\n  CK(2, table[69999] == one && table[69993] == two);\n  return 0;\n}\n";
-    okayms_test::run_both(kRun, tally, "big_reloc_program", src, 0);
+    okayms::ObjectFile object;
+    okayms_test::run_both(kRun, tally, "big_reloc_program", src, 0, &object);
+    // The /O0 object through the file form, as okay-cl writes it and okay-link reads it.
+    size_t most = 0;
+    for (const okayms::Section& sec : object.sections) most = std::max(most, sec.relocations.size());
+    CHECK(tally, most > 65535);
+    const auto bytes = okayms::write_coff(object);
+    CHECK(tally, bytes.ok());
+    if (!bytes.ok()) {
+        std::fprintf(stderr, "  %s\n", bytes.error.c_str());
+        return;
+    }
+    const auto back = okayms::read_coff(bytes.value.data(), bytes.value.size());
+    CHECK(tally, back.ok());
+    if (!back.ok()) return;
+    const auto linked = okayms::link_executable({back.value}, okayms::LinkOptions{});
+    CHECK(tally, linked.ok());
+    if (!linked.ok()) return;
+    const std::string exe = "/tmp/okayms-r30/big_reloc_file.exe";
+    CHECK(tally, okayms_test::write_bytes(exe, linked.value));
+    CHECK(tally, okayms_test::wine_exit(exe) == 0);
 }
 
 int main(int argc, char** argv) {
@@ -464,7 +565,8 @@ int main(int argc, char** argv) {
     r30_local_before_shadow(tally);
     r30_fp_reference(tally);
     r30_lambda_instances(tally);
+    r30_pieces(tally);
     r30_reloc_overflow(tally);
     r30_big_reloc_program(tally);
-    return tally.finish(12);
+    return tally.finish(13);
 }

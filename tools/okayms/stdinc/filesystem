@@ -376,6 +376,7 @@ struct __okay_file_clock {
     typedef ratio<1, 10000000> period;
     typedef chrono::duration<long long, ratio<1, 10000000> > duration;
     static const bool is_steady = false;
+    template <class Unused = void>  // made only where it is called (see steady_clock::now in <chrono>)
     static chrono::time_point<__okay_file_clock, chrono::duration<long long, ratio<1, 10000000> > > now() {
         unsigned long long ft = 0;
         GetSystemTimeAsFileTime(&ft);
@@ -449,6 +450,8 @@ public:
     bool is_regular_file() const;
     bool is_directory(error_code& ec) const;
     bool is_regular_file(error_code& ec) const;
+    bool is_symlink() const;
+    bool is_symlink(error_code& ec) const;
     std::uintmax_t file_size() const;
     std::uintmax_t file_size(error_code& ec) const;
     file_time_type last_write_time() const;

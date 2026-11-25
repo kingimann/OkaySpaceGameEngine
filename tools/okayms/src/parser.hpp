@@ -1048,6 +1048,8 @@ struct Parser {
         Node name;
         name.kind = Node::Name;
         name.text = n;
+        // The locals declared so far (Node::vis): the name means one of them when it can (Round 30).
+        name.vis = local_seq + 1;
         return name;
     }
     Node node_addr(Node inner) const {
@@ -1545,6 +1547,7 @@ struct Parser {
         const int size = size_of(type);
         return size == 1 || size == 2 || size == 4 || size == 8;
     }
+    int local_seq = 0;  // locals declared so far, in the whole file (Local::seq)
     void place_local(std::vector<Local>* locals, Local local) {
         const int used = locals->empty() ? 0 : -locals->back().offset;
         int align = align_of(local.type);
@@ -1554,6 +1557,7 @@ struct Parser {
         const int aligned = (used + align - 1) & ~(align - 1);
         local.offset = -(aligned + size);
         local.scope = scope_depth;
+        local.seq = ++local_seq;
         locals->push_back(local);
     }
 
@@ -2353,7 +2357,8 @@ struct Parser {
             if (accept(TAssign)) {
                 // A default argument: read where it is declared, so its names mean what they mean here.
                 Node def_expr;
-                if ((is(TLBrace) && pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0) ||
+                // (A class-template type read as a pattern, `const std::vector<T>& v = {}`, has no class yet: tpat.)
+                if ((is(TLBrace) && pt.base == 3 && pt.pointers == 0 && (pt.struct_id >= 0 || pt.tpat >= 0)) ||
                     (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.find(cur().text) == typedefs.end() &&
                      at + 1 < tokens.size() && (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace))) {
                     // `= {}`, `= {a, b}` or `= Color(1, 1, 1, 1)`: a class object made for each call. The text is
@@ -2598,7 +2603,9 @@ struct Parser {
         if (i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TStar)
             return true;  // S::* in a pointer to member (Round 30)
         if (i + 3 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
-            (find_struct(tokens[i + 2].text) >= 0 || typedefs.count(tokens[i + 2].text) > 0) && tokens[i + 3].kind != TLParen)
+            (find_struct(tokens[i + 2].text) >= 0 || typedefs.count(tokens[i + 2].text) > 0 ||
+             structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0) &&
+            tokens[i + 3].kind != TLParen)
             return true;  // S::Nested names a nested class, enumeration or typedef of a plain struct
         if (i >= 1 && tokens[i - 1].kind == TLt && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen)
             return true;  // a function type as a template argument: std::function<S(int)> ([dcl.fct])
@@ -4857,14 +4864,15 @@ struct Parser {
             typedefs.erase(scoped_tds[k].name);
             if (scoped_tds[k].had) typedefs[scoped_tds[k].name] = scoped_tds[k].old;
         }
-        // An enumeration of this class whose name was already a type outside it (struct okay::Event beside
-        // HealthWatch::Event): the outer type is that name again after the class (Round 30). Without such a clash the
-        // name stays in the one table, as before.
+        // The enumerations of this class are its member types (def.tdefs): after the class the name means again what it
+        // meant before (Round 30: ModelAnimator's `enum Slot` hid Inventory::Slot in Inventory's members, and
+        // HealthWatch::Event hid struct okay::Event). The class's members, derived classes and members defined outside
+        // the class get them through def.tdefs (bind_class_tdefs).
         for (size_t k = enum_types_declared.size(); k-- > enum_types_from;) {
             const EnumDecl& ed = enum_types_declared[k];
             if (ed.nest != struct_nest) continue;
             if (ed.had) typedefs[ed.name] = ed.old;
-            else if (find_struct(ed.name) >= 0) typedefs.erase(ed.name);
+            else typedefs.erase(ed.name);
         }
         return true;
     }
@@ -5101,6 +5109,14 @@ struct Parser {
     }
 
     bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
+        // The body is a "scope" block around the user's block (below): the code generator opens a scope for it, so
+        // the parser opens one too, first, and the scope numbers of the locals match the generator's (Round 30:
+        // they were one apart in constructors and destructors, and of two locals of one name the wrong one was found).
+        struct ScopeGuard {
+            Parser& p;
+            explicit ScopeGuard(Parser& q) : p(q) { p.push_scope(); }
+            ~ScopeGuard() { p.pop_scope(); }
+        } scope_guard(*this);
         const StructDef def = structs[static_cast<size_t>(cls)];
         std::vector<Node> pre;
         std::vector<Node> post;

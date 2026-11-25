@@ -43,6 +43,8 @@ struct Gen {
     // function being generated, when line records are wanted.
     bool debug_lines = false;
     std::vector<std::pair<uint32_t, int>> lines;
+    // The line (of the preprocessed text) of the statement being generated, for error messages (Round 30).
+    int stmt_line = 0;
     std::vector<uint8_t> extra_pops;
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
@@ -94,16 +96,16 @@ struct Gen {
     // The local a name means here: of the visible locals of that name, the one of the innermost block (Round 29: a
     // local of an enclosing block declared later in the text no longer hides the inner block's own one; before, the
     // last declared visible local was taken). Within one block the last declared.
-    // vis (Node::vis, Round 30): when the name was read only the first vis locals were declared; one of those is taken
-    // when there is one, so `int d; { use(d); int d; }` reads the outer d before the inner one is declared.
+    // vis (Node::vis, Round 30): only locals with seq below it were declared when the name was read; one of those is
+    // taken when there is one, so `int d; { use(d); int d; }` reads the outer d before the inner one is declared.
     Local* find_local(const std::string& name, int vis = -1) {
         Local* best = nullptr;
         int best_steps = -1;
         for (int pass = vis >= 0 ? 0 : 1; pass < 2 && best == nullptr; ++pass) {
-            const int limit = pass == 0 ? std::min(vis, static_cast<int>(locals.size())) : static_cast<int>(locals.size());
-            for (int i = limit - 1; i >= 0; --i) {
+            for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
                 Local& local = locals[static_cast<size_t>(i)];
                 if (local.name != name) continue;
+                if (pass == 0 && local.seq >= vis) continue;
                 const int steps = scope_distance(local.scope);
                 if (steps < 0) continue;
                 if (best == nullptr || steps < best_steps) {

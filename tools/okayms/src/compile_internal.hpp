@@ -344,8 +344,8 @@ struct Node {
     bool imported = false;
     // Line of the preprocessed text where a statement starts. 0 is unknown.
     int line = 0;
-    // A name written in the source: how many locals of the function had been declared when it was read, or -1. Of two
-    // locals of one name the code generator takes one declared before the use ([basic.scope.pdecl], Round 30).
+    // A name read by the parser: the parser's count of declared locals (Local::seq) at that point, or -1. Of two locals
+    // of one name the code generator takes one declared before the name was read ([basic.scope.pdecl], Round 30).
     int vis = -1;
     std::vector<Node> kids;
 };
@@ -371,6 +371,9 @@ struct Local {
     // length or template argument; cval is its value in the type's width.
     bool has_cval = false;
     uint64_t cval = 0;
+    // When it was declared: the parser's running count of declared locals (place_local), 0 for one made otherwise.
+    // A name read before it (Node::vis) does not mean it (Round 30).
+    int seq = 0;
 };
 
 struct FuncDecl {

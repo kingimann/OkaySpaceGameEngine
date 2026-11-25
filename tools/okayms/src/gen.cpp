@@ -185,7 +185,19 @@ bool Gen::gen_addr(const Node& node) {
         if (!gen_expr(node)) return false;
         return gen_addr(node.kids[0]);
     }
-    error = "not an address";
+    // What the operand was, for the message (Round 30): the survey's "not an address" lines then say where to look.
+    std::string what;
+    switch (node.kind) {
+        case Node::Call: what = "a call of " + (node.text.empty() ? std::string("a function pointer") : node.text); break;
+        case Node::Name: what = "the name " + node.text; break;
+        case Node::IntLit: what = "a constant"; break;
+        case Node::StringLit: what = "a string"; break;
+        case Node::Binary: what = "a binary operator"; break;
+        case Node::Unary: what = "a unary operator or cast"; break;
+        case Node::Assign: what = "an assignment"; break;
+        default: what = "an expression"; break;
+    }
+    error = "not an address: " + what;
     return false;
 }
 
@@ -468,6 +480,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (node.line > 0 && node.kind != Node::Block) stmt_line = node.line;
     if (debug_lines && node.line > 0 && node.kind != Node::Block)
         lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {

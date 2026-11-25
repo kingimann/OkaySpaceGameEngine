@@ -399,8 +399,17 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             const int machine = src == 0 ? 1 : src == 1 ? 2 : src == 2 ? 8 : 9;
             gen.mov_regs(local.reg, machine);
         }
+        gen.stmt_line = 0;
         if (!gen.gen_stmt(fn.body)) {
-            *error = (gen.error.empty() ? std::string("codegen failed") : gen.error) + " (in " + fn.name + ")";
+            // "file:line: " of the statement when it is known (Round 30), as the parser's errors have.
+            std::string place;
+            if (gen.stmt_line > 0 && line_source.origin != nullptr && line_source.files != nullptr &&
+                static_cast<size_t>(gen.stmt_line) <= line_source.origin->size()) {
+                const auto& o = (*line_source.origin)[static_cast<size_t>(gen.stmt_line) - 1];
+                if (o.first >= 0 && static_cast<size_t>(o.first) < line_source.files->size())
+                    place = (*line_source.files)[static_cast<size_t>(o.first)] + ":" + std::to_string(o.second) + ": ";
+            }
+            *error = place + (gen.error.empty() ? std::string("codegen failed") : gen.error) + " (in " + fn.name + ")";
             return false;
         }
         if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});

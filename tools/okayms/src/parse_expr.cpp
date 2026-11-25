@@ -2185,7 +2185,7 @@ bool Parser::parse_unary(Node* out) {
         } else {
             out->kind = Node::Name;
             out->text = name;
-            if (cur_locals != nullptr) out->vis = static_cast<int>(cur_locals->size());
+            out->vis = local_seq + 1;
             if (!local_visible(name) && !names_function(name)) {
                 // std::hex used as a value: the namespace qualifier was dropped (namespaces are flat for names that
                 // are not called), so the function is found by its last name part when exactly one has it.
@@ -2768,9 +2768,20 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     out->kids.push_back(std::move(tern));
                     continue;
                 }
-                if (cur_locals != nullptr && typed && ta.base == 3 &&
+                const auto class_obj = [](const Type& t) {
+                    return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id >= 0;
+                };
+                // c ? "text" : std::string(...): one operand of a class and one that is not; the other is converted to
+                // the class ([expr.cond] 4.3, a converting constructor), so the result is an object of that class
+                // (Round 30: LocalPlayerInput.hpp's `kb ? "keyboard" : "pad" + std::to_string(n)`).
+                const bool mixed = cur_locals != nullptr && typed && class_obj(ta) != class_obj(tb) &&
+                                   (class_obj(ta) ? tb : ta).memptr < 0 &&
+                                   ((class_obj(ta) ? tb : ta).pointers > 0 || (class_obj(ta) ? tb : ta).is_array()) &&
+                                   structs[static_cast<size_t>((class_obj(ta) ? ta : tb).struct_id)].name == "string";
+                if (mixed && !class_obj(ta)) ta = tb;
+                if (mixed || (cur_locals != nullptr && typed && ta.base == 3 &&
                     ta.pointers == 0 && !ta.is_array() && tb.base == 3 && tb.pointers == 0 &&
-                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els))) {
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els)))) {
                     Local hidden;
                     hidden.name = "__tn" + std::to_string(tmp_count++);
                     hidden.type = ta;
@@ -2780,6 +2791,18 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     chosen.kind = Node::If;
                     chosen.kids.push_back(std::move(tern.kids[0]));
                     for (Node* branch : {&mid, &els}) {
+                        Type bt;
+                        if (mixed && static_type(*branch, &bt) && !class_obj(bt)) {
+                            // The operand that is not an object: the hidden object is made from it by a constructor.
+                            Node ctor_stmt;
+                            std::vector<Node> cargs;
+                            cargs.push_back(std::move(*branch));
+                            if (!special_call(ta.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs),
+                                              &ctor_stmt))
+                                return false;
+                            chosen.kids.push_back(std::move(ctor_stmt));
+                            continue;
+                        }
                         Node assign;
                         assign.kind = Node::Assign;
                         assign.op = TAssign;

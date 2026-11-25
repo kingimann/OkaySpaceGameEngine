@@ -159,23 +159,22 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
 template <class Draw>
 bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw) { return HostWindow(title, open, itemId, draw); }
 
+// The host of the sections drawn by OkayUI only (Project Settings' Player, Physics, Rendering, Tags and Layers): the body goes into the
+// ImGui window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so there is no Dear ImGui version to switch to when a
+// popup or a window in front covers it. `draw(x, y, w, h)` returns the body's height.
+template <class Draw>
+bool PanelSection(const char* itemId, Draw draw) {
+    static OkayUI::CapturedGeometry cap;            // scratch: the sections are drawn one after another
+    return okayuihost::HostPanelSection(itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap, [&](float x, float y, float w, float h) {
+        OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
+        MetricsFromImGui metrics_;
+        const float drawn = draw(x, y, w, h);
+        OkayUI::PopTextScale();
+        return drawn;
+    });
+}
+
 } // namespace
-
-bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
-    return HostSection("##okayui_tagslayers", [&](float x, float y, float w, float h) {
-        const okayuiscreens::TagsLayersResult r = okayuiscreens::DrawTagsLayers(model, state, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, r.popup};
-    });
-}
-
-bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent) {
-    return HostSection("##okayui_physics", [&](float x, float y, float w, float h) {
-        const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};   // no list in this section opens a popup
-    });
-}
 
 bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
                               okaypanels::ImportSettingsIntent& intent) {
@@ -191,22 +190,6 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::Post
         const okayuiscreens::PostProcessResult r = okayuiscreens::DrawPostProcess(model, x, y, w, h);
         intent = r.intent;
         return SectionDrawn{r.contentHeight, r.popup};
-    });
-}
-
-bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent) {
-    return HostSection("##okayui_player", [&](float x, float y, float w, float h) {
-        const okayuiscreens::PlayerSettingsResult r = okayuiscreens::DrawPlayerSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
-    });
-}
-
-bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent) {
-    return HostSection("##okayui_rendering", [&](float x, float y, float w, float h) {
-        const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
     });
 }
 
@@ -370,6 +353,17 @@ bool PanelWindow(const char* title, bool* open, const char*, Draw draw) {
     ImGui::End();
     return shown;
 }
+// A section: the body drawn at the cursor, then a placeholder as tall as it drew.
+template <class Draw>
+bool PanelSection(const char*, Draw draw) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+    const float h = draw(p.x, p.y, w, 20000.0f);
+    OkayUI::PopTextScale();
+    ImGui::Dummy(ImVec2(w, (h > 1.0f && h < 20000.0f) ? h : 8.0f));
+    return true;
+}
 } // namespace
 #else
 // A build without OkayUI (no okay_ui library): these windows do not exist there.
@@ -379,13 +373,13 @@ bool DrawHistoryOkayUI(bool*, const std::function<void(okaypanels::HistoryModel&
 bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&, ProblemsRects*) { return false; }
 bool DrawStatsOkayUI(bool*, const std::function<void(okaypanels::StatsModel&)>&) { return false; }
 bool DrawProfilerOkayUI(bool*, const std::function<void(okaypanels::ProfilerModel&)>&, okaypanels::ProfilerIntent&) { return false; }
-#endif
-bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
+#endif
 bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
-bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
-bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
 bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okaypanels::CompHeaderIntent&, bool*) { return false; }
@@ -470,6 +464,44 @@ bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::Profile
         intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
         if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
+    });
+}
+
+// Project Settings' Player, Physics, Rendering and Tags and Layers sections (docs/ui/own_ui_toolkit.md section 26): OkayUI only, each
+// in its place under its collapsing header inside the Dear ImGui window.
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
+    intent = okaypanels::TagsLayersIntent();
+    return PanelSection("##okayui_tagslayers", [&](float x, float y, float w, float h) {
+        const okayuiscreens::TagsLayersResult r = okayuiscreens::DrawTagsLayers(model, state, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent) {
+    intent = okaypanels::PhysicsSettingsIntent();
+    return PanelSection("##okayui_physics", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent) {
+    intent = okaypanels::PlayerSettingsIntent();
+    return PanelSection("##okayui_player", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PlayerSettingsResult r = okayuiscreens::DrawPlayerSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent) {
+    intent = okaypanels::RenderingSettingsIntent();
+    return PanelSection("##okayui_rendering", [&](float x, float y, float w, float h) {
+        const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
     });
 }
 

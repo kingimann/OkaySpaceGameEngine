@@ -419,12 +419,15 @@ int main() {
         ras.DrawImGui(); const Bitmap imPic = ras.bmp;
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
         CHECK(okRes.width.w > 0 && okRes.height.x > okRes.width.x + okRes.width.w);
-        // the same click on the Width "+" (the field's right end less the label and a step button) steps both by one
-        const UI::Rect wp = okRes.widthPlus;
-        ok.sim.Move(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
-        im.Click(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f, imBody);
-        if (okD.width != 1281 || imD.width != 1281) std::printf("width +: okayui %d imgui %d\n", okD.width, imD.width);
-        CHECK(okD.width == 1281 && imD.width == 1281);
+        // no steppers in either (main's plain five-digit fields): a click at the field's right end, where "+" used to be, changes
+        // neither value
+        const UI::Rect wf = okRes.width;
+        const float lw = UI::CalcTextWidth("Width") * okayuiscreens::kEditorTextScale + 8.0f;
+        const float cx = wf.x + wf.w - lw - 6.0f, cy = wf.y + wf.h * 0.5f;
+        ok.sim.Move(cx, cy); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(cx, cy, imBody);
+        if (okD.width != 1280 || imD.width != 1280) std::printf("width click: okayui %d imgui %d\n", okD.width, imD.width);
+        CHECK(okD.width == 1280 && imD.width == 1280);
         imD.width = okD.width = 1280;
         im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());

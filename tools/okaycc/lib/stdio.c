@@ -241,3 +241,62 @@ int fprintf(FILE *f, char *fmt, ...) {
 
 int remove(char *path) { return syscall(87, (long)path, 0, 0) < 0 ? -1 : 0; }
 int rename(char *from, char *to) { return syscall(82, (long)from, (long)to, 0) < 0 ? -1 : 0; }
+
+/* POSIX file descriptors (<fcntl.h>, <unistd.h>): open 2, close 3, read 0, lseek 8, fcntl 72,
+ * fsync 74, ftruncate 77, unlink 87, getpid 39, nanosleep 35, access 21 (the x86-64 Linux system
+ * call table). A failed call returns -1 and sets errno to the error number the kernel gave. */
+int *__okay_errno(void);
+static long sysResult(long r) {
+    if (r < 0 && r > -4096) {
+        *__okay_errno() = (int)-r;
+        return -1;
+    }
+    return r;
+}
+int open(char *path, int flags, ...) {
+    va_list ap;
+    int mode = 0;
+    if (flags & 64) { /* O_CREAT: the third argument is the mode */
+        va_start(ap, flags);
+        mode = va_arg(ap, int);
+        va_end(ap);
+    }
+    return (int)sysResult(syscall(2, (long)path, (long)flags, (long)mode));
+}
+int creat(char *path, int mode) { return open(path, 64 | 1 | 512, mode); }
+int close(int fd) { return (int)sysResult(syscall(3, (long)fd, 0, 0)); }
+long read(int fd, char *buf, long n) { return sysResult(syscall(0, (long)fd, (long)buf, n)); }
+long lseek(int fd, long off, int whence) { return sysResult(syscall(8, (long)fd, off, (long)whence)); }
+int fcntl(int fd, int cmd, ...) {
+    va_list ap;
+    long arg;
+    va_start(ap, cmd);
+    arg = va_arg(ap, long);
+    va_end(ap);
+    return (int)sysResult(syscall(72, (long)fd, (long)cmd, arg));
+}
+int fsync(int fd) { return (int)sysResult(syscall(74, (long)fd, 0, 0)); }
+int ftruncate(int fd, long len) { return (int)sysResult(syscall(77, (long)fd, len, 0)); }
+int unlink(char *path) { return (int)sysResult(syscall(87, (long)path, 0, 0)); }
+int access(char *path, int mode) { return (int)sysResult(syscall(21, (long)path, (long)mode, 0)); }
+int getpid(void) { return (int)syscall(39, 0, 0, 0); }
+struct __okay_timespec {
+    long sec;
+    long nsec;
+};
+int nanosleep(struct __okay_timespec *req, struct __okay_timespec *rem) {
+    return (int)sysResult(syscall(35, (long)req, (long)rem, 0));
+}
+int usleep(unsigned int us) {
+    struct __okay_timespec t;
+    t.sec = us / 1000000;
+    t.nsec = (long)(us % 1000000) * 1000;
+    return nanosleep(&t, 0);
+}
+unsigned int sleep(unsigned int s) {
+    struct __okay_timespec t;
+    t.sec = s;
+    t.nsec = 0;
+    nanosleep(&t, 0);
+    return 0;
+}

@@ -1,0 +1,54 @@
+// <condition_variable> for okay-cc (ISO/IEC 14882 [thread.condition]). Our own header, for the one
+// thread okay-cc programs have (<thread>): notify does nothing, as nobody is blocked; a wait with
+// a predicate that is false runs the std::threads that have not run yet, one at a time, until it
+// is true, and stops the program with a message if none is left (no other thread could ever make
+// it true); a wait without a predicate returns at once (a spurious wake-up, which the standard
+// allows); a timed wait sleeps for its time unless its predicate is already true.
+#pragma once
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <thread>
+namespace std {
+enum class cv_status { no_timeout, timeout };
+class condition_variable {
+public:
+    condition_variable() {}
+    void notify_one() {}
+    void notify_all() {}
+    void wait(unique_lock<mutex> &) { __okay_thread_run_one(); }
+    template <class Pred>
+    void wait(unique_lock<mutex> &, Pred pred) {
+        while (!pred())
+            if (!__okay_thread_run_one()) {
+                fputs("okay-cc: condition_variable::wait can never end (one thread)\n", stderr);
+                abort();
+            }
+    }
+    template <class R, class P>
+    cv_status wait_for(unique_lock<mutex> &, const std::chrono::duration<R, P> &d) {
+        if (__okay_thread_run_one()) return cv_status::no_timeout;
+        this_thread::sleep_for(d);
+        return cv_status::timeout;
+    }
+    template <class R, class P, class Pred>
+    bool wait_for(unique_lock<mutex> &, const std::chrono::duration<R, P> &d, Pred pred) {
+        while (!pred())
+            if (!__okay_thread_run_one()) {
+                this_thread::sleep_for(d);
+                return pred();
+            }
+        return true;
+    }
+    template <class C, class D>
+    cv_status wait_until(unique_lock<mutex> &lk, const std::chrono::time_point<C, D> &tp) {
+        return wait_for(lk, tp - C::now());
+    }
+    template <class C, class D, class Pred>
+    bool wait_until(unique_lock<mutex> &lk, const std::chrono::time_point<C, D> &tp, Pred pred) {
+        return wait_for(lk, tp - C::now(), pred);
+    }
+};
+typedef condition_variable condition_variable_any;
+}  // namespace std

@@ -1,0 +1,4 @@
+// <sstream> for okay-cc (ISO/IEC 14882 [sstream.syn]): the string streams. Our own header; every stream class is in
+// <__stream>.
+#pragma once
+#include <__stream>

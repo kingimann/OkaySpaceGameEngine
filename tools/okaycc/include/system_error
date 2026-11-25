@@ -1,0 +1,102 @@
+// <system_error> for okay-cc (ISO/IEC 14882 [syserr]). Our own header: error_code with one category,
+// the system's (Linux errno values, which are also the generic ones here), and system_error.
+// error_category is a plain class with the two names; custom categories are not done.
+#pragma once
+#include <stdexcept>
+#include <string>
+namespace std {
+class error_category {
+public:
+    explicit error_category(int k) : __k(k) {}
+    const char *name() const { return __k == 0 ? "generic" : "system"; }
+    string message(int v) const;
+    bool operator==(const error_category &o) const { return __k == o.__k; }
+    bool operator!=(const error_category &o) const { return __k != o.__k; }
+    int __k;
+};
+inline const error_category &generic_category() {
+    static error_category c(0);
+    return c;
+}
+inline const error_category &system_category() {
+    static error_category c(1);
+    return c;
+}
+// The messages of the errno values std::filesystem reports (Linux errno numbers; texts as the C
+// library prints them).
+inline string error_category::message(int v) const {
+    switch (v) {
+    case 0: return "Success";
+    case 1: return "Operation not permitted";
+    case 2: return "No such file or directory";
+    case 5: return "Input/output error";
+    case 9: return "Bad file descriptor";
+    case 12: return "Cannot allocate memory";
+    case 13: return "Permission denied";
+    case 17: return "File exists";
+    case 18: return "Invalid cross-device link";
+    case 20: return "Not a directory";
+    case 21: return "Is a directory";
+    case 22: return "Invalid argument";
+    case 28: return "No space left on device";
+    case 30: return "Read-only file system";
+    case 36: return "File name too long";
+    case 39: return "Directory not empty";
+    case 40: return "Too many levels of symbolic links";
+    default: return "Unknown error " + to_string(v);
+    }
+}
+enum class errc {
+    operation_not_permitted = 1,
+    no_such_file_or_directory = 2,
+    io_error = 5,
+    permission_denied = 13,
+    file_exists = 17,
+    not_a_directory = 20,
+    is_a_directory = 21,
+    invalid_argument = 22,
+    no_space_on_device = 28,
+    result_out_of_range = 34,
+    read_only_file_system = 30,
+    filename_too_long = 36,
+    directory_not_empty = 39,
+    not_supported = 95,
+    value_too_large = 75
+};
+class error_code {
+public:
+    error_code() : __v(0), __c(&system_category()) {}
+    error_code(int v, const error_category &c) : __v(v), __c(&c) {}
+    error_code(errc e) : __v((int)e), __c(&generic_category()) {}
+    void assign(int v, const error_category &c) {
+        __v = v;
+        __c = &c;
+    }
+    void clear() {
+        __v = 0;
+        __c = &system_category();
+    }
+    int value() const { return __v; }
+    const error_category &category() const { return *__c; }
+    string message() const { return __c->message(__v); }
+    explicit operator bool() const { return __v != 0; }
+    bool operator==(const error_code &o) const { return __v == o.__v && *__c == *o.__c; }
+    bool operator!=(const error_code &o) const { return !(*this == o); }
+    bool operator==(errc e) const { return __v == (int)e; }
+    bool operator!=(errc e) const { return __v != (int)e; }
+
+private:
+    int __v;
+    const error_category *__c;
+};
+inline error_code make_error_code(errc e) { return error_code((int)e, generic_category()); }
+class system_error : public runtime_error {
+public:
+    system_error(error_code ec, const string &what) : runtime_error(what + ": " + ec.message()), __ec(ec) {}
+    system_error(error_code ec) : runtime_error(ec.message()), __ec(ec) {}
+    const error_code &code() const { return __ec; }
+
+private:
+    error_code __ec;
+};
+}  // namespace std

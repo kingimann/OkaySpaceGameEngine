@@ -761,6 +761,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | no sound in a call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
+| no sound until a click | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | no warning before building | [33.2](20-35-planned.md#332-scene-validation) Scene validation |
 | no way to add my own look | [26.3](20-35-planned.md#263-custom-shaders) Custom shaders |
 | no way to draw a level with my art | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
@@ -862,6 +863,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | requests for console releases | [56.4](43-proposals.md#564-console-platforms) Console platforms |
 | Result: 8 of 8 cheats caught | [39.13](39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) Cheat simulator and hardening audit |
 | rigging did nothing | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
+| right-click opens the browser menu | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | rooms feel too big or small | [44.3](43-proposals.md#443-measuring-and-level-metrics) Measuring and level metrics |
 | rotation flips near straight up or down | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | rubber-banding or snapping back when I move online | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
@@ -872,6 +874,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | saved graph loads differently | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | saved over the wrong scene | [22.4](20-35-planned.md#224-backups) Backups |
 | saves are lost after an update | [37.8](37-platform-windowing.md#378-per-user-folders) Per-user folders |
+| saves gone after a reload | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | saves land next to the exe | [37.8](37-platform-windowing.md#378-per-user-folders) Per-user folders |
 | scatter makes the editor slow | [29.2](20-35-planned.md#292-vegetation-painting) Vegetation painting |
 | scene file broken and no older copy | [22.4](20-35-planned.md#224-backups) Backups |
@@ -1108,6 +1111,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the owner wants to try the game on an Xbox One | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
+| the page scrolls when pressing space | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | the panel is slow on a big project | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
 | the part rig is duplicated after reload | [4.9](04-characters-cameras.md#49-blocky-character-and-customization) Blocky Character and customization |

@@ -185,7 +185,7 @@ bool Parser::braced_temp(int bsid, Node* out) {
             }
             size_t k = 0;
             for (const Field& f : agg.fields) {
-                if (f.name == "__vptr") continue;
+                if (f.name.compare(0, 6, "__vptr") == 0) continue;
                 if (is(TRBrace)) break;
                 Node item;
                 if (is(TLBrace) && f.type.base == 3 && f.type.pointers == 0 && !f.type.is_array() && f.type.struct_id >= 0) {
@@ -759,9 +759,12 @@ bool Parser::static_type(const Node& node, Type* out) const {
             base = peel_array(base);
         }
         if (base.base != 3 || base.struct_id < 0 || base.struct_id >= static_cast<int>(structs.size())) return false;
-        for (const Field& field : structs[static_cast<size_t>(base.struct_id)].fields)
-            if (field.name == node.text) {
-                *out = field.type;
+        // The last field of the name: a member of the class hides a member of a base with the same name
+        // ([class.member.lookup]; Component::m_live and UIDamageNumbers::m_live), as the code generator reads it.
+        const std::vector<Field>& fs = structs[static_cast<size_t>(base.struct_id)].fields;
+        for (size_t k = fs.size(); k-- > 0;)
+            if (fs[k].name == node.text) {
+                *out = fs[k].type;
                 return true;
             }
         return false;
@@ -790,6 +793,18 @@ bool Parser::static_type(const Node& node, Type* out) const {
                 inner = peel_array(inner);
             }
             ++inner.pointers;
+            *out = inner;
+            return true;
+        }
+        if ((node.op == TMinus || node.op == TTilde) && inner.pointers == 0 && !inner.is_array() && inner.base != 3 &&
+            inner.base != 0) {
+            // -x and ~x ([expr.unary.op] 8, 10): the promoted type of x (std::max(-limit, x) deduces float).
+            inner.is_ref = false;
+            inner.is_const = false;
+            if (inner.base == 2 || inner.base == 4 || inner.is_bool) {
+                inner = Type{};
+                inner.base = 1;
+            }
             *out = inner;
             return true;
         }
@@ -1052,7 +1067,7 @@ bool Parser::parse_new(Node* out) {
                 const StructDef def = structs[static_cast<size_t>(ty.struct_id)];
                 size_t next_item = 0;
                 for (const Field& f : def.fields) {
-                    if (f.name == "__vptr") continue;
+                    if (f.name.compare(0, 6, "__vptr") == 0) continue;
                     const bool scalar = f.type.pointers > 0 || (f.type.base != 3 && !f.type.is_array());
                     if (next_item >= items.size()) {
                         if (!scalar) {
@@ -1466,7 +1481,7 @@ bool Parser::parse_unary(Node* out) {
     } else if (is(TIdent) && cur().text == "dynamic_cast" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
         // dynamic_cast<T*>(e) ([expr.dynamic.cast]): for a class T with virtual functions, a call of
         // std::__okay_dynamic_cast (<typeinfo>) with e and T's type information, read back as a T*. A cast to a base
-        // (or the same class) needs no check. Own limits: pointers only, single inheritance.
+        // (or the same class) needs no check. Own limits: pointers only, no virtual bases.
         next();
         next();
         Type ty;
@@ -1492,6 +1507,7 @@ bool Parser::parse_unary(Node* out) {
             return false;
         }
         if (from.pointers == 1 && from.base == 3 && from.struct_id >= 0 && derives_from(from.struct_id, ty.struct_id)) {
+            class_ptr_convert(&inner, ty);  // the base subobject (Round 29)
             *out = cast_node(ty, std::move(inner));  // to a base or the same class: no check ([expr.dynamic.cast] 5)
             return parse_postfix(out);
         }
@@ -1694,6 +1710,27 @@ bool Parser::parse_unary(Node* out) {
             // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
             // class has no member function of that name. Nested classes are kept under their plain name.
             const std::string member = name.substr(colons + 2);
+            if (is(TLBrace) && cur_locals != nullptr) {
+                // Outer::Inner{args} and Outer::Mid::Inner{args} (Round 29: Inventory::Slot{...}): the class nested in
+                // the named class, found by its parent (another class of the same plain name elsewhere is not taken).
+                int walk = scope_sid;
+                std::string rest = member;
+                while (walk >= 0) {
+                    const size_t step = rest.find("::");
+                    const std::string part = rest.substr(0, step);
+                    int nested = -1;
+                    for (size_t k = 0; k < structs.size(); ++k)
+                        if (structs[k].name == part && structs[k].parent == walk && !structs[k].incomplete)
+                            nested = static_cast<int>(k);
+                    walk = nested;
+                    if (step == std::string::npos) break;
+                    rest = rest.substr(step + 2);
+                }
+                if (walk >= 0) {
+                    if (!braced_temp(walk, out)) return false;
+                    return parse_postfix(out);
+                }
+            }
             bool member_fn = false;
             for (const Method& m : structs[static_cast<size_t>(scope_sid)].methods)
                 if (m.name == member) member_fn = true;
@@ -2200,6 +2237,7 @@ bool Parser::parse_unary(Node* out) {
             functional = k > at + 1 && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
         }
         if (type_ahead && !functional) {
+            const bool reinterp = cur().text == "(reinterpret";
             next();
             Type ty;
             bool imp = false;
@@ -2227,10 +2265,12 @@ bool Parser::parse_unary(Node* out) {
                 pt.rref = false;
                 pt.is_const = false;
                 pt.pointers += 1;
+                Node addr = node_addr(std::move(inner));
+                if (!reinterp) class_ptr_convert(&addr, pt, true);  // a base subobject, or the derived object around it
                 Node cast;
                 cast.kind = Node::Unary;
                 cast.type = pt;
-                cast.kids.push_back(node_addr(std::move(inner)));
+                cast.kids.push_back(std::move(addr));
                 *out = Node{};
                 out->kind = Node::Unary;
                 out->op = TStar;
@@ -2293,6 +2333,8 @@ bool Parser::parse_unary(Node* out) {
                 }
                 return parse_postfix(out);
             }
+            // (Base*)p and static_cast<Derived*>(b) with several bases: the address moves to the subobject or back.
+            if (!reinterp) class_ptr_convert(&inner, ty, true);
             out->kind = Node::Unary;
             out->type = ty;
             out->kids.push_back(std::move(inner));
@@ -2769,6 +2811,22 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             if (!operator_binary(op, out, &right, &handled)) return false;
             if (handled) continue;
         }
+        {
+            // p = derived; and p == derived with several bases (Round 29, [conv.ptr] 3, [expr.eq] 3): the pointer to
+            // the derived class is converted to the base pointer first.
+            Type lt, rt;
+            if (op == TAssign && static_type(*out, &lt)) {
+                lt.is_ref = false;
+                class_ptr_convert(&right, lt);
+            } else if ((op == TEq || op == TNe) && static_type(*out, &lt) && static_type(right, &rt)) {
+                lt.is_ref = false;
+                rt.is_ref = false;
+                if (lt.pointers == 1 && rt.pointers == 1 && lt.base == 3 && rt.base == 3) {
+                    class_ptr_convert(&right, lt);
+                    class_ptr_convert(out, rt);
+                }
+            }
+        }
         Node bin;
         const bool compound = is_compound_op(op);
         bin.kind = op == TAssign || compound ? Node::Assign : Node::Binary;
@@ -2946,7 +3004,7 @@ bool Parser::parse_type_trait(Node* out) {
         v = is_cls(a) && !structs[static_cast<size_t>(a.struct_id)].poly;
         if (v)
             for (const Field& f : structs[static_cast<size_t>(a.struct_id)].fields)
-                if (f.name != "__vptr") v = false;
+                if (f.name.compare(0, 6, "__vptr") != 0) v = false;
     } else if (which == "__is_final") {
         v = false;
     } else if (which == "__is_trivially_destructible") {

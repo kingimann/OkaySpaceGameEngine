@@ -4639,9 +4639,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
-# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
-# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
-add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): no shipped program starts the external curl program; WinHTTP on Windows,
+# our own client elsewhere. Fails and names the file for any curl spawn in engine/launcher/editor/player/server/shared/platform.
+add_test(NAME no_curl_spawn COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_no_curl.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt

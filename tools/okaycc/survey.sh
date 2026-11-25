@@ -9,6 +9,9 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 S="$HERE/build/survey"
 CC="${OKAYCC:-$HERE/build/okay-cc}"     # OKAYCC=path picks another build of okay-cc
 INC="${OKAYINC:-tools/okaycc/include}"  # and OKAYINC its headers
+# The include folders CMake gives okay_engine: its own, and okayscript_lang's PUBLIC one
+# (engine/CMakeLists.txt links okayscript_lang; okayscript/CMakeLists.txt).
+ENGINC=(-I engine/include -I okayscript/include)
 mkdir -p "$S"
 cd "$ROOT"
 
@@ -24,7 +27,7 @@ files = sorted(subprocess.check_output(['find', 'engine/src', '-name', '*.cpp'],
 needs = {}
 for f in files:
     for _ in range(120):
-        p = subprocess.run([cc, '--pp', '-I', 'engine/include', '-I', inc, '-I', stub, f],
+        p = subprocess.run([cc, '--pp', '-I', 'engine/include', '-I', 'okayscript/include', '-I', inc, '-I', stub, f],
                            cwd=root, capture_output=True, text=True)
         m = re.search(r'cannot find header "([^"]+)"', p.stderr)
         if not m:
@@ -48,7 +51,7 @@ OUT="${1:-$S/result.txt}"
 [[ "$OUT" = /* ]] || OUT="$OLDPWD/$OUT"
 : > "$OUT"
 find engine/src -name '*.cpp' | sort | while read -r f; do
-  err=$(timeout 30 "$CC" --obj "$S/o.o" -I engine/include -I "$INC" "$f" 2>&1 >/dev/null; echo "rc=$?")
+  err=$(timeout 30 "$CC" --obj "$S/o.o" "${ENGINC[@]}" -I "$INC" "$f" 2>&1 >/dev/null; echo "rc=$?")
   rc=${err##*rc=}; err=$(echo "$err" | grep -v '^rc=' | head -1)
   if [[ $rc != 0 && -z "$err" ]]; then err="exit $rc (timeout or crash)"; fi
   if [[ -z "$err" ]]; then echo "OK|$f" >> "$OUT"; else echo "ERR|$f|$err" >> "$OUT"; fi

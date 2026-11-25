@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "test_framework.hpp"
 #include "EditorLayoutMath.hpp"
 #include <cmath>
@@ -288,6 +289,19 @@ int main() {
         auto off = PlanToolbar(it, 150, false, 2, 10, 40);   // even the icons do not
         CHECK(off.overflowed > 0 && off.shown[0] && !off.shown.back());
         CHECK(off.used <= 150 - 40 + 1e-3);
+        // The Game view toolbar (2.903.8.27 was cut off at the right): its switches and the play state are planned with
+        // labels off; in a narrow view the last ones go into the "..." menu and the shown ones always fit the row.
+        {
+            std::vector<ToolbarItem> game = {{150, 150, 0}, {90, 90, 0}, {100, 100, 0}, {80, 80, 0}};   // capture, stats+..., physics, state
+            for (float a : {120.0f, 260.0f, 400.0f, 520.0f, 900.0f}) {
+                const ToolbarPlan gp = PlanToolbar(game, a, false, 8, 8, 30);
+                CHECK(gp.used <= a - 30 + 1e-3f);
+                CHECK(gp.overflowed == (int)std::count(gp.shown.begin(), gp.shown.end(), false));
+                for (std::size_t k = 1; k < game.size(); ++k) if (gp.shown[k]) CHECK(gp.shown[k - 1]);   // only the tail moves
+            }
+            CHECK(PlanToolbar(game, 900, false, 8, 8, 30).overflowed == 0);
+            CHECK(PlanToolbar(game, 260, false, 8, 8, 30).overflowed > 0);
+        }
         // Labels switched off: never label.
         CHECK(!PlanToolbar(it, 900, false, 2, 10, 40).labels());
         // More room never means fewer labels.

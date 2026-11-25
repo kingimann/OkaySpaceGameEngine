@@ -15,45 +15,46 @@ int main() {
     // Default: open, no manual choice.
     SidebarState s; CHECK(!s.folded && !s.manual && SidebarToPref(s) == 0);
     CHECK(SidebarWidth(s, 1200) == kSidebarOpenW && SidebarWidth(SidebarState{true, true}, 1200) == kSidebarStripW);
-    // The page area always keeps its minimum: a narrow open list shrinks, never below the strip; folding frees width.
-    for (float w : {400.0f, 500.0f, 640.0f, 700.0f, 900.0f, 1600.0f}) {
-        SidebarState o; const float sw = SidebarWidth(o, w);
-        CHECK(sw >= kSidebarStripW && sw <= kSidebarOpenW);
-        if (w >= kMinPageAreaW + kSidebarStripW) CHECK(PageAreaWidth(o, w) >= kMinPageAreaW);
-        SidebarState f{true, true}; CHECK(PageAreaWidth(f, w) >= PageAreaWidth(o, w));
-        CHECK(PageAreaWidth(f, w) == w - kSidebarStripW);
+    // Never cut: the open list is as wide as its text needs and never shrinks below that, at any window width.
+    const float longText = 230.0f;   // a long name or hint, measured in the current font
+    const float need = SidebarOpenWidth(longText, 1.0f, 30.0f);
+    CHECK(need >= kIconColW + longText + 30.0f && need > kSidebarOpenW);
+    CHECK(SidebarOpenWidth(10.0f) == kSidebarOpenW);   // short text: the 196 px minimum
+    for (float w : {300.0f, 400.0f, 500.0f, 640.0f, 700.0f, 900.0f, 1600.0f}) {
+        SidebarState o; CHECK(SidebarWidth(o, w, 1.0f, need) == need);                // open: always the full width, text fits
+        SidebarState f{true, true}; CHECK(SidebarWidth(f, w, 1.0f, need) == kSidebarStripW);
+        CHECK(PageAreaWidth(f, w, 1.0f, need) >= PageAreaWidth(o, w, 1.0f, need));
+        // Automatic rule: either the list is folded to icons, or the open list AND a usable page area fit.
+        SidebarState a; SidebarAuto(a, w, 1.0f, need);
+        CHECK(a.folded || PageAreaWidth(a, w, 1.0f, need) >= kMinPageAreaW);
     }
-    CHECK(SidebarWidth(SidebarState{}, 900) == kSidebarOpenW && SidebarWidth(SidebarState{}, 560) == 140);
-    // UI scale: every size grows with it, the page area keeps its (scaled) minimum, folding thresholds scale too.
+    // The fold line moves out when the text needs a wider list.
+    CHECK(FoldBelowWidth(1.0f, 0.0f) == kFoldBelowW && FoldBelowWidth(1.0f, need) >= need + kMinPageAreaW);
+    // UI scale: every size grows with it, the folding thresholds too.
     for (float sc : {1.0f, 1.25f, 1.5f, 2.0f}) {
         SidebarState o; CHECK(SidebarWidth(o, 3000, sc) == kSidebarOpenW * sc);
         CHECK(SidebarWidth(SidebarState{true, true}, 3000, sc) == kSidebarStripW * sc);
-        for (float w : {500.0f, 900.0f, 1400.0f}) { const float sw = SidebarWidth(o, w, sc); CHECK(sw >= kSidebarStripW * sc && sw <= kSidebarOpenW * sc); }
         SidebarState a; SidebarAuto(a, kFoldBelowW * sc - 1, sc); CHECK(a.folded);
         SidebarAuto(a, kUnfoldAboveW * sc + 1, sc); CHECK(!a.folded);
         CHECK(RowHeight(sc, 15.0f * sc) >= 2 * 15.0f * sc);
         CHECK(StripRowHeight(sc, 15.0f * sc) >= 15.0f * sc);
     }
-    // Text is cut with "..." so it never runs out of its row.
-    const auto mw = [](const std::string& t) { return (float)t.size() * 7.0f; };
-    CHECK(FitText("Easy", 100, mw) == "Easy");
-    { const std::string f = FitText("Fences, buildings, cars", 100, mw); CHECK(f.size() * 7 <= 100 && f.size() > 3 && f.substr(f.size() - 3) == "..."); }
-    CHECK(FitText("Hello", 10, mw).empty());
-    for (float w : {30.0f, 60.0f, 90.0f, 140.0f}) CHECK(mw(FitText("Make something big", w, mw)) <= w);
+    // The owner's case (2.903.8.27): a docked Modeling window about 1000 px wide at 125 % shows the full names.
+    { SidebarState a; SidebarAuto(a, 1000.0f, 1.25f, SidebarOpenWidth(170.0f * 1.25f, 1.25f, 30.0f)); CHECK(!a.folded); }
     // Greyed pages say why; usable ones say nothing.
     CHECK(std::string(PageDisabledReason(false, false)).empty() && std::string(PageDisabledReason(true, true)).empty());
     CHECK(std::string(PageDisabledReason(true, false)).find("model") != std::string::npos);
     // Toggle is a manual choice, both ways.
     SidebarToggle(s); CHECK(s.folded && s.manual); SidebarToggle(s); CHECK(!s.folded && s.manual);
-    // Automatic rule with hysteresis: fold below 760, unfold above 840, nothing in between.
+    // Automatic rule with hysteresis: fold below 660, unfold above 740, nothing in between.
     SidebarState a;
     SidebarAuto(a, 1000); CHECK(!a.folded);
-    SidebarAuto(a, 770); CHECK(!a.folded);               // still open just above the fold line
-    SidebarAuto(a, 759); CHECK(a.folded && !a.manual);
-    SidebarAuto(a, 790); CHECK(a.folded);                // small growth: stays folded
-    SidebarAuto(a, 770); SidebarAuto(a, 800); SidebarAuto(a, 750); CHECK(a.folded);   // wobbling inside the band never flips it
-    SidebarAuto(a, 841); CHECK(!a.folded && !a.manual);
-    SidebarAuto(a, 800); CHECK(!a.folded);               // and stays open
+    SidebarAuto(a, 670); CHECK(!a.folded);               // still open just above the fold line
+    SidebarAuto(a, 659); CHECK(a.folded && !a.manual);
+    SidebarAuto(a, 690); CHECK(a.folded);                // small growth: stays folded
+    SidebarAuto(a, 670); SidebarAuto(a, 700); SidebarAuto(a, 650); CHECK(a.folded);   // wobbling inside the band never flips it
+    SidebarAuto(a, 741); CHECK(!a.folded && !a.manual);
+    SidebarAuto(a, 700); CHECK(!a.folded);               // and stays open
     // A manual choice wins over the automatic rule, in both directions.
     SidebarState m; SidebarToggle(m);                    // folded by choice
     SidebarAuto(m, 2000); CHECK(m.folded);
@@ -71,16 +72,19 @@ int main() {
         CHECK(okay::edlayout::ViewPrefs::Parse("modelingsidebarfolded 2\n").modelingSidebar == 2);
         CHECK(okay::edlayout::ViewPrefs::Parse("modelingsidebarfolded 9\n").modelingSidebar == 0);
     }
-    // The folded strip: every page has a short unique label (2 letters) so clicking one opens that page.
-    std::set<std::string> ab; for (const Page& p : Pages()) { CHECK(std::string(p.abbr).size() >= 1 && std::string(p.abbr).size() <= 2); CHECK(ab.insert(p.abbr).second); }
-    // The folded strip has the Easy page first, and Ctrl+\ still folds the list (the key is wired in the window).
-    CHECK(std::string(Pages().front().abbr) == "Ea");
-    for (const Page& p : Pages()) CHECK(std::string(p.abbr).size() == 2 && std::isupper((unsigned char)p.abbr[0]) && std::islower((unsigned char)p.abbr[1]));   // "Ad", not the old "EM"
-    for (const Page& p : Pages()) CHECK(std::string(p.abbr)[0] == p.name[0]);   // the letters come from the new name (Fix the surface: Fs)
+    // The folded strip shows one picture per page (names as tooltips): every page has its own icon, the Easy page first.
+    std::set<int> icons; for (const Page& p : Pages()) CHECK(icons.insert((int)p.icon).second);
+    CHECK(Pages().front().icon == PageIcon::Star && std::string(Pages().front().name) == "Easy");
     {
         std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/main.cpp"); std::stringstream ss; ss << in.rdbuf();
         CHECK(ss.str().find("ImGuiKey_Backslash") != std::string::npos);
         CHECK(ss.str().find("Back to the simple view") == std::string::npos);
+        CHECK(ss.str().find("DrawPageList(") != std::string::npos);   // the window draws the shared page list
+    }
+    {   // The page list never shortens text with "..." and never draws the old two-letter strip.
+        std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/ModelingSidebarUi.cpp"); std::stringstream ss; ss << in.rdbuf();
+        CHECK(ss.str().find("FitText") == std::string::npos && ss.str().find("abbr") == std::string::npos);
+        CHECK(ss.str().find("IconFor(pi.icon)") != std::string::npos && ss.str().find("SetTooltip") != std::string::npos);
     }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("modeling_sidebar: all passed\n");

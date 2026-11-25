@@ -140,7 +140,7 @@ inline Info Gather(const char* ui = nullptr) {
     if (!pl::IsCompiledIn(k)) k = (k == pl::BackendKind::Own) ? pl::BackendKind::Sdl2 : pl::BackendKind::Own;
     i.platform = pl::BackendName(k);
 
-#if defined(OKAY_HTTP_WINHTTP)
+#if defined(_WIN32)   // the same test as the NativeHttp.hpp include above (that header is not included on Windows)
     i.http = "winhttp";   // not asking NativeAvailable(): that opens the WinHTTP session
 #else
     i.http = okay::http::NativeAvailable() ? "own" : "none";

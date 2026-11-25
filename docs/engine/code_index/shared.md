@@ -858,23 +858,23 @@ Back to the [code index](../code_index.md). 68 headers, 1002 names.
 - `ReaderSwitch` struct, line 38: One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
 - `Readers` function, line 40
 - `Setting` struct, line 53
-- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, our HTTP client, the okay::platform backend and OkayUI.
-- `Requested` function, line 70: True when OKAY_OWN_STACK is "1" in the environment.
-- `SetIfUnset` function, line 75
-- `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
-- `Info` struct, line 95
-- `FormatLine` function, line 105: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 123: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 130: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 137: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 172
-- `Startup` function, line 176: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `RuntimeSettings` function, line 58: Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
+- `Requested` function, line 69: True when OKAY_OWN_STACK is "1" in the environment.
+- `SetIfUnset` function, line 74
+- `ApplyEnvironment` function, line 85: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
+- `Info` struct, line 94
+- `FormatLine` function, line 104: Pure text: '[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 122: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 129: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 136: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 171
+- `Startup` function, line 175: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 
 - `Needs` enum, line 33: What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
 - `Item` struct, line 35
-- `Items` function, line 46: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
+- `Items` function, line 47: The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed). Every item is on
 - `AlternativeExe` struct, line 60: A second program built from the same sources against our own UI (CMake options OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): the
 - `Alternative` function, line 64
 - `Context` struct, line 78: What is true on this machine: used to hide items that cannot work here.

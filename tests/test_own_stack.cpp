@@ -35,23 +35,32 @@ static void Set(const char* name, const char* value) {
 static void ClearStackEnvironment() {
     for (const Setting& s : RuntimeSettings()) Unset(s.var);
     Unset("OKAY_OWN_STACK");
-    Unset("OKAY_HTTP_CURL");
     Unset("OKAY_DEV");
 }
 static bool Has(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
+// The one HTTP client this build has (NativeHttp.hpp): no curl and no run-time switch any more.
+static const char* ExpectedHttp() {
+#if defined(OKAY_HTTP_WINHTTP)
+    return "winhttp";
+#elif defined(OKAY_OWN_HTTP_ACTIVE)
+    return "own";
+#else
+    return "none";
+#endif
+}
 
 static void TestText() {
     Info old;   // the stack of a default build
-    old.platform = "sdl2"; old.http = "curl"; old.ownReaders = {"fbx"}; old.crypto = "libsodium"; old.ui = "imgui";
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui");
-    old.switches = "okayui,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
-    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=own(fbx) crypto=libsodium ui=imgui switches=okayui,http");
+    old.platform = "sdl2"; old.http = "winhttp"; old.ownReaders = {"fbx"}; old.crypto = "libsodium"; old.ui = "imgui";
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=winhttp readers=own(fbx) crypto=libsodium ui=imgui");
+    old.switches = "okayui,platform";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=winhttp readers=own(fbx) crypto=libsodium ui=imgui switches=okayui,platform");
     old.switches.clear();
 
     Info mix;
-    mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"};
+    mix.platform = "own"; mix.http = "none"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"};
     mix.crypto = "libsodium"; mix.ui = "imgui";
-    CHECK(FormatLine(mix) == "[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui");
+    CHECK(FormatLine(mix) == "[okay] stack: platform=own http=none readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui");
 
     Info all;
     all.platform = "own"; all.http = "own"; all.ownReaders = {"fbx"}; all.crypto = "own(test)"; all.ui = "okayui";
@@ -104,14 +113,15 @@ static void TestTables() {
     for (const Setting& s : RuntimeSettings()) {
         CHECK(!Has(s.var, "CRYPTO") && !Has(s.var, "SODIUM") && !Has(s.value, "crypto"));
     }
-    // What the dogfood switch sets besides the readers: HTTP, the okay::platform backend (Linux), the UI toolkit.
+    // What the dogfood switch sets besides the readers: the okay::platform backend (Linux) and the UI toolkit. Not HTTP: our own
+    // client is the only one on Linux (no curl), so there is nothing to switch.
     bool http = false, ui = false, plat = false;
     for (const Setting& s : RuntimeSettings()) {
         if (!std::strcmp(s.var, "OKAY_OWN_HTTP")) http = !std::strcmp(s.value, "1");
         if (!std::strcmp(s.var, "OKAY_UI_BACKEND")) ui = !std::strcmp(s.value, "okayui");
         if (!std::strcmp(s.var, "OKAY_PLATFORM_BACKEND")) plat = !std::strcmp(s.value, "own");
     }
-    CHECK(http && ui);
+    CHECK(!http && ui);
 #if defined(__linux__)
     CHECK(plat);
 #else
@@ -137,8 +147,8 @@ static void TestBuildDefaults() {
 #  endif
 #  if defined(OKAY_OWN_HTTP) && !defined(_WIN32) && !defined(__APPLE__)
     CHECK(i.http == "own");
-    Set("OKAY_OWN_HTTP", "0");   // the run-time switch still wins over the build default
-    CHECK(Describe("imgui").find("http=curl") != std::string::npos);
+    Set("OKAY_OWN_HTTP", "0");   // the old run-time opt-out does nothing any more: there is no curl to fall back to
+    CHECK(Describe("imgui").find("http=own") != std::string::npos);
     Unset("OKAY_OWN_HTTP");
 #  endif
     // Crypto: still the library, unless this is the test-only crypto build.
@@ -150,12 +160,12 @@ static void TestBuildDefaults() {
 #elif defined(OKAY_EXPECT_OWN_READERS)   // a default build since 2026-11-17: our own model readers, the rest still the old stack
     CHECK(i.ownReaders.size() == Readers().size() + 1);   // + fbx
     CHECK(i.platform == "sdl2");
-    CHECK(i.http == "curl" || i.http == "winhttp");
+    CHECK(i.http == ExpectedHttp());
     CHECK(Has(line, "readers=own(fbx,dae,"));
 #else               // a build with the reader options switched OFF: exactly the old stack
     CHECK(i.ownReaders.size() == 1 && i.ownReaders[0] == "fbx");   // FBX is always ours
     CHECK(i.platform == "sdl2");
-    CHECK(i.http == "curl" || i.http == "winhttp");
+    CHECK(i.http == ExpectedHttp());
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
     CHECK(Has(line, "readers=own(fbx)"));
 #endif

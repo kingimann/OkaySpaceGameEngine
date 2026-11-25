@@ -158,6 +158,15 @@ int main() {
         checkFiles("quote falls back", fs, "/src/main.c", {"/inc"}, "int b ;\n", nullptr);
     }
     {
+        // A header that does not end in a new-line ([lex.phases] p1.2, Math/TwoBoneIK.hpp): the
+        // next line of the includer is still a directive (round 25 read "#include" as text).
+        okaycc::MemoryFiles fs;
+        fs.add("/src/main.c", "#include \"a.h\"\n#include \"b.h\"\nint m;\n");
+        fs.add("/src/a.h", "int a; // no new-line");
+        fs.add("/src/b.h", "int b;\n");
+        checkFiles("no final new-line", fs, "/src/main.c", {}, "int a ;\nint b ;\nint m ;\n", nullptr);
+    }
+    {
         okaycc::MemoryFiles fs;
         fs.add("/src/main.c", "#define H \"a.h\"\n#include H\n");
         fs.add("/src/a.h", "int a;\n");

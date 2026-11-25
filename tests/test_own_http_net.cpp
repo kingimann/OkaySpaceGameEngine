@@ -359,9 +359,10 @@ static void TestNativeHttp() {
     const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
     ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("OKAY_HTTP_CURL");
     ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
-    CHECK(!okay::http::NativeAvailable());                      // off unless asked for
-    ::setenv("OKAY_OWN_HTTP", "1", 1);
-    CHECK(okay::http::NativeAvailable());
+    CHECK(okay::http::NativeAvailable());                       // always on: no run-time opt-in (and no curl behind it)
+    ::setenv("OKAY_OWN_HTTP", "0", 1); ::setenv("OKAY_HTTP_CURL", "1", 1);
+    CHECK(okay::http::NativeAvailable());                       // the old opt-out and kill switch are gone
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("OKAY_HTTP_CURL");
     okay::http::Result r = okay::http::Request("GET", base + "/ok", {});
     CHECK(r.reached && r.status == 200 && r.body == "hello");
     r = okay::http::Request("POST", base + "/echo", {"Content-Type: text/plain"}, "payload");
@@ -376,14 +377,12 @@ static void TestNativeHttp() {
     CHECK(r.reached && r.status == 200 && r.body.empty());
     { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "hello"); }
     r = okay::http::Request("GET", base + "/garbage", {});
-    CHECK(!r.reached && !r.error.empty());                       // callers fall back to curl
+    CHECK(!r.reached && !r.error.empty());                       // a failure with its reason (nothing else is tried)
     r = okay::http::Request("GET", base + "/ok", {"Bad: x\r\nInjected: 1"});
     CHECK(!r.reached);
     r = okay::http::Request("GET", "https://127.0.0.1:" + std::to_string(s.port) + "/ok", {});
     CHECK(!r.reached);                                          // no CA trusts it / not TLS: never "reached"
-    ::setenv("OKAY_HTTP_CURL", "1", 1);
-    CHECK(!okay::http::NativeAvailable());                      // the existing kill switch still wins
-    ::unsetenv("OKAY_HTTP_CURL"); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unsetenv("NO_PROXY");
     ::unlink(tmpl);
     s.Stop();
 }
@@ -446,7 +445,6 @@ static void TestDownloadFeatures() {
       r = Perform("GET", base + "/wrongrange", {"Range: bytes=5-"}, "", o); CHECK_ERR(r, Err::BadResponse);
       r = Perform("GET", base + "/file", {"Range: bytes=5000-"}, "", o); CHECK(r.ok && r.response.status == 416 && !r.partial); }
     // RequestEx: resume, restart, 404 left alone, progress
-    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
     ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::unsetenv("HTTPS_PROXY"); ::unsetenv("https_proxy");
     char tmpl[] = "/tmp/okay_dl_XXXXXX"; int tfd = ::mkstemp(tmpl); ::close(tfd);
     auto slurp = [&](const char* p) { std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), {}); };
@@ -507,7 +505,7 @@ static void TestDownloadFeatures() {
       n.cancel = [] { return true; };
       r = Perform("GET", "http://no-such-host.invalid/", {}, "", n);
       CHECK(!r.ok); }
-    ::unlink(tmpl); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unlink(tmpl); ::unsetenv("NO_PROXY");
     s.Stop();
 }
 
@@ -529,7 +527,6 @@ static void TestReviewFixes() {
     };
     s.Start();
     const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
-    ::unsetenv("OKAY_HTTP_CURL"); ::setenv("OKAY_OWN_HTTP", "1", 1);
     ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
     // A request that was written and then timed out may have reached the server: maybeSent tells callers not to re-send it.
     okay::http::Result r = okay::http::Request("POST", base + "/stall", {}, "payload", "", "", 400);
@@ -541,13 +538,13 @@ static void TestReviewFixes() {
     CHECK(!r.reached && r.status == 0 && r.body.empty());
     r = okay::http::Request("POST", base + "/cutclose", {}, "x");
     CHECK(!r.reached && r.maybeSent && r.body.empty());
-    // A clean "not reached" (connection refused) is not marked as sent: the curl fallback may run.
+    // A clean "not reached" (connection refused) is not marked as sent: a caller's retry may run.
     {   int port = 0; int lf = Listen(port); ::close(lf);
         r = okay::http::Request("POST", "http://127.0.0.1:" + std::to_string(port) + "/x", {}, "x", "", "", 2000);
         CHECK(!r.reached && !r.maybeSent); }
     r = okay::http::Request("GET", "http://no-such-name.invalid/x", {}, "", "", "", 3000);
     CHECK(!r.reached && !r.maybeSent);
-    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unsetenv("NO_PROXY");
     // Redirect cap: a server that redirects forever stops after cap + 1 requests with an error.
     {   NetOptions o = Opts(); o.limits.maxRedirects = 5;
         const size_t before = s.Count();
@@ -564,24 +561,13 @@ static void TestReviewFixes() {
     s.Stop();
 }
 
-// ---- the no-re-send decision, and the real AccountService path (review fixes) ------------------------------------
-static void TestNoResendDecision() {
-    using okay::http::Result; using okay::http::ShouldFallBackToCurl;
-    Result ok; ok.reached = true; ok.status = 200;
-    Result clean; clean.reached = false; clean.maybeSent = false;
-    Result sent; sent.reached = false; sent.maybeSent = true;
-    for (const char* m : {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}) {
-        const bool idem = std::string(m) == "GET" || std::string(m) == "HEAD";
-        CHECK(!ShouldFallBackToCurl(m, ok));       // success: nothing to fall back to
-        CHECK(ShouldFallBackToCurl(m, clean));     // clean failure: curl may always run
-        CHECK(ShouldFallBackToCurl(m, sent) == idem);   // maybe sent: only GET / HEAD may be repeated
-    }
-}
-
+// ---- no re-send and no curl: the real AccountService path (review fixes) ---------------------------------------------
 static int CountLines(const std::string& path) {
     std::ifstream f(path); std::string l; int n = 0; while (std::getline(f, l)) ++n; return n;
 }
 
+// PATH holds only a FAKE curl that writes a line when it runs. The seam never starts it: a request that may have reached the
+// server is sent exactly once, whatever its method, and a clean failure (connection refused) is a failure, not a curl run.
 static void TestAccountNoResend() {
     namespace fs = std::filesystem;
     fs::path dir = fs::temp_directory_path() / ("okay_resend_" + okay::account::detail::RandomHex(8));
@@ -590,39 +576,29 @@ static void TestAccountNoResend() {
     WriteFile((dir / "bin" / "curl").string(), "#!/bin/sh\necho run >> '" + log + "'\nexit 7\n");
     Sh("chmod +x '" + (dir / "bin" / "curl").string() + "'");
     const char* oldPath = std::getenv("PATH"); const std::string savedPath = oldPath ? oldPath : "";
-    ::setenv("PATH", (dir / "bin").string().c_str(), 1);   // only the fake curl: a fallback is counted, not run for real
-    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::setenv("PATH", (dir / "bin").string().c_str(), 1);   // only the fake curl: a run would be counted
     ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
 
     Server s;   // accepts, reads the whole request, then closes without answering
     s.handler = [](int, const std::string&, const std::string&) {};
     s.Start();
     okay::account::AccountService svc(dir / "cfg", "http://127.0.0.1:" + std::to_string(s.port));
-    for (const char* m : {"POST", "PUT", "PATCH", "DELETE"}) {
+    for (const char* m : {"POST", "PUT", "PATCH", "DELETE", "GET", "HEAD"}) {
         const size_t before = s.Count();
-        okay::account::ApiResponse r = svc.ApiAnon("/act", m, "{\"a\":1}");
+        okay::account::ApiResponse r = svc.ApiAnon("/act", m, std::string(m) == "GET" || std::string(m) == "HEAD" ? "" : "{\"a\":1}");
         CHECK(!r.reached);
         CHECK(s.Count() - before == 1);            // the server saw exactly one request
-        CHECK(!fs::exists(log));                   // and curl never ran (no re-send)
-    }
-    for (const char* m : {"GET", "HEAD"}) {        // a repeat is allowed here: curl (fake) runs once each
-        const int beforeCurl = fs::exists(log) ? CountLines(log) : 0;
-        const size_t before = s.Count();
-        okay::account::ApiResponse r = svc.ApiAnon("/act", m);
-        CHECK(!r.reached);
-        CHECK(s.Count() - before == 1);
-        CHECK(CountLines(log) == beforeCurl + 1);
     }
     s.Stop();
-    {   // a clean failure (connection refused): curl is tried, also for a POST
+    {   // a clean failure (connection refused): a failure, nothing else is tried
         int port = 0; int lf = Listen(port); ::close(lf);
         okay::account::AccountService dead(dir / "cfg2", "http://127.0.0.1:" + std::to_string(port));
-        const int beforeCurl = CountLines(log);
         okay::account::ApiResponse r = dead.ApiAnon("/act", "POST", "{}");
-        CHECK(!r.reached && CountLines(log) == beforeCurl + 1);
+        CHECK(!r.reached);
     }
+    CHECK(!fs::exists(log) || CountLines(log) == 0);   // curl never ran
     ::setenv("PATH", savedPath.c_str(), 1);
-    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unsetenv("NO_PROXY");
     std::error_code ec; fs::remove_all(dir, ec);
 }
 
@@ -1201,14 +1177,14 @@ static void TestKeepAliveRetryRules() {
         }
         detail::DropIdleConnections(); s.Stop();
     }
-    {   // a server that stalls past the timeout after reading a POST: maybeSent is set and curl must not repeat it
-        ::setenv("OKAY_OWN_HTTP", "1", 1); ::setenv("NO_PROXY", "127.0.0.1", 1);
+    {   // a server that stalls past the timeout after reading a POST: maybeSent is set and nothing repeats it
+        ::setenv("NO_PROXY", "127.0.0.1", 1);
         KaServer s; s.handler = [&](int, int, const std::string&, const std::string&, int) { while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); return false; };
         s.Start();
         okay::http::Result r = okay::http::Request("POST", "http://127.0.0.1:" + std::to_string(s.port) + "/x", {}, "{}", "", "", 700);
-        CHECK(!r.reached && r.maybeSent && !okay::http::ShouldFallBackToCurl("POST", r) && s.requests == 1);
+        CHECK(!r.reached && r.maybeSent && s.requests == 1);
         detail::DropIdleConnections(); s.Stop();
-        ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+        ::unsetenv("NO_PROXY");
     }
     {   // a PUT that succeeds is not pooled-reused either
         KaServer s; s.handler = [](int, int, const std::string&, const std::string&, int c) { SendAll(c, KaOk("ok")); return true; };
@@ -1239,7 +1215,7 @@ static void TestHeadConditionalCookies() {
     };
     s.Start();
     const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
-    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL"); ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy");
+    ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy");
     // HEAD: the length comes from the headers, no body is read, and a following GET on the same connection is not confused
     okay::http::RequestOptions ro;
     okay::http::ExResult r = okay::http::RequestEx("HEAD", base + "/res", {}, "", "", "", ro);
@@ -1287,7 +1263,7 @@ static void TestHeadConditionalCookies() {
     r = okay::http::RequestEx("GET", base + "/need", {}, "", "", "", ck);
     CHECK(r.reached && r.body == "none");
     detail::DropIdleConnections();
-    ::unlink(tmpl); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unlink(tmpl); ::unsetenv("NO_PROXY");
     s.Stop();
 }
 
@@ -1405,7 +1381,6 @@ int main(int argc, char** argv) {
     TestHostileNet();
     TestProxyHostile();
     TestReviewFixes();
-    TestNoResendDecision();
     TestAccountNoResend();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;

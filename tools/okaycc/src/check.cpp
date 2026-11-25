@@ -46,7 +46,14 @@ public:
             if (d && d->function && !d->fromInstance && d->body && d->type && isAuto(d->type->inner.get()) &&
                 d->isInline) {
                 early.insert(d.get());
-                checkFunction(*d);
+                // One that takes a lambda (a closure parameter, F &&f) is checked when its first
+                // call is, after the lambda: f() needs the lambda's own function.
+                if (takesClosure(*d->type)) deferredAuto_[d->name] = d.get();
+                else checkFunction(*d);
+            } else if (d && d->function && d->body && d->type && hasDecltype(d->type->inner.get()) &&
+                       takesClosure(*d->type)) {
+                early.insert(d.get());  // -> decltype(f()) with f a lambda: the same
+                deferredAuto_[d->name] = d.get();
             }
         std::vector<Decl*> waiting;
         for (auto& d : tu.decls) {
@@ -58,6 +65,11 @@ public:
             }
             if (d->function) checkFunction(*d);
             else checkVar(*d);
+        }
+        while (!deferredAuto_.empty()) {  // (not called in this file)
+            Decl* d = deferredAuto_.begin()->second;
+            deferredAuto_.erase(deferredAuto_.begin());
+            checkFunction(*d);
         }
         // Members of class template instances: checked once something refers to them (their own
         // bodies may refer to more), the others are dropped ([temp.inst] p4).
@@ -167,6 +179,14 @@ private:
     std::set<std::string> pendingAuto_;
     ET lookup(const std::string& name, int line, int col, bool quiet = false) {
         if (!pendingAuto_.empty() && instDirty() && pendingAuto_.count(name)) return bad(line, col);
+        if (!deferredAuto_.empty()) {
+            auto da = deferredAuto_.find(name);
+            if (da != deferredAuto_.end()) {
+                Decl* d = da->second;
+                deferredAuto_.erase(da);
+                checkFunctionNow(*d);
+            }
+        }
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[static_cast<std::size_t>(i)].find(name);
             if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
@@ -362,9 +382,10 @@ private:
             if (method_ && scopeOf(e.text) <= 0) {  // a parameter or local hides a member ([basic.scope.block])
                 const Type* st = canonOf(method_);
                 if (st) {
+                    const bool viaBase = !viaOtherBase(st, e.text, false).empty();
                     for (const Param& f : st->params) {
-                        if (f.name != e.text || !f.mangled.empty()) continue;
-                        if (!f.type || f.type->kind == Type::Kind::Function) continue;
+                        if (!viaBase && (f.name != e.text || !f.mangled.empty())) continue;
+                        if (!viaBase && (!f.type || f.type->kind == Type::Kind::Function)) continue;
                         auto obj = std::make_unique<Expr>();
                         obj->kind = Expr::Kind::Name;
                         obj->text = "this";
@@ -804,6 +825,12 @@ private:
                 r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
+            if (std::string via = viaOtherBase(st, fname, false); !via.empty()) {
+                // A data member of a base after the primary one: obj.__mb:<B>.x ([class.member.lookup]).
+                e.kids[0] = toSubobject(std::move(e.kids[0]), e.text == "->", via, e);
+                e.text = ".";
+                return checkExpr(e);
+            }
             if (scopeOf(st->tag + "::" + fname) == 0 && !hasSideEffects(*e.kids[0])) {
                 // obj.s for a static data member s ([expr.ref] p6.1): the object is not read; the
                 // member is the class's one object C::s.
@@ -818,11 +845,38 @@ private:
         }
         case Expr::Kind::Cast: {
             if (!need(0) || !e.ty) return bad(e.line, e.col);
+            ET refProbe;
+            if (e.ty->kind == Type::Kind::Reference && !e.ty->rref && e.ty->inner &&
+                e.ty->inner->kind == Type::Kind::Struct) {
+                ++quiet_;
+                refProbe = checkExpr(*e.kids[0]);
+                --quiet_;
+            }
+            if (e.ty->kind == Type::Kind::Reference && !e.ty->rref && e.ty->inner &&
+                e.ty->inner->kind == Type::Kind::Struct && !refProbe.bad && refProbe.lvalue) {
+                // static_cast<B &>(d) ([expr.static.cast] p2, p4): *static_cast<B *>(&d), so the
+                // address moves to a base subobject that is not at the start.
+                auto ptrCast = mkE(Expr::Kind::Cast, e);
+                ptrCast->ty = prim(Type::Kind::Pointer);
+                ptrCast->ty->inner = cloneType(*e.ty->inner);
+                ptrCast->kids.push_back(eUnary("&", std::move(e.kids[0]), e));
+                e.kind = Expr::Kind::Unary;
+                e.text = "*";
+                e.ty.reset();
+                e.kids.clear();
+                e.kids.push_back(std::move(ptrCast));
+                return checkExpr(e);
+            }
             // (int)obj for a class with a conversion function: obj.operator int() first
             // ([expr.cast], [class.conv.fct]).
             if (e.ty->kind != Type::Kind::Struct && e.ty->kind != Type::Kind::Void) convertIfNeeded(*e.kids[0]);
             ET inner = decay(checkExpr(*e.kids[0]));
             if (inner.bad) return bad(e.line, e.col);
+            // (B *)d and (D *)b with B a base after the primary one: the address moves
+            // ([expr.static.cast] p11, [expr.cast] p4).
+            if (inner.type && (toBaseSubobject(e.kids[0], inner.type.get(), e.ty.get()) ||
+                               fromBaseSubobject(e.kids[0], inner.type.get(), e.ty.get())))
+                return checkExprBody(e);
             r.type = cloneType(*e.ty);
             r.nullc = inner.nullc && isIntish(*r.type);
             return r;
@@ -1075,6 +1129,131 @@ private:
 
     // An operand that is cheap and safe to check twice: a name, a member, an index or a dereference
     // built from those. (Checking a call twice is avoided; a chain would check itself too often.)
+    // ---- Multiple inheritance (parser.cpp: a base after the primary one is the member
+    // "__mb:<tag>", its subobject) ----
+    // The subobject member of class st through which a member named n of a base after the primary
+    // one is found (a data member, or a member function when 'method'), or "".
+    std::string viaOtherBase(const Type* st, const std::string& n, bool method, int depth = 0) {
+        if (!st || depth > 16) return "";
+        for (const Param& m : st->params) {
+            if (m.name.compare(0, 5, "__mb:") != 0 || !m.type) continue;
+            const Type* b = canonOf(m.type.get());
+            if (!b) continue;
+            for (const Param& f : b->params)
+                if (f.name == n && (method ? !f.mangled.empty() && !isSpecialName(f.name)
+                                           : f.mangled.empty() && f.type && f.type->kind != Type::Kind::Function))
+                    return m.name;
+            if (!viaOtherBase(b, n, method, depth + 1).empty()) return m.name;
+        }
+        return "";
+    }
+    // obj.sub (or p->sub when arrow): the subobject member 'sub' of obj.
+    std::unique_ptr<Expr> toSubobject(std::unique_ptr<Expr> obj, bool arrow, const std::string& sub, const Expr& at) {
+        auto m = mkE(Expr::Kind::Member, at);
+        m->text = arrow ? "->" : ".";
+        m->kids.push_back(std::move(obj));
+        m->kids.push_back(mkName(sub, at));
+        return m;
+    }
+
+    // A pointer to, or an lvalue of, class 'from' used as its base class 'to' when that base is not
+    // at the start of the object ([conv.ptr] p3, [dcl.init.ref] p5): the pointer moves to the base's
+    // subobject and a null pointer stays null; the lvalue becomes the subobject member. True when e
+    // was changed (the caller checks it again).
+    bool toBaseSubobject(std::unique_ptr<Expr>& e, const Type* from, const Type* to) {
+        if (!e || !from || !to) return false;
+        bool ptr = false;
+        if (from->kind == Type::Kind::Pointer && to->kind == Type::Kind::Pointer && from->inner && to->inner) {
+            from = from->inner.get();
+            to = to->inner.get();
+            ptr = true;
+        }
+        if (from->kind != Type::Kind::Struct || to->kind != Type::Kind::Struct || from->tag.empty() ||
+            to->tag.empty() || from->tag == to->tag)
+            return false;
+        std::vector<std::string> path = basePath(from->tag, to->tag);
+        if (path.empty() || (path.size() == 1 && path[0].empty())) return false;
+        Expr& pos = *e;  // (the node lives on inside the new expression)
+        if (!ptr) {
+            for (const std::string& sub : path) e = toSubobject(std::move(e), false, sub, pos);
+            return true;
+        }
+        std::unique_ptr<Expr> first;
+        std::unique_ptr<Expr> p;
+        if (simpleOperand(*e)) {
+            p = cloneExpr(*e);
+        } else {
+            auto pt = prim(Type::Kind::Pointer);
+            pt->inner = cloneType(*from);
+            std::string tmp = newTemp(*pt, pos, false);
+            auto lhs = mkName(tmp, pos);
+            first = eAssignNode(std::move(lhs), std::move(e), pos);
+            p = mkName(tmp, pos);
+        }
+        std::unique_ptr<Expr> sub = toSubobject(cloneExpr(*p), true, path[0], pos);
+        for (std::size_t k = 1; k < path.size(); ++k) sub = toSubobject(std::move(sub), false, path[k], pos);
+        auto cond = mkE(Expr::Kind::Cond, pos);
+        cond->kids.push_back(std::move(p));
+        cond->kids.push_back(eUnary("&", std::move(sub), pos));
+        auto null = mkE(Expr::Kind::Cast, pos);
+        null->ty = prim(Type::Kind::Pointer);
+        null->ty->inner = cloneType(*to);
+        null->kids.push_back(mkE(Expr::Kind::Int, pos));
+        cond->kids.push_back(std::move(null));
+        e = first ? eCommaNode(std::move(first), std::move(cond), pos) : std::move(cond);
+        return true;
+    }
+
+    // The other way, a pointer to base class 'from' cast to its derived class 'to' (the base not at
+    // the start): (char *)p - offset of the subobject, a null pointer staying null. The caller's
+    // cast then gives the type.
+    bool fromBaseSubobject(std::unique_ptr<Expr>& e, const Type* from, const Type* to) {
+        if (!e || !from || !to || from->kind != Type::Kind::Pointer || to->kind != Type::Kind::Pointer || !from->inner ||
+            !to->inner || from->inner->kind != Type::Kind::Struct || to->inner->kind != Type::Kind::Struct ||
+            from->inner->tag.empty() || to->inner->tag.empty() || from->inner->tag == to->inner->tag)
+            return false;
+        std::vector<std::string> path = basePath(to->inner->tag, from->inner->tag);
+        if (path.empty() || (path.size() == 1 && path[0].empty())) return false;
+        Expr& pos = *e;  // (the node lives on inside the new expression)
+        auto charPtr = [&](std::unique_ptr<Expr> x) {
+            auto c = mkE(Expr::Kind::Cast, pos);
+            c->ty = prim(Type::Kind::Pointer);
+            c->ty->inner = prim(Type::Kind::Char);
+            c->kids.push_back(std::move(x));
+            return c;
+        };
+        std::unique_ptr<Expr> first;
+        std::unique_ptr<Expr> p;
+        if (simpleOperand(*e)) {
+            p = cloneExpr(*e);
+        } else {
+            std::string tmp = newTemp(*from, pos, false);
+            auto lhs = mkName(tmp, pos);
+            first = eAssignNode(std::move(lhs), std::move(e), pos);
+            p = mkName(tmp, pos);
+        }
+        // &((D *)0)->sub...: the subobject's offset
+        auto zero = mkE(Expr::Kind::Cast, pos);
+        zero->ty = cloneType(*to);
+        zero->kids.push_back(mkE(Expr::Kind::Int, pos));
+        std::unique_ptr<Expr> sub = toSubobject(std::move(zero), true, path[0], pos);
+        for (std::size_t k = 1; k < path.size(); ++k) sub = toSubobject(std::move(sub), false, path[k], pos);
+        auto minus = mkE(Expr::Kind::Bin, pos);
+        minus->text = "-";
+        minus->kids.push_back(charPtr(cloneExpr(*p)));
+        minus->kids.push_back(charPtr(eUnary("&", std::move(sub), pos)));
+        auto back = mkE(Expr::Kind::Bin, pos);
+        back->text = "+";
+        back->kids.push_back(charPtr(mkE(Expr::Kind::Int, pos)));
+        back->kids.push_back(std::move(minus));
+        auto cond = mkE(Expr::Kind::Cond, pos);
+        cond->kids.push_back(std::move(p));
+        cond->kids.push_back(std::move(back));
+        cond->kids.push_back(charPtr(mkE(Expr::Kind::Int, pos)));
+        e = first ? eCommaNode(std::move(first), std::move(cond), pos) : std::move(cond);
+        return true;
+    }
+
     static bool simpleOperand(const Expr& e) {
         switch (e.kind) {
         case Expr::Kind::Name: return true;
@@ -1082,7 +1261,11 @@ private:
         case Expr::Kind::Unary: return e.text == "*" && !e.kids.empty() && e.kids[0] && simpleOperand(*e.kids[0]);
         case Expr::Kind::Index:
             return e.kids.size() == 2 && e.kids[0] && e.kids[1] && simpleOperand(*e.kids[0]) &&
-                   (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Name);
+                   (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Name ||
+                    // v[(size_t)i], v[idx[t * 3 + 1]]: an index with no side effects and no call
+                    ((e.kids[1]->kind == Expr::Kind::Cast || e.kids[1]->kind == Expr::Kind::Bin ||
+                      e.kids[1]->kind == Expr::Kind::Index) &&
+                     !hasSideEffects(*e.kids[1])));
         default: return false;
         }
     }
@@ -1511,6 +1694,7 @@ private:
                 return r;
             }
         }
+
         if ((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
             !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
             // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
@@ -1529,7 +1713,8 @@ private:
         if (e.kind == Expr::Kind::Member && e.text == "->" && e.kids.size() == 2 && e.kids[0]) rewriteArrow(e);
         if (!rewriteOperator(e)) rewriteFreeOperator(e);
         ET r = checkExprBody(e);
-        if (r.type) e.checked = cloneType(*r.type);
+        // (an object of a finished class is kept by name: its members are the class's, canonOf)
+        if (r.type) e.checked = finishedClassCopy(*r.type) ? classByName(*r.type) : cloneType(*r.type, false);
         return r;
     }
 
@@ -1633,6 +1818,10 @@ private:
             if (!canAssign(*lhs.type, rhs)) {
                 err(e.line, e.col, "cannot assign this value");
                 return bad(e.line, e.col);
+            }
+            if (toBaseSubobject(e.kids[1], rhs.type.get(), lhs.type.get())) {
+                rhs = decay(checkExpr(*e.kids[1]));
+                if (rhs.bad) return bad(e.line, e.col);
             }
         } else if (!isIntish(*lhs.type) || !rhs.type || !isIntish(*rhs.type)) {
             // a op= b on a floating or pointer lvalue: a = a op b ([expr.ass] p7: a is evaluated once,
@@ -1841,7 +2030,8 @@ private:
     }
     void qualifyNames(Expr& e, const std::string& ns) {
         // (also N::x written relative to the declaration's namespace: Vec3::Up in okay::Quat)
-        if (e.kind == Expr::Kind::Name && !e.text.empty() && e.text[0] != '\x01' && scopeOf(e.text) < 0 &&
+        // (a local of the caller is not seen: stringstream(s, in | out) called where a local 'out' is)
+        if (e.kind == Expr::Kind::Name && !e.text.empty() && e.text[0] != '\x01' && scopeOf(e.text) != 0 &&
             (e.text.find("::") == std::string::npos || !overloads_.count(e.text))) {
             for (std::string sc = ns; !sc.empty();) {
                 if (scopes_.front().count(sc + "::" + e.text)) {
@@ -1926,9 +2116,7 @@ private:
                     const Type* pt = c->type->params[i].type.get();
                     if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
                     if (pt->kind == Type::Kind::Struct || pt->kind == Type::Kind::Array) {
-                        bool il = pt->tag.compare(0, 17, "initializer_list<") == 0 ||
-                                  pt->tag.compare(0, 22, "std::initializer_list<") == 0;
-                        total += il ? 0 : 2;
+                        total += isInitListType(pt) ? 0 : 2;
                     } else if (ak->kids.size() > 1) {
                         ok = false;
                         break;
@@ -2033,6 +2221,9 @@ private:
             return ok;
         }
         ET d = decay(copyET(a));
+        // P not a reference: the top-level const of A is ignored ([temp.deduct.call] p2), so
+        // make_tuple(v) with a const int v makes a tuple<int>.
+        if (pat.kind != Type::Kind::Reference && d.type && d.type->kind != Type::Kind::Pointer) d.type->cnst = false;
         return deduceType(pat, *d.type, sig, bound);
     }
     bool keepArray_ = false;  // deducing through a reference: an array argument stays an array
@@ -2323,7 +2514,12 @@ private:
         std::vector<std::unique_ptr<Expr>> vals = std::move(b.kids);
         b.kids.clear();
         bool viaCtor = false;
+        bool listCtor = false;  // [over.match.list] p1.1: the whole list goes to an initializer-list constructor
+        for (const Param& p : T->params)
+            if (p.name == "<ctor>" && p.type && p.type->params.size() == 1 && isInitListType(p.type->params[0].type.get()))
+                listCtor = !vals.empty();
         for (const Param& p : T->params) {
+            if (listCtor) break;
             if (p.name != "<ctor>" || !p.type || p.type->params.size() != vals.size()) continue;
             if (vals.empty()) continue;
             const Type* a0 = p.type->params[0].type.get();
@@ -2335,7 +2531,17 @@ private:
         std::unique_ptr<Expr> seq;
         auto addE = [&](std::unique_ptr<Expr> x) { seq = seq ? eCommaNode(std::move(seq), std::move(x), b) : std::move(x); };
         auto self = [&]() { return eUnary("&", mkName(tmp, b), b); };
-        if (viaCtor) {
+        if (listCtor) {
+            // v = {{1, 2, 3}} for a vector<V3>: one element V3{1, 2, 3} (as T{a, b} below).
+            auto call = mkE(Expr::Kind::Call, b);
+            call->kids.push_back(mkName("\x01" "ctor:" + tag, b));
+            call->kids.push_back(self());
+            auto list = mkE(Expr::Kind::Brace, b);
+            list->ival = 5;
+            for (auto& v : vals) list->kids.push_back(std::move(v));
+            call->kids.push_back(std::move(list));
+            addE(std::move(call));
+        } else if (viaCtor) {
             auto call = mkE(Expr::Kind::Call, b);
             call->kids.push_back(mkName("\x01" "ctor:" + tag, b));
             call->kids.push_back(self());
@@ -2781,8 +2987,31 @@ private:
                         fitScore(*cand.fn->params[i].type, decay(copyET(argTypes[i]))) < 0)
                         ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)
-                    if (!b[i] && !(i < given.size() && given[i])) ok = false;
+                    if (!b[i] && !(i < given.size() && given[i])) {
+                        // Not deduced: a defaulted parameter takes its default in the instance.
+                        if (i < cand.hasDef.size() && cand.hasDef[i]) {
+                            b[i] = prim(Type::Kind::Struct);
+                            b[i]->tag = kDefaultArgTag;
+                        } else {
+                            ok = false;
+                        }
+                    }
                 if (!ok) continue;
+                if (!sfinaeFailed().empty()) {
+                    // The instance of this candidate could not be formed (SFINAE): try the next one.
+                    std::vector<TArg> probe;
+                    for (std::size_t i = 0; i < cand.names.size(); ++i) {
+                        TArg a;
+                        if (i < given.size() && given[i]) {
+                            a.isValue = true;
+                            a.value = static_cast<std::int64_t>(c0.kids[i]->ival);
+                        } else if (b[i]) {
+                            a.type = cloneType(*b[i]);
+                        }
+                        probe.push_back(std::move(a));
+                    }
+                    if (sfinaeFailed().count(key + "|" + instFuncName(key, cand, probe))) continue;
+                }
                 chosen = &cand;
                 name = key;
                 bound = std::move(b);
@@ -2812,7 +3041,7 @@ private:
             std::string inst = instFuncName(name, sig, args);
             bool known = false;
             for (const InstReq& r : instRequests())
-                if (r.name == inst) known = true;
+                if (r.name == inst && r.tmpl == name) known = true;  // (name#k: another overload's instance)
             if (!known) {
                 InstReq r;
                 r.tmpl = name;
@@ -2911,7 +3140,7 @@ private:
                     if (!c->type || c->type->params.size() != 1 || !c->type->params[0].type) continue;
                     const Type* pt = c->type->params[0].type.get();
                     if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
-                    if (pt->kind != Type::Kind::Struct || (pt->tag.compare(0, 22, "std::initializer_list<") != 0 && pt->tag.compare(0, 17, "initializer_list<") != 0)) continue;
+                    if (!isInitListType(pt)) continue;
                     auto list = initList(*e.kids[2], *pt);
                     if (!list) return bad(e.line, e.col);
                     e.kids[2] = std::move(list);
@@ -3111,6 +3340,7 @@ private:
             if (st)
                 for (const Param& f : st->params)
                     if (f.name == c0.text && !f.mangled.empty() && !isSpecialName(f.name)) isMethod = true;
+            if (!isMethod && st && scopeOf(c0.text) <= 0 && !viaOtherBase(st, c0.text, true).empty()) isMethod = true;
             if (isMethod) {
                 std::string fname = c0.text;
                 c0.kind = Expr::Kind::Member;
@@ -3150,6 +3380,16 @@ private:
                     if (f.name == mem.kids[1]->text && !f.mangled.empty() && !isSpecialName(f.name))
                         cands.push_back(&f);
                 hideBaseMembers(cands, st->tag);
+                if (cands.empty()) {
+                    // A member function of a base after the primary one: called on that subobject
+                    // (the subobject is the object expression, so 'this' is adjusted).
+                    std::string via = viaOtherBase(st, mem.kids[1]->text, true);
+                    if (!via.empty()) {
+                        mem.kids[0] = toSubobject(std::move(mem.kids[0]), mem.text == "->", via, mem);
+                        mem.text = ".";
+                        return checkCall(e);
+                    }
+                }
                 if (!cands.empty()) {
                     const Param* fp = pickOverload(cands, e, 1);
                     const Param& f = *fp;
@@ -3236,7 +3476,7 @@ private:
             const Type* pt = fn.params[i].type.get();
             if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
             if (a && a->kind == Expr::Kind::Brace && pt && pt->kind == Type::Kind::Struct) {
-                if (pt->tag.compare(0, 22, "std::initializer_list<") == 0 || pt->tag.compare(0, 17, "initializer_list<") == 0) {
+                if (isInitListType(pt)) {
                     // f({a, b}) for an initializer_list parameter ([dcl.init.list] p5): the list's array.
                     if (auto list = initList(*a, *pt)) e.kids[i + 1] = std::move(list);
                 } else {
@@ -3333,6 +3573,8 @@ private:
                     err(e.line, e.col, "cannot bind this reference argument");
                     return bad(e.line, e.col);
                 }
+                if (toBaseSubobject(e.kids[i + 1], src.type.get(), &want) && checkExpr(*e.kids[i + 1]).bad)
+                    return bad(e.line, e.col);
                 auto wrapped = std::make_unique<Expr>();
                 wrapped->kind = Expr::Kind::Unary;
                 wrapped->text = "&";
@@ -3392,6 +3634,9 @@ private:
                 err(e.line, e.col, "cannot assign argument");
                 return bad(e.line, e.col);
             }
+            if (fn.params[i].type && toBaseSubobject(e.kids[i + 1], arg.type.get(), fn.params[i].type.get()) &&
+                checkExpr(*e.kids[i + 1]).bad)
+                return bad(e.line, e.col);
         }
         for (std::size_t i = fn.params.size(); i < nargs; ++i) {
             ET arg = decay(checkExpr(*e.kids[i + 1]));
@@ -3612,6 +3857,12 @@ private:
         if (pick) e.kids[0]->text = pick->mangled;
     }
 
+    // std::initializer_list<E>, or a reference to one ([support.initlist]).
+    static bool isInitListType(const Type* t) {
+        if (t && t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
+        return t && t->kind == Type::Kind::Struct &&
+               (t->tag.compare(0, 22, "std::initializer_list<") == 0 || t->tag.compare(0, 17, "initializer_list<") == 0);
+    }
     // {a, b, ...} as a std::initializer_list<E> (our <initializer_list>: fields b_ and n_): a hidden
     // array E[n] set from the elements and a hidden list pointing at it. Both live to the end of the
     // full expression's statement block, like the temporaries of [dcl.init.list]/6.
@@ -3997,6 +4248,8 @@ private:
                 if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
                 if (!src.bad && src.type && !sameType(*d.type->inner, *src.type) && !derivedFrom(*src.type, *d.type->inner))
                     err(d.line, d.col, "cannot bind this reference");
+                else if (!src.bad && toBaseSubobject(d.init, src.type.get(), d.type->inner.get()))
+                    checkExpr(*d.init);
             }
             add(d.name, cloneType(*d.type), false, d.line, d.col);
             return;
@@ -4032,6 +4285,8 @@ private:
                 // N::b = N::a / 2 with a a const global of constant value: put the value in.
                 src = decay(checkExpr(*d.init));
             }
+            if (!src.bad && canAssign(*d.type, src) && toBaseSubobject(d.init, src.type.get(), d.type.get()))
+                src = decay(checkExpr(*d.init));
             if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
             else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
                 err(d.line, d.col, "initializer is not a constant");
@@ -4096,6 +4351,36 @@ private:
         curFn_ = savedFn;
         fnBase_ = savedBase;
         scopes_.pop_back();
+    }
+
+    // ---- Deduced return types of functions that take a lambda ----
+    std::map<std::string, Decl*> deferredAuto_;
+    static bool takesClosure(const Type& fn) {
+        for (const Param& p : fn.params) {
+            const Type* t = p.type.get();
+            while (t && (t->kind == Type::Kind::Reference || t->kind == Type::Kind::Pointer) && t->inner) t = t->inner.get();
+            if (t && t->kind == Type::Kind::Struct && t->tag.compare(0, 10, "__closure_") == 0) return true;
+        }
+        return false;
+    }
+    // Check function d now, in the middle of another one: only the file scope is seen from it.
+    void checkFunctionNow(Decl& d) {
+        std::vector<std::map<std::string, Sym>> outer(std::make_move_iterator(scopes_.begin() + 1),
+                                                      std::make_move_iterator(scopes_.end()));
+        scopes_.resize(1);
+        std::vector<TempInfo> savedTemps = std::move(temps_);
+        temps_.clear();
+        std::vector<LamCtx> savedLam = std::move(lamStack_);
+        lamStack_.clear();
+        const int savedLoops = loops_, savedSwitches = switches_, savedQuiet = quiet_;
+        loops_ = switches_ = quiet_ = 0;
+        checkFunction(d);
+        loops_ = savedLoops;
+        switches_ = savedSwitches;
+        quiet_ = savedQuiet;
+        lamStack_ = std::move(savedLam);
+        temps_ = std::move(savedTemps);
+        for (auto& sc : outer) scopes_.push_back(std::move(sc));
     }
 
     // return e; with a class result: copy-construct an object the function does not own, convert
@@ -4411,6 +4696,10 @@ private:
                     } else {
                         v = decay(dauto ? std::move(raw) : checkExpr(*s.expr));
                         curFn_->type->inner = v.type ? cloneType(*v.type) : prim(Type::Kind::Int);
+                        // Not known in this round (a template instance asked for just now): a call
+                        // of this function has no type until the file is read again, so nothing is
+                        // deduced from the int put in its place (a lambda returning make_tuple(..)).
+                        if (v.bad && instDirty()) pendingAuto_.insert(curFn_->name);
                     }
                 }
                 ret_ = curFn_->type->inner.get();
@@ -4436,11 +4725,14 @@ private:
                 if (!v.bad && (!v.lvalue || !v.type ||
                                (!sameType(*ret_->inner, *v.type) && !derivedFrom(*v.type, *ret_->inner))))
                     err(s.line, s.col, "return type does not match");
+                else if (!v.bad && toBaseSubobject(s.expr, v.type.get(), ret_->inner.get()))
+                    checkExpr(*s.expr);
             } else {
                 if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
                 ET v = decay(checkExpr(*s.expr));
                 classReturn(s, v);
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
+                else if (!v.bad && toBaseSubobject(s.expr, v.type.get(), ret_)) checkExpr(*s.expr);
             }
             break;
         case Stmt::Kind::If: {

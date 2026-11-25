@@ -26,6 +26,10 @@ public:
     const std::vector<Diag>& items() const { return items_; }
     std::string format() const;
     void clear() { items_.clear(); }
+    // Drops the items after the first n (a tentative read that is taken back).
+    void truncate(std::size_t n) {
+        if (items_.size() > n) items_.resize(n);
+    }
 
 private:
     std::vector<Diag> items_;

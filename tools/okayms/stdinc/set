@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <utility>
 #include <vector>
+#include <iterator>
 namespace std {
 template <typename T, typename C = less<T> >
 class set {
@@ -46,7 +47,10 @@ public:
     bool empty() const { return items_.empty(); }
     const T* begin() const { return items_.begin(); }
     const T* end() const { return items_.end(); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(items_.end()); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(items_.begin()); }
     void clear() { items_.clear(); }
+    void swap(set& other) { items_.swap(other.items_); }
     size_t count(const T& value) const {
         const size_t at = lower(value);
         return at < items_.size() && !cmp_(value, items_[at]) ? 1 : 0;

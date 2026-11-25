@@ -118,6 +118,7 @@ public:
     ~Win32Shell() override {
         RemoveIcon();
         if (m_icon) DestroyIcon(m_icon);
+        if (m_bigIcon) DestroyIcon(m_bigIcon);
         if (m_tray) DestroyWindow(m_tray);
     }
 
@@ -184,10 +185,39 @@ public:
         Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
 
+    // A desktop notification (launcher/DesktopNotify.hpp decides; main.cpp queues them, one at a time): the balloon
+    // with the app's own icon (NIIF_USER with hBalloonIcon, the large size when the SDK has it), quiet when the sound
+    // setting is off (NIIF_NOSOUND), and held back by Windows during quiet time / focus assist (NIIF_RESPECT_QUIET_TIME).
+    // Windows 10 and 11 show it as a notification in the bottom-right corner and keep it in the Action Center; a click
+    // comes back as NIN_BALLOONUSERCLICK in the icon's callback message.
+    bool Notify(const std::string& title, const std::string& text, bool sound) override {
+        if (!m_tray || g_iconHwnd != m_tray) return false;
+        NOTIFYICONDATAW nid; BaseData(nid, m_tray);
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_USER | (sound ? 0u : (DWORD)NIIF_NOSOUND);
+#if defined(NIIF_RESPECT_QUIET_TIME)
+        nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+#endif
+#if defined(NIIF_LARGE_ICON)
+        if (!m_bigIcon)
+            m_bigIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                          GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+        nid.hBalloonIcon = m_bigIcon ? m_bigIcon : m_icon;
+        if (m_bigIcon) nid.dwInfoFlags |= NIIF_LARGE_ICON;
+        if (!nid.hBalloonIcon) nid.dwInfoFlags = (nid.dwInfoFlags & ~(DWORD)(NIIF_USER | NIIF_LARGE_ICON)) | NIIF_INFO;
+#else
+        nid.dwInfoFlags = (nid.dwInfoFlags & ~(DWORD)NIIF_USER) | NIIF_INFO;   // no hBalloonIcon in this SDK: the info icon
+#endif
+        CopyW(nid.szInfoTitle, Wide(title));
+        CopyW(nid.szInfo, Wide(text.empty() ? std::string(" ") : text));   // an empty szInfo removes the balloon
+        return Shell_NotifyIconW(NIM_MODIFY, &nid) != FALSE;
+    }
+
 private:
     HWND m_main;   // the launcher's window (shown and hidden)
     HWND m_tray;   // our hidden window: owns the icon and the menu, receives the messages
     HICON m_icon = nullptr;
+    HICON m_bigIcon = nullptr;   // the balloon's icon (desktop notifications)
     std::wstring m_tip;
 };
 

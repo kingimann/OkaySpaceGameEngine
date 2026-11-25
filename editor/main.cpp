@@ -53146,16 +53146,16 @@ static void EditorJoinFrame(EditorState& ed) {
     }
     if (!ed.isPlaying()) { ConsoleLog("Play stopped before the join finished.", 1); g_joinRun.active = false; return; }
     NetworkManager* nm = ed.net() ? ed.net() : ed.scene().FindObjectOfType<NetworkManager>();
-    jp::JoinProgress p;
+    jp::EditorJoinProgress p;
     p.seconds = (float)(now - g_joinRun.dispatchMs) / 1000.0f;
     p.gateRefusal = okay::NetworkManager::LastJoinRefusal();
     if (nm) {
         p.joined = nm->Joined(); p.rejected = nm->JoinRejected(); p.rejectReason = nm->JoinRejectReason(); p.lastError = nm->LastError();
         p.stopped = !nm->IsConnected();
     } else p.stopped = true;
-    const jp::JoinOutcome o = jp::WatchEditorJoin(p, g_joinRun.host);
-    if (o.state == jp::JoinState::Waiting) return;
-    JoinToast(o.text, o.state == jp::JoinState::Joined ? 0 : 2);
+    const jp::EditorJoinResult o = jp::WatchEditorJoin(p, g_joinRun.host);
+    if (o.state == jp::EditorJoinPhase::Waiting) return;
+    JoinToast(o.text, o.state == jp::EditorJoinPhase::Joined ? 0 : 2);
     g_joinRun.active = false;
 }
 // The toast: bottom centre of the editor window for a few seconds (also in the Console).

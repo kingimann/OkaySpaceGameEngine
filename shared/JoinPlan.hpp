@@ -166,7 +166,7 @@ inline std::string EditorJoinDropText(const EditorJoinState& s, const std::strin
 }
 
 /// What the joining NetworkManager says, each frame after the join started.
-struct JoinProgress {
+struct EditorJoinProgress {
     bool joined = false;
     bool rejected = false;          ///< NetworkManager::JoinRejected
     std::string rejectReason;       ///< NetworkManager::JoinRejectReason
@@ -175,17 +175,17 @@ struct JoinProgress {
     bool stopped = false;           ///< the manager went offline without joining (or there is none)
     float seconds = 0.0f;           ///< since the join started
 };
-enum class JoinState { Waiting, Joined, Failed };
-struct JoinOutcome { JoinState state = JoinState::Waiting; std::string text; };
+enum class EditorJoinPhase { Waiting, Joined, Failed };
+struct EditorJoinResult { EditorJoinPhase state = EditorJoinPhase::Waiting; std::string text; };
 /// The join's result in words for the console and the toast: full, a wrong password, ended (no game with that room code,
 /// the host stopped), no answer within `timeoutSeconds`.
-inline JoinOutcome WatchEditorJoin(const JoinProgress& p, const std::string& hostName, float timeoutSeconds = 30.0f) {
+inline EditorJoinResult WatchEditorJoin(const EditorJoinProgress& p, const std::string& hostName, float timeoutSeconds = 30.0f) {
     const std::string host = hostName.empty() ? std::string("the host") : hostName;
     const std::string game = host + "'s game";
-    JoinOutcome o;
-    if (p.joined) { o.state = JoinState::Joined; o.text = "Joined " + game + "."; return o; }
+    EditorJoinResult o;
+    if (p.joined) { o.state = EditorJoinPhase::Joined; o.text = "Joined " + game + "."; return o; }
     auto has = [](const std::string& s, const char* part) { return s.find(part) != std::string::npos; };
-    o.state = JoinState::Failed;
+    o.state = EditorJoinPhase::Failed;
     if (!p.gateRefusal.empty()) { o.text = "Couldn't join " + game + ": " + p.gateRefusal; return o; }
     if (p.rejected) {
         const std::string& r = p.rejectReason;
@@ -204,7 +204,7 @@ inline JoinOutcome WatchEditorJoin(const JoinProgress& p, const std::string& hos
     }
     if (p.stopped) { o.text = "Couldn't join " + game + ": the connection closed. It may have ended."; return o; }
     if (timeoutSeconds > 0.0f && p.seconds >= timeoutSeconds) { o.text = game + " did not answer. It may have ended."; return o; }
-    o.state = JoinState::Waiting;
+    o.state = EditorJoinPhase::Waiting;
     return o;
 }
 

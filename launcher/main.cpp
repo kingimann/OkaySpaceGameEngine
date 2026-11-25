@@ -2142,21 +2142,32 @@ void SyncChatSeen(const std::string& user) {
     savedSum = sum;
 }
 // Unread numbers per conversation and in total (okay::chat::CountUnread over the newest messages the poll threads read,
-// Messages::UnreadRows). The rows come from PollWorker (about every 30 s) and the chat poll (every 6 s while it is open).
-okay::thr::Mutex* g_unreadMutex = nullptr;              // guards the three below
+// Messages::UnreadRows), and for group chats (okay::chat::CountGroupUnread over Messages::GroupUnreadRows, with my_groups'
+// newest id and my server read mark per group). The rows come from PollWorker (about every 30 s) and the chat poll (every
+// 6 s while it is open); either part may come alone.
+okay::thr::Mutex* g_unreadMutex = nullptr;              // guards the (guarded) ones below
 static std::vector<okay::chat::UnreadRow> g_unreadIn;   // (guarded) the newest rows read
 static std::string g_unreadInMe;                        // (guarded) my account id
 static bool g_unreadInFresh = false;                    // (guarded)
-static void PublishUnreadRows(std::vector<okay::chat::UnreadRow> rows, const std::string& me) {   // poll threads
+static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadIn;   // (guarded)
+static std::map<long, long> g_groupReadIn, g_groupNewestIn;       // (guarded) group -> my last_read / its newest message id
+static bool g_groupUnreadInFresh = false;                         // (guarded)
+struct GroupUnreadPart { std::vector<okay::chat::GroupUnreadRow> rows; const std::vector<okay::Messages::GroupConvo>* groups = nullptr; };
+static void PublishUnreadRows(std::vector<okay::chat::UnreadRow>* rows, const std::string& me, GroupUnreadPart* group = nullptr) {   // poll threads
     if (!g_unreadMutex || me.empty()) return;
+    std::map<long, long> read, newest;
+    if (group && group->groups) for (const auto& g : *group->groups) { read[g.id] = g.lastRead; newest[g.id] = g.lastId; }
     okay::thr::LockMutex(g_unreadMutex);
-    g_unreadIn = std::move(rows); g_unreadInMe = me; g_unreadInFresh = true;
+    if (rows) { g_unreadIn = std::move(*rows); g_unreadInMe = me; g_unreadInFresh = true; }
+    if (group) { g_groupUnreadIn = std::move(group->rows); g_groupReadIn = std::move(read); g_groupNewestIn = std::move(newest); g_groupUnreadInFresh = true; }
     okay::thr::UnlockMutex(g_unreadMutex);
 }
 static std::vector<okay::chat::UnreadRow> g_unreadRows;   // (UI thread) the rows in use
 static std::string g_unreadMe;
 static bool g_unreadKnown = false;                        // rows have been read for this account
-// The counts now (worked out at most every 100 ms; the UI thread only).
+static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadRows;   // (UI thread) the group rows in use
+static std::map<long, long> g_groupServerRead, g_groupNewest;
+// The counts now (worked out at most every 100 ms; the UI thread only). Takes what the poll threads published, both parts.
 const okay::chat::UnreadSummary& ChatUnread() {
     static okay::chat::UnreadSummary sum;
     static Uint32 at = 0;
@@ -2166,43 +2177,25 @@ const okay::chat::UnreadSummary& ChatUnread() {
     if (g_unreadMutex) {
         okay::thr::LockMutex(g_unreadMutex);
         if (g_unreadInFresh) { g_unreadRows.swap(g_unreadIn); g_unreadMe = g_unreadInMe; g_unreadInFresh = false; g_unreadKnown = true; }
-        okay::thr::UnlockMutex(g_unreadMutex);
-    }
-    const auto seen = okay::chat::SeenWithFloor(g_chatSeenDm, g_unreadRows, g_chatUnreadFloor);
-    sum = okay::chat::CountUnread(g_unreadRows, g_unreadMe, seen, g_blockedUsers);
-    return sum;
-}
-// Group chats the same way (okay::chat::CountGroupUnread over Messages::GroupUnreadRows, with my_groups' newest id and my
-// server read mark per group). Published with the DM rows by the same two poll threads, under the same lock.
-static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadIn;   // (guarded)
-static std::map<long, long> g_groupReadIn, g_groupNewestIn;       // (guarded) group -> my last_read / its newest message id
-static bool g_groupUnreadInFresh = false;                         // (guarded)
-static void PublishGroupUnread(std::vector<okay::chat::GroupUnreadRow> rows, const std::vector<okay::Messages::GroupConvo>& groups) {   // poll threads
-    if (!g_unreadMutex) return;
-    std::map<long, long> read, newest;
-    for (const auto& g : groups) { read[g.id] = g.lastRead; newest[g.id] = g.lastId; }
-    okay::thr::LockMutex(g_unreadMutex);
-    g_groupUnreadIn = std::move(rows); g_groupReadIn = std::move(read); g_groupNewestIn = std::move(newest); g_groupUnreadInFresh = true;
-    okay::thr::UnlockMutex(g_unreadMutex);
-}
-static std::vector<okay::chat::GroupUnreadRow> g_groupUnreadRows;   // (UI thread) the rows in use
-static std::map<long, long> g_groupServerRead, g_groupNewest;
-// The group counts now (at most every 100 ms; the UI thread only). Muted groups keep a number on their row but stay out of
-// the total; the open group counts nothing.
-const okay::chat::GroupUnreadSummary& ChatGroupUnread() {
-    static okay::chat::GroupUnreadSummary sum;
-    static Uint32 at = 0;
-    const Uint32 now = okay::platform::TicksMs32();
-    if (at != 0 && now - at < 100) return sum;
-    at = now;
-    if (g_unreadMutex) {
-        okay::thr::LockMutex(g_unreadMutex);
         if (g_groupUnreadInFresh) {
             g_groupUnreadRows.swap(g_groupUnreadIn); g_groupServerRead.swap(g_groupReadIn); g_groupNewest.swap(g_groupNewestIn);
             g_groupUnreadInFresh = false;
         }
         okay::thr::UnlockMutex(g_unreadMutex);
     }
+    const auto seen = okay::chat::SeenWithFloor(g_chatSeenDm, g_unreadRows, g_chatUnreadFloor);
+    sum = okay::chat::CountUnread(g_unreadRows, g_unreadMe, seen, g_blockedUsers);
+    return sum;
+}
+// The group counts now (UI thread). Muted groups keep a number on their row but stay out of the total; the open group
+// counts nothing.
+const okay::chat::GroupUnreadSummary& ChatGroupUnread() {
+    static okay::chat::GroupUnreadSummary sum;
+    static Uint32 at = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (at != 0 && now - at < 100) return sum;
+    at = now;
+    (void)ChatUnread();   // picks up the newest published rows
     std::set<long> muted;
     for (const auto& k : g_mutedChats) if (k.rfind("g:", 0) == 0) muted.insert(std::atol(k.c_str() + 2));
     sum = okay::chat::CountGroupUnread(g_groupUnreadRows, g_unreadMe, okay::chat::GroupSeen(g_chatSeenGroup, g_groupServerRead),
@@ -9478,7 +9471,7 @@ static std::vector<PolledChatEvent> PollChatEvents(okay::account::AccountService
     }
     if (counts) {
         const auto gs = msgs.MyGroups();
-        PublishGroupUnread(msgs.GroupUnreadRows(), gs);   // the group numbers for the nav badge (ChatGroupUnread)
+        { GroupUnreadPart gp{msgs.GroupUnreadRows(), &gs}; PublishUnreadRows(nullptr, msgs.MyUserId(), &gp); }   // the group numbers for the nav badge (ChatGroupUnread)
         for (const auto& e : okay::GroupMessageEvents(gs, groupSeen, okay::account::PublicName(who))) {
             std::string title;
             for (const auto& g : gs) if (g.id == e.groupId) title = g.title;
@@ -9517,7 +9510,7 @@ static int PollWorker(void*) {
                     fr = okay::Friends(poller).PendingRequests();
                     std::vector<okay::Messages::IncomingMessage> incoming;
                     unread = msgs.UnreadSince(since, newest, &incoming);
-                    PublishUnreadRows(msgs.UnreadRows(), msgs.MyUserId());   // the real numbers per conversation (ChatUnread)
+                    { auto rows = msgs.UnreadRows(); PublishUnreadRows(&rows, msgs.MyUserId()); }   // the real numbers per conversation (ChatUnread)
                     // Only messages that arrived since the last poll (the first poll of an account only sets the mark:
                     // what was already unread is in the badge and the Notifications tab, not a burst of pop-ups).
                     static long notifiedUpTo = -1;
@@ -10483,12 +10476,12 @@ static int ChatPollWorker(void*) {
             if (now >= nextConv) {
                 auto c = dm.Conversations();
                 if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; okay::thr::UnlockMutex(g_chatMutex); }
-                PublishUnreadRows(dm.UnreadRows(), dm.MyUserId());   // unread numbers stay current while the chat is open
+                { auto rows = dm.UnreadRows(); PublishUnreadRows(&rows, dm.MyUserId()); }   // unread numbers stay current while the chat is open
                 nextConv = now + 6000;
             }
             if (now >= nextGroups) {
                 auto gs = dm.MyGroups();
-                PublishGroupUnread(dm.GroupUnreadRows(), gs);   // group unread numbers too (ChatGroupUnread)
+                { GroupUnreadPart gp{dm.GroupUnreadRows(), &gs}; PublishUnreadRows(nullptr, dm.MyUserId(), &gp); }   // group unread numbers too (ChatGroupUnread)
                 if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatGroups = std::move(gs); g_chatGroupsReady = true; okay::thr::UnlockMutex(g_chatMutex); }
                 nextGroups = now + 6000;
             }

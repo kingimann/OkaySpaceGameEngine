@@ -655,39 +655,39 @@ static void TestEditorJoin() {
     CHECK(NextEditorJoinStep(s) == EditorJoinStep::Join);                     // already playing (a hand-off): join straight away
 
     // The result in words.
-    JoinProgress p;
-    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Waiting);
+    EditorJoinProgress p;
+    CHECK(WatchEditorJoin(p, "maya").state == EditorJoinPhase::Waiting);
     p.joined = true;
-    JoinOutcome o = WatchEditorJoin(p, "maya");
-    CHECK(o.state == JoinState::Joined && o.text == "Joined maya's game.");
-    p = JoinProgress{}; p.rejected = true; p.rejectReason = "server is full";
+    EditorJoinResult o = WatchEditorJoin(p, "maya");
+    CHECK(o.state == EditorJoinPhase::Joined && o.text == "Joined maya's game.");
+    p = EditorJoinProgress{}; p.rejected = true; p.rejectReason = "server is full";
     o = WatchEditorJoin(p, "maya");
-    CHECK(o.state == JoinState::Failed && o.text.find("maya's game is full") == 0);
+    CHECK(o.state == EditorJoinPhase::Failed && o.text.find("maya's game is full") == 0);
     p.rejectReason = "wrong password";
     CHECK(WatchEditorJoin(p, "maya").text.find("password") != std::string::npos);
     p.rejectReason = "the host did not answer";
     CHECK(WatchEditorJoin(p, "maya").text.find("may have ended") != std::string::npos);
     p.rejectReason = "kicked by the anti-cheat; try again in 30 s";
     CHECK(WatchEditorJoin(p, "maya").text == "Couldn't join maya's game: kicked by the anti-cheat; try again in 30 s.");
-    p = JoinProgress{}; p.lastError = "No game is hosted with code K7Q29X (check the code; the host may have stopped).";
+    p = EditorJoinProgress{}; p.lastError = "No game is hosted with code K7Q29X (check the code; the host may have stopped).";
     o = WatchEditorJoin(p, "maya");
-    CHECK(o.state == JoinState::Failed && o.text.find("has ended") != std::string::npos);
+    CHECK(o.state == EditorJoinPhase::Failed && o.text.find("has ended") != std::string::npos);
     p.lastError = "The online game ended: the relay session closed.";
     CHECK(WatchEditorJoin(p, "maya").text == "maya's game has ended.");
     p.lastError = "Could not reach the relay server r:1 (no answer after 8 s).";
     CHECK(WatchEditorJoin(p, "").text.find("Could not reach the relay") != std::string::npos);
     CHECK(WatchEditorJoin(p, "").text.find("the host's game") != std::string::npos);
-    p = JoinProgress{}; p.gateRefusal = "your session ticket was refused";
+    p = EditorJoinProgress{}; p.gateRefusal = "your session ticket was refused";
     CHECK(WatchEditorJoin(p, "maya").text.find("ticket") != std::string::npos);
-    p = JoinProgress{}; p.stopped = true;
-    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Failed);
-    p = JoinProgress{}; p.seconds = 29.0f;
-    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Waiting);
+    p = EditorJoinProgress{}; p.stopped = true;
+    CHECK(WatchEditorJoin(p, "maya").state == EditorJoinPhase::Failed);
+    p = EditorJoinProgress{}; p.seconds = 29.0f;
+    CHECK(WatchEditorJoin(p, "maya").state == EditorJoinPhase::Waiting);
     p.seconds = 30.0f;
     CHECK(WatchEditorJoin(p, "maya").text == "maya's game did not answer. It may have ended.");
     // Joined wins over everything else.
     p.joined = true; p.lastError = "x"; p.rejected = true;
-    CHECK(WatchEditorJoin(p, "maya").state == JoinState::Joined);
+    CHECK(WatchEditorJoin(p, "maya").state == EditorJoinPhase::Joined);
 }
 
 int main() {

@@ -104,23 +104,25 @@ public:
     /// The recent rows (id, sender, recipient) for okay::chat::CountUnread: unread counts per conversation
     /// and in total from one query (the newest `limit` messages I can see).
     std::vector<chat::UnreadRow> UnreadRows(int limit = 300) {
-        std::vector<chat::UnreadRow> out;
-        if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/messages?select=id,sender,recipient&order=id.desc&limit=" + std::to_string(limit), "GET");
-        if (!r.ok) return out;
-        for (const auto& o : SplitObjects(r.body))
-            out.push_back({std::atol(Field(o, "id").c_str()), Field(o, "sender"), Field(o, "recipient")});
-        return out;
+        return NewestRows<chat::UnreadRow>("messages", "sender,recipient", limit, [](const std::string& o, long id) {
+            return chat::UnreadRow{id, Field(o, "sender"), Field(o, "recipient")};
+        });
     }
     /// The same for group chats (id, group, sender), for okay::chat::CountGroupUnread: the newest `limit` messages of
     /// every group I am in (the server's "read group messages" rule only returns those).
     std::vector<chat::GroupUnreadRow> GroupUnreadRows(int limit = 300) {
-        std::vector<chat::GroupUnreadRow> out;
+        return NewestRows<chat::GroupUnreadRow>("group_messages", "convo_id,sender", limit, [](const std::string& o, long id) {
+            return chat::GroupUnreadRow{id, std::atol(Field(o, "convo_id").c_str()), Field(o, "sender")};
+        });
+    }
+    /// The newest `limit` rows of `table` (id plus `columns`), newest first, each made by `make(object, id)`.
+    template <class Row, class Make>
+    std::vector<Row> NewestRows(const char* table, const char* columns, int limit, Make make) {
+        std::vector<Row> out;
         if (!acct_.IsLoggedIn()) return out;
-        auto r = acct_.Api("/rest/v1/group_messages?select=id,convo_id,sender&order=id.desc&limit=" + std::to_string(limit), "GET");
+        auto r = acct_.Api(std::string("/rest/v1/") + table + "?select=id," + columns + "&order=id.desc&limit=" + std::to_string(limit), "GET");
         if (!r.ok) return out;
-        for (const auto& o : SplitObjects(r.body))
-            out.push_back({std::atol(Field(o, "id").c_str()), std::atol(Field(o, "convo_id").c_str()), Field(o, "sender")});
+        for (const auto& o : SplitObjects(r.body)) out.push_back(make(o, std::atol(Field(o, "id").c_str())));
         return out;
     }
     /// My own account id (looked up once), for CountUnread.

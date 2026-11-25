@@ -2439,7 +2439,10 @@ private:
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
-                err(d.line, d.col, "a static local initialized by a value that is not a constant is not supported");
+                // static const float k = 0.5f, static double s = -1.0: the constant's bits; any
+                // other value is reported by fillInit.
+                fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                g.bytes.resize(static_cast<std::size_t>(sz));
             }
             mod_.globals.push_back(std::move(g));
             Sym s;

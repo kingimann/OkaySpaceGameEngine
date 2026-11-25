@@ -25,11 +25,20 @@ int counter(int k) {
     return tab[k] + tab[3];
 }
 
+// A static local float set from a constant.
+float scaled(float v) {
+    static const float k = 0.25f;
+    static double off = -1.5;
+    return v * k + (float)off;
+}
+
 int main() {
     printf("%d %d %d %d %d\n", tex::index(0), tex::index(1), tex::index(2), tex::index(3), tex::index(7));
     int a = counter(0);
     int b = counter(1);
     int c = counter(2);
     printf("%d %d %d\n", a, b, c);
+    printf("%.3f %.3f\n", scaled(2.0f), scaled(10.0f));
     return 0;
 }
+

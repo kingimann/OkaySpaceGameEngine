@@ -4,6 +4,7 @@
 
 // The syntax tree and what parser.cpp shares with check.cpp and lower.cpp (docs/engine/modularization_plan.md, batch T1).
 #include "ast.hpp"
+#include "packs.hpp"
 
 #include "files.hpp"
 #include "ir.hpp"
@@ -5303,8 +5304,9 @@ private:
 // Parse and check. A function template called without explicit arguments is only known after the
 // checker has deduced them, so the file is parsed again with the new instance requests until none
 // are new (at most eight rounds).
-Tu frontEnd(const std::vector<Token>& toks, Diagnostics& diags) {
+Tu frontEnd(const std::vector<Token>& raw, Diagnostics& diags) {
     instRequests().clear();
+    const std::vector<Token> toks = expandPacks(raw);
     Tu result;
     for (int round = 0; round < 8; ++round) {
         Diagnostics local;

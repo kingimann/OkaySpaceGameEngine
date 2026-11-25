@@ -138,7 +138,14 @@ void BeginCard(const char* id) {
     g_lay.cy = py;                           // (no spacing yet: the card grows to fit)
     const float pad = 14.0f, rad = g_look ? 10.0f : rnd();
     if (*height > 0.0f) {
-        const unsigned char raised[4] = {38, 42, 51, 255};
+        // The card is a step up from the panel: a little lighter on a dark theme, near white on a light one (the launcher
+        // hands its theme over in Style(): Slate gives the old {38, 42, 51}).
+        const unsigned char* pn = g_theme.panel;
+        const bool lightPanel = pn[0] * 0.2126f + pn[1] * 0.7152f + pn[2] * 0.0722f > 140.0f;
+        unsigned char raised[4];
+        for (int k = 0; k < 3; ++k)
+            raised[k] = (unsigned char)(lightPanel ? pn[k] + (255 - pn[k]) * 0.85f : pn[k] + (g_theme.text[k] - pn[k]) * 0.04f + 0.5f);
+        raised[3] = 255;
         rrect(px, py, w, *height, rad, g_theme.border);
         rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, g_look ? raised : g_theme.bg);
     }

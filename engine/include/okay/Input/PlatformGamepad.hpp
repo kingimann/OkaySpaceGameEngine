@@ -71,6 +71,7 @@ inline void FeedPadAt(int player, platform::Gamepad* pad, std::vector<char>* key
         lt = st.axis[LAxTriggerLeft] / 32767.0f; rt = st.axis[LAxTriggerRight] / 32767.0f;
         for (int i = 0; i < (int)(sizeof(kMap) / sizeof(kMap[0])); ++i)
             if (st.button[(int)kMap[i]]) mask |= 1u << i;
+        if (st.button[LBtGuide]) mask |= 1u << Input::PadGuide;   // after LT / RT in Input's order, so not in kMap
     } else if (pad) {
         left = PadRawStick(*pad, GamepadAxis::LeftX, GamepadAxis::LeftY);
         right = PadRawStick(*pad, GamepadAxis::RightX, GamepadAxis::RightY);
@@ -78,6 +79,7 @@ inline void FeedPadAt(int player, platform::Gamepad* pad, std::vector<char>* key
         rt = pad->Axis(GamepadAxis::TriggerRight) / 32767.0f;
         for (int i = 0; i < (int)(sizeof(kMap) / sizeof(kMap[0])); ++i)
             if (pad->Button(kMap[i])) mask |= 1u << i;
+        if (pad->Button(GamepadButton::Guide)) mask |= 1u << Input::PadGuide;
     }
     // Processed first so the keyboard stand-in keys follow the dead zone too.
     Input::FeedGamepadRaw(player, left, right, lt, rt, mask, pad != nullptr);
@@ -104,7 +106,7 @@ inline void FeedPad(platform::Gamepad* pad, std::vector<char>& keys) {
     FeedPadAt(0, pad, &keys);
 }
 
-/// Up to Input::kMaxGamepads controllers, one per player slot. A pad takes the slot it had
+/// Up to Input::kMaxGamepads (8) controllers, one per player slot. A pad takes the slot it had
 /// last time when that is free (else the first free one) and frees it when pulled out. Use it
 /// from the event loop: Add(deviceIndex) on a controller-added event, Remove(instanceId) on a
 /// controller-removed event (SDL_CONTROLLERDEVICE* or platform::EventType::Gamepad*),

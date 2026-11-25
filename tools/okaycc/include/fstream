@@ -1,0 +1,4 @@
+// <fstream> for okay-cc (ISO/IEC 14882 [fstream.syn]): filebuf and the file streams. Our own header; every stream class is in
+// <__stream>.
+#pragma once
+#include <__stream>

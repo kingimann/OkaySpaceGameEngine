@@ -42,6 +42,12 @@
 #define AccentToggleButton AccentToggleButton_WO
 #define AccentCol AccentCol_WO
 #define TipButton TipButton_WO
+#define ToggleChip ToggleChip_WO
+#define ToggleChipWidth ToggleChipWidth_WO
+#define StateButton StateButton_WO
+#define BeginDropdown BeginDropdown_WO
+#define PushClearTabColors PushClearTabColors_WO
+#define PopClearTabColors PopClearTabColors_WO
 // The Inspector's OkayUI-part helpers in InspectorPanel.cpp (the hosted OkayUI Inspector), renamed like the rest.
 #define ComponentValueMenuEntries ComponentValueMenuEntries_WO
 #define FieldHooksFor FieldHooksFor_WO
@@ -121,6 +127,12 @@
 #undef AccentToggleButton
 #undef AccentCol
 #undef TipButton
+#undef ToggleChip
+#undef ToggleChipWidth
+#undef StateButton
+#undef BeginDropdown
+#undef PushClearTabColors
+#undef PopClearTabColors
 #undef ComponentValueMenuEntries
 #undef FieldHooksFor
 #undef MarkPrefabOverrides

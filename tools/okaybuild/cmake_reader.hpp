@@ -163,6 +163,11 @@ static string binNormal(const string& p) {
     while (!n.empty() && n.back() == '/') n.pop_back();
     return n.empty() || n == "." ? string("{bin}") : "{bin}/" + n;
 }
+static bool plainShellChar(char ch) { return isalnum((unsigned char)ch) || strchr("_./+-=,:{}@%", ch) != nullptr; } // needs no quoting for sh
+static string shellWord(const string& w) { // a word for sh: kept bare when it is plain, else in single quotes
+    if (!w.empty() && std::all_of(w.begin(), w.end(), plainShellChar)) return w;
+    string q = "'"; for (char ch : w) { if (ch == '\'') q += "'\\''"; else q += ch; } return q + "'";
+}
 static bool inBin(const string& p) { // a file strictly inside {bin}, already tidied by binNormal()
     if (p.compare(0, 6, "{bin}/") != 0 || p.size() == 6) return false;
     string rest = p.substr(6);
@@ -177,6 +182,8 @@ struct Target {
     // directory-wide settings captured when the target was made
     vector<string> dirIncs, dirDefs, dirOpts, dirLinkOpts;
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
+    vector<string> linkProp, ifLinkProp; // LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES as get_target_property reads them, in call order
+    vector<vector<string>> postBuild; string postBuildDir; // add_custom_command(TARGET POST_BUILD): commands (words) and their folder
     std::map<string, string> props;
     bool cxx17 = false, excluded = false;
     string skipReason; // set when the target cannot be written (missing source, needs a download, ...)
@@ -225,8 +232,9 @@ struct Interp {
     vector<string> dirDefs, dirOpts, dirIncs, dirLinkOpts;
     string curSrc, curBin; // CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR
     vector<std::pair<string, string>> parentWrites; // PARENT_SCOPE writes seen in the running function/directory
-    int depth = 0; bool returning = false, breaking = false;
-    std::map<string, string> srcProps; // "file|PROP" -> value (per-file properties collected as set_source_files_properties runs)
+    int depth = 0; bool returning = false, breaking = false, continuing = false; // continuing: continue() skips the rest of this loop pass
+    std::map<string, string> srcProps; // "folder|file|PROP" -> value: a source property belongs to the folder that set it (only targets made there see it)
+    string srcKey(const string& folder, const string& file, const string& prop) const { return folder + "|" + file + "|" + prop; }
     bool testingOn = false;
     // Files the CMake code writes while it is read (file(WRITE/APPEND), cmake -E copy): path -> text. Only paths in the build folder
     // ({bin}) go into the manifest; the source tree is never written.
@@ -238,6 +246,15 @@ struct Interp {
         out.assign((std::istreambuf_iterator<char>(in)), {}); inputs.insert(path); return true;
     }
     int cmakeTool(const vector<string>& w); // `cmake -E ...` done here: CMake itself is never run
+    // Commands the CMake code runs at configure time on files in the build folder (a copy of a binary file, `ar d` on it): they
+    // cannot run while the project is read, so they become one manifest action per file, in order, run by the build before
+    // anything uses the file. The reader reports them as having worked (RESULT 0), which is what they do on a working machine.
+    struct BinStep { string file; vector<string> cmds; vector<string> inputs; };
+    vector<BinStep> binSteps;
+    BinStep& binStep(const string& file) { for (auto& b : binSteps) if (b.file == file) return b; binSteps.push_back({file, {}, {}}); return binSteps.back(); }
+    bool windows() const { return get("CMAKE_SYSTEM_NAME") == "Windows"; }
+    void applySystem();
+    void configureFile(const vector<string>& a);
     std::map<string, string> globalProps; // set_property(GLOBAL ...)
     std::map<string, std::regex> rxCache; // each pattern is compiled once (the module grouping matches thousands of times)
     const std::regex& rx(const string& pattern) { auto it = rxCache.find(pattern); if (it == rxCache.end()) it = rxCache.emplace(pattern, std::regex(pattern)).first; return it->second; }
@@ -305,6 +322,7 @@ struct Interp {
         if (head == "INSTALL_INTERFACE") { tally.genex["INSTALL_INTERFACE"]++; return ""; }
         if (head == "TARGET_OBJECTS") { tally.genex["TARGET_OBJECTS"]++; return "{TARGET_OBJECTS:" + expand(rest) + "}"; } // the objects of an OBJECT library: linked in whole
         if (head == "TARGET_FILE") { tally.genex["TARGET_FILE"]++; return "{target:" + expand(rest) + "}"; }
+        if (head == "TARGET_FILE_DIR") { tally.genex["TARGET_FILE_DIR"]++; return "{target_dir:" + expand(rest) + "}"; }
         if (head == "TARGET_PROPERTY") {
             tally.genex["TARGET_PROPERTY"]++; auto comma = rest.find(','); string tn = expand(rest.substr(0, comma)), pn = comma == string::npos ? "" : rest.substr(comma + 1);
             Target* t = tgt(tn); if (!t) return ""; vector<string> v;
@@ -314,6 +332,9 @@ struct Interp {
             return joinList(v);
         }
         if (head == "CXX_COMPILER_ID") return "";
+        // $<LINK_ONLY:x> stays as text: it is a value CMake keeps in link properties (and a regex may look for it); a link item
+        // spelled this way is linked as x (resolveTarget)
+        if (head == "LINK_ONLY") { tally.genex["LINK_ONLY"]++; return "$<LINK_ONLY:" + expand(rest) + ">"; }
         tally.genex["$<" + head + ">"]++; return "";
     }
     // arguments as the command sees them: expanded, unquoted ones split at ';' and dropped when empty
@@ -426,8 +447,8 @@ struct Interp {
             "list", "string", "file", "add_executable", "add_library", "target_link_libraries", "target_include_directories", "target_compile_definitions",
             "target_compile_options", "target_compile_features", "target_sources", "target_link_options", "set_target_properties", "add_test", "set_tests_properties",
             "find_package", "find_program", "find_path", "pkg_check_modules", "check_include_file_cxx", "add_compile_options", "add_compile_definitions",
-            "add_link_options", "include_directories", "enable_testing", "cmake_minimum_required", "enable_language", "get_filename_component",
-            "set_source_files_properties", "set_property", "get_property", "get_target_property", "cmake_parse_arguments", "separate_arguments", "cmake_language", "while", "find_library", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "math", "cmake_policy"};
+            "add_link_options", "include_directories", "enable_testing", "configure_file", "cmake_minimum_required", "enable_language", "get_filename_component",
+            "set_source_files_properties", "get_source_file_property", "set_property", "get_property", "get_target_property", "cmake_parse_arguments", "separate_arguments", "cmake_language", "while", "find_library", "execute_process", "FetchContent_Declare", "FetchContent_MakeAvailable", "return", "break", "continue", "math", "cmake_policy"};
         return k.count(n) > 0;
     }
 
@@ -435,6 +456,7 @@ struct Interp {
     void run(const vector<Cmd>& cs, size_t b, size_t e);
     void exec(const vector<Cmd>& cs, size_t& i, size_t e);
     void callFunc(const Func& f, const string& name, const vector<string>& av);
+    void initConfigFlags();
     void sub(const string& dir);
     void includeFile(const string& file);
     void builtin(const Cmd& c);
@@ -461,7 +483,7 @@ static size_t matchEnd(const vector<Cmd>& cs, size_t i, size_t e, const char* op
 }
 
 inline void Interp::run(const vector<Cmd>& cs, size_t b, size_t e) {
-    for (size_t i = b; i < e && !returning && !breaking;) exec(cs, i, e);
+    for (size_t i = b; i < e && !returning && !breaking && !continuing;) exec(cs, i, e);
 }
 
 inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
@@ -497,7 +519,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
             for (long k = lo; k <= hi; ++k) items.push_back(std::to_string(k));
         } else for (size_t k = 1; k < a.size(); ++k) items.push_back(a[k]);
         bool had = has(var); string old = get(var);
-        for (auto& it : items) { vars[var] = it; run(cs, i + 1, end); if (breaking) { breaking = false; break; } if (returning) break; }
+        for (auto& it : items) { vars[var] = it; run(cs, i + 1, end); continuing = false; if (breaking) { breaking = false; break; } if (returning) break; }
         if (!had) vars.erase(var); else vars[var] = old;
         i = end + 1; return;
     }
@@ -505,7 +527,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
         size_t end = matchEnd(cs, i, e, "while", "endwhile"); long passes = 0;
         while (!returning && condArgs(c)) {
             if (++passes > 100000) throw ReadError{c.file + ":" + std::to_string(c.line) + ": while() ran 100000 times; stopping"};
-            run(cs, i + 1, end); if (breaking) { breaking = false; break; }
+            run(cs, i + 1, end); continuing = false; if (breaking) { breaking = false; break; }
         }
         i = end + 1; return;
     }
@@ -517,6 +539,7 @@ inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
     }
     if (n == "return") { returning = true; ++i; return; }
     if (n == "break") { breaking = true; ++i; return; }
+    if (n == "continue") { continuing = true; ++i; return; }
     ++i;
     auto fit = funcs.find(n);
     if (fit != funcs.end()) { callFunc(fit->second, n, args(c.args)); return; }
@@ -598,6 +621,12 @@ inline void Interp::doList(const vector<string>& a) {
         vector<string> r; for (size_t k = 2; k + 1 < a.size(); ++k) { long idx = atol(a[k].c_str()); if (idx < 0) idx += (long)cur.size(); r.push_back(idx >= 0 && idx < (long)cur.size() ? cur[(size_t)idx] : ""); }
         vars[a.back()] = joinList(r);
     }
+    else if (op == "POP_FRONT" || op == "POP_BACK") { // list(POP_FRONT <list> [<out>...]): each out takes one item; with none, one item is dropped
+        bool front = op == "POP_FRONT"; vector<string> outs(a.begin() + 2, a.end());
+        if (outs.empty()) { if (!cur.empty()) { if (front) cur.erase(cur.begin()); else cur.pop_back(); } }
+        for (auto& o : outs) { if (cur.empty()) break; if (front) { vars[o] = cur.front(); cur.erase(cur.begin()); } else { vars[o] = cur.back(); cur.pop_back(); } }
+        if (cur.empty()) vars.erase(var); else vars[var] = joinList(cur);
+    }
     else if (op == "REMOVE_ITEM") { vector<string> r; for (auto& x : cur) if (std::find(a.begin() + 2, a.end(), x) == a.end()) r.push_back(x); vars[var] = joinList(r); }
     else if (op == "REMOVE_DUPLICATES") { vector<string> r; for (auto& x : cur) if (std::find(r.begin(), r.end(), x) == r.end()) r.push_back(x); vars[var] = joinList(r); }
     else if (op == "FIND" && a.size() > 3) { auto it = std::find(cur.begin(), cur.end(), a[2]); vars[a[3]] = it == cur.end() ? "-1" : std::to_string(it - cur.begin()); }
@@ -643,7 +672,7 @@ inline void Interp::doProperty(const string& n, const vector<string>& a) {
         if (scope == "DIRECTORY") { if (prop == "CMAKE_CONFIGURE_DEPENDS") for (auto& v : vals) inputs.insert(abs(v, curSrc)); return; }
         if (scope == "TARGET") { for (auto& t : names) if (Target* tt = tgt(t)) put(tt->props[prop]); return; }
         if (scope == "SOURCE") {
-            for (auto& f : names) { string key = abs(f, curSrc) + "|" + prop; string slot = srcProps.count(key) ? srcProps[key] : ""; put(slot); srcProps[key] = slot; }
+            for (auto& f : names) { string key = srcKey(curSrc, abs(f, curSrc), prop); string slot = srcProps.count(key) ? srcProps[key] : ""; put(slot); srcProps[key] = slot; }
             return;
         }
         if (scope == "TEST") { // the tests made so far with these names (labels, environment, ...); the last test of a name is the one meant
@@ -661,7 +690,7 @@ inline void Interp::doProperty(const string& n, const vector<string>& a) {
     bool found = false; string v;
     if (scope == "GLOBAL") { auto it = globalProps.find(prop); if (it != globalProps.end()) { found = true; v = it->second; } }
     else if (scope == "TARGET") { if (Target* t = tgt(name)) { auto it = t->props.find(prop); if (it != t->props.end()) { found = true; v = it->second; } } }
-    else if (scope == "SOURCE") { auto it = srcProps.find(abs(name, curSrc) + "|" + prop); if (it != srcProps.end()) { found = true; v = it->second; } }
+    else if (scope == "SOURCE") { auto it = srcProps.find(srcKey(curSrc, abs(name, curSrc), prop)); if (it != srcProps.end()) { found = true; v = it->second; } }
     else if (scope == "DIRECTORY" && prop == "TESTS") { // the tests added so far in that folder, in order
         string dir = name.empty() ? curSrc : abs(name, curSrc); vector<string> names;
         for (auto& t : tests) if (t.dir == dir) names.push_back(t.name);
@@ -786,12 +815,64 @@ inline int Interp::cmakeTool(const vector<string>& w) {
             string from = abs(w[k], curSrc), text; if (!readText(from, text)) return 1;
             string to = isDir ? binNormal(dest + "/" + fs::path(from).filename().generic_string()) : dest;
             if (!inBin(to)) { tally.unknown["write outside the build folder"]++; return 1; }
+            if (text.find('\0') != string::npos && from.compare(0, 6, "{bin}/") != 0) { // a binary file (a library): the build copies it
+                BinStep& st = binStep(to); st.cmds.push_back("cp " + shellWord(from) + " " + shellWord(to)); st.inputs.push_back(from); continue;
+            }
             written[to] = text;
         }
         return 0;
     }
     if (op == "make_directory" || op == "remove" || op == "rm" || op == "touch" || op == "echo") return 0; // nothing to keep: folders are made when files are written
     tally.unknown["cmake -E " + op]++; return 1;
+}
+
+// configure_file(<input> <output> [@ONLY] [COPYONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE ...]), as the CMake documentation describes it:
+// @VAR@ and (without @ONLY) ${VAR} are replaced by the variable's value; "#cmakedefine VAR ..." becomes "#define VAR ..." when VAR is
+// true and "/* #undef VAR */" when not; "#cmakedefine01 VAR" becomes "#define VAR 1" or "0". An output in the build folder is
+// carried in the manifest like a file(WRITE); the input is read like file(READ) (a change reads the project again).
+inline void Interp::configureFile(const vector<string>& a) {
+    if (a.size() < 2) { tally.unknown["configure_file"]++; return; }
+    bool atOnly = false, copyOnly = false, escQuotes = false;
+    for (size_t k = 2; k < a.size(); ++k) { if (a[k] == "@ONLY") atOnly = true; else if (a[k] == "COPYONLY") copyOnly = true; else if (a[k] == "ESCAPE_QUOTES") escQuotes = true; }
+    string in = abs(a[0], curSrc), text; if (!readText(in, text)) throw ReadError{"configure_file: cannot read " + in};
+    string out = abs(a[1], curSrc); std::error_code ec;
+    if (out == curBin || (!written.count(out) && fs::is_directory(out, ec)) || (!a[1].empty() && a[1].back() == '/')) out += "/" + fs::path(in).filename().string();
+    out = binNormal(out);
+    if (!inBin(out)) { tally.unknown["write outside the build folder"]++; return; }
+    if (!copyOnly) {
+        auto value = [&](const string& name) { string v = get(name); if (!escQuotes) return v; string e; for (char ch : v) { if (ch == '"') e += "\\\""; else e += ch; } return e; };
+        string r; std::istringstream ls(text); string line; bool first = true;
+        auto replaceVars = [&](const string& l) {
+            string o;
+            for (size_t i = 0; i < l.size(); ++i) {
+                if (l[i] == '@') { size_t j = l.find('@', i + 1); auto nameChar = [](char ch) { return isalnum((unsigned char)ch) || strchr("_./+-", ch) != nullptr; };
+                    if (j != string::npos && j > i + 1 && std::all_of(l.begin() + (long)i + 1, l.begin() + (long)j, nameChar)) { o += value(l.substr(i + 1, j - i - 1)); i = j; continue; } }
+                if (!atOnly && l[i] == '$' && i + 1 < l.size() && l[i + 1] == '{') { size_t j = l.find('}', i + 2); if (j != string::npos) { o += value(l.substr(i + 2, j - i - 2)); i = j; continue; } }
+                o += l[i];
+            }
+            return o;
+        };
+        bool endsNl = !text.empty() && text.back() == '\n';
+        while (std::getline(ls, line)) {
+            if (!first) r += '\n'; first = false;
+            size_t b = line.find_first_not_of(" \t");
+            if (b != string::npos && line[b] == '#') {
+                size_t d = line.find_first_not_of(" \t", b + 1); string rest = d == string::npos ? "" : line.substr(d);
+                bool zeroOne = rest.compare(0, 14, "cmakedefine01 ") == 0, def = !zeroOne && rest.compare(0, 12, "cmakedefine ") == 0;
+                if (zeroOne || def) {
+                    std::istringstream ws(rest.substr(zeroOne ? 14 : 12)); string var; ws >> var; string tail; std::getline(ws, tail);
+                    bool on = isTrue(get(var));
+                    if (zeroOne) r += line.substr(0, b) + "#define " + var + (on ? " 1" : " 0");
+                    else r += on ? line.substr(0, b) + "#define " + var + replaceVars(tail) : "/* #undef " + var + " */";
+                    continue;
+                }
+            }
+            r += replaceVars(line);
+        }
+        if (endsNl) r += '\n';
+        text = r;
+    }
+    written[out] = text;
 }
 
 inline void Interp::doFile(const vector<string>& a) {
@@ -855,7 +936,27 @@ inline void Interp::doFind(const string& name, const vector<string>& a) {
     if (name == "find_package") {
         if (a.empty()) return; const string& p = a[0]; bool required = std::find(a.begin(), a.end(), "REQUIRED") != a.end();
         bool found = false;
-        if (p == "Threads") { found = true; Target t; t.name = "Threads::Threads"; t.kind = "imported"; t.ifLinks = {"pthread"}; targets[t.name] = t; vars["CMAKE_THREAD_LIBS_INIT"] = "-pthread"; vars["Threads_FOUND"] = "TRUE"; vars["THREADS_FOUND"] = "TRUE"; }
+        if (p == "Threads") { found = true; Target t; t.name = "Threads::Threads"; t.kind = "imported"; t.ifLinks = {"pthread"};
+            // MinGW: CMake's probe links a pthread_create program without a library when the program linker flags already bring in
+            // winpthread (the project's toolchain file does), so Threads::Threads then adds nothing; otherwise it is -lpthread
+            if (windows() && get("CMAKE_EXE_LINKER_FLAGS").find("winpthread") != string::npos) t.ifLinks.clear(); targets[t.name] = t; vars["CMAKE_THREAD_LIBS_INIT"] = "-pthread"; vars["Threads_FOUND"] = "TRUE"; vars["THREADS_FOUND"] = "TRUE"; }
+        else if (p == "Python3") { // the interpreter is a program of the host (also for a cross build): the first python3 on PATH
+            const char* pe = getenv("PATH"); std::stringstream ss(pe ? pe : ""); string d;
+            while (!found && std::getline(ss, d, ':')) { std::error_code ec; string cand = d + "/python3"; if (!d.empty() && fs::is_regular_file(cand, ec) && (fs::status(cand, ec).permissions() & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) != fs::perms::none) { found = true; vars["Python3_EXECUTABLE"] = cand; } }
+            if (found) { vars["Python3_FOUND"] = "TRUE"; vars["Python3_Interpreter_FOUND"] = "TRUE"; Target t; t.name = "Python3::Interpreter"; t.kind = "imported"; targets[t.name] = t; }
+            else vars["Python3_Interpreter_FOUND"] = "FALSE";
+        }
+        else if (windows() && p != "PkgConfig") {
+            // a cross build looks only under the target's roots (CMAKE_PREFIX_PATH, CMAKE_FIND_ROOT_PATH) for the package's own
+            // config file (<root>/lib/cmake/<Name>/<Name>Config.cmake or <name>-config.cmake) and runs it, as CMake's config mode does;
+            // the host's /usr/include is never used for a Windows program
+            vector<string> roots = splitList(get("CMAKE_PREFIX_PATH")); for (auto& r : splitList(get("CMAKE_FIND_ROOT_PATH"))) roots.push_back(r);
+            string lowerP = lower(p);
+            for (auto& r : roots) for (const string& f : {r + "/lib/cmake/" + p + "/" + p + "Config.cmake", r + "/lib/cmake/" + p + "/" + lowerP + "-config.cmake", r + "/cmake/" + p + "Config.cmake"}) {
+                std::error_code ec; if (found || !fs::is_regular_file(f, ec)) continue;
+                cache[p + "_DIR"] = fs::path(f).parent_path().generic_string(); includeFile(f); found = true; vars[p + "_FOUND"] = "TRUE";
+            }
+        }
         else if (p == "SDL2") {
             std::error_code ec; bool h = fs::exists("/usr/include/SDL2/SDL.h", ec) || fs::exists("/usr/include/x86_64-linux-gnu/SDL2/SDL.h", ec) || fs::exists("/usr/local/include/SDL2/SDL.h", ec);
             if (h) { found = true; string inc = fs::exists("/usr/include/SDL2/SDL.h", ec) ? "/usr/include/SDL2" : fs::exists("/usr/local/include/SDL2/SDL.h", ec) ? "/usr/local/include/SDL2" : "/usr/include/x86_64-linux-gnu/SDL2";
@@ -899,7 +1000,9 @@ inline void Interp::doFind(const string& name, const vector<string>& a) {
     }
     if (name == "check_include_file_cxx" || name == "check_include_file") {
         if (a.size() < 2) return; bool ok = false;
-        for (const char* d : {"/usr/include", "/usr/local/include", "/usr/include/x86_64-linux-gnu"}) { std::error_code ec; if (fs::exists(string(d) + "/" + a[0], ec)) ok = true; }
+        vector<string> dirs = {"/usr/include", "/usr/local/include", "/usr/include/x86_64-linux-gnu"};
+        if (windows()) { dirs.clear(); for (auto& r : splitList(get("CMAKE_FIND_ROOT_PATH"))) dirs.push_back(r + "/include"); dirs.push_back("/usr/x86_64-w64-mingw32/include"); } // the cross compiler's headers, not the host's
+        for (auto& d : dirs) { std::error_code ec; if (fs::exists(d + "/" + a[0], ec)) ok = true; }
         cache[a[1]] = ok ? "1" : ""; return;
     }
     if (name == "pkg_check_modules") {
@@ -928,7 +1031,8 @@ inline void Interp::addTarget(const Cmd& c, const vector<string>& a, bool lib) {
     t.kind = lib ? (type == "INTERFACE" ? "iface" : "lib") : "exe";
     if (type == "SHARED" || type == "MODULE") t.libKind = "shared"; else if (type == "OBJECT") t.libKind = "object";
     for (; k < a.size(); ++k) {
-        if (a[k] == "WIN32" || a[k] == "MACOSX_BUNDLE") continue;
+        if (a[k] == "WIN32") { t.props["WIN32_EXECUTABLE"] = "TRUE"; continue; } // a Windows GUI program (ignored elsewhere)
+        if (a[k] == "MACOSX_BUNDLE") continue;
         if (a[k] == "EXCLUDE_FROM_ALL") { t.excluded = true; continue; }
         t.sources.push_back(abs(a[k], curSrc));
     }
@@ -957,7 +1061,15 @@ inline void Interp::doTarget(const Cmd& c, const vector<string>& a) {
         else if (n == "target_compile_definitions") into(t->defs, t->pubDefs, t->ifDefs, w);
         else if (n == "target_compile_options") into(t->opts, t->pubOpts, t->ifOpts, w);
         else if (n == "target_link_options") t->linkOpts.push_back(w);
-        else if (n == "target_link_libraries") { if (w == "debug" || w == "optimized" || w == "general") continue; into(t->links, t->pubLinks, t->ifLinks, w); }
+        else if (n == "target_link_libraries") {
+            if (w == "debug" || w == "optimized" || w == "general") continue;
+            into(t->links, t->pubLinks, t->ifLinks, w);
+            // the properties: PRIVATE and PUBLIC are the target's own links; PUBLIC and INTERFACE go to its users, and a static
+            // library hands its PRIVATE links on as $<LINK_ONLY:x> (its users must link them too)
+            if (t->kind != "iface" && scope != "INTERFACE") t->linkProp.push_back(w);
+            if (scope != "PRIVATE" || t->kind == "iface") t->ifLinkProp.push_back(w);
+            else if (t->kind == "lib" && t->libKind != "shared" && t->libKind != "object") t->ifLinkProp.push_back("$<LINK_ONLY:" + w + ">");
+        }
         else if (n == "target_compile_features") { if (w == "cxx_std_17" || w == "cxx_std_20" || w == "cxx_std_14" || w == "cxx_std_11") t->cxx17 = true; }
     }
 }
@@ -982,15 +1094,39 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "project") {
         if (a.empty()) return; vars["PROJECT_NAME"] = a[0]; vars["CMAKE_PROJECT_NAME"] = a[0];
-        for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") { vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1]; }
+        for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") { // PROJECT_VERSION and its parts, also as <name>_VERSION...
+            vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1];
+            std::istringstream vs(a[k + 1]); string part; int n = 0;
+            for (const char* nm : {"_MAJOR", "_MINOR", "_PATCH", "_TWEAK"}) { vars[string("PROJECT_VERSION") + nm] = ""; vars[a[0] + "_VERSION" + nm] = ""; }
+            while (n < 4 && std::getline(vs, part, '.')) { static const char* nm[] = {"_MAJOR", "_MINOR", "_PATCH", "_TWEAK"}; vars[string("PROJECT_VERSION") + nm[n]] = part; vars[a[0] + "_VERSION" + nm[n]] = part; ++n; }
+        }
         vars["PROJECT_SOURCE_DIR"] = curSrc; vars["PROJECT_BINARY_DIR"] = curBin; return;
     }
-    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard") {
-        if (n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
+    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard") {
+        if (n == "add_custom_command" && a.size() >= 3 && a[0] == "TARGET") { // add_custom_command(TARGET t PRE_BUILD|PRE_LINK|POST_BUILD COMMAND ... [WORKING_DIRECTORY d] ...)
+            Target* t = tgt(a[1]);
+            if (!t || a[2] != "POST_BUILD") { tally.unknown[!t ? "add_custom_command on an unknown target" : "add_custom_command(TARGET " + a[2] + ")"]++; return; }
+            vector<vector<string>> cmds; string dir = curBin; int mode = 0; // 1 COMMAND words, 2 skip one value
+            for (size_t k = 3; k < a.size(); ++k) {
+                const string& w = a[k];
+                if (w == "COMMAND") { cmds.emplace_back(); mode = 1; continue; }
+                if (w == "WORKING_DIRECTORY" && k + 1 < a.size()) { dir = abs(a[++k], curBin); mode = 0; continue; }
+                if (w == "VERBATIM" || w == "USES_TERMINAL" || w == "COMMAND_EXPAND_LISTS") { mode = 0; continue; }
+                if (w == "COMMENT" || w == "BYPRODUCTS" || w == "DEPENDS" || w == "JOB_POOL") { mode = 2; continue; }
+                if (mode == 1) cmds.back().push_back(w);
+            }
+            for (auto& c2 : cmds) if (!c2.empty()) {
+                if (c2[0] == get("CMAKE_COMMAND")) { tally.unknown["add_custom_command(TARGET) running cmake"]++; continue; } // okay-build never runs CMake
+                t->postBuild.push_back(c2);
+            }
+            t->postBuildDir = dir; return;
+        }
+        if (n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
         if (n == "add_custom_target" && !a.empty()) { Target t; t.name = a[0]; t.kind = "custom"; t.skipReason = "add_custom_target is not expressed"; targets[t.name] = t; }
         return;
     }
     if (n == "enable_testing") { testingOn = true; return; }
+    if (n == "configure_file") { configureFile(a); return; }
     if (n == "include") {
         if (a.empty()) return; string f = a[0];
         if (f.find('/') == string::npos && f.find(".cmake") == string::npos) return; // a module name (FetchContent, CheckIncludeFileCXX ...): handled by the commands themselves
@@ -1009,15 +1145,23 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "find_package" || n == "find_program" || n == "find_library" || n == "find_path" || n == "pkg_check_modules" || n == "check_include_file_cxx" || n == "check_include_file") { doFind(n, a); return; }
     if (n == "execute_process") {
-        string cmdline, outVar, resVar; bool inCmd = false; vector<string> w;
+        string cmdline, outVar, resVar; bool inCmd = false, strip = false; vector<string> w;
         for (size_t k = 0; k < a.size(); ++k) {
             if (a[k] == "COMMAND") { inCmd = true; continue; }
+            if (a[k] == "OUTPUT_STRIP_TRAILING_WHITESPACE") { strip = true; inCmd = false; continue; }
             if (a[k] == "OUTPUT_VARIABLE" && k + 1 < a.size()) { outVar = a[++k]; inCmd = false; continue; }
             if (a[k] == "RESULT_VARIABLE" && k + 1 < a.size()) { resVar = a[++k]; inCmd = false; continue; }
             if (a[k].rfind("OUTPUT_", 0) == 0 || a[k].rfind("ERROR_", 0) == 0 || a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") { inCmd = false; if (a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") ++k; continue; }
             if (inCmd) w.push_back(a[k]);
         }
         if (!w.empty() && w[0] == get("CMAKE_COMMAND")) { int rc = cmakeTool(w); if (!outVar.empty()) vars[outVar] = ""; if (!resVar.empty()) vars[resVar] = std::to_string(rc); return; }
+        { // a command on a file in the build folder that a build-time step makes: it runs as part of that step
+            string file; for (auto& x : w) { string b = binNormal(x); for (auto& st : binSteps) if (st.file == b) file = b; }
+            if (!file.empty()) {
+                string line; for (auto& x : w) line += (line.empty() ? "" : " ") + shellWord(binNormal(x) == file ? file : x);
+                binStep(file).cmds.push_back(line); if (!outVar.empty()) vars[outVar] = ""; if (!resVar.empty()) vars[resVar] = "0"; return;
+            }
+        }
         for (auto& x : w) { string q = "'"; for (char ch : x) { if (ch == '\'') q += "'\\''"; else q += ch; } cmdline += q + "' "; }
         string out; int rc = 1;
         if (!w.empty()) { FILE* f = CMR_POPEN((cmdline + " 2>/dev/null").c_str(), "r"); if (f) { char b[512]; size_t k; while ((k = fread(b, 1, sizeof b, f)) > 0) out.append(b, k); int st = CMR_PCLOSE(f);
@@ -1027,6 +1171,7 @@ inline void Interp::builtin(const Cmd& c) {
  rc = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
 #endif
  } }
+        if (strip) while (!out.empty() && isspace((unsigned char)out.back())) out.pop_back();
         if (!outVar.empty()) vars[outVar] = out; if (!resVar.empty()) vars[resVar] = std::to_string(rc); return;
     }
     if (n == "add_executable") { addTarget(c, a, false); return; }
@@ -1043,8 +1188,11 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "set_source_files_properties") {
         size_t p = 0; while (p < a.size() && a[p] != "PROPERTIES") ++p;
-        for (size_t q = p + 1; q + 1 < a.size(); q += 2) for (size_t k = 0; k < p; ++k) srcProps[abs(a[k], curSrc) + "|" + a[q]] += (srcProps.count(abs(a[k], curSrc) + "|" + a[q]) ? ";" : "") + a[q + 1];
+        for (size_t q = p + 1; q + 1 < a.size(); q += 2) for (size_t k = 0; k < p; ++k) srcProps[srcKey(curSrc, abs(a[k], curSrc), a[q])] = a[q + 1]; // sets (replaces) the value
         return;
+    }
+    if (n == "get_source_file_property" && a.size() >= 3) { // get_source_file_property(<var> <file> <prop>): this folder's value, else NOTFOUND
+        auto it = srcProps.find(srcKey(curSrc, abs(a[1], curSrc), a[2])); vars[a[0]] = it != srcProps.end() ? it->second : a[0] + "-NOTFOUND"; return;
     }
     if (n == "set_property" || n == "get_property") { doProperty(n, a); return; }
     if (n == "cmake_parse_arguments") { parseArguments(a); return; }
@@ -1057,6 +1205,12 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "get_target_property" && a.size() >= 3) { // SOURCES and SOURCE_DIR come from what the reader recorded; other properties from set_target_properties
         Target* t = tgt(a[1]); string v; bool ok = t != nullptr;
+        auto raw = targets.find(a[1]);
+        if (a[2] == "ALIASED_TARGET") { bool al = raw != targets.end() && !raw->second.aliasOf.empty(); vars[a[0]] = al ? raw->second.aliasOf : a[0] + "-NOTFOUND"; return; }
+        if (t && (a[2] == "LINK_LIBRARIES" || a[2] == "INTERFACE_LINK_LIBRARIES")) {
+            const vector<string>& l = a[2] == "LINK_LIBRARIES" ? t->linkProp : t->ifLinkProp; // recorded by target_link_libraries
+            vars[a[0]] = l.empty() ? a[0] + "-NOTFOUND" : joinList(l); return;
+        }
         if (t && a[2] == "SOURCES") v = joinList(t->sources); else if (t && a[2] == "SOURCE_DIR") v = t->dir; else if (t && a[2] == "NAME") v = t->name;
         else if (t) { auto it = t->props.find(a[2]); ok = it != t->props.end(); if (ok) v = it->second; }
         vars[a[0]] = ok ? v : a[0] + "-NOTFOUND"; return;
@@ -1127,15 +1281,56 @@ inline void Interp::init() {
     vars["CMAKE_SOURCE_DIR"] = opt.root; vars["CMAKE_BINARY_DIR"] = opt.binDir; vars["PROJECT_SOURCE_DIR"] = opt.root; vars["PROJECT_BINARY_DIR"] = opt.binDir;
     curSrc = opt.root; curBin = opt.binDir;
     vars["CMAKE_CURRENT_SOURCE_DIR"] = curSrc; vars["CMAKE_CURRENT_BINARY_DIR"] = curBin;
-    vars["CMAKE_SYSTEM_NAME"] = "Linux"; vars["UNIX"] = "1"; vars["CMAKE_DL_LIBS"] = "dl"; vars["CMAKE_CXX_COMPILER_ID"] = "GNU"; vars["CMAKE_C_COMPILER_ID"] = "GNU";
+    vars["CMAKE_SYSTEM_NAME"] = opt.defs.count("CMAKE_SYSTEM_NAME") ? opt.defs["CMAKE_SYSTEM_NAME"] : "Linux"; vars["UNIX"] = "1"; vars["CMAKE_DL_LIBS"] = "dl"; vars["CMAKE_CXX_COMPILER_ID"] = "GNU"; vars["CMAKE_C_COMPILER_ID"] = "GNU";
     vars["CMAKE_VERSION"] = "3.28.0"; vars["CMAKE_MAJOR_VERSION"] = "3"; vars["CMAKE_MINOR_VERSION"] = "28"; // the language level this reader follows
     vars["CMAKE_COMMAND"] = "cmake"; vars["CMAKE_CROSSCOMPILING"] = ""; vars["CMAKE_HOST_UNIX"] = "1";
     vars["CMAKE_BUILD_TYPE"] = opt.defs.count("CMAKE_BUILD_TYPE") ? opt.defs["CMAKE_BUILD_TYPE"] : opt.buildType;
     cache["CMAKE_BUILD_TYPE"] = vars["CMAKE_BUILD_TYPE"];
 }
 
+// The platform variables for the target system (CMAKE_SYSTEM_NAME, from a toolchain file or --opt). Written from the CMake
+// documentation of WIN32, MINGW, UNIX, CMAKE_CROSSCOMPILING and CMAKE_EXECUTABLE_SUFFIX. Only Linux (the default) and Windows with
+// a GNU (MinGW) compiler are known; another system name is an error, not a guess.
+inline void Interp::applySystem() {
+    string sys = get("CMAKE_SYSTEM_NAME");
+    vars["CMAKE_HOST_SYSTEM_NAME"] = "Linux"; vars["CMAKE_CROSSCOMPILING"] = sys == "Linux" ? "" : "TRUE";
+    if (sys == "Linux") return;
+    if (sys != "Windows") throw ReadError{"CMAKE_SYSTEM_NAME '" + sys + "' is not known to okay-build cmake (Linux and Windows are)"};
+    vars.erase("UNIX"); vars["WIN32"] = "1"; vars["CMAKE_DL_LIBS"] = "";
+    string cxx = get("CMAKE_CXX_COMPILER"); string base = fs::path(cxx).filename().string();
+    if (cxx.empty() || base.find("mingw") == string::npos) throw ReadError{"a Windows target needs a MinGW CMAKE_CXX_COMPILER (x86_64-w64-mingw32-g++); MSVC is not read yet"};
+    vars["MINGW"] = "1";
+    vars["CMAKE_EXECUTABLE_SUFFIX"] = ".exe"; vars["CMAKE_STATIC_LIBRARY_PREFIX"] = "lib"; vars["CMAKE_STATIC_LIBRARY_SUFFIX"] = ".a";
+    vars["CMAKE_SHARED_LIBRARY_SUFFIX"] = ".dll"; vars["CMAKE_IMPORT_LIBRARY_SUFFIX"] = ".dll.a";
+}
+
+// The per-configuration flag variables, as CMake documents them for GNU compilers (a value given with --opt / -D wins). The
+// linker-flag variables start from their _INIT values (a toolchain file sets those) unless given.
+inline void Interp::initConfigFlags() {
+    static const char* cfg[][2] = {{"DEBUG", "-g"}, {"RELEASE", "-O3 -DNDEBUG"}, {"RELWITHDEBINFO", "-O2 -g -DNDEBUG"}, {"MINSIZEREL", "-Os -DNDEBUG"}};
+    for (const char* lang : {"C", "CXX"}) {
+        string base = string("CMAKE_") + lang + "_FLAGS";
+        if (!cache.count(base)) cache[base] = get(base + "_INIT");
+        for (auto& c : cfg) if (!cache.count(base + "_" + c[0])) cache[base + "_" + c[0]] = c[1];
+    }
+    for (const char* kind : {"EXE", "SHARED", "STATIC", "MODULE"}) {
+        string base = string("CMAKE_") + kind + "_LINKER_FLAGS";
+        if (!cache.count(base)) cache[base] = get(base + "_INIT");
+        for (auto& c : cfg) if (!cache.count(base + "_" + c[0])) cache[base + "_" + c[0]] = "";
+    }
+}
+
 inline void Interp::runTop() {
     string file = opt.root + "/CMakeLists.txt"; std::ifstream in(file); if (!in) throw ReadError{"no CMakeLists.txt in " + opt.root};
+    { // -DCMAKE_TOOLCHAIN_FILE: CMake reads it before the project's own files, with CMAKE_BINARY_DIR already set
+        auto tc = opt.defs.find("CMAKE_TOOLCHAIN_FILE");
+        if (tc != opt.defs.end() && !tc->second.empty()) {
+            string tf = abs(tc->second, opt.root); std::error_code ec;
+            if (!fs::is_regular_file(tf, ec)) throw ReadError{"CMAKE_TOOLCHAIN_FILE " + tc->second + " does not exist"};
+            includeFile(tf);
+        }
+        applySystem(); initConfigFlags();
+    }
     string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
     auto cs = parseFile(text, "CMakeLists.txt");
     vars["CMAKE_CURRENT_LIST_FILE"] = file; vars["CMAKE_CURRENT_LIST_DIR"] = opt.root;
@@ -1190,6 +1385,7 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
     std::function<void(const string&, bool)> item = [&](const string& w, bool direct) {
         (void)direct;
         if (w.empty()) return;
+        if (w.compare(0, 12, "$<LINK_ONLY:") == 0 && w.back() == '>') { item(w.substr(12, w.size() - 13), direct); return; }
         if (w[0] == '-') { if (w.compare(0, 2, "-l") == 0) addUnique(r.libs, w.substr(2)); else addUnique(r.linkFlags, w); return; }
         Target* d = in.tgt(w);
         if (!d) {
@@ -1209,6 +1405,15 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
             }
         } else if (d->kind == "iface" || d->kind == "imported") {
             if (!seen.insert(d->name).second) return;
+            if (d->kind == "imported") { // a package's config file describes its imported targets with properties
+                auto prop = [&](const string& k) { auto it = d->props.find(k); return it == d->props.end() ? string() : it->second; };
+                for (auto& x : splitSemi(prop("INTERFACE_INCLUDE_DIRECTORIES"))) addUnique(r.incs, x);
+                for (auto& x : splitSemi(prop("INTERFACE_COMPILE_DEFINITIONS"))) addUnique(r.defs, x);
+                string file = prop("IMPORTED_IMPLIB"); if (file.empty()) file = prop("IMPORTED_LOCATION");
+                if (file.empty()) for (auto& kv : d->props) if (kv.first.rfind("IMPORTED_IMPLIB_", 0) == 0 || kv.first.rfind("IMPORTED_LOCATION_", 0) == 0) { file = kv.second; break; }
+                if (!file.empty()) addUnique(r.linkFlags, file);
+                for (auto& x : splitSemi(prop("INTERFACE_LINK_LIBRARIES"))) item(x, false);
+            }
             for (auto& x : d->pubIncs) addUnique(r.incs, x); for (auto& x : d->ifIncs) addUnique(r.incs, x);
             for (auto& x : d->pubDefs) addUnique(r.defs, x); for (auto& x : d->ifDefs) addUnique(r.defs, x);
             for (auto& x : d->pubOpts) addUnique(r.opts, x); for (auto& x : d->ifOpts) addUnique(r.opts, x);
@@ -1226,9 +1431,11 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
 // Writes the manifest text. Returns it; `rep` says what could and could not be expressed.
 static string emitManifest(Interp& in, Report& rep) {
     const string& root = in.opt.root;
-    string bt = in.get("CMAKE_BUILD_TYPE"); string btFlags, btDef;
-    if (bt == "Release") { btFlags = "-O3"; btDef = "NDEBUG"; } else if (bt == "Debug") btFlags = "-g";
-    else if (bt == "RelWithDebInfo") { btFlags = "-O2 -g"; btDef = "NDEBUG"; } else if (bt == "MinSizeRel") { btFlags = "-Os"; btDef = "NDEBUG"; }
+    string bt = in.get("CMAKE_BUILD_TYPE"), btUp; for (char ch : bt) btUp += (char)toupper((unsigned char)ch);
+    // CMAKE_<LANG>_FLAGS then CMAKE_<LANG>_FLAGS_<CONFIG> (shell-like words); with no build type only the first
+    auto words = [](const string& s) { vector<string> r; std::istringstream ws(s); string w; while (ws >> w) r.push_back(w); return r; };
+    auto cfgWords = [&](const string& base) { vector<string> r = words(in.get(base)); if (!btUp.empty()) for (auto& w : words(in.get(base + "_" + btUp))) r.push_back(w); return r; };
+    vector<string> cFlags = cfgWords("CMAKE_C_FLAGS"), cxxFlags = cfgWords("CMAKE_CXX_FLAGS"), exeLink = cfgWords("CMAKE_EXE_LINKER_FLAGS"), sharedLink = cfgWords("CMAKE_SHARED_LINKER_FLAGS");
     string stdv = in.get("CMAKE_CXX_STANDARD").empty() ? "17" : in.get("CMAKE_CXX_STANDARD");
     string stdFlag = "-std=" + string(Interp::isTrue(in.get("CMAKE_CXX_EXTENSIONS")) || !in.has("CMAKE_CXX_EXTENSIONS") ? "gnu++" : "c++") + stdv;
     for (auto& n : in.order) {
@@ -1278,13 +1485,39 @@ static string emitManifest(Interp& in, Report& rep) {
     for (auto& n : in.order) { Target& t = in.targets[n]; if (t.kind == "exe" || t.kind == "lib") for (auto& d : t.dirDefs) if (isAccount(d)) account = true; }
     rep.accountDefines = account;
     if (account) out << "account_defines = on\n";
-    out << "toolchain\n  path_map = on\nend\n";
+    out << "toolchain\n  path_map = on\n";
+    auto tcLine = [&](const char* k, const vector<string>& v) { if (v.empty()) return; out << "  " << k << " ="; for (auto& w : v) out << " " << qw(w); out << "\n"; };
+    { // the compilers a toolchain file (or --opt) named; a Windows (MinGW) target also gets CMake's Windows file names, resource
+      // compiler, standard libraries and the import library CMake writes for every program
+        string cxxc = in.get("CMAKE_CXX_COMPILER"), cc = in.get("CMAKE_C_COMPILER");
+        if (!cc.empty()) out << "  cc = " << qw(cc) << "\n";
+        if (!cxxc.empty()) out << "  cxx = " << qw(cxxc) << "\n";
+        string ar = in.get("CMAKE_AR"), base = fs::path(cxxc).filename().string();
+        string prefix = base.size() > 3 && base.compare(base.size() - 3, 3, "g++") == 0 ? cxxc.substr(0, cxxc.size() - 3) : string();
+        if (ar.empty() && !prefix.empty() && prefix.back() == '-') ar = prefix + "ar"; // x86_64-w64-mingw32-g++ -> x86_64-w64-mingw32-ar
+        if (!ar.empty()) out << "  ar = " << qw(ar) << "\n";
+        if (in.windows()) {
+            string rc = in.get("CMAKE_RC_COMPILER"); if (rc.empty() && !prefix.empty() && prefix.back() == '-') rc = prefix + "windres";
+            if (!rc.empty()) out << "  rc = " << qw(rc) << "\n";
+            out << "  obj_suffix = .obj\n  exe_suffix = .exe\n  exe_import_lib = on\n";
+            string std = in.get("CMAKE_CXX_STANDARD_LIBRARIES"); if (std.empty()) std = "-lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32";
+            tcLine("std_libs", words(std));
+        }
+    }
+    tcLine("c_flags", cFlags); tcLine("cxx_flags", cxxFlags); tcLine("link_lead", cxxFlags); tcLine("exe_link_flags", exeLink); tcLine("shared_link_flags", sharedLink);
+    out << "end\n";
     for (auto& fu : in.fetchUsed) {
         auto& f = in.fetchDeclared[fu]; out << "fetch " << qw(fu) << "\n";
         if (!f.git.empty()) out << "  git = " << qw(f.git) << "\n  commit = " << qw(f.tag) << "\n"; else out << "  url = " << qw(f.url) << "\n  sha256 = " << qw(f.sha256) << "\n";
         out << "  dir = _deps/" << fu << "-src\nend\n"; ++rep.fetches;
     }
     for (auto& f : in.folders) out << "folder " << qw(f) << "\n";
+    for (auto& st : in.binSteps) { // configure-time commands on a build-folder file, run by the build before the file is used
+        out << "action\n  output = " << qw(st.file) << "\n";
+        if (!st.inputs.empty()) { out << "  inputs ="; for (auto& i : st.inputs) out << " " << qw(i); out << "\n"; }
+        string cmd; for (auto& c : st.cmds) cmd += (cmd.empty() ? "" : " && ") + c;
+        out << "  cmd = " << cmd << "\nend\n";
+    }
     for (auto& g : in.written) { // files the CMake code wrote while it was read: the build writes them (only when the text changed)
         out << "generate " << qw(g.first) << "\n";
         const size_t chunk = 4000; // several text lines keep each line short; they are joined with nothing in between
@@ -1302,11 +1535,8 @@ static string emitManifest(Interp& in, Report& rep) {
         for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
         for (auto& x : t.dirDefs) if (!isAccount(x)) addUnique(defs, x); for (auto& x : t.defs) addUnique(defs, x); for (auto& x : t.pubDefs) addUnique(defs, x);
         for (auto& x : r.defs) addUnique(defs, x);
-        if (!btDef.empty()) addUnique(defs, btDef);
         bool cxx = t.cxx17; for (auto& s : t.sources) { string e = fs::path(s).extension().string(); if (e == ".cpp" || e == ".cc" || e == ".cxx") cxx = true; }
         if (cxx) addUnique(opts, stdFlag);
-        for (auto& w : splitSemi(btFlags.empty() ? "" : btFlags)) { (void)w; }
-        { std::stringstream ss(btFlags); string w; while (ss >> w) addUnique(opts, w); }
         for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.opts) addUnique(opts, x); for (auto& x : t.pubOpts) addUnique(opts, x);
         for (auto& x : r.opts) addUnique(opts, x);
         // LINKER:a,b is the compiler driver's -Wl,a,b; SHELL:"x y" is several words (CMake's link-option prefixes)
@@ -1322,15 +1552,19 @@ static string emitManifest(Interp& in, Report& rep) {
         out << "\n";
         auto line = [&](const char* k, const vector<string>& v) { if (v.empty()) return; out << "  " << k << " ="; for (auto& w : v) out << " " << qw(w); out << "\n"; };
         { auto on = t.props.find("OUTPUT_NAME"); if (on != t.props.end() && !on->second.empty()) out << "  output_name = " << qw(on->second) << "\n"; }
+        for (auto& pc : t.postBuild) { out << "  post_build ="; for (auto& w : pc) out << " " << qw(srcWord(w, root)); out << "\n"; }
+        if (!t.postBuild.empty()) out << "  post_build_dir = " << qw(srcWord(t.postBuildDir, root)) << "\n";
+        if (t.kind == "exe" && in.windows()) { auto w = t.props.find("WIN32_EXECUTABLE"); if (w != t.props.end() && Interp::isTrue(w->second)) out << "  win32_executable = on\n"; }
         line("include", incs); line("define", defs); line("flags", opts); line("link_flags", linkFlags); line("libs", libs); line("deps", r.deps);
         rep.defines += (int)defs.size(); rep.flags += (int)opts.size();
         for (auto& s : t.sources) {
-            for (const char* prop : {"COMPILE_OPTIONS", "COMPILE_FLAGS", "COMPILE_DEFINITIONS", "INCLUDE_DIRECTORIES"}) {
-                auto it = in.srcProps.find(s + "|" + prop); if (it == in.srcProps.end()) continue;
+            for (const char* prop : {"COMPILE_OPTIONS", "COMPILE_FLAGS", "COMPILE_DEFINITIONS", "INCLUDE_DIRECTORIES", "OBJECT_DEPENDS"}) {
+                auto it = in.srcProps.find(in.srcKey(t.dir, s, prop)); if (it == in.srcProps.end()) continue;
                 for (auto& w : splitSemi(it->second)) {
                     if (w.empty()) continue; ++rep.perFile; string rs = qw(rootRel(s, root));
                     if (string(prop) == "COMPILE_DEFINITIONS") out << "  file_define = " << rs << " " << qw(w) << "\n";
                     else if (string(prop) == "INCLUDE_DIRECTORIES") out << "  file_include = " << rs << " " << qw(rootRel(w, root)) << "\n";
+                    else if (string(prop) == "OBJECT_DEPENDS") out << "  file_depends = " << rs << " " << qw(rootRel(w, root)) << "\n";
                     else out << "  file_flag = " << rs << " " << qw(w) << "\n";
                 }
             }

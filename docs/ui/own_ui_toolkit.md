@@ -3309,3 +3309,42 @@ menus and drag and drop straight from the scene) and the editor host that filled
 own. Project Settings > Modules is shared with the New Project form (`editor/ModulesPanelUI.hpp`) and stays Dear ImGui.
 
 **Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build.
+
+## 28. Five small tool windows on OkayUI only: Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager
+
+The move of sections 24 and 25 (a whole window through `okayuihost::HostPanelWindow`, `PanelWindow` in `editor/OkayPanels.cpp`) for
+five self-contained windows. Their Dear ImGui bodies are deleted; the editor side keeps the work (the search, opening a hit, erasing,
+adding and saving a field, creating, reloading, switching and opening a plugin) and answers the intent:
+
+| Window | Editor side | Model (`shared/EditorPanelModels.hpp`) | Screen (`okayui/screens/OkayUIEditorPanels.cpp`) |
+|---|---|---|---|
+| Keyboard Shortcuts | `DrawShortcutsWindow` (`editor/main.cpp`) | `KeyboardShortcuts()` (the list moved out of main.cpp), `FilterShortcuts`, `ShortcutsState` | `DrawShortcuts` |
+| Net | `DrawNetPanel` (`editor/NetSimPanel.cpp`) | `NetSimModel` (the simulator's values by pointer), `ClampNetSim`, `NetWireText` | `DrawNetSim` |
+| Find in Files | `DrawFindInFiles` (`editor/FindInFiles.cpp`) | `FindInFilesModel` / `State` / `Intent`, `FindInFilesStatus`, `FindHitLabel`, `FindHitPreview` | `DrawFindInFiles` |
+| Data Asset | `DrawDataAssetEditor` (`editor/main.cpp`) | `DataAssetModel` (the fields by pointer), `DataAssetIntent` | `DrawDataAsset` |
+| Plugin Manager | `DrawPluginManager` (`editor/PluginsWindow.cpp`) | `PluginManagerModel` (`PluginRow`), `PluginManagerIntent`, `PluginScopeText` | `DrawPluginManager` |
+
+The window titles are the Dear ImGui ones ("Net###Net" included), so saved layouts keep their place. `PanelWindow` / `HostWindow` take
+the size a new window opens at (Keyboard Shortcuts 520 x 560, Find in Files 600 x 420, Plugin Manager 560 x 360, as before; the others
+440 x 340). Find in Files still takes the keyboard when Ctrl+Shift+F opens it (`FindInFilesModel::focusQuery`, `SetKeyboardFocusHere`).
+
+**Small differences from the Dear ImGui bodies.** The Net sliders keep the values in range on the frame they are drawn (the clamp is
+`ClampNetSim`, which also turns a NaN into the lower bound); the Data Asset's Add Field and Save follow the last field as before (no
+fixed footer). No toolkit gap had to be closed for these five.
+
+**Tests.** `okayui_editor_panels`: the shortcut filter (any case, keys or description, empty sections dropped), typing in the filter;
+Net's Simulate switch and sliders writing through the pointers (percentages stored as fractions), the clamp; Find in Files' status line,
+labels and previews, Enter and Search asking for a search only with a term, a click opening a hit, the focus request; Data Asset's typing
+in place, X, Add Field and Save; the Plugin Manager's switch, Edit, Open / Close and the three buttons; goldens `editorpanels_shortcuts`,
+`editorpanels_shortcuts_filtered`, `editorpanels_net`, `editorpanels_findinfiles`, `editorpanels_dataasset`, `editorpanels_plugins`.
+`okayui_panels_imgui` hosts all five in a Dear ImGui window (the picture against the old hosting).
+
+Results (Release, headless): `okayui_editor_panels` 363 checks; the new goldens failed first (no picture yet), were written and
+looked at, then pass. Breaking the Find in Files rule on purpose (a search with nothing typed) turned two checks red.
+`okayui_panels_imgui` 155 checks, the five hosted pictures 0.000% different from the old hosting. The Dear ImGui `ImGui::Begin` calls in
+`editor/` went from 49 to 44 (about 40 real windows; the rest are the dock host, popups and the OkayUI-layer host).
+
+**Left (not this step).** The Input panel (`editor/InputDebugger.hpp`) is also drawn by `tools/input_shots.cpp`, so it moves with that
+tool; the Hierarchy, the Inspector, the Scene view and Project Settings > Modules stay as section 27 says.
+
+**Not verified.** Windows, the editor in a real window, the `okay-editor-okayui` build.

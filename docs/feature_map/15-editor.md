@@ -190,7 +190,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.8.1 Plugin host - `editor/PluginsWindow.*` - plugin list, loading, hot reload on save, `// @name` headers, enable and disable, plugin panel bridge
   - 15.8.2 Editor API - `editor/PluginsWindow.cpp` (`RegisterPluginBuiltins`) - about 25 `editor_*` builtins (selection, create, rename, parent, transforms, undo point, log, input, heading, hint)
   - 15.8.3 Plugins menu - `editor/PluginsWindow.cpp` (`DrawPluginsMenu`) - project plugins first, then global ones, error marks, Turned off list, New Plugin
-  - 15.8.4 Plugin Manager - `editor/PluginsWindow.cpp` (`DrawPluginManager`) - errors, turn off, open folder
+  - 15.8.4 Plugin Manager - `editor/PluginsWindow.cpp` (`DrawPluginManager`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - errors, turn off, open folder
   - 15.8.5 Examples - `examples/editor-plugins` - `AlignTools.okay` and `CleanupNames.okay`
 - **Code:** `editor/PluginsWindow.*`, `examples/editor-plugins/AlignTools.okay`, `examples/editor-plugins/CleanupNames.okay`, `Scripting/OkayScriptVM`
 - **API:** hooks `start`, `on_gui`, `on_menu`, `on_selection`, `on_tick`; `editor_*` functions; `OkayScriptVM::AddBuiltin`
@@ -260,7 +260,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog`, crash handler ~549-788), `okayui/screens/OkayUIPanels.cpp` (the window, drawn by OkayUI only) - reads crash reports from earlier runs
   - 15.11.3 Stats - `editor/main.cpp` (`DrawStats`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - object, mesh and triangle counts, FPS
   - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only, with the Textures section) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
-  - 15.11.5 Net panel - `editor/NetSimPanel.*` - network simulator toggles and bytes and messages per object
+  - 15.11.5 Net panel - `editor/NetSimPanel.*`, `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - network simulator toggles and bytes and messages per object
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
   - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
   - 15.11.8 Problems panel - `editor/ProblemsPanel.*` (drawn by OkayUI only: `okayui/screens/OkayUIEditorPanels.cpp`), `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
@@ -302,7 +302,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.13.1 Sprite Editor - `editor/main.cpp` (`DrawSpriteEditor` ~42208-42417) - pixel paint, shapes, flood fill
   - 15.13.2 Material editor - `editor/main.cpp` (`DrawMaterialEditor` ~10174) - `.okaymat` albedo, emissive, specular, texture, tiling, Apply to Selection
-  - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor` ~10009) - data assets for scripts
+  - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - data assets for scripts
   - 15.13.4 Items, Loot & Recipes - `editor/ContentEditors.cpp` - items, loot tables and crafting recipes (11.2, 11.3); Window menu and View > Editors & Tools
   - 15.13.5 Save Manager - `editor/main.cpp` (`DrawSaveManager` ~10046) - browse and edit `.okaysave` files
   - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer`), `okayui/screens/OkayUIPanels.cpp` (drawn by OkayUI only) - mixer buses and volumes (7.1)
@@ -327,7 +327,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections; Post-processing is drawn by OkayUI only (`okayui/screens/OkayUIEditorPanels.cpp`, `DrawPostProcess`)
   - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings`), `okayui/screens/OkayUIEditorPanels.cpp` (the Player, Physics, Rendering, Tags and Layers and Loading screen sections, drawn by OkayUI only; Modules still Dear ImGui) - project-wide defaults saved to `project.okayproj` (company, version, default size)
   - 15.14.3 Services window - `editor/main.cpp` (`DrawServices` ~9805) - status of the online services that ship in the engine: Steam and Multiplayer
-  - 15.14.4 Keyboard Shortcuts - `editor/main.cpp` (`DrawShortcutsWindow` ~10837) - list of editor shortcuts
+  - 15.14.4 Keyboard Shortcuts - `editor/main.cpp` (`DrawShortcutsWindow`), `shared/EditorPanelModels.hpp` (the list), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - list of editor shortcuts
   - 15.14.5 About, update and quit prompts - `editor/main.cpp` (`DrawAboutPopup` ~16869, `DrawUpdatePopup` ~17000, `DrawQuitPrompt` ~10801)
 - **Code:** `editor/main.cpp`
 - **API:** Edit > Project Settings; View > Panels > Lighting, Services; Help menu

@@ -1,0 +1,34 @@
+// <iomanip> for okay-cc (ISO/IEC 14882 [iomanip.syn], [std.manip]). Our own header: each manipulator
+// returns a small tag object, and the stream operators for the tags set the stream's field.
+#pragma once
+#include <__stream>
+namespace std {
+struct __setprecision { int n; };
+struct __setw { int n; };
+struct __setfill { char c; };
+struct __setbase { int n; };
+struct __setiosflags { unsigned int f; bool set; };
+inline __setprecision setprecision(int n) { return __setprecision{n}; }
+inline __setw setw(int n) { return __setw{n}; }
+inline __setfill setfill(char c) { return __setfill{c}; }
+inline __setbase setbase(int n) { return __setbase{n}; }
+inline __setiosflags setiosflags(unsigned int f) { return __setiosflags{f, true}; }
+inline __setiosflags resetiosflags(unsigned int f) { return __setiosflags{f, false}; }
+inline ostream &operator<<(ostream &os, __setprecision m) { os.precision(m.n); return os; }
+inline ostream &operator<<(ostream &os, __setw m) { os.width(m.n); return os; }
+inline ostream &operator<<(ostream &os, __setfill m) { os.fill(m.c); return os; }
+inline ostream &operator<<(ostream &os, __setbase m) {
+    os.setf(m.n == 16 ? ios_base::hex : m.n == 8 ? ios_base::oct : m.n == 10 ? ios_base::dec : 0, ios_base::basefield);
+    return os;
+}
+inline ostream &operator<<(ostream &os, __setiosflags m) {
+    if (m.set) os.setf(m.f);
+    else os.unsetf(m.f);
+    return os;
+}
+inline istream &operator>>(istream &is, __setw m) { is.width(m.n); return is; }
+inline istream &operator>>(istream &is, __setbase m) {
+    is.setf(m.n == 16 ? ios_base::hex : m.n == 8 ? ios_base::oct : m.n == 10 ? ios_base::dec : 0, ios_base::basefield);
+    return is;
+}
+}  // namespace std

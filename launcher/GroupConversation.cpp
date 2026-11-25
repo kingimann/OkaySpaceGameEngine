@@ -99,7 +99,7 @@ void DrawGroupConversation(
         char sub[64];
         if (online > 0) std::snprintf(sub, sizeof(sub), "%d members \xC2\xB7 %d online", n, online);
         else std::snprintf(sub, sizeof(sub), "%d member%s", n, n == 1 ? "" : "s");
-        ImGui::PushStyleColor(ImGuiCol_Text, online > 0 ? ImVec4(0.47f, 0.80f, 0.43f, 1) : ImVec4(0.6f, 0.64f, 0.7f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, online > 0 ? okaytheme::Current().success : okaytheme::kTextDim);
         ImGui::TextUnformatted(sub);
         ImGui::PopStyleColor();
         ImVec2 c;
@@ -169,7 +169,7 @@ void DrawGroupConversation(
         if (ImGui::MenuItem("Starred messages")) openStarred = true;
         if (ImGui::MenuItem("Media & links")) openMedia = true;
         ImGui::Separator();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
         if (ImGui::MenuItem("Leave group")) {
             if (dm.LeaveGroup(gid)) { g_chatSelGroup = 0; g_chatForceLog = true; Toast("You left the group", 1); }
         }
@@ -209,7 +209,7 @@ void DrawGroupConversation(
             DrawAvatar(avatarOf(mi->uid), mi->name, 28.0f);
             if (onlineOf(*mi)) {
                 md->AddCircleFilled(ImVec2(rp.x + 24, rp.y + 27), 5.5f, ImGui::GetColorU32(ImGuiCol_PopupBg), 12);
-                md->AddCircleFilled(ImVec2(rp.x + 24, rp.y + 27), 4.0f, IM_COL32(76, 200, 110, 255), 12);
+                md->AddCircleFilled(ImVec2(rp.x + 24, rp.y + 27), 4.0f, okaytheme::SuccessFillU32(), 12);
             }
             std::string nm = mi->name + (isMe(*mi) ? "  (you)" : "");
             md->AddText(ImVec2(rp.x + 38, rp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), nm.c_str());
@@ -246,7 +246,7 @@ void DrawGroupConversation(
             if (ImGui::Selectable(("      " + kv.second.preview).c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x - 26, 0))) {
                 jumpTo(-kv.first); ImGui::CloseCurrentPopup();
             }
-            DrawStar(ImGui::GetWindowDrawList(), ImVec2(sp.x + 8, sp.y + ImGui::GetTextLineHeight() * 0.5f), 6.0f, IM_COL32(250, 200, 70, 255));
+            DrawStar(ImGui::GetWindowDrawList(), ImVec2(sp.x + 8, sp.y + ImGui::GetTextLineHeight() * 0.5f), 6.0f, okaytheme::WarningFillU32());
             ImGui::SameLine();
             if (ImGui::SmallButton("x")) unstar = kv.first;
             ImGui::PopID();
@@ -284,7 +284,7 @@ void DrawGroupConversation(
             ImDrawList* md = ImGui::GetWindowDrawList();
             if (SDL_Texture* tx = AvatarTexture(imgs[k]))
                 md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
-            else md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), IM_COL32(44, 48, 58, 255), 8.0f);
+            else md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), okaytheme::U32(okaytheme::kField), 8.0f);
             ImGui::PopID();
             if (++col >= perRow) col = 0;
         }
@@ -294,7 +294,7 @@ void DrawGroupConversation(
         if (links.empty()) ImGui::TextDisabled("No links shared yet.");
         for (std::size_t k = 0; k < links.size(); ++k) {
             ImGui::PushID((int)(1000 + k));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().info);
             if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
             ImGui::PopStyleColor();
             ImGui::PopID();
@@ -304,7 +304,7 @@ void DrawGroupConversation(
     ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y + 34));
     {
         const ImVec2 lp = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
+        ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), okaytheme::Ink(16), 1.0f);
     }
     ImGui::Dummy(ImVec2(0, 6));
     if (showSearch) {
@@ -472,19 +472,20 @@ void DrawGroupConversation(
 
         ImGui::PushID((int)m.id);
         ImGui::SetCursorPosX(baseX + x0);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0, 0, 0, 0) : (m.mine ? myBubble : ImVec4(0.204f, 0.235f, 0.306f, 1.0f)));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0, 0, 0, 0.0f) : (m.mine ? myBubble : okaytheme::kControl));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
         ImGui::BeginChild("##gbub", ImVec2(useW, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ChatBubbleTextPush(m.mine && !bare);   // my bubble is a filled colour: its text is white in every theme
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         ImDrawList* bdl = ImGui::GetWindowDrawList();
         if (rep) {   // quoted message (click to jump)
             ImGui::BeginGroup();
             const ImVec2 qp = ImGui::GetCursorScreenPos();
             bdl->AddRectFilled(ImVec2(qp.x - 4, qp.y), ImVec2(qp.x - 1, qp.y + ImGui::GetTextLineHeight() * 1.7f), ImGui::GetColorU32(kAccent), 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f, 0.85f, 0.95f, 0.9f)));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(okaytheme::WithAlpha(okaytheme::kText, 0.9f)));
             ImGui::TextUnformatted(repName.c_str());
             ImGui::PopStyleColor();
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -519,10 +520,10 @@ void DrawGroupConversation(
                 bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
                                      ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
             else {
-                bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), IM_COL32(255, 255, 255, 14), 12.0f);
+                bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), okaytheme::Ink(14), 12.0f);
                 const float a0 = (float)ImGui::GetTime() * 6.0f;
                 bdl->PathArcTo(ImVec2(ip.x + mediaSz.x * 0.5f, ip.y + mediaSz.y * 0.5f), 10.0f, a0, a0 + 4.6f, 20);
-                bdl->PathStroke(IM_COL32(255, 255, 255, 120), 0, 2.0f);
+                bdl->PathStroke(okaytheme::Ink(120), 0, 2.0f);
             }
             if (!isSticker && mhov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (mclick) g_chatLightboxReq = mediaUrl; }
         } else if (gIsFile) RenderChatFileCard(gfile, ImGui::GetContentRegionAvail().x);
@@ -551,11 +552,11 @@ void DrawGroupConversation(
             if (!bare && mw2 < av2) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (av2 - mw2));
             if (starred) {
                 const ImVec2 sp = ImGui::GetCursorScreenPos();
-                DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f, IM_COL32(250, 200, 70, 255));
+                DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f, okaytheme::WarningFillU32());
             }
         }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? ImVec4(0.6f, 0.64f, 0.72f, 0.9f)
-                                : (m.mine ? ImVec4(0.82f, 0.88f, 1.0f, 0.60f) : ImVec4(0.60f, 0.66f, 0.76f, 0.70f))));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? okaytheme::WithAlpha(okaytheme::kTextDim, 0.9f)
+                                : (m.mine ? okaytheme::WithAlpha(okaytheme::Current().info, 0.6f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f))));
         ImGui::TextUnformatted(meta.c_str());
         ImGui::PopStyleColor();
         if (m.edited && ImGui::IsItemHovered()) {   // "edited" -> earlier versions
@@ -564,6 +565,7 @@ void DrawGroupConversation(
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenEditHistory(dm, true, m.id, m.body);
         }
         ImGui::PopStyleVar();
+        ChatBubbleTextPop(m.mine && !bare);
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
@@ -651,18 +653,7 @@ void DrawGroupConversation(
                 firstPill = false;
                 const bool mineR = myit != gmyreacts.end() && myit->second.count(kv.first);
                 const std::string cnt = std::to_string(kv.second);
-                const float pw = 26.0f + ImGui::CalcTextSize(cnt.c_str()).x;
-                ImGui::PushID(ReactionEmojiId(kv.first));
-                const ImVec2 pp = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##gpill", ImVec2(pw, 20))) { dm.GroupReact(m.id, kv.first, !mineR); g_chatForceLog = true; }
-                const bool ph = ImGui::IsItemHovered();
-                if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(mineR ? "Remove" : "React"); }
-                dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 20), mineR ? IM_COL32(232, 72, 92, ph ? 60 : 42) : IM_COL32(255, 255, 255, ph ? 26 : 14), 10.0f);
-                if (mineR) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 20), IM_COL32(232, 72, 92, 150), 10.0f, 0, 1.0f);
-                if (kv.first == "heart") DrawHeart(dl, ImVec2(pp.x + 11, pp.y + 10), 5.5f, mineR ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                else DrawEmoji(dl, ImVec2(pp.x + 11, pp.y + 10), 13, ReactionEmojiId(kv.first));
-                dl->AddText(ImVec2(pp.x + 20, pp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
-                ImGui::PopID();
+                if (ReactionPill(dl, kv.first, cnt, mineR)) { dm.GroupReact(m.id, kv.first, !mineR); g_chatForceLog = true; }
             }
             ImGui::PopStyleVar();
         }
@@ -704,7 +695,7 @@ void DrawGroupConversation(
                 DrawAvatar(seen[k]->avatar, seen[k]->name, 16.0f);
             }
             ImGui::SetCursorScreenPos(ImVec2(sp.x + faces, sp.y));
-            ImGui::TextColored(seen.empty() ? ImVec4(0.60f, 0.64f, 0.72f, 0.90f) : ImVec4(0.55f, 0.76f, 1.0f, 0.95f), "%s", label.c_str());
+            ImGui::TextColored(seen.empty() ? okaytheme::WithAlpha(okaytheme::kTextDim, 0.9f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.95f), "%s", label.c_str());
             if (ImGui::IsItemHovered() && !seen.empty()) {
                 std::string all; for (const auto* s2 : seen) all += (all.empty() ? "" : "\n") + s2->name;
                 ImGui::SetTooltip("%s", all.c_str());
@@ -741,10 +732,10 @@ void DrawGroupConversation(
         const bool jh = ImGui::IsItemHovered();
         ImDrawList* jd = ImGui::GetWindowDrawList();
         const ImVec2 jc(jp.x + 17, jp.y + 17);
-        jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? ImVec4(0.30f, 0.33f, 0.40f, 1.0f) : ImVec4(0.22f, 0.24f, 0.30f, 0.97f)), 24);
-        jd->AddCircle(jc, 16.0f, IM_COL32(255, 255, 255, 34), 24, 1.0f);
-        jd->AddLine(ImVec2(jc.x - 5.5f, jc.y - 2.5f), ImVec2(jc.x, jc.y + 3.0f), IM_COL32(230, 234, 242, 255), 2.0f);
-        jd->AddLine(ImVec2(jc.x, jc.y + 3.0f), ImVec2(jc.x + 5.5f, jc.y - 2.5f), IM_COL32(230, 234, 242, 255), 2.0f);
+        jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? okaytheme::kTextDim : okaytheme::WithAlpha(okaytheme::kControl, 0.97f)), 24);
+        jd->AddCircle(jc, 16.0f, okaytheme::Ink(34), 24, 1.0f);
+        jd->AddLine(ImVec2(jc.x - 5.5f, jc.y - 2.5f), ImVec2(jc.x, jc.y + 3.0f), okaytheme::TextU32(), 2.0f);
+        jd->AddLine(ImVec2(jc.x, jc.y + 3.0f), ImVec2(jc.x + 5.5f, jc.y - 2.5f), okaytheme::TextU32(), 2.0f);
         if (jh) ImGui::SetTooltip("Jump to latest");
         ImGui::EndChild();
         ImGui::PopStyleVar();
@@ -778,7 +769,7 @@ void DrawGroupConversation(
         ImGui::TextDisabled("Mention");
         for (const auto& nm : mentionHits) {
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().info);
             if (ImGui::SmallButton(("@" + nm + "##mh").c_str())) {
                 std::string cur = gInput;
                 cur = cur.substr(0, mentionAt) + "@" + nm + " ";

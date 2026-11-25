@@ -89,17 +89,32 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
+    // the configuration's words, as CMake places them: c_flags / cxx_flags first on every compile of that language; link_lead right
+    // after the linker on every link (CMake passes the language flags to the linking driver too), then exe_link_flags on a program
+    // or shared_link_flags on a shared library, all before the objects
+    vector<string> cFlags, cxxFlags, linkLead, exeLinkFlags, sharedLinkFlags;
+    // Windows (MinGW): rc compiles .rc files (GNU windres: -O coff, -D, -I, file, .res); std_libs end every link (the system's
+    // standard libraries); exe_import_lib = on adds -Wl,--out-implib,lib<name>.dll.a and the image version to a program's link
+    string rc; vector<string> stdLibs; bool exeImportLib = false;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
 };
 static bool applyPreset(Toolchain& c, const string& name) {
-    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
+    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.cFlags = c.cFlags; d.cxxFlags = c.cxxFlags; d.linkLead = c.linkLead; d.exeLinkFlags = c.exeLinkFlags; d.sharedLinkFlags = c.sharedLinkFlags; d.stdLibs = c.stdLibs; d.exeImportLib = c.exeImportLib; d.rc = c.rc; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
     if (name == "gcc") {}
     else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
     else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
     else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
     else return false;
     d.name = name; c = d; return true;
+}
+// The toolchain keys that take a list of words, by name (nullptr: not one of them).
+static vector<string>* toolchainList(Toolchain& c, const string& k) {
+    static const std::pair<const char*, vector<string> Toolchain::*> keys[] = {
+        {"flags", &Toolchain::flags}, {"link_flags", &Toolchain::linkFlags}, {"c_flags", &Toolchain::cFlags}, {"cxx_flags", &Toolchain::cxxFlags},
+        {"link_lead", &Toolchain::linkLead}, {"exe_link_flags", &Toolchain::exeLinkFlags}, {"shared_link_flags", &Toolchain::sharedLinkFlags}, {"std_libs", &Toolchain::stdLibs}};
+    for (auto& kv : keys) if (k == kv.first) return &(c.*kv.second);
+    return nullptr;
 }
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
@@ -117,6 +132,11 @@ struct Target {
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
     // per-file additions (CMake's set_source_files_properties): {source path, word}
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
+    vector<std::pair<string, string>> fileDepends; // file_depends = SRC FILE...: more inputs of that source's compile (CMake's OBJECT_DEPENDS)
+    bool win32Exe = false; // win32_executable = on: a Windows GUI program (-mwindows), CMake's WIN32_EXECUTABLE
+    // post_build = WORD... (one line per command) run after the target is made, in post_build_dir (default: the build folder), each
+    // time it is made again; words may hold {bin}, {src}, {target:NAME} and {target_dir:NAME} (CMake's POST_BUILD custom commands)
+    vector<vector<string>> postBuild; string postBuildDir;
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
@@ -330,7 +350,8 @@ static Manifest parseManifest(const string& file) {
             if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
-            else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
+            else if (toolchainList(c, k)) add(*toolchainList(c, k));
+            else if (k == "rc") one(c.rc); else if (k == "exe_import_lib") c.exeImportLib = oneFlag(v, "exe_import_lib");
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
@@ -432,9 +453,12 @@ static Manifest parseManifest(const string& file) {
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "test") x.isTest = oneFlag(v, "test");
             else if (k == "output_name") { if (v.size() != 1) throw err("output_name takes one value"); x.outName = v[0]; }
-            else if (k == "file_flag" || k == "file_define" || k == "file_include") {
+            else if (k == "win32_executable") x.win32Exe = oneFlag(v, "win32_executable");
+            else if (k == "post_build") { if (v.empty()) throw err("post_build takes a command"); x.postBuild.push_back(v); }
+            else if (k == "post_build_dir") { if (v.size() != 1) throw err("post_build_dir takes one value"); x.postBuildDir = v[0]; }
+            else if (k == "file_flag" || k == "file_define" || k == "file_include" || k == "file_depends") {
                 if (v.size() < 2) throw err(k + " takes a source path and then one or more words");
-                auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : x.fileIncludes;
+                auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : k == "file_depends" ? x.fileDepends : x.fileIncludes;
                 for (size_t i = 1; i < v.size(); ++i) dst.push_back({v[0], v[i]});
             }
             else throw err("unknown target key '" + k + "'");
@@ -744,15 +768,19 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& d : t.deps) go(d);
         std::reverse(po.begin(), po.end()); return po;
     };
+    // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
+    string binTree = binTreeOf(m);
+    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
+    for (auto& r : raws) { // an action's command, files and folder may name the build tree too (the `cmake` command writes such actions)
+        r.cmd = fixBin(r.cmd); r.output = fixBin(r.output); r.dir = fixBin(r.dir);
+        for (auto& o : r.outputs) o = fixBin(o); for (auto& i : r.inputs) i = fixBin(i);
+    }
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
     for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
         for (auto& o : r.outputs) produced.insert(resolve(r.dir, o));
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
-    // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
-    string binTree = binTreeOf(m);
-    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
     std::map<string, const GenFile*> genAt = genFilePaths(m); // checked here (inside the build folder); written only by a real build
     vector<string> folderPaths; for (auto& f : m.folders) folderPaths.push_back(binPathChecked(m, "folder", f.first, f.second));
     for (auto& n : order) {
@@ -766,16 +794,34 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
                 throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
             }
-            bool isC = fs::path(s).extension() == ".c";
+            bool isC = fs::path(s).extension() == ".c", isRc = fs::path(s).extension() == ".rc";
             string rel = sRaw.compare(0, 6, "{bin}/") == 0 ? "_bin/" + sRaw.substr(6) : fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
-            a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
+            a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + (isRc ? string(".res") : m.tc.obj)); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
+            for (auto& pf : t.fileDepends) if (pf.first == sRaw) a.inputs.push_back(resolve("", fixBin(pf.second)));
+            if (isRc) { // a Windows resource script: windres -O coff <definitions> -I <folder>... <file> <out>.res (no dependency file)
+                if (m.tc.rc.empty() || m.tc.msvc) throw Fail("target '" + t.name + "': " + s + " is a resource script, and the toolchain has no rc (GNU windres) set");
+                a.kind = "RC"; a.depfile.clear(); a.argv = {m.tc.rc, "-O", "coff"};
+                string root = fs::current_path().generic_string();
+                auto absOf = [&](const string& p) { return (!m.tc.pathMap || p.empty() || p[0] == '/' || (p.size() > 1 && p[1] == ':')) ? p : root + "/" + p; };
+                for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) a.argv.push_back(f); // the account definitions and other toolchain -D words
+                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                auto inc = [&](const string& i) { a.argv.push_back("-I"); a.argv.push_back(absOf(fixBin(i))); };
+                for (auto& i : t.includes) inc(i);
+                for (auto& i : t.exportIncludes) inc(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
+                a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
+                objs.push_back(a.output); objActs.push_back(add(a)); continue;
+            }
             if (m.tc.msvc) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
                 for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
+                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(spellMsvc(fixBin(f), false));
                 for (auto& f : t.flags) a.argv.push_back(spellMsvc(fixBin(f), false));
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
@@ -789,6 +835,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
+                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
                 if (t.libKind == "shared") a.argv.push_back("-fPIC");
                 for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
@@ -823,9 +870,19 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string linker = m.tc.ld.empty() ? m.tc.cxx : m.tc.ld;
             a.argv = {linker}; a.rspHead = 1;
             if (m.tc.msvc) a.argv.push_back("/nologo");
+            for (auto& f : m.tc.linkLead) a.argv.push_back(m.tc.msvc ? spellMsvc(fixBin(f), true) : fixBin(f));
+            for (auto& f : t.libKind == "shared" ? m.tc.sharedLinkFlags : m.tc.exeLinkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(fixBin(f), true) : fixBin(f));
+            if (t.win32Exe && !t.isLib) a.argv.push_back(m.tc.msvc ? "/SUBSYSTEM:WINDOWS" : "-mwindows");
             if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-shared");
             if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-Wl,-soname," + fs::path(a.output).filename().string()); // so a program records "libX.so", not the path we linked with
             for (auto& o : objs) a.argv.push_back(o);
+            if (!m.tc.msvc) { // -o right after the objects, as CMake writes it; a Windows program also writes an import library
+                a.argv.push_back("-o"); a.argv.push_back(a.output);
+                if (m.tc.exeImportLib && !t.isLib) {
+                    fs::path op(a.output); string imp = (op.parent_path() / ("lib" + op.stem().string() + ".dll.a")).generic_string();
+                    a.argv.push_back("-Wl,--out-implib," + imp); a.argv.push_back("-Wl,--major-image-version,0,--minor-image-version,0");
+                }
+            }
             for (auto& f : m.tc.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
             for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(fixBin(f), true) : fixBin(f)); // {bin}: a map file, a linker script in the build folder
             vector<string> sys = t.libs; std::set<string> rpaths;
@@ -838,11 +895,35 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& s : byName[l]->libs) sys.push_back(s); }
             for (auto& r : rpaths) a.argv.push_back("-Wl,-rpath," + r); // the loader finds our shared libraries beside the build output
             for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : "-l" + s);
+            for (auto& s : m.tc.stdLibs) a.argv.push_back(s);
             if (m.tc.msvc && (msvcLinkerIsCl(linker) || linker == m.tc.cc || linker == m.tc.cxx)) { a.argv.push_back("/Fe" + a.output); }
             else if (m.tc.msvc) { a.argv.push_back("/OUT:" + a.output); }
-            else { a.argv.push_back("-o"); a.argv.push_back(a.output); }
+            // a file a link word names that an action of the manifest makes (a library the configure step prepares in the build
+            // folder, for example) is an input of the link, so it is made first
+            for (auto& w : a.argv) { string f = w; auto eq = f.rfind(','); if (eq != string::npos && f.rfind("-Wl,", 0) == 0) f = f.substr(eq + 1);
+                if (!f.empty() && f[0] != '-' && produced.count(resolve("", f))) a.waitFor.push_back(resolve("", f)); }
         }
         finalAct[n] = add(a); g.targetFinal.push_back({n, finalAct[n]});
+        if (!t.postBuild.empty()) { // one step after the link; it reruns when the linked file changes. Users of the target wait for it.
+            auto fill = [&](string w) {
+                w = fixBin(w);
+                for (size_t at; (at = w.find("{src}")) != string::npos;) w.replace(at, 5, fs::current_path().generic_string());
+                for (const char* key : {"{target_dir:", "{target:"}) for (size_t at; (at = w.find(key)) != string::npos;) {
+                    size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + strlen(key), e - at - strlen(key));
+                    auto it = byName.find(nm); if (it == byName.end()) throw Fail("target '" + t.name + "': post_build names unknown target '" + nm + "'");
+                    fs::path f = fs::absolute(outPath(*it->second)); string r = (string(key) == "{target:" ? f : f.parent_path()).lexically_normal().generic_string();
+                    w.replace(at, e - at + 1, r);
+                }
+                return w;
+            };
+            string dir = t.postBuildDir.empty() ? fs::absolute(under("")).lexically_normal().generic_string() : fill(t.postBuildDir), script = "mkdir -p " + cmr::shellWord(dir) + " && cd " + cmr::shellWord(dir);
+            for (auto& c : t.postBuild) { script += " &&"; for (auto& w : c) script += " " + cmr::shellWord(fill(w)); }
+            Action p; p.kind = "POST"; p.target = t.name; p.desc = "post-build " + t.name; // not "RUN": a step with side effects is never taken from the cache
+            p.output = under(".okaybuild/post/" + m.objSub + t.name + ".stamp"); p.outputs = {p.output};
+            p.argv = {"sh", "-c", script + " && : > " + cmr::shellWord(fs::absolute(p.output).generic_string())};
+            p.inputs = {a.output}; p.deps = {finalAct[n]};
+            int pid = add(p); g.targetFinal.back().second = pid;
+        }
     }
     // raw actions (imported commands and generators): `cd DIR && CMD` through sh.
     // Every declared output is an edge source. `after` names the spelling used in the manifest.
@@ -901,7 +982,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     }
     { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
         std::set<string> compiled; bool anyCompile = false;
-        for (auto& a : g.acts) if (a.kind == "CC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
+        for (auto& a : g.acts) if (a.kind == "CC" || a.kind == "RC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
         if (!g.acts.empty()) g.folders = folderPaths; // cheap and harmless: every planned build gets them (a link step may write into one)
         static const std::set<string> headerExt = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp"};
         for (auto& kv : genAt)

@@ -1,0 +1,4 @@
+// <istream> for okay-cc (ISO/IEC 14882 [istream.syn]): istream, iostream and ws. Our own header; every stream class is in
+// <__stream>.
+#pragma once
+#include <__stream>

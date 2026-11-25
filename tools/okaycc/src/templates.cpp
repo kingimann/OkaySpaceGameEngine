@@ -58,6 +58,16 @@ std::size_t mangledEnd(const std::string& s, std::size_t j) {
         std::size_t e = mangledEnd(s, k + 1);
         return e == k + 1 ? j : e;
     }
+    if (c == 'F') {
+        // A function type: F <return> <parameters> E.
+        std::size_t k = j + 1;
+        while (k < s.size() && s[k] != 'E') {
+            std::size_t e = mangledEnd(s, k);
+            if (e == k) return j;
+            k = e;
+        }
+        return k < s.size() ? k + 1 : j;
+    }
     if (c == 'L') {
         std::size_t k = s.find('E', j);
         return k == std::string::npos ? j : k + 1;
@@ -114,6 +124,29 @@ std::unique_ptr<Type> typeFromMangle(const std::string& m) {
         auto t = make(c == 'P' ? Type::Kind::Pointer : Type::Kind::Reference);
         t->rref = c == 'O';
         t->inner = std::move(inner);
+        return t;
+    }
+    if (c == 'F') {
+        // A function type F <return> <parameters> E; a lone v stands for no parameters.
+        std::vector<std::unique_ptr<Type>> parts;
+        std::size_t k = 1;
+        while (k < m.size() && m[k] != 'E') {
+            std::size_t e = mangledEnd(m, k);
+            if (e == k) return nullptr;
+            auto p = typeFromMangle(m.substr(k, e - k));
+            if (!p) return nullptr;
+            parts.push_back(std::move(p));
+            k = e;
+        }
+        if (parts.empty()) return nullptr;
+        auto t = make(Type::Kind::Function);
+        t->inner = std::move(parts[0]);
+        if (!(parts.size() == 2 && parts[1]->kind == Type::Kind::Void))
+            for (std::size_t n = 1; n < parts.size(); ++n) {
+                Param p;
+                p.type = std::move(parts[n]);
+                t->params.push_back(std::move(p));
+            }
         return t;
     }
     if (c == 'A') {

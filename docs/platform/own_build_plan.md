@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (rounds 12 to 14 below measured against CMake; the older rounds were not re-checked).
+> **Last checked:** 2026-11-25 (round 15 added: our own compilers driven by okay-build; rounds 12 to 14 measured against CMake; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -90,6 +90,7 @@ Cold build, clean tree, same `-j2`:
 Preprocess is 0 because an imported step is the compiler command itself, not a structured compile that runs `-E` first. The cache therefore does not restore those outputs: deleting them and building again would compile them again. A cache-hit rebuild was not measured on this tree for that reason. The separate preprocess timer is in `--profile` for structured compiles.
 
 ## Asset pipeline (design only, not built)
+Round 15 update: the first piece is built (`importer` key `tool = TARGET`, see Round 15). The text below is the older design.
 A pipeline would be a rule in the manifest: a source suffix, a tool, an output suffix, and a folder to scan. okay-build would turn each match into an action edge. The engine's importers are inside the engine and the editor, not a program this tool can run. Until there is a command-line importer, assets stay as hand-written `action` blocks. No engine file was changed. The question for the owner is in the round report: is a small importer program allowed, or do assets stay as actions?
 
 ## MSVC flag spelling
@@ -567,3 +568,62 @@ projects. No CMake, Ninja, Meson or make code was read or used (rule 19a). No cr
   not run (no full player build this round). MSVC and `.rc` with MSVC are not read. Static libraries are made with `ar rcs`
   (CMake: `ar qc` then `ranlib`; same archive). The asset pipeline design (item 4) was not started.
 
+## Round 15 on claude/okaybuild-15: our own compilers from okay-build, skips instead of known failures, asset tool (2026-11-25)
+Written from the command-line descriptions in `docs/platform/own_compiler_plan.md` and `own_msvc_plan.md` and from running the
+four programs (`okay-cc --help`, `okay-ld`, `okay-cl`, `okay-link` with wrong flags to see what each takes); the include scan from
+the C and C++ standards' description of `#include` (quoted names looked up from the including file's folder first). No code from
+CMake, Ninja, Meson, make or any other project was read or used (rule 19a). No cryptography; no engine file was compiled that holds any.
+- **Our own compilers.** New toolchain presets `toolchain okay-cc` (tools/okaycc: `okay-cc`, `okay-ld`, Linux ELF) and
+  `toolchain okay-ms` (tools/okayms: `okay-cl`, `okay-link`, Windows PE, MSVC spelling), also as `--toolchain okay-cc|okay-ms`
+  (no probe: the names on PATH, or the tools the manifest names). Commands okay-build writes (from `-v`):
+  `okay-cc --obj OUT.o -Irepo/tools/okaycc/include -Irepo/engine/include repo/engine/src/Graphics/Font.cpp`,
+  `okay-ld -o build/font font_main.cpp.o Font.cpp.o write.c.o ...` (a library's objects, not its archive),
+  `okay-cl /c /O1 /I. /DBASE=3 /FoOUT.obj src/util.c`, `ar rcs build/util.lib util.c.obj`,
+  `okay-link /ENTRY:start /SUBSYSTEM:CONSOLE entry.c.obj build/util.lib /OUT:build/app.exe`.
+  Flag translation: GCC words are spelled the MSVC way first for okay-ms (as for `msvc`). A word the compiler has no switch for and
+  that only tunes the result is left out (`-O*` and `-g` for okay-cc, `-W*`, `-w`, `-std=`, `-f*`, `-pthread`; `/nologo`, `/W*`,
+  `/EH*`, `/std:`, `/MD`/`/MT`, `/Zc:`, `/Od`; `/INCREMENTAL`, `/OPT:`, `/MACHINE:` on a link). `/Zi` becomes `/Z7`, `/Ox` `/O2`.
+  A word that would change what is built is an error naming the gap: a define with okay-cc ("okay-cc has no -D"), a sanitizer,
+  any unknown word, a system library or `std_libs` with okay-ld, a shared library, a WIN32 program with okay-cc.
+  The compilers write no dependency file, so okay-build lists the headers itself after each compile (every `#include "x"` / `<x>`
+  of the source and of each header found, in the file's folder and the `-I`/`/I` folders; `#if` is not followed, so the list can
+  only be too long: an extra rebuild, never a missed one). The compiler cache is off for them (it needs `-E`), and so are
+  response files on Linux. okay-ld writes no execute bit: okay-build sets it. `link_archives = off` (the okay-cc default) links a
+  library's objects; on (the okay-ms default) links the `.lib`.
+- **Results (this machine):** a two-library program (C and C++ files, our libc from `tools/okaycc/lib` as a library target)
+  builds with okay-cc and runs (`7 14`); a second build does nothing; changing `util.h` rebuilds exactly the two files that
+  include it. **Engine files:** 5 programs with 7 unchanged engine files (`Graphics/Font.cpp`, `UI/FocusGraph.cpp`,
+  `Texture/Mip.cpp` + `Texture.cpp`, `Input/GestureRecognizer.cpp`, `Texture/Bc.cpp`, drivers from
+  `tools/okaycc/tests/progs_cpp_engine`) built by okay-build once with okay-cc and once with g++ from the same targets: all 5
+  print the same. okay-ms: a `.lib` and a PE32+ x86-64 program (`app.exe`, checked by its headers); 9 unchanged engine files
+  (the 7 above, `Core/BuildInfo.cpp`, `Audio/WavDecoder.cpp`, `Optimize/MipBudget.cpp`) compile to x86-64 COFF through okay-build.
+- **What the compilers lack (found here, recorded, not changed; other agents own them):** okay-cc has no `-D`, no `-E`, no depfile
+  and no response files; okay-ld reads no archives, takes no system libraries and leaves the program without the execute bit;
+  neither tree has an archiver (okay-build makes archives with GNU `ar`, as for the gcc preset); okay-link misreads GNU `ar`'s
+  long-name table (names of 16 or more characters, "long archive name is missing a terminator": it wants the PE document's
+  NUL-ended names), so okay-build stops with a clear message and `link_archives = off` works around it; okay-cl rejects
+  `/nologo` and has no `/showIncludes`; okay-cl at `/O2` stops on `Texture/Bc.cpp` ("not an address (in okay::tex::EncodeBc)"),
+  `/O1` and no optimisation compile it; okay-ms has no command that writes an import library, so a program that calls Windows
+  (`kernel32.lib`, needed by `runtime/startup.c`) was not linked through okay-build (the test program uses `/ENTRY:` and no imports).
+- **The 7 known failures** (5 need Wine's `cmd.exe`, 2 need libsodium and SDL2): wine 9.0 here is installed but aborts
+  (`free(): invalid pointer`; wine32 is missing), and libsodium is not installed. The tests now ask first (`wine cmd.exe /c echo`
+  must print the word; `g++` must link an empty program with `-lsodium -lSDL2`) and count the checks as **skipped with the reason**,
+  never as passed. The summary line is `N checks passed, F failed, S skipped`; `OKAYBUILD_NO_SKIP=1` turns every skip into a failure.
+  A machine with a working wine and those libraries runs them as before.
+- **Asset pipeline, first piece:** an `importer` can name its converter as a program of the same manifest, `tool = TARGET`.
+  `{tool}` in `cmd` is that program's path, every step lists the program as an input (so it is built first, and a rebuilt
+  converter converts every asset again), and asking for one output (`okay-build out/a.up`) builds the converter and that file only.
+  A library or an unknown name is an error. Design for the next pieces: the converter is a real engine tool such as
+  `tools/okaytexture` (`okay-texture compress in.png out.dds`, which exists now, so the old question "is a command-line importer
+  allowed" is answered); then a `package` takes importer outputs as assets; then a converter that writes a depfile for the files it
+  reads (a model and its textures). Not built: those three; okay-texture was not run through okay-build (it links the whole engine
+  library, too large a build for this shared machine).
+- **Tests:** `testOwnCompilerOkayCc` (12 checks), `testOwnCompilerEngineFiles` (4), `testOwnCompilerOkayMs` (13, one skipped
+  here: running `app.exe` needs wine), `testImporterTool` (6). Before: 16 own-compiler checks failed ("unknown toolchain
+  preset 'okay-cc'") and the run then stopped at a folder that was never made (the test now checks the folder exists) and all 6 importer checks failed ("unknown importer key 'tool'"). After: all pass.
+  `tools/okaybuild/build.sh` builds the four compiler programs into `<out>/own` (only again when their sources change);
+  `OKAYBUILD_OWN_TOOLS=DIR` uses others, `OKAYBUILD_OWN_TOOLS=none` skips those checks. One older check ("build type None adds no
+  flags") looked for `-O` anywhere in the line and failed when the temp folder's path held `-O`; it now looks for ` -O`.
+- **Not done / unverified:** nothing ran on Windows; no okay-ms program was run (wine here cannot start anything); okay-build's own
+  Windows host was not tried with these toolchains (there it always uses a response file over 30,000 characters, which okay-cl
+  does not read). The include scan does not follow `#include MACRO` or a header found only in the compiler's built-in folders.

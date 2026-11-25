@@ -130,6 +130,7 @@ struct RawAction {
 // An importer maps a file pattern to a command line; one action per matching file (expanded when the graph is planned).
 struct ImporterDecl {
     string name, pattern, output, cmd, depfile, pool; vector<string> inputs, settings; int line = 0;
+    string tool; // tool = TARGET: the converter is a program this manifest builds; {tool} is its path, and each step waits for it
 };
 struct Target {
     string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
@@ -388,6 +389,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "inputs") add(x.inputs);
             else if (k == "settings") add(x.settings);
+            else if (k == "tool") { if (v.size() != 1) throw err("tool takes one value (a target name)"); x.tool = v[0]; }
             else throw err("unknown importer key '" + k + "'");
         } else if (mode == BUILDFILE) {
             if (k == "inputs") add(m.buildInputs);
@@ -746,12 +748,19 @@ static string fillTemplate(string t, const std::vector<std::pair<string, string>
 static vector<RawAction> expandImporters(const Manifest& m) {
     vector<RawAction> out;
     for (auto& im : m.importers) {
-        string settings = joined(im.settings);
+        string settings = joined(im.settings), toolPath;
+        if (!im.tool.empty()) { // the program's output path, as the target's link step writes it; listing it as an input makes the step wait for it
+            const Target* t = nullptr; for (auto& x : m.targets) if (x.name == im.tool) t = &x;
+            if (!t) throw Fail("importer '" + im.name + "': tool '" + im.tool + "' is not a target of this manifest");
+            if (t->isLib) throw Fail("importer '" + im.name + "': tool '" + im.tool + "' is a library, not a program");
+            toolPath = under(m.outdir + "/" + (t->outName.empty() ? t->name : t->outName) + m.tc.exe);
+        }
         for (auto& h : importerFiles(im.pattern)) {
             fs::path in(h.path);
             vector<std::pair<string, string>> kv = {{"input", h.path}, {"name", in.filename().string()}, {"stem", in.stem().string()},
                 {"ext", in.extension().string().empty() ? "" : in.extension().string().substr(1)}, {"dir", h.relDir}};
             RawAction r; r.line = im.line; r.pool = im.pool; r.inputs = im.inputs; r.inputs.push_back(h.path);
+            if (!toolPath.empty()) r.inputs.push_back(toolPath);
             r.output = fillTemplate(im.output, kv);
             if (r.output == h.path) throw Fail("importer '" + im.name + "': output would overwrite its input " + h.path);
             fs::path op(r.output);
@@ -760,6 +769,7 @@ static vector<RawAction> expandImporters(const Manifest& m) {
             vector<std::pair<string, string>> cv;
             for (auto& x : kv) cv.push_back({x.first, x.first == "input" ? quote(x.second) : x.second});
             cv.push_back({"output", quote(partial)}); cv.push_back({"depfile", quote(r.depfile)}); cv.push_back({"settings", settings});
+            if (!toolPath.empty()) cv.push_back({"tool", quote(fs::absolute(toolPath).lexically_normal().generic_string())});
             r.cmd = fillTemplate(im.cmd, cv);
             r.partials.push_back({partial, r.output});
             r.salt = "importer " + im.name + "\nsettings " + settings;

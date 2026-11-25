@@ -2374,6 +2374,40 @@ static void testPostBuild() {
     o = sh("-f build.okay app", &rc);
     check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\nsub it is \"fine\"\n", "a new link runs the step again", o);
 }
+// Asset pipeline, first piece: an importer whose converter is a program built by the same manifest (tool = TARGET). Its steps wait
+// for the program, {tool} is the program's path, and a rebuilt program converts every asset again.
+static void testImporterTool() {
+    printf("test: importer tool = TARGET: assets are converted by a program the same build makes\n");
+    fresh("imptool");
+    auto conv = [&](const char* how) {
+        write("conv/main.cpp", string("#include <cctype>\n#include <fstream>\n#include <iterator>\n#include <string>\n"
+              "int main(int argc, char** argv) { if (argc != 3) return 2; std::ifstream in(argv[1]);\n"
+              " std::string s((std::istreambuf_iterator<char>(in)), {}); for (char& c : s) c = (char)") + how + "((unsigned char)c);\n"
+              " std::ofstream(argv[2]) << s; return 0; }\n");
+    };
+    conv("std::toupper");
+    write("assets/a.txt", "hello"); write("assets/b.txt", "world");
+    write("build.okay", "target conv exe\n sources = conv/main.cpp\nend\n"
+          "importer up\n pattern = assets/*.txt\n output = out/{stem}.up\n tool = conv\n cmd = {tool} {input} {output}\nend\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && readFile(gRoot / "out/a.up") == "HELLO" && readFile(gRoot / "out/b.up") == "WORLD", "the converter is built first, then each asset is converted with it", o);
+    o = sh("-j2", &rc);
+    check(rc == 0 && ran(o) == 0, "a second build does nothing", o);
+    sleepMs(); conv("std::tolower");
+    o = sh("-j2", &rc);
+    check(rc == 0 && readFile(gRoot / "out/a.up") == "hello" && readFile(gRoot / "out/b.up") == "world", "a changed converter is rebuilt and converts every asset again", o);
+    fs::remove_all(gRoot / "out"); fs::remove_all(gRoot / "build");
+    o = sh("-j2 out/a.up", &rc);
+    check(rc == 0 && fs::exists(gRoot / "out/a.up") && !fs::exists(gRoot / "out/b.up"), "asking for one converted file builds the converter and that file only", o);
+    write("build.okay", "target conv lib\n sources = conv/main.cpp\nend\n"
+          "importer up\n pattern = assets/*.txt\n output = out/{stem}.up\n tool = conv\n cmd = {tool} {input} {output}\nend\n");
+    o = sh("-j2", &rc);
+    check(rc != 0 && o.find("tool 'conv' is a library") != string::npos, "a tool that is a library is an error", o);
+    write("build.okay", "importer up\n pattern = assets/*.txt\n output = out/{stem}.up\n tool = nope\n cmd = {tool} {input} {output}\nend\n");
+    o = sh("-j2", &rc);
+    check(rc != 0 && o.find("tool 'nope' is not a target") != string::npos, "a tool that is not a target is an error", o);
+}
+
 // ---- Our own compilers (tools/okaycc: okay-cc and okay-ld for Linux; tools/okayms: okay-cl and okay-link for Windows) driven by
 // okay-build through 'toolchain okay-cc' and 'toolchain okay-ms'. The four programs come from OKAYBUILD_OWN_TOOLS (build.sh builds
 // them there); without them these checks are skipped, never passed.
@@ -2528,6 +2562,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
+        if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "own") { testOwnCompilerOkayCc(); testOwnCompilerEngineFiles(); testOwnCompilerOkayMs(); printf("okaybuild tests (own compilers only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
@@ -2561,6 +2596,7 @@ int main(int argc, char** argv) {
     testSourcePropertiesPerFolder();
     testMingwToolchainFile();
     testPostBuild();
+    testImporterTool();
     testOwnCompilerOkayCc();
     testOwnCompilerEngineFiles();
     testOwnCompilerOkayMs();

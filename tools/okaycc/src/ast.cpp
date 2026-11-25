@@ -49,7 +49,30 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->needCtor = t.needCtor;
     n->needDtor = t.needDtor;
     n->vslots = t.vslots;
-    if (t.inner) n->inner = cloneType(*t.inner);
+    if (t.inner) {
+        const Type& in = *t.inner;
+        bool viaRef = t.kind == Type::Kind::Pointer || t.kind == Type::Kind::Reference;
+        if (viaRef && (in.kind == Type::Kind::Struct || in.kind == Type::Kind::Union) && !in.params.empty() &&
+            !in.tag.empty() && canonOf(&in) != &in) {
+            // A pointer or reference to a finished class keeps only the class's name and facts, not
+            // its members: whoever needs the members takes the finished class by its tag (canonOf).
+            // A full copy at every pointer made the types grow exponentially with nesting (a class
+            // whose member functions take other classes by reference, each copying the next).
+            auto sh = std::make_unique<Type>();
+            sh->kind = in.kind;
+            sh->tag = in.tag;
+            sh->cnst = in.cnst;
+            sh->base = in.base;
+            sh->nonpod = in.nonpod;
+            sh->hasVptr = in.hasVptr;
+            sh->needCtor = in.needCtor;
+            sh->needDtor = in.needDtor;
+            sh->vslots = in.vslots;
+            n->inner = std::move(sh);
+        } else {
+            n->inner = cloneType(in);
+        }
+    }
     if (t.bound) n->bound = cloneExpr(*t.bound);
     for (const Param& p : t.params) {
         Param c;

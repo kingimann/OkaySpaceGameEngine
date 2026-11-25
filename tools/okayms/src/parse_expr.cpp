@@ -1866,6 +1866,18 @@ bool Parser::parse_postfix(Node* out) {
             }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
+            {
+                // o.r for a reference member: the field holds the address of what it refers to ([dcl.ref]).
+                Type holder;
+                if (static_type(out->kids[0], &holder) && holder.base == 3 && holder.struct_id >= 0 &&
+                    structs[static_cast<size_t>(holder.struct_id)].ref_caps.count(out->text) > 0) {
+                    Node field = std::move(*out);
+                    *out = Node{};
+                    out->kind = Node::Unary;
+                    out->op = TStar;
+                    out->kids.push_back(std::move(field));
+                }
+            }
         }
     }
     return true;

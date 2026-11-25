@@ -111,6 +111,10 @@ struct Preprocessor {
                     *ok = false;
                     return 0;
                 }
+                // An integer suffix (201611L, 1u, 2ULL) does not change the value here ([cpp.cond] 12, [lex.icon]).
+                while (j < expanded.size() && (expanded[j] == 'u' || expanded[j] == 'U' || expanded[j] == 'l' ||
+                                               expanded[j] == 'L'))
+                    ++j;
                 Tok tok;
                 tok.kind = 1;
                 tok.num = value;
@@ -632,7 +636,7 @@ struct Preprocessor {
                     bool good = true;
                     const int64_t value = eval_pp(expr, &good);
                     if (!good) {
-                        error = error.empty() ? "bad preprocessor expression" : error;
+                        error = error.empty() ? "bad preprocessor expression: #if " + expr : error;
                         --depth;
                         return "";
                     }

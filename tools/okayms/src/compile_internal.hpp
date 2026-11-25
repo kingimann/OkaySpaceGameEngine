@@ -207,6 +207,7 @@ struct StructDef {
     // A lambda's closure class: the captured variables kept by reference. The field holds the address; a use of
     // the name reads through it.
     std::set<std::string> ref_caps;
+    std::set<std::string> ref_members;  // `T& name;` members: also in ref_caps (the field holds an address)
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;

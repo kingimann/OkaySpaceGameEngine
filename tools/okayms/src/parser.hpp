@@ -3243,12 +3243,24 @@ struct Parser {
             }
             const Type base_type = field.type;
             while (accept(TStar)) ++field.type.pointers;
+            // T& name; a reference member ([dcl.ref], [class.base.init]): the field holds the address of what it refers
+            // to, set by the constructor's member initializer, and every use of the name goes through it.
+            bool ref_member = false;
+            if (!static_member && (is(TAmp) || is(TAndAnd)) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) {
+                next();
+                ++field.type.pointers;
+                ref_member = true;
+            }
             if (!is(TIdent)) {
                 error = "expected a field name";
                 return false;
             }
             field.name = cur().text;
             next();
+            if (ref_member) {
+                def.ref_caps.insert(field.name);
+                def.ref_members.insert(field.name);
+            }
             if (!parse_brackets(&field.type)) return false;
             if (field.type.array_len == 0 && !static_member) {
                 error = "an array member needs a length";
@@ -3813,6 +3825,23 @@ struct Parser {
                 Init* init = nullptr;
                 for (Init& candidate : inits)
                     if (candidate.name == field.name) init = &candidate;
+                if (def.ref_members.count(field.name) > 0) {
+                    // r(x) for a reference member: the field is bound to x, it keeps x's address.
+                    if (init == nullptr || init->args.size() != 1) {
+                        error = "the reference member " + field.name + " needs a member initializer";
+                        return false;
+                    }
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.kids.push_back(node_this_field(field.name));
+                    assign.kids.push_back(node_addr(std::move(init->args[0])));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    pre.push_back(std::move(stmt));
+                    continue;
+                }
                 if (init == nullptr && field_is_aggr(field)) {
                     // `float m[16] = {...};` or `P p = {1, 2};`: element by element, then the rest is zero.
                     Node list;

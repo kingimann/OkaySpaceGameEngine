@@ -1,6 +1,7 @@
 #include "ModelingEasyUi.hpp"
 #include "ModelingEasyOps.hpp"
 #include "ModelingStarters.hpp"
+#include "EditorWidgets.hpp"   // StateButton, the clear tab colours
 #include "imgui.h"
 #include <algorithm>
 #include <cstdio>
@@ -20,6 +21,9 @@ struct UiState {
     bool recentLoaded = false;
     std::string note;           // what the last tool said, in plain words
     float noteAge = 0;
+    const Tool* hover = nullptr;      // the tool button under the mouse this frame (shown in the "About" card)
+    const Starter* hoverStarter = nullptr;
+    float tileW = 150;                // this frame's tile width (TilesFor), shared by every grid on the page
 };
 UiState g_ui;
 
@@ -75,25 +79,56 @@ bool ToolBtn(Host& h, const Tool& t, ImVec2 size, const char* idSuffix = "") {
     const bool hit = ImGui::Button(label, size);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        g_ui.hover = &t;
         if (!why.empty()) ImGui::SetTooltip("%s", why.c_str());
         else ImGui::SetTooltip("%s", TooltipFor(t).c_str());
     }
     return hit;
 }
 
-void ToolGrid(Host& h, const std::vector<const Tool*>& tools, ImVec2 size) {
-    const float w = ImGui::GetContentRegionAvail().x, gap = ImGui::GetStyle().ItemSpacing.x;
-    float x = 0;
+void ToolGrid(Host& h, const std::vector<const Tool*>& tools, float height) {
+    int col = 0;
+    const TileLayout tl = TilesFor(ImGui::GetContentRegionAvail().x, ImGui::GetStyle().ItemSpacing.x, g_ui.tileW, g_ui.tileW);
     for (const Tool* t : tools) {
-        if (x > 0 && x + size.x > w) x = 0; else if (x > 0) ImGui::SameLine();
-        if (ToolBtn(h, *t, size)) RunTool(h, *t);
-        x += size.x + gap;
+        if (col > 0 && col < tl.cols) ImGui::SameLine(); else col = 0;
+        if (ToolBtn(h, *t, ImVec2(g_ui.tileW, height))) RunTool(h, *t);
+        ++col;
     }
+}
+
+// The card under the buttons: what the button under the mouse does, or, with nothing under the mouse, how this step works.
+void AboutCard(Host& h, int tab) {
+    const float lineH = ImGui::GetTextLineHeightWithSpacing();
+    ImGui::Spacing();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    ImGui::BeginChild("##easyabout", ImVec2(0, lineH * 5.0f + ImGui::GetStyle().WindowPadding.y * 2), ImGuiChildFlags_Borders);
+    if (const Tool* t = g_ui.hover) {
+        ImGui::TextUnformatted(t->name);
+        ImGui::TextWrapped("%s", t->tip);
+        ImGui::TextDisabled("For example: %s", t->example);
+        const std::string why = WhyNot(*t, h.state);
+        if (!why.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "First: %s", why.c_str());
+        else if (t->key[0]) ImGui::TextDisabled("Shortcut: %s", t->key);
+    } else if (const Starter* st = g_ui.hoverStarter) {
+        ImGui::TextUnformatted(st->name);
+        ImGui::TextWrapped("%s", st->tip);
+        ImGui::TextDisabled("Click to add it to the scene, then change it with the other steps.");
+    } else {
+        ImGui::Text("Step %d of %d: %s", tab + 1, kBeginnerTabCount, TabName((Tab)tab));
+        if (tab + 1 < kBeginnerTabCount) ImGui::TextWrapped("Next step, %s: %s", TabName((Tab)(tab + 1)), TabHelp((Tab)(tab + 1)));
+        else ImGui::TextWrapped("This is the last step. Your model is ready to use in the scene.");
+        ImGui::TextDisabled("Point at a button to see what it does here.");
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 }
 } // namespace
 
 void DrawEasyModeling(Host& h) {
-    const ImVec2 big(150, 54);
+    const float bigH = std::max(54.0f, ImGui::GetFrameHeight() * 1.6f);
+    g_ui.hover = nullptr; g_ui.hoverStarter = nullptr;
     if (!g_ui.recentLoaded) { g_ui.recentLoaded = true; if (h.loadRecent) g_ui.recent = h.loadRecent(); }
     g_ui.noteAge += ImGui::GetIO().DeltaTime;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -102,25 +137,19 @@ void DrawEasyModeling(Host& h) {
     // Row 1: Undo / Redo / Repeat always on screen, the size of the model.
     {
         const bool cu = h.canUndo && h.canUndo(), cr = h.canRedo && h.canRedo();
-        ImGui::BeginDisabled(!cu);
-        if (ImGui::Button("Undo##easy", ImVec2(96, 40)) && h.undo) h.undo();
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(cu ? "Take back the last thing you did.  Ctrl+Z" : "Nothing to take back yet.");
+        const float rowH = std::max(40.0f, ImGui::GetFrameHeight() * 1.3f);
+        // StateButton: a usable button is filled with an accent outline, an unusable one is an empty dim outline.
+        if (StateButton("Undo##easy", cu, ImVec2(96, rowH), "Take back the last thing you did.  Ctrl+Z", "Nothing to take back yet.") && h.undo) h.undo();
         ImGui::SameLine();
-        ImGui::BeginDisabled(!cr);
-        if (ImGui::Button("Redo##easy", ImVec2(96, 40)) && h.redo) h.redo();
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(cr ? "Put back what you took back.  Ctrl+Y" : "Nothing to put back.");
+        if (StateButton("Redo##easy", cr, ImVec2(96, rowH), "Put back what you took back.  Ctrl+Y", "Nothing to put back.") && h.redo) h.redo();
         ImGui::SameLine();
         const std::string rep = RepeatId(g_ui.recent);
         const Tool* rt = rep.empty() ? nullptr : FindTool(rep);
         const bool canRep = rt && WhyNot(*rt, h.state).empty();
-        ImGui::BeginDisabled(!canRep);
         std::string rl = rt ? std::string("Do again: ") + rt->name : std::string("Do again");
         rl += "##easy_repeat";
-        if (ImGui::Button(rl.c_str(), ImVec2(0, 40)) && rt) RunTool(h, *rt);
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(rt ? "Do the last tool again." : "Use a tool first, then you can repeat it here.");
+        const std::string repWhy = !rt ? std::string("Use a tool first, then you can repeat it here.") : WhyNot(*rt, h.state);
+        if (StateButton(rl.c_str(), canRep, ImVec2(0, rowH), "Do the last tool again.", repWhy.c_str()) && rt) RunTool(h, *rt);
         if (h.mesh && !h.mesh->vertices.empty()) {
             const okay::Vec3 sz = h.mesh->Size();
             ImGui::SameLine(); ImGui::AlignTextToFramePadding();
@@ -179,32 +208,48 @@ void DrawEasyModeling(Host& h) {
     }
     ImGui::Separator();
 
-    // The five tabs.
-    if (ImGui::BeginTabBar("##easytabs")) {
+    // The five steps, as tabs: the open one is filled with the accent colour (PushClearTabColors) and every tab carries its
+    // step number. The tile width is worked out once for every grid of the page (TilesFor in ModelingEasy.hpp).
+    {
+        float minW = 0;
+        for (const Starter& st : Starters()) minW = std::max(minW, ImGui::CalcTextSize(st.name).x);
+        for (int i = 0; i < kBeginnerTabCount; ++i) for (const Tool* t : ToolsOnTab((Tab)i)) minW = std::max(minW, ImGui::CalcTextSize(t->name).x);
+        minW = std::max(120.0f, minW + ImGui::GetStyle().FramePadding.x * 2 + 8);
+        g_ui.tileW = TilesFor(ImGui::GetContentRegionAvail().x, ImGui::GetStyle().ItemSpacing.x, minW, minW * 1.3f).w;
+    }
+    PushClearTabColors();
+    const bool tabsOpen = ImGui::BeginTabBar("##easytabs");
+    PopClearTabColors();
+    if (tabsOpen) {
         for (int i = 0; i < kBeginnerTabCount; ++i) {
             const Tab tab = (Tab)i;
-            if (!ImGui::BeginTabItem(TabName(tab), nullptr, h.openTab == i ? ImGuiTabItemFlags_SetSelected : 0)) continue;
+            char tl[48]; std::snprintf(tl, sizeof(tl), "%d  %s###easytab%d", i + 1, TabName(tab), i);
+            PushClearTabColors();
+            const bool open = ImGui::BeginTabItem(tl, nullptr, h.openTab == i ? ImGuiTabItemFlags_SetSelected : 0);
+            PopClearTabColors();
+            if (!open) continue;
             g_ui.tab = i;
             ImGui::TextDisabled("%s", TabHelp(tab));
             if (tab == Tab::Shape) {
                 ImGui::TextUnformatted("Start from something ready-made");
-                const float w = ImGui::GetContentRegionAvail().x;
-                float x = 0;
+                const TileLayout tl = TilesFor(ImGui::GetContentRegionAvail().x, ImGui::GetStyle().ItemSpacing.x, g_ui.tileW, g_ui.tileW);
+                const float tileH = std::max(100.0f, 68.0f + ImGui::GetTextLineHeight() + 14.0f);
+                int col = 0;
                 for (const Starter& s : Starters()) {
-                    if (x > 0 && x + 110 > w) x = 0; else if (x > 0) ImGui::SameLine();
+                    if (col > 0 && col < tl.cols) ImGui::SameLine(); else col = 0;
+                    ++col;
                     char l[64]; std::snprintf(l, sizeof(l), "##easy_st_%s", s.id);
-                    const bool hit = ImGui::Button(l, ImVec2(110, 96));
+                    const bool hit = ImGui::Button(l, ImVec2(g_ui.tileW, tileH));
                     const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
                     if (h.thumb) {
                         std::string id = s.id;
                         if (void* th = h.thumb(std::string("easy_") + id, [id] { return BuildStarter(id); }))
-                            ImGui::GetWindowDrawList()->AddImage((ImTextureID)th, ImVec2((a.x + b.x) * 0.5f - 32, a.y + 4), ImVec2((a.x + b.x) * 0.5f + 32, a.y + 68));
+                            ImGui::GetWindowDrawList()->AddImage((ImTextureID)th, ImVec2((a.x + b.x) * 0.5f - 32, a.y + 6), ImVec2((a.x + b.x) * 0.5f + 32, a.y + 70));
                     }
                     const ImVec2 ts = ImGui::CalcTextSize(s.name);
-                    ImGui::GetWindowDrawList()->AddText(ImVec2((a.x + b.x) * 0.5f - ts.x * 0.5f, b.y - ts.y - 6), ImGui::GetColorU32(ImGuiCol_Text), s.name);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to add it, then change it with the other tabs.", s.tip);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2((a.x + b.x) * 0.5f - ts.x * 0.5f, b.y - ts.y - 8), ImGui::GetColorU32(ImGuiCol_Text), s.name);
+                    if (ImGui::IsItemHovered()) { g_ui.hoverStarter = &s; ImGui::SetTooltip("%s\nClick to add it, then change it with the other tabs.", s.tip); }
                     if (hit && h.addModel) { h.addModel(BuildStarter(s.id), s.name); Say(h, std::string("Added a ") + s.name + ". Change it with the other tabs."); }
-                    x += 110 + ImGui::GetStyle().ItemSpacing.x;
                 }
                 ImGui::Spacing();
                 ImGui::TextUnformatted("Or add a simple shape");
@@ -243,7 +288,8 @@ void DrawEasyModeling(Host& h) {
                 ImGui::ColorEdit3("Any colour##easy", g_ui.col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 ImGui::SameLine(); ImGui::TextDisabled("Your colour");
             }
-            ToolGrid(h, ToolsOnTab(tab), big);
+            ToolGrid(h, ToolsOnTab(tab), bigH);
+            AboutCard(h, i);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

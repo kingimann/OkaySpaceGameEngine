@@ -92,7 +92,7 @@
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
 #include "ModelingHighlight.hpp"            // button wrappers: outline matches of the tool search
-#include "ModelingSidebar.hpp"              // fold state and widths of the advanced Modeling window's page list
+#include "ModelingSidebarUi.hpp"            // the Modeling window's page list: fold state, widths (ModelingSidebar.hpp) and drawing
 #include "ModelingToolIndex.hpp"            // the advanced Modeling window as data: pages by job, search, hints
 #include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
@@ -24795,40 +24795,12 @@ void DrawModeling(EditorState& ed) {
     const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
     // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
-    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x, g_uiScale);
-    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x, g_uiScale), 0), ImGuiChildFlags_Borders);
-    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(oked::modeltools::kFoldBtn * g_uiScale, oked::modeltools::kFoldBtn * g_uiScale))) sbToggle();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
-    const char* lastJob = "";
-    for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
-        const int i = pi.legacy;
-        const MdlPage& pg = kPages[i];
-        const bool usable = !pg.needsMesh || haveMesh;
-        if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
-            ImGui::PushID(i); ImGui::BeginDisabled(!usable);
-            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, oked::modeltools::StripRowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
-            ImGui::PopID();
-            continue;
-        }
-        if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
-        ImGui::PushID(i);
-        ImGui::BeginDisabled(!usable);
-        const ImVec2 r0 = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, oked::modeltools::RowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
-        ImGui::EndDisabled();
-        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
-        ImDrawList* ndl = ImGui::GetWindowDrawList();
-        const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        const float padX = oked::modeltools::kRowPadX * g_uiScale, maxTextW = ImGui::GetItemRectSize().x - padX * 2;   // cut with "..." instead of running out of the row
-        const auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
-        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale), tc, oked::modeltools::FitText(pi.name, maxTextW, measure).c_str());
-        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), oked::modeltools::FitText(pi.desc, maxTextW, measure).c_str());
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && usable && maxTextW < ImGui::CalcTextSize(pi.desc).x) ImGui::SetTooltip("%s\n%s", pi.name, pi.desc);   // the full words when the row is narrow
-        ImGui::PopID();
+    {   // the page list (ModelingSidebarUi.cpp): icons + full names open, icons only folded; text is never cut
+        const auto why = [&](int i) { return oked::modeltools::PageDisabledReason(kPages[i].needsMesh, haveMesh); };
+        const oked::modeltools::PageListResult pl = oked::modeltools::DrawPageList(s_sb, s_mdlPage, why, g_uiScale, ImGui::GetWindowSize().x);
+        if (pl.clicked >= 0) s_mdlPage = pl.clicked;
+        if (pl.toggled) { g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); }
     }
-    ImGui::EndChild();
     if (kPages[s_mdlPage].needsMesh && !haveMesh) { s_mdlPage = 8; }
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
@@ -51775,8 +51747,10 @@ void DrawGameView(EditorState& ed) {
     if (s_aspect < 0 || s_aspect >= kGameResCount) s_aspect = 0;
     // Mobile emulator: test on phone / tablet screens (size, notch, safe area).
     if (g_gameDevice < 0 || g_gameDevice >= kMobileDeviceCount) g_gameDevice = 0;
-    ImGui::SetNextItemWidth(170);
-    if (ImGui::BeginCombo("##device", g_gameDevice ? kMobileDevices[g_gameDevice].name : "Device: off")) {
+    // The toolbar: the Device and Screen dropdowns, then on / off switches that show their state (ToggleChip); what does not
+    // fit the row moves into a "..." menu (PlanToolbar, like the Scene toolbar), so nothing runs off the right edge.
+    ImGui::SetNextItemWidth(160);
+    if (BeginDropdown("##device", g_gameDevice ? kMobileDevices[g_gameDevice].name : "Device: off")) {
         for (int i = 0; i < kMobileDeviceCount; ++i) {
             if (i == 1 || i == 8) ImGui::Separator();   // off / phones / tablets
             char lbl[96];
@@ -51789,22 +51763,22 @@ void DrawGameView(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mobile emulator: play the game on a phone or tablet screen\n(real resolution, rounded corners, notch, safe area). The mouse acts as your finger.");
     ImGui::SameLine();
     int curW = 0, curH = 0;
-    if (const MobileDevice* dev = ActiveDevice()) {
-        (void)dev;
+    if (ActiveDevice()) {
         if (ImGui::Button(g_gameDeviceLandscape ? "Landscape" : "Portrait")) { g_gameDeviceLandscape = !g_gameDeviceLandscape; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the device");
         ImGui::SameLine();
-        if (ImGui::Checkbox("Safe area", &g_gameSafeArea)) SaveSettings();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.");
+        if (ToggleChip("Safe area##gamesafe", &g_gameSafeArea, "Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.")) SaveSettings();
     } else {
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
+    char resPv[64]; std::snprintf(resPv, sizeof resPv, "Screen: %s", kGameResPresets[s_aspect].name);
+    ImGui::SetNextItemWidth(std::max(150.0f, ImGui::CalcTextSize(resPv).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2));
+    if (BeginDropdown("##gameres", resPv)) {
         for (int i = 0; i < kGameResCount; ++i) {
             if (i == 1 || i == 8 || i == kGameResCustomIdx) ImGui::Separator();  // group: aspects / fixed / custom
             if (ImGui::Selectable(kGameResPresets[i].name, s_aspect == i)) { s_aspect = i; SaveSettings(); }
         }
         ImGui::EndCombo();
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Game view's screen: free, an aspect ratio (16:9 ...) or a fixed resolution.");
     // Custom width/height inputs (only for the Custom preset).
     curW = kGameResPresets[s_aspect].w; curH = kGameResPresets[s_aspect].h;
     if (s_aspect == kGameResCustomIdx) {
@@ -51819,48 +51793,74 @@ void DrawGameView(EditorState& ed) {
     }   // no device
     if (ActiveDevice()) { float da; CurrentGameRes(da, curW, curH); }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
-    ImGui::SameLine();
     {
-        // Drawn status dot: green while the game runs, gray in edit mode.
-        ImVec2 dp = ImGui::GetCursorScreenPos();
-        float dr = ImGui::GetFontSize() * 0.26f;
-        ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(130, 134, 142, 255);
-        ImGui::GetWindowDrawList()->AddCircleFilled(
-            ImVec2(dp.x + dr, dp.y + ImGui::GetTextLineHeight() * 0.55f), dr, dc);
-        ImGui::Dummy(ImVec2(dr * 2.0f + 5.0f, 0));
-        ImGui::SameLine(0, 0);
-        if (ed.isPlaying()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.52f, 1), "live");
-        else                ImGui::TextDisabled("press Play to run");
-    }
-    // FPS testing: grab the mouse so look controls work in the Game tab.
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {
-        if (g_gameMouseCapture) g_gameCursorReleased = false;   // grab it now (if playing)
-        else if (ed.isPlaying() && Cursor::IsLocked()) g_gameCursorReleased = true;   // let go now
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nEsc shows the cursor again; click the Game view to give it back.\nGames that lock the cursor (FPS/TPS controllers) grab it automatically.");
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame rate and frame times (average, 1% low, hitches), the time scale, what paused the game,\nobject + triangle counts and, optionally, the timers: overlaid on the view.\nThe arrow picks what to show.");
-    ImGui::SameLine(0, 2);
-    if (ImGui::ArrowButton("##statsopts", ImGuiDir_Down)) ImGui::OpenPopup("##statsoptspop");
-    if (ImGui::BeginPopup("##statsoptspop")) {
-        ImGui::TextDisabled("Stats overlay shows");
-        bool changed = false;
-        changed |= ImGui::Checkbox("Frame-rate graph", &g_gameStatsGraph);
-        changed |= ImGui::Checkbox("Scene counts (objects, components)", &g_gameStatsScene);
-        changed |= ImGui::Checkbox("Timers and tweens", &g_gameStatsTimers);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the scene's scheduler (Invoke, InvokeRepeating, delays) and\ntween manager are running, refreshed four times a second.");
-        if (changed) { g_gameStatsOverlay = true; SaveSettings(); }   // ticking a part means you want to see it
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
-    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
+        const ImGuiStyle& gst = ImGui::GetStyle();
+        const float fh = ImGui::GetFrameHeight();
+        const char* kCapTip = "Lock + hide the cursor for FPS/TPS mouselook while testing.\nEsc shows the cursor again; click the Game view to give it back.\nGames that lock the cursor (FPS/TPS controllers) grab it automatically.";
+        const char* kStatsTip = "Frame rate and frame times (average, 1% low, hitches), the time scale, what paused the game,\nobject + triangle counts and, optionally, the timers: overlaid on the view.\nThe ... button beside it picks what to show.";
+        const char* kPhysTip = "Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.";
+        // The play state, in words: a dot (green while the game runs) and what the mouse does now.
+        const bool grabbing = ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined());
+        const char* stateText = !ed.isPlaying() ? "Editing" : !grabbing ? "Playing" : g_gameCursorReleased ? "Playing - click the view to capture" : "Playing - Esc frees the mouse";
+        const float dotR = ImGui::GetFontSize() * 0.26f;
+        enum { kCap, kStats, kPhys, kState, kCount };
+        std::vector<okay::edlayout::ToolbarItem> items(kCount);
+        items[kCap].iconW = items[kCap].labelW = ToggleChipWidth("Capture mouse");
+        items[kStats].iconW = items[kStats].labelW = ToggleChipWidth("Stats") + 2.0f + fh;   // + its "..." button
+        items[kPhys].iconW = items[kPhys].labelW = ToggleChipWidth("Physics");
+        items[kState].iconW = items[kState].labelW = dotR * 2.0f + 6.0f + ImGui::CalcTextSize(stateText).x;
         ImGui::SameLine();
-        if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
-        else ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)");
+        const float avail = ImGui::GetWindowContentRegionMax().x - ImGui::GetCursorPosX();
+        const okay::edlayout::ToolbarPlan plan = okay::edlayout::PlanToolbar(items, avail, false, gst.ItemSpacing.x, gst.ItemSpacing.x, fh + gst.ItemSpacing.x);
+        bool first = true;
+        const auto next = [&] { if (!first) ImGui::SameLine(); first = false; };
+        const auto capChanged = [&] {
+            if (g_gameMouseCapture) g_gameCursorReleased = false;   // grab it now (if playing)
+            else if (ed.isPlaying() && Cursor::IsLocked()) g_gameCursorReleased = true;   // let go now
+        };
+        const auto statsParts = [&] {
+            ImGui::TextDisabled("Stats overlay shows");
+            bool changed = false;
+            changed |= ImGui::Checkbox("Frame-rate graph", &g_gameStatsGraph);
+            changed |= ImGui::Checkbox("Scene counts (objects, components)", &g_gameStatsScene);
+            changed |= ImGui::Checkbox("Timers and tweens", &g_gameStatsTimers);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the scene's scheduler (Invoke, InvokeRepeating, delays) and\ntween manager are running, refreshed four times a second.");
+            if (changed) { g_gameStatsOverlay = true; SaveSettings(); }   // ticking a part means you want to see it
+        };
+        if (plan.shown[kCap]) { next(); if (ToggleChip("Capture mouse##gamecap", &g_gameMouseCapture, kCapTip)) capChanged(); }
+        if (plan.shown[kStats]) {
+            next();
+            if (ToggleChip("Stats##gamestats", &g_gameStatsOverlay, kStatsTip)) SaveSettings();
+            ImGui::SameLine(0, 2);
+            if (IconButton("##statsopts", TbIcon::More, "What the stats overlay shows")) ImGui::OpenPopup("##statsoptspop");
+            if (ImGui::BeginPopup("##statsoptspop")) { statsParts(); ImGui::EndPopup(); }
+        }
+        if (plan.shown[kPhys]) { next(); if (ToggleChip("Physics##gamephys", &g_physDebug, kPhysTip)) { ApplyPhysicsDebug(); SaveSettings(); } }
+        if (plan.shown[kState]) {
+            next();
+            ImGui::AlignTextToFramePadding();
+            const ImVec2 dp = ImGui::GetCursorScreenPos();
+            const ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(130, 134, 142, 255);
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(dp.x + dotR, dp.y + ImGui::GetTextLineHeight() * 0.5f), dotR, dc);   // centred on the text line
+            ImGui::Dummy(ImVec2(dotR * 2.0f + 6.0f, ImGui::GetTextLineHeight()));
+            ImGui::SameLine(0, 0);
+            if (ed.isPlaying()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.52f, 1), "%s", stateText);
+            else                ImGui::TextDisabled("%s", stateText);
+        }
+        if (plan.overflowed > 0) {   // the switches that did not fit, as ticks in a menu
+            next();
+            if (IconButton("##gamemore", TbIcon::More, "More: the switches that do not fit")) ImGui::OpenPopup("##gamemorepop");
+            if (ImGui::BeginPopup("##gamemorepop")) {
+                if (!plan.shown[kCap] && ImGui::MenuItem("Capture mouse", nullptr, &g_gameMouseCapture)) capChanged();
+                if (!plan.shown[kStats]) {
+                    if (ImGui::MenuItem("Stats", nullptr, &g_gameStatsOverlay)) SaveSettings();
+                    ImGui::Separator(); statsParts(); ImGui::Separator();
+                }
+                if (!plan.shown[kPhys] && ImGui::MenuItem("Physics", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+                if (!plan.shown[kState]) ImGui::TextDisabled("%s", stateText);
+                ImGui::EndPopup();
+            }
+        }
     }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();

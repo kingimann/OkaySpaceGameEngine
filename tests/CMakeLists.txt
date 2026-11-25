@@ -5401,3 +5401,13 @@ add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)
 target_include_directories(test_input_grok PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME input_grok COMMAND test_input_grok)
+
+# The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
+# completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
+add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
+target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                           ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_cli COMMAND test_launcher_cli)
+set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)

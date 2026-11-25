@@ -26,6 +26,45 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
 /// Start `argv` and do not wait for it (the editor). True when it started.
 bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd);
 
+/// How StartDetached starts a program that gets a window of its own.
+struct DetachOptions {
+    std::string pathFirst;     ///< "" = PATH as it is; else this folder is put first on PATH, for the new program only
+    bool newConsole = false;   ///< Windows: the program gets its own console window (cmd.exe); POSIX: no difference
+    std::string title;         ///< Windows: the new console window's title
+};
+bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd, const DetachOptions& options);
+
+/// A program running in the background whose output is read while it runs (the launcher's Command line page).
+/// Start never waits; Poll reads what is ready without waiting, so it can be called once a frame. stdin is empty.
+/// Windows: two pipes read with PeekNamedPipe, and a job object so Stop ends the program and everything it started.
+/// POSIX: two non-blocking pipes, and the program leads its own process group so Stop ends the whole group.
+/// No thread and no <mutex> (CLAUDE.md rule 21a). Not copyable.
+class Child {
+public:
+    Child();
+    ~Child();   ///< a program still running is stopped
+    Child(const Child&) = delete;
+    Child& operator=(const Child&) = delete;
+
+    /// Start `argv` (argv[0] goes through ResolveProgram; the rest are passed one by one, never through a shell) in
+    /// `cwd` ("" = the current folder). False with a plain reason when it could not start.
+    bool Start(const std::vector<std::string>& argv, const std::string& cwd, std::string& error);
+    /// Append what the program wrote since the last call to `out` and `err`. True while it runs or output is left.
+    bool Poll(std::string& out, std::string& err);
+    /// It was started and Poll has not yet seen it end.
+    bool Running() const;
+    /// End it (and what it started) now. Poll then reports it finished.
+    void Stop();
+    /// It ended because Stop was called.
+    bool Stopped() const;
+    /// Its exit code once it ended (-1 before).
+    int ExitCode() const;
+
+private:
+    struct Impl;
+    Impl* impl_;
+};
+
 /// The full path of a program found on PATH, or "" (Windows also tries ".exe"). Only absolute PATH folders are
 /// searched, so a program in the current folder is never picked up by its bare name.
 std::string FindOnPath(const std::string& program);

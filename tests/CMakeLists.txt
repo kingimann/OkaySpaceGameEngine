@@ -5523,7 +5523,15 @@ set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 # closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
 add_executable(test_launcher_tray test_launcher_tray.cpp)
 target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
-target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_tray COMMAND test_launcher_tray)
 set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)
+
+# The chat window's Friends list (launcher/FriendsList.hpp): grouping, the friend menu, status, layout. Headless.
+add_executable(test_launcher_friends test_launcher_friends.cpp)
+target_compile_features(test_launcher_friends PRIVATE cxx_std_17)
+target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_friends COMMAND test_launcher_friends)
+set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)

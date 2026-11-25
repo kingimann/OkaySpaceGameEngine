@@ -1126,6 +1126,13 @@ bool Parser::parse_unary(Node* out) {
         out->text = cur().text;
         out->type.pointers = 1;
         out->type.base = 2;
+        if (cur().ity == 16 || cur().ity == 32) {
+            // L"..." is an array of wchar_t (here unsigned short), U"..." of char32_t (unsigned int): the code unit
+            // bytes, and the zero unit's bytes after them (the generator adds the last zero byte).
+            out->type.base = cur().ity == 16 ? 4 : 1;
+            out->type.is_unsigned = true;
+            out->text.append(static_cast<size_t>(cur().ity == 16 ? 1 : 3), '\0');
+        }
         next();
     } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
         const bool from_global = is(TColonColon);
@@ -1311,7 +1318,10 @@ bool Parser::parse_unary(Node* out) {
                 bool any_object_fn = false;
                 for (const Method& m : def.methods)
                     if (m.name == name && !m.is_static) any_object_fn = true;
-                if (is_method && !any_object_fn && find_member_tmpl(cur_class, name, &tmpl_owner) == nullptr) {
+                // In a static member function there is no this: a member template named there is a static one
+                // (Log::Error calls Emit), called like the static functions.
+                const bool no_this = !local_visible("this");
+                if (is_method && !any_object_fn && (no_this || find_member_tmpl(cur_class, name, &tmpl_owner) == nullptr)) {
                     // Only static functions have this name: there is no object to call it on.
                     return qualified_call(out, cur_class, name, {}) && parse_postfix(out);
                 }

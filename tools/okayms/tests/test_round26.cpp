@@ -12,6 +12,10 @@ namespace {
 using okayms_test::Tally;
 const okayms_test::ProgramRun kRun{"r26", {}};
 const okayms_test::ProgramRun kRunRtti{"r26", {}, true};
+const okayms_test::ProgramRun kRunIo{"r26",
+                                     {"msvcrt.dll:fopen", "msvcrt.dll:_wfopen", "msvcrt.dll:fwrite", "msvcrt.dll:fread",
+                                      "msvcrt.dll:fseek", "msvcrt.dll:ftell", "msvcrt.dll:rewind", "msvcrt.dll:fclose",
+                                      "msvcrt.dll:_wremove"}};
 }  // namespace
 
 // The bump allocator of program_check.hpp (no C runtime is linked on the okay-ms side).
@@ -194,6 +198,147 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// return {a, b,} for a class with an initializer-list constructor (a trailing comma too); a range for over a class whose
+// begin() and end() return iterator objects (std::filesystem::path).
+static void r26_return_list_range(Tally& tally) {
+    std::printf("r26_return_list_range\n");
+    okayms_test::run_both(kRun, tally, "return_list_range", std::string(kAlloc) + R"OKMS(
+#include <vector>
+#include <string>
+struct M { std::string n; float f; };
+static M Make(const char* n, float f) { M m; m.n = n; m.f = f; return m; }
+static std::vector<M> Build() { return { Make("a", 1.0f), Make("bb", 2.0f), }; }
+static std::vector<int> Ints() { return {1, 2, 3}; }
+static int part1(void) {
+  std::vector<M> v = Build();
+  if (v.size() != 2 || v[1].n != "bb") return 1;
+  std::vector<int> w = Ints();
+  if (w.size() != 3 || w[2] != 3) return 2;
+  return 0;
+}
+
+#include <filesystem>
+#include <string>
+static int part2(void) {
+  std::filesystem::path q("x/yy/zzz");
+  int m = 0; int len = 0;
+  for (const auto& part : q) { ++m; len += (int)part.string().size(); }
+  if (m != 3 || len != 6) return 1;
+  int n = 0;
+  for (const auto& c : q.relative_path()) if (!c.empty()) ++n;
+  if (n != 3) return 2;
+  return 0;
+}
+
+int entry(void) {
+  int r = part1();
+  if (r != 0) return r;
+  r = part2();
+  return r == 0 ? 0 : 20 + r;
+}
+)OKMS", 0);
+}
+
+// A static member function template that calls another one with no object (Log::Error calls Emit);
+// compare_exchange_weak with a success and a failure order.
+static void r26_static_tmpl_cas(Tally& tally) {
+    std::printf("r26_static_tmpl_cas\n");
+    okayms_test::run_both(kRun, tally, "static_tmpl_cas", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <utility>
+struct L {
+  template <class... A> static int Error(A&&... a) { return Emit(1, std::forward<A>(a)...); }
+private:
+  template <class... A> static int Emit(int lv, A&&... a) { return lv + (int)sizeof...(A); }
+};
+static int part1(void) { return L::Error(1, 2.0, "x") == 4 ? 0 : 1; }
+
+#include <atomic>
+static int part2(void){ std::atomic<const void*> o{nullptr}; int x; const void* e = nullptr; if (!o.compare_exchange_weak(e, &x, std::memory_order_acquire, std::memory_order_relaxed)) return 1; return o.load() == &x ? 0 : 2; }
+
+int entry(void) {
+  int r = part1();
+  if (r != 0) return r;
+  r = part2();
+  return r == 0 ? 0 : 20 + r;
+}
+)OKMS", 0);
+}
+
+// L"..." (UTF-16, from UTF-8 source text), u8"...", \u and \U escapes (a surrogate pair above U+FFFF), std::wstring from a wide literal, std::FILE,
+// and a local char array initialized from a string literal (it held the literal's address before this round).
+static void r26_wide_literals(Tally& tally) {
+    std::printf("r26_wide_literals\n");
+    okayms_test::run_both(kRunIo, tally, "wide_literals", std::string(kAlloc) + R"OKMS(
+#include <cstdio>
+#include <string>
+#include <algorithm>
+#include <vector>
+static int wlen(const wchar_t* s) { int n = 0; while (s[n]) ++n; return n; }
+static int part1(void) {
+  const wchar_t* w = L"rbé";
+  if (wlen(w) != 3 || w[0] != 'r' || w[2] != 0xE9) return 1;
+  const wchar_t* e = L"\U0001F600";
+  if (wlen(e) != 2 || e[0] != 0xD83D || e[1] != 0xDE00) return 2;
+  std::wstring ws = L"abc";
+  if (ws.size() != 3 || ws[1] != 'b') return 3;
+  std::FILE* f = nullptr;
+  if (f != nullptr) { std::fseek(f, 0, SEEK_END); std::fclose(f); }
+  std::vector<int> v = {1, 2, 1};
+  v.erase(std::remove(v.begin(), v.end(), 1), v.end());
+  if (v.size() != 1) return 4;
+  const char* u8s = u8"xé";
+  if (u8s[1] != (char)0xC3) return 5;
+  const wchar_t* w2 = L"\u00e9";
+  if (w2[0] != 0xE9 || w2[1] != 0) return 6;
+  return 0;
+}
+
+static int part2(void) {
+  const char msg[] = "hello file";
+  if (msg[0] != 104) return 10;
+  char m2[] = "hi";
+  if (m2[0] != 104) return 11;
+  return 0;
+}
+
+int entry(void) {
+  int r = part1();
+  if (r != 0) return r;
+  r = part2();
+  return r == 0 ? 0 : 20 + r;
+}
+)OKMS", 0);
+}
+
+// std::fopen, fwrite, fseek, ftell, rewind, fread, fclose and Microsoft's _wfopen and _wremove with wide names, called in
+// msvcrt.dll (the declarations of our <cstdio>).
+static void r26_file_io(Tally& tally) {
+    std::printf("r26_file_io\n");
+    okayms_test::run_both(kRunIo, tally, "file_io", std::string(kAlloc) + R"OKMS(
+#include <cstdio>
+#include <cstring>
+int entry(void) {
+  std::FILE* f = _wfopen(L"okayms_r26_io.bin", L"wb");
+  if (!f) return 1;
+  const char msg[] = "hello file";
+  if (std::fwrite(msg, 1, 10, f) != 10) return 2;
+  std::fclose(f);
+  f = std::fopen("okayms_r26_io.bin", "rb");
+  if (!f) return 3;
+  if (std::fseek(f, 0, SEEK_END) != 0) return 4;
+  if (std::ftell(f) != 10) return 5;
+  std::rewind(f);
+  char buf[16];
+  if (std::fread(buf, 1, 10, f) != 10) return 6;
+  std::fclose(f);
+  if (buf[0] != 104 || buf[9] != 101) return 7;
+  _wremove(L"okayms_r26_io.bin");
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -202,5 +347,9 @@ int main(int argc, char** argv) {
     r26_shared_ptr(tally);
     r26_fixes(tally);
     r26_path_iter(tally);
-    return tally.finish(4);
+    r26_return_list_range(tally);
+    r26_static_tmpl_cas(tally);
+    r26_wide_literals(tally);
+    r26_file_io(tally);
+    return tally.finish(8);
 }

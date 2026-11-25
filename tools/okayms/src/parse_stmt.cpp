@@ -621,15 +621,26 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             hidden.name = "__br" + std::to_string(rv_count++);
             hidden.type = cur_ret;
             place_local(locals, hidden);
-            if (obj_needs_ctor(cur_ret)) {
+            Type ret_list;
+            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(cur_ret.struct_id, &ret_list)) {
+                // return {a, b, c}; for a class with an initializer-list constructor (a vector): that constructor is
+                // preferred for a list that is not empty ([over.match.list]).
+                Node list;
+                if (!init_list_temp(ret_list, &list)) return false;
+                std::vector<Node> largs;
+                largs.push_back(std::move(list));
+                Node call;
+                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(largs), &call))
+                    return false;
+                stmt_pre.push_back(std::move(call));
+            } else if (obj_needs_ctor(cur_ret)) {
                 next();
                 std::vector<Node> cargs;
-                if (!is(TRBrace)) {
-                    do {
-                        Node a;
-                        if (!parse_expr(1, &a)) return false;
-                        cargs.push_back(std::move(a));
-                    } while (accept(TComma));
+                while (!is(TRBrace) && !is(TEnd)) {  // a trailing comma is allowed ([dcl.init] 1)
+                    Node a;
+                    if (!parse_expr(1, &a)) return false;
+                    cargs.push_back(std::move(a));
+                    if (!accept(TComma)) break;
                 }
                 if (!expect(TRBrace, "'}'")) return false;
                 Node call;
@@ -956,6 +967,22 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             return false;
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
         if (!fix_unsized(&decl.type, init)) return false;
+        if (init.kind == Node::StringLit && decl.type.is_array() && decl.type.more.empty() && decl.type.pointers == 0 &&
+            decl.type.base == 2) {
+            // char s[] = "text"; in a function ([dcl.init.string]): the characters and the zero are stored element by
+            // element (before, the literal's address was stored in the array's first bytes).
+            Node list;
+            list.kind = Node::Block;
+            list.text = "init";
+            for (size_t ci = 0; ci <= init.text.size() && static_cast<int>(ci) < decl.type.array_len; ++ci) {
+                Node ch;
+                ch.kind = Node::IntLit;
+                ch.type.base = 1;
+                ch.number = ci < init.text.size() ? static_cast<uint64_t>(static_cast<unsigned char>(init.text[ci])) : 0;
+                list.kids.push_back(std::move(ch));
+            }
+            init = std::move(list);
+        }
         local.type = decl.type;
         if (!is_static && wants_copy(decl.type, init)) {
             // C x = y; with y an object of the class: the copy constructor.
@@ -1378,6 +1405,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     // A class with begin() and end() that return pointers: the pointer runs from one to the other ([stmt.ranged]).
     bool class_range = false;
+    bool iter_class = false;  // begin() and end() return iterator objects (path::iterator), not pointers
     Type iter_type;
     Node begin_call, end_call;
     if (range_type.base == 3 && range_type.pointers == 0 && !range_type.is_array() && range_type.struct_id >= 0 &&
@@ -1385,11 +1413,16 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
          (range.kind == Node::Unary && range.op == TStar))) {
         const Method* mb = find_method(range_type.struct_id, "begin", 0);
         const Method* me = find_method(range_type.struct_id, "end", 0);
-        if (mb == nullptr || me == nullptr || mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers) {
-            error = "a range for over a class needs begin() and end() that return pointers";
+        const bool class_iters = mb != nullptr && me != nullptr && mb->ret.pointers == 0 && !mb->ret.is_ref &&
+                                 mb->ret.base == 3 && mb->ret.struct_id >= 0 && me->ret.pointers == 0 &&
+                                 me->ret.base == 3 && me->ret.struct_id == mb->ret.struct_id;
+        if (mb == nullptr || me == nullptr ||
+            (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers))) {
+            error = "a range for over a class needs begin() and end() that return pointers or iterator objects";
             return false;
         }
         class_range = true;
+        iter_class = class_iters;
         iter_type = mb->ret;
         for (int w = 0; w < 2; ++w) {
             const Method* m = w == 0 ? mb : me;
@@ -1407,7 +1440,52 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     const int count = class_range ? 0 : range_type.array_len;
     Type elem = class_range ? iter_type : peel_array(range_type);
-    if (class_range) elem.pointers -= 1;
+    if (class_range && !iter_class) elem.pointers -= 1;
+    // With iterator objects ([stmt.ranged] 1): the element is *__ri, the test __ri != __re and the step ++__ri, each by
+    // the iterator class's operators. The iterators are destroyed after the loop.
+    Node iter_deref;
+    Node iter_cond;
+    Node iter_step;
+    const std::string iter_name = "__ri" + std::to_string(range_count);
+    const std::string iter_end_name = "__re" + std::to_string(range_count + 1);
+    if (iter_class) {
+        range_count += 2;
+        for (const std::string& n : {iter_name, iter_end_name}) {
+            Local it;
+            it.name = n;
+            it.type = iter_type;
+            place_local(locals, it);
+        }
+        bool done = false;
+        iter_deref = node_name(iter_name);
+        if (!operator_unary(TStar, false, &iter_deref, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator*";
+            return false;
+        }
+        Node left = node_name(iter_name);
+        Node right = node_name(iter_end_name);
+        done = false;
+        if (!operator_binary(TNe, &left, &right, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator!=";
+            return false;
+        }
+        iter_cond = std::move(left);
+        iter_step = node_name(iter_name);
+        done = false;
+        if (!operator_unary(TPlusPlus, false, &iter_step, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator++";
+            return false;
+        }
+        if (!static_type(iter_deref, &elem)) {
+            error = "cannot work out the type of the range elements";
+            return false;
+        }
+        elem.is_ref = false;
+        elem.rref = false;
+    }
     elem.is_const = false;
     at = decl_start;
     bool is_const = false;
@@ -1426,18 +1504,25 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     push_scope();
     dscopes.emplace_back();
     Local index;
-    index.name = "__ri" + std::to_string(range_count++);
     index.type.base = 1;
     Local range_end;
-    range_end.name = "__re" + std::to_string(range_count++);
-    if (class_range) {
-        index.type = iter_type;
-        range_end.type = iter_type;
+    if (iter_class) {
+        index.name = iter_name;  // placed above, where its operators were looked up
+        range_end.name = iter_end_name;
+    } else {
+        index.name = "__ri" + std::to_string(range_count++);
+        range_end.name = "__re" + std::to_string(range_count++);
+        if (class_range) {
+            index.type = iter_type;
+            range_end.type = iter_type;
+        }
+        place_local(locals, index);
+        if (class_range) place_local(locals, range_end);
     }
-    place_local(locals, index);
-    if (class_range) place_local(locals, range_end);
     Node element;
-    if (class_range) {
+    if (iter_class) {
+        element = iter_deref;
+    } else if (class_range) {
         element.kind = Node::Unary;
         element.op = TStar;
         element.kids.push_back(node_name(index.name));
@@ -1480,10 +1565,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     Node cond;
     cond.kind = Node::Binary;
     cond.op = class_range ? TNe : TLt;
-    cond.kids.push_back(node_name(index.name));
-    if (class_range) {
+    if (iter_class) {
+        cond = std::move(iter_cond);
+    } else if (class_range) {
+        cond.kids.push_back(node_name(index.name));
         cond.kids.push_back(node_name(range_end.name));
     } else {
+        cond.kids.push_back(node_name(index.name));
         Node limit;
         limit.kind = Node::IntLit;
         limit.number = static_cast<uint64_t>(count);
@@ -1495,6 +1583,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     step.op = TPlusPlus;
     step.number = 0;
     step.kids.push_back(node_name(index.name));
+    if (iter_class) step = std::move(iter_step);
     Node iteration;
     iteration.kind = Node::Block;
     iteration.kids.push_back(std::move(decl_node));
@@ -1540,6 +1629,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         out->kids.push_back(std::move(stmt));
     }
     out->kids.push_back(std::move(loop));
+    if (iter_class && obj_needs_dtor(iter_type)) {
+        for (const std::string& n : {range_end.name, index.name}) {
+            Node call;
+            if (!special_call(iter_type.struct_id, "<dtor>", node_addr(node_name(n)), {}, &call)) return false;
+            out->kids.push_back(std::move(call));
+        }
+    }
     return true;
 }
 

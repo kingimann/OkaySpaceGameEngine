@@ -233,6 +233,48 @@ inline std::string ShortCount(long n) {
     return b;
 }
 
+// ---- The Community showcase (published games and levels, shown big) --------------------------------------------------------
+/// The feed of big cards and, at the wide sizes, a rail on the right (top creators, friends playing now). The rail shows only
+/// when the feed keeps at least `feedMinW` beside it (`railW` + `gap`); the feed is never wider than `maxFeedW` (it is
+/// centred when the page is wider). Cards: `FitGrid(feed.w, cardMinW, cardGap, 3)`.
+struct Showcase { bool railShown = false; Rect feed, rail; };
+inline Showcase LayoutShowcase(float availW, float cardMinW, float cardGap, float railW, float gap, float maxFeedW) {
+    Showcase s;
+    const float feedMinW = 2 * cardMinW + cardGap;   // two cards a row at least beside the rail
+    s.railShown = availW - railW - gap >= feedMinW;
+    const float fw = std::max(1.0f, std::min(maxFeedW, availW - (s.railShown ? railW + gap : 0.0f)));
+    s.feed = Rect{0, 0, fw, 0};
+    if (s.railShown) s.rail = Rect{fw + gap, 0, railW, 0};
+    return s;
+}
+
+/// The "Share your creation" box at the top of the showcase: the title and a line under it on the left, the library pick and
+/// Share on the right; when they do not fit beside the title (narrow page, big UI scale) the pick and Share go under the text.
+struct ShareBox { bool stacked = false; Rect title, sub, combo, share; float h = 0; };
+inline ShareBox LayoutShareBox(float w, float pad, float titleW, float titleH, float lineH, float comboMaxW, float shareW, float btnH, float gap) {
+    ShareBox b;
+    const float tx = pad + gap * 0.6f;   // (the accent bar on the left edge)
+    const float comboW = std::min(comboMaxW, std::max(0.0f, w * 0.35f));
+    const float rightW = comboW + gap + shareW;
+    b.stacked = tx + titleW + 2 * gap + rightW + pad > w;
+    b.title = Rect{tx, pad, std::min(titleW, std::max(0.0f, w - tx - pad)), titleH};
+    const float textR = b.stacked ? w - pad : w - pad - rightW - 2 * gap;
+    b.sub = Rect{tx, b.title.B() + gap * 0.4f, std::max(0.0f, textR - tx), lineH};
+    if (b.stacked) {
+        const float y = b.sub.B() + gap;
+        const float cw = std::max(0.0f, std::min(comboMaxW, w - tx - pad - gap - shareW));
+        b.combo = Rect{tx, y, cw, btnH};
+        b.share = Rect{b.combo.R() + gap, y, shareW, btnH};
+        b.h = y + btnH + pad;
+    } else {
+        b.h = std::max(b.sub.B(), btnH + pad) + pad;
+        const float y = (b.h - btnH) * 0.5f;
+        b.share = Rect{w - pad - shareW, y, shareW, btnH};
+        b.combo = Rect{b.share.x - gap - comboW, y, comboW, btnH};
+    }
+    return b;
+}
+
 /// The Notifications page's filter chips: 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System. `kind` is the
 /// notification's kind (0 system, 1 friend, 2 message, 3 update).
 inline bool NotifMatches(int filter, int kind, bool unread) {

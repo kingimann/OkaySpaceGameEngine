@@ -8761,6 +8761,7 @@ static bool g_wsReady = false;                       // (guarded)
 static std::vector<okay::WorkshopItem> g_wsList;     // (guarded)
 static std::map<long, std::pair<long,long>> g_wsRatings;  // (guarded)
 static bool g_wsFailed = false;                      // (guarded) the last fetch did not reach the server
+static bool g_wsEverDone = false;                    // (guarded) a fetch has finished (the Community showcase reads the list without taking g_wsReady)
 static int MarketListWorker(void*) {
     bool reached = false;
     try {
@@ -8770,11 +8771,11 @@ static int MarketListWorker(void*) {
         auto r = reached ? ws.Ratings() : std::map<long, std::pair<long, long>>{};
         if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
         if (reached) { g_wsList = std::move(l); g_wsRatings = std::move(r); }   // a failed fetch keeps what is shown
-        g_wsFailed = !reached; g_wsReady = true;
+        g_wsFailed = !reached; g_wsReady = true; g_wsEverDone = true;
         if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
     } catch (...) {
         if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
-        g_wsFailed = true; g_wsReady = true;
+        g_wsFailed = true; g_wsReady = true; g_wsEverDone = true;
         if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
     }
     g_wsFetching = false;
@@ -11166,6 +11167,304 @@ static void WhatsNewData(std::vector<DevBuildRow>& devRows, std::string& devNote
                        {std::string(OKAY_ENGINE_VERSION), "2026-11-23", "claude/work", "The build you are running"}};
             devNotes = "Launcher: Marketplace cards, loading and error states\nLauncher: Community toolbar and drop zone\nLauncher: notifications header wraps at big UI scale\n";
         }
+    }
+}
+
+// Sample listings for the dev screenshot hooks (OKAY_UI_DEMO_USER): the Marketplace and the Community showcase use the same ones.
+// `mode` "many" adds rows to scroll, "long" adds long titles. Never used outside the demo hooks.
+static void MarketDemoListings(const std::string& mode, std::vector<okay::WorkshopItem>& out, std::map<long, std::pair<long, long>>& ratings) {
+    const std::string& mktDemo = mode;
+    auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
+        okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
+        w.created = (long)std::time(nullptr) - id * 7200; w.featured = id == 1 || id == 7;
+        out.push_back(w); ratings[id] = {rs, rc}; };
+                    it(1, "Neon Drift", "kingimann", "game", "Synthwave arcade racer with drift combos.", 4210, 46, 10);
+                    it(2, "Low-poly Space Props", "maya", "model", "120 ships, crates and stations. CC0.", 980, 28, 6);
+                    it(3, "Sci-fi Panels PBR", "priya", "texture", "Tileable 2K metal + emissive panels.", 640, 18, 4);
+                    it(4, "Pixel Dungeon Tileset", "jonas", "sprite", "16x16 tiles, 4 biomes, animated torches.", 1530, 44, 9);
+                    it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
+                    it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
+                    it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
+                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 0, 0);
+                    if (mktDemo == "many")
+                        for (long i = 9; i <= 40; ++i) {
+                            static const char* kinds[] = {"game", "model", "texture", "sprite", "audio", "script", "template", "tool"};
+                            const std::string t = "Community pack " + std::to_string(i);
+                            it(i, t.c_str(), i % 3 ? "maya" : "jonas", kinds[i % 8], "A sample listing so the page scrolls.", i * 37, (i % 5) * 9, i % 5 ? 2 : 0);
+                        }
+                    if (mktDemo == "long") {
+                        it(41, "The Extraordinarily Long Title Of A Community Space Exploration And Trading Game", "averyveryverylongusername_2026", "game",
+                           "A description that runs on and on: procedural galaxies, trading, ship building, co-op missions, a full soundtrack, "
+                           "mod support and a level editor, all in one download that is far too long to fit on a card.", 123456, 400, 90);
+                        it(42, "Supercalifragilisticexpialidocious-Texture-Pack-With-No-Spaces", "x", "texture", "", 1, 5, 1);
+                    }
+    it(43, "Orbit Hopper", "maya", "game", "Hop between tiny planets, collect stardust and dodge comets. Made for Game Jam #12.", 3480, 45, 10);
+    it(44, "Crystal Caverns (level)", "jonas", "scene", "A cave level with glowing crystals and a hidden room.", 760, 17, 4);
+}
+
+// ---- The Community showcase (owner 2026-11-25: "its a place where users can showcase their games, levels") ----------------------
+// Published creations from the marketplace list (the same fetch, MarketListWorker), shown big: Featured, New, Popular, Following
+// (your friends' creations) and Your creations (your listings, then your library: the old Community page). A card opens the
+// creation's page, which is the Marketplace item page (one page for an item: big picture, description, Get, the creator,
+// reviews). Real numbers only: downloads and reviews; the server has no likes yet (no table for them), so there is no like count.
+// Where things go: launcher/PageLayout.hpp LayoutShowcase (tests/test_launcher_page_layout.cpp).
+long g_mktOpenItem = 0;   // a creation to open on the Marketplace item page (set by the Community showcase)
+static void DrawCommunityShowcase(okay::account::AccountService& account, int view, int& tab, const char* demoUser, const std::vector<fs::path>& scenes) {
+    namespace PL = okay::launcherlayout;
+    static Uint32 s_nextFetch = 0;
+    static std::vector<okay::WorkshopItem> items;
+    static std::map<long, std::pair<long, long>> ratings;
+    static bool loaded = false, failed = false;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
+    if (now >= s_nextFetch && !g_wsFetching) {   // the marketplace list, the same worker the Marketplace uses
+        g_wsFetching = true; s_nextFetch = now + 30000;
+        if (okay::thr::Thread* t = okay::thr::CreateThread(MarketListWorker, "okay-wslist", nullptr)) okay::thr::DetachThread(t);
+        else g_wsFetching = false;
+    }
+    okay::thr::LockMutex(g_wsMutex);
+    if (g_wsEverDone) { if (!g_wsFailed) { items = g_wsList; ratings = g_wsRatings; } failed = g_wsFailed; loaded = true; }
+    okay::thr::UnlockMutex(g_wsMutex);
+    static const char* kDemoState = std::getenv("OKAY_UI_DEMO_SHOWCASE");   // dev screenshot hook: loading | empty | offline
+    const std::string demo = kDemoState ? kDemoState : "";
+    if (demoUser && items.empty() && demo.empty()) { MarketDemoListings("", items, ratings); loaded = true; failed = false; }
+    if (demoUser && demo == "loading") loaded = false;
+    if (demoUser && demo == "empty") { loaded = true; failed = false; items.clear(); }
+    if (demoUser && demo == "offline") { loaded = true; failed = true; items.clear(); }
+    const std::string me = demoUser ? std::string(demoUser) : account.CurrentSession().username;
+    auto avgOf = [&](long id) { auto it = ratings.find(id); return it != ratings.end() && it->second.second > 0 ? (float)it->second.first / (float)it->second.second : 0.0f; };
+    auto countOf = [&](long id) { auto it = ratings.find(id); return it != ratings.end() ? it->second.second : 0L; };
+    // Friends (for Following and the "playing now" rail), from the Friends worker's list.
+    std::set<std::string> friendNames;
+    std::vector<std::pair<std::string, std::string>> playing;   // name, what
+    if (g_frMutex) {
+        okay::thr::LockMutex(g_frMutex);
+        for (const auto& f : g_frList) if (f.status == "accepted") {
+            friendNames.insert(f.username);
+            if (!f.playing.empty() && f.online) playing.push_back({f.display.empty() ? f.username : f.display, f.playing});
+        }
+        okay::thr::UnlockMutex(g_frMutex);
+    }
+    if (demoUser) { friendNames = {"maya", "jonas"}; playing = {{"maya", "Playing Orbit Hopper"}, {"jonas", "In the editor"}}; }
+
+    // The list for this view.
+    std::vector<const okay::WorkshopItem*> list;
+    for (const auto& w : items) {
+        if (view == 3 && !friendNames.count(w.author)) continue;
+        if (view == 4 && (me.empty() || w.author != me)) continue;
+        if (!w.status.empty() && w.status != "approved" && w.author != me) continue;
+        list.push_back(&w);
+    }
+    if (view == 0) {   // Featured: the ones staff featured, then the best rated
+        std::stable_sort(list.begin(), list.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) {
+            if (a->featured != b->featured) return a->featured;
+            return avgOf(a->id) > avgOf(b->id); });
+    } else if (view == 1) std::stable_sort(list.begin(), list.end(), [](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return a->created > b->created; });
+    else if (view == 2) std::stable_sort(list.begin(), list.end(), [](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return a->downloads > b->downloads; });
+
+    const float W = ImGui::GetContentRegionAvail().x, lh = ImGui::GetTextLineHeight();
+    const PL::Showcase sc = PL::LayoutShowcase(W, UiPx(300.0f), UiPx(20.0f), UiPx(280.0f), UiPx(28.0f), UiPx(1240.0f));
+    const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
+    ImGui::BeginChild("##showfeed", ImVec2(sc.feed.w, bodyH), false);
+    const float FW = ImGui::GetContentRegionAvail().x;
+    const PL::Grid grid = PL::FitGrid(FW, UiPx(300.0f), UiPx(20.0f), 3);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float pad = UiPx(16.0f);
+
+    // ---- Share your creation (top of the feed) ----
+    {
+        static int pick = 0;
+        std::vector<std::string> names;
+        for (const auto& sp : scenes) if (IsBuiltGame(sp) || sp.extension() == ".okayscene") names.push_back(sp.stem().string());
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const float shareW = FitButtonW("Share", UiPx(100.0f)), btnH = ImGui::GetFrameHeight() + UiPx(8.0f);
+        const char* kTitle = "Showcase your game or level";
+        const PL::ShareBox sb = PL::LayoutShareBox(FW, pad, ImGui::CalcTextSize(kTitle).x * 1.15f, lh * 1.15f, lh, UiPx(260.0f), shareW, btnH, UiPx(10.0f));
+        const float bh = sb.h;
+        CardBackground(dl, bp, ImVec2(bp.x + FW, bp.y + bh), false);
+        dl->AddRectFilled(bp, ImVec2(bp.x + UiPx(5.0f), bp.y + bh), ImGui::GetColorU32(kAccent), UiPx(3.0f));
+        ImGui::SetWindowFontScale(1.15f);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(bp.x + sb.title.x, bp.y + sb.title.y), cText, kTitle);
+        ImGui::SetWindowFontScale(1.0f);
+        dl->AddText(ImVec2(bp.x + sb.sub.x, bp.y + sb.sub.y), cDim, FitText("Pick something from your library and share it with everyone.", sb.sub.w).c_str());
+        const float cx = bp.x + sb.combo.x, cy = bp.y + sb.combo.y, comboW = sb.combo.w, bx = bp.x + sb.share.x;
+        if (!names.empty()) {
+            pick = std::clamp(pick, 0, (int)names.size() - 1);
+            ImGui::SetCursorScreenPos(ImVec2(cx, cy));
+            ImGui::SetNextItemWidth(comboW);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UiPx(12.0f), (btnH - lh) * 0.5f));
+            if (BeginSlateCombo("##sharepick", names[(std::size_t)pick].c_str())) {
+                for (int i = 0; i < (int)names.size(); ++i) if (ImGui::Selectable(names[(std::size_t)i].c_str(), i == pick)) pick = i;
+                ImGui::EndCombo();
+            }
+            ImGui::PopStyleVar();
+        } else {
+            dl->AddText(ImVec2(cx, cy + (btnH - lh) * 0.5f), cDim, FitText("Your library is empty", comboW).c_str());
+        }
+        ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + sb.share.y));
+        ImGui::BeginDisabled(names.empty());
+        if (PrimaryButton("Share", ImVec2(shareW, btnH))) { g_pendingPublishTitle = names[(std::size_t)pick]; tab = 7; }   // the publish form, prefilled
+        ImGui::EndDisabled();
+        if (names.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Build a game in the editor (File > Build Game) or drop one in Your creations first");
+        ImGui::SetCursorScreenPos(ImVec2(bp.x, bp.y + bh + UiPx(24.0f)));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    // ---- The cards ----
+    const float picH = std::floor(grid.cardW * 9.0f / 16.0f);
+    const float cardH = picH + pad + lh * 1.25f + UiPx(10.0f) + UiPx(28.0f) + UiPx(8.0f) + 2 * lh + pad + ImGui::GetFrameHeight() + UiPx(8.0f) + pad;
+    if (!loaded) {
+        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+        for (int i = 0; i < grid.cols * 2; ++i) {
+            const PL::Rect c = PL::GridCell(grid, i, cardH);
+            const ImVec2 a(g0.x + c.x, g0.y + c.y);
+            dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), UiPx(14.0f));
+            SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + picH), UiPx(14.0f));
+            SkeletonBlock(dl, ImVec2(a.x + pad, a.y + picH + pad), ImVec2(a.x + c.w * 0.6f, a.y + picH + pad + lh), 4.0f);
+            SkeletonBlock(dl, ImVec2(a.x + pad, a.y + picH + pad + lh * 2.2f), ImVec2(a.x + c.w * 0.4f, a.y + picH + pad + lh * 3.0f), 4.0f);
+        }
+        ImGui::Dummy(ImVec2(FW, PL::GridHeight(grid, grid.cols * 2, cardH)));
+    } else if (failed && items.empty()) {
+        EmptyState(kIcoAlert, "Can't reach the OkaySpace server", "The showcase loads from the server. Check your internet connection, then try again.", UiPx(30.0f));
+        const float bw = FitButtonW("Try again", UiPx(140.0f));
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (FW - bw) * 0.5f));
+        if (PrimaryButton("Try again", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) s_nextFetch = 0;
+    } else if (list.empty()) {
+        if (view == 3) EmptyState(6, "Nothing from your friends yet", "When a friend shares a game or a level, it shows here.", UiPx(30.0f));
+        else EmptyState(2, "Be the first to showcase a game", "Share a game or a level you made: it shows here for everyone.", UiPx(30.0f));
+    } else {
+        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            const okay::WorkshopItem& w = *list[i];
+            const PL::Rect c = PL::GridCell(grid, (int)i, cardH);
+            const ImVec2 a(g0.x + c.x, g0.y + c.y), b(a.x + c.w, a.y + c.h);
+            if (!ImGui::IsRectVisible(a, b)) continue;
+            ImGui::PushID((int)w.id);
+            ImGui::SetCursorScreenPos(a);
+            ImGui::SetNextItemAllowOverlap();
+            const bool click = ImGui::InvisibleButton("##sc", ImVec2(c.w, c.h));
+            const bool hov = ImGui::IsMouseHoveringRect(a, b) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+            CardBackground(dl, a, b, hov);
+            // The picture: the category colour, the initial, the type (listings carry no image yet).
+            const ImVec4 kc = kMktKinds[MktKindIndex(w.kind)].color;
+            const ImU32 top = ImGui::GetColorU32(ImVec4(kc.x * 0.6f + 0.08f, kc.y * 0.6f + 0.08f, kc.z * 0.6f + 0.1f, 1.0f));
+            const ImU32 bot = ImGui::GetColorU32(ImVec4(kc.x * 0.22f + 0.06f, kc.y * 0.22f + 0.07f, kc.z * 0.22f + 0.09f, 1.0f));
+            dl->PushClipRect(a, ImVec2(b.x, a.y + picH), true);
+            dl->AddRectFilled(a, ImVec2(b.x, a.y + picH + UiPx(14.0f)), bot, UiPx(14.0f));
+            dl->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + picH * 0.7f), top, top, bot, bot);
+            dl->PopClipRect();
+            {
+                const std::string ini(1, (char)std::toupper((unsigned char)(w.title.empty() ? '?' : w.title[0])));
+                ImGui::SetWindowFontScale(3.2f);
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2((a.x + b.x - is.x) * 0.5f, a.y + (picH - is.y) * 0.5f), IM_COL32(255, 255, 255, 215), ini.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            {   // the type chip on the picture
+                const char* kl = MktKindIndex(w.kind) == MktKindIndex("scene") ? "Level" : kMktKinds[MktKindIndex(w.kind)].label;
+                const ImVec2 ks = ImGui::CalcTextSize(kl);
+                const ImVec2 kp(a.x + UiPx(12.0f), a.y + UiPx(12.0f));
+                dl->AddRectFilled(kp, ImVec2(kp.x + ks.x + UiPx(16.0f), kp.y + ks.y + UiPx(6.0f)), IM_COL32(0, 0, 0, 130), (ks.y + UiPx(6.0f)) * 0.5f);
+                dl->AddText(ImVec2(kp.x + UiPx(8.0f), kp.y + UiPx(3.0f)), IM_COL32_WHITE, kl);
+                if (w.featured) {
+                    const char* fl = "Featured";
+                    const ImVec2 fs = ImGui::CalcTextSize(fl);
+                    const ImVec2 fp(b.x - UiPx(12.0f) - fs.x - UiPx(16.0f), kp.y);
+                    dl->AddRectFilled(fp, ImVec2(fp.x + fs.x + UiPx(16.0f), fp.y + fs.y + UiPx(6.0f)), IM_COL32(150, 110, 30, 230), (fs.y + UiPx(6.0f)) * 0.5f);
+                    dl->AddText(ImVec2(fp.x + UiPx(8.0f), fp.y + UiPx(3.0f)), IM_COL32_WHITE, fl);
+                }
+            }
+            float y = a.y + picH + pad;
+            const float tw = c.w - 2 * pad;
+            ImGui::SetWindowFontScale(1.25f);
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + pad, y), cText, FitText(w.title.empty() ? std::string("Untitled") : w.title, tw / 1.25f).c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            y += lh * 1.25f + UiPx(10.0f);
+            {   // the creator: avatar initial and name
+                const std::string by = w.author.empty() ? std::string("unknown") : w.author;
+                const float av = UiPx(28.0f);
+                dl->AddCircleFilled(ImVec2(a.x + pad + av * 0.5f, y + av * 0.5f), av * 0.5f, ImGui::GetColorU32(NameColor(by)), 24);
+                const std::string ini(1, (char)std::toupper((unsigned char)by[0]));
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                dl->AddText(ImVec2(a.x + pad + (av - is.x) * 0.5f, y + (av - is.y) * 0.5f), IM_COL32_WHITE, ini.c_str());
+                dl->AddText(ImVec2(a.x + pad + av + UiPx(10.0f), y + (av - lh) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text, 0.85f), FitText(by, tw - av - UiPx(10.0f)).c_str());
+            }
+            y += UiPx(28.0f) + UiPx(8.0f);
+            {   // a short description, two lines
+                std::string d1, d2;
+                WrapTwoLines(w.description.empty() ? std::string("No description yet.") : w.description, tw, d1, d2);
+                dl->AddText(ImVec2(a.x + pad, y), cDim, d1.c_str());
+                if (!d2.empty()) dl->AddText(ImVec2(a.x + pad, y + lh), cDim, d2.c_str());
+            }
+            y += 2 * lh + pad;
+            {   // Play (opens the creation's page) and the real numbers: downloads, reviews
+                const float pw = FitButtonW("Play", UiPx(96.0f)), ph = ImGui::GetFrameHeight() + UiPx(8.0f);
+                ImGui::SetCursorScreenPos(ImVec2(a.x + pad, y));
+                const bool play = PrimaryButton(MktKindIndex(w.kind) == MktKindIndex("game") || MktKindIndex(w.kind) == MktKindIndex("scene") ? "Play" : "Get", ImVec2(pw, ph));
+                char st[64];
+                const long rc = countOf(w.id);
+                if (rc > 0) std::snprintf(st, sizeof(st), "%s downloads  \xC2\xB7  %.1f stars (%ld)", PL::ShortCount(w.downloads).c_str(), avgOf(w.id), rc);
+                else std::snprintf(st, sizeof(st), "%s downloads", PL::ShortCount(w.downloads).c_str());
+                dl->AddText(ImVec2(a.x + pad + pw + UiPx(12.0f), y + (ph - lh) * 0.5f), cDim, FitText(st, tw - pw - UiPx(12.0f)).c_str());
+                if (play) { g_mktOpenItem = w.id; tab = 7; }
+            }
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (click) { g_mktOpenItem = w.id; tab = 7; }   // the creation's page
+            ImGui::PopID();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, (int)list.size(), cardH)));
+        ImGui::Dummy(ImVec2(FW, UiPx(20.0f)));
+    }
+    ImGui::EndChild();
+
+    // ---- The right rail at the wide sizes: top creators, friends playing now ----
+    if (sc.railShown) {
+        ImGui::SameLine(0, sc.rail.x - sc.feed.R());
+        ImGui::BeginChild("##showrail", ImVec2(sc.rail.w, bodyH), false);
+        auto railCard = [&](const char* id, const char* title, auto&& body) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(14.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
+            ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+            SectionLabel(title, -1);
+            ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+            body();
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, UiPx(16.0f)));
+        };
+        railCard("##topcreators", "TOP CREATORS", [&]() {
+            std::map<std::string, std::pair<long, int>> by;   // downloads, creations
+            for (const auto& w : items) if (!w.author.empty()) { by[w.author].first += w.downloads; by[w.author].second += 1; }
+            std::vector<std::pair<std::string, std::pair<long, int>>> v(by.begin(), by.end());
+            std::sort(v.begin(), v.end(), [](const auto& x, const auto& y) { return x.second.first > y.second.first; });
+            if (v.empty()) ImGui::TextDisabled("No creators yet.");
+            for (std::size_t i = 0; i < v.size() && i < 5; ++i) {
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float av = UiPx(32.0f);
+                ImDrawList* rd = ImGui::GetWindowDrawList();
+                rd->AddCircleFilled(ImVec2(p.x + av * 0.5f, p.y + av * 0.5f), av * 0.5f, ImGui::GetColorU32(NameColor(v[i].first)), 24);
+                const std::string ini(1, (char)std::toupper((unsigned char)v[i].first[0]));
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                rd->AddText(ImVec2(p.x + (av - is.x) * 0.5f, p.y + (av - is.y) * 0.5f), IM_COL32_WHITE, ini.c_str());
+                rd->AddText(ImVec2(p.x + av + UiPx(10.0f), p.y - UiPx(1.0f)), cText, v[i].first.c_str());
+                char t[64]; std::snprintf(t, sizeof(t), "%d creation%s  \xC2\xB7  %s downloads", v[i].second.second, v[i].second.second == 1 ? "" : "s", PL::ShortCount(v[i].second.first).c_str());
+                rd->AddText(ImVec2(p.x + av + UiPx(10.0f), p.y + lh), cDim, t);
+                ImGui::Dummy(ImVec2(0, av + UiPx(10.0f)));
+            }
+        });
+        railCard("##playingnow", "FRIENDS PLAYING NOW", [&]() {
+            if (playing.empty()) ImGui::TextDisabled("None of your friends are playing right now.");
+            for (const auto& p : playing) {
+                ImGui::TextUnformatted(p.first.c_str());
+                ImGui::TextDisabled("%s", p.second.c_str());
+                ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+            }
+        });
+        ImGui::EndChild();
     }
 }
 
@@ -14888,7 +15187,18 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 2) {                            // ---- Community ----
             namespace PL = okay::launcherlayout;
-            sectionHeader("Community", "Games, levels, scripts and models made by other OkaySpace creators. What you add here also shows in Play.");
+            sectionHeader("Community", "Games and levels the OkaySpace community made. Play them, and share your own.");
+            static int cmTab = 0;   // 0 Featured, 1 New, 2 Popular, 3 Following, 4 Your creations
+            {
+                std::vector<Chip> tabs(5);
+                tabs[0].label = "Featured"; tabs[1].label = "New"; tabs[2].label = "Popular"; tabs[3].label = "Following"; tabs[4].label = "Your creations";
+                const int hit = ChipRow("##cmtabs", tabs, cmTab, ImGui::GetContentRegionAvail().x);
+                if (hit >= 0) cmTab = hit;
+                ImGui::Dummy(ImVec2(0, UiPx(14.0f)));
+            }
+            if (cmTab != 4) {
+                DrawCommunityShowcase(account, cmTab, tab, kUiDemoUser, scenes);
+            } else {   // ---- Your creations: your library (what you made or added) and the drop zone ----
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
@@ -15235,6 +15545,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndPopup();
             }
+            }   // (Your creations)
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
@@ -17885,29 +18196,7 @@ int main(int argc, char** argv) {
                 okay::thr::LockMutex(g_wsMutex);
                 if (g_wsReady) { if (!g_wsFailed) { wCache = g_wsList; wRatings = g_wsRatings; } wFailed = g_wsFailed; wLoaded = true; g_wsReady = false; }
                 if (kUiDemoUser && wCache.empty() && mktDemo != "loading" && mktDemo != "error" && mktDemo != "empty") {   // dev screenshot hook: sample listings of every type
-                    auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
-                        okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
-                        wCache.push_back(w); wRatings[id] = {rs, rc}; };
-                    it(1, "Neon Drift", "kingimann", "game", "Synthwave arcade racer with drift combos.", 4210, 46, 10);
-                    it(2, "Low-poly Space Props", "maya", "model", "120 ships, crates and stations. CC0.", 980, 28, 6);
-                    it(3, "Sci-fi Panels PBR", "priya", "texture", "Tileable 2K metal + emissive panels.", 640, 18, 4);
-                    it(4, "Pixel Dungeon Tileset", "jonas", "sprite", "16x16 tiles, 4 biomes, animated torches.", 1530, 44, 9);
-                    it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
-                    it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
-                    it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
-                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 0, 0);
-                    if (mktDemo == "many")
-                        for (long i = 9; i <= 40; ++i) {
-                            static const char* kinds[] = {"game", "model", "texture", "sprite", "audio", "script", "template", "tool"};
-                            const std::string t = "Community pack " + std::to_string(i);
-                            it(i, t.c_str(), i % 3 ? "maya" : "jonas", kinds[i % 8], "A sample listing so the page scrolls.", i * 37, (i % 5) * 9, i % 5 ? 2 : 0);
-                        }
-                    if (mktDemo == "long") {
-                        it(41, "The Extraordinarily Long Title Of A Community Space Exploration And Trading Game", "averyveryverylongusername_2026", "game",
-                           "A description that runs on and on: procedural galaxies, trading, ship building, co-op missions, a full soundtrack, "
-                           "mod support and a level editor, all in one download that is far too long to fit on a card.", 123456, 400, 90);
-                        it(42, "Supercalifragilisticexpialidocious-Texture-Pack-With-No-Spaces", "x", "texture", "", 1, 5, 1);
-                    }
+                    MarketDemoListings(mktDemo, wCache, wRatings);
                     wLoaded = true;
                 }
                 if (kUiDemoUser && mktDemo == "error") { wLoaded = true; wFailed = true; }
@@ -17922,6 +18211,8 @@ int main(int argc, char** argv) {
             // LayoutMarketTile, LayoutMarketDetail; tests/test_launcher_page_layout.cpp). Browsing needs no account; Get and Sell do.
             namespace PL = okay::launcherlayout;
             static PL::MarketQuery mq;
+            static bool mqFromShowcase = false;   // the item page was opened from the Community showcase: Back goes back there
+            if (g_mktOpenItem) { mq.Open(g_mktOpenItem); g_mktOpenItem = 0; mqFromShowcase = true; }
             char* const wSearch = marketFilter;   // the main loop's buffer: a profile's "see their listings" and Esc reach it
             static int  wSort = 0;         // 0 Newest, 1 Popular (downloads), 2 Top rated
             static bool wFiltersOpen = false;
@@ -18242,7 +18533,10 @@ int main(int argc, char** argv) {
                 if (detailItem) {   // ---- The item page ----
                     const okay::WorkshopItem& w = *detailItem;
                     if (dvReviewsFor != w.id) { dvReviewsFor = w.id; dvReviews = ws.Reviews(w.id); }
-                    if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) mq.Back();
+                    if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        mq.Back();
+                        if (mqFromShowcase) { mqFromShowcase = false; tab = 2; }
+                    }
                     ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
                     const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f), UiPx(200.0f));
                     const ImVec2 o = ImGui::GetCursorScreenPos();

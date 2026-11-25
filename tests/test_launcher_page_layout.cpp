@@ -255,6 +255,36 @@ void CheckMarketShop(float winW) {
     CHECK(d.info.R() <= W + 0.5f && d.picture.R() <= W + 0.5f);
 }
 
+// The Community showcase: the feed of big cards and the rail (top creators, friends playing) only at the wide sizes; the rail
+// never covers the feed, the feed keeps two cards a row beside it, and the tabs and the "Share your creation" box fit.
+void CheckShowcase(float winW) {
+    const float W = PageW(winW);
+    const L::Showcase sc = L::LayoutShowcase(W, Px(300.0f), Px(20.0f), Px(280.0f), Px(28.0f), Px(1240.0f));
+    CHECK(sc.feed.R() <= W + 0.5f);
+    if (sc.railShown) {
+        CHECK(!L::Overlaps(L::Rect{0, 0, sc.feed.w, 100}, L::Rect{sc.rail.x, 0, sc.rail.w, 100}));
+        CHECK(sc.rail.R() <= W + 0.5f);
+        CHECK(L::FitGrid(sc.feed.w, Px(300.0f), Px(20.0f), 3).cols >= 2);
+    }
+    if (winW >= 1920 && g_scale == 1.0f) CHECK(sc.railShown);   // the rail at the wide size
+    if (winW <= 960) CHECK(!sc.railShown);                       // never at the small one
+    const L::Grid g = L::FitGrid(sc.feed.w, Px(300.0f), Px(20.0f), 3);
+    CHECK(g.cols >= 1 && g.cols <= 3);
+    CHECK(g.cardW >= Px(300.0f) - 0.5f || g.cols == 1);
+    if (winW >= 1280 && g_scale == 1.0f) CHECK(g.cols >= 2);
+    for (int i = 0; i + 1 < 6; ++i) CHECK(!L::Overlaps(L::GridCell(g, i, Px(360.0f)), L::GridCell(g, i + 1, Px(360.0f))));
+    CheckChips(sc.feed.w, {"Featured", "New", "Popular", "Following", "Your creations"});
+    // The share box: the text on the left, the library pick and Share on the right (or under the text when narrow).
+    const float shareW = L::ButtonW(TextW("Share"), Px(14.0f), Px(100.0f)), btnH = LineH() + Px(14.0f);
+    const L::ShareBox b = L::LayoutShareBox(sc.feed.w, Px(16.0f), TextW("Showcase your game or level") * 1.15f, LineH() * 1.15f, LineH(),
+                                            Px(260.0f), shareW, btnH, Px(10.0f));
+    const L::Rect box{0, 0, sc.feed.w, b.h};
+    CHECK(NoOverlaps({b.title, b.sub, b.combo, b.share}));
+    for (const auto& r : {b.title, b.sub, b.combo, b.share}) CHECK(L::Inside(r, box));
+    CHECK(b.combo.w >= Px(120.0f));
+    if (winW >= 1280 && g_scale == 1.0f) CHECK(!b.stacked);
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -272,6 +302,7 @@ void RunAll() {
         CheckTestBuilds(s[0]);
         CheckAchievementsHeader(s[0]);
         CheckMarketShop(s[0]);
+        CheckShowcase(s[0]);
     }
 }
 

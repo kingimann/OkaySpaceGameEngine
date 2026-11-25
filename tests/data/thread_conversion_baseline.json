@@ -21,17 +21,17 @@
  "launcher/main.cpp": {
   "okay::thr::AtomicAdd": 6,
   "okay::thr::AtomicCAS": 2,
-  "okay::thr::AtomicGet": 18,
+  "okay::thr::AtomicGet": 17,
   "okay::thr::AtomicInt": 16,
   "okay::thr::AtomicSet": 28,
-  "okay::thr::CreateMutex": 58,
-  "okay::thr::CreateThread": 65,
+  "okay::thr::CreateMutex": 60,
+  "okay::thr::CreateThread": 67,
   "okay::thr::DestroyMutex": 5,
-  "okay::thr::DetachThread": 56,
-  "okay::thr::LockMutex": 169,
+  "okay::thr::DetachThread": 59,
+  "okay::thr::LockMutex": 177,
   "okay::thr::Mutex": 45,
-  "okay::thr::Thread": 67,
-  "okay::thr::UnlockMutex": 175,
-  "okay::thr::WaitThread": 12
+  "okay::thr::Thread": 69,
+  "okay::thr::UnlockMutex": 183,
+  "okay::thr::WaitThread": 11
  }
 }

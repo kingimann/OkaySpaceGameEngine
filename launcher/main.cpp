@@ -11405,7 +11405,7 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
                 const bool play = PrimaryButton(MktKindIndex(w.kind) == MktKindIndex("game") || MktKindIndex(w.kind) == MktKindIndex("scene") ? "Play" : "Get", ImVec2(pw, ph));
                 char st[64];
                 const long rc = countOf(w.id);
-                if (rc > 0) std::snprintf(st, sizeof(st), "%s downloads  \xC2\xB7  %.1f stars (%ld)", PL::ShortCount(w.downloads).c_str(), avgOf(w.id), rc);
+                if (rc > 0) std::snprintf(st, sizeof(st), "%s downloads  \xC2\xB7  %.1f/5", PL::ShortCount(w.downloads).c_str(), avgOf(w.id));
                 else std::snprintf(st, sizeof(st), "%s downloads", PL::ShortCount(w.downloads).c_str());
                 dl->AddText(ImVec2(a.x + pad + pw + UiPx(12.0f), y + (ph - lh) * 0.5f), cDim, FitText(st, tw - pw - UiPx(12.0f)).c_str());
                 if (play) { g_mktOpenItem = w.id; tab = 7; }
@@ -11756,7 +11756,7 @@ static void StartSessionCheck(okay::account::AccountService& acct) {
 // theme-allow-begin: the welcome screen artwork, the same in every theme
 static void DrawWelcomeArt(ImDrawList* dl, ImVec2 a, ImVec2 b) {
     const ImU32 top = ImGui::GetColorU32(ImVec4(kAccent.x * 0.35f + 0.05f, kAccent.y * 0.35f + 0.06f, kAccent.z * 0.35f + 0.10f, 1.0f));
-    const ImU32 bot = ImGui::GetColorU32(okaytheme::kDeep);
+    const ImU32 bot = IM_COL32(10, 12, 20, 255);   // the art is a night sky in every theme (its text is light)
     dl->AddRectFilledMultiColor(a, b, top, top, bot, bot);
     const float w = b.x - a.x, h = b.y - a.y;
     okay::Random stars(1234567u);   // the same sky every frame
@@ -13158,7 +13158,8 @@ int main(int argc, char** argv) {
                     ImVec2 ts = ImGui::CalcTextSize(nb);
                     float bw = std::max(20.0f, ts.x + 12.0f), bx = mx.x - bw - 8.0f;
                     dl->AddRectFilled(ImVec2(bx, cy - 9.0f), ImVec2(bx + bw, cy + 9.0f), badgeCol, 9.0f);
-                    dl->AddText(ImVec2(bx + (bw - ts.x) * 0.5f, cy - ts.y * 0.5f), IM_COL32_WHITE, nb);
+                    const bool soft = ((badgeCol >> IM_COL32_A_SHIFT) & 0xFF) < 200;   // a see-through badge: page text; a filled one: white
+                    dl->AddText(ImVec2(bx + (bw - ts.x) * 0.5f, cy - ts.y * 0.5f), soft ? okaytheme::TextU32() : IM_COL32_WHITE, nb);
                 }
             }
             if (hov) {
@@ -20323,7 +20324,7 @@ int main(int argc, char** argv) {
                 float fs = ImGui::GetFontSize() * 0.82f;
                 ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, cat.c_str());
                 dl->AddRectFilled(at, ImVec2(at.x + ts.x + 14, at.y + ts.y + 6), ImGui::GetColorU32(ImVec4(nc.x, nc.y, nc.z, 0.22f)), (ts.y + 6) * 0.5f);
-                dl->AddText(ImGui::GetFont(), fs, ImVec2(at.x + 7, at.y + 3), ImGui::GetColorU32(ImVec4(nc.x * 0.4f + 0.6f, nc.y * 0.4f + 0.6f, nc.z * 0.4f + 0.6f, 1)), cat.c_str());
+                dl->AddText(ImGui::GetFont(), fs, ImVec2(at.x + 7, at.y + 3), ImGui::GetColorU32(okaytheme::ReadableOn(nc)), cat.c_str());
                 return ts.x + 14;
             };
             // Small comment-bubble glyph.
@@ -20350,7 +20351,7 @@ int main(int argc, char** argv) {
                 const ImVec2 ts = ImGui::CalcTextSize(lbl.c_str());
                 const ImVec4 c = sectionColor(x);
                 d->AddRectFilled(at, ImVec2(at.x + ts.x + 14, at.y + ts.y + 4), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.22f)), 9.0f);
-                d->AddText(ImVec2(at.x + 7, at.y + 2), ImGui::GetColorU32(ImVec4(c.x * 0.5f + 0.5f, c.y * 0.5f + 0.5f, c.z * 0.5f + 0.5f, 1.0f)), lbl.c_str());
+                d->AddText(ImVec2(at.x + 7, at.y + 2), ImGui::GetColorU32(okaytheme::ReadableOn(c)), lbl.c_str());
                 return ts.x + 14;
             };
             auto drawPinIcon = [](ImDrawList* d, ImVec2 c, ImU32 col) {

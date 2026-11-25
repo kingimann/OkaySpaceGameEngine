@@ -478,6 +478,7 @@ void DrawGroupConversation(
         ImGui::BeginChild("##gbub", ImVec2(useW, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ChatBubbleTextPush(m.mine && !bare);   // my bubble is a filled colour: its text is white in every theme
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
         ImDrawList* bdl = ImGui::GetWindowDrawList();
         if (rep) {   // quoted message (click to jump)
@@ -564,6 +565,7 @@ void DrawGroupConversation(
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenEditHistory(dm, true, m.id, m.body);
         }
         ImGui::PopStyleVar();
+        ChatBubbleTextPop(m.mine && !bare);
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();

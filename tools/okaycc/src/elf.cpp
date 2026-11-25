@@ -925,8 +925,14 @@ void emitFunction(Image& im, const Function& f) {
 }
 
 void emitData(Image& im, const Module& m) {
+    // Read-only items first, then the writable ones: each section is one run of bytes
+    // [roStart, roEnd) and [dataStart, dataEnd). Interleaved, a vtable in .rodata between two .data
+    // items fell inside the .data run and its relocations were written for the wrong section (its
+    // slots were null at run time).
+    for (int pass = 0; pass < 2; ++pass)
     for (const Global& g : m.globals) {
         bool ro = g.rodata;
+        if (ro != (pass == 0)) continue;
         if (ro) {
             if (im.roStart == im.roEnd) im.roStart = im.bytes.size();
             else

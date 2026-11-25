@@ -2077,11 +2077,278 @@ endif()
     write("bad.okay", "folder {bin}/../x\ntarget t exe\n  sources = main.cpp\nend\n");
     o = sh("-f bad.okay targets", &rc); check(rc == 2 && o.find("folder") != string::npos, "folder above {bin} is refused", o);
 }
+// Round 14: okayscript/CMakeLists.txt walks a link closure with continue(), list(POP_FRONT) and get_target_property(LINK_LIBRARIES,
+// INTERFACE_LINK_LIBRARIES, ALIASED_TARGET). Without them the reader looped until while() gave up, so `okay-build cmake .` failed on main.
+static void testLoopControlAndLinkProperties() {
+    printf("test: okay-build cmake: continue(), list(POP_FRONT/POP_BACK), link properties of targets\n");
+    fresh("linkprops");
+    write("a.cpp", "int a(){return 1;}\n"); write("main.cpp", "int main(){return 0;}\n");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(lk CXX)
+function(expect name want)
+    if(NOT "${${name}}" STREQUAL "${want}")
+        message(FATAL_ERROR "${name} is '${${name}}', want '${want}'")
+    endif()
+endfunction()
+set(out "")
+foreach(x 1 2 3 4)
+    if(x EQUAL 2)
+        continue()
+    endif()
+    list(APPEND out ${x})
+endforeach()
+expect(out "1;3;4")
+set(i 0)
+set(out "")
+while(i LESS 5)
+    math(EXPR i "${i} + 1")
+    if(i EQUAL 3)
+        continue()
+    endif()
+    list(APPEND out ${i})
+endwhile()
+expect(out "1;2;4;5")
+set(q a b c d)
+list(POP_FRONT q first)
+expect(first a)
+expect(q "b;c;d")
+list(POP_BACK q last)
+expect(last d)
+list(POP_FRONT q one two)
+expect(one b)
+expect(two c)
+expect(q "")
+list(POP_FRONT q nothing)
+if(DEFINED nothing)
+    message(FATAL_ERROR "POP_FRONT of an empty list must leave the variable unset")
+endif()
+add_library(base STATIC a.cpp)
+add_library(iface INTERFACE)
+target_link_libraries(iface INTERFACE base)
+add_library(mid STATIC a.cpp)
+target_link_libraries(mid PUBLIC iface PRIVATE m)
+add_library(okay::mid ALIAS mid)
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE okay::mid)
+get_target_property(l app LINK_LIBRARIES)
+expect(l "okay::mid")
+get_target_property(l mid LINK_LIBRARIES)
+expect(l "iface;m")
+get_target_property(l mid INTERFACE_LINK_LIBRARIES)
+expect(l "iface;$<LINK_ONLY:m>")
+get_target_property(l iface INTERFACE_LINK_LIBRARIES)
+expect(l "base")
+get_target_property(l iface LINK_LIBRARIES)
+expect(l "l-NOTFOUND")
+get_target_property(al okay::mid ALIASED_TARGET)
+expect(al mid)
+get_target_property(al mid ALIASED_TARGET)
+expect(al "al-NOTFOUND")
+set(seen "") # dup-allow: this test repeats the link-closure walk of okayscript/CMakeLists.txt on purpose, to check the reader runs it like CMake
+set(todo app)
+while(todo)
+    list(POP_FRONT todo t)
+    if(t IN_LIST seen OR NOT TARGET ${t})
+        if(NOT t IN_LIST seen)
+            list(APPEND seen ${t})
+        endif()
+        continue()
+    endif()
+    list(APPEND seen ${t})
+    get_target_property(al ${t} ALIASED_TARGET)
+    get_target_property(own ${t} LINK_LIBRARIES)
+    get_target_property(users ${t} INTERFACE_LINK_LIBRARIES)
+    foreach(x IN LISTS al own users)
+        if(x AND NOT x MATCHES "NOTFOUND$")
+            string(REGEX REPLACE "^\\$<LINK_ONLY:(.*)>$" "\\1" x "${x}")
+            list(APPEND todo ${x})
+        endif()
+    endforeach()
+endwhile()
+set(c "${seen}")
+expect(c "app;okay::mid;mid;iface;m;base")
+)CM");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc);
+    check(rc == 0, "continue(), POP_FRONT/POP_BACK and the link properties give CMake's values", o);
+    check(o.find("not understood    0") != string::npos, "nothing in the file is left not understood", o);
+}
+// Round 14: the configuration's flags. CMake puts CMAKE_<LANG>_FLAGS and CMAKE_<LANG>_FLAGS_<CONFIG> first on every compile of that
+// language and also on the link line (before the objects), with CMAKE_EXE_LINKER_FLAGS[_<CONFIG>] for programs. The CI's ASan job
+// sets CMAKE_CXX_FLAGS_DEBUG and CMAKE_EXE_LINKER_FLAGS on the command line. Expected lines were taken from `ninja -t commands`
+// of a real CMake configure of the same project.
+static string lineWith(const string& text, const string& word) { size_t at = text.find(word); if (at == string::npos) return ""; size_t b = text.rfind('\n', at); size_t e = text.find('\n', at); return text.substr(b == string::npos ? 0 : b + 1, e == string::npos ? string::npos : e - (b == string::npos ? 0 : b + 1)); }
+static void testConfigurationFlags() {
+    printf("test: okay-build cmake: CMAKE_<LANG>_FLAGS[_<CONFIG>] and CMAKE_EXE_LINKER_FLAGS on compiles and links\n");
+    fresh("cfgflags");
+    write("main.cpp", "extern \"C\" int c_part();\nint main(){ return c_part(); }\n");
+    write("part.c", "int c_part(void){ return 0; }\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(cf C CXX)\nset(CMAKE_CXX_STANDARD 17)\nadd_executable(app main.cpp part.c)\n");
+    int rc; string o = sh("cmake . -o rel.okay --build-type Release", &rc);
+    o = sh("-f rel.okay --dry-run -v app", &rc);
+    string link = lineWith(o, " -o build/app");
+    check(rc == 0 && link.find("-O3 -DNDEBUG") != string::npos && link.find("-O3") < link.find("app/main.cpp.o"), "Release: the link line starts with -O3 -DNDEBUG, before the objects", o);
+    string cc = lineWith(o, "-c " + (gRoot / "main.cpp").string());
+    check(cc.find("-O3 -DNDEBUG -std=gnu++17") != string::npos, "Release: a C++ compile has -O3 -DNDEBUG before the standard (CMake's order)", cc);
+    o = sh("cmake . -o dbg.okay --build-type Debug --opt \"CMAKE_CXX_FLAGS_DEBUG=-g1 -gz\" --opt CMAKE_CXX_FLAGS=-fno-omit-frame-pointer --opt CMAKE_C_FLAGS=-DONLY_C --opt CMAKE_EXE_LINKER_FLAGS=-Wl,--compress-debug-sections=zlib", &rc);
+    o = sh("-f dbg.okay --dry-run -v app", &rc);
+    cc = lineWith(o, "-c " + (gRoot / "main.cpp").string()); string c = lineWith(o, "-c " + (gRoot / "part.c").string());
+    link = lineWith(o, " -o build/app");
+    check(cc.find("-fno-omit-frame-pointer -g1 -gz") != string::npos && cc.find(" -g ") == string::npos && cc.find("ONLY_C") == string::npos, "Debug with CMAKE_CXX_FLAGS and CMAKE_CXX_FLAGS_DEBUG given: the C++ compile has them instead of -g", cc);
+    check(c.find("-DONLY_C -g") != string::npos && c.find("-fno-omit-frame-pointer") == string::npos && c.find("-g1") == string::npos, "a C file gets CMAKE_C_FLAGS and CMAKE_C_FLAGS_DEBUG, not the C++ ones", c);
+    check(link.find("-fno-omit-frame-pointer -g1 -gz -Wl,--compress-debug-sections=zlib") != string::npos && link.find("-gz") < link.find("app/main.cpp.o"), "Debug link: C++ flags, then CMAKE_EXE_LINKER_FLAGS, before the objects", link);
+    o = sh("cmake . -o none.okay --build-type None", &rc); o = sh("-f none.okay --dry-run -v app", &rc);
+    cc = lineWith(o, "-c " + (gRoot / "main.cpp").string());
+    check(cc.find("-O") == string::npos && cc.find(" -g") == string::npos && cc.find("NDEBUG") == string::npos, "build type None adds no flags", cc);
+    o = sh("-f rel.okay app", &rc);
+    check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the Release program builds and runs", o);
+}
+// Round 14: a source file property belongs to the folder whose CMakeLists.txt set it, and only targets made in that folder see it.
+// Found with the ASan CI configuration (OKAY_BUILD_XBOX_UWP=ON): platform/xbox_uwp gives ModelImport.cpp extra definitions for its
+// test only, and engine/ gives Image.cpp -w for the engine only; okay-build had applied both everywhere. Checked against real CMake.
+static void testSourcePropertiesPerFolder() {
+    printf("test: okay-build cmake: source properties are per folder; set_source_files_properties replaces a value\n");
+    fresh("srcpropdir");
+    write("shared.cpp", "int shared(){return 0;}\n"); write("main.cpp", "int main(){return 0;}\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(sp CXX)\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_OPTIONS \"-w\")\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_DEFINITIONS ROOT_ONLY=1)\n"
+        "set_source_files_properties(shared.cpp PROPERTIES COMPILE_DEFINITIONS ROOT_ONLY=2)\n"
+        "add_executable(root_app main.cpp shared.cpp)\nadd_subdirectory(sub)\n");
+    write("sub/CMakeLists.txt", "set_source_files_properties(${CMAKE_SOURCE_DIR}/shared.cpp PROPERTIES COMPILE_DEFINITIONS SUB_ONLY)\n"
+        "add_executable(sub_app ${CMAKE_SOURCE_DIR}/main.cpp ${CMAKE_SOURCE_DIR}/shared.cpp)\n"
+        "get_source_file_property(v ${CMAKE_SOURCE_DIR}/shared.cpp COMPILE_DEFINITIONS)\n"
+        "if(NOT v STREQUAL \"SUB_ONLY\")\n  message(FATAL_ERROR \"sub sees ${v}\")\nendif()\n");
+    int rc; string o = sh("cmake . -o build.okay", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0, "the folder reads its own value of the property", o);
+    size_t r = man.find("target root_app"), s = man.find("target sub_app");
+    string root = r == string::npos ? "" : man.substr(r, man.find("\nend\n", r) - r), sub = s == string::npos ? "" : man.substr(s, man.find("\nend\n", s) - s);
+    check(root.find("file_define = shared.cpp ROOT_ONLY=2") != string::npos && root.find("ROOT_ONLY=1") == string::npos && root.find("SUB_ONLY") == string::npos && root.find("file_flag = shared.cpp -w") != string::npos,
+          "the root target has the root folder's settings, the last value set", root);
+    check(sub.find("file_define = shared.cpp SUB_ONLY") != string::npos && sub.find("ROOT_ONLY") == string::npos && sub.find("-w") == string::npos, "the sub folder's target has only the sub folder's setting", sub);
+}
+// Round 14: the MinGW cross build the release uses (cmake/mingw-w64-x86_64.toolchain.cmake). okay-build cmake reads the toolchain
+// file (--opt CMAKE_TOOLCHAIN_FILE=...), sets the Windows platform variables, writes the compilers into the manifest, runs
+// configure_file, compiles .rc files with windres and links the way CMake's MinGW configure does. Every expected line below was
+// taken from `ninja -t commands` of real CMake on the same project and toolchain file.
+static void testMingwToolchainFile() {
+    printf("test: okay-build cmake: a MinGW toolchain file, configure_file, .rc resources, Windows link lines\n");
+    fresh("mingwtc");
+    write("tc.cmake", "set(CMAKE_SYSTEM_NAME Windows)\nset(CMAKE_SYSTEM_PROCESSOR x86_64)\nset(PFX x86_64-w64-mingw32)\n"
+        "set(CMAKE_C_COMPILER ${PFX}-gcc)\nset(CMAKE_CXX_COMPILER ${PFX}-g++)\nset(CMAKE_RC_COMPILER ${PFX}-windres)\n"
+        "set(CMAKE_EXE_LINKER_FLAGS_INIT \"-static-libgcc -static-libstdc++\")\n");
+    // the second toolchain file does what cmake/mingw-w64-x86_64.toolchain.cmake does with libwinpthread.a: copy it into the build
+    // folder at configure time, take one member out with ar and link the copy whole
+    write("tc2.cmake", R"CM(set(CMAKE_SYSTEM_NAME Windows)
+set(PFX x86_64-w64-mingw32)
+set(CMAKE_C_COMPILER ${PFX}-gcc)
+set(CMAKE_CXX_COMPILER ${PFX}-g++)
+set(_p -lwinpthread)
+execute_process(COMMAND ${PFX}-gcc -print-file-name=libwinpthread.a OUTPUT_VARIABLE _src OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(_src AND EXISTS "${_src}" AND DEFINED CMAKE_BINARY_DIR)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/okay-winpthread")
+    execute_process(COMMAND ${CMAKE_COMMAND} -E copy "${_src}" "${CMAKE_BINARY_DIR}/okay-winpthread/libwinpthread.a" RESULT_VARIABLE _r1 ERROR_QUIET)
+    if(_r1 EQUAL 0)
+        execute_process(COMMAND ${PFX}-ar d "${CMAKE_BINARY_DIR}/okay-winpthread/libwinpthread.a" version.o RESULT_VARIABLE _r2 ERROR_QUIET)
+        execute_process(COMMAND ${PFX}-ranlib "${CMAKE_BINARY_DIR}/okay-winpthread/libwinpthread.a" RESULT_VARIABLE _r3 ERROR_QUIET)
+        if(_r2 EQUAL 0 AND _r3 EQUAL 0)
+            set(_p "${CMAKE_BINARY_DIR}/okay-winpthread/libwinpthread.a")
+        endif()
+    endif()
+endif()
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-static-libgcc -Wl,-Bstatic,--whole-archive ${_p} -Wl,--no-whole-archive,-Bdynamic")
+)CM");
+    write("CMakeLists.txt", R"CM(cmake_minimum_required(VERSION 3.16)
+project(mw VERSION 4.5.6 LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+if(WIN32 AND MINGW AND NOT UNIX AND CMAKE_CROSSCOMPILING AND CMAKE_EXECUTABLE_SUFFIX STREQUAL ".exe")
+    add_compile_definitions(ON_WINDOWS)
+endif()
+enable_language(RC)
+set(APP_NAME "Demo")
+configure_file(${CMAKE_SOURCE_DIR}/ver.rc.in ${CMAKE_BINARY_DIR}/ver.rc @ONLY)
+add_library(util STATIC util.cpp)
+add_executable(app WIN32 main.cpp ${CMAKE_BINARY_DIR}/ver.rc)
+target_include_directories(app PRIVATE inc)
+target_link_libraries(app PRIVATE util ws2_32)
+add_executable(tool tool.cpp)
+set_target_properties(tool PROPERTIES WIN32_EXECUTABLE FALSE)
+)CM");
+    write("ver.rc.in", "#include <windows.h>\nVS_VERSION_INFO VERSIONINFO\n FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0\nBEGIN\nBLOCK \"StringFileInfo\"\nBEGIN\nBLOCK \"040904b0\"\nBEGIN\nVALUE \"ProductName\", \"@APP_NAME@ ${NOT_THIS}\"\nEND\nEND\nEND\n");
+    write("util.cpp", "int util(){return 0;}\n"); write("inc/x.h", "#pragma once\n"); write("tool.cpp", "int main(){return 0;}\n");
+    write("main.cpp", "#include <windows.h>\nint util();\nint WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int){ return util(); }\n");
+    int rc; string o = sh("cmake . -o build.okay --build-type Release --opt CMAKE_TOOLCHAIN_FILE=tc.cmake --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("not understood    0") != string::npos, "the toolchain file, configure_file and enable_language(RC) are understood", o);
+    check(man.find("cxx = x86_64-w64-mingw32-g++\n") != string::npos && man.find("cc = x86_64-w64-mingw32-gcc\n") != string::npos && man.find("rc = x86_64-w64-mingw32-windres\n") != string::npos
+          && man.find("ar = x86_64-w64-mingw32-ar\n") != string::npos && man.find("obj_suffix = .obj") != string::npos && man.find("exe_suffix = .exe") != string::npos, "the manifest names the toolchain file's compilers and Windows file names", man);
+    check(man.find("ProductName\\\", \\\"Demo ${NOT_THIS}") != string::npos, "configure_file @ONLY replaces @VAR@ only", man);
+    check(man.find("FILEVERSION 4,5,6,0") != string::npos, "project(VERSION) sets PROJECT_VERSION_MAJOR, _MINOR and _PATCH", man);
+    o = sh("-f build.okay --dry-run -v", &rc); string root = gRoot.string();
+    check(lineWith(o, "-c " + root + "/main.cpp").find("x86_64-w64-mingw32-g++ ") != string::npos && lineWith(o, "-c " + root + "/main.cpp").find("-DON_WINDOWS") != string::npos
+          && lineWith(o, "-c " + root + "/main.cpp").find("main.cpp.obj") != string::npos, "WIN32, MINGW and CMAKE_CROSSCOMPILING are set; objects end in .obj", o);
+    string res = lineWith(o, "ver.rc ");
+    check(res.find("x86_64-w64-mingw32-windres -O coff -DON_WINDOWS -I " + root + "/inc " + root + "/build/ctest/ver.rc .okaybuild/obj/app/_bin/ver.rc.res") != string::npos, "the resource is compiled with windres: -O coff, definitions, -I folders, the file, the .res", res);
+    string link = lineWith(o, " -o build/app.exe");
+    check(link.find("x86_64-w64-mingw32-g++ -O3 -DNDEBUG -static-libgcc -static-libstdc++ -mwindows .okaybuild/obj/app/main.cpp.obj .okaybuild/obj/app/_bin/ver.rc.res -o build/app.exe -Wl,--out-implib,build/libapp.dll.a -Wl,--major-image-version,0,--minor-image-version,0 build/libutil.a -lws2_32 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32") != string::npos,
+          "the program's link line is CMake's: flags, linker flags, -mwindows, objects, import library, libraries, Windows standard libraries", link);
+    link = lineWith(o, " -o build/tool.exe");
+    check(link.find("-mwindows") == string::npos && link.find("-ladvapi32") != string::npos, "a console program has no -mwindows", link);
+    // packages for a Windows program: only the target's roots are searched (a config file there is run), never the host's SDL2
+    write("pkg/root/lib/cmake/Fake/FakeConfig.cmake", "get_filename_component(_r \"${CMAKE_CURRENT_LIST_DIR}/../../..\" ABSOLUTE)\n"
+        "add_library(Fake::Fake SHARED IMPORTED)\nset_target_properties(Fake::Fake PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"${_r}/include/fake\" IMPORTED_IMPLIB \"${_r}/lib/libfake.dll.a\")\n");
+    write("pkg/root/include/fake/fake.h", "#pragma once\n"); write("pkg/root/lib/libfake.dll.a", "!<arch>\n");
+    write("pkg/CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(p CXX)\nfind_package(SDL2 QUIET)\nif(SDL2_FOUND)\n  message(FATAL_ERROR \"the host's SDL2 must not be found for Windows\")\nendif()\n"
+        "find_package(Fake REQUIRED)\nadd_executable(p p.cpp)\ntarget_link_libraries(p PRIVATE Fake::Fake)\n");
+    write("pkg/p.cpp", "int main(){return 0;}\n");
+    o = capture("cd '" + (gRoot / "pkg").string() + "' && " + gTool + " cmake . -o b.okay --opt CMAKE_TOOLCHAIN_FILE=../tc.cmake --opt CMAKE_PREFIX_PATH=" + (gRoot / "pkg/root").string() + " 2>&1", &rc);
+    man = readFile(gRoot / "pkg/b.okay");
+    check(rc == 0 && man.find("include = root/include/fake") != string::npos && man.find((gRoot / "pkg/root/lib/libfake.dll.a").string()) != string::npos,
+          "a config package under CMAKE_PREFIX_PATH is run; its imported target gives the include folder and the import library", o + man);
+    if (system("x86_64-w64-mingw32-g++ --version >/dev/null 2>&1") != 0 || system("x86_64-w64-mingw32-windres --version >/dev/null 2>&1") != 0) { printf("  (no MinGW here: not built)\n"); return; }
+    o = sh("-f build.okay", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/app.exe") && fs::exists(gRoot / "build/tool.exe"), "the MinGW build makes app.exe and tool.exe", o);
+    o = sh("cmake . -o pth.okay --build-type Release --opt CMAKE_TOOLCHAIN_FILE=tc2.cmake", &rc); man = readFile(gRoot / "pth.okay");
+    check(rc == 0 && man.find("exe_link_flags = -static-libgcc -Wl,-Bstatic,--whole-archive {bin}/okay-winpthread/libwinpthread.a -Wl,--no-whole-archive,-Bdynamic") != string::npos,
+          "the copied library in the build folder is linked (execute_process trims its output; the build-folder commands count as done)", man);
+    check(man.find("output = {bin}/okay-winpthread/libwinpthread.a") != string::npos && man.find("x86_64-w64-mingw32-ar d {bin}/okay-winpthread/libwinpthread.a version.o && x86_64-w64-mingw32-ranlib {bin}/okay-winpthread/libwinpthread.a") != string::npos,
+          "the copy, ar d and ranlib become one build step that makes the file", man);
+    o = sh("-f pth.okay tool", &rc);
+    string members = capture("x86_64-w64-mingw32-ar t '" + (gRoot / "build/ctest/okay-winpthread/libwinpthread.a").string() + "' 2>&1", &rc);
+    check(fs::exists(gRoot / "build/tool.exe") && rc == 0 && members.find("version.o") == string::npos && !members.empty(), "the build made the copy without version.o before linking the program with it", o + members);
+    string hdr = capture("x86_64-w64-mingw32-objdump -h '" + (gRoot / "build/app.exe").string() + "' 2>&1", &rc);
+    check(hdr.find(".rsrc") != string::npos, "app.exe carries the compiled resource", hdr);
+    string sub = capture("x86_64-w64-mingw32-objdump -p '" + (gRoot / "build/app.exe").string() + "' 2>&1 | grep -i subsystem", &rc);
+    check(sub.find("Windows GUI") != string::npos, "app.exe is a GUI program (-mwindows)", sub);
+}
+// Round 14: add_custom_command(TARGET ... POST_BUILD) (the player's module_sizes.py step) and find_package(Python3 COMPONENTS
+// Interpreter). The step runs after the program is linked, in the target's build folder, each time the program is linked again.
+static void testPostBuild() {
+    printf("test: okay-build cmake: POST_BUILD commands and find_package(Python3)\n");
+    if (system("python3 -c 1 >/dev/null 2>&1") != 0) { printf("  skipped (no python3)\n"); return; }
+    fresh("postbuild");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("sub/CMakeLists.txt", "add_executable(app ${CMAKE_SOURCE_DIR}/main.cpp)\n"
+        "add_custom_command(TARGET app POST_BUILD\n"
+        "    COMMAND ${Python3_EXECUTABLE} -c \"import os,sys; open(sys.argv[1],'a').write(os.path.basename(os.getcwd()) + ' it is \\\"fine\\\"\\\\n')\" $<TARGET_FILE_DIR:app>/post.txt\n"
+        "    COMMAND ${Python3_EXECUTABLE} -c \"print('second step')\"\n"
+        "    VERBATIM)\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(pb CXX)\nfind_package(Python3 COMPONENTS Interpreter REQUIRED)\n"
+        "if(NOT Python3_Interpreter_FOUND OR NOT IS_ABSOLUTE \"${Python3_EXECUTABLE}\")\n  message(FATAL_ERROR \"no python: ${Python3_EXECUTABLE}\")\nendif()\nadd_subdirectory(sub)\n");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("not understood    0") != string::npos, "find_package(Python3) and add_custom_command(TARGET POST_BUILD) are understood", o);
+    check(man.find("post_build = ") != string::npos && man.find("{target_dir:app}/post.txt") != string::npos && man.find("post_build_dir = {bin}/sub") != string::npos, "the manifest carries the steps, the target's folder and $<TARGET_FILE_DIR>", man);
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\n", "after the link the step ran once, in {bin}/sub, with the quotes kept", o + readFile(gRoot / "build/post.txt"));
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\n" && ran(o) == 0, "nothing changed: neither the link nor the step runs", o);
+    write("main.cpp", "int main(){ volatile int x = 0; return x; }\n"); // other code, so the program is linked again
+    o = sh("-f build.okay app", &rc);
+    check(rc == 0 && readFile(gRoot / "build/post.txt") == "sub it is \"fine\"\nsub it is \"fine\"\n", "a new link runs the step again", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2108,5 +2375,10 @@ int main(int argc, char** argv) {
     testCmakeModuleCommands();
     testGeneratedFileSafety();
     testLinkPieces();
+    testLoopControlAndLinkProperties();
+    testConfigurationFlags();
+    testSourcePropertiesPerFolder();
+    testMingwToolchainFile();
+    testPostBuild();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

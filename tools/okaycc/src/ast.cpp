@@ -34,6 +34,25 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
     return n;
 }
 
+// A finished class as its name and layout facts only; its members are found by its tag (canonOf).
+std::unique_ptr<Type> classByName(const Type& in) {
+    auto sh = std::make_unique<Type>();
+    sh->kind = in.kind;
+    sh->tag = in.tag;
+    sh->cnst = in.cnst;
+    sh->base = in.base;
+    sh->nonpod = in.nonpod;
+    sh->hasVptr = in.hasVptr;
+    sh->needCtor = in.needCtor;
+    sh->needDtor = in.needDtor;
+    sh->vslots = in.vslots;
+    return sh;
+}
+bool finishedClassCopy(const Type& t) {
+    return (t.kind == Type::Kind::Struct || t.kind == Type::Kind::Union) && !t.params.empty() && !t.tag.empty() &&
+           canonOf(&t) != &t;
+}
+
 std::unique_ptr<Type> cloneType(const Type& t) {
     auto n = std::make_unique<Type>();
     n->kind = t.kind;
@@ -51,24 +70,16 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->vslots = t.vslots;
     if (t.inner) {
         const Type& in = *t.inner;
-        bool viaRef = t.kind == Type::Kind::Pointer || t.kind == Type::Kind::Reference;
-        if (viaRef && (in.kind == Type::Kind::Struct || in.kind == Type::Kind::Union) && !in.params.empty() &&
-            !in.tag.empty() && canonOf(&in) != &in) {
+        // Also the return type of a function type: a class returned by value is named, not copied
+        // whole (each member function of a class returning the class copied it again: compiling a
+        // file with <filesystem> took seconds in cloneType).
+        bool viaRef = t.kind == Type::Kind::Pointer || t.kind == Type::Kind::Reference || t.kind == Type::Kind::Function;
+        if (viaRef && finishedClassCopy(in)) {
             // A pointer or reference to a finished class keeps only the class's name and facts, not
             // its members: whoever needs the members takes the finished class by its tag (canonOf).
             // A full copy at every pointer made the types grow exponentially with nesting (a class
             // whose member functions take other classes by reference, each copying the next).
-            auto sh = std::make_unique<Type>();
-            sh->kind = in.kind;
-            sh->tag = in.tag;
-            sh->cnst = in.cnst;
-            sh->base = in.base;
-            sh->nonpod = in.nonpod;
-            sh->hasVptr = in.hasVptr;
-            sh->needCtor = in.needCtor;
-            sh->needDtor = in.needDtor;
-            sh->vslots = in.vslots;
-            n->inner = std::move(sh);
+            n->inner = classByName(in);
         } else {
             n->inner = cloneType(in);
         }
@@ -82,7 +93,15 @@ std::unique_ptr<Type> cloneType(const Type& t) {
         c.vslot = p.vslot;
         c.pure = p.pure;
         c.cmethod = p.cmethod;
-        if (p.type) c.type = cloneType(*p.type);
+        if (p.type) {
+            const Type& pt = *p.type;
+            if (t.kind == Type::Kind::Function && finishedClassCopy(pt)) {
+                // A by-value class parameter of a function type: its name and facts only.
+                c.type = classByName(pt);
+            } else {
+                c.type = cloneType(pt);
+            }
+        }
         if (p.defArg) c.defArg = cloneExpr(*p.defArg);
         n->params.push_back(std::move(c));
     }

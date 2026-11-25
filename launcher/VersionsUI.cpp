@@ -287,11 +287,18 @@ void DrawThisVersion(const Host& h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
-    const float rowH = 54.0f;
     const std::string cur = okayver::NormalizeVersion(h.currentVersion);
     const std::string title = cur.empty() ? "You're running a development build" : "You're running " + V(cur);
-    DrawTextAt(dl, ImVec2(p0.x, p0.y + 2), title.c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.18f);
-    float x = p0.x + TextWidth(title.c_str(), 1.18f) + 12.0f;
+    const bool busy = st.indexJob != nullptr;
+    // The two buttons on the right, sized to their labels and the UI scale; the text gets the rest of the row.
+    const char* checkLbl = busy ? "Checking\xE2\x80\xA6" : "Check again";
+    const float bh = ImGui::GetFrameHeight() + okl::UiPx(8.0f), gap = okl::UiPx(8.0f);
+    const float b1 = okl::FitButtonW(checkLbl, okl::UiPx(120.0f)), b2 = okl::FitButtonW("Open install folder", okl::UiPx(150.0f));
+    const float titleH = ImGui::GetTextLineHeight() * 1.18f, lineH = ImGui::GetTextLineHeight();
+    const float rowH = std::max(titleH + okl::UiPx(6.0f) + lineH, bh) + okl::UiPx(6.0f);
+    const float textW = W - b1 - b2 - gap - okl::UiPx(20.0f);
+    DrawTextAt(dl, ImVec2(p0.x, p0.y + 2), Fit(title, textW / 1.18f).c_str(), ImGui::GetColorU32(ImGuiCol_Text), 1.18f);
+    float x = p0.x + std::min(TextWidth(title.c_str(), 1.18f), textW) + okl::UiPx(12.0f);
     if (st.haveIndex && st.index.ok && !cur.empty()) {
         if (cur == st.index.latest) x += DrawPill(dl, ImVec2(x, p0.y + 5), "Latest", Tint(h.accent, 0.32f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
         if (okayver::SameLine(cur, st.index.lts)) x += DrawPill(dl, ImVec2(x, p0.y + 5), "LTS", okaytheme::SuccessFillU32(0.353f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
@@ -300,15 +307,14 @@ void DrawThisVersion(const Host& h) {
     const std::string launcher = okayver::NormalizeVersion(h.launcherVersion);
     if (launcher.empty() || cur.empty() || launcher == cur) sub = "The launcher, the editor and the player are all this version.";
     else sub = "The editor and player are " + V(cur) + "; this launcher window is still " + V(launcher) + " until you restart it.";
-    DrawTextAt(dl, ImVec2(p0.x, p0.y + 30), Fit(sub, W - 330.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    DrawTextAt(dl, ImVec2(p0.x, p0.y + titleH + okl::UiPx(6.0f)), Fit(sub, textW).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
 
-    const bool busy = st.indexJob != nullptr;
-    ImGui::SetCursorScreenPos(ImVec2(p0.x + W - 306.0f, p0.y + 8));
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + W - b2 - gap - b1, p0.y + (rowH - bh) * 0.5f));
     ImGui::BeginDisabled(busy);
-    if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check again", ImVec2(140, 30))) StartIndex(h);
+    if (ImGui::Button(checkLbl, ImVec2(b1, bh))) StartIndex(h);
     ImGui::EndDisabled();
-    ImGui::SameLine(0, 8);
-    if (ImGui::Button("Open install folder", ImVec2(okl::FitButtonW("Open install folder", okl::UiPx(158.0f)), okl::UiPx(30.0f)))) {
+    ImGui::SameLine(0, gap);
+    if (ImGui::Button("Open install folder", ImVec2(b2, bh))) {
         std::error_code ec;
         fs::create_directories(okayver::VersionsDir(h.launcherDir), ec);
         if (h.openFolder) h.openFolder(okayver::VersionsDir(h.launcherDir).string());

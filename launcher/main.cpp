@@ -3267,7 +3267,7 @@ static void OkayUIFrameBegin() {
         const okaytheme::Palette& P = okaytheme::Current();
         put(t.bg, P.control); put(t.bgHover, okaytheme::Mix(P.control, P.ink, 0.08f)); put(t.bgDown, okaytheme::Mix(P.control, P.ink, 0.14f));
         put(t.border, okaytheme::Mix(P.raised, P.ink, 0.10f)); put(t.text, P.text); put(t.textDim, P.textDim);
-        put(t.panel, P.raised); put(t.track, P.sunken); put(t.titleBg, P.deep); put(t.field, P.field);
+        put(t.panel, P.base); put(t.track, P.sunken);   // (cards are a step up from the panel: OkayUI BeginCard) put(t.titleBg, P.deep); put(t.field, P.field);
     }
     t.accent[0] = (unsigned char)(kAccent.x * 255.0f + 0.5f); t.accent[1] = (unsigned char)(kAccent.y * 255.0f + 0.5f);
     t.accent[2] = (unsigned char)(kAccent.z * 255.0f + 0.5f);
@@ -6187,6 +6187,15 @@ static void RenderChatCallCard(const CallBody& cb, long endSecs, bool ended, boo
     ImGui::EndGroup();
 }
 
+// The text inside one of my chat bubbles (a filled accent or chat-theme colour): white, and the dim text a softer white, in every
+// theme (on Light the page text is dark). Push after the bubble's BeginChild, pop before its EndChild.
+void ChatBubbleTextPush(bool mine) {
+    if (!mine) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, okaytheme::WithAlpha(okaytheme::Current().onColor, 0.72f));
+}
+void ChatBubbleTextPop(bool mine) { if (mine) ImGui::PopStyleColor(2); }
+
 // One reaction under a chat message: the emoji (or the heart) and the count in a pill; yours is tinted. Returns true when
 // clicked (the caller toggles the reaction). Used by direct messages and group conversations.
 bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine) {
@@ -7735,6 +7744,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::BeginChild("##bubble", ImVec2(useW, 0),
                                   ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                ChatBubbleTextPush(m.mine && !bare);   // my bubble is a filled colour: its text is white in every theme
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                 ImDrawList* bdl = ImGui::GetWindowDrawList();
                 if (rep) {                                  // quoted message (click to jump)
@@ -7855,6 +7865,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         ImGui::SetTooltip("%s", ds == 3 ? "Read" : ds == 2 ? "Delivered" : "Sent");
                 }
                 ImGui::PopStyleVar();                       // ItemSpacing
+                ChatBubbleTextPop(m.mine && !bare);
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);                      // ChildRounding, WindowPadding
                 ImGui::PopStyleColor();                     // ChildBg
@@ -11243,6 +11254,12 @@ static void MarketDemoListings(const std::string& mode, std::vector<okay::Worksh
                     }
     it(43, "Orbit Hopper", "maya", "game", "Hop between tiny planets, collect stardust and dodge comets. Made for Game Jam #12.", 3480, 45, 10);
     it(44, "Crystal Caverns (level)", "jonas", "scene", "A cave level with glowing crystals and a hidden room.", 760, 17, 4);
+    if (mode == "one") {   // a nearly empty marketplace: one listing by a long name, and one of mine still in review
+        out.erase(out.begin() + 1, out.end());
+        out[0].author = "imanfakhargomi";
+        okay::WorkshopItem mine = out[0]; mine.id = 90; mine.title = "My first game"; mine.author = "starpilot"; mine.status = "rejected";
+        out.push_back(mine);
+    }
 }
 
 // Loading placeholders for a grid of cards (the Marketplace tiles, the Community showcase): two rows of grey cards, each with
@@ -13287,13 +13304,16 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(avail, S));
             if (!g_navCollapsed) {
                 float tx = br.x + 10.0f;
-                dl->AddText(ImVec2(tx, lp.y - 1.0f), navTextHi, "OkaySpace");
+                // The name over the version, centred on the logo (at a big UI scale the two lines are taller than the logo).
+                const float nameH = ImGui::GetTextLineHeight(), verH = ImGui::GetFontSize() * 0.82f;
+                const float ty = lp.y + (S - nameH - verH) * 0.5f;
+                dl->AddText(ImVec2(tx, ty), navTextHi, "OkaySpace");
                 // Version doubles as a "check for updates" link.
                 static const std::string kNavVer = std::string("v" OKAY_ENGINE_VERSION) + (okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION) ? " test" : "");
                 const char* ver = kNavVer.c_str();
                 float fs = ImGui::GetFontSize() * 0.82f;
                 ImVec2 vsz = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ver);
-                ImVec2 vp(tx, lp.y + S - vsz.y);
+                ImVec2 vp(tx, ty + nameH);
                 ImGui::SetCursorScreenPos(vp);
                 bool vclick = ImGui::InvisibleButton("##navver", vsz);
                 bool vhov = ImGui::IsItemHovered();
@@ -14845,8 +14865,13 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); if (ImGui::SmallButton("Rescan web games")) s_webScanned = false;
                 ImGui::Dummy(ImVec2(0, 10));
             }
-            if (player.empty())
-                ImGui::TextColored(okaytheme::Current().danger, "Player runtime not found next to the launcher.");
+            if (player.empty()) {   // the player program is missing: say so plainly, with the way to get it back
+                EmptyState(kIcoAlert, "The game player is missing", "Games run in OkaySpacePlayer, which should sit next to the launcher. Reinstall this version from Versions to get it back.", UiPx(40.0f));
+                const float bw = FitButtonW("Open Versions", UiPx(160.0f));
+                ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                if (PrimaryButton("Open Versions", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(10.0f)))) { tab = 15; g_lastTab = 15; SavePrefs(); }
+            }
             else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
                 // No *built* games (dev scenes don't count): a friendly card that says
                 // how games get here, with the next step (the editor opens via a project).
@@ -15786,7 +15811,7 @@ int main(int argc, char** argv) {
                 // ================= Hero: banner, avatar, name, stats =================
                 ImGui::Dummy(ImVec2(0, 4));
                 {
-                    const float heroH = 216.0f;
+                    const float heroH = UiPx(216.0f);   // (every size here follows the UI scale)
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                     ImGui::BeginChild("##achero", ImVec2(0, heroH), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
@@ -15794,7 +15819,7 @@ int main(int argc, char** argv) {
                     ImGui::PopStyleColor();
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const ImVec2 o = ImGui::GetWindowPos();
-                    const float W = ImGui::GetWindowSize().x, bannerH = 86.0f;
+                    const float W = ImGui::GetWindowSize().x, bannerH = UiPx(86.0f);
                     // Banner in the profile colour, with two soft "planets".
                     d->AddRectFilledMultiColor(o, ImVec2(o.x + W, o.y + bannerH), acc(0.85f), acc(0.35f), acc(0.20f), acc(0.70f));
                     d->AddRectFilled(o, ImVec2(o.x + W, o.y + bannerH), okaytheme::Shade(40), 14.0f, ImDrawFlags_RoundCornersTop);
@@ -15804,37 +15829,40 @@ int main(int argc, char** argv) {
                     d->AddEllipse(ImVec2(o.x + W - 120, o.y + 18), ImVec2(118, 24), okaytheme::Ink(30), -0.25f, 48, 1.5f);
                     d->PopClipRect();
                     // Avatar overlapping the banner edge.
-                    const float ar = 46.0f;
-                    const ImVec2 ac(o.x + 28 + ar, o.y + bannerH + 4);
-                    d->AddCircleFilled(ac, ar + 5, ImGui::GetColorU32(okaytheme::kRaised), 48);
+                    const float ar = UiPx(46.0f);
+                    const ImVec2 ac(o.x + UiPx(28.0f) + ar, o.y + bannerH + UiPx(4.0f));
+                    d->AddCircleFilled(ac, ar + UiPx(5.0f), ImGui::GetColorU32(okaytheme::kRaised), 48);
                     avatarDisc(d, ac, ar, s_myAvatar);
                     // Presence dot.
                     const ImU32 presCol = g_onlineStatus == 2 ? okaytheme::TextDimU32() : g_onlineStatus == 1 ? okaytheme::WarningFillU32() : okaytheme::SuccessFillU32();
                     const ImVec2 pd(ac.x + ar * 0.72f, ac.y + ar * 0.72f);
-                    d->AddCircleFilled(pd, 10.0f, ImGui::GetColorU32(okaytheme::kRaised), 20);
-                    d->AddCircleFilled(pd, 7.0f, online ? presCol : okaytheme::TextDimU32(), 20);
+                    d->AddCircleFilled(pd, UiPx(10.0f), ImGui::GetColorU32(okaytheme::kRaised), 20);
+                    d->AddCircleFilled(pd, UiPx(7.0f), online ? presCol : okaytheme::TextDimU32(), 20);
                     // Name block.
-                    const float tx = ac.x + ar + 20;
+                    const float tx = ac.x + ar + UiPx(20.0f);
+                    const float hbw1 = okl::FitButtonW("View my profile", okl::UiPx(132.0f)), hbw2 = okl::FitButtonW("Sign out", okl::UiPx(104.0f));
+                    const float nameMaxW = o.x + W - UiPx(24.0f) - hbw1 - hbw2 - UiPx(8.0f) - tx;   // the name block stops before the buttons
+                    const float nameY = o.y + bannerH + UiPx(8.0f), lhh = ImGui::GetTextLineHeight();
                     const float nsz = ImGui::GetFontSize() * 1.5f;
-                    d->AddText(ImGui::GetFont(), nsz, ImVec2(tx, o.y + bannerH + 8), cText, shownName.c_str());
+                    d->AddText(ImGui::GetFont(), nsz, ImVec2(tx, nameY), cText, FitText(shownName, nameMaxW / 1.5f).c_str());
                     std::string sub = "@" + myUser + "   \xC2\xB7   " +
                         (!online ? std::string("Local account on this device")
                                  : g_onlineStatus == 2 ? std::string("Invisible") : g_onlineStatus == 1 ? std::string("Away") : std::string("Online"));
-                    d->AddText(ImVec2(tx, o.y + bannerH + 10 + nsz), cDim, sub.c_str());
+                    d->AddText(ImVec2(tx, nameY + nsz + UiPx(2.0f)), cDim, FitText(sub, nameMaxW).c_str());
                     if (acctStatus[0]) {
                         std::string q = std::string("\xE2\x80\x9C") + acctStatus + "\xE2\x80\x9D";
-                        d->AddText(ImVec2(tx, o.y + bannerH + 30 + nsz), ImGui::GetColorU32(okaytheme::kText), q.c_str());
+                        d->AddText(ImVec2(tx, nameY + nsz + UiPx(6.0f) + lhh), ImGui::GetColorU32(okaytheme::kText), FitText(q, W - (tx - o.x) - UiPx(24.0f)).c_str());
                     }
                     // Actions, top-right over the banner.
-                    ImGui::SetCursorScreenPos(ImVec2(o.x + W - 16 - 132 - 8 - 104, o.y + bannerH + 12));
+                    ImGui::SetCursorScreenPos(ImVec2(o.x + W - UiPx(16.0f) - hbw1 - UiPx(8.0f) - hbw2, o.y + bannerH + UiPx(12.0f)));
                     ImGui::BeginDisabled(!account.IsOnline());
-                    if (PrimaryButton("View my profile", ImVec2(okl::FitButtonW("View my profile", okl::UiPx(132.0f)), okl::UiPx(32.0f))))
+                    if (PrimaryButton("View my profile", ImVec2(hbw1, okl::UiPx(32.0f))))
                         OpenPublicProfile(acDemo ? std::string() : account.UserId(), myUser, shownName, s_myAvatar, acctAccent);   // by id: the saved name can lag the real one
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("%s", account.IsOnline() ? "See your public profile exactly as other players do" : "Public profiles need an online account");
-                    ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Sign out", ImVec2(okl::FitButtonW("Sign out", okl::UiPx(104.0f)), okl::UiPx(32.0f))) && !acDemo) {
+                    ImGui::SameLine(0, UiPx(8.0f));
+                    if (ImGui::Button("Sign out", ImVec2(hbw2, okl::UiPx(32.0f))) && !acDemo) {
                         account.Logout();
                         acctMessage.clear();
                         acctUser[0] = acctPass[0] = '\0';
@@ -15848,25 +15876,28 @@ int main(int argc, char** argv) {
                         const int lvl = okay::Achievements::Level(pts) + 1;
                         const float prog = okay::Achievements::LevelProgress(pts);
                         const int games = LibraryGameCount(scenes);
-                        float cx = o.x + 24, cy = o.y + heroH - 46;
+                        float cx = o.x + UiPx(24.0f), cy = o.y + heroH - UiPx(46.0f);
+                        const float chipH = UiPx(34.0f);
                         auto chip = [&](const char* big, const char* small, float extraW) -> ImVec2 {
                             const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(small).x;
-                            const float w = std::max(bw * 1.15f, sw) + 26 + extraW;
-                            d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + 34), okaytheme::Ink(10), 9.0f);
-                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.1f, ImVec2(cx + 12, cy + 2), cText, big);
-                            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.80f, ImVec2(cx + 12, cy + 19), cDim, small);
+                            const float w = std::max(bw * 1.15f, sw) + UiPx(26.0f) + extraW;
+                            d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + chipH), okaytheme::Ink(10), 9.0f);
+                            const float bigH = ImGui::GetFontSize() * 1.1f, smallH = ImGui::GetFontSize() * 0.80f;
+                            const float ty0 = cy + (chipH - bigH - smallH) * 0.5f;
+                            d->AddText(ImGui::GetFont(), bigH, ImVec2(cx + UiPx(12.0f), ty0), cText, big);
+                            d->AddText(ImGui::GetFont(), smallH, ImVec2(cx + UiPx(12.0f), ty0 + bigH), cDim, small);
                             const ImVec2 at(cx, cy);
-                            cx += w + 8;
+                            cx += w + UiPx(8.0f);
                             return at;
                         };
                         char b1[32], b2[32], b3[32], s1[48];
                         std::snprintf(b1, sizeof(b1), "Level %d", lvl);
                         std::snprintf(s1, sizeof(s1), "%d points", pts);
-                        const ImVec2 lc = chip(b1, s1, 60);
+                        const ImVec2 lc = chip(b1, s1, UiPx(60.0f));
                         // level progress ring-bar inside the level chip
-                        const float bx = lc.x + 12 + std::max(ImGui::CalcTextSize(b1).x * 1.15f, ImGui::CalcTextSize(s1).x) + 10;
-                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50, cy + 19), okaytheme::Ink(24), 2.0f);
-                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50 * prog, cy + 19), acc(1.0f), 2.0f);
+                        const float bx = lc.x + UiPx(12.0f) + std::max(ImGui::CalcTextSize(b1).x * 1.15f, ImGui::CalcTextSize(s1).x) + UiPx(10.0f);
+                        d->AddRectFilled(ImVec2(bx, cy + chipH * 0.5f - UiPx(2.0f)), ImVec2(bx + UiPx(50.0f), cy + chipH * 0.5f + UiPx(2.0f)), okaytheme::Ink(24), 2.0f);
+                        d->AddRectFilled(ImVec2(bx, cy + chipH * 0.5f - UiPx(2.0f)), ImVec2(bx + UiPx(50.0f) * prog, cy + chipH * 0.5f + UiPx(2.0f)), acc(1.0f), 2.0f);
                         std::snprintf(b2, sizeof(b2), "%d", (int)achs.size());
                         chip(b2, achs.size() == 1 ? "achievement" : "achievements", 0);
                         std::snprintf(b3, sizeof(b3), "%d", games);
@@ -15879,11 +15910,11 @@ int main(int argc, char** argv) {
                         if (!myCode.empty()) {
                             const ImVec2 fc = chip(myCode.c_str(), "friend code \xC2\xB7 click to copy", 0);
                             ImGui::SetCursorScreenPos(fc);
-                            const float fw = cx - 8 - fc.x;
-                            if (ImGui::InvisibleButton("##copycode", ImVec2(fw, 34))) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
+                            const float fw = cx - UiPx(8.0f) - fc.x;
+                            if (ImGui::InvisibleButton("##copycode", ImVec2(fw, chipH))) { ImGui::SetClipboardText(myCode.c_str()); Toast("Friend code copied", 1); }
                             if (ImGui::IsItemHovered()) {
                                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                                d->AddRect(fc, ImVec2(fc.x + fw, fc.y + 34), acc(0.8f), 9.0f, 0, 1.2f);
+                                d->AddRect(fc, ImVec2(fc.x + fw, fc.y + chipH), acc(0.8f), 9.0f, 0, 1.2f);
                             }
                         }
                     }
@@ -16018,16 +16049,19 @@ int main(int argc, char** argv) {
                             const float w = ImGui::GetContentRegionAvail().x;
                             d->ChannelsSplit(2);
                             d->ChannelsSetCurrent(1);
-                            d->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + 54), acc(0.85f), acc(0.40f), acc(0.25f), acc(0.70f));
-                            const ImVec2 c(p.x + 44, p.y + 58);
-                            d->AddCircleFilled(c, 31, okaytheme::U32(okaytheme::kDeep), 40);
-                            avatarDisc(d, c, 28, acctAvatar);
-                            float y = p.y + 96;
+                            d->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + UiPx(54.0f)), acc(0.85f), acc(0.40f), acc(0.25f), acc(0.70f));
+                            const ImVec2 c(p.x + UiPx(44.0f), p.y + UiPx(58.0f));
+                            d->AddCircleFilled(c, UiPx(31.0f), okaytheme::U32(okaytheme::kDeep), 40);
+                            avatarDisc(d, c, UiPx(28.0f), acctAvatar);
+                            float y = p.y + UiPx(96.0f);
                             d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.2f, ImVec2(p.x + 14, y), cText, shownName.c_str());
                             y += ImGui::GetFontSize() * 1.2f + 2;
                             d->AddText(ImVec2(p.x + 14, y), cDim, ("@" + myUser).c_str());
                             y += ImGui::GetTextLineHeight() + 6;
-                            if (acctStatus[0]) { d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), acc(1.0f), acctStatus, nullptr, w - 28); y += ImGui::GetTextLineHeight() + 6; }
+                            if (acctStatus[0]) {   // (wraps: the lines under it move down by its real height)
+                                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), acc(1.0f), acctStatus, nullptr, w - 28);
+                                y += ImGui::CalcTextSize(acctStatus, nullptr, false, w - 28).y + 6;
+                            }
                             if (acctBio[0]) {
                                 const ImVec2 bs = ImGui::CalcTextSize(acctBio, nullptr, false, w - 28);
                                 d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), ImGui::GetColorU32(okaytheme::kText), acctBio, nullptr, w - 28);
@@ -16035,7 +16069,7 @@ int main(int argc, char** argv) {
                             }
                             if (acctFavGame[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, (std::string("Favorite game: ") + acctFavGame).c_str()); y += ImGui::GetTextLineHeight() + 2; }
                             if (acctLocation[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, acctLocation); y += ImGui::GetTextLineHeight() + 2; }
-                            const float ph = std::max(200.0f, y - p.y + 12);
+                            const float ph = std::max(UiPx(200.0f), y - p.y + 12);
                             d->ChannelsSetCurrent(0);
                             d->AddRectFilled(p, ImVec2(p.x + w, p.y + ph), okaytheme::Shade(50), 10.0f);
                             d->ChannelsMerge();
@@ -17784,9 +17818,9 @@ int main(int argc, char** argv) {
                     if (ImGui::InvisibleButton("##presence", ImVec2(pw, ch))) ImGui::OpenPopup("##presencepop");
                     bool ph = ImGui::IsItemHovered();
                     dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + ch), ph ? okaytheme::Ink(22) : okaytheme::Ink(9), ch * 0.5f);
-                    dl->AddCircleFilled(ImVec2(pp.x + 15, pp.y + ch * 0.5f), 4.5f, kStatCol[si], 12);
-                    dl->AddText(ImVec2(pp.x + 26, pp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cText, kStat[si]);
-                    float vx = pp.x + pw - 15, vy = pp.y + ch * 0.5f;   // chevron
+                    dl->AddCircleFilled(ImVec2(pp.x + UiPx(15.0f), pp.y + ch * 0.5f), UiPx(4.5f), kStatCol[si], 12);
+                    dl->AddText(ImVec2(pp.x + UiPx(26.0f), pp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cText, kStat[si]);
+                    float vx = pp.x + pw - UiPx(15.0f), vy = pp.y + ch * 0.5f;   // chevron
                     dl->AddLine(ImVec2(vx - 3.5f, vy - 1.5f), ImVec2(vx, vy + 2.0f), cDim, 1.6f);
                     dl->AddLine(ImVec2(vx + 3.5f, vy - 1.5f), ImVec2(vx, vy + 2.0f), cDim, 1.6f);
                     if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Your status"); }
@@ -17836,7 +17870,8 @@ int main(int argc, char** argv) {
                     ImGui::PushID((int)f->rowId);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImVec2 rp = ImGui::GetCursorScreenPos();
-                    const float w = ImGui::GetContentRegionAvail().x, rowH = 62.0f, A = 40.0f, d = 34.0f;
+                    const float w = ImGui::GetContentRegionAvail().x, lhF = ImGui::GetTextLineHeight();
+                    const float rowH = std::max(UiPx(62.0f), 2 * lhF + UiPx(24.0f)), A = UiPx(40.0f), d = UiPx(34.0f);
                     ImGui::SetNextItemAllowOverlap();
                     if (ImGui::InvisibleButton("##frrow", ImVec2(w, rowH)))
                         OpenPublicProfile(f->id, f->username, dispName, f->avatar, f->accent);
@@ -17876,7 +17911,7 @@ int main(int argc, char** argv) {
                     }
                     if (rowHov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(11), 10.0f);
                     // Avatar + presence dot + favourite star.
-                    ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (rowH - A) * 0.5f));
+                    ImGui::SetCursorScreenPos(ImVec2(rp.x + UiPx(10.0f), rp.y + (rowH - A) * 0.5f));
                     ImVec2 ap = ImGui::GetCursorScreenPos();
                     DrawAvatar(f->avatar, dispName, A);
                     if (accepted || kind == 1) {
@@ -17886,10 +17921,10 @@ int main(int argc, char** argv) {
                     }
                     if (fav) DrawStar(dl, ImVec2(ap.x + 3, ap.y + 3), 6.0f, okaytheme::WarningFillU32());
                     // Name, @username, status line.
-                    const float tx = rp.x + 10 + A + 12, ty = rp.y + 12;
+                    const float tx = rp.x + UiPx(10.0f) + A + UiPx(12.0f), ty = rp.y + (rowH - 2 * lhF - UiPx(3.0f)) * 0.5f;
                     const bool invitable = accepted && f->online && !joinable && MpCanInvite();   // you're in a joinable match: invite them
                     const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : 2 + (joinable ? 1 : 0) + (invitable ? 1 : 0);
-                    const float right = rp.x + w - 12 - nBtns * (d + 8);
+                    const float right = rp.x + w - UiPx(12.0f) - nBtns * (d + UiPx(8.0f));
                     std::string nm = FitText(dispName, right - tx - 10);
                     dl->AddText(ImVec2(tx, ty), cText, nm.c_str());
                     float nx = tx + ImGui::CalcTextSize(nm.c_str()).x + 6;
@@ -17905,12 +17940,12 @@ int main(int argc, char** argv) {
                                     : f->lastSeen > 0 ? LastOnline(f->lastSeen) : "Offline";
                     ImU32 sc = kind == 1 ? ImGui::GetColorU32(accLt) : playing ? ImGui::GetColorU32(accLt)
                              : (accepted && f->online && f->customStatus.empty()) ? cGreen : cDim;
-                    dl->AddText(ImVec2(tx, ty + 20), sc, FitText(sub, right - tx - 10).c_str());
+                    dl->AddText(ImVec2(tx, ty + lhF + UiPx(3.0f)), sc, FitText(sub, right - tx - 10).c_str());
                     // Actions (right): round icon buttons.
-                    float bx = rp.x + w - 12 - d;
+                    float bx = rp.x + w - UiPx(12.0f) - d;
                     const float by = rp.y + (rowH - d) * 0.5f;
                     const ImU32 bg = okaytheme::Ink(16), bgh = okaytheme::Ink(34);
-                    auto at = [&](void) { ImGui::SetCursorScreenPos(ImVec2(bx, by)); bx -= d + 8; };
+                    auto at = [&](void) { ImGui::SetCursorScreenPos(ImVec2(bx, by)); bx -= d + UiPx(8.0f); };
                     if (kind == 1) {
                         at(); if (RoundIconButton("##decline", kRibClose, d, bg, okaytheme::DangerFillU32(), cText, "Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
                         at(); if (RoundIconButton("##accept", kRibCheck, d, okaytheme::SuccessFillU32(), okaytheme::SuccessFillU32(), IM_COL32_WHITE, "Accept")) {
@@ -18547,7 +18582,7 @@ int main(int argc, char** argv) {
                     if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
                     const bool besidePill = mp.railShown;   // the fold button (beside the grid only; the popup closes on a click outside)
                     const float fd = UiPx(28.0f);
-                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
+                    SearchPill("##mktsearch", besidePill ? "Search" : "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
                     if (besidePill) {
                         ImGui::SameLine(0, UiPx(8.0f));
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (mktBtnH - fd) * 0.5f);
@@ -19813,6 +19848,7 @@ int main(int argc, char** argv) {
                             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(svPadX, svPadY));
                             ImGui::BeginChild("##svbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                            ChatBubbleTextPush(mine);   // my bubble is a filled colour: its text is white in every theme
                             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
                             if (hasQuote) {
                                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(accLt)), "@%s", quoteWho.c_str());
@@ -19833,6 +19869,7 @@ int main(int argc, char** argv) {
                                 ImGui::PopStyleColor();
                             }
                             ImGui::PopStyleVar();
+                            ChatBubbleTextPop(mine);
                             ImGui::EndChild();
                             ImGui::PopStyleVar(2);
                             ImGui::PopStyleColor();

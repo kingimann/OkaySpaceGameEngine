@@ -2558,13 +2558,105 @@ static void testToolchainOkayMs() {
     check(rc == 0 && coff == 9, "9 engine files compile to x86-64 COFF objects with okay-cl through okay-build", o + "coff objects: " + std::to_string(coff));
 }
 
+// Round 16: CTest's PASS_/FAIL_/SKIP_REGULAR_EXPRESSION, CMake's own regular-expression dialect, and tests that are CMake scripts
+// (`cmake -P`, `cmake -E env`) run by okay-build itself. Expected results were taken by running real CMake and CTest on the same project.
+static void testCtestOutputRules() {
+    printf("test: ctest: pass, fail and skip regular expressions; CMake's regex dialect\n");
+    fresh("ctestrx");
+    write("prog.c", "#include <stdio.h>\n#include <stdlib.h>\nint main(int c, char** v) { for (int i = 1; i + 1 < c; ++i) printf(\"%s\\n\", v[i]); return atoi(v[c - 1]); }\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(rx C)\nenable_testing()\n"
+        "string(REGEX MATCH \"x.y\" M \"x\\ny\")\nif(NOT M STREQUAL \"x\\ny\")\n  message(FATAL_ERROR \"dot does not match a newline: [${M}]\")\nendif()\n"
+        "if(NOT \"a{1}\" MATCHES \"^a{1}$\")\n  message(FATAL_ERROR \"braces are not literal\")\nendif()\n"
+        "string(REGEX REPLACE \"([][.])\" \"\\\\\\\\\\\\1\" E \"a.b[c]\")\nif(NOT E STREQUAL \"a\\\\.b\\\\[c\\\\]\")\n  message(FATAL_ERROR \"escaping replace gave [${E}]\")\nendif()\n"
+        "set(L a.cpp third_party/x.cpp b.cpp)\nlist(FILTER L EXCLUDE REGEX \"^third_party/\")\nif(NOT L STREQUAL \"a.cpp;b.cpp\")\n  message(FATAL_ERROR \"list(FILTER) gave [${L}]\")\nendif()\n"
+        "add_executable(prog prog.c)\n"
+        "add_test(NAME pass_rx COMMAND prog hello 3)\nadd_test(NAME pass_rx_miss COMMAND prog hello 0)\nadd_test(NAME pass_rx_list COMMAND prog two 0)\n"
+        "add_test(NAME fail_rx COMMAND prog \"Error: x\" 0)\nadd_test(NAME skip_rx COMMAND prog \"skipped here\" 1)\nadd_test(NAME dot_newline COMMAND prog first second 0)\n"
+        "add_test(NAME brace COMMAND prog \"a{2}\" 0)\nadd_test(NAME will_fail_rx COMMAND prog hello 0)\nadd_test(NAME prop_cwd COMMAND prog x 0)\n"
+        "set_tests_properties(pass_rx PROPERTIES PASS_REGULAR_EXPRESSION \"hel+o\")\nset_tests_properties(pass_rx_miss PROPERTIES PASS_REGULAR_EXPRESSION \"bye\")\n"
+        "set_tests_properties(pass_rx_list PROPERTIES PASS_REGULAR_EXPRESSION \"one;two\")\nset_tests_properties(fail_rx PROPERTIES FAIL_REGULAR_EXPRESSION \"Error\")\n"
+        "set_tests_properties(skip_rx PROPERTIES SKIP_REGULAR_EXPRESSION \"skipped\")\nset_tests_properties(dot_newline PROPERTIES PASS_REGULAR_EXPRESSION \"^first.second\")\n"
+        "set_tests_properties(brace PROPERTIES PASS_REGULAR_EXPRESSION \"a{2}\")\nset_tests_properties(will_fail_rx PROPERTIES PASS_REGULAR_EXPRESSION \"hello\" WILL_FAIL TRUE)\n"
+        "set_tests_properties(prop_cwd PROPERTIES WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/sub\")\n");
+    fs::create_directories(gRoot / "sub");
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("not understood    0") != string::npos, "the regex checks of the CMake file pass (. matches a line break, { } are plain, \\\\ in a replacement is one backslash, list(FILTER))", o);
+    check(man.find("pass_regex = hel+o") != string::npos && man.find("pass_regex = one two") != string::npos && man.find("fail_regex = Error") != string::npos
+          && man.find("skip_regex = skipped") != string::npos && man.find("cwd = {src}/sub") != string::npos, "the manifest carries pass_regex, fail_regex, skip_regex and the WORKING_DIRECTORY property", man);
+    o = sh("-f build.okay ctest -j2 --junit out/rx.xml", &rc);
+    auto has = [&](const string& w) { return o.find(w) != string::npos; };
+    check(rc == 1 && has("PASS pass_rx ") && has("PASS pass_rx_list ") && has("PASS dot_newline ") && has("PASS brace ") && has("PASS prop_cwd "), "matching output passes, whatever the exit code; CMake's . and { } rules apply", o);
+    check(has("FAIL pass_rx_miss exit 0") && has("(required regular expression not found)") && has("FAIL fail_rx exit 0") && has("(fail regular expression found)"), "a missing required text or a found failure text fails, with the reason", o);
+    check(has("SKIP skip_rx (skip regular expression found)") && has("FAIL will_fail_rx") && has("9 tests, 3 failed, 1 skipped"), "a skip text skips; WILL_FAIL turns a regex pass into a failure (the same 5 passed, 3 failed, 1 skipped as CTest)", o);
+    { string x = readFile(gRoot / "out/rx.xml"); check(x.find("<failure message=\"required regular expression not found\">") != string::npos && x.find("<skipped message=\"skip regular expression found\"/>") != string::npos, "the JUnit file names the reasons", x); }
+    write("bad.okay", "ctest t\n cmd = true\n pass_regex = \"(unclosed\"\nend\n"); o = sh("-f bad.okay ctest", &rc);
+    check(rc == 2 && o.find("bad regular expression") != string::npos, "a bad regular expression in the manifest is an error before anything runs", o);
+    write("CMakeLists.txt", "project(p C)\nenable_testing()\nadd_test(NAME t COMMAND true)\nset_tests_properties(t PROPERTIES PROCESSORS 2)\n");
+    o = sh("cmake . -o p.okay --audit", &rc);
+    check(rc == 0 && o.find("test property PROCESSORS") != string::npos, "a test property okay-build does not use is counted as not understood, never dropped silently", o);
+}
+static void testCmakeScriptMode() {
+    printf("test: okay-build script runs CMake scripts (cmake -P) and ctest runs script tests without CMake\n");
+    fresh("script");
+    write("inc/part.cmake", "set(PART yes)\n");
+    write("s.cmake", "message(STATUS \"status ${A}\")\nmessage(\"plain ${B}\")\ninclude(${CMAKE_CURRENT_LIST_DIR}/inc/part.cmake)\n"
+        "file(WRITE \"${OUT}/w.txt\" \"one\\n\")\nfile(APPEND \"${OUT}/w.txt\" \"two\\n\")\n"
+        "execute_process(COMMAND sh -c \"cat; echo err >&2; exit 3\" WORKING_DIRECTORY \"${OUT}\" INPUT_FILE \"${OUT}/w.txt\"\n"
+        "                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err OUTPUT_STRIP_TRAILING_WHITESPACE)\n"
+        "execute_process(COMMAND pwd WORKING_DIRECTORY \"${OUT}\" OUTPUT_VARIABLE where OUTPUT_STRIP_TRAILING_WHITESPACE)\n"
+        "execute_process(COMMAND sh -c \"echo quiet; echo loud >&2\" OUTPUT_QUIET ERROR_VARIABLE e2)\n"
+        "execute_process(COMMAND sh -c \"echo a; echo b >&2\" OUTPUT_VARIABLE both ERROR_VARIABLE both)\n"
+        "message(STATUS \"rc=${rc} out=[${out}] err=[${err}] part=${PART} where=${where} e2=[${e2}] both=[${both}]\")\n"
+        "if(MODE STREQUAL \"fatal\")\n  message(FATAL_ERROR \"stop now\")\nendif()\nif(MODE STREQUAL \"send\")\n  message(SEND_ERROR \"bad but go on\")\nendif()\n"
+        "if(MODE STREQUAL \"ret\")\n  return()\nendif()\nmessage(STATUS \"end of script\")\n");
+    fs::create_directories(gRoot / "out");
+    string outDir = fs::canonical(gRoot / "out").string();
+    auto run = [&](const string& mode, string& err) { // standard output and standard error kept apart (sh() joins them)
+        string cmd = "cd '" + gRoot.string() + "' && " + gTool + " script -DA=a -D B=b -DOUT:PATH=" + outDir + " -DMODE=" + mode + " -P s.cmake 2>err.txt", o; char b[4096];
+        FILE* p = popen(cmd.c_str(), "r"); size_t n; while ((n = fread(b, 1, sizeof b, p)) > 0) o.append(b, n);
+        int rc = WEXITSTATUS(pclose(p)); err = readFile(gRoot / "err.txt"); return std::make_pair(rc, o);
+    };
+    string err; auto r = run("ok", err);
+    string want = "-- status a\n-- rc=3 out=[one\ntwo] err=[err\n] part=yes where=" + outDir + " e2=[loud\n] both=[a\nb\n]\n";
+    check(r.first == 0 && r.second == want + "-- end of script\n" && err == "plain b\n", "STATUS on standard output with \"-- \", plain text on standard error, -D values, include, file(WRITE/APPEND), execute_process with a folder, an input file and its variables", r.second + "|err|" + err);
+    r = run("fatal", err);
+    check(r.first == 1 && r.second == want && err == "plain b\nCMake Error at s.cmake:13 (message):\n  stop now\n\n\n", "FATAL_ERROR stops with exit 1 and CMake's error text", r.second + "|err|" + err);
+    r = run("send", err);
+    check(r.first == 1 && r.second == want + "-- end of script\n" && err.find("CMake Error at s.cmake:16 (message):\n  bad but go on") != string::npos, "SEND_ERROR carries on and ends with exit 1", r.second + "|err|" + err);
+    r = run("ret", err);
+    check(r.first == 0 && r.second == want, "return() ends the script with exit 0", r.second + "|err|" + err);
+    write("u.cmake", "set(X 1)\nfile(DOWNLOAD http://example.invalid/x x)\nmessage(STATUS \"not reached\")\n");
+    int rc; string o = sh("script -P u.cmake", &rc);
+    check(rc == 1 && o.find("u.cmake:2: not understood by okay-build script: file(DOWNLOAD) in a script") != string::npos && o.find("not reached") == string::npos, "a command a script does not understand stops it with its name, never a guess", o);
+    o = sh("script -P missing.cmake", &rc); check(rc == 1 && o.find("Not a file: missing.cmake") != string::npos, "a missing script is an error", o);
+    o = sh("tool env OKB_A=1 --unset=HOME sh -c 'echo \"$OKB_A[$HOME]\"; exit 4'", &rc);
+    check(rc == 4 && o == "1[]\n", "tool env sets and removes variables and returns the command's exit code (cmake -E env)", o);
+    // a project whose tests are CMake scripts: the manifest runs them with okay-build, and a `cmake` on PATH is never started
+    write("show.c", "#include <stdlib.h>\n#include <string.h>\nint main(void) { const char* v = getenv(\"OKB_X\"); return v && strcmp(v, \"42\") == 0 ? 0 : 1; }\n");
+    write("t.cmake", "if(NOT A EQUAL 1)\n  message(FATAL_ERROR \"A is ${A}\")\nendif()\nexecute_process(COMMAND ${PROG} RESULT_VARIABLE r)\nif(NOT r EQUAL 1)\n  message(FATAL_ERROR \"show gave ${r}\")\nendif()\nfile(WRITE \"${OUT}/ran.txt\" \"yes\")\n");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(sp C)\nenable_testing()\nadd_executable(show show.c)\n"
+        "add_test(NAME script_ok COMMAND ${CMAKE_COMMAND} -DA=1 -DPROG=$<TARGET_FILE:show> -DOUT=${CMAKE_CURRENT_BINARY_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/t.cmake)\n"
+        "add_test(NAME script_bad COMMAND ${CMAKE_COMMAND} -D A=2 -DPROG=$<TARGET_FILE:show> -P ${CMAKE_CURRENT_SOURCE_DIR}/t.cmake)\nset_tests_properties(script_bad PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME env_cmd COMMAND ${CMAKE_COMMAND} -E env OKB_X=42 $<TARGET_FILE:show>)\nadd_test(NAME other_cmake COMMAND ${CMAKE_COMMAND} --version)\n"
+        "file(WRITE ${CMAKE_BINARY_DIR}/note.txt \"from configure\")\nadd_test(NAME script_reads_note COMMAND ${CMAKE_COMMAND} -DNOTE=${CMAKE_BINARY_DIR}/note.txt -P ${CMAKE_CURRENT_SOURCE_DIR}/n.cmake)\n");
+    write("n.cmake", "file(READ \"${NOTE}\" t)\nif(NOT t STREQUAL \"from configure\")\n  message(FATAL_ERROR \"note is [${t}]\")\nendif()\n");
+    o = sh("cmake . -o build.okay --audit", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && o.find("CMake scripts run by okay-build 4, run cmake itself 1") != string::npos, "the audit counts script tests okay-build runs and the one that still needs cmake", o);
+    check(man.find("cmd = {okaybuild} script -DA=1 -DPROG={target:show}") != string::npos && man.find("cmd = {okaybuild} script -D A=2") != string::npos && man.find("cmd = {okaybuild} tool env OKB_X=42 {target:show}") != string::npos, "cmake -P and cmake -E env become okay-build script / tool env in the manifest", man);
+    write("fakebin/cmake", "#!/bin/sh\necho fake cmake ran; exit 99\n"); fs::permissions(gRoot / "fakebin/cmake", fs::perms::owner_all);
+    o = sh("-f build.okay build show >/dev/null && PATH=" + (gRoot / "fakebin").string() + ":$PATH " + gTool + " -f build.okay ctest -R 'script_ok|script_bad|env'", &rc);
+    check(rc == 0 && o.find("PASS script_ok") != string::npos && o.find("PASS script_bad") != string::npos && o.find("PASS env_cmd") != string::npos && o.find("fake cmake") == string::npos
+          && readFile(gRoot / "build/ctest/ran.txt") == "yes" && !fs::exists(gRoot / "build/ctest/note.txt"), "the script tests run and pass without CMake (a cmake on PATH that fails is never started); a file no chosen test names is not written", o);
+    o = sh("-f build.okay ctest script_reads_note", &rc);
+    check(rc == 0 && o.find("PASS script_reads_note") != string::npos && readFile(gRoot / "build/ctest/note.txt") == "from configure", "a file the CMake code wrote at configure time is written before a test that names it runs", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
         if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "compilers") { testToolchainOkayCc(); testOkayCcEngineFiles(); testToolchainOkayMs(); printf("okaybuild tests (okay compilers only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testConfigureTimeFiles(); testCmakeModuleCommands(); testGeneratedFileSafety(); testLinkPieces(); testLoopControlAndLinkProperties(); testConfigurationFlags(); testSourcePropertiesPerFolder(); testMingwToolchainFile(); testPostBuild(); testCtestOutputRules(); testCmakeScriptMode(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -2596,6 +2688,8 @@ int main(int argc, char** argv) {
     testSourcePropertiesPerFolder();
     testMingwToolchainFile();
     testPostBuild();
+    testCtestOutputRules();
+    testCmakeScriptMode();
     testImporterTool();
     testToolchainOkayCc();
     testOkayCcEngineFiles();

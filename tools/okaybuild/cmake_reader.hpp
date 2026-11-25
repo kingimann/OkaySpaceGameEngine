@@ -42,6 +42,7 @@ struct Arg { string text; bool quoted = false, bracket = false; };
 struct Cmd { string name; vector<Arg> args; int line = 0; string file; };
 
 struct ReadError { string msg; };
+struct ScriptStop { int code; }; // script mode: message(FATAL_ERROR) was printed; the script ends with this exit code
 
 static string lower(string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
 static string upper(string s) { for (auto& c : s) c = (char)toupper((unsigned char)c); return s; }
@@ -174,6 +175,50 @@ static bool inBin(const string& p) { // a file strictly inside {bin}, already ti
     return !(rest == ".." || rest.compare(0, 3, "../") == 0) && rest[0] != '/';
 }
 
+// CMake's regular expressions in the C++ library's ECMAScript dialect. Written from the CMake documentation of its regex syntax
+// (^ $ . [ ] [^ ] - * + ? | ( ) and "\<char> matches <char>") and checked against `cmake -P` on this machine: "." also matches a line
+// break, { } are plain characters, "\d" is a plain "d", and inside [ ] a backslash or "[" is a plain character and a "]" right
+// after "[" or "[^" is a member. ^ and $ are the start and end of the whole text in both dialects.
+static string cmakeRegexToStd(const string& r) {
+    string o; bool inSet = false; size_t setFirst = 0;
+    for (size_t i = 0; i < r.size(); ++i) {
+        char ch = r[i];
+        if (inSet) {
+            if (ch == ']' && i != setFirst) { inSet = false; o += ']'; }
+            else if (ch == '\\' || ch == '[' || ch == ']') { o += '\\'; o += ch; }
+            else o += ch;
+            continue;
+        }
+        if (ch == '\\') {
+            if (i + 1 >= r.size()) { o += "\\\\"; break; }
+            char nx = r[++i];
+            if (isalnum((unsigned char)nx) || nx == '_') o += nx; else { o += '\\'; o += nx; }
+            continue;
+        }
+        if (ch == '[') { inSet = true; o += '['; setFirst = i + 1; if (setFirst < r.size() && r[setFirst] == '^') { o += '^'; ++i; ++setFirst; } continue; }
+        if (ch == '.') { o += "[\\s\\S]"; continue; }
+        if (ch == '{' || ch == '}') { o += '\\'; o += ch; continue; }
+        o += ch;
+    }
+    return o;
+}
+
+// A CMake replacement text (string(REGEX REPLACE), list(TRANSFORM REPLACE)) in the C++ library's format: \1..\9 are groups (\0 the
+// whole match), "\\" is one backslash, and a "$" is a plain character.
+static string cmakeReplaceToStd(const string& rep) {
+    string o;
+    for (size_t k = 0; k < rep.size(); ++k) {
+        if (rep[k] == '\\' && k + 1 < rep.size()) {
+            char nx = rep[k + 1];
+            if (nx == '0') { o += "$&"; ++k; continue; }
+            if (isdigit((unsigned char)nx)) { o += '$'; o += nx; ++k; continue; }
+            if (nx == '\\') { o += '\\'; ++k; continue; }
+        }
+        if (rep[k] == '$') o += "$$"; else o += rep[k];
+    }
+    return o;
+}
+
 // ---- 2. What the evaluator builds ------------------------------------------------------------------------------------------
 struct Target {
     string name, kind; // exe | lib | iface | imported | alias
@@ -198,6 +243,7 @@ struct Options {
     std::map<string, string> fetched; // FetchContent name -> folder with the sources already on disk
     string buildType = "Release";
     bool quiet = true;
+    bool script = false; // `okay-build script -P FILE` (CMake's script mode): files are written on disk, commands run, messages print
 };
 
 struct Tally { std::map<string, int> run, unknown, genex; vector<string> messages; int options = 0, setOptions = 0, widened = 0; };
@@ -236,6 +282,14 @@ struct Interp {
     std::map<string, string> srcProps; // "folder|file|PROP" -> value: a source property belongs to the folder that set it (only targets made there see it)
     string srcKey(const string& folder, const string& file, const string& prop) const { return folder + "|" + file + "|" + prop; }
     bool testingOn = false;
+    // Script mode: how a command is run (okay-build passes its own process runner: argv, folder, standard-input file, whether
+    // standard error goes into the same text as standard output, then the two texts) and how many SEND_ERROR messages were given.
+    std::function<int(const vector<string>&, const string&, const string&, bool, string&, string&)> runProcess;
+    int scriptErrors = 0;
+    void scriptExecute(const Cmd& c, const vector<string>& a);
+    void scriptMessage(const Cmd& c, const vector<string>& a);
+    void scriptFile(const vector<string>& a);
+    int unknownTotal() const { int n = 0; for (auto& u : tally.unknown) n += u.second; return n; }
     // Files the CMake code writes while it is read (file(WRITE/APPEND), cmake -E copy): path -> text. Only paths in the build folder
     // ({bin}) go into the manifest; the source tree is never written.
     std::map<string, string> written; std::set<string> folders; // folders: file(MAKE_DIRECTORY) in {bin}
@@ -257,7 +311,7 @@ struct Interp {
     void configureFile(const vector<string>& a);
     std::map<string, string> globalProps; // set_property(GLOBAL ...)
     std::map<string, std::regex> rxCache; // each pattern is compiled once (the module grouping matches thousands of times)
-    const std::regex& rx(const string& pattern) { auto it = rxCache.find(pattern); if (it == rxCache.end()) it = rxCache.emplace(pattern, std::regex(pattern)).first; return it->second; }
+    const std::regex& rx(const string& pattern) { auto it = rxCache.find(pattern); if (it == rxCache.end()) it = rxCache.emplace(pattern, std::regex(cmakeRegexToStd(pattern))).first; return it->second; } // a CMake pattern
     std::map<string, vector<string>> dirDefsFinal; // add_compile_definitions as it stands at the end of each folder (CMake reads it when it generates)
     vector<std::pair<string, vector<string>>> deferred; // cmake_language(DEFER CALL ...) for the folder being read
     void runDeferred() { auto d = std::move(deferred); deferred.clear(); for (auto& c : d) { auto f = funcs.find(lower(c.first)); if (f != funcs.end()) callFunc(f->second, c.first, c.second); else tally.unknown["cmake_language(DEFER) of " + c.first]++; } }
@@ -483,7 +537,15 @@ static size_t matchEnd(const vector<Cmd>& cs, size_t i, size_t e, const char* op
 }
 
 inline void Interp::run(const vector<Cmd>& cs, size_t b, size_t e) {
-    for (size_t i = b; i < e && !returning && !breaking && !continuing;) exec(cs, i, e);
+    if (!opt.script) { for (size_t i = b; i < e && !returning && !breaking && !continuing;) exec(cs, i, e); return; }
+    // a script never guesses: the first thing it does not understand stops it, naming the command
+    for (size_t i = b; i < e && !returning && !breaking && !continuing;) {
+        int before = unknownTotal(); const Cmd& c = cs[i]; exec(cs, i, e);
+        if (unknownTotal() != before) {
+            string what; for (auto& u : tally.unknown) what += (what.empty() ? "" : ", ") + u.first;
+            throw ReadError{c.file + ":" + std::to_string(c.line) + ": not understood by okay-build script: " + what};
+        }
+    }
 }
 
 inline void Interp::exec(const vector<Cmd>& cs, size_t& i, size_t e) {
@@ -562,9 +624,11 @@ inline void Interp::callFunc(const Func& f, const string& name, const vector<str
 }
 
 inline void Interp::includeFile(const string& file) {
-    std::ifstream in(file); if (!in) return;
+    std::ifstream in(file); if (!in) { if (opt.script) throw ReadError{"include: cannot read " + file}; return; }
     string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
-    auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
+    string shown = fs::path(file).lexically_relative(opt.root).generic_string();
+    if (opt.script && (shown.empty() || shown.compare(0, 2, "..") == 0)) shown = file; // a script names a file outside the folder it runs in by its full path, as CMake does
+    auto cs = parseFile(text, shown);
     string was = get("CMAKE_CURRENT_LIST_FILE"); vars["CMAKE_CURRENT_LIST_FILE"] = file;
     vars["CMAKE_CURRENT_LIST_DIR"] = fs::path(file).parent_path().generic_string();
     run(cs, 0, cs.size()); returning = false; vars["CMAKE_CURRENT_LIST_FILE"] = was;
@@ -617,6 +681,10 @@ inline void Interp::doList(const vector<string>& a) {
     if (op == "APPEND") { for (size_t k = 2; k < a.size(); ++k) cur.push_back(a[k]); vars[var] = joinList(cur); }
     else if (op == "PREPEND") { cur.insert(cur.begin(), a.begin() + 2, a.end()); vars[var] = joinList(cur); }
     else if (op == "LENGTH" && a.size() > 2) vars[a[2]] = std::to_string(cur.size());
+    else if (op == "FILTER" && a.size() == 5 && (a[2] == "INCLUDE" || a[2] == "EXCLUDE") && a[3] == "REGEX") { // keep (or drop) the items the pattern finds
+        try { vector<string> keep; for (auto& x : cur) if (std::regex_search(x, rx(a[4])) == (a[2] == "INCLUDE")) keep.push_back(x); vars[var] = joinList(keep); }
+        catch (const std::regex_error&) { tally.unknown["list(FILTER) regex"]++; }
+    }
     else if (op == "GET" && a.size() > 3) {
         vector<string> r; for (size_t k = 2; k + 1 < a.size(); ++k) { long idx = atol(a[k].c_str()); if (idx < 0) idx += (long)cur.size(); r.push_back(idx >= 0 && idx < (long)cur.size() ? cur[(size_t)idx] : ""); }
         vars[a.back()] = joinList(r);
@@ -644,15 +712,14 @@ inline void Interp::doList(const vector<string>& a) {
             else { tally.unknown["list(TRANSFORM) selector " + a[k]]++; return; }
         }
         try {
-            std::regex selRx(sel.empty() ? string(".*") : sel);
             for (auto& x : cur) {
-                if (!sel.empty() && !std::regex_search(x, selRx)) continue;
+                if (!sel.empty() && !std::regex_search(x, rx(sel))) continue;
                 if (act == "APPEND") x += arg1; else if (act == "PREPEND") x = arg1 + x;
                 else if (act == "TOLOWER") for (auto& ch : x) ch = (char)tolower((unsigned char)ch);
                 else if (act == "TOUPPER") for (auto& ch : x) ch = (char)toupper((unsigned char)ch);
                 else if (act == "STRIP") { size_t b = x.find_first_not_of(" \t\r\n"), e2 = x.find_last_not_of(" \t\r\n"); x = b == string::npos ? "" : x.substr(b, e2 - b + 1); }
                 else if (act == "GENEX_STRIP") { if (x.find("$<") != string::npos) x.clear(); }
-                else if (act == "REPLACE") { string rep2; for (size_t q = 0; q < arg2.size(); ++q) { if (arg2[q] == '\\' && q + 1 < arg2.size() && isdigit((unsigned char)arg2[q + 1])) { rep2 += '$'; rep2 += arg2[++q]; } else if (arg2[q] == '$') rep2 += "$$"; else rep2 += arg2[q]; } x = std::regex_replace(x, rx(arg1), rep2); }
+                else if (act == "REPLACE") x = std::regex_replace(x, rx(arg1), cmakeReplaceToStd(arg2));
             }
         } catch (const std::regex_error&) { tally.unknown["list(TRANSFORM) regex"]++; return; }
         if (act == "GENEX_STRIP") { vector<string> r; for (auto& x : cur) if (!x.empty()) r.push_back(x); cur = r; }
@@ -727,8 +794,6 @@ inline void Interp::parseArguments(const vector<string>& a0) {
     if (missing.empty()) vars.erase(pre + "KEYWORDS_MISSING_VALUES"); else vars[pre + "KEYWORDS_MISSING_VALUES"] = joinList(missing);
 }
 
-static string cmakeRegexToStd(const string& r) { return r; }
-
 inline void Interp::doString(const vector<string>& a) {
     if (a.empty()) return; const string& op = a[0];
     try {
@@ -745,13 +810,11 @@ inline void Interp::doString(const vector<string>& a) {
         if (op == "REGEX" && a.size() >= 2) {
             const string& m = a[1];
             if (m == "REPLACE" && a.size() >= 5) {
-                string rep = a[3]; string r2; // \1 -> $1 for the standard library
-                for (size_t k = 0; k < rep.size(); ++k) { if (rep[k] == '\\' && k + 1 < rep.size() && isdigit((unsigned char)rep[k + 1])) { r2 += '$'; r2 += rep[++k]; } else if (rep[k] == '$') r2 += "$$"; else r2 += rep[k]; }
                 string in; for (size_t k = 5; k < a.size(); ++k) in += a[k];
-                vars[a[4]] = std::regex_replace(in, rx(cmakeRegexToStd(a[2])), r2); return;
+                vars[a[4]] = std::regex_replace(in, rx(a[2]), cmakeReplaceToStd(a[3])); return;
             }
             if ((m == "MATCH" || m == "MATCHALL") && a.size() >= 5) {
-                string in; for (size_t k = 4; k < a.size(); ++k) in += a[k]; const std::regex& re = rx(cmakeRegexToStd(a[2])); vector<string> found;
+                string in; for (size_t k = 4; k < a.size(); ++k) in += a[k]; const std::regex& re = rx(a[2]); vector<string> found;
                 for (auto it = std::sregex_iterator(in.begin(), in.end(), re); it != std::sregex_iterator(); ++it) { found.push_back(it->str(0)); if (m == "MATCH") { setMatch(true, *it); break; } }
                 vars[a[3]] = joinList(found); return;
             }
@@ -881,8 +944,8 @@ inline void Interp::doFile(const vector<string>& a) {
     if (op == "STRINGS" && a.size() >= 3) {
         string whole; readText(abs(a[1], curSrc), whole); std::istringstream in(whole); string line; vector<string> found; string re;
         for (size_t k = 3; k + 1 < a.size(); ++k) if (a[k] == "REGEX") re = a[k + 1];
-        std::regex rx; bool use = !re.empty(); try { if (use) rx = std::regex(re); } catch (...) { use = false; }
-        while (std::getline(in, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); if (!use || std::regex_search(line, rx)) { string esc; for (char ch : line) { if (ch == ';') esc += "\\;"; else esc += ch; } found.push_back(esc); } }
+        const std::regex* lineRx = nullptr; try { if (!re.empty()) lineRx = &rx(re); } catch (...) { tally.unknown["file(STRINGS) regex"]++; return; }
+        while (std::getline(in, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); if (!lineRx || std::regex_search(line, *lineRx)) { string esc; for (char ch : line) { if (ch == ';') esc += "\\;"; else esc += ch; } found.push_back(esc); } }
         vars[a[2]] = joinList(found); return;
     }
     if (op == "GLOB" || op == "GLOB_RECURSE") {
@@ -1087,6 +1150,7 @@ inline void Interp::builtin(const Cmd& c) {
         return;
     }
     if (n == "message") {
+        if (opt.script) { scriptMessage(c, a); return; }
         if (a.empty()) return;
         if (a[0] == "FATAL_ERROR" || a[0] == "SEND_ERROR") { string m; for (size_t k = 1; k < a.size(); ++k) m += a[k]; throw ReadError{c.file + ":" + std::to_string(c.line) + ": the CMake file stops here: " + m}; }
         if (a[0] == "WARNING" || a[0] == "AUTHOR_WARNING" || a[0] == "DEPRECATION") { string m; for (size_t k = 1; k < a.size(); ++k) m += a[k]; tally.messages.push_back(m); }
@@ -1130,12 +1194,13 @@ inline void Interp::builtin(const Cmd& c) {
     if (n == "include") {
         if (a.empty()) return; string f = a[0];
         if (f.find('/') == string::npos && f.find(".cmake") == string::npos) return; // a module name (FetchContent, CheckIncludeFileCXX ...): handled by the commands themselves
+        std::error_code ec; if (std::find(a.begin(), a.end(), "OPTIONAL") != a.end() && !fs::exists(abs(f, curSrc), ec)) return;
         includeFile(abs(f, curSrc)); return;
     }
     if (n == "add_subdirectory") { if (!a.empty()) sub(a[0]); return; }
     if (n == "list") { doList(a); return; }
     if (n == "string") { doString(a); return; }
-    if (n == "file") { doFile(a); return; }
+    if (n == "file") { if (opt.script) scriptFile(a); else doFile(a); return; }
     if (n == "get_filename_component") {
         if (a.size() < 3) return; string in = a[1], r; fs::path p(in); const string& m = a[2];
         if (m == "ABSOLUTE" || m == "REALPATH") r = abs(in, curSrc); else if (m == "DIRECTORY" || m == "PATH") r = p.parent_path().generic_string();
@@ -1144,6 +1209,7 @@ inline void Interp::builtin(const Cmd& c) {
         vars[a[0]] = r; return;
     }
     if (n == "find_package" || n == "find_program" || n == "find_library" || n == "find_path" || n == "pkg_check_modules" || n == "check_include_file_cxx" || n == "check_include_file") { doFind(n, a); return; }
+    if (n == "execute_process" && opt.script) { scriptExecute(c, a); return; }
     if (n == "execute_process") {
         string cmdline, outVar, resVar; bool inCmd = false, strip = false; vector<string> w;
         for (size_t k = 0; k < a.size(); ++k) {
@@ -1338,11 +1404,112 @@ inline void Interp::runTop() {
 }
 
 
+// ---- Script mode: `okay-build script [-D NAME=VALUE]... -P FILE [ARG...]` runs one CMake script the way `cmake -P` does, so the
+// tests that are CMake scripts need no CMake. Written from the CMake documentation of script mode, message(), file() and
+// execute_process(), and checked by running `cmake -P` on small scripts on this machine (output format, exit codes).
+// message(): STATUS goes to standard output as "-- text"; plain text and NOTICE go to standard error; WARNING and errors are printed
+// as "CMake Warning/Error at FILE:LINE (message):" with the text indented by two spaces. SEND_ERROR carries on and the script ends with
+// exit code 1; FATAL_ERROR stops it with exit code 1.
+inline void Interp::scriptMessage(const Cmd& c, const vector<string>& a) {
+    string mode = a.empty() ? "" : a[0]; size_t from = 0;
+    static const std::set<string> modes = {"FATAL_ERROR", "SEND_ERROR", "WARNING", "AUTHOR_WARNING", "DEPRECATION", "NOTICE", "STATUS", "VERBOSE", "DEBUG", "TRACE", "CHECK_START", "CHECK_PASS", "CHECK_FAIL"};
+    if (modes.count(mode)) from = 1; else mode = "NOTICE";
+    string text; for (size_t k = from; k < a.size(); ++k) text += a[k];
+    if (mode == "VERBOSE" || mode == "DEBUG" || mode == "TRACE") return; // below the default log level
+    if (mode == "STATUS" || mode.compare(0, 6, "CHECK_") == 0) { printf("-- %s\n", text.c_str()); fflush(stdout); return; }
+    if (mode == "NOTICE") { fflush(stdout); fprintf(stderr, "%s\n", text.c_str()); fflush(stderr); return; }
+    bool error = mode == "FATAL_ERROR" || mode == "SEND_ERROR";
+    string body; for (char ch : text) { body += ch; if (ch == '\n') body += "  "; }
+    fflush(stdout);
+    fprintf(stderr, "CMake %s at %s:%d (message):\n  %s\n\n\n", error ? "Error" : mode == "DEPRECATION" ? "Deprecation Warning" : "Warning", c.file.c_str(), c.line, body.c_str());
+    fflush(stderr);
+    if (mode == "SEND_ERROR") ++scriptErrors;
+    if (mode == "FATAL_ERROR") throw ScriptStop{1};
+}
+
+// file() in a script works on the disk (a configure only keeps files in memory for the manifest).
+inline void Interp::scriptFile(const vector<string>& a) {
+    if (a.empty()) return; const string& op = a[0]; std::error_code ec;
+    if ((op == "WRITE" || op == "APPEND") && a.size() >= 2) {
+        string p = abs(a[1], curSrc), text; for (size_t k = 2; k < a.size(); ++k) text += a[k];
+        if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
+        std::ofstream f(p, std::ios::binary | (op == "WRITE" ? std::ios::trunc : std::ios::app));
+        if (!f || !(f << text)) throw ReadError{"file(" + op + "): cannot write " + p};
+        return;
+    }
+    if (op == "MAKE_DIRECTORY") { for (size_t k = 1; k < a.size(); ++k) if (!fs::create_directories(abs(a[k], curSrc), ec) && ec) throw ReadError{"file(MAKE_DIRECTORY): cannot make " + a[k]}; return; }
+    if (op == "REMOVE" || op == "REMOVE_RECURSE") { for (size_t k = 1; k < a.size(); ++k) { string p = abs(a[k], curSrc); if (op == "REMOVE") { if (!fs::is_directory(p, ec)) fs::remove(p, ec); } else fs::remove_all(p, ec); } return; }
+    if (op == "TOUCH") { for (size_t k = 1; k < a.size(); ++k) { string p = abs(a[k], curSrc); { std::ofstream f(p, std::ios::app); if (!f) throw ReadError{"file(TOUCH): cannot touch " + p}; } fs::last_write_time(p, fs::file_time_type::clock::now(), ec); } return; }
+    if (op == "WRITE" || op == "APPEND" || op == "COPY" || op == "DOWNLOAD" || op == "UPLOAD" || op == "INSTALL" || op == "GENERATE" || op == "CONFIGURE" || op == "CHMOD" || op == "CHMOD_RECURSE" || op == "RENAME" || op == "COPY_FILE" || op == "CREATE_LINK" || op == "LOCK" || op == "ARCHIVE_CREATE" || op == "ARCHIVE_EXTRACT") { tally.unknown["file(" + op + ") in a script"]++; return; }
+    doFile(a); // READ, STRINGS, GLOB, RELATIVE_PATH ... read the disk the same way in both modes
+}
+
+// execute_process() in a script runs the command (one COMMAND; several piped together are not done) and fills the variables.
+inline void Interp::scriptExecute(const Cmd& c, const vector<string>& a) {
+    vector<vector<string>> cmds; string cwd, inFile, outFile, errFile, outVar, errVar, resVar, resultsVar, fatal;
+    bool outQuiet = false, errQuiet = false, outStrip = false, errStrip = false; int mode = 0; // 1 command words
+    for (size_t k = 0; k < a.size(); ++k) {
+        const string& w = a[k]; bool more = k + 1 < a.size();
+        if (w == "COMMAND") { cmds.emplace_back(); mode = 1; continue; }
+        if (mode == 1 && w != "WORKING_DIRECTORY" && w != "INPUT_FILE" && w != "OUTPUT_FILE" && w != "ERROR_FILE" && w != "OUTPUT_VARIABLE" && w != "ERROR_VARIABLE" && w != "RESULT_VARIABLE" && w != "RESULTS_VARIABLE"
+            && w != "OUTPUT_QUIET" && w != "ERROR_QUIET" && w != "OUTPUT_STRIP_TRAILING_WHITESPACE" && w != "ERROR_STRIP_TRAILING_WHITESPACE" && w != "TIMEOUT" && w != "ENCODING" && w != "COMMAND_ECHO" && w != "COMMAND_ERROR_IS_FATAL" && w != "ECHO_OUTPUT_VARIABLE" && w != "ECHO_ERROR_VARIABLE") { cmds.back().push_back(w); continue; }
+        mode = 0;
+        if (w == "WORKING_DIRECTORY" && more) cwd = abs(a[++k], curSrc);
+        else if (w == "INPUT_FILE" && more) inFile = abs(a[++k], curSrc);
+        else if (w == "OUTPUT_FILE" && more) outFile = abs(a[++k], curSrc);
+        else if (w == "ERROR_FILE" && more) errFile = abs(a[++k], curSrc);
+        else if (w == "OUTPUT_VARIABLE" && more) outVar = a[++k];
+        else if (w == "ERROR_VARIABLE" && more) errVar = a[++k];
+        else if (w == "RESULT_VARIABLE" && more) resVar = a[++k];
+        else if (w == "RESULTS_VARIABLE" && more) resultsVar = a[++k];
+        else if (w == "OUTPUT_QUIET") outQuiet = true; else if (w == "ERROR_QUIET") errQuiet = true;
+        else if (w == "OUTPUT_STRIP_TRAILING_WHITESPACE") outStrip = true; else if (w == "ERROR_STRIP_TRAILING_WHITESPACE") errStrip = true;
+        else if (w == "COMMAND_ERROR_IS_FATAL" && more) fatal = a[++k];
+        else { tally.unknown["execute_process(" + w + ") in a script"]++; return; } // TIMEOUT, ENCODING, COMMAND_ECHO, ECHO_*: not done
+    }
+    if (cmds.size() != 1 || cmds[0].empty()) { tally.unknown[cmds.size() > 1 ? "execute_process with several COMMANDs" : "execute_process with no command"]++; return; }
+    if (cmds[0][0] == get("CMAKE_COMMAND")) { tally.unknown["execute_process(cmake) in a script"]++; return; }
+    if (!runProcess) throw ReadError{"execute_process: this okay-build cannot run commands from a script"};
+    std::error_code ec; if (!inFile.empty() && !fs::is_regular_file(inFile, ec)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": execute_process: INPUT_FILE " + inFile + " cannot be read"};
+    bool merge = !outVar.empty() && outVar == errVar;
+    string out, err; int rc = runProcess(cmds[0], cwd, inFile, merge, out, err);
+    auto strip = [](string& t) { while (!t.empty() && isspace((unsigned char)t.back())) t.pop_back(); };
+    if (outStrip) strip(out); if (errStrip) strip(err);
+    auto toFile = [&](const string& p, const string& t) { std::ofstream f(p, std::ios::binary | std::ios::trunc); if (!f || !(f << t)) throw ReadError{"execute_process: cannot write " + p}; };
+    if (!outFile.empty()) toFile(outFile, out); if (!errFile.empty() && !merge) toFile(errFile, err);
+    if (merge) vars[outVar] = out; else { if (!outVar.empty()) vars[outVar] = out; if (!errVar.empty()) vars[errVar] = err; }
+    if (outVar.empty() && outFile.empty() && !outQuiet && !out.empty()) { fputs(out.c_str(), stdout); fflush(stdout); }
+    if (errVar.empty() && errFile.empty() && !errQuiet && !err.empty()) { fputs(err.c_str(), stderr); fflush(stderr); }
+    if (!resVar.empty()) vars[resVar] = std::to_string(rc);
+    if (!resultsVar.empty()) vars[resultsVar] = std::to_string(rc);
+    if ((fatal == "ANY" || fatal == "LAST") && rc != 0) {
+        fflush(stdout); fprintf(stderr, "CMake Error at %s:%d (execute_process):\n  execute_process failed command indexes:\n\n    1: \"Child return code: %d\"\n\n\n", c.file.c_str(), c.line, rc);
+        throw ScriptStop{1};
+    }
+}
+
+// Runs one script. defs are the -D values (CMake puts them in the cache, where the script reads them); args are the words after
+// the script (CMAKE_ARGV<n> counts from the program name, as in CMake). Returns the exit code `cmake -P` would give.
+template <class Runner>
+static int runCmakeScript(const string& file, const std::map<string, string>& defs, const vector<string>& argvWords, Runner runner) {
+    Interp in; std::error_code ec; string cwd = fs::current_path(ec).generic_string();
+    in.opt.root = cwd; in.opt.binDir = cwd; in.opt.defs = defs; in.opt.script = true; in.runProcess = runner;
+    in.init(); in.vars.erase("CMAKE_BUILD_TYPE"); in.cache.erase("CMAKE_BUILD_TYPE"); // a script has no build type
+    string abs = fs::absolute(file, ec).lexically_normal().generic_string();
+    in.vars["CMAKE_SCRIPT_MODE_FILE"] = abs; in.vars["CMAKE_ARGC"] = std::to_string(argvWords.size());
+    for (size_t k = 0; k < argvWords.size(); ++k) in.vars["CMAKE_ARGV" + std::to_string(k)] = argvWords[k];
+    if (!fs::is_regular_file(abs, ec)) { fprintf(stderr, "CMake Error: Not a file: %s\n", file.c_str()); return 1; }
+    try { in.includeFile(abs); }
+    catch (const ScriptStop& s) { return s.code; }
+    catch (const ReadError& e) { fflush(stdout); fprintf(stderr, "okay-build script: %s\n", e.msg.c_str()); return 1; }
+    return in.scriptErrors ? 1 : 0;
+}
+
 // ---- 3. Interpreter result to a build.okay manifest ----------------------------------------------------------------------
 struct Report {
     int targetsDeclared = 0, exes = 0, libs = 0, ifaces = 0, emitted = 0, skipped = 0, sources = 0, defines = 0, flags = 0, perFile = 0;
     int generated = 0; vector<string> inputs; // generate blocks written; the files read (for the buildfile block)
-    int fetches = 0, testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
+    int fetches = 0, testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0, testsCmakeScript = 0;
     vector<std::pair<string, string>> skippedTargets; // name, reason
     vector<std::pair<string, string>> skippedTests;
     vector<string> unresolved; // link items that were neither a target nor a plain library name
@@ -1584,14 +1751,20 @@ static string emitManifest(Interp& in, Report& rep) {
                 if (!emitted.count(tg->name)) { skip = true; why = "needs " + tg->name + ", which is not written (" + (tg->skipReason.empty() ? string("not an emitted target") : tg->skipReason) + ")"; }
                 needs.push_back(tg->name); words.push_back("{target:" + tg->name + "}"); if (k == 0) exe = true; continue;
             }
-            if (w == "cmake") ++rep.testsNeedCmake;
             words.push_back(srcWord(w, root));
         }
+        if (!words.empty() && tdef.cmd[0] == in.get("CMAKE_COMMAND")) { // a test that runs CMake: okay-build does the same job itself
+            size_t k = 1; while (k < words.size() && words[k].compare(0, 2, "-D") == 0) k += words[k] == "-D" ? 2 : 1;
+            if (k + 1 < words.size() && words[k] == "-P") { words[0] = "{okaybuild}"; words.insert(words.begin() + 1, "script"); ++rep.testsCmakeScript; } // cmake -D... -P file
+            else if (words.size() > 2 && words[1] == "-E" && words[2] == "env") { words[0] = "{okaybuild}"; words[1] = "tool"; ++rep.testsCmakeScript; } // cmake -E env N=V cmd
+            else ++rep.testsNeedCmake;
+        } else for (auto& w : words) if (w == in.get("CMAKE_COMMAND")) { ++rep.testsNeedCmake; break; }
         if (exe) ++rep.testsExe; else ++rep.testsScript;
         if (skip) { ++rep.testsSkipped; rep.skippedTests.push_back({tdef.name, why}); continue; }
         ++rep.testsEmitted;
-        string cwd = tdef.cwd.empty() ? rootRel(tdef.dir, root) : tdef.cwd;
-        if (tdef.cwd.empty()) cwd = "{bin}" + (cwd.empty() || cwd == tdef.dir ? string() : "/" + cwd);
+        string tcwd = tdef.props.count("WORKING_DIRECTORY") ? tdef.props.at("WORKING_DIRECTORY") : tdef.cwd; // the property wins over add_test's
+        string cwd = tcwd.empty() ? rootRel(tdef.dir, root) : tcwd;
+        if (tcwd.empty()) cwd = "{bin}" + (cwd.empty() || cwd == tdef.dir ? string() : "/" + cwd);
         else cwd = srcWord(cwd, root);
         out << "ctest " << qw(tdef.name) << "\n  cmd =";
         for (auto& w : words) out << " " << qw(w);
@@ -1607,6 +1780,16 @@ static string emitManifest(Interp& in, Report& rep) {
             out << "\n";
         }
         if (Interp::isTrue(pr("RUN_SERIAL")) && !pr("RUN_SERIAL").empty()) out << "  serial = on\n";
+        // how the output decides the result (CMake regular expressions, a list: any one of them)
+        for (const char* key : {"PASS_REGULAR_EXPRESSION", "FAIL_REGULAR_EXPRESSION", "SKIP_REGULAR_EXPRESSION"}) {
+            auto v = splitSemi(pr(key)); if (v.empty()) continue;
+            out << "  " << lower(string(key).substr(0, 4)) << "_regex =";
+            for (auto& w : v) out << " " << qw(w);
+            out << "\n";
+        }
+        static const std::set<string> knownProps = {"TIMEOUT", "WILL_FAIL", "SKIP_RETURN_CODE", "ENVIRONMENT", "LABELS", "DEPENDS", "RUN_SERIAL", "WORKING_DIRECTORY",
+            "PASS_REGULAR_EXPRESSION", "FAIL_REGULAR_EXPRESSION", "SKIP_REGULAR_EXPRESSION"};
+        for (auto& kv : tdef.props) if (!knownProps.count(kv.first)) in.tally.unknown["test property " + kv.first]++; // never dropped without a word
         out << "end\n";
     }
     return out.str();

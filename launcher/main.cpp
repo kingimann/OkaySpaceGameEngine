@@ -134,6 +134,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "AntiCheatPages.hpp"   // Admin > Anti-cheat, my bans and appeals, session tickets
 #include "CoverArtAvatars.hpp"  // game cover art, avatar textures
 #include "NavIcons.hpp"         // the sidebar's line icons, round icon buttons, stars
+#include "okay/Core/Random.hpp"   // the welcome screen's star field
 #include "SignInGate.hpp"       // what the window may show before and after signing in (tested headless)
 #include "AuthForm.hpp"         // the welcome screen's fields, checks and plain-words errors (tested headless)
 #include "PageLayout.hpp"       // where the page toolbar, chips, card grids and listing cards go (tested headless)
@@ -11431,8 +11432,8 @@ static void DrawWelcomeArt(ImDrawList* dl, ImVec2 a, ImVec2 b) {
     const ImU32 bot = ImGui::GetColorU32(okaytheme::kDeep);
     dl->AddRectFilledMultiColor(a, b, top, top, bot, bot);
     const float w = b.x - a.x, h = b.y - a.y;
-    unsigned seed = 1234567u;
-    auto rnd = [&]() { seed = seed * 1103515245u + 12345u; return (float)((seed >> 8) & 0xFFFF) / 65535.0f; };
+    okay::Random stars(1234567u);   // the same sky every frame
+    auto rnd = [&]() { return stars.Value(); };
     for (int i = 0; i < 90; ++i) {
         const ImVec2 p(a.x + rnd() * w, a.y + rnd() * h);
         dl->AddCircleFilled(p, 0.6f + rnd() * 1.2f, IM_COL32(255, 255, 255, (int)(40 + rnd() * 120)), 8);
@@ -11666,10 +11667,10 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
         ImGui::Checkbox("Stay signed in", &g_staySignedIn);
         if (emailAccounts) { ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x + cw - ImGui::CalcTextSize("Forgot password?").x); if (link("##forgot", "", "Forgot password?")) { step = AF::Step::Forgot; banner.clear(); submitted = false; if (std::strchr(fId, '@')) std::snprintf(fEmail, sizeof(fEmail), "%s", fId); } }
         bannerBox();
-        if (bannerUnreachable && !banner.empty() && link("##retry", "", "Try again")) { submitted = true; if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) StartAuthJob(account, 1, AF::Trim(fId), fPass, ""); }
+        if (bannerUnreachable && !banner.empty() && link("##retry", "", "Try again")) { submitted = true; if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) StartAuthJob(account, 1, okay::str::Trim(fId), fPass, ""); }
         if (mainButton("Sign in", "Signing in\xE2\x80\xA6", true, enter)) {
             submitted = true;
-            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 1, AF::Trim(fId), fPass, ""); }
+            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 1, okay::str::Trim(fId), fPass, ""); }
         }
         ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
         if (link("##tosignup", "New here?", "Create an account")) { step = AF::Step::SignUp; banner.clear(); submitted = false; }
@@ -11716,8 +11717,8 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
             submitted = true;
             if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) {
                 banner.clear();
-                if (emailAccounts) StartAuthJob(account, 2, AF::Trim(fEmail), fPass, AF::Trim(fUser));
-                else StartAuthJob(account, 2, AF::Trim(fUser), fPass, "");
+                if (emailAccounts) StartAuthJob(account, 2, okay::str::Trim(fEmail), fPass, okay::str::Trim(fUser));
+                else StartAuthJob(account, 2, okay::str::Trim(fUser), fPass, "");
             }
         }
         ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
@@ -11729,7 +11730,7 @@ static void DrawWelcomeScreen(okay::account::AccountService& account, okay::sign
             bannerBox();
             if (mainButton("Send reset link", "Sending\xE2\x80\xA6", true, enter)) {
                 submitted = true;
-                if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 3, AF::Trim(fEmail), "", ""); }
+                if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 3, okay::str::Trim(fEmail), "", ""); }
             }
         } else {
             title("We sent you a link", ("Open the email we sent to " + sentTo + " and follow the link to choose a new password.").c_str());

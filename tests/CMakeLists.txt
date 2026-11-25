@@ -4246,7 +4246,7 @@ endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
 # The launcher's sign-in gate and welcome screen rules (launcher/SignInGate.hpp, launcher/AuthForm.hpp). Std only.
 add_executable(test_signin_gate test_signin_gate.cpp)
-target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_features(test_signin_gate PRIVATE cxx_std_17)
 add_test(NAME signin_gate COMMAND test_signin_gate)
 

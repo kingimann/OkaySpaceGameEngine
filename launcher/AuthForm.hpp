@@ -4,6 +4,7 @@
 // network), tested headless (tests/test_signin_gate.cpp). The requests themselves go through the one account client,
 // okay::account::AccountService.
 #pragma once
+#include "okay/Core/StringUtil.hpp"   // okay::str::Trim, LowerAscii (std only)
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -26,16 +27,10 @@ inline std::vector<Field> FieldOrder(Step s, bool emailAccounts) {
     }
 }
 
-inline std::string Trim(const std::string& s) {
-    std::size_t a = 0, b = s.size();
-    while (a < b && std::isspace((unsigned char)s[a])) ++a;
-    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
-    return s.substr(a, b - a);
-}
 
 /// "" when fine, else one short sentence. Empty fields say nothing until the person tries to submit (`submitted`).
 inline std::string CheckEmail(const std::string& raw, bool submitted) {
-    const std::string e = Trim(raw);
+    const std::string e = okay::str::Trim(raw);
     if (e.empty()) return submitted ? "Enter your email address." : "";
     const std::size_t at = e.find('@');
     if (at == std::string::npos || at == 0 || e.find('@', at + 1) != std::string::npos) return "That doesn't look like an email address.";
@@ -44,7 +39,7 @@ inline std::string CheckEmail(const std::string& raw, bool submitted) {
     return "";
 }
 inline std::string CheckUsername(const std::string& raw, bool submitted) {
-    const std::string u = Trim(raw);
+    const std::string u = okay::str::Trim(raw);
     if (u.empty()) return submitted ? "Choose a username." : "";
     if (u.size() < 2 || u.size() > 32) return "Use 2 to 32 characters.";
     for (unsigned char c : u)
@@ -52,7 +47,7 @@ inline std::string CheckUsername(const std::string& raw, bool submitted) {
     return "";
 }
 inline std::string CheckIdentifier(const std::string& raw, bool submitted) {
-    if (Trim(raw).empty()) return submitted ? "Enter your email or username." : "";
+    if (okay::str::Trim(raw).empty()) return submitted ? "Enter your email or username." : "";
     return "";
 }
 
@@ -107,10 +102,9 @@ inline bool CanSubmit(Step s, bool emailAccounts, const std::string& id, const s
 /// What a server answer means for the screen.
 enum class Outcome { Error, CheckYourEmail, Unreachable };
 struct Friendly { Outcome outcome = Outcome::Error; std::string text; };
-inline std::string LowerCopy(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 /// The account client's error, in plain words (never codes, HTTP numbers or setup notes for developers).
 inline Friendly FriendlyError(const std::string& raw) {
-    const std::string e = LowerCopy(raw);
+    const std::string e = okay::str::LowerAscii(raw);
     auto has = [&](const char* k) { return e.find(k) != std::string::npos; };
     if (has("check your email to confirm")) return {Outcome::CheckYourEmail, "Check your email: we sent you a link to confirm your account."};
     if (has("couldn't reach") || has("unreachable") || has("offline"))

@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (round 15 added: our own compilers driven by okay-build; rounds 12 to 14 measured against CMake; the older rounds were not re-checked).
+> **Last checked:** 2026-11-25 (round 18 added: the engine library and 20 engine test programs built with okay-build and compared with CMake+Ninja+CTest; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -739,3 +739,59 @@ scripts and projects on this machine. No code from CMake, CTest, Ninja or any ot
   `okay-build ctest` itself is still not done on Windows. When a time-out kills a pipe, only the commands we started are killed, not
   programs they started. The cold-build times above were taken on a busy machine and say nothing about speed. The engine library and
   the programs that link it (about 950) were not built this round.
+
+## Round 18 on claude/okaybuild-18: the engine library against Ninja, compile lines in CMake's order, scripts that run CMake (2026-11-25)
+Written from the CMake documentation (used as a specification: `INCLUDE_DIRECTORIES`, `SYSTEM`, imported targets' include folders,
+`DEFINE_SYMBOL`, `POSITION_INDEPENDENT_CODE`, script mode and `CMAKE_ARGV<n>`) and the POSIX descriptions of `setpgid` and `kill`. Every
+expected line was taken by running real CMake 3.28 with Ninja, and `cmake -P`, on small projects on this machine. No code from CMake,
+Ninja or any other project was read or used (rule 19a). No cryptography was written or changed. `okay_crypto` was compiled, because
+the engine library needs it; no crypto or hash test was chosen.
+- **Compile lines in CMake's order.** Round 17's lines had the same words as CMake's, but in another order and with `-I` where CMake
+  writes `-isystem`. Now `okay-build cmake` writes `compile_order = cmake` in the toolchain block, and a GCC-style compile is laid out as
+  CMake's Ninja files do it: the definitions sorted without repeats (the account definitions among them), then the source's own
+  definitions sorted, then the source's include folders, the target's `-I` folders, its `-isystem` folders, then the flags. A new target
+  key `system_include` holds the system folders: `SYSTEM` in `target_include_directories`, `include_directories(SYSTEM ...)`, and the
+  folders of an IMPORTED target (here `SDL2::SDL2`). A folder that is a system folder anywhere is one, and system folders come after
+  the others. The target's own folders and options keep call order (PRIVATE and PUBLIC mixed). Folder names keep `.` and `..` as CMake
+  does (`okayui/../shared` and `shared` are two `-I` words in both tools). A shared library gets `-D<target>_EXPORTS` and `-fPIC` right
+  after the language standard. Hand-written manifests keep okay-build's own order (`compile_order = okay`, the default); the MSVC and
+  our-compiler presets do not use the CMake order.
+- **`okay-build compdb TARGET...`** lists only the compiles a build of those targets runs (it listed everything, and stopped on the
+  fetched Dear ImGui source that is missing here).
+- **`tools/okaybuild/examples/compare_cmake_commands.py --exact`** compares each object's command word for word, paired by target and
+  source. It leaves out only the compiler name, the output, the dependency-file options, `-c` and the source, and okay-build's
+  `-ffile-prefix-map`. Account definitions are compared by name and place, not value. `--map` spells CMake's build folder as okay-build's.
+- **Measured on the tree (Linux, g++ 13.3).** Default options (Release): **1,826 of 1,826 compile commands identical word for word**
+  (every target except the 37 that need the fetched Dear ImGui; CMake has 1,928). On round 17's tool: 0 of 486 for the engine libraries.
+  The engine library and what it links (`okay_engine` 458 objects, `okay_platform` 6, `okay_crypto` 9, `okay_physcore` 6,
+  `okayscript_lang` 7): 486 of 486 identical. The same with build type None and `-O0` (the build below): 506 of 506 for the libraries and
+  the 20 test programs, and again 1,826 of 1,826 for the tree.
+- **Built at `-j1`, build type None, `-O0`** (to fit the machine; the flags are compared above for Release too). Both tools ran 531 steps:
+  Ninja 2,868 s, okay-build 2,960 s (a shared, busy machine: not a speed comparison). **Archive members: the same names in the same order
+  in all 5 libraries** (`ar t`). **Objects: all 484 library objects byte-identical.** The 20 test objects differ only in the source path
+  that `__FILE__` puts in them (`/okay-src/...` from okay-build's path map, the real path from CMake). A no-op build with the final tool
+  of this round ran 0 of 531 steps, so its command lines are the ones measured.
+- **20 test programs that link the engine** (audio_formats, component_order, data_load_checks, frame_overlay, humanoid_bones,
+  lua_script, module_vs_weapons, navmesh_carving, net_backend, net_resume_resend, profiler_jobs, scheduler_scale, script_debug, survival,
+  text, tilemap_collision, ui_text_example, user_reports, voxel_more, wav_playback): **CTest 20 passed, okay-build ctest 20 passed**, test
+  by test the same.
+- **Round 17's rebuild check is in the repository:** `tools/okaybuild/examples/compare_rebuilds.py` (rewritten). It builds both trees,
+  then per change (`noop`, `edit:PATH`, `touch:PATH`) builds both again and compares the objects each rebuilt, by target and source. An edit
+  is undone afterwards (the bytes come back with a new time) and the undo is compared too. A touch that only Ninja rebuilds is reported as
+  the planned difference. Found while writing it: putting a touched file's bytes back made Ninja rebuild twice, so a touch is not undone.
+- **Scripts that run CMake.** In `okay-build script`, `${CMAKE_COMMAND} [-D N=V]... -P FILE` runs `okay-build script`, and
+  `${CMAKE_COMMAND} -E env ...` runs `okay-build tool env`; `CMAKE_COMMAND` is okay-build's own path, as CMake gives its own. Any other
+  `cmake` command still stops the script as not understood. Output, errors and results are byte for byte `cmake -P`'s on the test
+  script. **`CMAKE_ARGV1`.. were off by one** (okay-build counted its word `script`); they are now the words after the program, as in CMake.
+- **A TIMEOUT now ends the programs a command started.** With a TIMEOUT, the commands of one `execute_process` get a process group of
+  their own (as okay-build's test runner already does), and a time-out kills the group. Checked: `sh -c "sleep 30 & ...; wait"` with
+  TIMEOUT 0.5 leaves the sleep dead under CMake and now under okay-build; round 17 left it running. Without a TIMEOUT nothing changes, so
+  a command can still read the terminal.
+- **Tests:** `testCmakeCompileOrder` (8 checks), `testCompareRebuildsScript` (5), `testScriptRunsItself` (4). On round 17's tool, 8 of the
+  12 checks of the first and third failed (one only because the "not understood" message now names `cmake -E`); the rebuild script did not
+  exist in the repository. After: all pass. Whole suite (`tools/okaybuild/build.sh`): **585 checks passed, 0 failed, 8 skipped** (was 568
+  passed, 0 failed, 8 skipped; the same 8 skips, all for wine or libsodium).
+- **Not done / unverified:** nothing ran on Windows. The rebuild script was run on a small project and in the suite, not again on the
+  real tree this round (the disk fell below 5 GB after the two builds, so the trees were deleted). The build used `-O0` and build type
+  None, not the default Release. MSVC `/external:I` is not used for system folders (plain `/I`). The 37 targets that need the fetched
+  Dear ImGui were not compared. The engine programs other than these 20 (about 930) were not built.

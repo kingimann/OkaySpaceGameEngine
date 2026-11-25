@@ -430,6 +430,13 @@ bool Parser::parse_lambda(Node* out) {
     if (!add_method(&structs[static_cast<size_t>(sid)], sid, m)) return false;
     const size_t mi = structs[static_cast<size_t>(sid)].methods.size() - 1;
     const size_t resume = body_end + 1;
+    // The locals of the function around stay visible to decltype in the body (an unevaluated operand names a local
+    // that is not captured: [expr.prim.lambda.capture] 7, [dcl.type.decltype]).
+    struct OuterGuard {
+        std::vector<const std::vector<Local>*>& stack;
+        ~OuterGuard() { stack.pop_back(); }
+    } outer_guard{lam_outer_locals_};
+    lam_outer_locals_.push_back(cur_locals);
     if (!has_ret && returns_value) {
         const bool saved_probe = lam_probe;
         const bool saved_seen = lam_probe_seen;
@@ -1350,6 +1357,18 @@ bool Parser::parse_unary(Node* out) {
             const auto alias = global_alias.find(name);
             if (alias != global_alias.end()) name = alias->second;
         }
+        if (is(TLt) && !local_visible(name)) {
+            // std::is_same_v<A, B>: a variable template (kept by its bare name, like function templates).
+            std::string bare = name;
+            const size_t first = name.find("::");
+            if (first != std::string::npos && namespaces.count(name.substr(0, first)) > 0)
+                bare = name.substr(name.rfind("::") + 2);
+            const auto vt = var_templates.find(bare);
+            if (vt != var_templates.end()) {
+                if (!parse_var_template_use(vt->second, out)) return false;
+                return parse_postfix(out);
+            }
+        }
         int scope_sid = -1;
         if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name) && !(!tokens[at - 1].nsq && member_hides(name, cur().kind))) {
             // Box<int>::member in an expression.
@@ -1452,9 +1471,24 @@ bool Parser::parse_unary(Node* out) {
             const std::string suffix = name.substr(last + 2);
             // An ordinary function of that full name (std::filesystem::remove beside the algorithm std::remove) is the
             // one called ([namespace.qual]); okay-ms keeps templates by their bare names only.
-            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0 && ovl.count(name) == 0)
-                name = suffix;
+            // std::remove(path) is <cstdio>'s function and std::remove(first, last, v) the algorithm template: when an
+            // ordinary function of the name exists, the template is used only for a call none of the functions can take
+            // and one of the template's overloads can (by the number of arguments, [over.match.viable] 2).
+            bool use_template = namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0;
+            if (use_template && ovl.count(name) > 0) {
+                use_template = false;
+                if (is(TLParen)) {
+                    const size_t n = call_arg_count_at(at);
+                    bool plain_takes = false;
+                    for (const OvFn& o : ovl[name])
+                        if (o.required <= n && (o.params.size() >= n || o.vararg)) plain_takes = true;
+                    use_template = !plain_takes && func_template_takes(suffix, n);
+                }
+            }
+            if (use_template) name = suffix;
         }
+        // std::filesystem::path(p) names the class even where a local `path` is visible ([basic.lookup.qual]).
+        bool ns_class = false;
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // std::string("abc"): a class of a namespace is registered by its bare name, as in a declaration.
             const size_t first = name.find("::");
@@ -1464,8 +1498,10 @@ bool Parser::parse_unary(Node* out) {
                 if (fd.name == name) is_function = true;
             if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
                 (class_name_text(suffix) || (typedefs.count(suffix) == 0 && find_struct(suffix) >= 0) ||
-                 (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
+                 (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3))) {
                 name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
+                ns_class = true;
+            }
         }
         size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
@@ -1623,7 +1659,7 @@ bool Parser::parse_unary(Node* out) {
                 }
             }
         }
-        if (is(TLBrace) && colons == std::string::npos && !local_visible(name) && cur_locals != nullptr) {
+        if (is(TLBrace) && colons == std::string::npos && (ns_class || !local_visible(name)) && cur_locals != nullptr) {
             // C{args}: a temporary object of a class made from a braced list ([expr.type.conv], [dcl.init.list]):
             // by a constructor, or member by member for an aggregate.
             int bsid = -1;
@@ -1660,7 +1696,7 @@ bool Parser::parse_unary(Node* out) {
                 return parse_postfix(out);
             }
         }
-        if (is(TLParen) && colons == std::string::npos && !local_visible(name) && cur_locals != nullptr) {
+        if (is(TLParen) && colons == std::string::npos && (ns_class || !local_visible(name)) && cur_locals != nullptr) {
             // C(args): a temporary object of a class built by a constructor ([expr.type.conv]). It is
             // made before the statement that uses it and destroyed after it.
             int csid = -1;
@@ -1713,9 +1749,11 @@ bool Parser::parse_unary(Node* out) {
                 return parse_postfix(out);
             }
         }
-        if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen)) && !local_visible(name)) {
+        const bool plain_beats_template = is(TLParen) && func_templates.count(name) > 0 && ovl.count(name) > 0 &&
+                                          !func_template_takes(name, call_arg_count_at(at));  // see std::remove above
+        if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen)) && !local_visible(name) && !plain_beats_template) {
             std::vector<TArg> targs;
-            if (is(TLt) && !parse_template_args(func_templates[name], &targs, true)) return false;
+            if (is(TLt) && !parse_func_template_args(name, &targs)) return false;
             if (!expect(TLParen, "'('")) return false;
             std::vector<Node> cargs;
             if (!parse_call_args(&cargs)) return false;
@@ -1885,13 +1923,25 @@ bool Parser::parse_unary(Node* out) {
                                  (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd)))) ||
                                 // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
                                 (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text) &&
-                                 !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd) && template_id_cast_at(at + 1));
+                                 !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd) && template_id_cast_at(at + 1)) ||
+                                // (decltype(x)*)p, and static_cast<decltype(f)*>(p) ([dcl.type.decltype])
+                                (ahead == TIdent && tokens[at + 1].text == "decltype" && at + 2 < tokens.size() &&
+                                 tokens[at + 2].kind == TLParen);
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
         if (type_ahead) {
             size_t k = at + 1;
-            if (tokens[k].kind == TIdent && is_template_name_at(k)) {
+            if (tokens[k].kind == TIdent && tokens[k].text == "decltype") {
+                int depth = 0;  // past decltype( ... ): (decltype(x)(y) + 1) is a functional cast
+                for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                    if (tokens[k].kind == TLParen) ++depth;
+                    else if (tokens[k].kind == TRParen && --depth == 0) {
+                        ++k;
+                        break;
+                    }
+                }
+            } else if (tokens[k].kind == TIdent && is_template_name_at(k)) {
                 int angle = 0;  // past the template's argument list: (Box<int>(x) + 1) is a functional cast
                 for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
                     if (tokens[k].kind == TLt) ++angle;
@@ -2579,6 +2629,14 @@ bool Parser::parse_type_trait(Node* out) {
         Type t;
         bool imp = false;
         bool exp = false;
+        if (is(TIdent) && type_packs.count(cur().text) > 0 && at + 1 < tokens.size() && tokens[at + 1].kind == TEllipsis) {
+            // Args...: the types of a template parameter pack, in order ([temp.variadic] 5).
+            for (const Type& pt : type_packs[cur().text]) types.push_back(pt);
+            next();
+            next();
+            if (!accept(TComma)) break;
+            continue;
+        }
         if (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.count(cur().text) == 0) {
             t = Type{};
             t.base = 3;
@@ -2661,6 +2719,55 @@ bool Parser::parse_type_trait(Node* out) {
         if (is_cls(b)) v = (is_cls(a) && (a.struct_id == b.struct_id || derives_from(a.struct_id, b.struct_id))) ||
                            (!is_cls(a) && converts_by_ctor(b.struct_id, Node{}, a));
         else v = !is_cls(a) && a.pointers == b.pointers && (a.pointers == 0 || a.base == b.base || b.base == 0);
+    } else if (which == "__is_invocable") {
+        // INVOKE(f, args...) is well formed ([func.require], [meta.rel] is_invocable), for a callable that is a class
+        // with operator() (a lambda's closure), a function or a pointer to one. Own simplification: a call operator fits
+        // by its number of parameters (defaults counted) and each argument by a loose conversion (a class from the same
+        // class, a derived class or a converting constructor; a scalar from a scalar; a pointer from a pointer of as
+        // many levels); a call operator template fits by its number of parameters. Pointers to members are not
+        // invocable here.
+        Type f = a;
+        f.is_ref = false;
+        f.rref = false;
+        const std::vector<Type> args(types.begin() + 1, types.end());
+        auto arg_fits = [&](const Type& from_ref, const Type& to_ref) {
+            Type from = from_ref;
+            Type to = to_ref;
+            from.is_ref = to.is_ref = false;
+            if (is_cls(to))
+                return (is_cls(from) && (from.struct_id == to.struct_id || derives_from(from.struct_id, to.struct_id))) ||
+                       (!is_cls(from) && converts_by_ctor(to.struct_id, Node{}, from));
+            if (is_cls(from)) return false;
+            if (to.pointers > 0 || from.pointers > 0)
+                return from.pointers == to.pointers || (from.pointers == 0 && from.base == 1);  // 0 / nullptr
+            return true;
+        };
+        auto params_fit = [&](const std::vector<Type>& params, const std::vector<Node>* defaults, bool vararg) {
+            const size_t need = defaults != nullptr ? required_args(*defaults, params.size()) : params.size();
+            if (args.size() < need || (args.size() > params.size() && !vararg)) return false;
+            for (size_t i = 0; i < args.size() && i < params.size(); ++i)
+                if (!arg_fits(args[i], params[i])) return false;
+            return true;
+        };
+        if (is_cls(f)) {
+            for (int sid = f.struct_id; sid >= 0 && !v; sid = structs[static_cast<size_t>(sid)].base)
+                for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+                    if (m.name == "operator()" && params_fit(m.params, &m.defaults, false)) v = true;
+            int owner = -1;
+            const MemberTmpl* mt = v ? nullptr : find_member_tmpl(f.struct_id, "operator()", &owner);
+            if (mt != nullptr) {
+                size_t fixed = 0;
+                bool pack = false;
+                for (const Type& pt : mt->td.proto) {
+                    if (pt.pack) pack = true;
+                    else ++fixed;
+                }
+                v = mt->td.proto.empty() || (pack ? args.size() >= fixed : args.size() == fixed);
+            }
+        } else if (f.is_func() && f.pointers <= 1 && static_cast<size_t>(f.func_id) < func_types.size()) {
+            const FuncType& ft = func_types[static_cast<size_t>(f.func_id)];
+            v = params_fit(ft.params, nullptr, ft.vararg);
+        }
     } else {
         error = "unknown type trait " + which;
         return false;

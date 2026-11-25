@@ -164,6 +164,7 @@ int main(int argc, char** argv) {
             else if (low.compare(0, 2, "fe") == 0) key = "fe";
             else if (low.compare(0, 1, "i") == 0) key = "i";
             else if (low.compare(0, 1, "d") == 0) key = "d";
+            else if (low.compare(0, 1, "u") == 0) key = "u";
             else {
                 fail("unknown flag: " + arg);
                 return 1;
@@ -174,6 +175,7 @@ int main(int argc, char** argv) {
             else if (key == "fe") exe_out = value;
             else if (key == "i") common.include_paths.push_back(value);
             else if (key == "d") common.defines.push_back(value);
+            else if (key == "u") common.undefines.push_back(value);
             else if (key == "entry") link.entry = value;
             else if (key == "libpath") libpaths.push_back(value);
             else if (!set_subsystem(value)) return 1;

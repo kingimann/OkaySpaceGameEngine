@@ -255,6 +255,36 @@ struct Parser {
         for (size_t i = 0; i + 2 < tokens.size(); ++i)
             if (tokens[i].kind == TEnum && (tokens[i + 1].kind == TStruct) && tokens[i + 2].kind == TIdent)
                 scoped.insert(tokens[i + 2].text);
+        // using B = Outer::BarStyle; (or typedef Outer::BarStyle B;) for a scoped enumeration: B::Segmented is then read
+        // as BarStyle::Segmented ([dcl.typedef] 2, [enum.udecl]). Own simplification: the alias holds for the rest of
+        // the file, whatever block it was declared in.
+        // Each alias declaration by position: the latest one before a use counts (another `using S = ...;` for a type
+        // that is not a scoped enumeration ends the earlier one).
+        std::map<std::string, std::vector<std::pair<size_t, std::string>>> scoped_alias;
+        for (size_t i = 0; i + 3 < tokens.size(); ++i) {
+            if (is_word(i, "using") && tokens[i + 1].kind == TIdent && tokens[i + 2].kind == TAssign) {
+                size_t j = i + 3;
+                while (j + 2 < tokens.size() && tokens[j].kind == TIdent && tokens[j + 1].kind == TColonColon) j += 2;
+                const bool to_enum = j + 1 < tokens.size() && tokens[j].kind == TIdent && scoped.count(tokens[j].text) > 0 &&
+                                     tokens[j + 1].kind == TSemi;
+                if (scoped.count(tokens[i + 1].text) == 0)
+                    scoped_alias[tokens[i + 1].text].push_back({i, to_enum ? tokens[j].text : std::string()});
+            } else if (tokens[i].kind == TTypedef) {
+                size_t j = i + 1;
+                while (j + 2 < tokens.size() && tokens[j].kind == TIdent && tokens[j + 1].kind == TColonColon) j += 2;
+                if (j + 2 < tokens.size() && tokens[j].kind == TIdent && scoped.count(tokens[j].text) > 0 &&
+                    tokens[j + 1].kind == TIdent && tokens[j + 2].kind == TSemi && scoped.count(tokens[j + 1].text) == 0)
+                    scoped_alias[tokens[j + 1].text].push_back({i, tokens[j].text});
+            }
+        }
+        const auto alias_at = [&scoped_alias](const std::string& name, size_t pos) {
+            const auto it = scoped_alias.find(name);
+            std::string found;
+            if (it != scoped_alias.end())
+                for (const auto& decl : it->second)
+                    if (decl.first < pos) found = decl.second;
+            return found;
+        };
         std::vector<Token> out;
         out.reserve(tokens.size());
         std::string in_scoped;  // the scoped enum whose braces are open
@@ -465,6 +495,15 @@ struct Parser {
                 // Input::PadFamily::Xbox: a scoped enumerator named through the class (or namespace) that declares the
                 // enumeration. Enumerators are kept in one table here, so the outer qualifier is dropped.
                 ++i;
+                continue;
+            }
+            if (t.kind == TIdent && scoped_alias.count(t.text) > 0 && i + 2 < tokens.size() &&
+                tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
+                (i == 0 || tokens[i - 1].kind != TColonColon) && !alias_at(t.text, i).empty()) {
+                Token n = t;
+                n.text = alias_at(t.text, i) + "::" + tokens[i + 2].text;
+                out.push_back(n);
+                i += 2;
                 continue;
             }
             if (t.kind == TIdent && scoped.count(t.text) > 0 && i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon &&
@@ -1402,7 +1441,19 @@ struct Parser {
             stmt_temps = keep_temps;
             if (!expect(TRParen, "')'")) return false;
             Type t;
-            if (!static_type(e, &t)) {
+            bool outer_found = false;
+            if (e.kind == Node::Name && !local_visible(e.text))
+                for (size_t li = lam_outer_locals_.size(); li-- > 0 && !outer_found;) {
+                    const std::vector<Local>* outer = lam_outer_locals_[li];
+                    if (outer == nullptr) continue;
+                    for (size_t k = outer->size(); k-- > 0;)
+                        if ((*outer)[k].name == e.text) {
+                            t = (*outer)[k].type;
+                            outer_found = true;
+                            break;
+                        }
+                }
+            if (!outer_found && !static_type(e, &t)) {
                 error = "decltype of an expression whose type is not known";
                 return false;
             }
@@ -2020,7 +2071,20 @@ struct Parser {
             bool imp = false;
             bool exp = false;
             const bool lead_const = accept(TConst);
-            if (!parse_type(&r, &imp, &exp)) return false;
+            // The parameters are in scope in a trailing return type ([basic.scope.param]): -> decltype(f()).
+            std::vector<Local> param_locals;
+            for (size_t i = 0; i < out->params.size() && i < out->param_names.size(); ++i) {
+                if (out->param_names[i].empty()) continue;
+                Local pl;
+                pl.name = out->param_names[i];
+                pl.type = out->params[i];
+                param_locals.push_back(pl);
+            }
+            std::vector<Local>* const saved_locals = cur_locals;
+            if (!param_locals.empty()) cur_locals = &param_locals;
+            const bool type_ok = parse_type(&r, &imp, &exp);
+            cur_locals = saved_locals;
+            if (!type_ok) return false;
             if (accept(TConst) || lead_const) r.pconst = true;
             while (accept(TStar)) ++r.pointers;
             if (accept(TAmp)) r.is_ref = true;
@@ -4761,14 +4825,125 @@ struct Parser {
     bool inst_primary = false;
     std::map<std::string, TDecl> class_templates{};
     std::map<std::string, TDecl> func_templates{};
+    // Variable templates by bare name: the template's parameters and the first token of the initializer.
+    struct VarTmpl {
+        TDecl td;
+        size_t init_at = 0;
+    };
+    std::map<std::string, VarTmpl> var_templates{};
+    // The local variables of the functions around the lambda bodies being read (innermost last), for decltype.
+    std::vector<const std::vector<Local>*> lam_outer_locals_{};
+    // name<args> for a variable template: the initializer read again with the parameters bound to args, as a value
+    // (okay-ms's variable templates are constants: the address of one cannot be taken).
+    bool parse_var_template_use(const VarTmpl& vt, Node* out) {
+        std::vector<TArg> targs;
+        if (!parse_template_args(vt.td, &targs, false)) return false;
+        const auto bound = bind_params(vt.td, targs);
+        const size_t saved = at;
+        at = vt.init_at;
+        const bool ok = parse_expr(1, out);
+        const bool ended = ok && is(TSemi);
+        at = saved;
+        unbind_params(bound);
+        if (ok && !ended) {
+            error = "expected ';' after the initializer of a variable template";
+            return false;
+        }
+        return ok;
+    }
     // Further templates of the same name (overloads), told apart by the number of arguments: one
     // with a parameter pack takes any number from its fixed parameters up, and loses to a template
     // with exactly the number of parameters ([temp.func.order], simplified).
     std::map<std::string, std::vector<TDecl>> func_template_extra{};
+    // The overloads whose template parameters accept the explicit template arguments of the call being read (f<0>(t)
+    // cannot be a template <class X> f overload): set by parse_func_template_args, used once by pick_func_template.
+    std::vector<const TDecl*> explicit_fit_{};
+    std::string explicit_fit_name_{};
+    // Reads f<...> for the function template `name`: the arguments are read against each overload in turn, since an
+    // overload set may mix type and value parameters (std::get<0>(tuple) and std::get<T>(variant), [temp.over]); the
+    // overloads they fit are remembered for pick_func_template.
+    bool parse_func_template_args(const std::string& name, std::vector<TArg>* out) {
+        std::vector<const TDecl*> cands{&func_templates[name]};
+        auto extra = func_template_extra.find(name);
+        if (extra != func_template_extra.end())
+            for (const TDecl& cand : extra->second) cands.push_back(&cand);
+        const size_t start = at;
+        size_t end = start;
+        std::string first_error;
+        std::vector<const TDecl*> fit;
+        for (const TDecl* cand : cands) {
+            at = start;
+            error.clear();
+            std::vector<TArg> args;
+            if (!parse_template_args(*cand, &args, true)) {
+                if (first_error.empty()) first_error = error;
+                continue;
+            }
+            if (fit.empty()) {
+                *out = std::move(args);
+                end = at;
+            }
+            fit.push_back(cand);
+            if (cands.size() == 1) break;
+        }
+        error.clear();
+        if (fit.empty()) {
+            error = first_error;
+            return false;
+        }
+        at = end;
+        explicit_fit_ = fit.size() == cands.size() ? std::vector<const TDecl*>() : fit;
+        explicit_fit_name_ = name;
+        return true;
+    }
+    // The number of arguments of the call whose '(' is at `open` (top-level commas; 0 for "()").
+    size_t call_arg_count_at(size_t open) const {
+        int depth = 0;
+        size_t count = 0;
+        bool any = false;
+        for (size_t k = open; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            const Tok kk = tokens[k].kind;
+            if (kk == TLParen || kk == TLBrack || kk == TLBrace) {
+                if (depth++ > 0) any = true;
+                continue;
+            }
+            if (kk == TRParen || kk == TRBrack || kk == TRBrace) {
+                if (--depth == 0) break;
+                continue;
+            }
+            any = true;
+            if (kk == TComma && depth == 1) ++count;
+        }
+        return any ? count + 1 : 0;
+    }
+    // Whether an overload of the function template `name` takes nargs arguments (by its parameters; a pack takes any
+    // number from its fixed parameters up). Defaults of function templates are not counted.
+    bool func_template_takes(const std::string& name, size_t nargs) {
+        std::vector<const TDecl*> cands{&func_templates[name]};
+        auto extra = func_template_extra.find(name);
+        if (extra != func_template_extra.end())
+            for (const TDecl& cand : extra->second) cands.push_back(&cand);
+        for (const TDecl* cand : cands) {
+            size_t fixed = 0;
+            bool has_pack = false;
+            for (const Type& pt : cand->proto) {
+                if (pt.pack) has_pack = true;
+                else ++fixed;
+            }
+            if (has_pack ? nargs >= fixed : nargs == cand->proto.size()) return true;
+        }
+        return false;
+    }
     const TDecl& pick_func_template(const std::string& name, size_t nargs) {
+        std::vector<const TDecl*> only;
+        if (explicit_fit_name_ == name) only.swap(explicit_fit_);
+        explicit_fit_.clear();
+        explicit_fit_name_.clear();
         const TDecl* best = &func_templates[name];
+        if (!only.empty()) best = only.front();
         bool best_exact = false;
         auto consider = [&](const TDecl& cand) {
+            if (!only.empty() && std::find(only.begin(), only.end(), &cand) == only.end()) return;
             size_t fixed = 0;
             bool has_pack = false;
             for (const Type& pt : cand.proto) {
@@ -4780,7 +4955,7 @@ struct Parser {
             if (!has_pack && !best_exact) {
                 best = &cand;
                 best_exact = true;
-            } else if (!best_exact && best == &func_templates[name]) {
+            } else if (!best_exact && best == (only.empty() ? &func_templates[name] : only.front())) {
                 best = &cand;
             }
         };
@@ -5442,6 +5617,30 @@ struct Parser {
             class_templates[cname] = td;
             at = td.end;
             return true;
+        }
+        if (struct_nest == 0 && !td.params.empty()) {
+            // template <class T> constexpr bool name = e; a variable template ([temp.pre] 1): a name, then '=' at the
+            // top level before any '(' or '{'. Kept as the token range of its initializer; a use name<args> reads that
+            // expression again with the parameters bound (parse_var_template_use).
+            int nest = 0;
+            for (size_t k = td.start; k < td.end; ++k) {
+                const Tok kk = tokens[k].kind;
+                if (kk == TLParen || kk == TLBrace) break;
+                if (kk == TLt) ++nest;
+                else if (kk == TGt) --nest;
+                else if (kk == TAssign && nest == 0) {
+                    if (k > td.start && tokens[k - 1].kind == TIdent &&
+                        !(k > td.start + 1 && tokens[k - 2].kind == TColonColon)) {  // not X<T>::member = v
+                        VarTmpl vt;
+                        vt.td = td;
+                        vt.init_at = k + 1;
+                        var_templates[tokens[k - 1].text] = vt;
+                        at = td.end;
+                        return true;
+                    }
+                    break;
+                }
+            }
         }
         // A function template: its name is the identifier before the first '('. The parameter
         // types are read once with each type parameter standing for itself (base 100 + index), so

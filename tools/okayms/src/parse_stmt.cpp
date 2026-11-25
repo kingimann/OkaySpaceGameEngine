@@ -751,6 +751,25 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             }
             if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
                 return false;
+            Type value_type;
+            if (!braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
+                !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array())) {
+                // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
+                // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3). The
+                // object is made in a hidden local that becomes the result (as for return {a, b}).
+                Local hidden;
+                hidden.name = "__br" + std::to_string(rv_count++);
+                hidden.type = cur_ret;
+                place_local(locals, hidden);
+                std::vector<Node> cargs;
+                cargs.push_back(std::move(value));
+                Node call;
+                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                    return false;
+                stmt_pre.push_back(std::move(call));
+                value = node_name(hidden.name);
+            }
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
             dtor_skip.clear();

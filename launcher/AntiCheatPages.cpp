@@ -218,8 +218,8 @@ void DrawAntiCheatAdmin() {
         ImGui::Dummy(ImVec2(w, ts.y * s + 6));
     };
     auto statusCol = [](const std::string& s) -> ImU32 {
-        return s == "open" ? IM_COL32(236, 150, 60, 255) : s == "reviewing" ? IM_COL32(88, 140, 240, 255)
-             : s == "actioned" || s == "accepted" ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255);
+        return s == "open" ? okaytheme::WarningFillU32() : s == "reviewing" ? okaytheme::U32(kAccent)
+             : s == "actioned" || s == "accepted" ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32();
     };
     auto openBan = [&](const std::string& uid, const std::string& hw, long report, const std::string& reason) {
         banOpen = true; banUid = uid; banHw = hw; banReport = report; banWho = uid.empty() ? std::string() : name(uid);
@@ -246,13 +246,13 @@ void DrawAntiCheatAdmin() {
         }
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - 250));
-        if (ImGui::Button("Ban a player\xE2\x80\xA6", ImVec2(130, 30))) openBan("", "", 0, "");
+        if (ImGui::Button("Ban a player\xE2\x80\xA6", ImVec2(okl::FitButtonW("Ban a player\xE2\x80\xA6", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) openBan("", "", 0, "");
         ImGui::SameLine();
         if (ImGui::Button(g_acAdBusy ? "Loading\xE2\x80\xA6" : "Refresh", ImVec2(110, 30))) queue(new AcAdminJob);
         ImGui::Dummy(ImVec2(0, 6));
     }
     if (!D.loadError.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.45f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
         ImGui::TextWrapped("%s", D.loadError.c_str());
         ImGui::PopStyleColor();
     }
@@ -310,7 +310,7 @@ void DrawAntiCheatAdmin() {
                     if (ImGui::Button("Evidence")) { evidenceId = r.id; AcAdminJob* j = new AcAdminJob; j->evidenceFor = r.id; queue(j); }
                 }
                 ImGui::SameLine();
-                if (PrimaryButton("Ban\xE2\x80\xA6", ImVec2(80, 0)))
+                if (PrimaryButton("Ban\xE2\x80\xA6", ImVec2(okl::FitButtonW("Ban\xE2\x80\xA6", okl::UiPx(80.0f)), 0)))
                     openBan(client ? r.reporter : r.reported, client ? r.hwHash : std::string(), r.id,
                             client ? r.reason + ": " + r.details : r.reason);
                 if (linkedUid == subject && D.linkedFor == subject) {
@@ -355,7 +355,7 @@ void DrawAntiCheatAdmin() {
             if (active) {
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
                 ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, p.y + 6));
-                if (ImGui::Button("Unban\xE2\x80\xA6", ImVec2(90, 28))) { unbanId = b.id; unbanWhy[0] = '\0'; }
+                if (ImGui::Button("Unban\xE2\x80\xA6", ImVec2(okl::FitButtonW("Unban\xE2\x80\xA6", okl::UiPx(90.0f)), okl::UiPx(28.0f)))) { unbanId = b.id; unbanWhy[0] = '\0'; }
             }
             ImGui::PopID();
         }
@@ -381,9 +381,9 @@ void DrawAntiCheatAdmin() {
             if (!a.decisionNote.empty()) ImGui::TextDisabled("Decision: %s", a.decisionNote.c_str());
             ImGui::PopTextWrapPos();
             if (a.status == "open") {
-                if (PrimaryButton("Accept\xE2\x80\xA6", ImVec2(100, 28))) { decideId = a.id; decideAccept = true; decideNote[0] = '\0'; }
+                if (PrimaryButton("Accept\xE2\x80\xA6", ImVec2(okl::FitButtonW("Accept\xE2\x80\xA6", okl::UiPx(100.0f)), okl::UiPx(28.0f)))) { decideId = a.id; decideAccept = true; decideNote[0] = '\0'; }
                 ImGui::SameLine();
-                if (ImGui::Button("Reject\xE2\x80\xA6", ImVec2(100, 28))) { decideId = a.id; decideAccept = false; decideNote[0] = '\0'; }
+                if (ImGui::Button("Reject\xE2\x80\xA6", ImVec2(okl::FitButtonW("Reject\xE2\x80\xA6", okl::UiPx(100.0f)), okl::UiPx(28.0f)))) { decideId = a.id; decideAccept = false; decideNote[0] = '\0'; }
             }
             ImGui::Separator();
             ImGui::PopID();
@@ -413,7 +413,7 @@ void DrawAntiCheatAdmin() {
         ImGui::Dummy(ImVec2(0, 4));
         acb::Request q; std::string err;
         const std::string hw = banMachine && acb::IsHwHash(banHw) ? banHw : std::string();
-        if (PrimaryButton("Ban", ImVec2(110, 30))) {
+        if (PrimaryButton("Ban", ImVec2(okl::FitButtonW("Ban", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) {
             const bool byName = banUid.empty();
             const std::string uname = okayofficial::Trim(banName);
             if (byName && uname.empty()) Toast("Type the player's username", 2);
@@ -433,7 +433,7 @@ void DrawAntiCheatAdmin() {
             else { act(q, "Banned"); ImGui::CloseCurrentPopup(); }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (unbanId) { ImGui::OpenPopup("Lift anti-cheat ban"); }
@@ -442,9 +442,9 @@ void DrawAntiCheatAdmin() {
         ImGui::SetNextItemWidth(380);
         ImGui::InputTextWithHint("##acunwhy", "Why (kept with the ban)", unbanWhy, sizeof(unbanWhy));
         acb::Request q;
-        if (PrimaryButton("Unban", ImVec2(110, 30))) { if (acb::Unban(unbanId, unbanWhy, q)) act(q, "Ban lifted"); unbanId = 0; ImGui::CloseCurrentPopup(); }
+        if (PrimaryButton("Unban", ImVec2(okl::FitButtonW("Unban", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { if (acb::Unban(unbanId, unbanWhy, q)) act(q, "Ban lifted"); unbanId = 0; ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) { unbanId = 0; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { unbanId = 0; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (decideId) { ImGui::OpenPopup("Decide appeal"); }
@@ -458,7 +458,7 @@ void DrawAntiCheatAdmin() {
             decideId = 0; ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) { decideId = 0; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { decideId = 0; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -622,12 +622,12 @@ void DrawAcBanBanner() {
         std::string sub = ban->appealStatus == "open" ? "Your appeal is waiting for a decision."
                         : ban->appealStatus == "rejected" ? "Your appeal was rejected" + (ban->appealNote.empty() ? std::string(".") : ": " + ban->appealNote)
                         : "Think this is a mistake? You can appeal.";
-        d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(120, 46, 30, 235), 10.0f);
+        d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::DangerFillU32(0.922f), 10.0f);
         d->AddText(ImVec2(p.x + 14, p.y + 8), IM_COL32_WHITE, head.c_str());
-        d->AddText(ImVec2(p.x + 14, p.y + 28), IM_COL32(255, 222, 205, 255), sub.c_str());
+        d->AddText(ImVec2(p.x + 14, p.y + 28), okaytheme::WarningU32(), sub.c_str());
         if (ban->CanAppeal()) {
             ImGui::SetCursorScreenPos(ImVec2(p.x + w - 130, p.y + 12));
-            if (ImGui::Button("Appeal\xE2\x80\xA6", ImVec2(116, 30))) { appealOpen = true; appealBuf[0] = '\0'; }
+            if (ImGui::Button("Appeal\xE2\x80\xA6", ImVec2(okl::FitButtonW("Appeal\xE2\x80\xA6", okl::UiPx(116.0f)), okl::UiPx(30.0f)))) { appealOpen = true; appealBuf[0] = '\0'; }
         }
         ImGui::SetCursorScreenPos(p);
         ImGui::Dummy(ImVec2(w, h + 8));
@@ -646,14 +646,14 @@ void DrawAcBanBanner() {
             ImGui::TextDisabled("An admin reads this. Say what happened; %d appeal%s left for this ban.", ban->appealsLeft, ban->appealsLeft == 1 ? "" : "s");
             ImGui::InputTextMultiline("##acappeal", appealBuf, sizeof(appealBuf), ImVec2(460, 120));
             acb::Request q; std::string err;
-            if (PrimaryButton("Send appeal", ImVec2(140, 30))) {
+            if (PrimaryButton("Send appeal", ImVec2(okl::FitButtonW("Send appeal", okl::UiPx(140.0f)), okl::UiPx(30.0f)))) {
                 if (std::getenv("OKAY_UI_DEMO_USER")) { Toast("Demo: nothing is sent", 0); ImGui::CloseCurrentPopup(); }
                 else if (!acb::FileAppeal(ban->id, appealBuf, okayac::MachineHash(), q, &err)) Toast(err, 2);
                 else { AcMeJob* j = new AcMeJob; j->hasAction = true; j->action = q; j->okMsg = "Appeal sent"; AcMeQueue(j); ImGui::CloseCurrentPopup(); }
             }
             ImGui::SameLine();
         }
-        if (ImGui::Button("Cancel", ImVec2(110, 30))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }

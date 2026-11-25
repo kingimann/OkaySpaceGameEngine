@@ -28,7 +28,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Net | 33 | 166 | [code_index/engine-Net.md](code_index/engine-Net.md) |
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |
 | engine-Physics | 30 | 154 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
-| engine-Platform | 29 | 231 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
+| engine-Platform | 29 | 234 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
 | engine-Render | 49 | 467 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 131 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
@@ -38,4 +38,4 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-UI | 16 | 78 | [code_index/engine-UI.md](code_index/engine-UI.md) |
 | engine-VisualScript | 32 | 630 | [code_index/engine-VisualScript.md](code_index/engine-VisualScript.md) |
 | okayui | 12 | 642 | [code_index/okayui.md](code_index/okayui.md) |
-| shared | 68 | 982 | [code_index/shared.md](code_index/shared.md) |
+| shared | 68 | 1002 | [code_index/shared.md](code_index/shared.md) |

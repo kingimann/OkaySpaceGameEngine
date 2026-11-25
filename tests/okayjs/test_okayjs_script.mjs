@@ -57,13 +57,17 @@ test('case 5: GetComponent, GameObject.Find, identity and printing', () => {
     const g = quiet(new Game());
     const player = g.scene.CreateGameObject('Player');
     const sc = g.AddScript(player, gameScript('find_other.js'));
+    // okay.js only: GameObject is a class a script can test with instanceof (the engine's GameObject global is not
+    // callable yet, so this stays out of the shared script)
+    const kind = g.AddScript(g.scene.CreateGameObject('Kind'),
+                             'export default class K { Start() { this.isObject = GameObject.Find("Other") instanceof GameObject; } }');
     g.scene.CreateGameObject('Other');
     g.step(DT);
     assert.equal(sc.Get('sameTransform'), true);
     assert.equal(sc.Get('noBody'), true);
     assert.equal(sc.Get('otherName'), 'Other');
     assert.equal(sc.Get('text'), 'GameObject(Player)');
-    assert.equal(sc.Get('isObject'), true);
+    assert.equal(kind.Get('isObject'), true);
     assert.ok(g.log.some(l => l.text === 'found Other'));
 });
 

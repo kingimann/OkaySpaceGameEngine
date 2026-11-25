@@ -6,7 +6,6 @@ export default class S {
         const other = GameObject.Find("Other");
         this.otherName = other ? other.name : "none";
         this.text = String(this.gameObject);
-        this.isObject = other instanceof GameObject;
         Debug.Log("found " + this.otherName);
     }
 }

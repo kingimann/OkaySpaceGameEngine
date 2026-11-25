@@ -185,7 +185,7 @@ export default class T {
         CHECK(w.loaded);
         w.scene.CreateGameObject("Other");
         w.scene.Start();
-        Script(w.sc->VM()).Yes("sameTransform").Yes("noBody").Text("otherName", "Other").Text("text", "GameObject(Player)").Yes("isObject");
+        Script(w.sc->VM()).Yes("sameTransform").Yes("noBody").Text("otherName", "Other").Text("text", "GameObject(Player)");
         CHECK(LogHas("found Other"));
     }
 

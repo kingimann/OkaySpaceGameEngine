@@ -676,6 +676,7 @@ private:
         auto u = static_cast<std::uint64_t>(v);
         for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
     }
+    std::vector<std::pair<int, std::string>>* fillRelocs_ = nullptr;  // the relocations of the global being filled
     void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
         if (!t || !init) return;
         if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
@@ -716,6 +717,25 @@ private:
                 putAt(b, off, static_cast<std::int64_t>(b64), 8);
             }
             return;
+        }
+        if (t->kind == Type::Kind::Pointer && fillRelocs_) {
+            // An address constant inside constant data (ISO C 6.6 p9): a string literal, &global or
+            // a function's name; 8 bytes the linker fills in.
+            const Expr* x = init;
+            while (x->kind == Expr::Kind::Cast && !x->kids.empty() && x->kids[0]) x = x->kids[0].get();
+            std::string target;
+            if (x->kind == Expr::Kind::String) target = addString(x->text);
+            else if (x->kind == Expr::Kind::Unary && x->text == "&" && !x->kids.empty() && x->kids[0] &&
+                     x->kids[0]->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->kids[0]->text); g && g->global) target = g->gname.empty() ? x->kids[0]->text : g->gname;
+            } else if (x->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->text); g && g->global && g->func) target = g->gname.empty() ? x->text : g->gname;
+            }
+            if (!target.empty()) {
+                putAt(b, off, 0, 8);
+                fillRelocs_->emplace_back(off, target);
+                return;
+            }
         }
         std::int64_t val = 0;
         if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
@@ -787,7 +807,9 @@ private:
             g.size = sizeOf(d.type.get());
             if (g.size < 0) g.size = 0;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            fillRelocs_ = &g.relocs;
             fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+            fillRelocs_ = nullptr;
             if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
         } else if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
@@ -2489,7 +2511,9 @@ private:
                 // once in the image like a global's ([basic.start.static]). A value that is not a
                 // constant is reported by fillInit (dynamic initialization of a static local is not
                 // supported); it was silently zero before.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
                 // static const float k = 0.5f, static double s = -1.0: the constant's bits; any

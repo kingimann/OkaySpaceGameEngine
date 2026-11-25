@@ -39,9 +39,19 @@ public:
         for (auto& d : tu.decls)
             if (d && (d->name.compare(0, 4, "_ZTI") == 0 || d->name.compare(0, 4, "_ZTS") == 0))
                 tiDone_.insert(d->name);  // the parser's (for vtables)
+        // Inline functions with a deduced return type (auto, decltype(auto); template instances are
+        // inline) are checked first, so their callers see the type (std::visit(f, v).c_str()).
+        std::set<Decl*> early;
+        for (auto& d : tu.decls)
+            if (d && d->function && !d->fromInstance && d->body && d->type && isAuto(d->type->inner.get()) &&
+                d->isInline) {
+                early.insert(d.get());
+                checkFunction(*d);
+            }
         std::vector<Decl*> waiting;
         for (auto& d : tu.decls) {
             if (!d) continue;
+            if (early.count(d.get())) continue;
             if (d->function && d->fromInstance) {
                 waiting.push_back(d.get());
                 continue;
@@ -683,6 +693,15 @@ private:
                 r.type = prim(Type::Kind::Void);  // c ? (void)f() : (void)0 ([expr.cond] p2)
                 return r;
             }
+            if (a.type && b.type && !quiet_ && (a.type->kind == Type::Kind::Struct) != (b.type->kind == Type::Kind::Struct)) {
+                // c ? str : "null": the other branch converts to the class by a converting
+                // constructor ([expr.cond] p4), then both are objects of the class.
+                const bool aCls = a.type->kind == Type::Kind::Struct;
+                std::size_t other = aCls ? 2 : 1;
+                ET from = decay(copyET(aCls ? b : a));
+                if (from.type && convertingTemp(*e.kids[other], *from.type, aCls ? *a.type : *b.type))
+                    return checkExprBody(e);
+            }
             err(e.line, e.col, "branches of '?:' do not have a common type");
             return bad(e.line, e.col);
         }
@@ -850,6 +869,14 @@ private:
             return last;
         }
         case Expr::Kind::Brace:
+            if (e.ival == 11 && e.ty) {
+                // T{a, b, ..} of an aggregate that needs brace elision (made by the parser).
+                auto want = cloneType(*e.ty);
+                e.ty.reset();
+                e.ival = 0;
+                braceToTemp(e, *want);
+                if (e.kind == Expr::Kind::Comma) return checkExpr(e);
+            }
             err(e.line, e.col, "brace initializer is not an expression");
             return bad(e.line, e.col);
         }
@@ -1270,7 +1297,8 @@ private:
             arity = 1;
         if (arity == 0 || e.text == "&&" || e.text == "||" || e.text == ",") return false;
         std::string op = "operator" + e.text;
-        if (!freeOps_.count(op)) return false;
+        const bool tmplOp = funcTemplateSigs().count(op) > 0;  // template <class T> bool operator==(..)
+        if (!freeOps_.count(op) && !tmplOp) return false;
         for (std::size_t i = 0; i < arity; ++i)
             if (!e.kids[i]) return false;
         // The operand types: a cached result is read without taking it; anything else is probed
@@ -1350,6 +1378,39 @@ private:
             if (!ok) continue;
             auto call = mkE(Expr::Kind::Call, e);
             call->kids.push_back(mkName(name, e));
+            for (std::size_t i = 0; i < arity; ++i) call->kids.push_back(std::move(e.kids[i]));
+            e.kind = Expr::Kind::Call;
+            e.text.clear();
+            e.ival = 0;
+            e.kids = std::move(call->kids);
+            e.checked.reset();
+            return true;
+        }
+        if (tmplOp) {
+            // Non-member operator templates ([over.match.oper] p3, [temp.deduct.call]): a candidate
+            // is viable when its parameters deduce from the operands; the call then goes through
+            // the function template call, which chooses among them ("\x01tmpl:operator==").
+            bool any = false;
+            for (int k = 0; !any; ++k) {
+                std::string key = k == 0 ? op : op + "#" + std::to_string(k);
+                auto it = funcTemplateSigs().find(key);
+                if (it == funcTemplateSigs().end()) break;
+                const TemplateSig& cand = it->second;
+                if (!cand.fn || cand.fn->params.size() != arity) continue;
+                std::vector<std::unique_ptr<Type>> b(cand.names.size());
+                bool ok = true;
+                for (std::size_t i = 0; i < arity && ok; ++i) {
+                    const Type* pt = cand.fn->params[i].type.get();
+                    if (pt && !deduceArg(*pt, types[i], cand, b)) ok = false;
+                    if (pt && ok && !hasPlaceholder(*pt) && fitScore(*pt, decay(copyET(types[i]))) < 0) ok = false;
+                }
+                for (std::size_t i = 0; i < b.size() && ok; ++i)
+                    if (!b[i]) ok = false;
+                any = ok;
+            }
+            if (!any) return false;
+            auto call = mkE(Expr::Kind::Call, e);
+            call->kids.push_back(mkName("\x01" "tmpl:" + op, e));
             for (std::size_t i = 0; i < arity; ++i) call->kids.push_back(std::move(e.kids[i]));
             e.kind = Expr::Kind::Call;
             e.text.clear();
@@ -1568,6 +1629,11 @@ private:
             return bad(e.line, e.col);
         }
         if (e.text == "=") {
+            if (!canAssign(*lhs.type, rhs) && lhs.type->kind == Type::Kind::Struct && rhs.type &&
+                convertingTemp(*e.kids[1], *rhs.type, *lhs.type)) {
+                // x = v for a class x with a converting constructor from v ([over.ics.user]): x = X(v).
+                rhs = decay(checkExpr(*e.kids[1]));
+            }
             if (!canAssign(*lhs.type, rhs)) {
                 err(e.line, e.col, "cannot assign this value");
                 return bad(e.line, e.col);
@@ -1670,6 +1736,14 @@ private:
         if (param.kind == K::Int && !param.unsign &&
             (arg.type->kind == K::Char || arg.type->kind == K::Short || arg.type->kind == K::Bool))
             return 1;
+        // A pointer to a derived class converts to a pointer to its base better than to void *
+        // ([over.ics.rank] p4.4): os << buf.rdbuf() with a filebuf * takes the streambuf * one.
+        if (param.kind == K::Pointer && arg.type->kind == K::Pointer && param.inner && arg.type->inner) {
+            if (param.inner->kind == K::Void) return 5;
+            if (param.inner->kind == K::Struct && arg.type->inner->kind == K::Struct &&
+                derivedFrom(*arg.type->inner, *param.inner))
+                return 3;
+        }
         return 4;
     }
 
@@ -1849,6 +1923,24 @@ private:
                     deduced.push_back(i);
                     continue;
                 }
+                const Expr* ak = call.kids[firstArg + i].get();
+                if (ak && ak->kind == Expr::Kind::Brace) {
+                    // {a, b}: fits a class parameter; a scalar one only with at most one value
+                    // ([over.ics.list] p10); an initializer_list parameter is an exact match (p5).
+                    const Type* pt = c->type->params[i].type.get();
+                    if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (pt->kind == Type::Kind::Struct || pt->kind == Type::Kind::Array) {
+                        bool il = pt->tag.compare(0, 17, "initializer_list<") == 0 ||
+                                  pt->tag.compare(0, 22, "std::initializer_list<") == 0;
+                        total += il ? 0 : 2;
+                    } else if (ak->kids.size() > 1) {
+                        ok = false;
+                        break;
+                    } else {
+                        total += 2;
+                    }
+                    continue;
+                }
                 int sc = fitScore(*c->type->params[i].type, ets[i]);
                 if (sc < 0) {
                     ok = false;
@@ -2000,7 +2092,53 @@ private:
 
     // obj.f(args) where f is a member function template: deduce its parameters from the arguments
     // (e.kids[1..]), ask for the instance (made when the file is parsed again) and return its name.
-    std::string memberInstance(const std::string& key, Expr& e, std::size_t firstArg = 1) {
+    // Member name lookup stops at the first class that declares the name ([class.member.lookup]):
+    // when the class itself declares f, the f's it inherited are hidden (a derived member template
+    // erase(A&&...) hid nothing, so std::string::erase was called past it).
+    static bool ownedBy(const Param& f, const std::string& tag) {
+        static const std::string kMt = "\x01" "mtmpl:";
+        if (f.mangled.compare(0, kMt.size(), kMt) == 0) {
+            std::string key = f.mangled.substr(kMt.size());
+            return key.size() > tag.size() + 2 && key.compare(0, tag.size() + 2, tag + "::") == 0 &&
+                   key.find("::", tag.size() + 2) == std::string::npos;
+        }
+        std::string mn = mangleNested(tag);
+        for (const char* pre : {"_ZN", "_ZNK"}) {
+            std::string p = pre + mn;
+            if (f.mangled.size() > p.size() && f.mangled.compare(0, p.size(), p) == 0 &&
+                std::isdigit(static_cast<unsigned char>(f.mangled[p.size()])))
+                return true;
+        }
+        return false;
+    }
+    void hideBaseMembers(std::vector<const Param*>& cands, const std::string& tag) {
+        bool own = false;
+        for (const Param* c : cands)
+            if (ownedBy(*c, tag)) own = true;
+        if (!own) return;
+        // Only a candidate known to come from a base class is dropped.
+        std::vector<std::string> bases;
+        auto classNamed = [&](const std::string& t) -> const Type* {
+            auto it = canonStructs().find(t);
+            return it == canonStructs().end() ? nullptr : it->second.get();
+        };
+        for (const Type* c = classNamed(tag); c && !c->base.empty() && bases.size() < 64;) {
+            bases.push_back(c->base);
+            c = classNamed(c->base);
+        }
+        std::vector<const Param*> kept;
+        for (const Param* c : cands) {
+            bool fromBase = false;
+            if (!ownedBy(*c, tag))
+                for (const std::string& b : bases)
+                    if (ownedBy(*c, b)) fromBase = true;
+            if (!fromBase) kept.push_back(c);
+        }
+        cands = std::move(kept);
+    }
+    // given: the explicit template arguments (obj.f<T, 3>(..), [temp.arg.explicit]) as carriers.
+    std::string memberInstance(const std::string& key, Expr& e, std::size_t firstArg = 1,
+                               const std::vector<std::unique_ptr<Expr>>* given = nullptr) {
         auto it = funcTemplateSigs().find(key);
         if (it == funcTemplateSigs().end() || !it->second.fn) {
             err(e.line, e.col, "unknown member template");
@@ -2012,17 +2150,38 @@ private:
             return {};
         }
         std::vector<std::unique_ptr<Type>> bound(sig.names.size());
+        std::vector<bool> isValue(sig.names.size(), false);
+        std::vector<std::int64_t> values(sig.names.size(), 0);
+        std::size_t nGiven = given ? given->size() : 0;
+        for (std::size_t i = 0; i < nGiven && i < bound.size(); ++i) {
+            const Expr* c = (*given)[i].get();
+            if (!c) continue;
+            if (c->ty) bound[i] = cloneType(*c->ty);
+            else if (c->text == "v") {
+                isValue[i] = true;
+                values[i] = static_cast<std::int64_t>(c->ival);
+            }
+        }
         for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
             ET a = checkExpr(*e.kids[i + firstArg]);
             if (a.bad || !a.type) return {};
             ET d = decay(copyET(a));
-            if (sig.fn->params[i].type && !deduceArg(*sig.fn->params[i].type, a, sig, bound)) {
+            if (sig.fn->params[i].type && !(nGiven && hasPlaceholder(*sig.fn->params[i].type) &&
+                                            onlyGiven(*sig.fn->params[i].type, sig, nGiven)) &&
+                !deduceArg(*sig.fn->params[i].type, a, sig, bound)) {
                 err(e.line, e.col, "conflicting types for a template argument");
                 return {};
             }
         }
         std::vector<TArg> args;
         for (std::size_t i = 0; i < sig.names.size(); ++i) {
+            if (isValue[i]) {
+                TArg a;
+                a.isValue = true;
+                a.value = values[i];
+                args.push_back(std::move(a));
+                continue;
+            }
             if (!bound[i]) {
                 err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
                 return {};
@@ -2139,6 +2298,28 @@ private:
         }
     }
 
+    // Store value v into the place `dst` of type ft, as part of a temporary made from a braced list:
+    // a braced value for a class becomes a temporary of that class, one for an array is stored
+    // element by element (the temporary was zeroed or constructed first, so the rest stay).
+    template <class Add>
+    void braceStore(std::unique_ptr<Expr> dst, const Type& ft, std::unique_ptr<Expr> v, Add& addE, const Expr& at) {
+        if (v->kind == Expr::Kind::Brace && ft.kind == Type::Kind::Array && ft.inner) {
+            std::vector<std::unique_ptr<Expr>> items = std::move(v->kids);
+            for (std::size_t k = 0; k < items.size(); ++k) {
+                if (!items[k]) continue;
+                auto ix = mkE(Expr::Kind::Index, at);
+                ix->kids.push_back(k + 1 == items.size() ? std::move(dst) : cloneExpr(*dst));
+                auto n = mkE(Expr::Kind::Int, at);
+                n->ival = k;
+                ix->kids.push_back(std::move(n));
+                braceStore(std::move(ix), *ft.inner, std::move(items[k]), addE, at);
+            }
+            return;
+        }
+        if (v->kind == Expr::Kind::Brace && ft.kind == Type::Kind::Struct) braceToTemp(*v, ft);
+        addE(eAssignNode(std::move(dst), std::move(v), at));
+    }
+
     void braceToTemp(Expr& b, const Type& want) {
         const Type* T = canonOf(&want);
         if (!T || T->tag.empty()) return;
@@ -2177,6 +2358,14 @@ private:
                 call->kids.push_back(self());
                 addE(std::move(call));
             }
+            // Brace elision ([dcl.init.aggr] p15) also for a temporary: Values{x, y, z, w} with
+            // Values = std::array<float, 4> gives its one array member all four values.
+            if (aggregateOf(T)) {
+                std::size_t pos = 0;
+                auto rebuilt = elide(T, vals, pos, b);
+                for (; pos < vals.size(); ++pos) rebuilt->kids.push_back(std::move(vals[pos]));
+                vals = std::move(rebuilt->kids);
+            }
             std::size_t i = 0;
             for (const Param& f : T->params) {
                 if (!f.mangled.empty() || !f.type || f.type->kind == Type::Kind::Function || f.name == "__vptr" ||
@@ -2189,12 +2378,11 @@ private:
                     v = mkE(Expr::Kind::Int, b);
                 ++i;
                 if (!v) continue;
-                if (v->kind == Expr::Kind::Brace && f.type->kind == Type::Kind::Struct) braceToTemp(*v, *f.type);
                 auto field = mkE(Expr::Kind::Member, b);
                 field->text = ".";
                 field->kids.push_back(mkName(tmp, b));
                 field->kids.push_back(mkName(f.name, b));
-                addE(eAssignNode(std::move(field), std::move(v), b));
+                braceStore(std::move(field), *f.type, std::move(v), addE, b);
             }
             if (i < vals.size()) err(b.line, b.col, "too many initializers");
         }
@@ -2589,6 +2777,13 @@ private:
                     if (cand.fn->params[i].type && !(hasPlaceholder(*cand.fn->params[i].type) && onlyGiven(*cand.fn->params[i].type, cand, c0.kids.size())) &&
                         !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
                         ok = false;
+                // A parameter that names no template parameter must take its argument as an
+                // ordinary one does ([temp.deduct.call] p4, [over.match.viable]): operator==(const
+                // optional<T> &, nullopt_t) is not a candidate for o == 7.
+                for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
+                    if (cand.fn->params[i].type && !hasPlaceholder(*cand.fn->params[i].type) &&
+                        fitScore(*cand.fn->params[i].type, decay(copyET(argTypes[i]))) < 0)
+                        ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)
                     if (!b[i] && !(i < given.size() && given[i])) ok = false;
                 if (!ok) continue;
@@ -2958,14 +3153,21 @@ private:
                 for (const Param& f : st->params)
                     if (f.name == mem.kids[1]->text && !f.mangled.empty() && !isSpecialName(f.name))
                         cands.push_back(&f);
+                hideBaseMembers(cands, st->tag);
                 if (!cands.empty()) {
                     const Param* fp = pickOverload(cands, e, 1);
                     const Param& f = *fp;
                     if (f.type) addDefaults(e, *f.type, 0, st->tag);
                     std::string target = f.mangled;
                     if (target.compare(0, 7, "\x01" "mtmpl:") == 0) {
-                        target = memberInstance(target.substr(7), e);
+                        target = memberInstance(target.substr(7), e, 1,
+                                                mem.kids[1]->kids.empty() ? nullptr : &mem.kids[1]->kids);
                         if (target.empty()) return bad(e.line, e.col);
+                        // An instance with a deduced return type asked for in this round: its type is
+                        // known once the file is read again with it (as for function templates).
+                        if (f.type && isAuto(f.type->inner.get()) && !scopes_.front().count(target) &&
+                            !overloads_.count(target))
+                            return bad(e.line, e.col);
                     }
                     std::unique_ptr<Expr> selfArg;
                     if (mem.text == "->") {
@@ -3037,7 +3239,14 @@ private:
             Expr* a = e.kids[i + 1].get();
             const Type* pt = fn.params[i].type.get();
             if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
-            if (a && a->kind == Expr::Kind::Brace && pt && pt->kind == Type::Kind::Struct) braceToTemp(*a, *pt);
+            if (a && a->kind == Expr::Kind::Brace && pt && pt->kind == Type::Kind::Struct) {
+                if (pt->tag.compare(0, 22, "std::initializer_list<") == 0 || pt->tag.compare(0, 17, "initializer_list<") == 0) {
+                    // f({a, b}) for an initializer_list parameter ([dcl.init.list] p5): the list's array.
+                    if (auto list = initList(*a, *pt)) e.kids[i + 1] = std::move(list);
+                } else {
+                    braceToTemp(*a, *pt);
+                }
+            }
         }
         std::size_t nargs = e.kids.size() - 1;
         if (fn.variadic) {
@@ -4185,15 +4394,33 @@ private:
             if (isAuto(ret_) && curFn_ && curFn_->type) {
                 // A deduced return type ([dcl.spec.auto]): the type of the first return.
                 ET v;
+                bool keepRef = false;
                 if (!s.expr) {
                     curFn_->type->inner = prim(Type::Kind::Void);
                 } else {
-                    v = decay(checkExpr(*s.expr));
-                    curFn_->type->inner = v.type ? cloneType(*v.type) : prim(Type::Kind::Int);
+                    const bool dauto = ret_->variadic;
+                    ET raw;
+                    if (dauto) raw = checkExpr(*s.expr);
+                    // decltype(auto) ([dcl.type.auto.deduct] p5, [dcl.type.decltype] p1): an lvalue
+                    // that is not a plain name or member access (a call returning T&: *call)
+                    // gives T&, an xvalue T&&.
+                    if (dauto && !raw.bad && raw.type && raw.lvalue && raw.type->kind != Type::Kind::Function &&
+                        raw.type->kind != Type::Kind::Array && s.expr->kind != Expr::Kind::Name &&
+                        s.expr->kind != Expr::Kind::Member) {
+                        auto r = prim(Type::Kind::Reference);
+                        r->rref = raw.xvalue;
+                        r->inner = cloneType(*raw.type);
+                        curFn_->type->inner = std::move(r);
+                        keepRef = true;
+                    } else {
+                        v = decay(dauto ? std::move(raw) : checkExpr(*s.expr));
+                        curFn_->type->inner = v.type ? cloneType(*v.type) : prim(Type::Kind::Int);
+                    }
                 }
                 ret_ = curFn_->type->inner.get();
                 if (scopes_.front().count(curFn_->name))
                     scopes_.front()[curFn_->name].type = cloneType(*curFn_->type);
+                if (keepRef) break;  // (the expression was checked above, an lvalue)
                 // A class result is built as with a written return type (auto f() { return
                 // std::string("tag"); } destroyed the temporary it returned: an empty string).
                 if (s.expr && ret_->kind == Type::Kind::Struct) classReturn(s, v);

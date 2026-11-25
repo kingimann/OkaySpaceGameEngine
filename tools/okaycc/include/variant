@@ -5,7 +5,7 @@
 // class once per pack length, src/packs.cpp: at most fifteen alternatives). A value converts to
 // the alternative of exactly its type ([variant.ctor] chooses by overload resolution; here a
 // value of no alternative's type leaves the variant without a value, index() == variant_npos).
-// Not done: visit, emplace, get<I> and get_if<I> by index, comparisons, moves (a move copies).
+// visit takes one variant. Not done: emplace, get<I> and get_if<I> by index, comparisons, moves (a move copies).
 #pragma once
 #include <cstddef>
 #include <exception>
@@ -74,6 +74,17 @@ public:
         *this = t;
     }
 
+    // std::visit's work: the call on the alternative held, by the same fold over the index.
+    template <typename F, typename R>
+    void __visit_into(F &f, R *out) const {
+        int j = 0;
+        ((j++ == __i ? (void)(*out = f(*(T *)(void *)__s)) : (void)0), ...);
+    }
+    template <typename F>
+    void __visit_void(F &f) const {
+        int j = 0;
+        ((j++ == __i ? (void)f(*(T *)(void *)__s) : (void)0), ...);
+    }
     void __copy(const variant<T...> &o) {
         int j = 0;
         ((j++ == __i ? (void)new ((void *)__s) T(*(const T *)(const void *)o.__s) : (void)0), ...);
@@ -94,6 +105,33 @@ struct __vindex<U, variant<T...>> {
         return r;
     }
 };
+
+template <typename... T>
+struct __first_of;
+template <typename H, typename... T>
+struct __first_of<H, T...> {
+    typedef H type;
+};
+// visit(f, v) ([variant.visit]) for one variant: f called on the alternative v holds. The result
+// type is f's on the first alternative (the standard asks all of them to agree); a value result is
+// built by default construction and assignment here. A valueless variant throws. The result type
+// reaches the helper as a pointer-to-pointer tag: void ** picks the overload with no result.
+template <typename F, typename V>
+void __visit_ret(F &f, const V &v, void **) {
+    v.__visit_void(f);
+}
+template <typename F, typename V, typename R>
+R __visit_ret(F &f, const V &v, R **) {
+    R r{};
+    v.__visit_into(f, &r);
+    return r;
+}
+template <typename F, typename... T>
+auto visit(F f, const variant<T...> &v) {
+    if (v.__i < 0) throw bad_variant_access();
+    decltype(f(*(typename __first_of<T...>::type *)nullptr)) **tag = nullptr;
+    return __visit_ret(f, v, tag);
+}
 
 template <typename V>
 struct variant_size;

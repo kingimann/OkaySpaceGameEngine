@@ -309,6 +309,10 @@ int main() {
         engineDiff("tests/progs_cpp_engine/log_main.cpp", nullptr);
         // Round 24: Math/Quat.hpp (round 23: "cannot assign this value" in Quat::Euler).
         engineDiff("tests/progs_cpp_engine/quat_main.cpp", nullptr);
+        // Round 25: Math/Easing.hpp, and a class whose constructor and destructor are defined in
+        // another file (arrays of it call them through the helpers made at the end of the class).
+        engineDiff("tests/progs_cpp_engine/easing_main.cpp", nullptr);
+        engineDiff("tests/progs_cpp_multi/later25_main.cpp", "tests/progs_cpp_multi/later25_def.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

@@ -681,6 +681,10 @@ add_executable(test_physics_queries_ext test_physics_queries_ext.cpp)
 target_link_libraries(test_physics_queries_ext PRIVATE okay::engine)
 add_test(NAME physics_queries_ext COMMAND test_physics_queries_ext)
 
+add_executable(test_physics_query_broadphase test_physics_query_broadphase.cpp)
+target_link_libraries(test_physics_query_broadphase PRIVATE okay::engine)
+add_test(NAME physics_query_broadphase COMMAND test_physics_query_broadphase)
+
 add_executable(test_particles_tilemap test_particles_tilemap.cpp)
 target_link_libraries(test_particles_tilemap PRIVATE okay::engine)
 add_test(NAME particles_tilemap COMMAND test_particles_tilemap)
@@ -1800,6 +1804,10 @@ add_test(NAME phys_math COMMAND test_phys_math)
 add_executable(test_angular2d test_angular2d.cpp)
 target_link_libraries(test_angular2d PRIVATE okay::engine)
 add_test(NAME angular2d COMMAND test_angular2d)
+
+add_executable(test_physics2d_core test_physics2d_core.cpp)
+target_link_libraries(test_physics2d_core PRIVATE okay::engine)
+add_test(NAME physics2d_core COMMAND test_physics2d_core)
 
 add_executable(test_angular3d test_angular3d.cpp)
 target_link_libraries(test_angular3d PRIVATE okay::engine)
@@ -5475,6 +5483,7 @@ add_test(NAME text_shape COMMAND test_text_shape)
 add_executable(test_physics_grok test_physics_grok.cpp)
 target_link_libraries(test_physics_grok PRIVATE okay::engine)
 add_test(NAME physics_grok COMMAND test_physics_grok)
+
 # Grok input, on the ActionSet path: axial dead zone, per-set press buffer, Controls rows, smooth per controller.
 add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)

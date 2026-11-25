@@ -68,7 +68,7 @@ inline GameObject* CachedPartner(const Scene& scene, J* j) {
 inline GameObject* Joint3DPartner(const Scene& scene, Joint3D* j) {
     if (!j) return nullptr;
     if (j->connectedId != 0 || !j->connectedGuid.empty()) {
-        if (j->linkedName.empty()) j->linkedName = j->connectedBody;   // a link that came with a copy: its name is the one it has now
+        if (!j->linkedNameKnown) j->NoteLinkedName();   // a link that came with a copy: its name is the one it has now
         else if (j->connectedBody != j->linkedName) j->ConnectTo(nullptr);   // a new name was typed: that is the partner now
     }
     if (j->connectedId != 0) {

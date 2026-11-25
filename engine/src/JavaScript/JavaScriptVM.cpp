@@ -21,7 +21,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <iterator>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 
 namespace okay {
@@ -1019,25 +1023,16 @@ const char* const kLibMembers[][2] = {
     {"Symbol", "for keyFor iterator asyncIterator toPrimitive toStringTag hasInstance"},
     {"Reflect", "apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible ownKeys preventExtensions set setPrototypeOf"},
 };
-const char* const kArrayMembers = "at concat copyWithin entries every fill filter find findIndex findLast findLastIndex flat flatMap forEach includes indexOf join keys lastIndexOf length map pop push reduce reduceRight reverse shift slice some sort splice toReversed toSorted unshift values";
-const char* const kStringMembers = "at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf length localeCompare normalize padEnd padStart repeat replace replaceAll slice split startsWith substring toLowerCase toUpperCase trim trimEnd trimStart";
 const char* const kGlobals[] = {"console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol",
                                 "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "ReferenceError",
                                 "SyntaxError", "Reflect", "parseInt", "parseFloat", "isNaN", "isFinite", "globalThis",
                                 "queueMicrotask", "GetComponent", "Destroy", "gameObject", "transform", "this",
                                 "undefined", "null", "NaN", "Infinity", "console.log"};
 
-std::vector<std::string> Words(const char* s) {
-    std::vector<std::string> out;
-    std::string w;
-    for (const char* p = s;; ++p) {
-        if (*p == ' ' || *p == 0) {
-            if (!w.empty()) out.push_back(w);
-            w.clear();
-            if (!*p) break;
-        } else w += *p;
-    }
-    return out;
+// The space-separated names of a library row.
+std::vector<std::string> Names(const char* list) {
+    std::istringstream in(list);
+    return {std::istream_iterator<std::string>(in), std::istream_iterator<std::string>()};
 }
 
 bool IsJsKeyword(const std::string& w) {
@@ -1095,7 +1090,7 @@ std::vector<std::string> JavaScriptVM::CompletionNames() {
     for (int i = 0; i < js::kKeywordCount; ++i) names.insert(js::kKeywords[i]);
     for (const char* g : kGlobals) names.insert(g);
     for (const auto& lib : kLibMembers)
-        for (const std::string& w : Words(lib[1])) names.insert(std::string(lib[0]) + "." + w);
+        for (const std::string& w : Names(lib[1])) names.insert(std::string(lib[0]) + "." + w);
     glue::AddApiNames(names, Hidden);
     return {names.begin(), names.end()};
 }
@@ -1118,7 +1113,7 @@ std::vector<std::string> JavaScriptVM::CompletionMembers(const std::string& rece
     std::set<std::string> out;
     for (const auto& lib : kLibMembers)
         if (receiver == lib[0])
-            for (const std::string& w : Words(lib[1])) out.insert(w);
+            for (const std::string& w : Names(lib[1])) out.insert(w);
     if (out.empty()) {
         if (receiver == "this") {
             out.insert("gameObject");
@@ -1172,22 +1167,18 @@ std::vector<JavaScriptVM::Setting> JavaScriptVM::Settings(const std::string& sou
     vm.m_quiet = true;
     if (!vm.Load(source, nullptr)) return out;
     std::vector<std::pair<std::size_t, Setting>> found;
-    auto num = [](float x) {
-        std::string t = js::Runtime::NumberToStdString((double)x);
-        return t;
+    auto num = [](double x) {   // the shortest text that reads back as the same float (settings are floats)
+        char buf[32];
+        for (int p = 1; p <= 9; ++p) {
+            std::snprintf(buf, sizeof buf, "%.*g", p, x);
+            if ((float)std::strtod(buf, nullptr) == (float)x) break;
+        }
+        return js::Runtime::NumberToStdString(std::strtod(buf, nullptr));
     };
     for (const std::string& n : vm.GlobalNames()) {
-        vs::VsValue v = vm.GetGlobal(n);
         Setting st;
         st.name = n;
-        if (v.IsBool()) { st.type = "boolean"; st.defaultText = v.AsBool() ? "true" : "false"; }
-        else if (v.IsNumber()) { st.type = "number"; st.defaultText = num(v.AsFloat()); }
-        else if (v.IsString()) { st.type = "string"; st.defaultText = "\"" + v.AsString() + "\""; }
-        else if (v.IsVec3()) {
-            Vec3 p = v.AsVec3();
-            st.type = "Vector3";
-            st.defaultText = "Vector3(" + num(p.x) + ", " + num(p.y) + ", " + num(p.z) + ")";
-        } else continue;
+        if (!glue::SettingText(vm.GetGlobal(n), st.type, st.defaultText, num)) continue;
         found.push_back({glue::FirstWordPos(source, n), st});
     }
     std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });

@@ -8,8 +8,8 @@
 // and the handle lookups of the generated layer. JavaScript uses all of these
 // (JavaScript/JavaScriptVM.cpp). The Lua backend still has private copies of the
 // same rules in engine/src/Lua/LuaScriptVM.cpp (Claude 3's lane): moving it onto
-// this file is handed over on #422, and until then the copies are marked
-// `dup-allow` here.
+// this file is handed over on #422, and until then those copies carry a
+// dup-allow mark with that reason here.
 #include "../Script/ScriptInternal.hpp"
 #include "okay/VisualScript/VsValue.hpp"
 #include <set>
@@ -40,6 +40,9 @@ std::string HandlerDoc(const std::string& name);
 std::string HandlerTypo(const std::string& name);
 /// Where `word` first appears in `source` as a whole word (letters, digits, _ and $), or npos.
 std::size_t FirstWordPos(const std::string& source, const std::string& word);
+/// One Inspector setting from a script value: type "number", "string", "boolean" or "Vector3" and its default
+/// text ("5", "\"ship\"", "true", "Vector3(1, 2.5, 0)"). False for any other kind of value.
+bool SettingText(const vs::VsValue& v, std::string& type, std::string& text, std::string (*number)(double));
 /// Write a failed handler's message to the Console the way every backend does.
 void ReportHandlerError(const GameObject* self, const std::string& message);
 

@@ -14,12 +14,14 @@ using script::checker_detail::EditDistance;
 std::vector<std::string> HandlerNamesFor(const std::string& fn) {
     // engine name -> the PascalCase handler, then the old snake_case one
     struct Alias { const char* engine; const char* pascal; const char* snake; };
+    // dup-allow-begin: Lua's copy of this table (LuaScriptVM.cpp HandlerNames) moves onto this file, handed over on #422
     static const Alias kAliases[] = {
         {"on_fixed_update", "FixedUpdate", "fixed_update"}, {"on_late_update", "LateUpdate", "late_update"},
         {"on_enable", "OnEnable", "on_enable"}, {"OnEnable", "OnEnable", "on_enable"},
         {"on_disable", "OnDisable", "on_disable"}, {"on_destroy", "OnDestroy", "on_destroy"},
         {"Start", "Start", "start"}, {"Awake", "Awake", "awake"}, {"Update", "Update", "update"},
     };
+    // dup-allow-end
     for (const Alias& a : kAliases) {
         if (fn != a.engine) continue;
         std::vector<std::string> out{a.pascal, a.snake};   // dup-allow: Lua's copy (LuaScriptVM.cpp HandlerNames) moves here, #422
@@ -96,6 +98,24 @@ std::size_t FirstWordPos(const std::string& source, const std::string& word) {
         if ((at == 0 || !isWord(source[at - 1])) && (end >= source.size() || !isWord(source[end]))) return at;
     }
     return std::string::npos;
+}
+
+bool SettingText(const vs::VsValue& v, std::string& type, std::string& text, std::string (*number)(double)) {
+    if (v.IsBool()) {
+        type = "boolean";
+        text = v.AsBool() ? "true" : "false";
+    } else if (v.IsNumber()) {
+        type = "number";
+        text = number((double)v.AsFloat());
+    } else if (v.IsString()) {
+        type = "string";
+        text = "\"" + v.AsString() + "\"";
+    } else if (v.IsVec3()) {
+        const Vec3 p = v.AsVec3();
+        type = "Vector3";
+        text = "Vector3(" + number(p.x) + ", " + number(p.y) + ", " + number(p.z) + ")";
+    } else return false;
+    return true;
 }
 
 void ReportHandlerError(const GameObject* self, const std::string& message) {

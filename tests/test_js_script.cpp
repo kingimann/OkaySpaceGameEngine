@@ -50,6 +50,48 @@ struct World {
 };
 // dup-allow-end
 
+// What a script holds after it ran, checked in a chain: Script(vm).Num("hits", 1).Text("name", "Coin").
+struct Script {
+    IScriptVM* vm;
+    explicit Script(IScriptVM* v) : vm(v) {}
+    Script& Num(const char* name, double want, double eps = 1e-5) {
+        double got = vm->GetGlobal(name).AsFloat();
+        if (std::fabs(got - want) > eps) std::cerr << "  " << name << " = " << got << ", want " << want << "\n";
+        CHECK(std::fabs(got - want) <= eps);
+        return *this;
+    }
+    Script& Yes(const char* name, bool want = true) {
+        bool got = vm->GetGlobal(name).AsBool();
+        if (got != want) std::cerr << "  " << name << " = " << got << ", want " << want << "\n";
+        CHECK(got == want);
+        return *this;
+    }
+    Script& Text(const char* name, const std::string& want) {
+        std::string got = vm->GetGlobal(name).AsString();
+        if (got != want) std::cerr << "  " << name << " = '" << got << "', want '" << want << "'\n";
+        CHECK(got == want);
+        return *this;
+    }
+    Script& Says(const char* name, const std::string& part) {
+        std::string got = vm->GetGlobal(name).AsString();
+        if (got.find(part) == std::string::npos) std::cerr << "  " << name << " = '" << got << "', want it to say '" << part << "'\n";
+        CHECK(got.find(part) != std::string::npos);
+        return *this;
+    }
+    Script& Settings(std::vector<std::string> want) {
+        CHECK(vm->GlobalNames() == want);
+        return *this;
+    }
+};
+static bool HasAll(const std::vector<std::string>& v, std::initializer_list<const char*> names) {
+    for (const char* n : names)
+        if (std::find(v.begin(), v.end(), n) == v.end()) {
+            std::cerr << "  missing " << n << "\n";
+            return false;
+        }
+    return true;
+}
+
 int main() {
     RUN_SUITE("js_script");
     Log::sink = [](Log::Level l, const std::string& m) {
@@ -81,11 +123,9 @@ export default class Mover {
 )JS");
         CHECK(w.loaded);
         w.Frames(60);
-        CHECK(w.Get("started").AsBool());
+        Script(w.sc->VM()).Yes("started").Settings({"label", "speed", "started"});
         CHECK_NEAR(w.player->transform->Position().x, 2.0f, 0.01f);
         CHECK(LogHas("start Player"));
-        std::vector<std::string> names = w.sc->VM()->GlobalNames();
-        CHECK(names == (std::vector<std::string>{"label", "speed", "started"}));
     }
 
     // 2. Inspector overrides (component fields) replace the script's defaults; an exported object works too.
@@ -117,10 +157,9 @@ export default class P {
 }
 )JS");
         CHECK(w.loaded);
-        w.Frames(10, {'d'});
+        w.Frames(10, {'d'});   // ten frames holding d, then five without
         w.Frames(5);
-        CHECK(w.Get("moved").AsFloat() == 10.0f);
-        CHECK_NEAR(w.Get("dtSeen").AsFloat(), kDt, 1e-5f);
+        Script(w.sc->VM()).Num("moved", 10).Num("dtSeen", kDt);
         CHECK(w.player->transform->Position().x > 0.1f);
     }
 
@@ -139,14 +178,14 @@ export default class T {
 }
 )JS");
         CHECK(w.loaded);
+        IScriptVM* vm = w.sc->VM();
         GameObject* coin = w.scene.CreateGameObject("Coin");
-        CHECK(w.sc->VM()->HasEvent("on_trigger_enter"));
-        w.sc->VM()->CallEventWith("on_trigger_enter", vs::VsValue::Object(coin->InstanceId()));
-        CHECK(w.Get("hits").AsFloat() == 1.0f);
-        CHECK(w.Get("lastName").AsString() == "Coin");
+        CHECK(vm->HasEvent("on_trigger_enter") && !vm->HasEvent("on_trigger_exit"));
+        vm->CallEventWith("on_trigger_enter", vs::VsValue::Object(coin->InstanceId()));
+        Script(vm).Num("hits", 1).Text("lastName", "Coin");
         CHECK_NEAR(coin->transform->Position().y, 2.0f, 1e-5f);
-        vs::VsValue r = w.sc->VM()->CallEventArgs("on_sequence_event", {vs::VsValue{std::string("a")}, vs::VsValue{std::string("b")}});
-        CHECK(r.AsString() == "ab");
+        const std::vector<vs::VsValue> args = {vs::VsValue{std::string("a")}, vs::VsValue{std::string("b")}};
+        CHECK(vm->CallEventArgs("on_sequence_event", args).AsString() == "ab");
     }
 
     // 5. GetComponent, GameObject.Find, engine object identity and printing.
@@ -166,10 +205,7 @@ export default class S {
 )JS", false);
         w.scene.CreateGameObject("Other");
         w.scene.Start();
-        CHECK(w.Get("sameTransform").AsBool());
-        CHECK(w.Get("noBody").AsBool());
-        CHECK(w.Get("otherName").AsString() == "Other");
-        CHECK(w.Get("text").AsString() == "GameObject(Player)");
+        Script(w.sc->VM()).Yes("sameTransform").Yes("noBody").Text("otherName", "Other").Text("text", "GameObject(Player)");
         CHECK(LogHas("found Other"));
     }
 
@@ -266,11 +302,12 @@ export default class B {
     }
 }
 )JS");
-        CHECK(w.Get("e1").AsString().find("isn't a key name") != std::string::npos);
-        CHECK(w.Get("e2").AsString().find("call Translate on a Transform") != std::string::npos);
-        CHECK(w.Get("e3").AsString().find("bad arguments to Transform.Translate") != std::string::npos);
-        CHECK(w.Get("e4").AsString() == "undefined");
-        CHECK(w.Get("e5").AsString().find("Transform has no settable property 'nope'") != std::string::npos);
+        Script(w.sc->VM())
+            .Says("e1", "isn't a key name")
+            .Says("e2", "call Translate on a Transform")
+            .Says("e3", "bad arguments to Transform.Translate")
+            .Text("e4", "undefined")
+            .Says("e5", "Transform has no settable property 'nope'");
     }
 
     // 11. Generators and async functions inside a game script (a timer over several frames).
@@ -287,11 +324,11 @@ export default class C {
     Update(dt) { this.co.next(); }
 }
 )JS");
-        CHECK(w.Get("done").AsBool());
+        Script(w.sc->VM()).Yes("done");   // the await finished in Start's own job pass
         w.Frames(2);
-        CHECK(w.Get("stage").AsFloat() == 2.0f);
+        Script(w.sc->VM()).Num("stage", 2);
         w.Frames(5);
-        CHECK(w.Get("stage").AsFloat() == 3.0f);
+        Script(w.sc->VM()).Num("stage", 3);   // the generator is done after three steps
     }
 
     // 12. The scene round trip keeps the language and the script runs after loading.
@@ -304,17 +341,17 @@ export default class C {
                 "export default { Update(dt) { this.transform.Rotate(0, 90 * dt, 0); } };");
             text = SceneSerializer::Serialize(s);
         }
-        Scene loaded("L");
+        Scene back("L");
         std::string err;
-        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
-        GameObject* g = loaded.Find("Spinner");
-        CHECK(g != nullptr);
-        if (g) {
-            auto* sc = g->GetComponent<ScriptComponent>();
-            CHECK(sc && sc->Language() == "javascript" && sc->VM() != nullptr);
-            loaded.Start();
-            for (int i = 0; i < 30; ++i) loaded.Update(kDt);
-            CHECK(std::fabs(g->transform->Rotation().ToEuler().y) > 10.0f);
+        CHECK(SceneSerializer::Deserialize(back, text, &err) && back.Find("Spinner"));
+        if (GameObject* spinner = back.Find("Spinner")) {
+            const ScriptComponent* script = spinner->GetComponent<ScriptComponent>();
+            CHECK(script != nullptr);
+            CHECK(script && std::string(script->Language()) == JavaScriptVM::kLanguage && script->VM());
+            back.Start();
+            int frames = 30;
+            while (frames-- > 0) back.Update(kDt);
+            CHECK(std::fabs(spinner->transform->Rotation().ToEuler().y) > 10.0f);
         }
     }
 
@@ -324,50 +361,49 @@ export default class C {
         CHECK(starter.find("Update(dt) {") != std::string::npos);
         JavaScriptVM vm;
         CHECK(vm.ValidateAll(starter).empty());
-        std::vector<ScriptDiagnostic> w = JavaScriptVM::Lint(
+        std::vector<ScriptDiagnostic> lint = JavaScriptVM::Lint(
             "export default class M {\n  Updte(dt) {\n    if (Input.GetKeyy(\"a\")) {}\n    const s = \"Input.Nope\"; // Time.Nope\n  }\n}\n");
-        CHECK(w.size() == 2);
-        if (w.size() == 2) {
-            CHECK(w[0].line == 2 && w[0].severity == 1 && w[0].message.find("Did you mean Update?") != std::string::npos);
-            CHECK(w[1].line == 3 && w[1].message.find("Input has no member 'GetKeyy'. Did you mean GetKey?") != std::string::npos);
-            CHECK(w[1].column == 15);
+        CHECK(lint.size() == 2);
+        if (lint.size() == 2) {
+            const ScriptDiagnostic& typo = lint[0];
+            const ScriptDiagnostic& member = lint[1];
+            CHECK(typo.line == 2 && typo.severity == 1);
+            CHECK(typo.message.find("Did you mean Update?") != std::string::npos);
+            CHECK(member.line == 3 && member.column == 15);
+            CHECK(member.message.find("Input has no member 'GetKeyy'. Did you mean GetKey?") != std::string::npos);
         }
         CHECK(JavaScriptVM::Lint("function update(dt) {}\nfunction Start() {}\nconst v = new Vector3(1, 2, 3);").empty());
-        auto has = [](const std::vector<std::string>& v, const char* x) { return std::find(v.begin(), v.end(), x) != v.end(); };
-        std::vector<std::string> m = JavaScriptVM::CompletionMembers("Input");
-        CHECK(has(m, "GetKey") && has(m, "GetAxis"));
-        m = JavaScriptVM::CompletionMembers("this.transform");
-        CHECK(has(m, "position") && has(m, "Translate") && has(m, "GetComponent"));
-        m = JavaScriptVM::CompletionMembers("this.transform.position");
-        CHECK(has(m, "x") && has(m, "magnitude") && has(m, "add"));
-        m = JavaScriptVM::CompletionMembers("Math");
-        CHECK(has(m, "floor") && has(m, "PI"));
-        m = JavaScriptVM::CompletionMembers("Vector3");
-        CHECK(has(m, "Distance") && has(m, "up"));
+        struct MemberCase { const char* receiver; std::initializer_list<const char*> some; };
+        const MemberCase members[] = {
+            {"Input", {"GetKey", "GetAxis"}},
+            {"this.transform", {"position", "Translate", "GetComponent"}},
+            {"this.transform.position", {"x", "magnitude", "add"}},
+            {"Math", {"floor", "PI"}},
+            {"Vector3", {"Distance", "up"}},
+        };
+        for (const MemberCase& c : members) CHECK(HasAll(JavaScriptVM::CompletionMembers(c.receiver), c.some));
         CHECK(JavaScriptVM::CompletionMembers("nothingKnown").empty());
-        CHECK(JavaScriptVM::CompletionDoc("Input.GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
-        CHECK(JavaScriptVM::CompletionDoc("Translate").find("Transform.Translate(") == 0);
-        CHECK(JavaScriptVM::CompletionDoc("Update").find("every frame") != std::string::npos);
-        CHECK(JavaScriptVM::CompletionDoc("class") == "JavaScript keyword");
+        struct DocCase { const char* name; const char* starts; };
+        const DocCase docs[] = {
+            {"Input.GetKey", "Input.GetKey(key: string) -> boolean"}, {"GetKey", "Input.GetKey(key: string) -> boolean"},
+            {"Translate", "Transform.Translate("}, {"class", "JavaScript keyword"}, {"Update", "called every frame"},
+        };
+        for (const DocCase& d : docs) CHECK(JavaScriptVM::CompletionDoc(d.name).rfind(d.starts, 0) == 0);
         CHECK(JavaScriptVM::CompletionDoc("nothingHere").empty());
-        CHECK(JavaScriptVM::CompletionDoc("GetKey").find("Input.GetKey(key: string) -> boolean") == 0);
-        CHECK(std::string(ScriptLanguageForExtension(".js")) == "javascript");
-        CHECK(std::string(ScriptLanguageForExtension("JS")) == "javascript");
-        std::vector<std::string> words = JavaScriptVM::CompletionNames();
-        CHECK(has(words, "function") && has(words, "Input.GetKey") && has(words, "Update") && has(words, "Math.floor"));
-        std::vector<JavaScriptVM::Setting> st = JavaScriptVM::Settings(
+        for (const char* ext : {".js", "JS", ".mjs"}) CHECK(std::string(ScriptLanguageForExtension(ext)) == "javascript");
+        CHECK(HasAll(JavaScriptVM::CompletionNames(), {"function", "Input.GetKey", "Update", "Math.floor"}));
+        const std::vector<JavaScriptVM::Setting> settings = JavaScriptVM::Settings(
             "export default class P {\n  speed = 5;\n  name = 'ship';\n  alive = true;\n  offset = new Vector3(1, 2.5, 0);\n"
             "  onHit = () => {};\n  Start() { console.log('not shown'); }\n}\nconsole.log('not shown either');\n");
-        CHECK(st.size() == 4);
-        if (st.size() == 4) {
-            CHECK(st[0].name == "speed" && st[0].type == "number" && st[0].defaultText == "5");
-            CHECK(st[1].name == "name" && st[1].defaultText == "\"ship\"");
-            CHECK(st[2].name == "alive" && st[2].defaultText == "true");
-            CHECK(st[3].name == "offset" && st[3].defaultText == "Vector3(1, 2.5, 0)");
-        }
+        const JavaScriptVM::Setting wantSettings[] = {
+            {"speed", "number", "5"}, {"name", "string", "\"ship\""}, {"alive", "boolean", "true"}, {"offset", "Vector3", "Vector3(1, 2.5, 0)"}};
+        CHECK(settings.size() == 4);
+        for (std::size_t i = 0; i < settings.size() && i < 4; ++i)
+            CHECK(settings[i].name == wantSettings[i].name && settings[i].type == wantSettings[i].type &&
+                  settings[i].defaultText == wantSettings[i].defaultText);
         CHECK(!LogHas("not shown"));
         CHECK(JavaScriptVM::Settings("this is not javascript").empty());
-        CHECK(std::find(AvailableScriptLanguages().begin(), AvailableScriptLanguages().end(), "javascript") != AvailableScriptLanguages().end());
+        CHECK(HasAll(AvailableScriptLanguages(), {"javascript", "lua"}));
     }
 
     // 14. Format Document for JavaScript: re-indent by brackets; strings, comments and template text are not brackets.
@@ -416,14 +452,14 @@ export default class C {
     //     is a handle with its properties and generated methods; Rigidbody.InvMass falls through; a removed
     //     component is a clear error, never a crash.
     {
-        Scene scene{"B"};
-        GameObject* lamp = scene.CreateGameObject("Lamp");
+        Scene room{"B"};
+        GameObject* lamp = room.CreateGameObject("Lamp");
         Light* light = lamp->AddComponent<Light>();
         lamp->AddComponent<Rigidbody3D>();
-        auto* sc = lamp->AddComponent<ScriptComponent>("javascript");
-        std::string err;
+        auto* script = lamp->AddComponent<ScriptComponent>("javascript");
+        std::string loadError;
         g_errs.clear();
-        CHECK(sc->LoadSource(R"JS(
+        CHECK(script->LoadSource(R"JS(
 var got, kind, text, owner, flicker, held, same, inv, missing, bad, nomember, later, gone;
 function Start() {
     const l = GetComponent("Light");
@@ -444,24 +480,25 @@ function Start() {
 function Update(dt) {
     try { later = held.intensity; } catch (e) { gone = String(e); }
 }
-)JS", &err));
-        if (!err.empty()) std::cerr << "  load: " << err << "\n";
-        scene.Start();
+)JS", &loadError));
+        if (!loadError.empty()) std::cerr << "  load: " << loadError << "\n";
+        room.Start();
         for (const auto& e : g_errs) std::cerr << "  error: " << e << "\n";
         CHECK_NEAR(light->intensity, 2.5f, 1e-5f);
-        CHECK_NEAR(sc->VM()->GetGlobal("got").AsFloat(), 2.5f, 1e-5f);
-        CHECK(sc->VM()->GetGlobal("kind").AsString() == "object");
-        CHECK(sc->VM()->GetGlobal("text").AsString().find("Light") != std::string::npos);
-        CHECK(sc->VM()->GetGlobal("owner").AsString() == "Lamp");
         CHECK(light->type == Light::Type::Spot);
-        CHECK(sc->VM()->GetGlobal("same").AsBool());
-        CHECK(sc->VM()->GetGlobal("inv").AsFloat() > 0.0f);
-        CHECK(sc->VM()->GetGlobal("missing").AsBool());
-        CHECK(sc->VM()->GetGlobal("bad").AsString().find("intensity") != std::string::npos);
-        CHECK(sc->VM()->GetGlobal("nomember").AsString().find("no settable property 'noSuchThing'") != std::string::npos);
-        lamp->RemoveComponent(light);
-        scene.Update(kDt);
-        CHECK(sc->VM()->GetGlobal("gone").AsString().find("null") != std::string::npos);
+        Script(script->VM())
+            .Num("got", 2.5)
+            .Text("kind", "object")
+            .Says("text", "Light")
+            .Text("owner", "Lamp")
+            .Yes("same")
+            .Yes("missing")
+            .Says("bad", "intensity")
+            .Says("nomember", "no settable property 'noSuchThing'");
+        CHECK(script->VM()->GetGlobal("inv").AsFloat() > 0.0f);
+        lamp->RemoveComponent(light);   // the handle the script kept now reads as an error
+        room.Update(kDt);
+        Script(script->VM()).Says("gone", "null");
     }
 
     // 16. The sandbox: no file, network, process or module access, no compiling code from strings.
@@ -472,21 +509,18 @@ function Update(dt) {
                 "var noFn = false; try { Function('return 1'); } catch (e) { noFn = e instanceof EvalError; }\n"
                 "var noCtor = false; try { (() => {}).constructor('return 1'); } catch (e) { noCtor = e instanceof EvalError; }");
         CHECK(w.loaded);
-        CHECK(w.Get("open").AsFloat() == 0.0f);
-        CHECK(w.Get("noEval").AsBool());
-        CHECK(w.Get("noFn").AsBool());
-        CHECK(w.Get("noCtor").AsBool());
+        Script(w.sc->VM()).Num("open", 0).Yes("noEval").Yes("noFn").Yes("noCtor");
     }
 
     // 17. The generated layer's DENY_* rules hold for JavaScript too, through both binding tables.
     {
-        Scene scene{"D"};
-        GameObject* g = scene.CreateGameObject("Picker");
-        g->AddComponent<UIFilePicker>();
-        g->AddComponent<AnimStateMachine>();
-        auto* sc = g->AddComponent<ScriptComponent>("javascript");
-        std::string err;
-        CHECK(sc->LoadSource(R"JS(
+        Scene picks{"D"};
+        GameObject* picker = picks.CreateGameObject("Picker");
+        picker->AddComponent<UIFilePicker>();
+        picker->AddComponent<AnimStateMachine>();   // what the typed table's Animator finds
+        auto* script = picker->AddComponent<ScriptComponent>("javascript");
+        std::string loadError;
+        CHECK(script->LoadSource(R"JS(
 var rootOk = true, openOk = true, animOk = true, animErr = "", rmOk = false, rmErr = "";
 function Start() {
     const fp = GetComponent("UIFilePicker");
@@ -495,15 +529,15 @@ function Start() {
     try { GetComponent("Animator").SetCharacterModel("/etc/passwd"); } catch (e) { animOk = false; animErr = String(e); }
     try { GetComponent("Animator").SetRootMotion(false); rmOk = true; } catch (e) { rmErr = String(e); }
 }
-)JS", &err));
-        if (!err.empty()) std::cerr << "  load: " << err << "\n";
-        scene.Start();
-        CHECK(!sc->VM()->GetGlobal("rootOk").AsBool());
-        CHECK(!sc->VM()->GetGlobal("openOk").AsBool());
-        if (!sc->VM()->GetGlobal("rmOk").AsBool()) std::cerr << "  allowed call failed: " << sc->VM()->GetGlobal("rmErr").AsString() << "\n";
-        CHECK(!sc->VM()->GetGlobal("animOk").AsBool());
-        CHECK(sc->VM()->GetGlobal("animErr").AsString().find("SetCharacterModel") != std::string::npos);
-        CHECK(sc->VM()->GetGlobal("rmOk").AsBool());
+)JS", &loadError));
+        if (!loadError.empty()) std::cerr << "  load: " << loadError << "\n";
+        picks.Start();
+        Script(script->VM())
+            .Yes("rootOk", false)    // a denied class: UIFilePicker
+            .Yes("openOk", false)
+            .Yes("animOk", false)    // a typed method whose text parameter names a place
+            .Says("animErr", "SetCharacterModel")
+            .Yes("rmOk");            // the rest of Animator still works
     }
 
     // 18. A collision handler gets the other object and the contact globals; a class with inheritance works.

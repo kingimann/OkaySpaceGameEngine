@@ -10,8 +10,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <random>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -23,40 +23,54 @@ using namespace okay::js;
 
 namespace {
 
-std::string ReadFile(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
+std::string FileText(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-// Run a script; returns what it printed (one line per console.log) and "ERROR: message" when it failed.
-std::string Run(const std::string& src, bool stress = false, std::uint64_t budget = 50'000'000, std::size_t memLimit = 0) {
+struct Options {
+    bool stress = false;                 ///< collect at every safe point
+    std::uint64_t budget = 50'000'000;
+    std::size_t memory = 0;              ///< 0 = the default limit
+};
+
+// Everything a script printed (one line per console.log), then "ERROR: <message>" when it failed.
+std::string Run(const std::string& src, Options o = {}) {
     Runtime rt;
-    rt.gcStress = stress;
-    rt.SetBudget(budget);
-    if (memLimit) rt.memoryLimit = memLimit;
-    std::string out;
-    rt.printSink = [&](const std::string& s) { out += s + "\n"; };
-    std::string err;
-    if (!rt.Run(src, "t.js", &err)) out += "ERROR: " + err + "\n";
-    return out;
+    rt.gcStress = o.stress;
+    rt.SetBudget(o.budget);
+    if (o.memory) rt.memoryLimit = o.memory;
+    std::string printed;
+    rt.printSink = [&printed](const std::string& line) { printed += line + "\n"; };
+    std::string why;
+    if (!rt.Run(src, "t.js", &why)) printed += "ERROR: " + why + "\n";
+    return printed;
+}
+std::string Run(const std::string& src, bool stress, std::uint64_t budget = 50'000'000, std::size_t memLimit = 0) {
+    Options o;
+    o.stress = stress;
+    o.budget = budget;
+    o.memory = memLimit;
+    return Run(src, o);
 }
 
+// The script prints exactly `want` (lines joined with \n).
 void Expect(const std::string& src, const std::string& want) {
-    std::string got = Run(src);
-    if (got != want + "\n") std::cerr << "  for: " << src << "\n  got: " << got << "  want: " << want << "\n";
-    CHECK(got == want + "\n");
+    const std::string got = Run(src, Options{});
+    const bool same = got == want + "\n";
+    if (!same) std::cerr << "  script: " << src << "\n  printed: " << got << "  expected: " << want << "\n";
+    CHECK(same);
 }
+// The script fails with an error that says `part`.
 void ExpectError(const std::string& src, const std::string& part) {
-    std::string got = Run(src);
-    bool ok = got.find("ERROR: ") != std::string::npos && got.find(part) != std::string::npos;
-    if (!ok) std::cerr << "  for: " << src << "\n  got: " << got << "  want an error with: " << part << "\n";
+    const std::string got = Run(src, Options{});
+    const bool ok = got.find("ERROR: ") != std::string::npos && got.find(part) != std::string::npos;
+    if (!ok) std::cerr << "  script: " << src << "\n  printed: " << got << "  expected an error saying: " << part << "\n";
     CHECK(ok);
 }
 
 void ConformanceScript(bool stress) {
-    std::string src = ReadFile(std::string(OKAY_SOURCE_DIR) + "/tests/javascript/conformance.js");
+    std::string src = FileText(std::string(OKAY_SOURCE_DIR) + "/tests/javascript/conformance.js");
     CHECK(!src.empty());
     Runtime rt;
     rt.gcStress = stress;

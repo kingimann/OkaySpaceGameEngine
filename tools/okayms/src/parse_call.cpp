@@ -300,6 +300,12 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
         Node self;
         self.kind = Node::Name;
         self.text = "this";
+        // Base::f() from a class with several bases (Round 29): the base subobject of this.
+        const int to_owner = cur_class >= 0 && method_owner != cur_class && base_offset(cur_class, method_owner) > 0
+                                 ? base_offset(cur_class, method_owner)
+                                 : 0;
+        if (to_owner + m->this_adj != 0)
+            self = offset_ptr(std::move(self), to_owner + m->this_adj, m->this_sid >= 0 ? m->this_sid : m->owner);
         call.kids.push_back(std::move(self));
     }
     for (Node& arg : args) call.kids.push_back(std::move(arg));
@@ -379,8 +385,13 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     call.number = 1;
     call.type = m->ret;
     Node hoist;  // a virtual call's object with side effects: the store of its address (see below)
+    // A function of a base that is not at offset 0 (Round 29, [class.mi]): the object's address moves to that base
+    // subobject (for a virtual call, to the subobject whose table holds the slot).
+    const int owner_off = method_owner != sid && base_offset(sid, method_owner) > 0 ? base_offset(sid, method_owner) : 0;
     if (!dynamic) {
         call.text = m->qname;
+        if (!m->is_static && owner_off + m->this_adj != 0)
+            self = offset_ptr(std::move(self), owner_off + m->this_adj, m->this_sid >= 0 ? m->this_sid : m->owner);
     } else {
         if (has_effects(self)) {
             // p->f() where p is an expression with effects (sp->f() through a smart pointer's operator->): its value
@@ -415,11 +426,13 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
                 stmt_pre.push_back(std::move(stmt));
             }
         }
+        if (owner_off + m->vt_adj != 0)
+            self = offset_ptr(std::move(self), owner_off + m->vt_adj, m->vt_sid >= 0 ? m->vt_sid : m->owner);
         FuncType ft;
         ft.ret = m->ret;
         Type self_ptr;
         self_ptr.base = 3;
-        self_ptr.struct_id = m->owner;
+        self_ptr.struct_id = m->vt_adj != 0 && m->vt_sid >= 0 ? m->vt_sid : m->owner;
         self_ptr.pointers = 1;
         ft.params.push_back(self_ptr);
         // A reference parameter is passed as its address (adjust_args took it), as for a direct call: the pointer

@@ -291,7 +291,18 @@ struct Parser {
         std::set<std::string> scoped_seen;  // its enumerators read so far
         int enum_depth = 0;
         bool want_name = false;
+        // The closing parentheses of rewritten casts still to be written, by the index of the token after which each
+        // goes (innermost last): static_cast<T>(x)->m is ((T)(x))->m, not (T)((x)->m).
+        std::vector<size_t> cast_closers;
+        Token closer;
+        closer.kind = TRParen;
+        closer.text = ")";
         for (size_t i = 0; i < tokens.size(); ++i) {
+            while (!cast_closers.empty() && cast_closers.back() < i) {
+                closer.line = tokens[i].line;
+                out.push_back(closer);
+                cast_closers.pop_back();
+            }
             const Token& t = tokens[i];
             if (t.kind == TIdent && t.text == "thread_local") {
                 // thread_local ([dcl.stc] 4): at block scope it implies static; here it is a `static` that says so.
@@ -535,9 +546,24 @@ struct Parser {
                     else if (tokens[j].kind == TGt && --angle == 0) break;
                 }
                 if (j + 1 < tokens.size() && tokens[j].kind == TGt && tokens[j + 1].kind == TLParen) {
+                    {
+                        // The whole cast in parentheses (Round 29): find the ')' that closes the operand.
+                        int depth = 0;
+                        size_t m = j + 1;
+                        for (; m < tokens.size() && tokens[m].kind != TEnd; ++m) {
+                            if (tokens[m].kind == TLParen) ++depth;
+                            else if (tokens[m].kind == TRParen && --depth == 0) break;
+                        }
+                        Token wrap = tokens[i + 1];
+                        wrap.kind = TLParen;
+                        wrap.text = "(";
+                        out.push_back(wrap);
+                        cast_closers.push_back(m);
+                    }
                     Token open = tokens[i + 1];
                     open.kind = TLParen;
-                    open.text = "(";
+                    // reinterpret_cast keeps the address as it is (no base adjustment, [expr.reinterpret.cast] 7).
+                    open.text = t.text == "reinterpret_cast" ? "(reinterpret" : "(";
                     Token close = tokens[j];
                     close.kind = TRParen;
                     close.text = ")";
@@ -555,6 +581,7 @@ struct Parser {
             }
             out.push_back(t);
         }
+        for (; !cast_closers.empty(); cast_closers.pop_back()) out.push_back(closer);
         tokens = std::move(out);
     }
 
@@ -688,6 +715,14 @@ struct Parser {
     bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
     int rv_count = 0;
+    // The adjustor thunks the secondary tables name (Round 29): made as functions at the end of the file.
+    struct Thunk {
+        std::string symbol;
+        std::string target;
+        int adj = 0;
+        bool rdx = false;
+    };
+    std::vector<Thunk> thunks{};
 
     // A constructor template is a constructor too, before any instance of it is made.
     bool has_ctor_template(int sid) const {
@@ -721,6 +756,9 @@ struct Parser {
             return true;
         if (d.poly) return true;  // the constructor stores the table pointer
         if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)])) return true;
+        for (const StructDef::BaseInfo& bi : d.bases)
+            if (class_needs_ctor(structs[static_cast<size_t>(bi.sid)])) return true;
+        if (!d.sec_tables.empty()) return true;  // the constructor stores the bases' table pointers
         for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
             const Type& t = d.fields[i].type;
             if (d.fields[i].init_at >= 0 || d.fields[i].init_zero) return true;
@@ -763,6 +801,8 @@ struct Parser {
         for (const Method& m : d.methods)
             if (m.name == "<dtor>") return true;
         if (d.base >= 0 && class_needs_dtor(structs[static_cast<size_t>(d.base)])) return true;
+        for (const StructDef::BaseInfo& bi : d.bases)
+            if (class_needs_dtor(structs[static_cast<size_t>(bi.sid)])) return true;
         for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
             const Type& t = d.fields[i].type;
             if (t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 &&
@@ -817,7 +857,7 @@ struct Parser {
             const StructDef& sd = structs[static_cast<size_t>(sid)];
             size_t k = 0;
             for (const Field& f : sd.fields) {
-                if (f.name == "__vptr") continue;
+                if (f.name.compare(0, 6, "__vptr") == 0) continue;
                 if (k >= args.size()) break;
                 Node fn;
                 fn.kind = Node::Field;
@@ -836,6 +876,22 @@ struct Parser {
                         return false;
                     steps.push_back(std::move(mcall));
                     continue;
+                }
+                if (obj_needs_ctor(f.type) || obj_needs_dtor(f.type)) {
+                    // A member of class type set from its item by the class's own operator= (G g{"text"} with a
+                    // std::string member; before Round 29 the item's bytes were stored into the member).
+                    Node lhs = fn;
+                    Node rhs = args[k];
+                    bool done = false;
+                    if (!operator_binary(TAssign, &lhs, &rhs, &done)) return false;
+                    if (done) {
+                        ++k;
+                        Node st;
+                        st.kind = Node::ExprStmt;
+                        st.kids.push_back(std::move(lhs));
+                        steps.push_back(std::move(st));
+                        continue;
+                    }
                 }
                 Node assign;
                 assign.kind = Node::Assign;
@@ -959,7 +1015,7 @@ struct Parser {
             const StructDef& sd = structs[static_cast<size_t>(type.struct_id)];
             size_t k = 0;
             for (const Field& f : sd.fields) {
-                if (f.name == "__vptr") continue;
+                if (f.name.compare(0, 6, "__vptr") == 0) continue;
                 Node fn;
                 fn.kind = Node::Field;
                 fn.op = TDot;
@@ -1009,6 +1065,33 @@ struct Parser {
         f.text = field;
         f.kids.push_back(node_name("this"));
         return f;
+    }
+    // The table pointer stores of a class's constructor and destructor: its own table at offset 0, then (Round 29) the
+    // table of each base subobject that is not at offset 0: *(void ***)((char *)this + off) = (void **)&table.
+    void vptr_stores(const StructDef& def, std::vector<Node>* out) const {
+        if (!def.poly) return;
+        out->push_back(vptr_store_this(def.vtable_sym));
+        Type pp;
+        pp.base = 0;
+        pp.pointers = 2;
+        for (const StructDef::SecTable& st : def.sec_tables) {
+            Node slot;
+            slot.kind = Node::Unary;
+            slot.op = TStar;
+            Type ppp = pp;
+            ppp.pointers = 3;
+            Node at_off = offset_ptr(node_name("this"), st.off, st.sid);
+            slot.kids.push_back(cast_node(ppp, std::move(at_off)));
+            Node store;
+            store.kind = Node::Assign;
+            store.op = TAssign;
+            store.kids.push_back(std::move(slot));
+            store.kids.push_back(cast_node(pp, node_addr(node_name(st.sym))));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(store));
+            out->push_back(std::move(stmt));
+        }
     }
     // this->__vptr = (void **)&table;
     Node vptr_store_this(const std::string& table_sym) const {
@@ -1220,12 +1303,31 @@ struct Parser {
         name.init_bytes.assign(text.begin(), text.end());
         name.init_bytes.push_back(0);
         globals.push_back(name);
-        // Round 26: a second pointer, to the type information of the class's base (0 when it has none or for a type
-        // that is not a class), so dynamic_cast can walk from the dynamic type up the single-inheritance chain.
+        // A second pointer (Round 29; Round 26 had one base): to the list of the class's direct bases, each the address
+        // of its type information and its offset in the class (8 + 8 bytes), ended by a zero entry; 0 when the class has
+        // no base or the type is not a class. dynamic_cast walks these from the dynamic type to the class it wants.
         std::string base_sym;
-        if (sid >= 0 && structs[static_cast<size_t>(sid)].base >= 0) {
-            const int bsid = structs[static_cast<size_t>(sid)].base;
-            base_sym = type_info_symbol(bsid, structs[static_cast<size_t>(bsid)].symname());
+        if (sid >= 0 && (structs[static_cast<size_t>(sid)].base >= 0 || !structs[static_cast<size_t>(sid)].bases.empty())) {
+            std::vector<std::pair<int, int>> list;  // (base, offset)
+            for (const StructDef::BaseInfo& bi : structs[static_cast<size_t>(sid)].bases) list.push_back({bi.sid, bi.off});
+            if (list.empty()) list.push_back({structs[static_cast<size_t>(sid)].base, 0});
+            Global bases;
+            bases.name = sym + "_bases";
+            bases.is_static = true;
+            bases.bss = false;
+            bases.type.base = 0;
+            bases.type.pointers = 1;
+            bases.type.array_len = static_cast<int>(list.size() * 2 + 2);
+            bases.init_bytes.assign((list.size() + 1) * 16, 0);
+            for (size_t k = 0; k < list.size(); ++k) {
+                const std::string bti = type_info_symbol(list[k].first, structs[static_cast<size_t>(list[k].first)].symname());
+                bases.addr_relocs.push_back({static_cast<uint32_t>(k * 16), bti});
+                for (int b = 0; b < 8; ++b)
+                    bases.init_bytes[k * 16 + 8 + static_cast<size_t>(b)] =
+                        static_cast<uint8_t>(static_cast<uint64_t>(static_cast<long long>(list[k].second)) >> (8 * b));
+            }
+            base_sym = bases.name;
+            globals.push_back(std::move(bases));
         }
         Global ti;
         ti.name = sym;
@@ -1388,6 +1490,21 @@ struct Parser {
                 auto it = sd.tdefs.find(tokens[at + 1].text);
                 if (it != sd.tdefs.end()) {
                     *t = it->second;
+                    next();
+                    next();
+                    any = true;
+                    continue;
+                }
+            }
+            if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 &&
+                !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen)) {
+                // Character::Bone where Bone is a class nested in Character: that class, also when another namespace
+                // has a type of the same name (HumanoidMotion::Bone, an enumeration; Round 29).
+                int nested = -1;
+                for (size_t k = 0; k < structs.size(); ++k)
+                    if (structs[k].parent == t->struct_id && structs[k].name == tokens[at + 1].text) nested = static_cast<int>(k);
+                if (nested >= 0) {
+                    t->struct_id = nested;
                     next();
                     next();
                     any = true;
@@ -1563,51 +1680,67 @@ struct Parser {
                 open_structs.push_back(defined_in);
                 outer_open.shadowed = bind_class_tdefs(defined_in);
             }
-            int base_id = -1;
+            // The base classes ([class.derived] 1): one or more, each with an optional access word; with several,
+            // each base is its own subobject (Round 29, [class.mi]).
+            std::vector<int> base_ids;
             if (accept(TColon)) {
-                while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
-                                      cur().text == "protected" || cur().text == "virtual"))
-                    next();
-                if (is(TIdent) && (is_template_name_at(at) || (typedefs.count(cur().text) > 0 &&
-                                                                 find_struct(cur().text) < 0))) {
-                    // class X : public Base<X> ([class.derived], [temp.names]): a base named by a template-id or a
-                    // typedef. X is declared (incomplete) first, so the base's arguments may name it (CRTP).
-                    if (!name.empty() && find_struct(name) < 0) {
-                        StructDef fwd;
-                        fwd.name = name;
-                        fwd.incomplete = true;
-                        fwd.ns = current_ns;
-                        if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
-                        fwd.cxx = true;
-                        fwd.is_class = as_class;
-                        fwd.is_union = as_union;
-                        structs.push_back(fwd);
+                while (true) {
+                    bool virt = false;
+                    while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
+                                          cur().text == "protected" || cur().text == "virtual")) {
+                        if (cur().text == "virtual") virt = true;
+                        next();
                     }
-                    Type bt;
-                    bool imp = false;
-                    bool exp = false;
-                    if (!parse_type(&bt, &imp, &exp)) return false;
-                    if (bt.base != 3 || bt.pointers != 0 || bt.struct_id < 0) {
-                        error = "expected a base class";
+                    int base_id = -1;
+                    if (is(TIdent) && (is_template_name_at(at) || (typedefs.count(cur().text) > 0 &&
+                                                                     find_struct(cur().text) < 0) ||
+                                       (at + 1 < tokens.size() && tokens[at + 1].kind == TColonColon))) {
+                        // class X : public Base<X> ([class.derived], [temp.names]): a base named by a template-id, a
+                        // typedef or a qualified name. X is declared (incomplete) first, so the base's arguments may name
+                        // it (CRTP).
+                        if (!name.empty() && find_struct(name) < 0) {
+                            StructDef fwd;
+                            fwd.name = name;
+                            fwd.incomplete = true;
+                            fwd.ns = current_ns;
+                            if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
+                            fwd.cxx = true;
+                            fwd.is_class = as_class;
+                            fwd.is_union = as_union;
+                            structs.push_back(fwd);
+                        }
+                        Type bt;
+                        bool imp = false;
+                        bool exp = false;
+                        if (!parse_type(&bt, &imp, &exp)) return false;
+                        if (bt.base != 3 || bt.pointers != 0 || bt.struct_id < 0) {
+                            error = "expected a base class";
+                            return false;
+                        }
+                        base_id = bt.struct_id;
+                    } else {
+                        if (!is(TIdent) || find_struct(cur().text) < 0) {
+                            error = "expected a base class";
+                            return false;
+                        }
+                        base_id = find_struct(cur().text);
+                        next();
+                    }
+                    if (virt && (!base_ids.empty() || is(TComma))) {
+                        error = "virtual base classes are not supported with several bases";
                         return false;
                     }
-                    base_id = bt.struct_id;
-                } else {
-                    if (!is(TIdent) || find_struct(cur().text) < 0) {
-                        error = "expected a base class";
-                        return false;
-                    }
-                    base_id = find_struct(cur().text);
-                    next();
+                    base_ids.push_back(base_id);
+                    if (!accept(TComma)) break;
                 }
                 if (!is(TLBrace)) {
-                    error = "only one base class is supported";
+                    error = "expected '{' after the base classes";
                     return false;
                 }
             }
             if (is(TLBrace)) {
                 int id = -1;
-                if (!parse_struct_body(as_union, name, &id, as_class, base_id)) return false;
+                if (!parse_struct_body(as_union, name, &id, as_class, base_ids)) return false;
                 type->base = 3;
                 type->struct_id = id;
                 return true;
@@ -1880,7 +2013,7 @@ struct Parser {
             for (int i = 0; i < t.array_len; ++i) parts.push_back(elem);
         } else {
             for (const Field& f : structs[static_cast<size_t>(t.struct_id)].fields)
-                if (f.name != "__vptr") parts.push_back(f.type);
+                if (f.name.compare(0, 6, "__vptr") != 0) parts.push_back(f.type);
         }
         for (const Type& part : parts) {
             if (*pos >= items.size()) break;
@@ -2232,6 +2365,15 @@ struct Parser {
         if (id < 0) return false;
         const std::string& member = tokens[i + 2].text;
         if (structs[static_cast<size_t>(id)].tdefs.count(member) > 0) return false;
+        // UIBind::Mode with Mode an enumeration declared in the class (enumeration names are kept in the one table of
+        // type names): a type, unless the class has a member of that name (Round 29, UIWidgetsMore.hpp).
+        const StructDef& sd = structs[static_cast<size_t>(id)];
+        if (typedefs.count(member) > 0 && sd.statics.count(member) == 0 && find_field_named(sd, member) < 0) {
+            bool method = false;
+            for (const Method& m : sd.methods)
+                if (m.name == member) method = true;
+            if (!method) return false;
+        }
         return find_struct(member) < 0;
     }
 
@@ -2273,7 +2415,8 @@ struct Parser {
                is_template_name_at(at) || (is(TIdent) && cur().text == "typename") ||
                (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
                 (tokens[at + 1].kind == TIdent || tokens[at + 1].kind == TAmp || tokens[at + 1].kind == TStar ||
-                 tokens[at + 1].kind == TConst));
+                 tokens[at + 1].kind == TConst || tokens[at + 1].kind == TAndAnd ||
+                 tokens[at + 1].kind == TLBrack));  // auto [a, b] = e; (Round 29)
     }
 
     // A class or struct used by its bare name, as in C++ ("C c;").
@@ -2576,6 +2719,9 @@ struct Parser {
     bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_local_decl_one(const Type& type, bool is_typedef, bool is_static, bool is_const, Node* out,
                               std::vector<Local>* locals, int stmt_line, bool* more);
+    // `auto [a, b]` (with & or && before the '['): a structured binding ([dcl.struct.bind]), Round 29.
+    bool binding_ahead() const;
+    bool parse_binding_decl(const Type& declared, bool is_const, Node* out, std::vector<Local>* locals, int stmt_line);
     // The end of a declarator: ',' means another follows, otherwise ';'.
     // `auto x = e;` and `for (T x : array)`: the initializer was read before the declaration, to learn its type;
     // the declaration then takes it from here, where it would have read `= e` (or `: e`).
@@ -2732,10 +2878,96 @@ struct Parser {
     // ---- overload choice (ISO/IEC 14882 [over.match]) ----
     // The rank of converting the argument to a parameter of type p: 0 exact, 1 promotion, 2 conversion, 3 a
     // user-defined conversion; -1 when it cannot be converted. An argument whose type is not known counts as 1.
-    bool derives_from(int sid, int base) const {
-        for (int walk = sid; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
-            if (walk == base) return true;
-        return false;
+    bool derives_from(int sid, int base) const { return base_offset(sid, base) >= 0; }
+    // Where a base class's subobject is in an object of class sid (0 for the class itself, [class.mi]), or -1 when
+    // base is not a base of it. With one base per class this is always 0.
+    int base_offset(int sid, int base) const {
+        if (sid == base) return 0;
+        if (sid < 0 || sid >= static_cast<int>(structs.size()) || base < 0) return -1;
+        const StructDef& d = structs[static_cast<size_t>(sid)];
+        if (d.bases.empty()) return d.base >= 0 ? base_offset(d.base, base) : -1;
+        for (const StructDef::BaseInfo& bi : d.bases) {
+            const int inner = base_offset(bi.sid, base);
+            if (inner >= 0) return bi.off + inner;
+        }
+        return -1;
+    }
+    // p moved by off bytes, as a pointer to class sid: the address of a base subobject (off > 0) or, from a base, of
+    // the whole object (off < 0) ([conv.ptr] 3, [expr.static.cast] 11).
+    Node offset_ptr(Node p, int off, int sid) const {
+        Type to;
+        to.base = 3;
+        to.struct_id = sid;
+        to.pointers = 1;
+        if (off == 0) return cast_node(to, std::move(p));
+        Type bytes;
+        bytes.base = 2;
+        bytes.pointers = 1;
+        Node moved;
+        moved.kind = Node::Binary;
+        moved.op = off > 0 ? TPlus : TMinus;
+        moved.kids.push_back(cast_node(bytes, std::move(p)));
+        moved.kids.push_back(int_node(off > 0 ? off : -off));
+        return cast_node(to, std::move(moved));
+    }
+    // The same, keeping a null pointer null: p ? p + off : 0. A value with side effects is computed once, into a
+    // hidden local (in a comma expression, so it stays where it was written).
+    Node offset_ptr_checked(Node p, int off, int sid) {
+        if (off == 0) return p;
+        const bool never_null = (p.kind == Node::Unary && p.op == TAmp) || (p.kind == Node::Name && p.text == "this");
+        if (never_null) return offset_ptr(std::move(p), off, sid);
+        Type to;
+        to.base = 3;
+        to.struct_id = sid;
+        to.pointers = 1;
+        Node assign;
+        if (has_effects(p) && cur_locals != nullptr) {
+            Type held;
+            if (!static_type(p, &held)) held = void_ptr();
+            held.is_ref = false;
+            Local hidden;
+            hidden.name = "__up" + std::to_string(tmp_count++);
+            hidden.type = held;
+            place_local(cur_locals, hidden);
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(p));
+            p = node_name(hidden.name);
+        }
+        Node tern;
+        tern.kind = Node::Ternary;
+        tern.kids.push_back(p);
+        tern.kids.push_back(offset_ptr(p, off, sid));
+        tern.kids.push_back(cast_node(to, int_node(0)));
+        if (assign.kind != Node::Assign) return tern;
+        Node comma;
+        comma.kind = Node::Binary;
+        comma.op = TComma;
+        comma.type = to;
+        comma.kids.push_back(std::move(assign));
+        comma.kids.push_back(std::move(tern));
+        return comma;
+    }
+    // A value converted to `to`, a pointer to a class: when the value is a pointer to a class derived from it and the
+    // base is not at offset 0, the address moves to the base subobject ([conv.ptr] 3). With `down`, a pointer to a
+    // base converted to a pointer to a derived class moves back ([expr.static.cast] 11).
+    void class_ptr_convert(Node* value, const Type& to, bool down = false) {
+        if (to.pointers != 1 || to.base != 3 || to.struct_id < 0 || to.is_array() || to.is_ref) return;
+        Type from;
+        if (!static_type(*value, &from)) return;
+        from.is_ref = false;
+        if (from.pointers != 1 || from.base != 3 || from.struct_id < 0 || from.is_array() || from.struct_id == to.struct_id)
+            return;
+        if (from.func_id >= 0 || to.func_id >= 0) return;
+        const int up = base_offset(from.struct_id, to.struct_id);
+        if (up > 0) {
+            *value = offset_ptr_checked(std::move(*value), up, to.struct_id);
+            return;
+        }
+        if (!down || up == 0) return;
+        const int back = base_offset(to.struct_id, from.struct_id);
+        if (back > 0) *value = offset_ptr_checked(std::move(*value), -back, to.struct_id);
     }
     static bool arith_type(const Type& t) {
         return t.pointers == 0 && !t.is_array() && t.base != 3 && t.base != 0 && t.func_id < 0;
@@ -2815,7 +3047,65 @@ struct Parser {
             if (norm(a.params[i]) != norm(b.params[i])) return false;
         return true;
     }
+    // The number of elements of the braced list whose '{' is token `open` (commas at its own level).
+    int braced_count(size_t open) const {
+        int depth = 0;
+        int count = 0;
+        bool any = false;
+        for (size_t k = open; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            const Tok t = tokens[k].kind;
+            if (t == TLBrace || t == TLParen || t == TLBrack) {
+                if (depth == 1) any = true;
+                ++depth;
+                continue;
+            }
+            if (t == TRBrace || t == TRParen || t == TRBrack) {
+                if (--depth == 0) break;
+                continue;
+            }
+            if (depth == 1) {
+                if (t == TComma) {
+                    ++count;
+                    any = false;
+                } else {
+                    any = true;
+                }
+            }
+        }
+        return count + (any ? 1 : 0);
+    }
+    // Can an object of class sid be made from a braced list of n elements ([over.ics.list], [dcl.init.list] 3)? By an
+    // initializer-list constructor, a constructor that takes n arguments, or as an aggregate with at least n members.
+    bool class_takes_list(int sid, int n) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return true;
+        Type list;
+        if (n > 0 && has_init_list_ctor(sid, &list)) return true;
+        bool any_ctor = false;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name != "<ctor>") continue;
+            any_ctor = true;
+            if (static_cast<int>(m.params.size()) >= n && static_cast<int>(required_args(m.defaults, m.params.size())) <= n)
+                return true;
+        }
+        if (has_ctor_template(sid)) return true;
+        if (any_ctor) return n == 0 && !structs[static_cast<size_t>(sid)].poly;
+        int members = 0;
+        for (const Field& f : structs[static_cast<size_t>(sid)].fields)
+            if (f.name.compare(0, 6, "__vptr") != 0) ++members;
+        return n <= members || n == 0;
+    }
     int arg_score(const Node& arg, Type p) const {
+        if (arg.kind == Node::Block && arg.text == "tokbrace") {
+            // A braced list argument ([over.ics.list]): a class parameter takes it by a constructor or as an
+            // aggregate (a user-defined conversion); a pointer or a number takes {} or {x} only. Before (Round 28),
+            // set.erase({a, b}) chose erase(const T*) (Round 29).
+            const int n = braced_count(static_cast<size_t>(arg.number));
+            Type q = p;
+            q.is_ref = false;
+            if (q.pointers > 0 || q.is_array() || q.func_id >= 0) return n <= 1 ? 2 : -1;
+            if (q.base != 3) return n <= 1 ? 0 : -1;
+            return class_takes_list(q.struct_id, n) ? 4 : -1;
+        }
         Type a;
         if (!static_type(arg, &a)) return 1;
         if (arg.kind == Node::IntLit && arg.text == "char" && a.base == 1) a.base = 2;  // a character literal is a char
@@ -3203,6 +3493,14 @@ struct Parser {
                 }
                 Node a = node_addr(std::move(arg));
                 arg = std::move(a);
+                // A reference to a base class bound to an object of a derived class: the base subobject ([dcl.init.ref]).
+                Type to_ptr = pt;
+                to_ptr.is_ref = false;
+                to_ptr.rref = false;
+                to_ptr.pointers += 1;
+                class_ptr_convert(&arg, to_ptr);
+            } else if (pt.pointers == 1 && !pt.is_array() && pt.base == 3) {
+                class_ptr_convert(&arg, pt);
             } else if (cur_locals != nullptr && pt.base == 3 && pt.pointers == 0 && !pt.is_array() && pt.struct_id >= 0 &&
                        arg.kind == Node::Call && class_prvalue(pt, arg)) {
                 // f(g()) with g returning the parameter's class by value: the result is made in a hidden local (the
@@ -3261,9 +3559,17 @@ struct Parser {
     }
     bool add_method(StructDef* def, int self, Method m) {
         m.owner = self;
+        m.this_adj = 0;
+        m.this_sid = -1;
+        m.vt_adj = 0;
+        m.vt_sid = -1;
         size_t found = def->methods.size();
         const std::string new_sig = param_sig(m.params);
         bool collide = false;
+        // Virtual functions of the same signature in the bases that are not at offset 0 ([class.virtual] 2: this
+        // function overrides each of them): their slots in the secondary tables get an adjustor thunk below.
+        std::vector<std::pair<int, int>> sec_overrides;  // (subobject offset, slot)
+        std::vector<size_t> sec_entries;
         for (size_t i = 0; i < def->methods.size(); ++i)
             if (def->methods[i].name == m.name && def->methods[i].params.size() == m.params.size()) {
                 bool same = true;
@@ -3273,14 +3579,35 @@ struct Parser {
                 } else if (m.name != "<dtor>") {
                     same = param_sig(def->methods[i].params) == new_sig && def->methods[i].is_const == m.is_const;
                 }
+                if (same && def->methods[i].is_virtual && def->methods[i].vt_adj != 0) {
+                    sec_overrides.push_back({def->methods[i].vt_adj, def->methods[i].slot});
+                    sec_entries.push_back(i);
+                    if (found < def->methods.size() && def->methods[found].is_virtual) continue;  // keep the first base's
+                }
                 if (same) found = i;
                 else collide = true;
             }
         if (found < def->methods.size() && def->methods[found].is_virtual) {
             m.is_virtual = true;
             m.slot = def->methods[found].slot;
+            m.vt_adj = def->methods[found].vt_adj;
+            m.vt_sid = def->methods[found].vt_sid;
         }
-        if (m.is_virtual) {
+        // A destructor overrides the virtual destructor of every base that has one ([class.dtor] 13).
+        if (m.name == "<dtor>")
+            for (const StructDef::SecTable& st : def->sec_tables)
+                if (st.dtor_slot >= 0) {
+                    m.is_virtual = true;
+                    sec_overrides.push_back({st.off, st.dtor_slot});
+                }
+        // The other entries of this signature are replaced by this one (only the entry kept is found by a call).
+        for (size_t k = sec_entries.size(); k-- > 0;) {
+            const size_t i = sec_entries[k];
+            if (i == found) continue;
+            def->methods.erase(def->methods.begin() + static_cast<std::ptrdiff_t>(i));
+            if (found < def->methods.size() && found > i) --found;
+        }
+        if (m.is_virtual && m.vt_adj == 0) {
             if (!def->poly) {
                 if (def->base >= 0) {
                     error = "a virtual function in a class derived from a class without virtual functions is not supported";
@@ -3305,11 +3632,52 @@ struct Parser {
             for (const Type& param : m.params) m.qname += param.is_ref ? "r" : "v";  // constructors overload by type
         if (!m.tsym.empty()) m.qname += "<" + m.tsym + ">";  // a constructor template instance
         m.symbol = cxx_method_symbol(structs, *def, m);
-        if (m.is_virtual)
-            def->vtable[static_cast<size_t>(m.slot)] = m.pure ? "" : m.name == "<dtor>" ? sdd_symbol(*def, m) : m.symbol;
+        const std::string target = m.pure ? "" : m.name == "<dtor>" ? sdd_symbol(*def, m) : m.symbol;
+        if (m.is_virtual && m.vt_adj == 0)
+            def->vtable[static_cast<size_t>(m.slot)] = target;
+        for (const auto& ov : sec_overrides)
+            for (StructDef::SecTable& st : def->sec_tables)
+                if (st.off == ov.first && ov.second >= 0 && ov.second < static_cast<int>(st.slots.size()))
+                    st.slots[static_cast<size_t>(ov.second)] =
+                        target.empty() ? std::string() : adjustor_thunk(*def, m, target, ov.first);
         if (found < def->methods.size()) def->methods[found] = std::move(m);
         else def->methods.push_back(std::move(m));
         return true;
+    }
+
+    // An adjustor thunk for a secondary table's slot (Round 29): the slot is called with the address of the base
+    // subobject at `adj`; the thunk subtracts adj and jumps to `target`, the function of the whole class. Its name is
+    // the target's with the access letter replaced by W (public), O (protected) or G (private) and the adjustment as a
+    // decorated number, as Microsoft decorates virtual adjustor thunks. One per file (an internal symbol).
+    std::string adjustor_thunk(const StructDef& def, const Method& m, const std::string& target, int adj) {
+        std::string sym = target;
+        const std::string scope = "@" + def.symname() + "@@";
+        const size_t at_scope = sym.find(scope);
+        size_t letter = at_scope == std::string::npos ? std::string::npos : at_scope + scope.size();
+        // ??_GC@@UEAA...: the scalar deleting destructor's name starts with the class itself.
+        if (sym.compare(0, 4, "??_G") == 0 && sym.compare(4, def.symname().size() + 2, def.symname() + "@@") == 0)
+            letter = 4 + def.symname().size() + 2;
+        const char access = m.access == 'A' ? 'G' : m.access == 'I' ? 'O' : 'W';
+        std::string num;
+        if (adj >= 1 && adj <= 10) {
+            num = std::string(1, static_cast<char>('0' + adj - 1));
+        } else {
+            for (unsigned v = static_cast<unsigned>(adj); v != 0; v >>= 4) num.insert(num.begin(), static_cast<char>('A' + (v & 15u)));
+            num += "@";
+        }
+        if (letter != std::string::npos && letter < sym.size()) sym = sym.substr(0, letter) + access + num + sym.substr(letter + 1);
+        else sym = "__okay_thunk" + std::to_string(adj) + "_" + sym;
+        for (const Thunk& t : thunks)
+            if (t.symbol == sym) return sym;
+        Thunk t;
+        t.symbol = sym;
+        t.target = target;
+        t.adj = adj;
+        // A class result returned through memory: its address is the first argument and this the second.
+        t.rdx = m.name != "<dtor>" && m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref && !m.ret.is_array() &&
+                !fits_register(m.ret);
+        thunks.push_back(t);
+        return sym;
     }
 
     // `= expr` or `{expr}` or `{}` after a member name. The expression is parsed again, where it is
@@ -3421,7 +3789,8 @@ struct Parser {
             next();
         }
     }
-    bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
+    bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false,
+                           const std::vector<int>& base_ids = {}) {
         struct NestGuard {
             int& n;
             explicit NestGuard(int& x) : n(x) { ++n; }
@@ -3465,12 +3834,17 @@ struct Parser {
         def.is_union = as_union;
         def.is_class = is_class;
         def.cxx = is_class;
+        // The first base (Microsoft x64 layout, Round 29): the first base with virtual functions, else the first one
+        // written. It is at offset 0, its table is this class's table, and its members are copied as they are.
+        int base_id = -1;
+        for (int bid : base_ids)
+            if (base_id < 0 && structs[static_cast<size_t>(bid)].poly) base_id = bid;
+        if (base_id < 0 && !base_ids.empty()) base_id = base_ids.front();
         if (base_id >= 0) {
             const StructDef& base = structs[static_cast<size_t>(base_id)];
             def.base = base_id;
             def.cxx = true;
             def.fields = base.fields;
-            def.base_fields = base.fields.size();
             def.poly = base.poly;
             def.methods = base.methods;
             // Constructors are not inherited.
@@ -3479,7 +3853,86 @@ struct Parser {
             for (Method& inherited : def.methods) inherited.body_at = 0;
             def.vtable = base.vtable;
             def.statics = base.statics;
+            def.sec_tables = base.sec_tables;
+            def.bases_size = base.size;
+            def.align = base.align;
+            StructDef::BaseInfo first;
+            first.sid = base_id;
+            first.f0 = 0;
+            first.f1 = def.fields.size();
+            def.bases.push_back(first);
         }
+        // The other bases ([class.mi]), in declaration order, each at the next offset its alignment allows after the
+        // bases before it. Their fields are copied with that offset added; their member functions are reached through
+        // the subobject (this_adj), their virtual functions through the subobject's own table (vt_adj), which this
+        // class keeps as a secondary table.
+        for (int bid : base_ids) {
+            if (bid == base_id) continue;
+            const StructDef& base = structs[static_cast<size_t>(bid)];
+            if (base.incomplete) {
+                error = "base class " + base.name + " is incomplete";
+                return false;
+            }
+            for (const StructDef::BaseInfo& had : def.bases)
+                if (had.sid == bid) {
+                    error = "the same base class twice";
+                    return false;
+                }
+            const int balign = base.align < 1 ? 1 : base.align;
+            const int off = (def.bases_size + balign - 1) / balign * balign;
+            StructDef::BaseInfo info;
+            info.sid = bid;
+            info.off = off;
+            info.f0 = def.fields.size();
+            for (Field f : base.fields) {
+                f.offset += off;
+                // The base's table pointer keeps a name of its own ("__vptr16"): "__vptr" is the class's own, at offset 0.
+                if (f.name.compare(0, 6, "__vptr") == 0) f.name = "__vptr" + std::to_string(f.offset);
+                def.fields.push_back(f);
+            }
+            info.f1 = def.fields.size();
+            def.bases.push_back(info);
+            for (Method m : base.methods) {
+                if (m.name == "<ctor>" || m.name == "<dtor>") continue;
+                bool dup = false;
+                for (const Method& have : def.methods)
+                    if (have.name == m.name && have.params.size() == m.params.size() && have.is_const == m.is_const &&
+                        param_sig(have.params) == param_sig(m.params) && !(m.is_virtual && have.is_virtual))
+                        dup = true;
+                if (dup) continue;
+                m.body_at = 0;
+                if (m.this_sid < 0) m.this_sid = m.owner;
+                if (m.vt_sid < 0) m.vt_sid = m.owner;
+                if (!m.is_static) m.this_adj += off;
+                if (m.is_virtual) m.vt_adj += off;
+                def.methods.push_back(std::move(m));
+            }
+            for (const auto& st : base.statics) def.statics.insert(st);
+            if (base.poly) {
+                StructDef::SecTable table;
+                table.off = off;
+                table.sid = bid;
+                table.slots = base.vtable;
+                for (const Method& bm : base.methods)
+                    if (bm.name == "<dtor>" && bm.is_virtual) table.dtor_slot = bm.slot;
+                def.sec_tables.push_back(std::move(table));
+            }
+            for (StructDef::SecTable table : base.sec_tables) {
+                table.off += off;
+                def.sec_tables.push_back(std::move(table));
+            }
+            def.bases_size = off + base.size;
+            if (base.align > def.align) def.align = base.align;
+        }
+        // Keep the bases in declaration order (construction order, [class.base.init] 13).
+        if (base_ids.size() > 1) {
+            std::vector<StructDef::BaseInfo> ordered;
+            for (int bid : base_ids)
+                for (const StructDef::BaseInfo& bi : def.bases)
+                    if (bi.sid == bid) ordered.push_back(bi);
+            def.bases = ordered;
+        }
+        def.base_fields = def.fields.size();
         const size_t enums_from = enums_declared.size();
         int self = -1;
         for (size_t k = 0; k < structs.size(); ++k)
@@ -3516,8 +3969,10 @@ struct Parser {
         };
         std::vector<ScopedTd> scoped_tds;
         if (base_id >= 0) {
-            // The member types of the base class are names in this class too ([class.member.lookup]).
+            // The member types of the base classes are names in this class too ([class.member.lookup]).
             def.tdefs = structs[static_cast<size_t>(base_id)].tdefs;
+            for (int bid : base_ids)
+                for (const auto& td : structs[static_cast<size_t>(bid)].tdefs) def.tdefs.insert(td);
             for (const auto& td : def.tdefs) {
                 ScopedTd saved_td;
                 saved_td.name = td.first;
@@ -3956,11 +4411,10 @@ struct Parser {
         int cursor_bits = 0;
         size_t first_field = 0;
         if (def.base >= 0) {
-            // A derived class starts after the whole base object, as the
+            // A derived class starts after the whole base objects, as the
             // MSVC layout does. The base fields keep their offsets.
-            const StructDef& base = structs[static_cast<size_t>(def.base)];
-            offset = base.size;
-            align = base.align;
+            offset = def.bases_size;
+            align = def.align < 1 ? 1 : def.align;
             cursor_bits = offset * 8;
             first_field = def.base_fields;
         }
@@ -4016,6 +4470,8 @@ struct Parser {
             for (const Method& m : def.methods)
                 if (is_copy_param(m, self)) user_copy = true;
             bool part_copies = def.base >= 0 && class_has_copy(def.base);
+            for (const StructDef::BaseInfo& bi : def.bases)
+                if (class_has_copy(bi.sid)) part_copies = true;
             for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
                 const Type& ft = def.fields[fi].type;
                 if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
@@ -4073,6 +4529,26 @@ struct Parser {
             table.vtable = true;
             table.slots = def.vtable;
             table.rtti = type_info_symbol(self, def.symname());
+            globals.push_back(std::move(table));
+        }
+        // One table for each base subobject that is not at offset 0 and has virtual functions (Round 29): the slots
+        // of that base's table, with this class's overrides as adjustor thunks, the class's type information, and the
+        // subobject's offset in the slot before it.
+        for (size_t k = 0; k < def.sec_tables.size(); ++k) {
+            StructDef::SecTable& st = def.sec_tables[k];
+            st.sym = "??_7" + def.symname() + "@@6B" + structs[static_cast<size_t>(st.sid)].symname() + "@@";
+            for (size_t j = 0; j < k; ++j)
+                if (def.sec_tables[j].sid == st.sid) st.sym += "$" + std::to_string(st.off);
+            Global table;
+            table.name = st.sym;
+            table.type.base = 0;
+            table.type.pointers = 1;
+            table.type.array_len = static_cast<int>(st.slots.size());
+            table.bss = false;
+            table.vtable = true;
+            table.slots = st.slots;
+            table.rtti = type_info_symbol(self, def.symname());
+            table.top_off = st.off;
             globals.push_back(std::move(table));
         }
         structs[static_cast<size_t>(self)] = def;
@@ -4322,6 +4798,8 @@ struct Parser {
         return !any || has_ctor_template_taking(sid, 0);
     }
     bool parts_default_constructible(const StructDef& d, int self) const {
+        for (const StructDef::BaseInfo& bi : d.bases)
+            if (class_needs_ctor(structs[static_cast<size_t>(bi.sid)]) && !takes_no_args(bi.sid)) return false;
         if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)]) && !takes_no_args(d.base)) return false;
         for (size_t fi = d.base_fields; fi < d.fields.size(); ++fi) {
             const Field& f = d.fields[fi];
@@ -4355,7 +4833,7 @@ struct Parser {
     }
 
     static int find_field_named(const StructDef& d, const std::string& name) {
-        for (size_t i = 0; i < d.fields.size(); ++i)
+        for (size_t i = d.fields.size(); i-- > 0;)  // the last: a member hides a base's member of the same name
             if (d.fields[i].name == name) return static_cast<int>(i);
         return -1;
     }
@@ -4450,20 +4928,26 @@ struct Parser {
                 stmt.kids.push_back(std::move(assign));
                 return stmt;
             };
-            if (def.base >= 0 && class_has_copy(def.base)) {
-                std::vector<Node> args;
-                args.push_back(node_name("__o"));
-                Node call;
-                if (!special_call(def.base, "<ctor>", node_name("this"), std::move(args), &call)) return false;
-                pre.push_back(std::move(call));
-            } else {
-                for (size_t fi = 0; fi < def.base_fields; ++fi)
-                    if (def.fields[fi].name != "__vptr") pre.push_back(assign_field(def.fields[fi].name));
+            // Each base in declaration order ([class.copy.ctor] 14): by its copy constructor, given the base subobject of
+            // the source, or field by field.
+            for (const StructDef::BaseInfo& bi : def.bases) {
+                if (class_has_copy(bi.sid)) {
+                    std::vector<Node> args;
+                    args.push_back(node_name("__o"));
+                    Node call;
+                    if (!special_call(bi.sid, "<ctor>", bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid),
+                                      std::move(args), &call))
+                        return false;
+                    pre.push_back(std::move(call));
+                } else {
+                    for (size_t fi = bi.f0; fi < bi.f1; ++fi)
+                        if (def.fields[fi].name.compare(0, 6, "__vptr") != 0) pre.push_back(assign_field(def.fields[fi].name));
+                }
             }
-            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            vptr_stores(def, &pre);
             for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
                 const Field& field = def.fields[fi];
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 const Type& ft = field.type;
                 if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
                     class_has_copy(ft.struct_id)) {
@@ -4488,22 +4972,28 @@ struct Parser {
             if (!special_call(cls, "<ctor>", node_name("this"), std::move(inits[0].args), &call)) return false;
             pre.push_back(std::move(call));
         } else if (special == 1) {
-            if (def.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(def.base)])) {
+            // The bases in declaration order ([class.base.init] 13), each with the arguments of its initializer.
+            for (const StructDef::BaseInfo& bi : def.bases) {
+                if (!class_needs_ctor(structs[static_cast<size_t>(bi.sid)])) continue;
                 std::vector<Node> args;
                 for (Init& init : inits)
-                    if (init.name == structs[static_cast<size_t>(def.base)].name) args = std::move(init.args);
+                    if (init.name == structs[static_cast<size_t>(bi.sid)].name ||
+                        (!structs[static_cast<size_t>(bi.sid)].tmpl.empty() && init.name == structs[static_cast<size_t>(bi.sid)].tmpl &&
+                         def.bases.size() > 1))
+                        args = std::move(init.args);
+                const Node sub = bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid);
                 Node call;
-                if (!special_call(def.base, "<ctor>", node_name("this"), std::move(args), &call)) return false;
+                if (!special_call(bi.sid, "<ctor>", sub, std::move(args), &call)) return false;
                 pre.push_back(std::move(call));
-                if (eh_ && class_needs_dtor(structs[static_cast<size_t>(def.base)])) {
-                    eh_push_object(&pre, node_name("this"), def.base, 0, locals);
+                if (eh_ && class_needs_dtor(structs[static_cast<size_t>(bi.sid)])) {
+                    eh_push_object(&pre, sub, bi.sid, 0, locals);
                     ++eh_held;
                 }
             }
-            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            vptr_stores(def, &pre);
             for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
                 const Field& field = def.fields[fi];
-                if (field.name == "__vptr") continue;
+                if (field.name.compare(0, 6, "__vptr") == 0) continue;
                 Init* init = nullptr;
                 for (Init& candidate : inits)
                     if (candidate.name == field.name) init = &candidate;
@@ -4656,7 +5146,11 @@ struct Parser {
                 }
             }
             for (Init& init : inits) {
-                bool known = init.name == (def.base >= 0 ? structs[static_cast<size_t>(def.base)].name : std::string());
+                bool known = false;
+                for (const StructDef::BaseInfo& bi : def.bases)
+                    if (init.name == structs[static_cast<size_t>(bi.sid)].name ||
+                        (def.bases.size() > 1 && init.name == structs[static_cast<size_t>(bi.sid)].tmpl))
+                        known = true;
                 for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi)
                     if (def.fields[fi].name == init.name) known = true;
                 std::vector<std::string> path;
@@ -4701,7 +5195,7 @@ struct Parser {
                 }
             }
         } else {
-            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            vptr_stores(def, &pre);
             for (size_t fi = def.fields.size(); fi-- > def.base_fields;) {
                 const Field& field = def.fields[fi];
                 if (!obj_needs_dtor(field.type)) continue;
@@ -4710,9 +5204,14 @@ struct Parser {
                     return false;
                 post.push_back(std::move(call));
             }
-            if (def.base >= 0 && class_needs_dtor(structs[static_cast<size_t>(def.base)])) {
+            // The bases in reverse declaration order ([class.dtor] 13).
+            for (size_t bk = def.bases.size(); bk-- > 0;) {
+                const StructDef::BaseInfo& bi = def.bases[bk];
+                if (!class_needs_dtor(structs[static_cast<size_t>(bi.sid)])) continue;
                 Node call;
-                if (!special_call(def.base, "<dtor>", node_name("this"), {}, &call)) return false;
+                if (!special_call(bi.sid, "<dtor>", bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid),
+                                  {}, &call))
+                    return false;
                 post.push_back(std::move(call));
             }
         }
@@ -5668,19 +6167,22 @@ struct Parser {
                     next();
                 }
             }
-            int base_id = -1;
+            std::vector<int> base_ids;
             if (accept(TColon)) {
-                while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
-                                      cur().text == "protected" || cur().text == "virtual"))
-                    next();
-                Type bt;
-                bool imp = false;
-                bool exp = false;
-                if (!parse_type(&bt, &imp, &exp) || bt.base != 3) {
-                    if (error.empty()) error = "expected a base class";
-                    ok = false;
-                } else {
-                    base_id = bt.struct_id;
+                while (ok) {
+                    while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
+                                          cur().text == "protected" || cur().text == "virtual"))
+                        next();
+                    Type bt;
+                    bool imp = false;
+                    bool exp = false;
+                    if (!parse_type(&bt, &imp, &exp) || bt.base != 3) {
+                        if (error.empty()) error = "expected a base class";
+                        ok = false;
+                    } else {
+                        base_ids.push_back(bt.struct_id);
+                    }
+                    if (!accept(TComma)) break;
                 }
             }
             if (ok && !is(TLBrace)) {
@@ -5689,7 +6191,7 @@ struct Parser {
             }
             // The base class may itself be an instance made just now (A<T> : B<T>), which used and cleared pending_sym.
             pending_sym = sym;
-            if (ok) ok = parse_struct_body(false, key, &id, as_class, base_id);
+            if (ok) ok = parse_struct_body(false, key, &id, as_class, base_ids);
             if (ok) ok = apply_ool_statics(name, id);
             if (had) typedefs[name] = old_type;
             else typedefs.erase(name);
@@ -5819,7 +6321,13 @@ struct Parser {
             ++k;
         }
         td.end = k;
-        if (tokens[td.start].kind == TStruct) {
+        // template <class T> struct tm *f(...): a function template whose result type is written with `struct`
+        // ([dcl.type.elab]), not a class template: '*', '&' or a name and '(' follow the class name (Round 29).
+        const bool elaborated_fn =
+            tokens[td.start].kind == TStruct && td.start + 3 < tokens.size() && tokens[td.start + 1].kind == TIdent &&
+            (tokens[td.start + 2].kind == TStar || tokens[td.start + 2].kind == TAmp ||
+             (tokens[td.start + 2].kind == TIdent && tokens[td.start + 3].kind == TLParen));
+        if (tokens[td.start].kind == TStruct && !elaborated_fn) {
             if (td.start + 1 >= tokens.size() || tokens[td.start + 1].kind != TIdent) {
                 error = "expected a class template name";
                 return false;
@@ -7393,6 +7901,17 @@ struct Parser {
                         funcs.end());
         }
         declare_external_methods();
+        for (const Thunk& t : thunks) {
+            FuncDecl fn;
+            fn.name = t.symbol;
+            fn.symbol = t.symbol;
+            fn.defined = true;
+            fn.is_static = true;
+            fn.thunk_target = t.target;
+            fn.thunk_adj = t.adj;
+            fn.thunk_rdx = t.rdx;
+            funcs.push_back(std::move(fn));
+        }
         // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,
         // so two files can both use vector<int> or the same inline function): template instances and virtual tables.
         for (FuncDecl& f : funcs)
@@ -7613,6 +8132,7 @@ struct Parser {
                 continue;
             }
             if (is(TNamespace)) {
+                const bool inline_ns = cur().inl;  // inline namespace X { } ([namespace.def] 5)
                 next();
                 size_t pushed = 0;
                 if (is(TIdent)) {
@@ -7632,6 +8152,9 @@ struct Parser {
                 ns_is_anon.push_back(pushed == 0);
                 if (pushed == 0) ++anon_depth;
                 update_ns();
+                // The members of an inline namespace are members of the namespace around it too: its functions can be
+                // called by their bare names, as after a using-directive (Round 29; StringId.hpp's literals).
+                if (inline_ns && pushed > 0) using_namespaces.push_back(current_ns);
                 continue;
             }
             if (is(TIdent) && cur().text == "template" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
@@ -8108,6 +8631,19 @@ struct Parser {
                 fn.defined = false;
                 funcs.push_back(std::move(fn));
                 continue;
+            }
+            if (!current_ns.empty() && fn.ret.deduce == 0) {
+                // A function of a namespace that calls itself (Round 29): its name is known in its own body
+                // ([basic.scope.pdecl] 1, the point of declaration is before the body). The declaration made here is
+                // merged with the definition at the end of the file (finish_program).
+                bool known = false;
+                for (const FuncDecl& f : funcs)
+                    if (f.name == fn.name) known = true;
+                if (!known) {
+                    FuncDecl early = fn;
+                    early.defined = false;
+                    funcs.push_back(std::move(early));
+                }
             }
             if (!parse_function_body(&fn, -1)) return false;
             funcs.push_back(std::move(fn));

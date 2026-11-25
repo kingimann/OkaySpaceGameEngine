@@ -73,6 +73,10 @@ public:
         items_.clear();
         slots_.clear();
     }
+    void swap(unordered_map& other) {
+        items_.swap(other.items_);
+        slots_.swap(other.slots_);
+    }
     void reserve(size_t n) {
         if (n * 2 > slots_.size()) rebuild(n);
     }
@@ -142,6 +146,7 @@ public:
     pair<K, V>* end() { return items_.end(); }
     const pair<K, V>* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(unordered_map& other) { items_.swap(other.items_); }
     void reserve(size_t) {}
     size_t count(const K& key) const { return items_.count(key); }
     bool contains(const K& key) const { return items_.contains(key); }

@@ -459,6 +459,39 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             tok.text = value;
             tok.ity = str_prefix == 8 ? 0 : str_prefix;
+            if (i < text.size() && (text[i] == '_' || std::isalpha(static_cast<unsigned char>(text[i]))) && str_prefix == 0) {
+                // A user-defined string literal ([lex.ext] 5): "text"_x is the call operator""_x("text", 4); and in
+                // `operator""_x` the literal operator's name. Both become the function name __okay_udl_x here (own
+                // name; Microsoft decorates the literal operator as ??__K_x).
+                size_t e = i;
+                while (e < text.size() && (text[e] == '_' || std::isalnum(static_cast<unsigned char>(text[e])))) ++e;
+                const std::string suffix = text.substr(i, e - i);
+                i = e;
+                if (!tokens.empty() && tokens.back().kind == TIdent && tokens.back().text == "operator" && value.empty()) {
+                    tokens.back().text = "__okay_udl" + suffix;
+                    continue;
+                }
+                Token name = tok;
+                name.kind = TIdent;
+                name.text = "__okay_udl" + suffix;
+                name.ity = 0;
+                tokens.push_back(name);
+                Token punct = tok;
+                punct.text.clear();
+                punct.ity = 0;
+                punct.kind = TLParen;
+                tokens.push_back(punct);
+                tokens.push_back(tok);
+                punct.kind = TComma;
+                tokens.push_back(punct);
+                Token len = punct;
+                len.kind = TNumber;
+                len.number = value.size();
+                tokens.push_back(len);
+                punct.kind = TRParen;
+                tokens.push_back(punct);
+                continue;
+            }
             if (!tokens.empty() && tokens.back().kind == TString) {
                 // Adjacent string literals are one literal ([lex.string] 7, translation phase 6), also across lines. A
                 // plain part next to a wide one takes the wide encoding (its bytes are taken as code points).

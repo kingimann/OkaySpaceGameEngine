@@ -173,3 +173,13 @@ and controller test runs on this one path.
   meet convex shapes); a terrain raises no collision callbacks (as before).
 * A dedicated configurable 6-DOF Joint3D mode in the editor (the core's SixDof joint is reachable from code).
 * 2D: a slider joint, 2D bodies and joints in the debug view, 2D queries through the core tree.
+
+## Contact and joint correction shares (2026-11-25)
+
+`ColliderDef::positionCorrection` (0 = the world's `positionCorrection`, 0.2) is the share of an overlap a collider's
+contacts remove per position iteration; a pair uses the larger of its two. `JointDef::positionCorrection` (1 = all, as
+before) is the share of a joint's drift (anchor gap, limit overshoot) its position pass removes per iteration. Both
+defaults keep every scene as it was. The ragdoll (`dyn::CoreRagdoll`) uses 0.8 for its limbs and 0.5 for its joints:
+with the defaults, joints corrected in full won over contacts corrected by 0.2 and held limbs inside tables and floors
+(docs/gameplay/active_ragdoll.md).
+

@@ -404,6 +404,9 @@ struct ScoreEntry {
 ///   Supabase — a hosted Supabase project (auth/v1 REST + anon apikey).
 enum class Provider { Auto, Local, Custom, Supabase };
 
+/// How a check of the saved session with the server went (AccountService::CheckSession).
+enum class SessionCheck { Valid, Rejected, Unreachable, ServerError, NoSession };
+
 /// A client-side account service. Construct it with a config directory (where a
 /// saved session and any local accounts live) and, for online use, a server URL
 /// (+ an API key for managed providers like Supabase). With nothing configured
@@ -751,21 +754,32 @@ public:
     /// backend has nothing to check, so it just reports whether someone is in.
     /// `reached` (optional): false when the server could not be asked (the launcher's sign-in gate blocks then).
     bool VerifySession(bool* reached = nullptr) {
-        if (reached) *reached = true;
-        if (!session_.loggedIn) return false;
-        if (!IsOnline()) return true;
+        const SessionCheck c = CheckSession();
+        if (reached) *reached = c != SessionCheck::Unreachable;
+        return c == SessionCheck::Valid || c == SessionCheck::Unreachable;   // offline: keep the session
+    }
+
+    /// The same check as VerifySession, saying which way it went: Valid (the server
+    /// confirmed it, or a local backend has someone signed in), Rejected (401/403
+    /// and the refresh failed: signed out), Unreachable (no answer: the session is
+    /// kept, but nothing confirmed it), ServerError (it answered with another
+    /// error: kept, not confirmed), NoSession (nobody is signed in). The editor's
+    /// sign-in gate (editor/SignInGate.hpp) opens only on Valid.
+    SessionCheck CheckSession() {
+        if (!session_.loggedIn) return SessionCheck::NoSession;
+        if (!IsOnline()) return SessionCheck::Valid;
         // Supabase exposes the signed-in user at auth/v1/user; our custom server
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
-        if (!r.reached) { if (reached) *reached = false; return true; }   // offline: keep the session
+        if (!r.reached) return SessionCheck::Unreachable;
         if (r.status == 401 || r.status == 403) {    // token expired/revoked
             // Try to renew from the refresh token before giving up — a 1-hour
             // Supabase access token expiring shouldn't sign the player out.
-            if (RefreshSupabaseToken()) return true;
+            if (RefreshSupabaseToken()) return SessionCheck::Valid;
             Logout();
-            return false;
+            return SessionCheck::Rejected;
         }
-        return r.ok;
+        return r.ok ? SessionCheck::Valid : SessionCheck::ServerError;   // any other failure: the session is kept, nothing confirmed it
     }
 
     /// Verify an ARBITRARY access token (not our own session) and, on success, hand

@@ -1849,4 +1849,5 @@ Vec3 Physics3D::ResolveCapsule(Scene& scene, Vec3 center, Vec3 axis, float halfS
 
 } // namespace okay
 
+#include "okay/Physics/Core/VecConvert.hpp"
 #include "Physics3DEngine.inl"   // our own physics engine core runs the scene

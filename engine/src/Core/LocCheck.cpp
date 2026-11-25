@@ -129,16 +129,7 @@ void CollectPlurals(const std::vector<LocNode>& nodes, std::vector<PluralUse>& o
 }
 
 // ---- Widths ---------------------------------------------------------------------------
-int CellWidth(std::uint32_t cp) {
-    if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x0591 && cp <= 0x05C7) || (cp >= 0x064B && cp <= 0x065F) ||
-        (cp >= 0x200B && cp <= 0x200F) || (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0xFEFF)
-        return 0;
-    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7A3) ||
-        (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE30 && cp <= 0xFE6F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
-        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) || (cp >= 0x20000 && cp <= 0x3FFFD))
-        return 2;
-    return 1;
-}
+using utf8::CellWidth;   // engine/include/okay/Core/Utf8.hpp: the one table of zero, one and two cell characters
 
 int LineWidth(const std::string& line) {
     int w = 0;

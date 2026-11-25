@@ -30,7 +30,7 @@ for b in $backends; do
     cprog="$tmp/app/$(basename "$prog")"
     # the script's `shot` paths are relative: they are written into the backend's folder
     ( cd "$outdir/$b" && env DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" \
-        SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_PLATFORM_BACKEND=$b OKAY_TEST_SCRIPT="$(cd "$(dirname "$script")" && pwd)/$(basename "$script")" \
+        SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1 OKAY_PLATFORM_BACKEND=$b OKAY_TEST_SCRIPT="$(cd "$(dirname "$script")" && pwd)/$(basename "$script")" \
         timeout -s KILL "$limit" "$cprog" $APP_ARGS >"$outdir/$b/app.log" 2>&1 )
     code=$?
     kill $xp 2>/dev/null; wait $xp 2>/dev/null; rm -rf "$tmp"

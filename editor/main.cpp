@@ -103,6 +103,7 @@
 #include "okay/Render/OkayShader.hpp"   // Custom shader fields (our own .okayshader language)
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Core/Paths.hpp"           // the per-user folder the editor keeps its own files in (EditorFile)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
 #include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
@@ -777,6 +778,9 @@ int main(int argc, char** argv) {
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
+#include "SignInGate.hpp"   // the OkaySpace sign-in the editor needs before a project opens
+#include "OkayThreads.hpp"  // okay::thr: the sign-in check runs on a worker (rule 21a)
+#include "okay/Platform/Account/Account.hpp"   // okay::Account: the shared account service (the launcher's saved session)
 #include "EditorLayoutMath.hpp"   // overlay anchoring, label placement, density, toolbar plan, maximize, view prefs (tested)
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Animation/HumanoidActions.hpp"
@@ -2471,10 +2475,36 @@ bool g_quitRequested = false;    // quit pending (may prompt to save first)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
 
-// Recently-used scenes, persisted to a small file beside the working dir.
+// The editor's own files (settings, panel layout, recent scenes, saved layouts, custom actions, the Project view)
+// live in one per-user folder (okay::edtabs::EditorConfigDir: %APPDATA%/OkaySpace/config/editor on Windows), not in the
+// working folder, which on Windows is whatever started the launcher and so changed from one start to the next. The
+// folder is made on first use; a file an older editor left in the working folder is copied over once, so the move
+// loses nothing. If the folder cannot be made, the working folder is used as before.
+static const std::string& EditorConfigDirPath() {
+    static const std::string dir = [] {
+        std::string d = okay::edtabs::EditorConfigDir(
+            okay::Paths::ConfigDirFor(okay::Paths::CurrentPlatform(), okay::Paths::Env::Current(), "OkaySpace"),
+            std::getenv("OKAY_EDITOR_CONFIG_DIR"));
+        if (!d.empty() && !okay::Paths::EnsureDir(d)) d.clear();
+        return d;
+    }();
+    return dir;
+}
+std::string EditorFile(const char* name) {
+    const std::string& dir = EditorConfigDirPath();
+    std::string p = okay::edtabs::EditorConfigFile(dir, name);
+    if (!dir.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec) && std::filesystem::is_regular_file(name, ec))
+            std::filesystem::copy_file(name, p, ec);   // one-time move from the working folder (best effort)
+    }
+    return p;
+}
+
+// Recently-used scenes, persisted to a small file in the editor's per-user folder.
 void LoadRecent() {
     g_recent.clear();
-    std::ifstream f("okay_recent.txt");
+    std::ifstream f(EditorFile("okay_recent.txt"));
     std::string line;
     while (std::getline(f, line) && g_recent.size() < 10)
         if (!line.empty()) g_recent.push_back(line);
@@ -2482,7 +2512,7 @@ void LoadRecent() {
 void SaveRecent() {
     std::string text;
     for (const auto& p : g_recent) text += p + "\n";
-    okayproj::WriteTextAtomic("okay_recent.txt", text);
+    okayproj::WriteTextAtomic(EditorFile("okay_recent.txt"), text);
 }
 void AddRecent(const std::string& path) {
     if (path.empty()) return;
@@ -2494,8 +2524,10 @@ void AddRecent(const std::string& path) {
 
 // Persisted editor preferences (a tiny key/value file beside the working dir).
 void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
+static bool ApplyPanelOpenSetting(const std::string& key, int value);   // "panel_<name> 0|1": which panels are open (after DockPanels)
+static std::string PanelOpenSettingLines();                           // those lines, for SaveSettings
 void LoadSettings() {
-    std::ifstream f("okay_settings.txt");
+    std::ifstream f(EditorFile("okay_settings.txt"));
     g_firstRun = !f.good();   // no settings file yet → brand-new install (auto-scale UI to the display)
     std::string k; int v;
     int ver = 0;
@@ -2558,6 +2590,7 @@ void LoadSettings() {
         else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
         else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
         else if (k == "consolecollapse") g_consoleCollapse = (v != 0);
+        else if (ApplyPanelOpenSetting(k, v)) {}   // which panels (tabs) were open when the editor was last used
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -2621,8 +2654,9 @@ void SaveSettings() {
       << "sidetabs " << g_sideTabs << "\n"
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n"
-      << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n";
-    okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
+      << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n"
+      << PanelOpenSettingLines();
+    okayproj::WriteTextAtomic(EditorFile("okay_settings.txt"), f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -2654,11 +2688,11 @@ void SaveCustomActions() {
     std::ostringstream f;
     WriteCAList(f, "instr", g_customInstr);
     WriteCAList(f, "cond",  g_customCond);
-    okayproj::WriteTextAtomic("okay_custom_actions.txt", f.str());
+    okayproj::WriteTextAtomic(EditorFile("okay_custom_actions.txt"), f.str());
 }
 void LoadCustomActions() {
     g_customInstr.clear(); g_customCond.clear();
-    std::ifstream f("okay_custom_actions.txt");
+    std::ifstream f(EditorFile("okay_custom_actions.txt"));
     if (!f) return;
     std::string tag;
     while (f >> tag) {
@@ -2734,7 +2768,8 @@ static std::string g_saveNote; static unsigned long long g_saveNoteAt = 0;   // 
 static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
-static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or open graphs
+static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts, open graphs or a window's own document
+static void UnsavedDocTitles(std::vector<std::string>& titles);   // the windows' own unsaved documents (kUnsavedDocWindows)
 static bool SaveEditorDocument(const std::string& path, const std::string& content);  // backup, then atomic write
 static void RequestPlay(EditorState& ed);
 static void RequestStop(EditorState& ed);
@@ -4602,14 +4637,14 @@ static bool g_openSaveLayout = false;      // open the "Save Layout" dialog next
 static okay::edlayout::MaximizeState g_max;   // Shift+Space: the Scene fills the editor; this holds the layout to come back to
 static bool g_maxToggle = false;              // toggle it next frame (menu item, Restore button, Shift+Space)
 static void LoadUserLayouts() {
-    std::ifstream f("okay_layouts.txt", std::ios::binary);
+    std::ifstream f(EditorFile("okay_layouts.txt"), std::ios::binary);
     if (!f) return;
     std::stringstream ss; ss << f.rdbuf();
     g_userLayouts = okay::edtabs::ParseLayouts(ss.str());
 }
 static void SaveUserLayouts() {
     std::string why;
-    if (!okayproj::WriteTextAtomic("okay_layouts.txt", okay::edtabs::SerializeLayouts(g_userLayouts), &why))
+    if (!okayproj::WriteTextAtomic(EditorFile("okay_layouts.txt"), okay::edtabs::SerializeLayouts(g_userLayouts), &why))
         ConsoleLog("Couldn't write okay_layouts.txt: " + why, 2);
 }
 static void SaveCurrentLayoutAs(const std::string& name) {
@@ -4628,7 +4663,6 @@ static void SaveCurrentLayoutAs(const std::string& name) {
 static void LeaveMaximizeState() {   // another layout was picked: forget the maximized one without restoring it
     if (!g_max.on) return;
     g_max = okay::edlayout::MaximizeState{};
-    ImGui::GetIO().IniFilename = "imgui.ini";
 }
 static void ApplyUserLayout(const okay::edtabs::SavedLayout& l) {
     LeaveMaximizeState();
@@ -4647,6 +4681,69 @@ static void ApplyPendingLayoutIni() {
     if (g_layoutPendingIni.empty()) return;
     ImGui::LoadIniSettingsFromMemory(g_layoutPendingIni.c_str(), g_layoutPendingIni.size());
     g_layoutPendingIni.clear();
+}
+
+// ---- What is kept between runs: the dock layout and which panels are open ------------------------
+// The dock arrangement is the ImGui ini text, written by us (io.IniFilename is nullptr) to imgui.ini in the
+// editor's per-user folder (EditorFile): every couple of seconds when it changed, and on exit. Written whole or
+// not at all (WriteTextAtomic), so a crash or a forced close keeps the last good copy. Which panels are open is
+// kept in okay_settings.txt ("panel_<name> 0|1", okay::edtabs::PanelSettingKey) and saved as soon as one opens
+// or closes. While the Scene is maximized (Shift+Space) both are the arrangement from before it.
+static const char* kDockIniFile = "imgui.ini";
+static std::string g_dockIniSaved;      // the text last written (or read): nothing is written while it is the same
+static std::string g_panelOpenSaved;    // PanelOpenSettingLines() as last written by SaveSettings
+static bool ApplyPanelOpenSetting(const std::string& key, int value) {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    std::vector<std::string> labels;
+    for (int i = 0; i < n; ++i) labels.push_back(defs[i].label);
+    int idx = -1;
+    if (!okay::edtabs::ReadPanelOpenLine(key, labels, idx)) return false;
+    if (defs[idx].open) *defs[idx].open = value != 0;
+    return true;
+}
+static std::string PanelOpenSettingLines() {
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    std::vector<std::pair<std::string, bool>> panels;
+    for (int i = 0; i < n; ++i) {
+        if (!defs[i].open) continue;   // always open (the Scene view)
+        const bool open = g_max.on ? std::find(g_max.open.begin(), g_max.open.end(), defs[i].label) != g_max.open.end() : *defs[i].open;
+        panels.push_back({defs[i].label, open});
+    }
+    std::string lines = okay::edtabs::WritePanelOpenLines(panels);
+    g_panelOpenSaved = lines;
+    return lines;
+}
+// Read the dock layout once, after the ImGui context exists and before the first NewFrame.
+static void LoadDockLayout() {
+    std::ifstream f(EditorFile(kDockIniFile), std::ios::binary);
+    if (!f) return;
+    std::stringstream ss; ss << f.rdbuf();
+    g_dockIniSaved = ss.str();
+    if (!g_dockIniSaved.empty()) ImGui::LoadIniSettingsFromMemory(g_dockIniSaved.c_str(), g_dockIniSaved.size());
+}
+// `now`: write at once (exit); otherwise at most every 2 seconds. Call outside a frame (after Render).
+static void SaveDockLayout(bool now) {
+    static Uint64 last = 0;
+    const Uint64 t = okay::platform::TicksMs();
+    if (!now && t - last < 2000) return;
+    last = t;
+    std::string text;
+    if (g_max.on) text = g_max.layoutIni;
+    else { size_t sz = 0; const char* ini = ImGui::SaveIniSettingsToMemory(&sz); text.assign(ini ? ini : "", ini ? sz : 0); }
+    if (text.empty() || text == g_dockIniSaved) return;
+    std::string why;
+    if (okayproj::WriteTextAtomic(EditorFile(kDockIniFile), text, &why)) { g_dockIniSaved = text; return; }
+    static bool told = false;   // once per session, not every 2 seconds
+    if (!told) { told = true; ConsoleLog("Couldn't save the panel layout (" + EditorFile(kDockIniFile) + "): " + why, 2); }
+}
+// Once a frame: a panel opened or closed since the last save writes okay_settings.txt (checked every half second).
+static void SavePanelStateIfChanged() {
+    static Uint64 last = 0;
+    const Uint64 t = okay::platform::TicksMs();
+    if (t - last < 500) return;
+    last = t;
+    const std::string before = g_panelOpenSaved;
+    if (PanelOpenSettingLines() != before) SaveSettings();
 }
 
 // Build a built-in layout preset with DockBuilder. Each one opens the panels it
@@ -7143,7 +7240,7 @@ void DrawDockSpace(EditorState& ed) {
             for (int i = 0; i < n; ++i) if (defs[i].open && *defs[i].open) openNow.push_back(defs[i].label);
             okay::edlayout::EnterMaximize(g_max, std::string(ini ? ini : "", ini ? sz : 0), openNow, g_layoutName);
             for (int i = 0; i < n; ++i) if (defs[i].open) *defs[i].open = false;
-            ImGui::GetIO().IniFilename = nullptr;   // a maximized layout is never what the next launch should open with
+            // (a maximized layout is never what the next launch opens with: SaveDockLayout writes the one before it)
             ImGui::DockBuilderRemoveNode(dockId);
             ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockId, vp->WorkSize);
@@ -7157,7 +7254,6 @@ void DrawDockSpace(EditorState& ed) {
             for (int i = 0; i < n; ++i) if (defs[i].open) *defs[i].open = std::find(open.begin(), open.end(), defs[i].label) != open.end();
             g_layoutPendingIni = ini;
             g_layoutName = name;
-            ImGui::GetIO().IniFilename = "imgui.ini";
             ConsoleLog("Panels restored");
         }
     }
@@ -7479,10 +7575,10 @@ static void SaveProjectViewPrefs() {
     f << "filter " << g_projFilter << "\nsort " << g_projSort
       << "\nview " << g_projView << "\ncell " << (int)g_projCell
       << "\ntreew " << (int)g_projTreeW << "\n";
-    okayproj::WriteTextAtomic("okay_projectview.txt", f.str());
+    okayproj::WriteTextAtomic(EditorFile("okay_projectview.txt"), f.str());
 }
 static void LoadProjectViewPrefs() {
-    std::ifstream f("okay_projectview.txt");
+    std::ifstream f(EditorFile("okay_projectview.txt"));
     std::string k;
     while (f >> k) {
         if (k == "fav") {   // rest of the line: a path (may contain spaces)
@@ -11276,7 +11372,7 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
-        ImGui::TextDisabled("Save keeps the scene, every edited script and every open graph.");
+        ImGui::TextDisabled("Save writes everything listed here, then closes the editor.");
         {
             std::vector<std::string> names;
             if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (c.unsaved) names.push_back((c.path.empty() ? "Scene: " : "Prefab: ") + (c.path.empty() ? c.label : c.path)); }
@@ -11284,14 +11380,17 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
             for (okay::ScriptComponent* t : g_scriptTabs)
                 if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
             okay::editor::vsed::VsDirtyTitles(names);
+            UnsavedDocTitles(names);   // behavior trees, dialogue, quests, timelines, weapons
             for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
         }
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
             g_quitRequested = false; oked::QuitPromptAnswered(quit);
-            if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
+            if (ok) running = false;   // something failed: stay open so nothing is lost, and say so
+            else ShowErrorPopup("Not everything was saved", (g_lastSaveError.empty() ? std::string("The Console lists what could not be written.") : g_lastSaveError) +
+                                                            "\n\nThe editor stays open so nothing is lost.");
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
@@ -31226,45 +31325,6 @@ static bool DrawTopDownControllerWithOkayUI(EditorState& ed, TopDownController* 
     return true;
 }
 
-// Ragdoll, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
-static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*& toRemove) {
-    using namespace okaypanels;
-    InspFieldList L;
-    L.rows.reserve(19);
-    L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
-    if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
-        L.Note("This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.", false, true);
-    L.Section("Triggers");
-    L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
-    L.TipLookup();
-    L.Drag("Death Push##rd", &rd->deathImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
-    L.TipLookup();
-    L.Check("Hit Reactions##rd", &rd->hitReactions);
-    L.TipLookup();
-    L.Drag("Hit Push##rd", &rd->hitImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
-    L.TipLookup();
-    L.Drag("Recover Time##rd", &rd->hitRecover, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
-    L.TipLookup();
-    L.Section("Simulation");
-    L.Drag("Gravity##rd", &rd->gravity, 1, 0.05f, 0.0f, 50.0f);
-    L.TipLookup();
-    L.Slider("Damping##rd", &rd->damping, 0.0f, 0.5f);
-    L.TipLookup();
-    L.Slider("Friction##rd", &rd->friction, 0.0f, 1.0f);
-    L.TipLookup();
-    L.Drag("Skin Radius##rd", &rd->radius, 1, 0.005f, 0.0f, 0.5f);
-    L.TipLookup();
-    L.SliderInt("Iterations##rd", &rd->iterations, 1, 30);
-    L.TipLookup();
-    L.Drag("Max Speed##rd", &rd->maxSpeed, 1, 0.5f, 1.0f, 200.0f, "%.1f m/s");
-    L.TipLookup();
-    const int kRemove = L.SmallButton("Remove##rd");
-    if (!DrawRowsOkayUI(rd, "##okayui_ragdoll", L)) return false;
-    if (L.AnyChanged()) ed.dirty = true;
-    if (L[kRemove].clicked) toRemove = rd;
-    return true;
-}
-
 // Top Down Shooter Controller, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
 static bool DrawTopDownShooterControllerWithOkayUI(EditorState& ed, TopDownShooterController* sh, okay::Component*& toRemove) {
     using namespace okaypanels;
@@ -40320,38 +40380,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
-    if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
-        if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIInspector() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
-            if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.");
-            SectionHeader("Triggers");
-            if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
-            oked::FieldTip("Ragdoll On Death##rd");
-            if (ImGui::DragFloat("Death Push##rd", &rd->deathImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
-            oked::FieldTip("Death Push##rd");
-            if (ImGui::Checkbox("Hit Reactions##rd", &rd->hitReactions)) ed.dirty = true;
-            oked::FieldTip("Hit Reactions##rd");
-            if (ImGui::DragFloat("Hit Push##rd", &rd->hitImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
-            oked::FieldTip("Hit Push##rd");
-            if (ImGui::DragFloat("Recover Time##rd", &rd->hitRecover, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
-            oked::FieldTip("Recover Time##rd");
-            SectionHeader("Simulation");
-            if (ImGui::DragFloat("Gravity##rd", &rd->gravity, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
-            oked::FieldTip("Gravity##rd");
-            if (ImGui::SliderFloat("Damping##rd", &rd->damping, 0.0f, 0.5f)) ed.dirty = true;
-            oked::FieldTip("Damping##rd");
-            if (ImGui::SliderFloat("Friction##rd", &rd->friction, 0.0f, 1.0f)) ed.dirty = true;
-            oked::FieldTip("Friction##rd");
-            if (ImGui::DragFloat("Skin Radius##rd", &rd->radius, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
-            oked::FieldTip("Skin Radius##rd");
-            if (ImGui::SliderInt("Iterations##rd", &rd->iterations, 1, 30)) ed.dirty = true;
-            oked::FieldTip("Iterations##rd");
-            if (ImGui::DragFloat("Max Speed##rd", &rd->maxSpeed, 0.5f, 1.0f, 200.0f, "%.1f m/s")) ed.dirty = true;
-            oked::FieldTip("Max Speed##rd");
-            if (ImGui::SmallButton("Remove##rd")) toRemove = rd;
-        }
-    }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
         if (CompHeader("Top Down Shooter Controller", sh, &toRemove) && !(UseOkayUIInspector() && DrawTopDownShooterControllerWithOkayUI(ed, sh, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
@@ -44759,8 +44787,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ActiveRagdoll>(), "Active Ragdoll (balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<ActiveRagdoll>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (limp on death, balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
@@ -52225,11 +52252,42 @@ static okay::BackupManager& EditorBackups() {
 static bool SaveEditorDocument(const std::string& path, const std::string& content) {
     return EditorBackups().SaveWithBackup(path, content);
 }
+// The windows that edit a file of their own (not the scene): their unsaved documents count as unsaved work for the quit
+// question, are listed in it, and are saved by its Save (and File > Save Project). One table, so a window is added once.
+// Before, a behavior tree, dialogue graph, quest file, timeline sequence or weapon list that was not saved was thrown
+// away without a word when the editor closed.
+struct UnsavedDocWindow {
+    void (*titles)(std::vector<std::string>&);
+    bool (*save)(EditorState&, std::string&);
+};
+static const UnsavedDocWindow kUnsavedDocWindows[] = {
+    {BehaviorTreeUnsavedTitles, BehaviorTreeSaveForQuit},
+    {DialogueUnsavedTitles, DialogueSaveForQuit},
+    {TimelineUnsavedTitles, TimelineSaveForQuit},
+    {WeaponUnsavedTitles, WeaponSaveForQuit},
+};
+static void UnsavedDocTitles(std::vector<std::string>& titles) {
+    for (const UnsavedDocWindow& w : kUnsavedDocWindows) w.titles(titles);
+}
+// Save every window's document; false (and the reasons in the Console) when one could not be written.
+static bool SaveUnsavedDocs(EditorState& ed, std::vector<std::string>& saved) {
+    bool ok = true;
+    for (const UnsavedDocWindow& w : kUnsavedDocWindows) {
+        std::vector<std::string> before; w.titles(before);
+        if (before.empty()) continue;
+        std::string why;
+        if (w.save(ed, why)) { for (const std::string& t : before) saved.push_back(t); }
+        else { ok = false; g_lastSaveError = why; ConsoleLog(why, 2); }
+    }
+    return ok;
+}
 static bool AnyUnsavedWork(EditorState& ed) {
     if (ed.HasUnsavedChanges() || ed.PrefabOuterUnsaved()) return true;   // the flag, or the scene text differing from what was saved (the open prefab, or what it was opened from)
     for (okay::ScriptComponent* t : g_scriptTabs)
         if (t && ScriptTabDirty(t)) return true;
-    return okay::editor::vsed::VsAnyUnsaved();
+    if (okay::editor::vsed::VsAnyUnsaved()) return true;
+    std::vector<std::string> docs; UnsavedDocTitles(docs);
+    return !docs.empty();
 }
 // ---- Prefab mode ---------------------------------------------------------------------------------
 // The state machine lives in EditorState (OpenPrefab / SavePrefab / ClosePrefab ...); this is the screen side:
@@ -52583,6 +52641,7 @@ static bool SaveProject(EditorState& ed, bool interactive) {
             ok = false;
             ConsoleLog("Couldn't save " + (tp->g.path.empty() ? std::string("a visual script") : tp->g.path), 2);
         }
+    if (!SaveUnsavedDocs(ed, saved)) ok = false;   // behavior trees, dialogue, quests, timelines, weapons
     if (!SaveProjectSettingsTo(g_settingsProjectDir)) { ok = false; ConsoleLog("Couldn't save the project settings: " + g_lastSaveError, 2); }
     if (!SaveBuildProfiles(ed) || !SaveBuildLive(ed))  { ok = false; ConsoleLog("Couldn't save the build settings: " + g_lastSaveError, 2); }
     NoteProjectFilesSaved();
@@ -52652,6 +52711,27 @@ static bool ProcessAlive(unsigned long pid) {
 #endif
 }
 
+// The launcher next to the editor or one level up (the editor lives in Tools/ while the launcher sits at the top of the
+// install); empty when it is not there.
+static std::filesystem::path FindLauncherExe() {
+    namespace sfs = std::filesystem;
+    std::error_code ec;
+    const sfs::path dir = sfs::path(OkayExeDir());
+    const char* names[] = {"OkaySpace.exe", "okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
+    for (const sfs::path& base : {dir, dir.parent_path()})
+        for (const char* n : names) { sfs::path p = base / n; if (sfs::exists(p, ec)) return p; }
+    return {};
+}
+static void StartLauncher(const std::filesystem::path& launcher) {
+    if (launcher.empty()) return;
+#if defined(_WIN32)
+    std::string cmd = "start \"\" \"" + launcher.string() + "\"";
+#else
+    std::string cmd = "\"" + launcher.string() + "\" >/dev/null 2>&1 &";
+#endif
+    SysNoWindow(cmd.c_str());
+}
+
 // Returns true if the editor is allowed to run. When not, it tries to open the
 // launcher (found next to this exe) and returns false so main() can exit.
 static bool PassesLauncherGate(int argc, char** argv) {
@@ -52668,32 +52748,125 @@ static bool PassesLauncherGate(int argc, char** argv) {
     if (haveToken && ProcessAlive(launcherPid)) return true;
 
     // Not launched by a live launcher: bounce to the launcher and refuse.
-    namespace sfs = std::filesystem;
-    std::error_code ec;
-    sfs::path dir = sfs::absolute(argv[0], ec).parent_path();
-    const char* names[] = {"OkaySpace.exe", "okayspace-launcher.exe", "OkaySpaceLauncher.exe", "okayspace-launcher"};
-    // Search next to the editor and one level up (the editor may live in an Engine/
-    // subfolder while the launcher sits at the top of the install).
-    sfs::path launcher;
-    for (const sfs::path& base : {dir, dir.parent_path()}) {
-        for (const char* n : names) { sfs::path p = base / n; if (sfs::exists(p, ec)) { launcher = p; break; } }
-        if (!launcher.empty()) break;
-    }
+    const std::filesystem::path launcher = FindLauncherExe();
     const char* msg = "OkaySpace Editor must be opened from the OkaySpace Launcher.\n\n"
                       "Starting the launcher now...";
     if (launcher.empty())
         msg = "OkaySpace Editor must be opened from the OkaySpace Launcher,\n"
               "but the launcher was not found next to the editor.";
     if (okay::platform::Backend* pb = okay::platform::Default()) pb->ShowErrorBox("OkaySpace", msg);
-    if (!launcher.empty()) {
-#if defined(_WIN32)
-        std::string cmd = "start \"\" \"" + launcher.string() + "\"";
-#else
-        std::string cmd = "\"" + launcher.string() + "\" >/dev/null 2>&1 &";
-#endif
-        SysNoWindow(cmd.c_str());
-    }
+    StartLauncher(launcher);
     return false;
+}
+
+// ---- The sign-in gate (editor/SignInGate.hpp) --------------------------------------------------
+// The editor needs an OkaySpace sign-in the server confirms: the launcher's saved session (okay::Account, the same
+// AccountService and session.txt the launcher uses) is checked on a worker when the editor starts; until it is confirmed
+// a modal window asks to sign in (or to try again when the server can't be reached) and no project opens.
+// OKAY_TEST_NO_SIGNIN=1 turns it off for our tests and CI only.
+static oked::signin::Phase g_signin = oked::signin::Phase::Checking;
+static std::string g_signinMsg;
+// One network call at a time on a worker (okay::thr: no standard thread classes in the Windows build, rule 21a):
+// the session check, a sign-in or a password-reset email. The frame polls `done` and reads the answer after WaitThread.
+struct SignInJob {
+    enum Kind { Check, Login, Reset } kind = Check;
+    std::string id, password;
+    okay::account::SessionCheck check = okay::account::SessionCheck::Unreachable;
+    okay::account::Result result;
+    okay::thr::AtomicInt done;
+};
+static SignInJob* g_signinJob = nullptr;
+static okay::thr::Thread* g_signinThread = nullptr;
+static int SignInWorker(void* p) {
+    SignInJob* j = (SignInJob*)p;
+    okay::account::AccountService& a = okay::Account::Get();
+    if (j->kind == SignInJob::Check) j->check = a.CheckSession();
+    else if (j->kind == SignInJob::Login) j->result = a.Login(j->id, j->password);
+    else j->result = a.RequestPasswordReset(j->id);
+    okay::thr::AtomicSet(&j->done, 1);
+    return 0;
+}
+static bool StartSignInJob(SignInJob::Kind k, const std::string& id = {}, const std::string& pw = {}) {
+    if (g_signinJob) return false;   // one at a time
+    g_signinJob = new SignInJob();
+    g_signinJob->kind = k; g_signinJob->id = id; g_signinJob->password = pw;
+    g_signinThread = okay::thr::CreateThread(SignInWorker, "okay-signin", g_signinJob);
+    if (!g_signinThread) { SignInWorker(g_signinJob); }   // no thread: do it here (rare; the frame waits once)
+    return true;
+}
+bool SignInAllowsProjects() { return oked::signin::ProjectsAllowed(g_signin); }
+static void StartSessionCheck() {
+    if (StartSignInJob(SignInJob::Check)) g_signin = oked::signin::Phase::Checking;
+}
+static void StartSignInGate() {
+    const bool bypass = oked::signin::BypassRequested(std::getenv("OKAY_TEST_NO_SIGNIN"));
+    g_signin = oked::signin::Start(bypass, !bypass && okay::Account::Get().IsLoggedIn());
+    if (bypass) ConsoleLog("Sign-in check is off (OKAY_TEST_NO_SIGNIN=1: tests and CI only).", 1);
+    if (g_signin == oked::signin::Phase::Checking) StartSessionCheck();
+}
+static void DrawSignInGate() {
+    using oked::signin::Phase;
+    static std::string s_resetNote;
+    if (g_signinJob && okay::thr::AtomicGet(&g_signinJob->done)) {
+        if (g_signinThread) okay::thr::WaitThread(g_signinThread, nullptr);
+        g_signinThread = nullptr;
+        SignInJob* j = g_signinJob; g_signinJob = nullptr;
+        if (j->kind == SignInJob::Check) g_signin = oked::signin::AfterCheck(j->check, g_signinMsg);
+        else if (j->kind == SignInJob::Login) g_signin = oked::signin::AfterSignIn(j->result, g_signinMsg);
+        else s_resetNote = j->result.ok ? "We emailed you a reset code. Open the launcher's sign-in page to set a new password."
+                                        : (j->result.error.empty() ? std::string("Couldn't send the reset email.") : j->result.error);
+        if (j->kind != SignInJob::Reset && g_signin == Phase::Open) ConsoleLog("Signed in as " + okay::Account::Get().CurrentSession().username + ".");
+        delete j;
+    }
+    if (oked::signin::ProjectsAllowed(g_signin)) return;
+    static char email[256] = "", pass[256] = "";
+    const char* title = "Sign in to OkaySpace###SignInGate";
+    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize)) return;
+    okay::account::AccountService& acct = okay::Account::Get();
+    if (g_signin == Phase::Checking) {
+        ImGui::TextWrapped("Checking your OkaySpace sign-in...");
+    } else if (g_signin == Phase::Unreachable) {
+        ImGui::TextWrapped("Can't reach the OkaySpace server");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextWrapped("%s", g_signinMsg.c_str());
+        ImGui::TextDisabled("The editor opens once the server confirms your sign-in.");
+        ImGui::Dummy(ImVec2(0, 6));
+        if (ImGui::Button("Try again", ImVec2(140, 30))) StartSessionCheck();
+        ImGui::SameLine();
+        if (ImGui::Button("Sign in with another account", ImVec2(0, 30))) { acct.Logout(); g_signinMsg.clear(); g_signin = Phase::NeedSignIn; }
+    } else {
+        ImGui::TextWrapped("Sign in with your OkaySpace account to use the editor.");
+        if (!g_signinMsg.empty()) { ImGui::Dummy(ImVec2(0, 4)); ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f), "%s", g_signinMsg.c_str()); }
+        ImGui::Dummy(ImVec2(0, 6));
+        const bool busy = g_signin == Phase::SigningIn;
+        ImGui::BeginDisabled(busy);
+        ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##siemail", acct.UsesEmail() ? "Email" : "Username", email, sizeof email);
+        ImGui::SetNextItemWidth(-1);
+        const bool enter = ImGui::InputTextWithHint("##sipass", "Password", pass, sizeof pass, ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+        if ((ImGui::Button(busy ? "Signing in..." : "Sign in", ImVec2(140, 30)) || enter) && StartSignInJob(SignInJob::Login, email, pass)) {
+            g_signin = Phase::SigningIn; g_signinMsg.clear();
+            std::memset(pass, 0, sizeof pass);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Create account", ImVec2(0, 30))) StartLauncher(FindLauncherExe());   // sign-up lives in the launcher
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens the OkaySpace launcher, where you can make an account");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(busy || g_signinJob != nullptr);
+        if (ImGui::Button("Forgot password?", ImVec2(0, 30))) {
+            if (!email[0]) s_resetNote = "Type your email above first.";
+            else if (StartSignInJob(SignInJob::Reset, email)) s_resetNote = "Sending...";
+        }
+        ImGui::EndDisabled();
+        if (!s_resetNote.empty()) ImGui::TextWrapped("%s", s_resetNote.c_str());
+    }
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::Separator();
+    if (ImGui::Button("Quit", ImVec2(100, 28))) g_quitRequested = true;
+    ImGui::EndPopup();
 }
 
 // ==== Single-instance guard + launch hand-off ================================
@@ -53322,6 +53495,7 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.IniFilename = nullptr;   // the dock layout is read and written by LoadDockLayout / SaveDockLayout, in the per-user folder
     // Multi-window panels (ImGuiConfigFlags_ViewportsEnable) are turned on below, once the platform and renderer
     // backends are installed and have said whether they can open extra OS windows.
     io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
@@ -53645,6 +53819,8 @@ int main(int argc, char** argv) {
     ResolveAutoRendering();   // the saved Auto / Off / On modes are known now
     g_view.density = 0;   // the Density choice is gone: always Comfortable, even if an old settings file saved Compact
     LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
+    LoadDockLayout();      // the dock arrangement from the last run (imgui.ini in the per-user folder)
+    StartSignInGate();     // the OkaySpace sign-in is checked before any project opens (editor/SignInGate.hpp)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
     // afterwards the user's own UI Scale choice (saved) wins.
@@ -54578,7 +54754,7 @@ int main(int argc, char** argv) {
         }
 
         ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawSignInGate(); if (SignInAllowsProjects()) { DrawNewProjectPopup(ed); DrawProjectGate(ed); } DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;
@@ -55294,6 +55470,7 @@ int main(int argc, char** argv) {
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
+        SaveDockLayout(false); SavePanelStateIfChanged();   // the layout and the open panels survive a restart (and a forced close)
         okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         okay::pb::SetDrawColor(renderer, 30, 30, 34, 255);
         okay::pb::Clear(renderer);
@@ -55462,6 +55639,7 @@ int main(int argc, char** argv) {
     DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
+    SaveDockLayout(true); SaveSettings();   // the panel layout and the open panels, for the next start
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
     shutDown();

@@ -130,7 +130,6 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
-    src/Components/ActiveRagdoll.cpp
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
@@ -278,7 +277,7 @@ add_library(okay_engine
     src/Animation/HumanoidActions.cpp
     src/Animation/HumanoidActionsStates.cpp
     src/Animation/HumanoidActionsRuntime.cpp
-    src/Animation/RagdollPhysics.cpp
+    src/Animation/CoreRagdoll.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp

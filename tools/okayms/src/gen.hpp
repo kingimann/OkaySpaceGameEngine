@@ -157,6 +157,41 @@ struct Gen {
     int size_of(const Type& type) const;
     bool fits_register(const Type& type) const;
     Global* find_global(const std::string& name);
+    // thread_local variables ([basic.stc.thread]), Microsoft x64 TLS: the address of `sym` in this thread's copy is
+    // ThreadLocalStoragePointer[_tls_index] (the TEB's TLS array is at gs:[0x58]) plus sym's offset in the .tls section
+    // (a SECREL relocation). rax gets the address; rcx is kept.
+    bool is_tls(const std::string& sym) {
+        const Global* g = find_global(sym);
+        return g != nullptr && g->tls;
+    }
+    bool uses_tls = false;
+    void tls_addr(const std::string& sym) {
+        uses_tls = true;
+        b(0x51);  // push rcx
+        b(0x8B);  // mov ecx, [rip+_tls_index]
+        b(0x0D);
+        relocs.push_back({0, static_cast<uint32_t>(text.size()), "_tls_index", kRelAmd64Rel32});
+        u32(0);
+        const uint8_t gs_load[] = {0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00};  // mov rax, gs:[0x58]
+        for (uint8_t x : gs_load) b(x);
+        b(0x48);  // mov rax, [rax+rcx*8]
+        b(0x8B);
+        b(0x04);
+        b(0xC8);
+        b(0x59);  // pop rcx
+        b(0x48);  // lea rax, [rax+disp32]
+        b(0x8D);
+        b(0x80);
+        relocs.push_back({0, static_cast<uint32_t>(text.size()), sym, kRelAmd64Secrel});
+        u32(0);
+    }
+    // The value of a thread_local variable of type t, read through its address.
+    void tls_load(const std::string& sym, const Type& t) {
+        tls_addr(sym);
+        if (load_float_from_rax(t)) return;
+        const int size = size_of(t);
+        load_from_rax(t.pointer() || size >= 8 ? 8 : size, t.is_unsigned);
+    }
     Type element_type(const Type& type) const;
     void load_from_rax(int size, bool is_unsigned);
     // A float or double at [rax] goes to xmm0 (where a floating value lives), anything else to eax/rax.

@@ -1,0 +1,145 @@
+// okay-ms own standard header: <random>, written from ISO/IEC 14882 [rand]: the Mersenne twister engines mt19937 and
+// mt19937_64 ([rand.eng.mers], [rand.predef]: the parameters and the recurrence are those the standard gives, and the
+// 10000th output of each is checked by the tests), uniform_int_distribution, uniform_real_distribution (from
+// generate_canonical, [rand.util.canonical]) and random_device.
+// - random_device asks Windows for random bytes (BCryptGenRandom with the system-preferred generator, from bcrypt.dll);
+//   it is not our own generator. Nothing here is cryptography of our own.
+// - uniform_int_distribution draws by rejection over the smallest power-of-two range that holds b - a; the standard
+//   leaves the method open, so its numbers differ from other libraries'.
+// - No other engines, adaptors or distributions, no seed_seq, no stream operators.
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+extern "C" __declspec(dllimport) long BCryptGenRandom(void* algorithm, unsigned char* buffer, unsigned long size,
+                                                      unsigned long flags);
+namespace std {
+
+// mersenne_twister_engine<UIntType, w, n, m, r, a, u, d, s, b, t, c, l, f> ([rand.eng.mers]).
+template <typename U, size_t w, size_t n, size_t m, size_t r, U a, size_t u, U d, size_t s, U b, size_t t, U c, size_t l,
+          U f>
+class mersenne_twister_engine {
+    U x_[n];
+    size_t i_;
+
+    static U mask() { return w >= 64 ? (U)~(U)0 : (U)(((U)1 << (w % 64)) - 1); }
+
+public:
+    typedef U result_type;
+    static const U default_seed = 5489u;
+    static U min() { return 0; }
+    static U max() { return mask(); }
+    explicit mersenne_twister_engine(U value = default_seed) { seed(value); }
+    void seed(U value) {
+        x_[0] = value & mask();
+        for (size_t k = 1; k < n; ++k) x_[k] = (f * (x_[k - 1] ^ (x_[k - 1] >> (w - 2))) + (U)k) & mask();
+        i_ = n;
+    }
+    U operator()() {
+        if (i_ >= n) {
+            const U upper = (U)(mask() << r) & mask();
+            const U lower = (U)(~upper) & mask();
+            for (size_t k = 0; k < n; ++k) {
+                const U y = (x_[k] & upper) | (x_[(k + 1) % n] & lower);
+                U next = x_[(k + m) % n] ^ (y >> 1);
+                if (y & 1) next ^= a;
+                x_[k] = next;
+            }
+            i_ = 0;
+        }
+        U z = x_[i_++];
+        z ^= (z >> u) & d;
+        z ^= (z << s) & b;
+        z ^= (z << t) & c;
+        z ^= z >> l;
+        return z & mask();
+    }
+    void discard(unsigned long long z) {
+        for (; z > 0; --z) (*this)();
+    }
+};
+
+typedef mersenne_twister_engine<uint32_t, 32, 624, 397, 31, 0x9908b0dfu, 11, 0xffffffffu, 7, 0x9d2c5680u, 15,
+                                0xefc60000u, 18, 1812433253u>
+    mt19937;
+typedef mersenne_twister_engine<uint64_t, 64, 312, 156, 31, 0xb5026f5aa96619e9ull, 29, 0x5555555555555555ull, 17,
+                                0x71d67fffeda60000ull, 37, 0xfff7eee000000000ull, 43, 6364136223846793005ull>
+    mt19937_64;
+typedef mt19937 default_random_engine;
+
+class random_device {
+public:
+    typedef unsigned int result_type;
+    random_device() {}
+    static unsigned int min() { return 0; }
+    static unsigned int max() { return 0xffffffffu; }
+    unsigned int operator()() {
+        unsigned int v = 0;
+        BCryptGenRandom(0, (unsigned char*)&v, 4, 2);  // BCRYPT_USE_SYSTEM_PREFERRED_RNG
+        return v;
+    }
+    double entropy() const { return 32.0; }
+};
+
+// A double in [0, 1) from enough calls of g to fill its 53 bits: sum of g()'s values in base R, divided by R^k
+// ([rand.util.canonical]).
+template <typename G> double generate_canonical_double__(G& g) {
+    const double range = (double)(g.max() - g.min()) + 1.0;
+    const int calls = range >= 9007199254740992.0 ? 1 : 2;
+    double sum = 0.0;
+    double scale = 1.0;
+    for (int k = 0; k < calls; ++k) {
+        sum += (double)(g() - g.min()) * scale;
+        scale *= range;
+    }
+    double v = sum / scale;
+    if (v >= 1.0) v = 0.99999999999999989;  // the largest double below 1
+    return v;
+}
+
+template <typename T = int>
+class uniform_int_distribution {
+    T a_, b_;
+
+public:
+    typedef T result_type;
+    uniform_int_distribution() : a_(0), b_(numeric_limits<T>::max()) {}
+    uniform_int_distribution(T a, T b) : a_(a), b_(b) {}
+    T a() const { return a_; }
+    T b() const { return b_; }
+    template <typename G>
+    T operator()(G& g) {
+        const unsigned long long span = (unsigned long long)b_ - (unsigned long long)a_;
+        unsigned long long mask_ = span;
+        mask_ |= mask_ >> 1;
+        mask_ |= mask_ >> 2;
+        mask_ |= mask_ >> 4;
+        mask_ |= mask_ >> 8;
+        mask_ |= mask_ >> 16;
+        mask_ |= mask_ >> 32;
+        for (;;) {
+            unsigned long long v = (unsigned long long)(g() - g.min());
+            if ((unsigned long long)(g.max() - g.min()) < mask_) v = (v << 32) | (unsigned long long)(g() - g.min());
+            v &= mask_;
+            if (v <= span) return (T)((unsigned long long)a_ + v);
+        }
+    }
+};
+
+template <typename T = double>
+class uniform_real_distribution {
+    T a_, b_;
+
+public:
+    typedef T result_type;
+    uniform_real_distribution() : a_(0), b_(1) {}
+    uniform_real_distribution(T a, T b) : a_(a), b_(b) {}
+    T a() const { return a_; }
+    T b() const { return b_; }
+    template <typename G>
+    T operator()(G& g) {
+        return (T)((double)a_ + ((double)b_ - (double)a_) * generate_canonical_double__(g));
+    }
+};
+
+}  // namespace std

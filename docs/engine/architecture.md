@@ -124,7 +124,7 @@ have merged. Frozen names are kept as aliases and only listed.
 | Today | Kind | Proposed name | Notes |
 |---|---|---|---|
 | `PhysicsQuality::Classic` / `::Improved`, editor labels "Classic" / "Improved" (Project Settings, Physics) | enum, UI label | one physics step, no quality choice | PR #1160 (`claude2/physics-no-classic`) removes Classic; the scene key `physicsquality` is frozen and still read |
-| `engine/src/Physics/Physics2DImproved.inl`, `Physics3DImproved.inl` | files | `Physics2DStep.inl`, `Physics3DStep.inl` | after #1160 merges (Claude 2) |
+| `engine/src/Physics/Physics2DImproved.inl`, `Physics3DImproved.inl` | files | gone | both deleted: the steps are `Physics2DEngine.inl` and `Physics3DEngine.inl` (the bridges to the physics core) |
 | `engine/include/okay/Platform/OwnHttp.hpp`, `OwnHttpDownload.hpp`, `OwnHttpInflate.hpp`, `OwnHttpNet.hpp`; `struct OwnDownloadSpec`, `OwnDownloadResult` | files, types | `Http.hpp`, `HttpDownload.hpp`, `HttpInflate.hpp`, `HttpNet.hpp`; `DownloadSpec`, `DownloadResult` | curl is the qualified one while it lasts; `OKAY_OWN_HTTP` (CMake, env) frozen alias |
 | `engine/src/Platform/OwnWin32*.cpp`, `OwnLinux*.cpp`, `OwnLinux.hpp`; `BackendKind::Own`; `class OwnBackend` | files, enum, class | `Win32Platform*.cpp`, `LinuxPlatform*.cpp`; `BackendKind::Native`; `NativeBackend` | `BackendKind::Sdl2` keeps its qualifier; `OKAY_PLATFORM_BACKEND=own`, `OKAY_PLATFORM_DEFAULT_OWN` frozen aliases |
 | `shared/OwnPainter.hpp`, `enum class OwnPainterPick` | file, enum | `shared/PainterPick.hpp`, `PainterPick` | `OKAY_OWN_PAINTER` env frozen alias |

@@ -47,6 +47,9 @@ struct Token {
     // Namespace names in front of this name were dropped (std::filesystem::path is read as path): it names something in
     // a namespace, so a local variable of the same name does not hide it.
     bool nsq = false;
+    // The namespace names that were dropped in front of it ("okay::crypto" for okay::crypto::Sha256): used to choose
+    // between classes of one name in different namespaces.
+    std::string qual;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
 };
@@ -227,6 +230,14 @@ struct StructDef {
     // classes of one name (Outer1::Entry and Outer2::Entry) are told apart by it: a name used inside a class finds the
     // class nested there first (find_struct), and members of a nested class are decorated with the outer class too.
     int parent = -1;
+    // The namespace the class was declared in ("okay::crypto"; empty at global scope). Classes are kept by their plain
+    // names; when two at namespace scope share one, the later one is decorated Name@ns (ns_dup) and lookups prefer the
+    // one of the namespace written in front of the name, then the one of the namespace being read.
+    std::string ns;
+    bool ns_dup = false;
+    // A local class written in a member function of a class: that class, whose static members its member functions
+    // name by their plain names ([class.local], [basic.lookup.unqual] 8). -1 otherwise.
+    int local_in = -1;
     // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
     // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
     // body are read through it.

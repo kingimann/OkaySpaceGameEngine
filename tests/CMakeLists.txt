@@ -681,6 +681,10 @@ add_executable(test_physics_queries_ext test_physics_queries_ext.cpp)
 target_link_libraries(test_physics_queries_ext PRIVATE okay::engine)
 add_test(NAME physics_queries_ext COMMAND test_physics_queries_ext)
 
+add_executable(test_physics_query_broadphase test_physics_query_broadphase.cpp)
+target_link_libraries(test_physics_query_broadphase PRIVATE okay::engine)
+add_test(NAME physics_query_broadphase COMMAND test_physics_query_broadphase)
+
 add_executable(test_particles_tilemap test_particles_tilemap.cpp)
 target_link_libraries(test_particles_tilemap PRIVATE okay::engine)
 add_test(NAME particles_tilemap COMMAND test_particles_tilemap)
@@ -1419,6 +1423,14 @@ target_include_directories(test_editor_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/e
 target_compile_definitions(test_editor_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME editor_signin_gate COMMAND test_editor_signin_gate)
 
+# The editor closes when the launcher that started it has gone (editor/LauncherWatch.hpp): once a second, one close
+# request through the quit prompt, not repeated after Cancel; plus source checks of the editor and launcher wiring.
+add_executable(test_editor_launcher_watch test_editor_launcher_watch.cpp)
+target_compile_features(test_editor_launcher_watch PRIVATE cxx_std_17)
+target_include_directories(test_editor_launcher_watch PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_editor_launcher_watch PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME editor_launcher_watch COMMAND test_editor_launcher_watch)
+
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
 add_executable(test_sha256_unify test_sha256_unify.cpp)
@@ -1800,6 +1812,10 @@ add_test(NAME phys_math COMMAND test_phys_math)
 add_executable(test_angular2d test_angular2d.cpp)
 target_link_libraries(test_angular2d PRIVATE okay::engine)
 add_test(NAME angular2d COMMAND test_angular2d)
+
+add_executable(test_physics2d_core test_physics2d_core.cpp)
+target_link_libraries(test_physics2d_core PRIVATE okay::engine)
+add_test(NAME physics2d_core COMMAND test_physics2d_core)
 
 add_executable(test_angular3d test_angular3d.cpp)
 target_link_libraries(test_angular3d PRIVATE okay::engine)
@@ -5475,6 +5491,7 @@ add_test(NAME text_shape COMMAND test_text_shape)
 add_executable(test_physics_grok test_physics_grok.cpp)
 target_link_libraries(test_physics_grok PRIVATE okay::engine)
 add_test(NAME physics_grok COMMAND test_physics_grok)
+
 # Grok input, on the ActionSet path: axial dead zone, per-set press buffer, Controls rows, smooth per controller.
 add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)

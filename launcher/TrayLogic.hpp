@@ -222,6 +222,15 @@ inline IconEvent ClassifyIconMessage(unsigned ev, unsigned version) {
     }
 }
 
+/// A launcher dialog has just started waiting ("Close the editor first" after Exit OkaySpace in the tray menu, or an
+/// update that waits for the editor). A launcher hidden in the tray or minimized draws nothing, so the dialog waited
+/// where nobody could see it and the launcher stayed running with the editor still open (owner bug 2026-11-25: "if i
+/// quit the launcher from the tray, the editor doesnt close"). True = bring the window back once, so the dialog shows.
+/// Only on the edge (`pendingBefore` false), so a person who minimizes it again while it waits is left alone.
+inline bool ShowForPendingDialog(bool pendingNow, bool pendingBefore, bool windowBackgrounded) {
+    return pendingNow && !pendingBefore && windowBackgrounded;
+}
+
 /// How long the main loop sleeps per pass while the launcher window is not drawn. Hidden in the tray is the slowest,
 /// unless a voice call is live (its audio is pumped by the loop) or the popped-out chat window is drawing.
 inline int IdleDelayMs(bool hiddenInTray, bool chatWindowShown, bool chatFocused, bool callActive) {

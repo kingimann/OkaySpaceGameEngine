@@ -6,6 +6,7 @@
 // iterator over a path's elements; canonical() does not resolve symbolic links (it is
 // weakly_canonical of an existing path).
 #pragma once
+#include <cstdint>
 #include <chrono>
 #include <cstring>
 #include <string>

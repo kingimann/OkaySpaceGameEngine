@@ -58,8 +58,8 @@ Sutherland-Hodgman clipping of the incident box face against the reference face 
 inertia of simple solids from any mechanics textbook, the parallel-axis theorem and union-find for sleeping groups. No code was taken
 from another engine. Files: `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`, `engine/src/Physics/Physics3DImproved.inl`.
 
-**2D:** the quality setting is saved for 2D too, but the 2D step has no Improved solver yet (see `docs/status/UNFINISHED.md`): 2D scenes play
-exactly as before whichever quality is chosen.
+**2D:** since 2026-11-24 the 2D step runs on our own physics core, the solver 3D uses (`docs/physics/physics_core.md`, section "2D on the core").
+The quality setting is still saved for 2D and changes nothing.
 
 #### Bug fixes that apply to both qualities
 
@@ -732,9 +732,8 @@ bounds-before-overlap reorder, which `perf-pass-1` also touches). `Physics2D.cpp
 
 ### What is not done
 
-* **The 2D Improved solver.** The setting is saved for 2D but the 2D step is unchanged (`Physics2DImproved.inl` only holds the offset fix). 2D stacks
-  still sink and tip, and 2D has no slider, joint passes, debug joints or lost-support wake. The 3D solver core (`ContactSolver.hpp`) is written to be reused:
-  a 2D body is a 3D body that turns about z only; the 2D box contact needs a two-point clip. Listed in `docs/status/UNFINISHED.md`.
+* **2D** (done later, 2026-11-24): 2D bodies run on the physics core as bodies that turn about z only (`docs/physics/physics_core.md`). Still missing in 2D:
+  a slider joint and bodies and joints in the debug view. Listed in `docs/status/UNFINISHED.md`.
 * A long chain with a large mass ratio (50 kg on 1 kg links): 13 m instead of 8 m. Needs the joints solved together with the contacts.
 * A touching pile of sleeping bodies costs more in Improved (2.56 ms for 500) than in Classic, because every sleeping pair still runs the contact
   test to send `OnCollisionStay`.
@@ -746,8 +745,8 @@ bounds-before-overlap reorder, which `perf-pass-1` also touches). `Physics2D.cpp
 ## One physics path: our own physics engine
 
 Since 2026-11-23 every 3D scene runs on our own physics engine core. There is no quality choice any more: the Classic
-and Improved 3D steps and the separate Engine choice were deleted, and 2D Classic went too (2D keeps its Improved
-step). Project Settings > Physics shows **Solver iterations** under "Physics solver of the open scene".
+and Improved 3D steps and the separate Engine choice were deleted, and 2D Classic went too (since 2026-11-24 2D runs
+on the same core). Project Settings > Physics shows **Solver iterations** under "Physics solver of the open scene".
 
 Old scene files still load and save back unchanged: a file that says Classic, Improved or Engine keeps that line, but
 the value does nothing.

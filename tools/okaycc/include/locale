@@ -1,0 +1,69 @@
+// <locale> for okay-cc (ISO/IEC 14882 [localization]). Our own header. Only the classic "C" locale
+// exists: every std::locale is it, so comparing two gives true and name() is "C". A locale made
+// with a facet of the program's own (locale(classic(), new MyNumGet)) keeps nothing of that facet,
+// and the streams accept imbue and ignore it (<__stream>). The character tests with a locale are
+// the C library's. Not done: use_facet, has_facet, num_get, num_put, ctype, codecvt and the other
+// facets.
+#pragma once
+#include <cctype>
+#include <clocale>
+#include <string>
+namespace std {
+class locale {
+public:
+    typedef int category;
+    static const int none = 0;
+    static const int ctype = 1;
+    static const int numeric = 2;
+    static const int collate = 4;
+    static const int time = 8;
+    static const int monetary = 16;
+    static const int messages = 32;
+    static const int all = 63;
+    class facet {
+    public:
+        explicit facet(unsigned long refs = 0) { (void)refs; }
+        virtual ~facet() {}
+    };
+    class id {
+    public:
+        id() {}
+    };
+    locale() {}
+    locale(const locale &) {}
+    explicit locale(const char *name) { (void)name; }
+    explicit locale(const string &name) { (void)name; }
+    template <typename F>
+    locale(const locale &, F *f) {
+        (void)f;  // the facet is not kept (see above); like a facet whose count reached zero, it is not freed
+    }
+    locale &operator=(const locale &) { return *this; }
+    string name() const { return string("C"); }
+    bool operator==(const locale &) const { return true; }
+    bool operator!=(const locale &) const { return false; }
+    static const locale &classic() { return __classic(); }
+    static locale global(const locale &) { return locale(); }
+    static locale &__classic() {
+        static locale c;
+        return c;
+    }
+};
+template <typename C>
+bool isspace(C c, const locale &) { return ::isspace((int)(unsigned char)c) != 0; }
+template <typename C>
+bool isdigit(C c, const locale &) { return ::isdigit((int)(unsigned char)c) != 0; }
+template <typename C>
+bool isalpha(C c, const locale &) { return ::isalpha((int)(unsigned char)c) != 0; }
+template <typename C>
+bool isalnum(C c, const locale &) { return ::isalnum((int)(unsigned char)c) != 0; }
+template <typename C>
+bool isupper(C c, const locale &) { return ::isupper((int)(unsigned char)c) != 0; }
+template <typename C>
+bool islower(C c, const locale &) { return ::islower((int)(unsigned char)c) != 0; }
+template <typename C>
+bool ispunct(C c, const locale &) { return ::ispunct((int)(unsigned char)c) != 0; }
+template <typename C>
+C toupper(C c, const locale &) { return (C)::toupper((int)(unsigned char)c); }
+template <typename C>
+C tolower(C c, const locale &) { return (C)::tolower((int)(unsigned char)c); }
+}  // namespace std

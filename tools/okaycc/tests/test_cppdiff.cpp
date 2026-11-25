@@ -29,7 +29,7 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
     const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
-                           "lib/alloc.c", "lib/eh.c", "lib/m.c"};
+                           "lib/alloc.c", "lib/eh.c", "lib/m.c", "lib/stdio.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
@@ -275,6 +275,8 @@ int main() {
         // Round 20: GestureRecognizer.cpp (if-condition declarations, remove_if and erase of a range).
         engineDiff("tests/progs_cpp_engine/gesture_main.cpp", "../../engine/src/Input/GestureRecognizer.cpp");
         engineDiff("tests/progs_cpp_engine/bc_main.cpp", "../../engine/src/Texture/Bc.cpp");
+        // Round 21:
+        engineDiff("tests/progs_cpp_engine/wav_main.cpp", "../../engine/src/Audio/WavDecoder.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

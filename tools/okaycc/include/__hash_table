@@ -1,0 +1,156 @@
+// The hash table behind okay-cc's <unordered_map> and <unordered_set> (ISO/IEC 14882
+// [unord.req]). Our own code: separate chaining, one singly linked chain per bucket; the table
+// doubles when the number of elements passes the number of buckets (load factor 1). Each node holds
+// a pair<const K, V>; unordered_set uses V = char and shows only the key. Iterators walk the buckets
+// in order, so the order of a walk is not the order libstdc++ gives (the standard leaves it
+// unspecified). Iterators stay valid until a rehash or until their own element is erased.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <functional>
+#include <initializer_list>
+#include <new>
+#include <utility>
+namespace std {
+
+template <typename K, typename V>
+struct __hash_node {
+    pair<const K, V> kv;
+    __hash_node<K, V> *next;
+    unsigned long code;
+};
+
+template <typename K, typename V>
+struct __hash_it {
+    __hash_node<K, V> *n;
+    __hash_node<K, V> **buckets;
+    unsigned long nb;
+    unsigned long b;
+    __hash_it() : n(nullptr), buckets(nullptr), nb(0), b(0) {}
+    __hash_it(__hash_node<K, V> *x, __hash_node<K, V> **bs, unsigned long count, unsigned long at)
+        : n(x), buckets(bs), nb(count), b(at) {}
+    pair<const K, V> &operator*() const { return n->kv; }
+    pair<const K, V> *operator->() const { return &n->kv; }
+    bool operator==(const __hash_it<K, V> &o) const { return n == o.n; }
+    bool operator!=(const __hash_it<K, V> &o) const { return n != o.n; }
+    __hash_it<K, V> &operator++() {
+        n = n->next;
+        while (!n && ++b < nb) n = buckets[b];
+        return *this;
+    }
+    __hash_it<K, V> operator++(int) {
+        __hash_it<K, V> old = *this;
+        ++*this;
+        return old;
+    }
+};
+
+template <typename K, typename V, typename H, typename E>
+class __hash_table {
+public:
+    typedef __hash_node<K, V> node;
+    typedef pair<const K, V> value_type;
+    typedef __hash_it<K, V> iterator;
+    node **__b;
+    unsigned long __nb;
+    unsigned long __n;
+    H __hash;
+    E __eq;
+
+    __hash_table() : __b(nullptr), __nb(0), __n(0), __hash(), __eq() {}
+    ~__hash_table() {
+        clear();
+        free(__b);
+    }
+
+    iterator begin() const {
+        for (unsigned long i = 0; i < __nb; ++i)
+            if (__b[i]) return iterator(__b[i], __b, __nb, i);
+        return end();
+    }
+    iterator end() const { return iterator(nullptr, __b, __nb, __nb); }
+    iterator at(node *x) const { return x ? iterator(x, __b, __nb, x->code % __nb) : end(); }
+
+    node *findNode(const K &k) const {
+        if (__nb == 0) return nullptr;
+        unsigned long c = __hash(k);
+        for (node *x = __b[c % __nb]; x; x = x->next)
+            if (x->code == c && __eq(x->kv.first, k)) return x;
+        return nullptr;
+    }
+    void rehash(unsigned long want) {
+        if (want < 8) want = 8;
+        node **nb = (node **)calloc(want, sizeof(node *));
+        for (unsigned long i = 0; i < __nb; ++i) {
+            node *x = __b[i];
+            while (x) {
+                node *next = x->next;
+                unsigned long j = x->code % want;
+                x->next = nb[j];
+                nb[j] = x;
+                x = next;
+            }
+        }
+        free(__b);
+        __b = nb;
+        __nb = want;
+    }
+    node *link(node *x, unsigned long c) {
+        if (__n + 1 > __nb) rehash(__nb * 2);
+        x->code = c;
+        unsigned long j = c % __nb;
+        x->next = __b[j];
+        __b[j] = x;
+        ++__n;
+        return x;
+    }
+    pair<node *, bool> insertValue(const value_type &kv) {
+        node *had = findNode(kv.first);
+        if (had) return pair<node *, bool>(had, false);
+        node *x = (node *)malloc(sizeof(node));
+        new (&x->kv) value_type(kv.first, kv.second);
+        return pair<node *, bool>(link(x, __hash(kv.first)), true);
+    }
+    // The node for k, made with a default V if it is not there (operator[]).
+    node *get(const K &k) {
+        node *had = findNode(k);
+        if (had) return had;
+        node *x = (node *)malloc(sizeof(node));
+        new (&x->kv) value_type(k, V());
+        return link(x, __hash(k));
+    }
+    void eraseNode(node *z) {
+        node **at = &__b[z->code % __nb];
+        while (*at != z) at = &(*at)->next;
+        *at = z->next;
+        (&z->kv)->~value_type();
+        free(z);
+        --__n;
+    }
+    void clear() {
+        for (unsigned long i = 0; i < __nb; ++i) {
+            node *x = __b[i];
+            while (x) {
+                node *next = x->next;
+                (&x->kv)->~value_type();
+                free(x);
+                x = next;
+            }
+            __b[i] = nullptr;
+        }
+        __n = 0;
+    }
+    void copyFrom(const __hash_table<K, V, H, E> &o) {
+        for (iterator it = o.begin(); it != o.end(); ++it) insertValue(*it);
+    }
+    void takeFrom(__hash_table<K, V, H, E> &o) {
+        __b = o.__b;
+        __nb = o.__nb;
+        __n = o.__n;
+        o.__b = nullptr;
+        o.__nb = 0;
+        o.__n = 0;
+    }
+};
+
+}  // namespace std

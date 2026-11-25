@@ -3981,6 +3981,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - pseudo-localize (1.16, 31.3.2)
 - Public fields in the Inspector (13.4.3)
 - public key (39.7)
+- Public names (17.5.4)
 - public profile (17.7, 17.7.3)
 - Public server listing (16.4.4)
 - public variable (13.4)

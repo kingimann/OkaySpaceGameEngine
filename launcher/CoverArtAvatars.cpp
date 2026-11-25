@@ -4,6 +4,7 @@
 #include "LauncherShared.hpp"
 #include "CoverArtAvatars.hpp"
 #include "ChatText.hpp"   // IconTile, LoadRgbaFile
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okl {
 
@@ -126,7 +127,7 @@ void DrawAvatar(const std::string& url, const std::string& name, float size) {
         dl->AddCircleFilled(ctr, size * 0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f, col.y*0.55f, col.z*0.55f, 1)), 32);
         char init[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
         ImVec2 ts = ImGui::CalcTextSize(init);
-        dl->AddText(ImVec2(ctr.x - ts.x*0.5f, ctr.y - ts.y*0.5f), IM_COL32(255,255,255,255), init);
+        dl->AddText(ImVec2(ctr.x - ts.x*0.5f, ctr.y - ts.y*0.5f), okaytheme::OnColorU32(), init);
     }
     ImGui::Dummy(ImVec2(size, size));
 }

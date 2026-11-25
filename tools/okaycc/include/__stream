@@ -1,0 +1,896 @@
+// The streams for okay-cc (ISO/IEC 14882 [input.output]: [ios.base], [ostream], [istream],
+// [string.streams], [file.streams]). Our own design, not the standard's class layout: okay-cc has
+// single inheritance only, so there is one chain
+//     ios_base  <-  istream  <-  ostream  <-  iostream
+// (an ostream can also be read from; a valid program never notices). The bytes go through a
+// streambuf, a small abstract channel of our own with one string-backed and one FILE-backed kind.
+// Not done: wide characters, locales (imbue is accepted and ignored), exceptions(), tie(), sentry
+// objects, putback beyond one character, and the stream iterators other than istreambuf_iterator.
+#pragma once
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+namespace std {
+typedef long streamsize;
+typedef long streamoff;
+typedef long streampos;
+
+// A byte channel. Reads return the next byte or -1; seeks return the new position or -1.
+class streambuf {
+public:
+    virtual ~streambuf() {}
+    virtual long __write(const char *p, long n) { return 0; }
+    virtual int __get() { return -1; }
+    virtual int __peek() { return -1; }
+    virtual bool __unget() { return false; }
+    virtual long __seek(long off, int dir, bool forRead) { return -1; }
+    virtual long __tell(bool forRead) { return -1; }
+    virtual int __sync() { return 0; }
+    long __read(char *p, long n) {
+        long k = 0;
+        while (k < n) {
+            int c = __get();
+            if (c < 0) break;
+            p[k++] = (char)c;
+        }
+        return k;
+    }
+};
+
+class ios_base {
+public:
+    typedef unsigned int openmode;
+    static constexpr unsigned int app = 1;
+    static constexpr unsigned int ate = 2;
+    static constexpr unsigned int binary = 4;
+    static constexpr unsigned int in = 8;
+    static constexpr unsigned int out = 16;
+    static constexpr unsigned int trunc = 32;
+    typedef unsigned int fmtflags;
+    static constexpr unsigned int dec = 1;
+    static constexpr unsigned int oct = 2;
+    static constexpr unsigned int hex = 4;
+    static constexpr unsigned int basefield = 7;
+    static constexpr unsigned int fixed = 8;
+    static constexpr unsigned int scientific = 16;
+    static constexpr unsigned int floatfield = 24;
+    static constexpr unsigned int boolalpha = 32;
+    static constexpr unsigned int left = 64;
+    static constexpr unsigned int right = 128;
+    static constexpr unsigned int internal = 256;
+    static constexpr unsigned int adjustfield = 448;
+    static constexpr unsigned int showpos = 512;
+    static constexpr unsigned int uppercase = 1024;
+    static constexpr unsigned int skipws = 2048;
+    static constexpr unsigned int showbase = 4096;
+    static constexpr unsigned int showpoint = 8192;
+    typedef unsigned int iostate;
+    static constexpr unsigned int goodbit = 0;
+    static constexpr unsigned int badbit = 1;
+    static constexpr unsigned int eofbit = 2;
+    static constexpr unsigned int failbit = 4;
+    typedef int seekdir;
+    static constexpr int beg = 0;
+    static constexpr int cur = 1;
+    static constexpr int end = 2;
+
+    ios_base() : __sb(nullptr), __state(0), __flags(dec | skipws), __prec(6), __width(0), __fill(' ') {}
+    virtual ~ios_base() {}
+    bool good() const { return __state == 0; }
+    bool eof() const { return (__state & eofbit) != 0; }
+    bool fail() const { return (__state & (failbit | badbit)) != 0; }
+    bool bad() const { return (__state & badbit) != 0; }
+    explicit operator bool() const { return !fail(); }
+    bool operator!() const { return fail(); }
+    iostate rdstate() const { return __state; }
+    void clear(iostate s = 0) { __state = s; }
+    void setstate(iostate s) { __state = __state | s; }
+    fmtflags flags() const { return __flags; }
+    fmtflags flags(fmtflags f) {
+        fmtflags o = __flags;
+        __flags = f;
+        return o;
+    }
+    fmtflags setf(fmtflags f) {
+        fmtflags o = __flags;
+        __flags = __flags | f;
+        return o;
+    }
+    fmtflags setf(fmtflags f, fmtflags mask) {
+        fmtflags o = __flags;
+        __flags = (__flags & ~mask) | (f & mask);
+        return o;
+    }
+    void unsetf(fmtflags f) { __flags = __flags & ~f; }
+    streamsize precision() const { return __prec; }
+    streamsize precision(streamsize p) {
+        streamsize o = __prec;
+        __prec = p;
+        return o;
+    }
+    streamsize width() const { return __width; }
+    streamsize width(streamsize w) {
+        streamsize o = __width;
+        __width = w;
+        return o;
+    }
+    char fill() const { return __fill; }
+    char fill(char c) {
+        char o = __fill;
+        __fill = c;
+        return o;
+    }
+    streambuf *rdbuf() const { return __sb; }
+    template <typename L>
+    void imbue(const L &) {}
+    static bool sync_with_stdio(bool = true) { return true; }
+
+    streambuf *__sb;
+    iostate __state;
+    fmtflags __flags;
+    streamsize __prec;
+    streamsize __width;
+    char __fill;
+};
+typedef ios_base ios;
+
+class istream : public ios_base {
+public:
+    istream() : __gcount(0) {}
+    explicit istream(streambuf *sb) : __gcount(0) { __sb = sb; }
+    int get() {
+        __gcount = 0;
+        int c = __sb ? __sb->__get() : -1;
+        if (c < 0) setstate(eofbit | failbit);
+        else __gcount = 1;
+        return c;
+    }
+    istream &get(char &c) {
+        int v = get();
+        if (v >= 0) c = (char)v;
+        return *this;
+    }
+    int peek() {
+        if (fail()) return -1;
+        int c = __sb ? __sb->__peek() : -1;
+        if (c < 0) setstate(eofbit);
+        return c;
+    }
+    istream &unget() {
+        __state = __state & ~eofbit;
+        if (!__sb || !__sb->__unget()) setstate(badbit);
+        return *this;
+    }
+    istream &putback(char) { return unget(); }
+    istream &read(char *p, streamsize n) {
+        __gcount = 0;
+        if (fail()) return *this;
+        __gcount = __sb ? __sb->__read(p, n) : 0;
+        if (__gcount < n) setstate(eofbit | failbit);
+        return *this;
+    }
+    streamsize readsome(char *p, streamsize n) {
+        read(p, n);
+        if (__gcount < n) __state = __state & ~failbit;
+        return __gcount;
+    }
+    streamsize gcount() const { return __gcount; }
+    istream &ignore(streamsize n = 1, int delim = -1) {
+        __gcount = 0;
+        while (n > 0) {
+            int c = __sb ? __sb->__get() : -1;
+            if (c < 0) {
+                setstate(eofbit);
+                break;
+            }
+            ++__gcount;
+            if (c == delim) break;
+            if (n != 9223372036854775807L) --n;
+        }
+        return *this;
+    }
+    istream &getline(char *p, streamsize n, char delim = '\n') {
+        __gcount = 0;
+        streamsize k = 0;
+        while (k + 1 < n) {
+            int c = __sb ? __sb->__get() : -1;
+            if (c < 0) {
+                setstate(eofbit);
+                break;
+            }
+            ++__gcount;
+            if (c == delim) break;
+            p[k++] = (char)c;
+        }
+        if (n > 0) p[k] = 0;
+        if (__gcount == 0) setstate(failbit);
+        return *this;
+    }
+    istream &seekg(streampos pos) {
+        __state = __state & ~eofbit;
+        if (!__sb || __sb->__seek(pos, beg, true) < 0) setstate(failbit);
+        return *this;
+    }
+    istream &seekg(streamoff off, seekdir dir) {
+        __state = __state & ~eofbit;
+        if (!__sb || __sb->__seek(off, dir, true) < 0) setstate(failbit);
+        return *this;
+    }
+    streampos tellg() {
+        if (fail() || !__sb) return -1;
+        return __sb->__tell(true);
+    }
+    int sync() { return __sb ? __sb->__sync() : -1; }
+
+    // Formatted input ([istream.formatted]): skip white space, read one token, convert it.
+    bool __skip() {
+        if (fail()) return false;
+        for (;;) {
+            int c = __sb ? __sb->__peek() : -1;
+            if (c < 0) {
+                setstate(eofbit | failbit);
+                return false;
+            }
+            if (!(c == ' ' || (c >= 9 && c <= 13))) return true;
+            __sb->__get();
+        }
+    }
+    // The characters of a number: what strtol and strtod could take.
+    string __token(bool fp) {
+        string t;
+        for (;;) {
+            int c = __sb->__peek();
+            if (c < 0) {
+                setstate(eofbit);
+                break;
+            }
+            bool ok = (c >= '0' && c <= '9') || ((c == '-' || c == '+') && (t.empty() || (fp && (t.back() == 'e' || t.back() == 'E'))));
+            if ((__flags & basefield) == hex) ok = ok || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == 'x' || c == 'X';
+            if (fp) ok = ok || c == '.' || c == 'e' || c == 'E';
+            if (!ok) break;
+            t.push_back((char)c);
+            __sb->__get();
+        }
+        return t;
+    }
+    // On failure the value is 0 ([facet.num.get.virtuals] p3, C++11 and later).
+    bool __integer(long &v, bool &neg) {
+        v = 0;
+        neg = false;
+        if (!__skip()) return false;
+        string t = __token(false);
+        int base = (__flags & basefield) == hex ? 16 : (__flags & basefield) == oct ? 8 : 10;
+        char *end = nullptr;
+        v = strtol(t.c_str(), &end, base);
+        neg = !t.empty() && t[0] == '-';
+        if (t.empty() || end != t.c_str() + t.size()) {
+            v = 0;
+            setstate(failbit);
+            return false;
+        }
+        return true;
+    }
+    istream &operator>>(int &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = (int)v;
+        return *this;
+    }
+    istream &operator>>(long &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = v;
+        return *this;
+    }
+    istream &operator>>(short &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = (short)v;
+        return *this;
+    }
+    istream &operator>>(unsigned int &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = (unsigned int)v;
+        return *this;
+    }
+    istream &operator>>(unsigned long &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = (unsigned long)v;
+        return *this;
+    }
+    istream &operator>>(unsigned short &x) {
+        long v;
+        bool neg;
+        __integer(v, neg);
+        x = (unsigned short)v;
+        return *this;
+    }
+    istream &operator>>(double &x) {
+        x = 0;
+        if (!__skip()) return *this;
+        string t = __token(true);
+        char *end = nullptr;
+        double v = strtod(t.c_str(), &end);
+        if (t.empty() || end != t.c_str() + t.size()) {
+            x = 0;
+            setstate(failbit);
+        } else {
+            x = v;
+        }
+        return *this;
+    }
+    istream &operator>>(float &x) {
+        double d = 0;
+        *this >> d;
+        if (!fail()) x = (float)d;
+        else x = 0;
+        return *this;
+    }
+    istream &operator>>(bool &x) {
+        long v;
+        bool neg;
+        if (__integer(v, neg)) {
+            if (v == 0 || v == 1) x = v == 1;
+            else setstate(failbit);
+        }
+        return *this;
+    }
+    istream &operator>>(char &c) {
+        if (!__skip()) return *this;
+        c = (char)__sb->__get();
+        return *this;
+    }
+    istream &operator>>(unsigned char &c) {
+        if (!__skip()) return *this;
+        c = (unsigned char)__sb->__get();
+        return *this;
+    }
+    istream &operator>>(string &s) {
+        s.clear();
+        if (!__skip()) return *this;
+        for (;;) {
+            int c = __sb->__peek();
+            if (c < 0) {
+                setstate(eofbit);
+                break;
+            }
+            if (c == ' ' || (c >= 9 && c <= 13)) break;
+            s.push_back((char)c);
+            __sb->__get();
+        }
+        return *this;
+    }
+    istream &operator>>(istream &(*f)(istream &)) { return f(*this); }
+    istream &operator>>(ios_base &(*f)(ios_base &)) {
+        f(*this);
+        return *this;
+    }
+
+protected:
+    streamsize __gcount;
+};
+
+class ostream : public istream {
+public:
+    ostream() {}
+    explicit ostream(streambuf *sb) : istream(sb) {}
+    ostream &write(const char *p, streamsize n) {
+        if (!__sb || __sb->__write(p, n) != n) setstate(badbit);
+        return *this;
+    }
+    ostream &put(char c) { return write(&c, 1); }
+    ostream &flush() {
+        if (__sb) __sb->__sync();
+        return *this;
+    }
+    ostream &seekp(streampos pos) {
+        if (!__sb || __sb->__seek(pos, beg, false) < 0) setstate(failbit);
+        return *this;
+    }
+    ostream &seekp(streamoff off, seekdir dir) {
+        if (!__sb || __sb->__seek(off, dir, false) < 0) setstate(failbit);
+        return *this;
+    }
+    streampos tellp() {
+        if (fail() || !__sb) return -1;
+        return __sb->__tell(false);
+    }
+
+    // Formatted output ([ostream.formatted]): the text, padded to width() with fill() on the side
+    // adjustfield names (right by default; internal pads after a sign); width() is then 0.
+    ostream &__pad(const char *s, long n) {
+        long w = __width;
+        __width = 0;
+        if (w <= n) return write(s, n);
+        long padN = w - n;
+        unsigned int adj = __flags & adjustfield;
+        long split = 0;
+        if (adj == internal && n > 0 && (s[0] == '-' || s[0] == '+')) split = 1;
+        if (adj == left) {
+            write(s, n);
+            for (long k = 0; k < padN; ++k) put(__fill);
+            return *this;
+        }
+        if (split) write(s, split);
+        for (long k = 0; k < padN; ++k) put(__fill);
+        return write(s + split, n - split);
+    }
+    ostream &__signed(long v) {
+        unsigned int base = __flags & basefield;
+        if (base == hex || base == oct) return __unsigned((unsigned long)v);
+        char buf[32];
+        int n = snprintf(buf, sizeof(buf), (__flags & showpos) && v >= 0 ? "+%ld" : "%ld", v);
+        return __pad(buf, n);
+    }
+    ostream &__unsigned(unsigned long v) {
+        unsigned int base = __flags & basefield;
+        const char *f = "%lu";
+        if (base == hex) f = (__flags & uppercase) ? ((__flags & showbase) ? "0X%lX" : "%lX") : ((__flags & showbase) ? "0x%lx" : "%lx");
+        else if (base == oct) f = (__flags & showbase) ? "0%lo" : "%lo";
+        char buf[32];
+        int n = snprintf(buf, sizeof(buf), f, v);
+        return __pad(buf, n);
+    }
+    // A floating value ([facet.num.put.virtuals], table "Floating-point conversions"): fixed is
+    // %f, scientific %e, neither %g, with precision() digits (both is %a there, not done: %e here).
+    ostream &__float(double v) {
+        char f[16];
+        int k = 0;
+        f[k++] = '%';
+        if (__flags & showpos) f[k++] = '+';
+        if (__flags & showpoint) f[k++] = '#';
+        f[k++] = '.';
+        f[k++] = '*';
+        unsigned int ff = __flags & floatfield;
+        bool up = (__flags & uppercase) != 0;
+        f[k++] = ff == fixed ? (up ? 'F' : 'f') : ff == scientific ? (up ? 'E' : 'e') : ff == floatfield ? (up ? 'E' : 'e') : (up ? 'G' : 'g');
+        f[k] = 0;
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf), f, (int)__prec, v);
+        if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+        return __pad(buf, n);
+    }
+    ostream &operator<<(int v) { return __signed(v); }
+    ostream &operator<<(long v) { return __signed(v); }
+    ostream &operator<<(short v) { return __signed(v); }
+    ostream &operator<<(unsigned int v) {
+        unsigned int base = __flags & basefield;
+        if (base == hex || base == oct) return __unsigned(v);
+        return __unsigned(v);
+    }
+    ostream &operator<<(unsigned long v) { return __unsigned(v); }
+    ostream &operator<<(unsigned short v) { return __unsigned(v); }
+    ostream &operator<<(double v) { return __float(v); }
+    ostream &operator<<(float v) { return __float(v); }
+    ostream &operator<<(bool v) {
+        if (__flags & boolalpha) return __pad(v ? "true" : "false", v ? 4 : 5);
+        return __signed(v ? 1 : 0);
+    }
+    ostream &operator<<(char c) { return __pad(&c, 1); }
+    ostream &operator<<(signed char c) { return __pad((const char *)&c, 1); }
+    ostream &operator<<(unsigned char c) { return __pad((const char *)&c, 1); }
+    ostream &operator<<(const char *s) {
+        if (!s) {
+            setstate(badbit);
+            return *this;
+        }
+        return __pad(s, (long)strlen(s));
+    }
+    ostream &operator<<(const string &s) { return __pad(s.data(), (long)s.size()); }
+    ostream &operator<<(const void *p) {
+        char buf[32];
+        int n = snprintf(buf, sizeof(buf), "%p", p);
+        return __pad(buf, n);
+    }
+    // os << in.rdbuf(): every byte left in the other stream ([ostream.inserters] p8).
+    ostream &operator<<(streambuf *sb) {
+        if (!sb) {
+            setstate(badbit);
+            return *this;
+        }
+        char buf[4096];
+        long any = 0;
+        for (;;) {
+            long n = sb->__read(buf, (long)sizeof(buf));
+            if (n <= 0) break;
+            any += n;
+            write(buf, n);
+        }
+        if (any == 0) setstate(failbit);
+        return *this;
+    }
+    ostream &operator<<(ostream &(*f)(ostream &)) { return f(*this); }
+    ostream &operator<<(ios_base &(*f)(ios_base &)) {
+        f(*this);
+        return *this;
+    }
+};
+class iostream : public ostream {
+public:
+    iostream() {}
+    explicit iostream(streambuf *sb) : ostream(sb) {}
+};
+
+// Manipulators ([std.manip], [basefield.manip], [floatfield.manip]).
+inline ostream &endl(ostream &os) {
+    os.put('\n');
+    return os.flush();
+}
+inline ostream &ends(ostream &os) { return os.put(0); }
+inline ostream &flush(ostream &os) { return os.flush(); }
+inline istream &ws(istream &is) {
+    for (;;) {
+        int c = is.__sb ? is.__sb->__peek() : -1;
+        if (c < 0) {
+            is.setstate(ios_base::eofbit);
+            break;
+        }
+        if (!(c == ' ' || (c >= 9 && c <= 13))) break;
+        is.__sb->__get();
+    }
+    return is;
+}
+inline ios_base &dec(ios_base &s) {
+    s.setf(ios_base::dec, ios_base::basefield);
+    return s;
+}
+inline ios_base &hex(ios_base &s) {
+    s.setf(ios_base::hex, ios_base::basefield);
+    return s;
+}
+inline ios_base &oct(ios_base &s) {
+    s.setf(ios_base::oct, ios_base::basefield);
+    return s;
+}
+inline ios_base &fixed(ios_base &s) {
+    s.setf(ios_base::fixed, ios_base::floatfield);
+    return s;
+}
+inline ios_base &scientific(ios_base &s) {
+    s.setf(ios_base::scientific, ios_base::floatfield);
+    return s;
+}
+inline ios_base &defaultfloat(ios_base &s) {
+    s.unsetf(ios_base::floatfield);
+    return s;
+}
+inline ios_base &boolalpha(ios_base &s) {
+    s.setf(ios_base::boolalpha);
+    return s;
+}
+inline ios_base &noboolalpha(ios_base &s) {
+    s.unsetf(ios_base::boolalpha);
+    return s;
+}
+inline ios_base &showpos(ios_base &s) {
+    s.setf(ios_base::showpos);
+    return s;
+}
+inline ios_base &noshowpos(ios_base &s) {
+    s.unsetf(ios_base::showpos);
+    return s;
+}
+inline ios_base &uppercase(ios_base &s) {
+    s.setf(ios_base::uppercase);
+    return s;
+}
+inline ios_base &nouppercase(ios_base &s) {
+    s.unsetf(ios_base::uppercase);
+    return s;
+}
+inline ios_base &showbase(ios_base &s) {
+    s.setf(ios_base::showbase);
+    return s;
+}
+inline ios_base &showpoint(ios_base &s) {
+    s.setf(ios_base::showpoint);
+    return s;
+}
+inline ios_base &left(ios_base &s) {
+    s.setf(ios_base::left, ios_base::adjustfield);
+    return s;
+}
+inline ios_base &right(ios_base &s) {
+    s.setf(ios_base::right, ios_base::adjustfield);
+    return s;
+}
+inline ios_base &internal(ios_base &s) {
+    s.setf(ios_base::internal, ios_base::adjustfield);
+    return s;
+}
+inline ios_base &skipws(ios_base &s) {
+    s.setf(ios_base::skipws);
+    return s;
+}
+inline ios_base &noskipws(ios_base &s) {
+    s.unsetf(ios_base::skipws);
+    return s;
+}
+
+// getline ([string.io] p7): characters up to delim (which is taken and not stored); failbit when
+// nothing at all was taken.
+inline istream &getline(istream &is, string &s, char delim) {
+    s.clear();
+    if (is.fail()) return is;
+    long taken = 0;
+    for (;;) {
+        int c = is.__sb ? is.__sb->__get() : -1;
+        if (c < 0) {
+            is.setstate(ios_base::eofbit);
+            break;
+        }
+        ++taken;
+        if (c == delim) break;
+        s.push_back((char)c);
+    }
+    if (taken == 0) is.setstate(ios_base::failbit);
+    return is;
+}
+inline istream &getline(istream &is, string &s) { return getline(is, s, '\n'); }
+
+// The string channel of the string streams: one string, a read position and a write position.
+class __stringbuf : public streambuf {
+public:
+    string __s;
+    long __r;
+    long __w;
+    __stringbuf() : __r(0), __w(0) {}
+    long __write(const char *p, long n) {
+        for (long k = 0; k < n; ++k) {
+            if (__w < (long)__s.size()) __s[(unsigned long)__w] = p[k];
+            else __s.push_back(p[k]);
+            ++__w;
+        }
+        return n;
+    }
+    int __get() {
+        if (__r >= (long)__s.size()) return -1;
+        return (unsigned char)__s[(unsigned long)__r++];
+    }
+    int __peek() {
+        if (__r >= (long)__s.size()) return -1;
+        return (unsigned char)__s[(unsigned long)__r];
+    }
+    bool __unget() {
+        if (__r == 0) return false;
+        --__r;
+        return true;
+    }
+    long __seek(long off, int dir, bool forRead) {
+        long base = dir == 0 ? 0 : dir == 1 ? (forRead ? __r : __w) : (long)__s.size();
+        long p = base + off;
+        if (p < 0 || p > (long)__s.size()) return -1;
+        if (forRead) __r = p;
+        else __w = p;
+        return p;
+    }
+    long __tell(bool forRead) { return forRead ? __r : __w; }
+};
+
+// String streams ([string.streams]). The stream owns its channel; str() copies the text out.
+class ostringstream : public ostream {
+public:
+    ostringstream() { __sb = &__buf; }
+    explicit ostringstream(openmode m) {
+        __sb = &__buf;
+        (void)m;
+    }
+    explicit ostringstream(const string &s, openmode m = out) {
+        __sb = &__buf;
+        __buf.__s = s;
+        if (m & (ate | app)) __buf.__w = (long)s.size();
+    }
+    string str() const { return __buf.__s; }
+    void str(const string &s) {
+        __buf.__s = s;
+        __buf.__r = 0;
+        __buf.__w = 0;
+    }
+    __stringbuf *rdbuf() { return &__buf; }
+
+private:
+    __stringbuf __buf;
+};
+class istringstream : public istream {
+public:
+    istringstream() { __sb = &__buf; }
+    explicit istringstream(const string &s, openmode m = in) {
+        __sb = &__buf;
+        __buf.__s = s;
+        (void)m;
+    }
+    string str() const { return __buf.__s; }
+    void str(const string &s) {
+        __buf.__s = s;
+        __buf.__r = 0;
+        __buf.__w = 0;
+    }
+    __stringbuf *rdbuf() { return &__buf; }
+
+private:
+    __stringbuf __buf;
+};
+class stringstream : public iostream {
+public:
+    stringstream() { __sb = &__buf; }
+    explicit stringstream(openmode m) {
+        __sb = &__buf;
+        (void)m;
+    }
+    explicit stringstream(const string &s, openmode m = in | out) {
+        __sb = &__buf;
+        __buf.__s = s;
+        if (m & (ate | app)) __buf.__w = (long)s.size();
+    }
+    string str() const { return __buf.__s; }
+    void str(const string &s) {
+        __buf.__s = s;
+        __buf.__r = 0;
+        __buf.__w = 0;
+    }
+    __stringbuf *rdbuf() { return &__buf; }
+
+private:
+    __stringbuf __buf;
+};
+
+// The file channel: a C FILE from lib/stdio.c (writes are not buffered there, reads are).
+class filebuf : public streambuf {
+public:
+    FILE *__f;
+    bool __own;
+    filebuf() : __f(nullptr), __own(false) {}
+    explicit filebuf(FILE *f) : __f(f), __own(false) {}
+    ~filebuf() { close(); }
+    bool is_open() const { return __f != nullptr; }
+    filebuf *open(const char *path, unsigned int m) {
+        if (__f) return nullptr;
+        // [filebuf.members] table: the C mode for each openmode (binary changes nothing here).
+        unsigned int k = m & ~(ios_base::binary | ios_base::ate);
+        const char *mode = nullptr;
+        if (k == ios_base::out || k == (ios_base::out | ios_base::trunc)) mode = "w";
+        else if (k == ios_base::app || k == (ios_base::out | ios_base::app)) mode = "a";
+        else if (k == ios_base::in) mode = "r";
+        else if (k == (ios_base::in | ios_base::out)) mode = "r+";
+        else if (k == (ios_base::in | ios_base::out | ios_base::trunc)) mode = "w+";
+        else if (k == (ios_base::in | ios_base::app) || k == (ios_base::in | ios_base::out | ios_base::app)) mode = "a+";
+        if (!mode) return nullptr;
+        __f = fopen(path, mode);
+        if (!__f) return nullptr;
+        __own = true;
+        if ((m & ios_base::ate) && fseek(__f, 0, SEEK_END) != 0) {
+            close();
+            return nullptr;
+        }
+        return this;
+    }
+    filebuf *close() {
+        if (!__f) return nullptr;
+        if (__own) fclose(__f);
+        __f = nullptr;
+        __own = false;
+        return this;
+    }
+    long __write(const char *p, long n) { return __f ? (long)fwrite(p, 1, (unsigned long)n, __f) : 0; }
+    int __get() { return __f ? fgetc(__f) : -1; }
+    int __peek() {
+        if (!__f) return -1;
+        int c = fgetc(__f);
+        if (c >= 0) ungetc(c, __f);
+        return c;
+    }
+    bool __unget() { return __f && fseek(__f, -1, SEEK_CUR) == 0; }
+    long __seek(long off, int dir, bool) {
+        if (!__f || fseek(__f, off, dir) != 0) return -1;
+        return ftell(__f);
+    }
+    long __tell(bool) { return __f ? ftell(__f) : -1; }
+    int __sync() { return __f ? fflush(__f) : -1; }
+};
+
+// File streams ([file.streams]).
+class ifstream : public istream {
+public:
+    ifstream() { __sb = &__buf; }
+    explicit ifstream(const char *path, openmode m = in) {
+        __sb = &__buf;
+        open(path, m);
+    }
+    explicit ifstream(const string &path, openmode m = in) {
+        __sb = &__buf;
+        open(path.c_str(), m);
+    }
+    void open(const char *path, openmode m = in) {
+        if (__buf.open(path, m | in)) clear();
+        else setstate(failbit);
+    }
+    void open(const string &path, openmode m = in) { open(path.c_str(), m); }
+    bool is_open() const { return __buf.is_open(); }
+    void close() {
+        if (!__buf.close()) setstate(failbit);
+    }
+    filebuf *rdbuf() { return &__buf; }
+
+private:
+    filebuf __buf;
+};
+class ofstream : public ostream {
+public:
+    ofstream() { __sb = &__buf; }
+    explicit ofstream(const char *path, openmode m = out) {
+        __sb = &__buf;
+        open(path, m);
+    }
+    explicit ofstream(const string &path, openmode m = out) {
+        __sb = &__buf;
+        open(path.c_str(), m);
+    }
+    void open(const char *path, openmode m = out) {
+        if (__buf.open(path, m | out)) clear();
+        else setstate(failbit);
+    }
+    void open(const string &path, openmode m = out) { open(path.c_str(), m); }
+    bool is_open() const { return __buf.is_open(); }
+    void close() {
+        if (!__buf.close()) setstate(failbit);
+    }
+    filebuf *rdbuf() { return &__buf; }
+
+private:
+    filebuf __buf;
+};
+class fstream : public iostream {
+public:
+    fstream() { __sb = &__buf; }
+    explicit fstream(const char *path, openmode m = in | out) {
+        __sb = &__buf;
+        open(path, m);
+    }
+    explicit fstream(const string &path, openmode m = in | out) {
+        __sb = &__buf;
+        open(path.c_str(), m);
+    }
+    void open(const char *path, openmode m = in | out) {
+        if (__buf.open(path, m)) clear();
+        else setstate(failbit);
+    }
+    void open(const string &path, openmode m = in | out) { open(path.c_str(), m); }
+    bool is_open() const { return __buf.is_open(); }
+    void close() {
+        if (!__buf.close()) setstate(failbit);
+    }
+    filebuf *rdbuf() { return &__buf; }
+
+private:
+    filebuf __buf;
+};
+
+// istreambuf_iterator ([istreambuf.iterator]): the bytes of a stream, one by one; a default one is
+// the end.
+template <typename C>
+class istreambuf_iterator {
+public:
+    istreambuf_iterator() : __sb(nullptr) {}
+    istreambuf_iterator(istream &is) : __sb(is.__sb) {}
+    istreambuf_iterator(streambuf *sb) : __sb(sb) {}
+    C operator*() const { return (C)__sb->__peek(); }
+    istreambuf_iterator<C> &operator++() {
+        __sb->__get();
+        return *this;
+    }
+    bool __atEnd() const { return !__sb || __sb->__peek() < 0; }
+    bool operator==(const istreambuf_iterator<C> &o) const { return __atEnd() == o.__atEnd(); }
+    bool operator!=(const istreambuf_iterator<C> &o) const { return __atEnd() != o.__atEnd(); }
+
+private:
+    streambuf *__sb;
+};
+}  // namespace std

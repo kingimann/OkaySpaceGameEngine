@@ -9,7 +9,8 @@
 namespace okl {
 
 // Icon ids past the launcher tabs (0..10), and the round chat-ribbon buttons.
-enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19, kIcoTerminal = 20 };
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19, kIcoTerminal = 20,
+       kIcoSearch = 21, kIcoStar = 22, kIcoSort = 23 };
 enum { kRibChat, kRibPlay, kRibCheck, kRibClose, kRibMore, kRibStar, kRibStarOn };   // kRibStar: an outline star, kRibStarOn: a filled gold one
 
 void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col);   // line icon `id` centred at c
@@ -49,6 +50,21 @@ void SectionLabel(const char* title, int n);
 bool BeginSlateCombo(const char* label, const char* preview, int flags = 0);
 bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated, int popupMaxItems = -1);
 bool SlateCombo(const char* label, int* current, const char* const items[], int count, int popupMaxItems = -1);
+/// The fold / unfold button of a side panel (the sidebar, Servers' channels, Forums' sections): the panel icon in a rounded
+/// square, `d` pixels; the tooltip names the panel and the shortcut. True when clicked.
+bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hoverBg, ImU32 fg, ImU32 fgHover);
+/// Ctrl+B this frame, for the page whose panel it folds (a page takes it with TakePanelShortcut; if no page did, it folds
+/// the launcher sidebar at the end of the frame).
+extern bool g_panelShortcut;
+inline bool TakePanelShortcut() { const bool b = g_panelShortcut; g_panelShortcut = false; return b; }
+/// One icon of an icon rail (Servers' servers, Forums' folded sections): a round badge that turns into a rounded square when
+/// hovered or selected, with the rail's selection pill on the left edge, a tooltip with the full name, and an optional dot
+/// (new / unread). Content: `initials` on `fill`, or a line icon (`navIcon`), or a "+" (`plus`). Drawn in `r` (screen
+/// coordinates); `railX` is the rail's left edge (for the pill). True when clicked.
+struct RailIcon { std::string tip, initials; int navIcon = -1; bool plus = false; ImU32 fill = 0; bool selected = false, dot = false; int count = -1; };   // count >= 0: a small number badge
+bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 pos, float d, float railX);
+/// The thin line between groups of a rail, centred in a band from `a` to `b`.
+void DrawRailDivider(ImVec2 a, ImVec2 b);
 /// A plain button exactly as wide as its label needs (UI-scaled padding), at least `minW`.
 bool FitButton(const char* label, float h, float minW = 0.0f, bool primary = false);
 float FitButtonW(const char* label, float minW = 0.0f);   // the width FitButton will take

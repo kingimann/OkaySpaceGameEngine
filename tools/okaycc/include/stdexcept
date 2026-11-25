@@ -1,0 +1,60 @@
+// <stdexcept> for okay-cc (ISO/IEC 14882 [std.exceptions]). Our own header: the logic and runtime
+// error classes, each keeping its message in a std::string.
+#pragma once
+#include <exception>
+#include <string>
+namespace std {
+class logic_error : public exception {
+public:
+    explicit logic_error(const string &m) : __m(m) {}
+    explicit logic_error(const char *m) : __m(m) {}
+    const char *what() const { return __m.c_str(); }
+
+private:
+    string __m;
+};
+class runtime_error : public exception {
+public:
+    explicit runtime_error(const string &m) : __m(m) {}
+    explicit runtime_error(const char *m) : __m(m) {}
+    const char *what() const { return __m.c_str(); }
+
+private:
+    string __m;
+};
+class domain_error : public logic_error {
+public:
+    explicit domain_error(const string &m) : logic_error(m) {}
+    explicit domain_error(const char *m) : logic_error(m) {}
+};
+class invalid_argument : public logic_error {
+public:
+    explicit invalid_argument(const string &m) : logic_error(m) {}
+    explicit invalid_argument(const char *m) : logic_error(m) {}
+};
+class length_error : public logic_error {
+public:
+    explicit length_error(const string &m) : logic_error(m) {}
+    explicit length_error(const char *m) : logic_error(m) {}
+};
+class out_of_range : public logic_error {
+public:
+    explicit out_of_range(const string &m) : logic_error(m) {}
+    explicit out_of_range(const char *m) : logic_error(m) {}
+};
+class range_error : public runtime_error {
+public:
+    explicit range_error(const string &m) : runtime_error(m) {}
+    explicit range_error(const char *m) : runtime_error(m) {}
+};
+class overflow_error : public runtime_error {
+public:
+    explicit overflow_error(const string &m) : runtime_error(m) {}
+    explicit overflow_error(const char *m) : runtime_error(m) {}
+};
+class underflow_error : public runtime_error {
+public:
+    explicit underflow_error(const string &m) : runtime_error(m) {}
+    explicit underflow_error(const char *m) : runtime_error(m) {}
+};
+}  // namespace std

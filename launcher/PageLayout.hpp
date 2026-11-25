@@ -154,15 +154,61 @@ inline void PlaceHeader(HeaderSplit& h, float availW, float leftH, float rightW,
     }
 }
 
+// ---- Foldable side panels (the launcher sidebar, Servers' channel list, Forums' sections) ------------------------------------
+/// A page's side panel: beside the content when there is room and it is not folded; on a narrow page (`availW` below
+/// `narrowBelow`) it is never beside the content and opens over it instead (`overlay`, when the person asked for it).
+/// `contentW` is what the content gets.
+struct SidePanel { bool shown = true; bool overlay = false; float contentW = 0; };
+inline SidePanel LayoutSidePanel(float availW, float panelW, float gap, float narrowBelow, bool folded, bool overlayOpen) {
+    SidePanel p;
+    const bool narrow = availW < narrowBelow;
+    p.shown = !narrow && !folded;
+    p.overlay = narrow && overlayOpen;
+    p.contentW = std::max(0.0f, availW - (p.shown ? panelW + gap : 0.0f));
+    return p;
+}
+
+// ---- A folded side panel as an icon rail (Servers' server list, Forums' sections when folded) -----------------------------
+/// Where the icons of a rail go: one `d`-pixel icon per item, centred in a rail `railW` wide, from `top`, `gap` apart; an
+/// entry marked as a divider takes `divH` instead (its rect is the divider line's band). One rect per entry, in order.
+inline std::vector<Rect> LayoutIconRail(const std::vector<bool>& isDivider, float railW, float top, float d, float gap, float divH) {
+    std::vector<Rect> out;
+    float y = top;
+    for (bool div : isDivider) {
+        if (div) { out.push_back(Rect{railW * 0.25f, y, railW * 0.5f, divH}); y += divH + gap; }
+        else { out.push_back(Rect{(railW - d) * 0.5f, y, d, d}); y += d + gap; }
+    }
+    return out;
+}
+/// What the Forums page's folded sections rail holds, top to bottom: All posts, each joined section (its letter badge), a
+/// divider, Discover (the other sections), Create a section (when you can), Staff tools (staff only). Never empty: All posts
+/// and Discover are always there.
+enum class ForumRail { AllPosts, Section, Divider, Discover, Create, Staff };
+inline std::vector<ForumRail> ForumRailEntries(int joinedSections, bool canCreate, bool staff) {
+    std::vector<ForumRail> v{ForumRail::AllPosts};
+    for (int i = 0; i < joinedSections; ++i) v.push_back(ForumRail::Section);
+    v.push_back(ForumRail::Divider);
+    v.push_back(ForumRail::Discover);
+    if (canCreate) v.push_back(ForumRail::Create);
+    if (staff) v.push_back(ForumRail::Staff);
+    return v;
+}
+
 // ---- The Marketplace (a browse-and-shop page: a filter rail, a grid of item tiles, an item page) ----------------------------
 /// Where the filter rail and the grid go. Below `railMinPageW` the rail folds into a "Filters" button (it then opens over the
 /// grid). The grid has 3 to 6 columns of tiles at least `tileMinW` wide (fewer than 3 only when even 3 do not fit).
-struct MarketPage { bool railShown = true; Rect rail, grid; Grid tiles; };
-inline MarketPage LayoutMarketPage(float availW, float railW, float gap, float tileMinW, float tileGap, float railMinPageW) {
+/// Folded (`folded`, on a page wide enough for the rail) the rail is an icon rail `iconRailW` wide (`iconRail`) and the grid
+/// takes the rest.
+struct MarketPage { bool railShown = true, iconRail = false; Rect rail, grid; Grid tiles; };
+inline MarketPage LayoutMarketPage(float availW, float railW, float gap, float tileMinW, float tileGap, float railMinPageW,
+                                   bool folded = false, float iconRailW = 0.0f) {
     MarketPage m;
-    m.railShown = availW >= railMinPageW;
-    m.rail = m.railShown ? Rect{0, 0, railW, 0} : Rect{};
-    const float gx = m.railShown ? railW + gap : 0.0f;
+    const bool wide = availW >= railMinPageW;
+    m.railShown = wide && !folded;
+    m.iconRail = wide && folded;
+    const float rw = m.railShown ? railW : m.iconRail ? iconRailW : 0.0f;
+    m.rail = rw > 0 ? Rect{0, 0, rw, 0} : Rect{};
+    const float gx = rw > 0 ? rw + gap : 0.0f;
     m.grid = Rect{gx, 0, std::max(1.0f, availW - gx), 0};
     m.tiles = FitGrid(m.grid.w, tileMinW, tileGap, 6);
     return m;
@@ -182,12 +228,12 @@ inline MarketTile LayoutMarketTile(float tileW, float lineH, float priceH, float
 }
 /// The item page: the picture and the details side by side on a wide page, the picture over the details on a narrow one.
 struct MarketDetail { bool twoColumns = true; Rect picture, info; };
-inline MarketDetail LayoutMarketDetail(float availW, float gap, float minInfoW) {
+inline MarketDetail LayoutMarketDetail(float availW, float gap, float minInfoW, float narrowMaxPicH = 1e9f) {
     MarketDetail d;
     const float picW = std::floor(availW * 0.55f);
     d.twoColumns = availW - picW - gap >= minInfoW;
     if (d.twoColumns) { d.picture = Rect{0, 0, picW, std::floor(picW * 0.75f)}; d.info = Rect{picW + gap, 0, availW - picW - gap, 0}; }
-    else { d.picture = Rect{0, 0, availW, std::floor(availW * 0.5f)}; d.info = Rect{0, d.picture.B() + gap, availW, 0}; }
+    else { d.picture = Rect{0, 0, availW, std::floor(std::min(availW * 0.5f, narrowMaxPicH))}; d.info = Rect{0, d.picture.B() + gap, availW, 0}; }   // (a short banner: the details stay in view)
     return d;
 }
 /// What the Marketplace shows: which view (0 Browse, 1 Your listings, 2 Saved), a category (-1 all), a minimum average
@@ -209,6 +255,39 @@ inline bool MarketMatches(const MarketQuery& q, int kind, float avgRating, bool 
     if (!q.needle.empty() && haystack.find(q.needle) == std::string::npos) return false;
     return true;
 }
+/// Who sees a listing: an approved one everyone; one in review or not approved only its seller (with the badge) and staff.
+inline bool MarketListingVisible(const std::string& status, bool mine, bool staff) {
+    return status.empty() || status == "approved" || mine || staff;
+}
+/// Today's picks, Featured and Popular (Marketplace and Community) show approved listings only, the seller's own included.
+inline bool MarketFeaturable(const std::string& status) { return status.empty() || status == "approved"; }
+/// Today's picks only when there are enough approved, rated listings to pick from (`minItems`) and the grid under it holds more
+/// than one row (else it would only repeat the grid).
+inline bool ShowTodaysPicks(int approvedRated, int browseCount, int cols, int minItems = 6) {
+    return approvedRated >= minItems && browseCount > cols;
+}
+/// A tile's last line: the seller and "N downloads" side by side when both fit; else the seller alone on the whole line (the
+/// downloads are on the item page). The seller is shortened only when even the whole line is too narrow.
+struct TileMeta { bool showDownloads = true; float sellerW = 0; };
+inline TileMeta FitTileMeta(float sellerTextW, float downloadsW, float lineW, float gap) {
+    TileMeta t;
+    t.showDownloads = sellerTextW + gap + downloadsW <= lineW;
+    t.sellerW = t.showDownloads ? lineW - gap - downloadsW : lineW;
+    return t;
+}
+/// The smallest tile width: bigger tiles when there are only a few listings, so a near-empty grid is not a row of stamps.
+inline float MarketTileMinW(int items, float base) { return items <= 2 ? base * 1.45f : items <= 4 ? base * 1.2f : base; }
+/// What the Marketplace's folded filter rail holds: Search, a divider, All, one icon per category, a divider, Rating, Sort.
+enum class MarketRail { Search, Divider, All, Category, Rating, Sort };
+inline std::vector<MarketRail> MarketRailEntries(int categories) {
+    std::vector<MarketRail> v{MarketRail::Search, MarketRail::Divider, MarketRail::All};
+    for (int i = 0; i < categories; ++i) v.push_back(MarketRail::Category);
+    v.push_back(MarketRail::Divider);
+    v.push_back(MarketRail::Rating);
+    v.push_back(MarketRail::Sort);
+    return v;
+}
+
 /// "980", "1.5k", "12k", "1.2M": short enough for a tile.
 inline std::string ShortCount(long n) {
     char b[24];
@@ -216,6 +295,48 @@ inline std::string ShortCount(long n) {
     else if (n >= 10000) std::snprintf(b, sizeof(b), "%ldk", n / 1000);
     else if (n >= 1000) std::snprintf(b, sizeof(b), "%.1fk", n / 1000.0);
     else std::snprintf(b, sizeof(b), "%ld", n);
+    return b;
+}
+
+// ---- The Community showcase (published games and levels, shown big) --------------------------------------------------------
+/// The feed of big cards and, at the wide sizes, a rail on the right (top creators, friends playing now). The rail shows only
+/// when the feed keeps at least `feedMinW` beside it (`railW` + `gap`); the feed is never wider than `maxFeedW` (it is
+/// centred when the page is wider). Cards: `FitGrid(feed.w, cardMinW, cardGap, 3)`.
+struct Showcase { bool railShown = false; Rect feed, rail; };
+inline Showcase LayoutShowcase(float availW, float cardMinW, float cardGap, float railW, float gap, float maxFeedW) {
+    Showcase s;
+    const float feedMinW = 2 * cardMinW + cardGap;   // two cards a row at least beside the rail
+    s.railShown = availW - railW - gap >= feedMinW;
+    const float fw = std::max(1.0f, std::min(maxFeedW, availW - (s.railShown ? railW + gap : 0.0f)));
+    s.feed = Rect{0, 0, fw, 0};
+    if (s.railShown) s.rail = Rect{fw + gap, 0, railW, 0};
+    return s;
+}
+
+/// The "Share your creation" box at the top of the showcase: the title and a line under it on the left, the library pick and
+/// Share on the right; when they do not fit beside the title (narrow page, big UI scale) the pick and Share go under the text.
+struct ShareBox { bool stacked = false; Rect title, sub, combo, share; float h = 0; };
+inline ShareBox LayoutShareBox(float w, float pad, float titleW, float titleH, float lineH, float comboMaxW, float shareW, float btnH, float gap) {
+    ShareBox b;
+    const float tx = pad + gap * 0.6f;   // (the accent bar on the left edge)
+    const float comboW = std::min(comboMaxW, std::max(0.0f, w * 0.35f));
+    const float rightW = comboW + gap + shareW;
+    b.stacked = tx + titleW + 2 * gap + rightW + pad > w;
+    b.title = Rect{tx, pad, std::min(titleW, std::max(0.0f, w - tx - pad)), titleH};
+    const float textR = b.stacked ? w - pad : w - pad - rightW - 2 * gap;
+    b.sub = Rect{tx, b.title.B() + gap * 0.4f, std::max(0.0f, textR - tx), lineH};
+    if (b.stacked) {
+        const float y = b.sub.B() + gap;
+        const float cw = std::max(0.0f, std::min(comboMaxW, w - tx - pad - gap - shareW));
+        b.combo = Rect{tx, y, cw, btnH};
+        b.share = Rect{b.combo.R() + gap, y, shareW, btnH};
+        b.h = y + btnH + pad;
+    } else {
+        b.h = std::max(b.sub.B(), btnH + pad) + pad;
+        const float y = (b.h - btnH) * 0.5f;
+        b.share = Rect{w - pad - shareW, y, shareW, btnH};
+        b.combo = Rect{b.share.x - gap - comboW, y, comboW, btnH};
+    }
     return b;
 }
 

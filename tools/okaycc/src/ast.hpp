@@ -147,6 +147,8 @@ struct Tu {
 };
 
 std::unique_ptr<Type> cloneType(const Type& t);
+std::unique_ptr<Type> classByName(const Type& in);
+bool finishedClassCopy(const Type& t);
 std::unique_ptr<Expr> cloneExpr(const Expr& e);
 
 std::string exprStr(const Expr& e);

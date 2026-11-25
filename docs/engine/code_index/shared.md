@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 68 headers, 982 names.
+Back to the [code index](../code_index.md). 68 headers, 1002 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -705,18 +705,38 @@ Back to the [code index](../code_index.md). 68 headers, 982 names.
 
 ## `shared/OkayTheme.hpp`
 
-- `kDeep` function, line 15: Surfaces, darkest to lightest.
-- `kSunken` function, line 16
-- `kBase` function, line 17
-- `kRaised` function, line 18
-- `kField` function, line 19
-- `kControl` function, line 20
-- `kText` function, line 22: Text.
-- `kTextDim` function, line 23
-- `Mix` function, line 25
-- `WithAlpha` function, line 28
-- `ApplySlateMetrics` function, line 31: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplySlateColors` function, line 40: The full colour palette for a given accent.
+- `Palette` struct, line 20: ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
+- `SlatePalette` function, line 30
+- `MidnightPalette` function, line 41: Midnight: near-black with an indigo tint, brighter text and stronger hairlines (an OLED-style high-contrast dark theme).
+- `LightPalette` function, line 52: Light: white cards on a pale grey page, near-black text, darker status colours (so they read as text on white).
+- `Current` function, line 62
+- `SetPalette` function, line 73
+- `Ink` function, line 86: A see-through tint over a surface (hover fills, hairlines, soft backgrounds): 'alpha' 0..255 as it was written for the dark
+- `InkV` function, line 91
+- `Shade` function, line 93: A shadow or a dim layer (black in every theme, lighter on Light).
+- `TextU32` function, line 94
+- `TextDimU32` function, line 95
+- `SuccessU32` function, line 96
+- `DangerU32` function, line 97
+- `WarningU32` function, line 98
+- `InfoU32` function, line 99
+- `OnColorU32` function, line 100
+- `SurfaceU32` function, line 101
+- `SuccessFill` function, line 103: Filled status colours (a badge, a dot, a button) keep their full colour in every theme: one per status.
+- `DangerFill` function, line 104
+- `WarningFill` function, line 105
+- `SuccessFillU32` function, line 106
+- `DangerFillU32` function, line 107
+- `WarningFillU32` function, line 108
+- `Luminance` function, line 111: WCAG contrast ratio of two opaque colours (1..21).
+- `Contrast` function, line 115
+- `Mix` function, line 120
+- `WithAlpha` function, line 123
+- `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
+- `AccentText` function, line 129: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplySlateMetrics` function, line 136: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
+- `ApplyColors` function, line 145: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplySlateColors` function, line 211: The Slate colours (the editor and the launcher's default theme).
 
 ## `shared/OkayThreads.hpp`
 

@@ -1,0 +1,19 @@
+// <iostream> for okay-cc (ISO/IEC 14882 [iostream.syn], [narrow.stream.objects]). Our own header:
+// cin, cout, cerr and clog on the C files stdin, stdout and stderr of lib/stdio.c. They are inline
+// variables, so every file that includes this shares one of each.
+#pragma once
+#include <__stream>
+namespace std {
+struct __std_istream : istream {
+    filebuf __buf;
+    __std_istream() : __buf(stdin) { __sb = &__buf; }
+};
+struct __std_ostream : ostream {
+    filebuf __buf;
+    __std_ostream(int fd) : __buf(fd == 1 ? stdout : stderr) { __sb = &__buf; }
+};
+inline __std_istream cin;
+inline __std_ostream cout(1);
+inline __std_ostream cerr(2);
+inline __std_ostream clog(2);
+}  // namespace std

@@ -11,6 +11,13 @@ namespace std {
 template <typename T>
 class vector {
 public:
+    // the member types ([vector.overview]); the iterators are pointers
+    typedef T value_type;
+    typedef T *iterator;
+    typedef const T *const_iterator;
+    typedef unsigned long size_type;
+    typedef T &reference;
+    typedef const T &const_reference;
     vector() : data_(nullptr), size_(0), cap_(0) {}
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
     vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {

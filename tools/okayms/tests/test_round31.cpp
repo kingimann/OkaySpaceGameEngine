@@ -491,7 +491,8 @@ int entry(void) {
 )OKMS", 0);
 }
 
-// Durations of different units compared ([time.duration.comparisons]: in their common unit), as SceneSerializer.cpp's
+// A time point moved by a duration of another unit ([time.point.nonmember]; NativeFetch.hpp's `now() - milliseconds(1000)`,
+// which subtracted bytes). Durations of different units compared ([time.duration.comparisons]: in their common unit), as SceneSerializer.cpp's
 // `(std::filesystem::file_time_type::clock::now() - mtime) > std::chrono::seconds(2)`, whose parenthesized start, a
 // type's nested name followed by `::now()`, was read as a cast ("expected ')'"). Structured bindings of std::tuple, a
 // tuple-like type ([dcl.struct.bind] 4).
@@ -515,6 +516,12 @@ int entry(void) {
   if (std::chrono::nanoseconds(1) < std::chrono::hours(1)) r += 64;
   CK(1, r == 1 + 2 + 4 + 8 + 16 + 64);
   CK(2, (Clock::now() - 2) == 40);
+  typedef std::chrono::time_point<std::chrono::steady_clock, std::chrono::nanoseconds> TP;
+  TP t0(std::chrono::nanoseconds(5000000000LL));
+  TP t1 = t0 - std::chrono::milliseconds(1000);
+  TP t2 = t0 + std::chrono::seconds(2);
+  CK(5, t1.time_since_epoch().count() == 4000000000LL && t2.time_since_epoch().count() == 7000000000LL &&
+            (t0 - t1) == std::chrono::seconds(1));
   std::tuple<int, std::string, double> t(7, "ab", 2.5);
   auto [a, b, c] = t;
   CK(3, a == 7 && b == "ab" && c == 2.5);
@@ -624,13 +631,16 @@ int entry(void) {
 )OKMS", 0);
 }
 
-// Operators that used to compare bytes: std::pair's comparisons ([pairs.spec]; Mesh.hpp sorts pair<float, int>), and a
+// Operators that used to compare bytes: std::pair's and std::array's comparisons ([pairs.spec], [array.syn]; Mesh.hpp
+// sorts pair<float, int>, SkinnedMesh.hpp compares array<float, 4>), and a
 // hidden friend operator!= that calls the operator== defined before it in the class ([class.friend] 6: the friends
 // were moved out of the class in the wrong order, so the call found no operator== and compared the bytes).
 static void r31_pair_friend(Tally& tally) {
     std::printf("r31_pair_friend\n");
     okayms_test::run_both(kRun, tally, "pair_friend", std::string(kAlloc) + R"OKMS(
 #include <algorithm>
+#include <array>
+#include <string>
 #include <utility>
 #include <vector>
 namespace n {
@@ -649,10 +659,15 @@ int entry(void) {
   got.push_back(std::make_pair(0.25f, 0));
   std::sort(got.begin(), got.end());
   CK(1, got[0].second == 3 && got[1].second == 0 && got[2].second == 2 && got[3].second == 1);
+  std::array<float, 3> p{{1.0f, 2.0f, 3.0f}}, q{{1.0f, 2.0f, -1.0f}};
+  CK(4, p != q && q < p && !(p < q) && p == p && q <= p);
   std::pair<int, int> a(1, 2), b(1, 3);
   CK(2, a < b && !(b < a) && a != b && a == std::make_pair(1, 2) && b > a && a <= a && b >= a);
   n::Id x{1, 7}, y{1, 9}, z{2, 7};
   CK(3, x == y && !(x != y) && x != z);
+  std::wstring w = L"ab" + std::wstring(L"cd");
+  w = w + L"e";
+  CK(5, w.size() == 5 && w == std::wstring(L"abcde"));
   return 0;
 }
 )OKMS", 0);

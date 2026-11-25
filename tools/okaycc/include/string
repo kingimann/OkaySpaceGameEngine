@@ -208,6 +208,17 @@ public:
     const char *data() const { return p_; }
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
+    void swap(string &o) {  // [string.swap]: the buffers change hands
+        char *p = p_;
+        p_ = o.p_;
+        o.p_ = p;
+        unsigned long n = n_;
+        n_ = o.n_;
+        o.n_ = n;
+        unsigned long c = cap_;
+        cap_ = o.cap_;
+        o.cap_ = c;
+    }
 private:
     void assignChars(const char *s, unsigned long n) {
         release(grow(n));

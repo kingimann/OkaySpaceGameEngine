@@ -273,6 +273,7 @@ private:
             isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto") ||
             isKwTok(t, "typename") || isKwTok(t, "decltype"))
             return true;
+        if (t.kind == Tok::Ident && ctmpl_.count(t.text) && isLocalName(t.text)) return false;  // auto set = [&]..
         if (t.kind == Tok::Ident && ctmpl_.count(t.text)) {
             // A class template's name starts a type when its arguments follow. Followed by '=',
             // ';', '.' and the like it is a variable or member of that name (a member 'duration'
@@ -571,6 +572,13 @@ private:
             advance();
             if (!eatP("::")) break;
             chain += "::";
+        }
+        if (last == "operator") {
+            // using Base::operator[]; in a class ([namespace.udecl]): the base's operators stay
+            // found through the base, so the declaration adds nothing here.
+            while (!atEnd() && !isP(";")) advance();
+            expectP(";", ";");
+            return;
         }
         expectP(";", ";");
         if (!last.empty() && chain != last) {
@@ -2077,10 +2085,25 @@ private:
             advance();
         }
         std::string baseTag;
+        bool preDeclared = false;
+        if (!tag.empty() && !isUnion && isP(":") && !structs_.count(tag)) {
+            // The class name is declared before its base clause ([basic.scope.pdecl] p6), so a base
+            // may name it: struct T : std::enable_shared_from_this<T>.
+            auto inc = ty(Type::Kind::Struct);
+            inc->tag = tag;
+            structs_[tag] = cloneType(*inc);
+            if (!findTypedef(shortName(tag))) addTypedef(shortName(tag), cloneType(*inc));
+            preDeclared = true;
+        }
         if (!tag.empty() && !isUnion && isP(":")) {
             advance();
             while (isKw("public") || isKw("private") || isKw("protected") || isKw("virtual")) advance();
             std::string bn;
+            if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+                // N::B<T> as a base (std::enable_shared_from_this<C>): the template after its namespaces.
+                std::size_t ti = tmplAfterNs(i_, true);
+                if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) i_ = ti;
+            }
             if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && nextIs("<")) {
                 auto bt = instantiateClass(cur().text);
                 if (bt && !bt->tag.empty() && classOf(bt->tag)) baseTag = bt->tag;
@@ -2127,7 +2150,7 @@ private:
         }
         auto t = ty(isUnion ? Type::Kind::Union : Type::Kind::Struct);
         t->tag = tag;
-        bool completing = false;
+        bool completing = preDeclared;
         if (!tag.empty() && !structs_.count(tag)) {
             auto inc = ty(isUnion ? Type::Kind::Union : Type::Kind::Struct);
             inc->tag = tag;
@@ -4015,6 +4038,8 @@ private:
             instInProgress_.insert(tag);
             std::size_t saved = i_;
             auto savedPre = std::move(preStmts_);
+            auto savedLocals = std::move(localNames_);  // a class body does not see the function's locals
+            localNames_.clear();
             preStmts_.clear();
             bool savedHalf = halfGt_;
             halfGt_ = false;
@@ -4028,6 +4053,7 @@ private:
             specSkipFrom_ = specSkipTo_ = 0;
             i_ = saved;
             preStmts_ = std::move(savedPre);
+            localNames_ = std::move(savedLocals);
             halfGt_ = savedHalf;
             instInProgress_.erase(tag);
         }
@@ -4038,6 +4064,8 @@ private:
             instInProgress_.insert(tag);
             std::size_t saved = i_;
             auto savedPre = std::move(preStmts_);
+            auto savedLocals = std::move(localNames_);  // a class body does not see the function's locals
+            localNames_.clear();
             preStmts_.clear();
             bool savedHalf = halfGt_;
             halfGt_ = false;
@@ -4058,6 +4086,7 @@ private:
             unbindParams(es);
             i_ = saved;
             preStmts_ = std::move(savedPre);
+            localNames_ = std::move(savedLocals);
             halfGt_ = savedHalf;
             instInProgress_.erase(tag);
         }
@@ -4065,6 +4094,8 @@ private:
             instInProgress_.insert(tag);
             std::size_t saved = i_;
             auto savedPre = std::move(preStmts_);
+            auto savedLocals = std::move(localNames_);  // a class body does not see the function's locals
+            localNames_.clear();
             preStmts_.clear();
             bool savedHalf = halfGt_;
             halfGt_ = false;
@@ -4082,6 +4113,7 @@ private:
             unbindParams(es);
             i_ = saved;
             preStmts_ = std::move(savedPre);
+            localNames_ = std::move(savedLocals);
             halfGt_ = savedHalf;
             instInProgress_.erase(tag);
         }
@@ -6978,6 +7010,15 @@ private:
                 e->text += "::";
                 e->text += cur().text;
                 advance();
+                if (e->text.size() >= 10 && e->text.compare(e->text.size() - 10, 10, "::operator") == 0 && !atEnd() &&
+                    cur().kind == Tok::Punct && !isP("::")) {
+                    // Base::operator[](i): a base class's operator called by its name ([over.oper] p7).
+                    std::string op = cur().text;
+                    advance();
+                    if (op == "(" && eatP(")")) op = "()";
+                    else if (op == "[" && eatP("]")) op = "[]";
+                    e->text += op;
+                }
             }
             std::size_t last = e->text.rfind("::");
             if (last != std::string::npos) {

@@ -1,0 +1,66 @@
+// <numeric> for okay-cc (ISO/IEC 14882 [numeric.ops]). Our own header: iota, accumulate,
+// inner_product, partial_sum, adjacent_difference, gcd and lcm, each as the standard states it.
+#pragma once
+namespace std {
+template <typename It, typename T>
+void iota(It first, It last, T value) {
+    for (; first != last; ++first, ++value) *first = value;
+}
+template <typename It, typename T>
+T accumulate(It first, It last, T init) {
+    for (; first != last; ++first) init = init + *first;
+    return init;
+}
+template <typename It, typename T, typename Op>
+T accumulate(It first, It last, T init, Op op) {
+    for (; first != last; ++first) init = op(init, *first);
+    return init;
+}
+template <typename It1, typename It2, typename T>
+T inner_product(It1 first1, It1 last1, It2 first2, T init) {
+    for (; first1 != last1; ++first1, ++first2) init = init + *first1 * *first2;
+    return init;
+}
+template <typename It, typename Out>
+Out partial_sum(It first, It last, Out out) {
+    if (first == last) return out;
+    auto sum = *first;
+    *out = sum;
+    for (++first, ++out; first != last; ++first, ++out) {
+        sum = sum + *first;
+        *out = sum;
+    }
+    return out;
+}
+template <typename It, typename Out>
+Out adjacent_difference(It first, It last, Out out) {
+    if (first == last) return out;
+    auto prev = *first;
+    *out = prev;
+    for (++first, ++out; first != last; ++first, ++out) {
+        auto cur = *first;
+        *out = cur - prev;
+        prev = cur;
+    }
+    return out;
+}
+template <typename M, typename N>
+M gcd(M m, N n) {
+    M a = m < 0 ? -m : m;
+    M b = (M)(n < 0 ? -n : n);
+    while (b != 0) {
+        M t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+template <typename M, typename N>
+M lcm(M m, N n) {
+    if (m == 0 || n == 0) return 0;
+    M g = gcd(m, n);
+    M a = m < 0 ? -m : m;
+    M b = (M)(n < 0 ? -n : n);
+    return a / g * b;
+}
+}  // namespace std

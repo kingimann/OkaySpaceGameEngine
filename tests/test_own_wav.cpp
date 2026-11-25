@@ -6,6 +6,11 @@
 #include "test_framework.hpp"
 #include "okay/Audio/WavDecoder.hpp"
 #include "okay/Audio/AudioClip.hpp"
+#ifndef OWN_WAV_STANDALONE
+#include "okay/Audio/AudioStream.hpp"
+#endif
+#include <algorithm>
+#include <memory>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -363,6 +368,218 @@ static void TestLoadWavSwitch() {
     std::remove(path);
 }
 
+// ---- streamed WAV (AudioStream) == okay::wav whole-file decode, sample for sample ----------------------------------
+// The files are built here: every encoding, several blocks for ADPCM (with a short last block), extensible, chunks in
+// unusual order with odd sizes. Expected samples come from DecodeWav (more than two channels averaged to mono, as
+// AudioStream and AudioClip::LoadWAV both do).
+static Bytes Rand(std::size_t n) { Bytes d; for (std::size_t i = 0; i < n; ++i) d.push_back(Rnd() & 255); return d; }
+static Bytes ImaBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
+    Bytes d;
+    for (unsigned b = 0; b <= blocks; ++b) {
+        const unsigned len = b < blocks ? align : lastLen;
+        if (len == 0) break;
+        Bytes blk = Rand(len);
+        for (unsigned c = 0; c < ch && 4 * c + 3 < len; ++c) { blk[4 * c + 2] = (unsigned char)(Rnd() % 89); blk[4 * c + 3] = 0; }
+        d.insert(d.end(), blk.begin(), blk.end());
+    }
+    return d;
+}
+static Bytes MsBlocks(unsigned ch, unsigned align, unsigned blocks, unsigned lastLen) {
+    Bytes d;
+    for (unsigned b = 0; b <= blocks; ++b) {
+        const unsigned len = b < blocks ? align : lastLen;
+        if (len == 0) break;
+        Bytes blk = Rand(len);
+        for (unsigned c = 0; c < ch && c < len; ++c) blk[c] = (unsigned char)(Rnd() % 7);
+        for (unsigned c = 0; c < ch && ch + 2 * c + 1 < len; ++c) { blk[ch + 2 * c] = (unsigned char)(16 + Rnd() % 200); blk[ch + 2 * c + 1] = 0; }
+        d.insert(d.end(), blk.begin(), blk.end());
+    }
+    return d;
+}
+static Bytes MsCoefExtra(unsigned spb) {
+    Bytes x; P16(x, 32); P16(x, spb); P16(x, 7);
+    const int c[7][2] = {{256, 0}, {512, -256}, {0, 0}, {192, 64}, {240, 0}, {460, -208}, {392, -232}};
+    for (auto& p : c) { P16(x, unsigned(p[0]) & 0xFFFF); P16(x, unsigned(p[1]) & 0xFFFF); }
+    return x;
+}
+static Bytes ExtExtra(unsigned validBits, unsigned subTag) {
+    Bytes x; P16(x, 22); P16(x, validBits); P32(x, 0);
+    const unsigned char guid[16] = {(unsigned char)subTag, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71};
+    x.insert(x.end(), guid, guid + 16);
+    return x;
+}
+// RIFF/WAVE with odd-sized unknown chunks (and their pad bytes) before fmt and data, in either order.
+static Bytes OddChunks(const Bytes& fmt, const Bytes& data, bool dataFirst) {
+    Bytes b; Tag(b, "RIFF"); P32(b, 0); Tag(b, "WAVE");
+    Tag(b, "junk"); P32(b, 3); b.push_back(1); b.push_back(2); b.push_back(3); b.push_back(0);
+    Tag(b, "LIST"); P32(b, 5); for (int i = 0; i < 5; ++i) b.push_back((unsigned char)('a' + i)); b.push_back(0);
+    auto fmtChunk = [&] { Tag(b, "fmt "); P32(b, std::uint32_t(fmt.size())); b.insert(b.end(), fmt.begin(), fmt.end()); if (fmt.size() & 1) b.push_back(0); };
+    auto dataChunk = [&] { Tag(b, "data"); P32(b, std::uint32_t(data.size())); b.insert(b.end(), data.begin(), data.end()); if (data.size() & 1) b.push_back(0); };
+    if (dataFirst) { dataChunk(); Tag(b, "odd "); P32(b, 1); b.push_back(9); b.push_back(0); fmtChunk(); }
+    else { fmtChunk(); Tag(b, "odd "); P32(b, 1); b.push_back(9); b.push_back(0); dataChunk(); }
+    return b;
+}
+
+struct StreamCase { const char* name; Bytes file; };
+
+static std::vector<StreamCase> StreamCases() {
+    std::vector<StreamCase> v;
+    { Bytes x; P16(x, 2); P16(x, 505); v.push_back({"ima mono", Wav(Fmt(0x11, 1, 22050, 256, 4, x), ImaBlocks(1, 256, 21, 100))}); }
+    { Bytes x; P16(x, 2); P16(x, 505); v.push_back({"ima stereo", Wav(Fmt(0x11, 2, 22050, 512, 4, x), ImaBlocks(2, 512, 12, 200))}); }
+    v.push_back({"ima 3ch", Wav(Fmt(0x11, 3, 22050, 12 * 9, 4), ImaBlocks(3, 108, 60, 0))});
+    v.push_back({"ms adpcm mono", Wav(Fmt(2, 1, 22050, 256, 4, MsCoefExtra(500)), MsBlocks(1, 256, 22, 77))});
+    v.push_back({"ms adpcm stereo", Wav(Fmt(2, 2, 22050, 512, 4, MsCoefExtra(500)), MsBlocks(2, 512, 11, 300))});
+    v.push_back({"ms adpcm std coef", Wav(Fmt(2, 1, 8000, 64, 4, Bytes{0, 0}), MsBlocks(1, 64, 90, 9))});
+    v.push_back({"a-law stereo", Wav(Fmt(6, 2, 8000, 2, 8), Rand(2 * 9001))});
+    v.push_back({"mu-law mono", Wav(Fmt(7, 1, 8000, 1, 8), Rand(9003))});
+    { Bytes d; for (int i = 0; i < 2 * 7001; ++i) { float f = float(int(Rnd() % 20001) - 10000) / 10000.0f; std::uint32_t u; std::memcpy(&u, &f, 4); P32(d, u); }
+      v.push_back({"float32 stereo", Wav(Fmt(3, 2, 32000, 8, 32), d)}); }
+    { Bytes d; for (int i = 0; i < 6007; ++i) { double f = double(int(Rnd() % 20001) - 10000) / 7000.0; std::uint64_t u; std::memcpy(&u, &f, 8); P32(d, std::uint32_t(u)); P32(d, std::uint32_t(u >> 32)); }
+      v.push_back({"float64 mono", Wav(Fmt(3, 1, 32000, 8, 64), d)}); }
+    v.push_back({"pcm24 stereo", Wav(Fmt(1, 2, 44100, 6, 24), Rand(6 * 8000))});
+    v.push_back({"pcm32 mono", Wav(Fmt(1, 1, 44100, 4, 32), Rand(4 * 8000))});
+    v.push_back({"pcm8 stereo", Wav(Fmt(1, 2, 11025, 2, 8), Rand(2 * 8000))});
+    v.push_back({"pcm12-in-16 mono", Wav(Fmt(1, 1, 11025, 2, 12), Rand(2 * 8000))});
+    v.push_back({"extensible pcm16 4ch", Wav(Fmt(0xFFFE, 4, 16000, 8, 16, ExtExtra(16, 1)), Rand(8 * 5000))});
+    v.push_back({"extensible float stereo", [] { Bytes d; for (int i = 0; i < 2 * 5000; ++i) { float f = float(int(Rnd() % 2001) - 1000) / 1000.0f; std::uint32_t u; std::memcpy(&u, &f, 4); P32(d, u); }
+                                               return Wav(Fmt(0xFFFE, 2, 16000, 8, 32, ExtExtra(32, 3)), d); }()});
+    v.push_back({"extensible ima stereo", Wav(Fmt(0xFFFE, 2, 22050, 256, 4, ExtExtra(4, 0x11)), ImaBlocks(2, 256, 30, 0))});
+    v.push_back({"extensible a-law mono", Wav(Fmt(0xFFFE, 1, 8000, 1, 8, ExtExtra(8, 6)), Rand(7777))});
+    v.push_back({"pcm16 odd chunks, data last", OddChunks(Fmt(1, 2, 8000, 4, 16), Rand(4 * 6000 + 2), false)});
+    v.push_back({"pcm16 odd chunks, data first", OddChunks(Fmt(1, 1, 8000, 2, 16), Rand(2 * 6001), true)});
+    { Bytes x; P16(x, 2); P16(x, 505); v.push_back({"ima odd chunks, data first", OddChunks(Fmt(0x11, 1, 22050, 256, 4, x), ImaBlocks(1, 256, 9, 61), true)}); }
+    v.push_back({"ms adpcm odd chunks", OddChunks(Fmt(2, 1, 22050, 256, 4, MsCoefExtra(500)), MsBlocks(1, 256, 9, 33), false)});
+    return v;
+}
+
+// What AudioStream should give for `file`: DecodeWav's samples, averaged to mono when there are more than two channels.
+static bool Expected(const Bytes& file, AudioClip& out, std::string* e = nullptr) {
+    wav::WavAudio a;
+    if (!Dec(file, a, e)) return false;
+    out.sampleRate = a.sampleRate; out.channels = a.channels; out.samples = std::move(a.samples);
+    if (out.channels > 2) out = out.Downmixed();
+    return true;
+}
+static bool SameFloats(const float* a, const float* b, std::size_t n) { return n == 0 || std::memcmp(a, b, n * sizeof(float)) == 0; }
+static std::vector<float> ReadAll(AudioStream& s, std::size_t chunk, std::size_t limit) {
+    std::vector<float> out, buf(chunk * 2);
+    for (;;) {
+        const std::size_t n = s.Read(buf.data(), chunk);
+        out.insert(out.end(), buf.begin(), buf.begin() + long(n * std::size_t(s.Channels())));
+        if (n < chunk || out.size() > limit) break;
+    }
+    return out;
+}
+
+static void TestStreamMatchesWhole() {
+    int good = 0;
+    const auto cases = StreamCases();
+    for (const StreamCase& sc : cases) {
+        AudioClip want; std::string e;
+        if (!Expected(sc.file, want, &e)) { std::fprintf(stderr, "  case %s: DecodeWav failed: %s\n", sc.name, e.c_str()); CHECK(false); continue; }
+        auto bytes = std::make_shared<std::vector<unsigned char>>(sc.file);
+        std::string serr;
+        auto st = AudioStream::OpenMemory(bytes, &serr);
+        if (!st) { std::fprintf(stderr, "  case %s: stream refused: %s\n", sc.name, serr.c_str()); CHECK(false); continue; }
+        const std::size_t ch = std::size_t(want.channels), n = want.FrameCount();
+        bool ok = st->Channels() == want.channels && st->SampleRate() == want.sampleRate && st->TotalFrames() == std::int64_t(n);
+        if (!ok) std::fprintf(stderr, "  case %s: format differs: ch %d/%d rate %d/%d frames %lld/%zu\n", sc.name, st->Channels(), want.channels,
+                              st->SampleRate(), want.sampleRate, (long long)st->TotalFrames(), n);
+        // whole file in assorted piece sizes
+        for (std::size_t chunk : {std::size_t(1), std::size_t(333), std::size_t(4096)}) {
+            if (!ok) break;
+            st->Seek(0);
+            const auto got = ReadAll(*st, chunk, want.samples.size() * 2 + 100);
+            if (got.size() != want.samples.size() || !SameFloats(got.data(), want.samples.data(), got.size())) {
+                std::fprintf(stderr, "  case %s: streamed != whole (piece %zu, %zu vs %zu samples)\n", sc.name, chunk, got.size(), want.samples.size());
+                ok = false;
+            }
+        }
+        // seeks: block edges (505 and 500 frame ADPCM blocks), random places, then reading on to the end
+        std::vector<std::int64_t> targets = {0, 1, 499, 500, 501, 504, 505, 506, 1009, 1010, std::int64_t(n) / 2 + 3, std::int64_t(n) - 1};
+        for (int i = 0; i < 8; ++i) targets.push_back(std::int64_t(Rnd() % std::uint32_t(n)));
+        for (std::int64_t t : targets) {
+            if (!ok || t < 0 || t >= std::int64_t(n)) continue;
+            st->Seek(t);
+            const std::size_t len = std::min<std::size_t>(700, n - std::size_t(t));
+            std::vector<float> buf(len * ch);
+            const std::size_t got = st->Read(buf.data(), len);
+            if (got != len || !SameFloats(buf.data(), want.samples.data() + std::size_t(t) * ch, len * ch)) {
+                std::fprintf(stderr, "  case %s: seek to %lld differs\n", sc.name, (long long)t); ok = false;
+            }
+        }
+        if (ok) {   // reading on from a seek point continues the same audio to the end
+            const std::size_t t = n / 3;
+            st->Seek(std::int64_t(t));
+            const auto rest = ReadAll(*st, 1000, want.samples.size() * 2 + 100);
+            if (rest.size() != (n - t) * ch || !SameFloats(rest.data(), want.samples.data() + t * ch, rest.size())) {
+                std::fprintf(stderr, "  case %s: read on after a seek differs\n", sc.name); ok = false;
+            }
+        }
+        if (ok) {   // a loop is the file again, with no gap, twice and a bit
+            st->loop = true;
+            st->Seek(0);
+            const std::size_t total = 2 * n + 17;
+            std::vector<float> buf(total * ch);
+            const std::size_t got = st->Read(buf.data(), total);
+            bool same = got == total;
+            for (std::size_t i = 0; same && i < total * ch; ++i) same = std::memcmp(&buf[i], &want.samples[i % (n * ch)], sizeof(float)) == 0;
+            if (!same) { std::fprintf(stderr, "  case %s: loop differs\n", sc.name); ok = false; }
+            st->loop = false;
+        }
+        CHECK(ok);
+        if (ok) ++good;
+    }
+    std::printf("  streamed WAV equal to the whole-file decode: %d of %zu cases\n", good, cases.size());
+}
+
+// Hostile input on the streaming path: every truncation and random byte mutations of small files of every encoding.
+// No crash, no read past the data; when DecodeWav accepts the bytes the stream gives exactly its samples; when
+// DecodeWav refuses them the stream either refuses too or ends early (a damaged ADPCM block ends it there).
+static void TestStreamHostile() {
+    std::vector<Bytes> files;
+    { Bytes x; P16(x, 2); P16(x, 57); files.push_back(Wav(Fmt(0x11, 1, 8000, 32, 4, x), ImaBlocks(1, 32, 3, 13))); }
+    files.push_back(Wav(Fmt(0x11, 2, 8000, 24, 4), ImaBlocks(2, 24, 3, 9)));
+    files.push_back(Wav(Fmt(2, 1, 8000, 20, 4, MsCoefExtra(28)), MsBlocks(1, 20, 3, 11)));
+    files.push_back(Wav(Fmt(2, 2, 8000, 30, 4, Bytes{0, 0}), MsBlocks(2, 30, 3, 17)));
+    files.push_back(Wav(Fmt(6, 2, 8000, 2, 8), Rand(41)));
+    files.push_back(Wav(Fmt(0xFFFE, 3, 8000, 9, 24, ExtExtra(24, 1)), Rand(9 * 7)));
+    files.push_back(OddChunks(Fmt(3, 1, 8000, 8, 64), Rand(8 * 9), true));
+    long runs = 0, opened = 0, equal = 0;
+    auto exercise = [&](const Bytes& f) {
+        ++runs;
+        AudioClip want; const bool wholeOk = Expected(f, want);
+        auto st = AudioStream::OpenMemory(std::make_shared<std::vector<unsigned char>>(f));
+        if (!st) { CHECK(!wholeOk); return; }   // the stream refuses nothing that the whole-file decode accepts
+        ++opened;
+        const auto got = ReadAll(*st, 37, 1u << 20);
+        CHECK(st->TotalFrames() >= 0 && got.size() <= std::size_t(st->TotalFrames()) * std::size_t(st->Channels()));
+        if (wholeOk) {
+            const bool eq = got.size() == want.samples.size() && SameFloats(got.data(), want.samples.data(), got.size());
+            CHECK(eq);
+            if (eq) ++equal;
+        }
+        // seeks anywhere (also past the end) and a loop never hang or crash
+        st->loop = true;
+        for (int k = 0; k < 4; ++k) {
+            st->Seek(std::int64_t(Rnd() % 400) - 50);
+            float buf[2 * 64];
+            st->Read(buf, 64);
+        }
+    };
+    for (const Bytes& f : files) {
+        for (std::size_t n = 0; n <= f.size(); ++n) exercise(Bytes(f.begin(), f.begin() + long(n)));
+        for (int it = 0; it < 400; ++it) {
+            Bytes t = f;
+            const int k = 1 + int(Rnd() % 4);
+            for (int j = 0; j < k; ++j) t[Rnd() % t.size()] = (Rnd() & 3) == 0 ? 0xFF : (unsigned char)(Rnd() & 255);
+            exercise(t);
+        }
+    }
+    CHECK(opened > 0 && equal > 0 && opened < runs);
+    std::printf("  streamed hostile runs %ld, opened %ld, equal to the whole-file decode %ld\n", runs, opened, equal);
+}
+
 #endif
 
 // Differential: IMA ADPCM against Python's audioop at test time only. The Python script builds random blocks (mono and
@@ -451,6 +668,8 @@ int main() {
     TestHostile();
 #ifndef OWN_WAV_STANDALONE
     TestLoadWavSwitch();
+    TestStreamMatchesWhole();
+    TestStreamHostile();
 #endif
     TestImaDifferential();
     TEST_MAIN_RESULT();

@@ -807,7 +807,7 @@ void DrawMpDialogs() {
         ImGui::TextDisabled("Game");
         ImGui::SetNextItemWidth(340);
         if (gameIdx >= (int)lib.size()) gameIdx = 0;
-        if (ImGui::BeginCombo("##mpgame", lib.empty() ? "(no games in your library)" : lib[gameIdx].title.c_str())) {
+        if (BeginSlateCombo("##mpgame", lib.empty() ? "(no games in your library)" : lib[gameIdx].title.c_str())) {
             for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), i == gameIdx)) gameIdx = i;
             ImGui::EndCombo();
         }
@@ -1234,7 +1234,7 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
 
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::SetNextItemWidth(220);
-    if (ImGui::BeginCombo("##lbgame", game.empty() ? "No games in your library" : game.c_str())) {
+    if (BeginSlateCombo("##lbgame", game.empty() ? "No games in your library" : game.c_str())) {
         for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), gameSel == i)) { gameSel = i; reload = true; }
         ImGui::EndCombo();
     }
@@ -1384,7 +1384,7 @@ void DrawMultiplayerPage(bool signedIn) {
             ImGui::Dummy(ImVec2(0, 4));
             if (fmGame >= (int)lib.size()) fmGame = 0;
             ImGui::SetNextItemWidth(220);
-            if (ImGui::BeginCombo("Game", lib.empty() ? "" : lib[fmGame].title.c_str())) {
+            if (BeginSlateCombo("Game", lib.empty() ? "" : lib[fmGame].title.c_str())) {
                 for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), fmGame == i)) fmGame = i;
                 ImGui::EndCombo();
             }
@@ -1498,7 +1498,7 @@ void DrawMultiplayerPage(bool signedIn) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(180);
     if (gameFilter > (int)lib.size()) gameFilter = 0;
-    if (ImGui::BeginCombo("##mpgf", gameFilter == 0 ? "All games" : lib[gameFilter - 1].title.c_str())) {
+    if (BeginSlateCombo("##mpgf", gameFilter == 0 ? "All games" : lib[gameFilter - 1].title.c_str())) {
         if (ImGui::Selectable("All games", gameFilter == 0)) gameFilter = 0;
         for (int i = 0; i < (int)lib.size(); ++i) if (ImGui::Selectable(lib[i].title.c_str(), gameFilter == i + 1)) gameFilter = i + 1;
         ImGui::EndCombo();

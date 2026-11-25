@@ -576,6 +576,14 @@ add_test(NAME debug_console COMMAND test_debug_console)
 add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)
+# The Problems list's runner (editor/ProjectDiagRunner.*): the project-wide check off the editor's thread, once per change of files.
+# Not built for Windows: the test waits with <thread> (CLAUDE.md 21a).
+if(NOT WIN32)
+    add_executable(test_project_diag_runner test_project_diag_runner.cpp ${CMAKE_SOURCE_DIR}/editor/ProjectDiagRunner.cpp)
+    target_include_directories(test_project_diag_runner PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_project_diag_runner PRIVATE okay::engine)
+    add_test(NAME project_diag_runner COMMAND test_project_diag_runner)
+endif()
 
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)

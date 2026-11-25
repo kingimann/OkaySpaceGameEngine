@@ -79,6 +79,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     OkayUIHostViews.cpp                                                # window mode: the Scene and Game views (SceneViewCore.hpp, the engine software renderer, no Dear ImGui)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
+    ProjectDiagRunner.cpp                                              # when the Problems checks run: the project-wide one on a worker
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist

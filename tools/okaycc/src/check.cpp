@@ -2279,6 +2279,10 @@ private:
                     // ([over.ics.list] p10); an initializer_list parameter is an exact match (p5).
                     const Type* pt = c->type->params[i].type.get();
                     if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                    if (isInitListType(pt) && !initListTakes(*pt, *ak)) {
+                        ok = false;
+                        break;
+                    }
                     if (pt->kind == Type::Kind::Struct || pt->kind == Type::Kind::Array) {
                         total += isInitListType(pt) ? 0 : 2;
                     } else if (ak->kids.size() > 1) {
@@ -4094,6 +4098,28 @@ private:
         if (t && t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
         return t && t->kind == Type::Kind::Struct &&
                (t->tag.compare(0, 22, "std::initializer_list<") == 0 || t->tag.compare(0, 17, "initializer_list<") == 0);
+    }
+    // Whether a braced list can be an initializer_list<E> argument ([over.ics.list] p5): not when E
+    // is a class without constructors (an aggregate) and an element is a number, which no E is made
+    // from (v.insert(it, {t, x}) for a vector of {float, float} is the insert of one element).
+    bool initListTakes(const Type& il, const Expr& list) {
+        const Type* L = canonOf(&il);
+        const Type* E = nullptr;
+        if (L)
+            for (const Param& f : L->params)
+                if (f.name == "b_" && f.type && f.type->kind == Type::Kind::Pointer && f.type->inner) E = f.type->inner.get();
+        const Type* EC = E && E->kind == Type::Kind::Struct ? canonOf(E) : nullptr;
+        if (!EC) return true;
+        for (const Param& q : EC->params)
+            if (q.name == "<ctor>") return true;
+        for (const auto& k : list.kids) {
+            if (!k || k->kind == Expr::Kind::Brace) continue;
+            ++quiet_;
+            ET t = checkExpr(*k);
+            --quiet_;
+            if (!t.bad && t.type && (isIntish(*t.type) || isFp(*t.type) || isPtr(*t.type))) return false;
+        }
+        return true;
     }
     // {a, b, ...} as a std::initializer_list<E> (our <initializer_list>: fields b_ and n_): a hidden
     // array E[n] set from the elements and a hidden list pointing at it. Both live to the end of the

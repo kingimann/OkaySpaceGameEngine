@@ -1935,6 +1935,21 @@ private:
                 continue;
             }
             std::unique_ptr<Expr> v;
+            if (t->inner && (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
+                // S a[4]{} or {{..}, {..}}: each element from its own braced list, the rest from {}
+                // (value-initialized, [dcl.init.aggr] p5); the element is an object, not a number.
+                if (item) {
+                    v = cloneExpr(*item);
+                } else {
+                    v = std::make_unique<Expr>();
+                    v->kind = Expr::Kind::Brace;
+                    v->line = p.line;
+                    v->col = p.col;
+                    v->file = p.file;
+                }
+                out.push_back(sExpr(eAssign(std::move(el), std::move(v), p), p));
+                continue;
+            }
             if (item && item->kind != Expr::Kind::Brace) v = cloneExpr(*item);
             else if (item && !item->kids.empty() && item->kids[0]) v = cloneExpr(*item->kids[0]);
             else {

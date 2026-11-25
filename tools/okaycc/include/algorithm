@@ -188,6 +188,38 @@ It upper_bound(It first, It last, const V &value) {
     }
     return first;
 }
+// lower_bound and upper_bound with a comparison ([lower.bound], [upper.bound]): less(element, value)
+// and less(value, element).
+template <typename It, typename V, typename Less>
+It lower_bound(It first, It last, const V &value, Less less) {
+    long n = last - first;
+    while (n > 0) {
+        long half = n / 2;
+        It mid = first + half;
+        if (less(*mid, value)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename V, typename Less>
+It upper_bound(It first, It last, const V &value, Less less) {
+    long n = last - first;
+    while (n > 0) {
+        long half = n / 2;
+        It mid = first + half;
+        if (!less(value, *mid)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
 template <typename T>
 const T &clamp(const T &v, const T &lo, const T &hi) {
     if (v < lo) return lo;

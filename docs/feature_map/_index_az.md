@@ -2271,7 +2271,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - import module (13.8)
 - import report (3.6)
 - import script (14.8)
-- import settings (1.12, 1.12.3, 1.20, 20.2, 20.3, 20.4, 20.5)
+- import settings (1.12, 1.12.3, 1.20, 15.4.10, 20.2, 20.3, 20.4, 20.5)
 - Import today (20.4.4)
 - Import UI and extra animation files (3.6.8)
 - ImportBackend::Own (3.6)

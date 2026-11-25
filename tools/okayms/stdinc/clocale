@@ -1,0 +1,77 @@
+// okay-ms own standard header: <clocale>, written from ISO/IEC 14882 [c.locales] and ISO/IEC 9899 7.11 (locale.h).
+// okay-ms's runtime has one locale, "C" (7.11.1.1: the one every program starts in), so localeconv() describes it
+// (decimal point ".", every other text empty and every count CHAR_MAX, "not available") and setlocale() accepts only
+// "C" and "" (the native locale, which is "C" here) and refuses any other name with a null pointer. Both are defined
+// here, inline, not in the runtime.
+#pragma once
+#include <cstddef>
+#define LC_ALL 0
+#define LC_COLLATE 1
+#define LC_CTYPE 2
+#define LC_MONETARY 3
+#define LC_NUMERIC 4
+#define LC_TIME 5
+namespace std {
+struct lconv {
+    char* decimal_point;
+    char* thousands_sep;
+    char* grouping;
+    char* mon_decimal_point;
+    char* mon_thousands_sep;
+    char* mon_grouping;
+    char* positive_sign;
+    char* negative_sign;
+    char* currency_symbol;
+    char frac_digits;
+    char p_cs_precedes;
+    char n_cs_precedes;
+    char p_sep_by_space;
+    char n_sep_by_space;
+    char p_sign_posn;
+    char n_sign_posn;
+    char* int_curr_symbol;
+    char int_frac_digits;
+    char int_p_cs_precedes;
+    char int_n_cs_precedes;
+    char int_p_sep_by_space;
+    char int_n_sep_by_space;
+    char int_p_sign_posn;
+    char int_n_sign_posn;
+};
+inline lconv* localeconv() {
+    static char dot[2] = {'.', 0};
+    static char none[1] = {0};
+    static lconv c;
+    c.decimal_point = dot;
+    c.thousands_sep = none;
+    c.grouping = none;
+    c.mon_decimal_point = none;
+    c.mon_thousands_sep = none;
+    c.mon_grouping = none;
+    c.positive_sign = none;
+    c.negative_sign = none;
+    c.currency_symbol = none;
+    c.int_curr_symbol = none;
+    c.frac_digits = 127;  // CHAR_MAX: not available in the "C" locale
+    c.p_cs_precedes = 127;
+    c.n_cs_precedes = 127;
+    c.p_sep_by_space = 127;
+    c.n_sep_by_space = 127;
+    c.p_sign_posn = 127;
+    c.n_sign_posn = 127;
+    c.int_frac_digits = 127;
+    c.int_p_cs_precedes = 127;
+    c.int_n_cs_precedes = 127;
+    c.int_p_sep_by_space = 127;
+    c.int_n_sep_by_space = 127;
+    c.int_p_sign_posn = 127;
+    c.int_n_sign_posn = 127;
+    return &c;
+}
+inline char* setlocale(int category, const char* name) {
+    static char c_name[2] = {'C', 0};
+    if (category < LC_ALL || category > LC_TIME) return 0;
+    if (name == 0 || name[0] == 0 || (name[0] == 'C' && name[1] == 0)) return c_name;
+    return 0;
+}
+}  // namespace std

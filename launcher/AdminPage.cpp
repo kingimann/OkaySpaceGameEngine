@@ -2,6 +2,7 @@
 // servers; Admin > Reports; the Admin page itself; and the banner for a banned player. Moved out of launcher/main.cpp
 // unchanged (docs/engine/modularization_plan.md, Part C section 20, batch L5).
 #include "LauncherShared.hpp"
+#include "NavIcons.hpp"   // SlateCombo, the launcher's dropdown
 #include "AdminPage.hpp"
 #include "AntiCheatPages.hpp"   // acb, AcMeJob, DrawAntiCheatAdmin
 #include "UserReports.hpp"      // okayrep: report requests and outcomes
@@ -333,7 +334,7 @@ static void DrawReportsAdmin() {
         return s == "open" ? IM_COL32(236, 150, 60, 255) : s == "resolved" ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255);
     };
     ImGui::SetNextItemWidth(150);
-    if (ImGui::Combo("##repfilter", &filter, "Open\0Resolved\0Dismissed\0All\0")) { selReport = 0; queue(new RepAdminJob); }
+    if (SlateCombo("##repfilter", &filter, "Open\0Resolved\0Dismissed\0All\0")) { selReport = 0; queue(new RepAdminJob); }
     ImGui::SameLine();
     if (ImGui::Button(g_repAdBusy ? "Loading\xE2\x80\xA6" : "Refresh", ImVec2(110, 28))) queue(new RepAdminJob);
     ImGui::SameLine();
@@ -740,7 +741,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 ImGui::SetNextItemWidth(std::min(ImGui::GetContentRegionAvail().x, 420.0f));
                 ImGui::InputTextWithHint("##banwhy", "Reason (they'll see this)", banReason, sizeof(banReason));
                 ImGui::SetNextItemWidth(160);
-                ImGui::Combo("##bandur", &banDur, "1 hour\0" "1 day\0" "7 days\0" "30 days\0" "Permanent\0");
+                SlateCombo("##bandur", &banDur, "1 hour\0" "1 day\0" "7 days\0" "30 days\0" "Permanent\0");
                 ImGui::SameLine(0, 8);
                 static const long kHours[] = {1, 24, 24 * 7, 24 * 30, 0};
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.24f, 0.24f, 1));
@@ -891,7 +892,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 int r = m.role == "admin" ? 0 : 1;
                 ImGui::SetNextItemWidth(130);
                 ImGui::BeginDisabled(myRank < 2 && m.role == "admin");
-                if (ImGui::Combo("##srole", &r, "Admin\0Moderator\0Member\0")) {
+                if (SlateCombo("##srole", &r, "Admin\0Moderator\0Member\0")) {
                     AdminJob* j = job(11); j->n1 = sec->id; j->s1 = m.uid; j->s2 = r == 0 ? "admin" : r == 1 ? "moderator" : "member"; queue(j);
                     if (kDemo) Toast("Role changed", 1);
                 }

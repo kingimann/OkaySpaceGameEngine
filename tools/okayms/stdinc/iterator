@@ -1,0 +1,125 @@
+// okay-ms own standard header: <iterator>, written from ISO/IEC 14882 [iterators]: the iterator tags and
+// iterator_traits, next, prev, advance and distance, begin and end for containers and arrays, back_inserter, and
+// istreambuf_iterator. Differences from the standard:
+// - next, prev, advance and distance step one element at a time, except for a pointer, which moves in one step.
+// - make_move_iterator returns the iterator itself, so an element is copied where the standard moves it (okay-ms's
+//   containers copy an element that has no move constructor anyway).
+// - istreambuf_iterator reads through okay-ms's own streambuf (get and peek); include a stream header before using it.
+// - begin, end and size take a container only: okay-ms cannot read a parameter that is a reference to an array
+//   (T (&a)[N]) yet.
+// - No reverse_iterator, insert_iterator, front_insert_iterator, istream_iterator or ostream_iterator.
+#pragma once
+#include <cstddef>
+#include <type_traits>
+namespace std {
+
+struct input_iterator_tag {};
+struct output_iterator_tag {};
+struct forward_iterator_tag : public input_iterator_tag {};
+struct bidirectional_iterator_tag : public forward_iterator_tag {};
+struct random_access_iterator_tag : public bidirectional_iterator_tag {};
+
+template <typename It> struct iterator_traits {
+    typedef typename It::value_type value_type;
+    typedef typename It::difference_type difference_type;
+    typedef typename It::pointer pointer;
+    typedef typename It::reference reference;
+    typedef typename It::iterator_category iterator_category;
+};
+template <typename T> struct iterator_traits<T*> {
+    typedef T value_type;
+    typedef long long difference_type;
+    typedef T* pointer;
+    typedef T& reference;
+    typedef random_access_iterator_tag iterator_category;
+};
+
+template <typename It> void advance(It& it, long long n) {
+    if constexpr (is_pointer<It>::value) {
+        it += n;
+    } else {
+        for (; n > 0; --n) ++it;
+        for (; n < 0; ++n) --it;
+    }
+}
+// Two overloads each instead of a default argument n = 1 (okay-ms does not read default arguments of function templates).
+template <typename It> It next(It it, long long n) {
+    advance(it, n);
+    return it;
+}
+template <typename It> It next(It it) {
+    advance(it, 1);
+    return it;
+}
+template <typename It> It prev(It it, long long n) {
+    advance(it, -n);
+    return it;
+}
+template <typename It> It prev(It it) {
+    advance(it, -1);
+    return it;
+}
+template <typename It> long long distance(It first, It last) {
+    if constexpr (is_pointer<It>::value) {
+        return last - first;
+    } else {
+        long long n = 0;
+        for (; first != last; ++first) ++n;
+        return n;
+    }
+}
+
+template <typename C> typename C::iterator begin(C& c) { return c.begin(); }
+template <typename C> typename C::const_iterator begin(const C& c) { return c.begin(); }
+template <typename C> typename C::iterator end(C& c) { return c.end(); }
+template <typename C> typename C::const_iterator end(const C& c) { return c.end(); }
+template <typename C> size_t size(const C& c) { return c.size(); }
+
+template <typename It> It make_move_iterator(It it) { return it; }
+
+// Appends to a container through push_back each value assigned through it ([back.insert.iterator]).
+template <typename C>
+class back_insert_iterator {
+public:
+    C* container__;
+    typedef void value_type;
+    typedef long long difference_type;
+    typedef void pointer;
+    typedef void reference;
+    typedef output_iterator_tag iterator_category;
+    explicit back_insert_iterator(C& c) : container__(&c) {}
+    back_insert_iterator& operator=(const typename C::value_type& v) {
+        container__->push_back(v);
+        return *this;
+    }
+    back_insert_iterator& operator*() { return *this; }
+    back_insert_iterator& operator++() { return *this; }
+    back_insert_iterator operator++(int) { return *this; }
+};
+template <typename C> back_insert_iterator<C> back_inserter(C& c) { return back_insert_iterator<C>(c); }
+
+class streambuf;
+// The characters of a stream, one at a time, to its end ([istreambuf.iterator]); a default-made one is the end.
+template <typename CharT>
+class istreambuf_iterator {
+public:
+    streambuf* buf__;
+    typedef CharT value_type;
+    typedef long long difference_type;
+    typedef const CharT* pointer;
+    typedef CharT reference;
+    typedef input_iterator_tag iterator_category;
+    istreambuf_iterator() : buf__(0) {}
+    template <typename S>
+    istreambuf_iterator(S& stream) : buf__(stream.rdbuf()) {}
+    bool at_end__() const { return buf__ == 0 || buf__->peek() < 0; }
+    CharT operator*() const { return (CharT)buf__->peek(); }
+    istreambuf_iterator& operator++() {
+        buf__->get();
+        return *this;
+    }
+    bool operator==(const istreambuf_iterator& o) const { return at_end__() == o.at_end__(); }
+    bool operator!=(const istreambuf_iterator& o) const { return at_end__() != o.at_end__(); }
+};
+
+}  // namespace std

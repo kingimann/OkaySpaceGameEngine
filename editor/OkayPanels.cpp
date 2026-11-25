@@ -176,23 +176,6 @@ bool PanelSection(const char* itemId, Draw draw) {
 
 } // namespace
 
-bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
-                              okaypanels::ImportSettingsIntent& intent) {
-    return HostSection(id, [&](float x, float y, float w, float h) {
-        const okayuiscreens::ImportSettingsResult r = okayuiscreens::DrawImportSettings(model, state, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, r.popup};
-    });
-}
-
-bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent) {
-    return HostSection("##okayui_post", [&](float x, float y, float w, float h) {
-        const okayuiscreens::PostProcessResult r = okayuiscreens::DrawPostProcess(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, r.popup};
-    });
-}
-
 bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent) {
     return HostWindow("Hierarchy", open, "##okayui_hierarchy", [&](ImVec2 p, ImVec2 a) {
         model.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
@@ -377,9 +360,10 @@ bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels
 bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
-#endif
+bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel&, okaypanels::LoadingScreenIntent&) { return false; }
 bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
+#endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
 bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okaypanels::CompHeaderIntent&, bool*) { return false; }
@@ -500,6 +484,36 @@ bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okay
     intent = okaypanels::RenderingSettingsIntent();
     return PanelSection("##okayui_rendering", [&](float x, float y, float w, float h) {
         const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel& model, okaypanels::LoadingScreenIntent& intent) {
+    intent = okaypanels::LoadingScreenIntent();
+    return PanelSection("##okayui_loadingscreen", [&](float x, float y, float w, float h) {
+        const okayuiscreens::LoadingScreenResult r = okayuiscreens::DrawLoadingScreen(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+// The Project panel's import settings (shown in the Project panel and in the Inspector for the selected asset; `id` keeps the two
+// apart) and Lighting > Post-processing (docs/ui/own_ui_toolkit.md section 27): OkayUI only, like the Project Settings sections.
+bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
+                              okaypanels::ImportSettingsIntent& intent) {
+    intent = okaypanels::ImportSettingsIntent();
+    return PanelSection(id, [&](float x, float y, float w, float h) {
+        const okayuiscreens::ImportSettingsResult r = okayuiscreens::DrawImportSettings(model, state, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent) {
+    intent = okaypanels::PostProcessIntent();
+    return PanelSection("##okayui_post", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PostProcessResult r = okayuiscreens::DrawPostProcess(model, x, y, w, h);
         intent = r.intent;
         return r.contentHeight;
     });

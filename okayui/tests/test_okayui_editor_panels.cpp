@@ -976,6 +976,22 @@ int main() {
         b.scale = 2.0f; CHECK(!P::ImportSame(a, b));
         b = a; b.kind = P::ImportAudio; CHECK(!P::ImportSame(a, b));
         CHECK(P::ImportSizeIndex(0) == 0 && P::ImportSizeIndex(512) == 5 && P::ImportSizeIndex(777) == 7);
+        // a texture: Kind, Filter (Anisotropic is Trilinear with more than one sample), Anisotropy, the combo width
+        P::ImportFields t; t.kind = P::ImportTexture;
+        CHECK(P::ImportTexKindIndex(t) == 0);
+        P::ImportSetTexKind(t, 1); CHECK(t.normalMap && !t.sRGB && P::ImportTexKindIndex(t) == 1);
+        P::ImportSetTexKind(t, 2); CHECK(!t.normalMap && !t.sRGB && P::ImportTexKindIndex(t) == 2);
+        t.filter = 2; t.anisotropy = 8; CHECK(P::ImportFilterIndex(t) == 3);
+        P::ImportSetFilter(t, 2); CHECK(t.filter == 2 && t.anisotropy == 1 && P::ImportFilterIndex(t) == 2);
+        P::ImportSetFilter(t, 3); CHECK(t.filter == 2 && t.anisotropy == 8);
+        P::ImportSetFilter(t, 0); CHECK(t.filter == 0 && t.anisotropy == 8 && P::ImportFilterIndex(t) == 0);   // Point keeps the level
+        CHECK(P::ImportAnisoIndex(16) == 3 && P::ImportAnisoIndex(3) == 2);
+        P::ImportFields u = t; CHECK(P::ImportSame(t, u));
+        u.compression = 4; CHECK(!P::ImportSame(t, u));
+        u = t; u.mipFilter = 1; CHECK(!P::ImportSame(t, u));
+        CHECK(P::ImportComboWidth(20.0f, 12.0f, 34.0f, 900.0f, 40.0f, 8.0f) == 160.0f);    // never under 160
+        CHECK(P::ImportComboWidth(300.0f, 12.0f, 34.0f, 900.0f, 40.0f, 8.0f) == 358.0f);   // the longest choice, padding and arrow
+        CHECK(P::ImportComboWidth(300.0f, 12.0f, 34.0f, 300.0f, 40.0f, 8.0f) == 252.0f);   // the room left of the label
     }
     {   // a model: golden; Import animations, Apply only while changed, Revert, the normals list, the failure popup
         panelfix::ImportData d;
@@ -1012,23 +1028,48 @@ int main() {
         CHECK(res.popup.w > 0 && !d.state.showFail);
         Check("editorpanels_import_fail", r.Draw());
     }
-    {   // a texture with the sampler rows, a sound, a newer file, no edit
+    {   // a texture: every row (Kind, Filter with Anisotropy, Mip filter, compression, what is loaded, the tools), a sound, a newer file, no edit
         panelfix::ImportData t(P::ImportTexture), a(P::ImportAudio), n(P::ImportModel);
         n.model.newer = true;
-        t.model.showSampler = true;
         S::ImportSettingsResult rt, ra, rn, r0;
         P::ImportSettingsModel none;
         P::ImportSettingsState st0;
-        auto r = MakeRig(560, 600, [&](float x, float y, float w, float h) {
+        P::ImportSettingsIntent seen;
+        auto r = MakeRig(560, 1120, [&](float x, float y, float w, float h) {
             rt = S::DrawImportSettings(t.model, t.state, x, y, w, h);
+            if (rt.intent.generate) seen.generate = true;
+            if (rt.intent.changed) seen.changed = true;
         });
         r.Frames(2);
-        CHECK(rt.sizeCombo.w > 0 && rt.filterCombo.w > 0 && rt.wrapCombo.w > 0 && rt.mipmaps.w > 0);
+        CHECK(rt.sizeCombo.w > 0 && rt.kindCombo.w > 0 && rt.filterCombo.w > 0 && rt.anisoCombo.w > 0 && rt.wrapCombo.w > 0 && rt.mipmaps.w > 0);
+        CHECK(rt.mipFilterCombo.w > 0 && rt.compress.w > 0 && rt.formatCombo.w > 0 && rt.generate.w > 0 && rt.ddsCutout.w > 0);
+        CHECK(rt.contentHeight > 800.0f && rt.contentHeight < 1100.0f && UI::DroppedGeometry() == 0);
+        CHECK(rt.filterCombo.w >= 160.0f && rt.kindCombo.w > rt.wrapCombo.w);   // as wide as the longest choice
+        Check("editorpanels_import_texture", r.Draw());
         r.Click(UI::Rect{rt.sizeCombo.x, rt.sizeCombo.y, 60.0f, rt.sizeCombo.h});
         r.Click(UI::Rect{rt.sizeCombo.x, rt.sizeCombo.y + rt.sizeCombo.h * 6.0f, 60.0f, rt.sizeCombo.h});   // the sixth entry: 512
         CHECK(t.edit.maxSize == 512);
+        // Kind: the second entry is the normal map
+        r.Click(UI::Rect{rt.kindCombo.x, rt.kindCombo.y, 60.0f, rt.kindCombo.h});
+        r.Click(UI::Rect{rt.kindCombo.x, rt.kindCombo.y + rt.kindCombo.h * 2.0f, 60.0f, rt.kindCombo.h});
+        CHECK(t.edit.normalMap && !t.edit.sRGB);
+        // Filter: Trilinear (the third entry) takes one sample, so the Anisotropy row goes
+        r.Click(UI::Rect{rt.filterCombo.x, rt.filterCombo.y, 60.0f, rt.filterCombo.h});
+        r.Click(UI::Rect{rt.filterCombo.x, rt.filterCombo.y + rt.filterCombo.h * 3.0f, 60.0f, rt.filterCombo.h});
+        CHECK(t.edit.filter == 2 && t.edit.anisotropy == 1);
+        r.Frames(1); CHECK(rt.anisoCombo.w == 0);
+        // Compress off hides the format; Mipmaps off hides the mip filter
+        r.Click(rt.compress); CHECK(!t.edit.compress);
+        r.Frames(1); CHECK(rt.formatCombo.w == 0);
         r.Click(rt.mipmaps); CHECK(!t.edit.mipmaps);
-        Check("editorpanels_import_texture", r.Draw());
+        r.Frames(1); CHECK(rt.mipFilterCombo.w == 0);
+        // the tools: their choices stay in the state, not in the settings; Generate asks the host
+        seen = P::ImportSettingsIntent();
+        r.Click(rt.ddsNormal); CHECK(t.state.ddsNormal && !seen.changed);
+        r.Click(rt.generate); CHECK(seen.generate);
+        t.model.toolMessage = "Wrote Hero.dds";
+        r.Frames(2);
+        CHECK(rt.contentHeight > 500.0f);
         auto r2 = MakeRig(560, 420, [&](float x, float y, float w, float h) {
             ra = S::DrawImportSettings(a.model, a.state, x, y, w, h);
             rn = S::DrawImportSettings(n.model, n.state, x, y + 200.0f, w, 100.0f);
@@ -1124,6 +1165,47 @@ int main() {
         r.Frames(2);
         CHECK(company[7] == '\0' && res.company.w > 0 && res.version.w == 0 && res.width.w == 0);
         CHECK(rres.ambient.w == 0 && rres.skybox.w == 0 && rres.apply.w > 0);
+    }
+
+    // ================= Loading screen (Project Settings) =================
+    {   // the section, golden; Browse asks the host, Clear empties the logo, the accent box hides its colour, typing a path
+        panelfix::LoadingData d;
+        S::LoadingScreenResult res;
+        P::LoadingScreenIntent seen;
+        auto r = MakeRig(620, 360, [&](float x, float y, float w, float h) {
+            res = S::DrawLoadingScreen(d.model, x, y, w, h);
+            if (res.intent.changed) seen.changed = true;
+            if (res.intent.browse) seen.browse = true;
+        });
+        r.Frames(3);
+        CHECK(res.logo.w == 360.0f && res.browse.x > res.logo.x + res.logo.w && res.clear.x > res.browse.x + res.browse.w);
+        CHECK(res.accent.w > 0 && res.accent.x > res.accentBox.x + res.accentBox.w && res.bgTop.y > res.accentBox.y && res.showBar.y > res.bgBottom.y);
+        CHECK(res.contentHeight > 150.0f && res.contentHeight < 340.0f && UI::DroppedGeometry() == 0);
+        Check("editorpanels_loadingscreen", r.Draw());
+        r.Click(res.browse); CHECK(seen.browse && !seen.changed && d.logo[0] == 'A');
+        r.Click(res.clear); CHECK(seen.changed && d.logo[0] == '\0');
+        r.Frames(1);
+        r.Click(UI::Rect{res.logo.x, res.logo.y, 60.0f, res.logo.h});
+        r.sim.Type("Logo.png"); r.Frame();
+        CHECK(std::strcmp(d.logo, "Logo.png") == 0);
+        seen = P::LoadingScreenIntent();
+        r.Click(UI::Rect{res.accentBox.x, res.accentBox.y, 30.0f, res.accentBox.h});
+        CHECK(!d.accentOverride && seen.changed);
+        r.Frames(1); CHECK(res.accent.w == 0);
+        r.Click(UI::Rect{res.showBar.x, res.showBar.y, 30.0f, res.showBar.h}); CHECK(!d.showBar);
+    }
+    {   // no values: the note only; an unterminated logo buffer is ended
+        char logo[6]; std::memset(logo, 'L', sizeof logo);
+        P::LoadingScreenModel m; m.logo = logo; m.logoSize = sizeof logo;
+        S::LoadingScreenResult res, r0;
+        P::LoadingScreenModel none;
+        auto r = MakeRig(400, 300, [&](float x, float y, float w, float h) {
+            res = S::DrawLoadingScreen(m, x, y, w, 120.0f);
+            r0 = S::DrawLoadingScreen(none, x, y + 140.0f, w, h - 140.0f);
+        });
+        r.Frames(2);
+        CHECK(logo[5] == '\0' && res.logo.w > 0 && res.bgTop.w == 0 && res.showBar.w == 0);
+        CHECK(r0.logo.w == 0 && r0.contentHeight > 0.0f);
     }
 
     TEST_MAIN_RESULT();

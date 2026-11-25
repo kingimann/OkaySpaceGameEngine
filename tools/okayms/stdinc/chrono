@@ -4,6 +4,7 @@
 // GetSystemTimeAsFileTime from kernel32). Own minimal version: the common units (nanoseconds to hours),
 // +, -, comparisons, duration_cast, time_point arithmetic; no calendar, no zones, no literals.
 #pragma once
+#include <ctime>
 __declspec(dllimport) int QueryPerformanceCounter(long long* counter);
 __declspec(dllimport) int QueryPerformanceFrequency(long long* frequency);
 __declspec(dllimport) void GetSystemTimeAsFileTime(unsigned long long* time);
@@ -98,6 +99,14 @@ struct system_clock {
         // 100 ns steps since 1601-01-01; the Unix epoch is 11644473600 seconds later.
         const long long since_unix = (long long)ft - 116444736000000000LL;
         return time_point<system_clock, nanoseconds>(nanoseconds(since_unix * 100LL));
+    }
+    // Whole seconds since the Unix epoch, as time() counts them ([time.clock.system.members]); toward minus infinity.
+    static time_t to_time_t(const time_point<system_clock, nanoseconds>& t) {
+        const long long ns = t.time_since_epoch().count();
+        return (time_t)(ns >= 0 ? ns / 1000000000LL : -((-ns + 999999999LL) / 1000000000LL));
+    }
+    static time_point<system_clock, nanoseconds> from_time_t(time_t t) {
+        return time_point<system_clock, nanoseconds>(nanoseconds((long long)t * 1000000000LL));
     }
 };
 typedef steady_clock high_resolution_clock;

@@ -6,8 +6,9 @@
 > animation. It is our own system, written from published research and general control methods.
 > No code, data or assets from any commercial product were used or looked at.
 >
-> **Status:** first version (2026-11-22). Works in the unit tests on a flat floor and in the
-> example scene; see "What is not done".
+> **Status:** first version (2026-11-22), on the physics core since 2026-11-25 (claude/ragdoll-core-1).
+> Works in the unit tests on a flat floor; two scene tests still fail (see "What is not done"). The
+> example scene runs in `active_ragdoll` but was not seen in a window after the move.
 
 ## Where it lives
 
@@ -71,10 +72,25 @@ are switched off and back on after it recovers (`handOverControl`). Scripts:
 `active_ragdoll(name)` (knockdown, getup, die, revive, limp, powered, reactive, stumble),
 `active_ragdoll_push(ix, iy, iz[, px, py, pz])`, `active_ragdoll_shoot(ox, oy, oz, dx, dy, dz[, power])`,
 `active_ragdoll_explode(cx, cy, cz, force, radius)`, `active_ragdoll_state()`; each is also a
-visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `ActiveRagdoll::Push`,
+visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ragdoll::Push`,
 `Hit`, `Shoot`, `Explode`, `Trigger`, `SetMode`, `onStateChanged`, `Core()`.
 
-## Measured (unit tests, 1.8 m, 70 kg rig on flat ground)
+## Measured on the physics core (2026-11-25, Linux, g++ Release)
+
+- `active_ragdoll` 458 of 458 checks pass on the core (the push thresholds, recovery, get-up, hostile input and
+  determinism checks below are the same checks). Recovery time after a 35 N s push: 0.88 s.
+- Powered, the animation lifts an arm 70 degrees: the physical arm is 1.6 degrees off it after 2 s, still standing.
+- Limp on flat ground (`ragdoll`): every part's centre stays above the floor (lowest 0.042 m), joints apart by
+  under 6 mm, at most 0.065 rad past a limit while landing and 0 at rest; it settles.
+- Free fall: the pelvis drops 4.99 m in 1 s.
+- Against dynamic crates (`ragdoll_collisions`): a 4 kg crate is shoved 0.21 m, a 400 kg one 0.6 mm; no limb ends
+  inside either; legs do not pass through each other (smallest gap -0.5 mm) or the torso.
+- Two fixes found by these tests: lying on the floor the arms sank 0.09 m into it (the elbow stopped at -0.05 rad,
+  and the floor needed a few degrees past straight; now -0.2 rad), and with the scene's 10 solver iterations a body
+  landing on its leg pushed the shin 0.15 m into a crate under it (the ragdoll asks for 20 while it is physical,
+  `Physics3D::EngineGuest::GuestSolverIterations`).
+
+## Measured before the move (on the old XpbdRagdoll; the tests that assert these pass on the core)
 
 - Standing powered for 4 s: pelvis within 1 % of its standing height, torso lean under 1 degree.
 - A 35 N s push at the chest (0.5 m/s): stays up, back to the animation after 0.87 s (recovery time).
@@ -98,8 +114,8 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
 - Balance near the edge is chaotic: a change in rounding (for example moving the leg IK onto the
   shared two-bone solve) can turn one 70 N s push from "stays up" into "falls". The tests therefore
   print how many of 7 pushes between 55 and 90 N s it stands through and how often it grips.
-- Muscle limits are real since 2026-11-22: the drive's torque cap (and its damping) is in N m
-  (XPBD multipliers are positional, torque = lambda / h^2); before, the cap was 720 times too loose.
+- Muscle limits are real since 2026-11-22: the drive's torque cap is in N m (on the core: the joint drive's
+  `driveMaxTorque`).
 - Review of #1138 (fixed, each with a test): draped over a ledge the get-up hoisted the pelvis up to 1 m
   too high (a foot on the ledge moved the "ground"; a remembered contact plane was an invisible floor
   up to 1 m past an edge); a respawn was undone; Powered mode never gave control back; a remote copy
@@ -162,7 +178,7 @@ shared `Math/TwoBoneIK` solve.
 ## Sources
 
 - M. Mueller, M. Macklin, N. Chentanez, S. Jeschke, T.-Y. Kim, "Detailed Rigid Body Simulation
-  with Extended Position Based Dynamics", SCA 2020 - the solver structure.
+  with Extended Position Based Dynamics", SCA 2020 - the structure of the old XpbdRagdoll (deleted).
 - K. Yin, K. Loken, M. van de Panne, "SIMBICON: Simple Biped Locomotion Control", SIGGRAPH 2007 -
   torso held in the world frame through the stance hip, foot placement from centre of mass.
 - J. Pratt, C.-M. Chew, A. Torres, P. Dilworth, G. Pratt, "Virtual Model Control", IJRR 2001 -
@@ -180,6 +196,15 @@ shared `Math/TwoBoneIK` solve.
 - Swing / twist split of a joint rotation and two-bone IK by the law of cosines: general methods.
 
 ## What is not done
+
+- Two scene tests fail (2026-11-25): (1) `ragdoll` "table drop": face down across a table edge, the knees bend
+  about 0.25 rad past their limit under the legs' weight (the joints open up to 6 cm) and the shins end up to
+  0.096 m inside the table edge. The core's joint limits give under that load at 20 iterations; not fixed.
+  (2) `ragdoll_collisions` "pile": dropped standing onto a pile of loose 6 kg boxes, the body lands on its feet
+  and topples off onto the floor (no limb inside a box), so "lies on the boxes" and "the boxes moved 1 cm" fail;
+  and the 400 kg crate's top speed is 0.001 m/s against the 0.005 the test asks (it moves 0.6 mm). The tests
+  were written before the code and are left as they are.
+- The unit tests' own world (outside a scene) still steps with 10 solver iterations; only the scene uses 20.
 
 - No walking while physical: the character stands still while it stumbles (the controller is
   off), then takes over again.

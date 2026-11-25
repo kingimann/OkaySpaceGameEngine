@@ -97,6 +97,10 @@ struct Toolchain {
     // Windows (MinGW): rc compiles .rc files (GNU windres: -O coff, -D, -I, file, .res); std_libs end every link (the system's
     // standard libraries); exe_import_lib = on adds -Wl,--out-implib,lib<name>.dll.a and the image version to a program's link
     string rc; vector<string> stdLibs; bool exeImportLib = false;
+    // compile_order = cmake: a GCC-style compile line in the order CMake's Ninja files use (the definitions sorted and without repeats,
+    // then the source's own definitions sorted, then the source's include folders, the target's -I folders, its -isystem folders, then
+    // the flags), so the line can be compared with CMake's word for word. The default (okay) keeps okay-build's own order.
+    bool cmakeOrder = false;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
     // Our own compilers (presets okay-cc and okay-ms): which one, and whether a program links a static library's archive
@@ -137,6 +141,7 @@ struct Target {
     string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
     string libKind; // "" static archive, "shared" (.so, linked with -shared, -fPIC, found through an rpath), "object" (an archive that is linked whole, like CMake's OBJECT libraries)
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
+    vector<string> systemIncludes; // system_include = DIR...: include folders passed with -isystem (CMake's SYSTEM and imported targets' folders)
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
     // per-file additions (CMake's set_source_files_properties): {source path, word}
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
@@ -365,6 +370,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
+            else if (k == "compile_order") { if (v.size() != 1 || (v[0] != "cmake" && v[0] != "okay")) throw err("compile_order wants cmake or okay"); c.cmakeOrder = v[0] == "cmake"; }
             else if (k == "link_archives") c.linkArchives = oneFlag(v, "link_archives");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
@@ -461,6 +467,7 @@ static Manifest parseManifest(const string& file) {
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
+            else if (k == "system_include") add(x.systemIncludes);
             else if (k == "export_include") add(x.exportIncludes); else if (k == "define") add(x.defines);
             else if (k == "flags") add(x.flags); else if (k == "link_flags") add(x.linkFlags);
             else if (k == "libs") add(x.libs); else if (k == "deps") add(x.deps);
@@ -912,6 +919,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.includes) inc(i);
                 for (auto& i : t.exportIncludes) inc(i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
+                for (auto& i : t.systemIncludes) inc(i); // windres has no system folders
                 for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
                 a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
                 objs.push_back(a.output); objActs.push_back(add(a)); continue;
@@ -926,6 +934,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& pf : t.fileFlags) if (pf.first == sRaw) word(pf.second);
                 vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                for (auto& i : t.systemIncludes) incs.push_back(i); // our compilers have no system folders: plain -I / /I
                 for (auto& pf : t.fileIncludes) if (pf.first == sRaw) incs.push_back(pf.second);
                 for (auto& i : incs) a.argv.push_back((ms ? "/I" : "-I") + fixBin(i));
                 vector<string> defs = t.defines; for (auto& pf : t.fileDefines) if (pf.first == sRaw) defs.push_back(pf.second);
@@ -943,6 +952,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
+                for (auto& i : t.systemIncludes) a.argv.push_back("/I" + i); // not /external:I: kept as a plain folder for every cl version
                 for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
                 for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("/I" + pf.second);
                 for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("/D" + fixBin(pf.second));
@@ -951,16 +961,42 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
-                for (auto& f : m.tc.flags) a.argv.push_back(f);
-                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
-                if (t.libKind == "shared") a.argv.push_back("-fPIC");
-                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
-                for (auto& i : t.includes) a.argv.push_back("-I" + i);
-                for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("-I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                auto flagWords = [&](bool cmakeOrder) {
+                    for (auto& f : m.tc.flags) if (!cmakeOrder || f.rfind("-D", 0) != 0) a.argv.push_back(f);
+                    for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
+                    // CMake puts -fPIC after the language standard and before the target's options; okay-build's own order before both
+                    size_t lead = cmakeOrder && !t.flags.empty() && t.flags[0].rfind("-std=", 0) == 0 ? 1 : 0;
+                    if (t.libKind == "shared" && !lead) a.argv.push_back("-fPIC");
+                    for (size_t k = 0; k < t.flags.size(); ++k) {
+                        const string& f = t.flags[k];
+                        if (!(isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0))) a.argv.push_back(fixBin(f)); // a C++ standard does not apply to a C file
+                        if (t.libKind == "shared" && lead && k + 1 == lead) a.argv.push_back("-fPIC");
+                    }
+                };
+                vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                if (m.tc.cmakeOrder) { // CMake's order (see Toolchain::cmakeOrder); the toolchain's -D words (account defines) count as the target's
+                    std::set<string> defs, fileDefs; vector<string> fileIncs;
+                    for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) defs.insert(f);
+                    for (auto& d : t.defines) defs.insert("-D" + fixBin(d));
+                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) fileDefs.insert("-D" + fixBin(pf.second));
+                    for (auto& d : defs) a.argv.push_back(d);
+                    for (auto& d : fileDefs) a.argv.push_back(d);
+                    // the source's own folders first, then the target's; CMake drops a repeat inside each list but not between them
+                    vector<string> seen, seenFile;
+                    auto once = [&](vector<string>& in, const string& i) { if (std::find(in.begin(), in.end(), i) != in.end()) return false; in.push_back(i); return true; };
+                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw && once(seenFile, pf.second)) a.argv.push_back("-I" + pf.second);
+                    for (auto& i : incs) if (once(seen, i)) a.argv.push_back("-I" + i);
+                    for (auto& i : t.systemIncludes) if (once(seen, i)) { a.argv.push_back("-isystem"); a.argv.push_back(i); }
+                    flagWords(true);
+                } else {
+                    flagWords(false);
+                    for (auto& i : incs) a.argv.push_back("-I" + i);
+                    for (auto& i : t.systemIncludes) { a.argv.push_back("-isystem"); a.argv.push_back(i); }
+                    for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("-I" + pf.second);
+                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                }
                 for (auto& pf : t.fileFlags) if (pf.first == sRaw) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
                 if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
@@ -969,7 +1005,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                     for (size_t i = 1; i < a.argv.size(); ++i) {
                         string& w = a.argv[i];
                         if (w.rfind("-I", 0) == 0 && w.size() > 2) w = "-I" + absOf(w.substr(2));
-                        else if (w == "-c" && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
+                        else if ((w == "-c" || w == "-isystem") && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
                     }
                     a.argv.insert(a.argv.begin() + 1, "-ffile-prefix-map=" + root + "=/okay-src");
                 }
@@ -1718,6 +1754,9 @@ static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
     int prev = -1;
     if (!rq.inFile.empty() && (prev = open(rq.inFile.c_str(), O_RDONLY | O_CLOEXEC)) < 0) { rs.startFailed = true; rs.whole = strerror(errno); close(op[0]); close(op[1]); close(ep[0]); close(ep[1]); return; }
     vector<pid_t> pids;
+    // With a TIMEOUT the commands get a process group of their own (as okay-build's test runner does), so a time-out also ends the
+    // programs they started (a shell's children). Without one they stay in ours: a command may then read the terminal.
+    const bool group = rq.timeoutSec > 0; pid_t pgid = 0;
     for (size_t k = 0; k < n; ++k) {
         int link[2] = {-1, -1}, st[2] = {-1, -1};
         if ((k + 1 < n && cloexecPipe(link)) || cloexecPipe(st)) { rs.startFailed = true; rs.whole = strerror(errno); break; }
@@ -1725,6 +1764,7 @@ static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
         pid_t pid = fork();
         if (pid < 0) { rs.startFailed = true; rs.whole = strerror(errno); close(st[0]); close(st[1]); if (link[0] >= 0) { close(link[0]); close(link[1]); } break; }
         if (pid == 0) {
+            if (group) setpgid(0, pgid);
             if (prev >= 0) dup2(prev, 0);
             dup2(k + 1 < n ? link[1] : op[1], 1); dup2(rq.merge ? op[1] : ep[1], 2);
             int e = 0;
@@ -1732,6 +1772,7 @@ static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
             else { vector<char*> av; for (auto& w : rq.cmds[k]) av.push_back(const_cast<char*>(w.c_str())); av.push_back(nullptr); execvp(av[0], av.data()); e = errno; }
             ssize_t w = write(st[1], &e, sizeof e); (void)w; _exit(127);
         }
+        if (group) { if (!pgid) pgid = pid; setpgid(pid, pgid); } // in both processes, so it holds whichever runs first
         close(st[1]); int e = 0; ssize_t got; while ((got = read(st[0], &e, sizeof e)) < 0 && errno == EINTR) {}
         close(st[0]);
         if (prev >= 0) close(prev);
@@ -1743,12 +1784,13 @@ static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
     close(op[1]); close(ep[1]);
     long long started = nowNs(), limit = rq.timeoutSec > 0 ? (long long)(rq.timeoutSec * 1e9) : 0;
     int fds[2] = {op[0], ep[0]};
-    if (rs.startFailed) for (pid_t p : pids) kill(p, SIGKILL);
+    auto killAll = [&]() { if (pgid) kill(-pgid, SIGKILL); for (pid_t p : pids) kill(p, SIGKILL); };
+    if (rs.startFailed) killAll();
     else while (fds[0] >= 0 || fds[1] >= 0) {
         pollfd pf[2]; int nfd = 0, which[2];
         for (int i = 0; i < 2; ++i) if (fds[i] >= 0) { pf[nfd].fd = fds[i]; pf[nfd].events = POLLIN; pf[nfd].revents = 0; which[nfd++] = i; }
         int wait = -1;
-        if (limit) { long long left = limit - (nowNs() - started); if (left <= 0) { for (pid_t p : pids) kill(p, SIGKILL); rs.whole = "Process terminated due to timeout"; break; } wait = (int)(left / 1000000) + 1; }
+        if (limit) { long long left = limit - (nowNs() - started); if (left <= 0) { killAll(); rs.whole = "Process terminated due to timeout"; break; } wait = (int)(left / 1000000) + 1; }
         if (poll(pf, (nfds_t)nfd, wait) < 0) { if (errno == EINTR) continue; break; }
         for (int i = 0; i < nfd; ++i) {
             if (!(pf[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
@@ -3393,8 +3435,10 @@ static bool importedCompile(const Action& a, string& file) {
     for (size_t i = 0; i < w.size(); ++i) if (w[i] == "-c" && i + 1 < w.size()) { file = w[i + 1]; return !file.empty(); }
     return false;
 }
-static void writeCompdb(const Manifest& m) {
-    Graph g = plan(m, {}); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
+// compdb [TARGET...]: every compile, or only the compiles those targets need (as a build of them would run; a target nobody asked for may
+// lack a source, as for a build)
+static void writeCompdb(const Manifest& m, const vector<string>& want) {
+    Graph g = plan(m, want); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
     int n = 0;
     for (auto& a : g.acts) {
         if (a.kind == "CC") {
@@ -4120,7 +4164,7 @@ static int cmdFetch(const Manifest& m, const vector<string>& names) {
 
 // okay-build script [-D NAME=VALUE | -DNAME[:TYPE]=VALUE]... -P FILE [ARG...]: the same words `cmake -P` takes. See cmr::runCmakeScript.
 static int cmdScript(const vector<string>& a) {
-    std::map<string, string> defs; string file; vector<string> argvWords{gSelfExe, "script"};
+    std::map<string, string> defs; string file; vector<string> argvWords{gSelfExe}; // CMAKE_ARGV1.. are the words after the program, as in cmake -P
     for (size_t i = 0; i < a.size(); ++i) {
         string w = a[i];
         if (!file.empty()) { argvWords.push_back(w); continue; }
@@ -4382,7 +4426,7 @@ int main(int argc, char** argv) {
             for (auto& gp : genFilePaths(m)) fs::remove(gp.first); // the generate files a build wrote
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;
         }
-        if (cmd == "compdb") { writeCompdb(m); return 0; }
+        if (cmd == "compdb") { writeCompdb(m, want); return 0; }
         if (cmd == "targets") { listTargets(plan(m, {})); return 0; }
         if (cmd == "graph") { listGraph(plan(m, want)); return 0; }
         return build(m, want, o);

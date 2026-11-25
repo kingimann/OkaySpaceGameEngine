@@ -308,6 +308,31 @@ struct ProfilerPanelData {
     }
 };
 
+// The small tool windows (docs/ui/own_ui_toolkit.md section 28).
+struct ShortcutsData {
+    P::ShortcutsState state;
+    std::function<void(ImVec2, ImVec2)> Body() {
+        return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawShortcuts(P::KeyboardShortcuts(), state, p.x, p.y, a.x, a.y); };
+    }
+};
+struct NetPanelData {
+    panelfix::NetData d;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawNetSim(d.model, p.x, p.y, a.x, a.y); }; }
+};
+struct FindData {
+    P::FindInFilesModel model = panelfix::FindHits();
+    P::FindInFilesState state;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawFindInFiles(model, state, p.x, p.y, a.x, a.y); }; }
+};
+struct DataAssetPanelData {
+    panelfix::DataAssetData d;
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawDataAsset(d.model, p.x, p.y, a.x, a.y); }; }
+};
+struct PluginsData {
+    P::PluginManagerModel model = panelfix::Plugins();
+    std::function<void(ImVec2, ImVec2)> Body() { return [this](ImVec2 p, ImVec2 a) { okayuiscreens::DrawPluginManager(model, p.x, p.y, a.x, a.y); }; }
+};
+
 // The hosted picture `e` drew against the old way's: saved, printed, and nothing of the body left in OkayUI's frame (it is in ImGui's
 // draw list).
 Diff HostedDiff(const char* name, const Bitmap& oldWay, Editor& e) {
@@ -345,6 +370,11 @@ void SamePictureAsBefore() {
     CHECK(HostedAgainstOldWay<ProblemsData>("problems", "Problems###Problems").clearly < 0.5);
     CHECK(HostedAgainstOldWay<StatsPanelData>("stats", "Stats").clearly < 0.5);
     CHECK(HostedAgainstOldWay<ProfilerPanelData>("profiler", "Profiler").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<ShortcutsData>("shortcuts", "Keyboard Shortcuts").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<NetPanelData>("net", "Net###Net").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<FindData>("findinfiles", "Find in Files").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<DataAssetPanelData>("dataasset", "Data Asset").clearly < 0.5);
+    CHECK(HostedAgainstOldWay<PluginsData>("plugins", "Plugin Manager").clearly < 0.5);
 }
 
 void ImGuiInFrontCoversThePanel() {
@@ -876,7 +906,7 @@ void SectionsHiddenDrawNothing() {
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler, Keyboard Shortcuts, Net, Find in Files, Data Asset, Plugin Manager; Project Settings' Player, Physics, Rendering, Tags and Layers; Post-processing; import settings)");
     kH = 420;
     SamePictureAsBefore();
     ImGuiInFrontCoversThePanel();

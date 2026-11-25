@@ -117,6 +117,8 @@ export class Transform extends Component {
         if (this._parent) this._parent._children.splice(this._parent._children.indexOf(this), 1);
         this._parent = parent || null;
         if (parent) parent._children.push(this);
+        const scene = parent && parent.gameObject && parent.gameObject.scene;
+        if (scene && this.gameObject && this.gameObject.scene !== scene) scene.Add(this.gameObject);   // with its children
         if (world) {
             const local = parent ? parent.localToWorldMatrix.inverse().multiply(world) : world;
             const d = local.decompose();
@@ -260,6 +262,7 @@ export class Scene {
     Add(go) {
         const visit = g => {
             if (g.scene === this) return;
+            if (g.scene) { const i = g.scene.objects.indexOf(g); if (i >= 0) g.scene.objects.splice(i, 1); }   // moved here
             g.scene = this;
             this.objects.push(g);
             for (const c of g._components) if (c.OnAddedToScene) c.OnAddedToScene(this);
@@ -279,8 +282,8 @@ export class Scene {
     }
     /** Remove an object and its children. Components with OnDestroy hear about it first. */
     Destroy(go) {
+        if (go instanceof Component) go = go.gameObject;   // a component destroys its object (a removed one: nothing)
         if (!go || go._destroyed) return;
-        if (go instanceof Component) go = go.gameObject;
         for (const t of go.transform._children.slice()) this.Destroy(t.gameObject);
         for (const c of go._components) if (c.OnDestroyComponent) c.OnDestroyComponent();
         go.transform.SetParent(null, false);

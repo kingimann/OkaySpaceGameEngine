@@ -375,3 +375,108 @@ test('a GameObject made outside a scene can be added later with its children', (
     assert.equal(s.Find('Kid'), kid);
     assert.equal(kid.scene, s);
 });
+
+// ---- review fixes (PR #1289): each of these failed before its fix
+
+test('review 1: OnDisable on destroy only when the script is enabled (once), OnDestroy only after it started', () => {
+    const src = 'export default class D { log = []; OnEnable() { this.log.push("en"); } OnDisable() { this.log.push("dis"); } OnDestroy() { this.log.push("des"); } }';
+    const w = world(src);
+    w.frames(1);
+    w.player.active = false;
+    w.frames(1);                 // OnDisable here
+    const log = w.sc.Get('log');
+    w.g.scene.Destroy(w.player);  // already off: no second OnDisable
+    assert.deepEqual(log, ['en', 'dis', 'des']);
+    // an object that never ran (inactive from the start) gets neither, as in the engine (ScriptComponent::OnDestroy)
+    const g = new Game();
+    const off = g.scene.CreateGameObject('Off');
+    off.active = false;
+    const sc = g.AddScript(off, src);
+    g.step(DT);
+    g.scene.Destroy(off);
+    assert.equal(sc.instance === null ? null : JSON.stringify(sc.Get('log')), '[]');
+});
+
+test('review 2: destroying a component (or the same one twice, or a removed one) is safe and runs OnDestroy once', () => {
+    const w = world('export default class D { n = 0; OnDestroy() { this.n++; } }');
+    w.frames(1);
+    w.g.scene.Destroy(w.sc);
+    w.g.scene.Destroy(w.sc);
+    assert.equal(w.sc.instance.n, 1);
+    assert.ok(w.player.destroyed);
+    const s = new Scene();
+    const a = s.CreateGameObject('A');
+    const cam = a.AddComponent(Camera);
+    a.RemoveComponent(cam);
+    assert.doesNotThrow(() => s.Destroy(cam));
+    assert.ok(!a.destroyed);
+});
+
+test('review 4: a script may declare its own top-level names that are also engine globals', () => {
+    const w = world('const Time = { label: "mine" }; let transform = 5; class Input {}\nexport default class S { Start() { this.t = Time.label + transform; } }');
+    w.frames(1);
+    assert.equal(w.g.log.filter(l => l.level === 'error').length, 0, JSON.stringify(w.g.log));
+    assert.equal(w.sc.Get('t'), 'mine5');
+    // error lines still match the script
+    const e = world('let a = 1;\nlet b = 2;\nnull.x = 3;');
+    e.frames(1);
+    assert.match(e.g.log.find(l => l.level === 'error').text, /^script:3: TypeError/);
+});
+
+test('review 5: a second mouse button pressed while another is held (a chord: pointermove with buttons) is seen', () => {
+    const el = new EventTarget();
+    el.getBoundingClientRect = () => ({ left: 0, top: 0 });
+    const inp = new Input(el, { keyTarget: new EventTarget() });
+    const ptr = (type, o) => el.dispatchEvent(Object.assign(new Event(type), { pointerType: 'mouse', pointerId: 1, clientX: 0, clientY: 0, ...o }));
+    ptr('pointerdown', { button: 0, buttons: 1 });
+    inp.BeginFrame();
+    ptr('pointermove', { button: 2, buttons: 3 });   // right pressed while left is held
+    inp.BeginFrame();
+    assert.ok(inp.GetMouseButtonDown(1) && inp.GetMouseButton(1) && inp.GetMouseButton(0));
+    ptr('pointermove', { button: 2, buttons: 1 });   // right let go, left still held
+    inp.BeginFrame();
+    assert.ok(inp.GetMouseButtonUp(1) && !inp.GetMouseButton(1) && inp.GetMouseButton(0));
+    ptr('pointerup', { button: 0, buttons: 0 });
+    inp.BeginFrame();
+    assert.ok(inp.GetMouseButtonUp(0));
+});
+
+test('review 6: parenting an object under one in a scene puts it (and its children) in that scene', () => {
+    const s = new Scene();
+    const root = s.CreateGameObject('Root');
+    const kid = new GameObject('Kid'), grandkid = new GameObject('Grandkid');
+    grandkid.transform.SetParent(kid);
+    kid.transform.SetParent(root);
+    assert.equal(kid.scene, s);
+    assert.equal(s.Find('Grandkid'), grandkid);
+    const other = new Scene();
+    const host = other.CreateGameObject('Host');
+    kid.transform.SetParent(host);   // moved to another scene: listed there, not here
+    assert.equal(other.Find('Grandkid'), grandkid);
+    assert.equal(s.Find('Kid'), null);
+});
+
+test('review 7: export default of a plain function is not a class: its top-level functions are the handlers (as the engine)', () => {
+    const w = world('let n = 0;\nexport default function Update(dt) { n++; }');
+    w.frames(3);
+    assert.equal(w.g.log.filter(l => l.level === 'error').length, 0, JSON.stringify(w.g.log));
+    assert.equal(w.sc.Get('n'), 3);
+    const g = new Game();
+    const go = g.scene.CreateGameObject('F');
+    const sc = go.AddComponent(ScriptComponent, function NotAClass() {});
+    g.step(DT);
+    assert.equal(sc.instance, null);
+    assert.ok(g.log.some(l => l.level === 'error' && /a class or an object/.test(l.text)));
+});
+
+test('review 8: Awake waits until the object is active, then runs with OnEnable and Start (the engine order)', () => {
+    const g = new Game();
+    const go = g.scene.CreateGameObject('Later');
+    go.active = false;
+    const sc = g.AddScript(go, 'export default class A { calls = []; Awake() { this.calls.push("Awake"); } OnEnable() { this.calls.push("OnEnable"); } Start() { this.calls.push("Start"); } }');
+    g.step(DT); g.step(DT);
+    assert.deepEqual(sc.Get('calls'), []);
+    go.active = true;
+    g.step(DT);
+    assert.deepEqual(sc.Get('calls'), ['Awake', 'OnEnable', 'Start']);
+});

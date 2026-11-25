@@ -80,21 +80,21 @@ export class Game {
         const T = this.Time;
         this.input.BeginFrame();
         const scripts = this.scene.FindComponents(ScriptComponent);
-        // new scripts: Awake and OnEnable at once, Start before their first update
-        for (const s of scripts) {
-            if (!s.instance && !s._failed) {
-                if (!s.Load(this)) { s._failed = true; continue; }
-                s.Call('Awake');
-            }
-        }
+        // new scripts are loaded at once; Awake, OnEnable and Start run together the first frame the script can run
+        // (enabled, on an active object), as the engine's ScriptComponent::Start and JavaScriptVM::CallStart do
+        for (const s of scripts) if (!s.instance && !s._failed && !s.Load(this)) s._failed = true;
         const live = [];
         for (const s of this.scene.FindComponents(ScriptComponent)) {
             if (!s.instance || !s.gameObject || s.gameObject.destroyed) continue;
             const on = s.enabled && s.gameObject.activeInHierarchy;
-            if (on !== s._enabledSeen) { s._enabledSeen = on; s.Call(on ? 'OnEnable' : 'OnDisable'); }
-            if (!on) continue;
-            if (!s._started) { s._started = true; s.Call('Start'); }
-            live.push(s);
+            if (!s._started) {
+                if (!on) continue;
+                s._started = true; s._enabledSeen = true;
+                s.Call('Awake'); s.Call('OnEnable'); s.Call('Start');
+            } else if (on !== s._enabledSeen) {
+                s._enabledSeen = on; s.Call(on ? 'OnEnable' : 'OnDisable');
+            }
+            if (on) live.push(s);
         }
         const alive = s => s.gameObject && !s.gameObject.destroyed && s.enabled;
         T.unscaledDeltaTime = dt;

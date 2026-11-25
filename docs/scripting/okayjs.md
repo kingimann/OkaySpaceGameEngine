@@ -62,8 +62,8 @@ table (`engine/src/Script/EngineApi*.cpp`, `engine/src/Scripting/ScriptApiCore.c
 
 | Covered | Notes |
 | --- | --- |
-| `export default class`, `export default { }`, no export (global functions, also lower-case `update`), `export <declaration>` | the text is run as a strict function body; line numbers in errors match the script |
-| Awake, OnEnable, Start, FixedUpdate(dt), Update(dt), LateUpdate(dt), OnDisable, OnDestroy | in the engine's order; FixedUpdate at 1/50 s, at most 5 steps a frame; OnEnable / OnDisable when the object or the component is switched |
+| `export default class`, `export default { }`, no export (global functions, also lower-case `update`), `export <declaration>` | the text is run as a strict function body inside an inner function, so a script's own top-level `Time` or `transform` shadows the global; line numbers in errors match the script; a default-exported plain function is not constructed: as in the engine (only a class constructor is made), the top-level functions are the handlers |
+| Awake, OnEnable, Start, FixedUpdate(dt), Update(dt), LateUpdate(dt), OnDisable, OnDestroy | in the engine's order: Awake, OnEnable and Start together the first frame the script can run (an inactive object waits, as `ScriptComponent::Start` / `JavaScriptVM::CallStart`); FixedUpdate at 1/50 s, at most 5 steps a frame; OnEnable / OnDisable when the object or the component is switched; on destroy OnDisable only if still enabled, and nothing for a script that never started (`ScriptComponent::OnDestroy`) |
 | `this.gameObject`, `this.transform`, globals `gameObject`, `transform`, `GetComponent(name)`, `Destroy(obj)` | |
 | Settings: instance fields, replaced from outside (`fields`, what the Inspector does) | text values read as numbers, booleans, `Vector3(1, 2, 3)` |
 | GameObject: `name`, `tag`, `active`, `transform`, `GetComponent`, `GameObject.Find`, `GameObject.FindWithTag`, `String(obj)` = `GameObject(Name)`, a destroyed object is an error | |
@@ -92,6 +92,7 @@ engine forbids. Error texts are the browser's, not okay::js's.
 ## Tests
 
 - `okayjs_unit` (`node --test tests/okayjs/test_okayjs_math.mjs tests/okayjs/test_okayjs_script.mjs`, plain Node):
+  plus `test_okayjs_renderer.mjs` (the renderer against a fake WebGL context: no texture is made while a picture loads):
   the maths against hand-worked values and against a second way of computing the same thing, mesh winding, the scene
   graph, the game loop, input from synthetic events and a fake Gamepad API pad, and the engine test's game scripts
   (`tests/test_js_script.cpp` cases 1, 2, 3, 5 and 6 on `claude/javascript-1`).

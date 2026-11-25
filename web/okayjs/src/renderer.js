@@ -213,9 +213,11 @@ export class Renderer {
         if (!tex || !tex.source) return this.white;
         let t = this.textures.get(tex);
         if (t && t.version === tex.version) return t.handle;
-        if (!t) t = { handle: gl.createTexture() };
         const src = tex.source;
-        if (src instanceof HTMLImageElement && !src.complete) return this.white;   // not loaded yet: draw plain
+        // an <img> that has not loaded yet: draw plain, and make nothing until it can be drawn ('complete' rather than
+        // instanceof HTMLImageElement, which does not exist in a worker)
+        if ('complete' in src && !src.complete) return t ? t.handle : this.white;
+        if (!t) { t = { handle: gl.createTexture() }; this.textures.set(tex, t); }
         gl.bindTexture(gl.TEXTURE_2D, t.handle);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);   // picture rows run top-down; uv (0, 0) is the bottom-left
         const w = tex.width, h = tex.height;

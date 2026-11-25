@@ -61,16 +61,18 @@ export function translateScript(src) {
     });
     if (!defName) body = body.replace(/^([ \t]*)export\s+default\s+/m, '$1__okayDefault = ');
     body = body.replace(/^([ \t]*)export\s+(?=(?:async\s+)?(?:class|function|const|let|var)\b)/gm, '$1');
-    const names = topLevelNames(body).filter(x => x !== '__okayDefault');
+    const names = topLevelNames(body).filter(x => !x.startsWith('__okay'));   // the getter's own names stay hidden
     const handlers = HANDLERS.map(h => `${h}: typeof ${h} === 'function' ? ${h} : undefined`).join(', ');
     const getter = names.length
-        ? `(n) => { switch (n) { ${names.map(x => `case ${JSON.stringify(x)}: return ${x};`).join(' ')} } return undefined; }`
+        ? `(__okayName) => { switch (__okayName) { ${names.map(x => `case ${JSON.stringify(x)}: return ${x};`).join(' ')} } return undefined; }`
         : '() => undefined';
     const setter = names.length
-        ? `(n, v) => { switch (n) { ${names.map(x => `case ${JSON.stringify(x)}: ${x} = v; return true;`).join(' ')} } return false; }`
+        ? `(__okayName, __okayValue) => { switch (__okayName) { ${names.map(x => `case ${JSON.stringify(x)}: ${x} = __okayValue; return true;`).join(' ')} } return false; }`
         : '() => false';
-    return '"use strict"; let __okayDefault;\n' + body +
-        `\n;return { def: ${defName || '__okayDefault'}, handlers: { ${handlers} }, get: ${getter}, set: ${setter} };`;
+    // The script runs inside an inner function, so its own top-level `let Time`, `class Input` or `const transform`
+    // shadow the engine globals (the outer function's parameters) instead of clashing with them.
+    return '"use strict"; return (() => { let __okayDefault;\n' + body +
+        `\n;return { def: ${defName || '__okayDefault'}, handlers: { ${handlers} }, get: ${getter}, set: ${setter} };\n})();`;
 }
 
 /** Where an error happened in a script, as "script:LINE" (or "script" when the browser does not say). */
@@ -113,9 +115,12 @@ export class ScriptComponent extends Component {
                 def = mod.def;
             }
             let inst;
-            if (typeof def === 'function') inst = new def();
+            const isClass = typeof def === 'function' && /^class\b/.test(Function.prototype.toString.call(def));
+            if (typeof def === 'function' && !isClass && !mod)
+                throw new TypeError('A script must be script text, a class or an object; got a plain function');
+            if (isClass) inst = new def();
             else if (def && typeof def === 'object') inst = def;
-            else {   // no export: the top-level functions are the handlers
+            else {   // no export, or a plain function exported (as in the engine): the top-level functions are the handlers
                 inst = {};
                 for (const [k, f] of Object.entries(mod ? mod.handlers : {})) if (f) inst[k] = f;
             }
@@ -166,7 +171,14 @@ export class ScriptComponent extends Component {
         const text = where(e, this._id) + ': ' + (e && e.name ? e.name + ': ' + e.message : String(e));
         if (this.game) this.game.Debug.LogError(text); else console.error(text);
     }
-    OnDestroyComponent() { if (this.instance) { this.Call('OnDisable'); this.Call('OnDestroy'); } }
+    /** The engine's ScriptComponent::OnDestroy: nothing for a script that never started; OnDisable only when it is
+     *  still enabled (not a second time after it was switched off); OnDestroy once. */
+    OnDestroyComponent() {
+        if (!this.instance || !this._started || this._destroyCalled) return;
+        this._destroyCalled = true;
+        if (this._enabledSeen) { this._enabledSeen = false; this.Call('OnDisable'); }
+        this.Call('OnDestroy');
+    }
 }
 
 function coerce(v) {

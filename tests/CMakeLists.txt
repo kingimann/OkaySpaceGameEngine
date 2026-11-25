@@ -2752,7 +2752,7 @@ if(OKAY_NODE)
     # okay.js (web/okayjs/, docs/scripting/okayjs.md): maths, meshes, scene graph, input, game loop and the engine's game
     # scripts in plain node; then the examples in headless Chromium (skipped, 77, when playwright cannot be loaded).
     add_test(NAME okayjs_unit COMMAND ${OKAY_NODE} --test ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_math.mjs
-             ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_script.mjs)
+             ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_script.mjs ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_renderer.mjs)
     add_test(NAME okayjs_browser COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_browser.js)
     set_tests_properties(okayjs_browser PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()

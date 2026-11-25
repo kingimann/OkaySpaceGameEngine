@@ -126,6 +126,12 @@ export class Input {
                 }
                 this._mouseDelta[0] += e.movementX || 0; this._mouseDelta[1] += e.movementY || 0;
                 this._mouse = p;
+                // a button pressed or let go while another is held comes as a pointermove (Pointer Events "chorded
+                // buttons"): take the state of every button from the `buttons` bit mask
+                if (e.pointerType !== 'touch' && typeof e.buttons === 'number') {
+                    // bits: 1 left, 2 right, 4 middle, 8 back, 16 forward = the engine's 0, 1, 2, 3, 4
+                    for (let b = 0; b < 5; ++b) ((e.buttons >> b) & 1) ? this.mouse.press(b) : this.mouse.release(b);
+                }
             });
             const up = e => {
                 if (e.pointerType === 'touch') {

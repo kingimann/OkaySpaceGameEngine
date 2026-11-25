@@ -7,6 +7,8 @@
 #include "ScriptAssist.hpp"
 #include "MainShared.hpp"          // g_showScriptDocs, g_codeFont, SectionHeader (main.cpp)
 #include "ConsolePanel.hpp"        // ConsoleLog
+#include "okay/Lua/Lua.hpp"         // okay::lua::kKeywords
+#include "okay/Lua/LuaScriptVM.hpp" // LuaLanguageWords: the bound engine names and their docs for Lua scripts
 #include "ScriptAssistBindings.hpp" // components' members, argument hints and docs from the engine's binding table
 
 namespace oked {
@@ -1971,6 +1973,30 @@ const scripteditor::LanguageWords& OkayScriptLanguageWords() {
         d.lineComments = {"//", "#"};     // '#' comments; a "#" inside a string stays part of the string
         d.blockStart = "/*";
         d.blockEnd = "*/";
+        inited = true;
+    }
+    return d;
+}
+
+// Lua scripts (language "lua", our own interpreter okay::lua): the Lua keywords, '--' and '--[[ ]]' comments,
+// and every bound engine type and member (LuaScriptVM::CompletionNames) with its hover doc (CompletionDoc).
+const scripteditor::LanguageWords& LuaLanguageWords() {
+    static bool inited = false;
+    static scripteditor::LanguageWords d;
+    if (!inited) {
+        for (const char* k : okay::lua::kKeywords) d.keywords.push_back(k);
+        d.keywords.push_back("self");
+        for (const char* t : {"GameObject", "Transform", "Vector3", "Input", "Time", "Debug", "Mathf", "Rigidbody"})
+            d.types.push_back(t);
+        for (const auto& name : okay::LuaScriptVM::CompletionNames()) {
+            if (std::find(d.keywords.begin(), d.keywords.end(), name) != d.keywords.end()) continue;
+            std::string doc = okay::LuaScriptVM::CompletionDoc(name);
+            d.known.push_back(name);
+            d.docs.emplace(name, doc.empty() ? std::string("Lua name") : doc);
+        }
+        d.lineComments = {"--"};
+        d.blockStart = "--[[";
+        d.blockEnd = "]]";
         inited = true;
     }
     return d;

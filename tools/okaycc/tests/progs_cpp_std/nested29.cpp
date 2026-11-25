@@ -35,6 +35,21 @@ struct Derived : Skel {
     Bar more{5, 6, 7, 8};
     float Sum() const { return more.x + b.x; }
 };
+namespace app {
+struct Paths {
+    struct Env {
+        std::string home;
+        static Env Current();
+    };
+    static int Count() { return 2; }
+};
+// a member of a nested class defined outside it: Env is the class itself, Paths's members are seen
+Paths::Env Paths::Env::Current() {
+    Env e;
+    e.home = std::string("/home/") + std::to_string(Count());
+    return e;
+}
+}  // namespace app
 namespace gx {
 inline int Bar(const char *n, Vec2 pos, Vec2 size, int role = 0) {
     return (int)(pos.x + pos.y + size.x * 10 + size.y) + role + (int)std::string(n).size();
@@ -48,5 +63,6 @@ int main() {
     Skel::Bar q{5, 6, 7, 8};
     s.Count(3);
     std::printf("%g %g %g %d %g\n", s.W(), s.H(), q.x, s.Count(3L), Derived().Sum());
+    std::printf("%s\n", app::Paths::Env::Current().home.c_str());
     return 0;
 }

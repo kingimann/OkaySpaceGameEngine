@@ -3680,16 +3680,31 @@ private:
     void enterMemberScope(const std::string& tag) {
         if (tag.empty() || memberScope_ >= 0) return;
         std::map<std::string, std::unique_ptr<Type>> names;
-        std::string pre = tag + "::";
-        for (auto it = memberTypes_.lower_bound(pre); it != memberTypes_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
-            if (it->second && it->first.find("::", pre.size()) == std::string::npos)
-                names[it->first.substr(pre.size())] = cloneType(*it->second);
-        for (auto it = structs_.lower_bound(pre); it != structs_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
-            if (it->second && it->first.find("::", pre.size()) == std::string::npos && !it->second->tag.empty()) {
-                auto t = ty(Type::Kind::Struct);
-                t->tag = it->second->tag;
-                names[it->first.substr(pre.size())] = std::move(t);
+        // The class's member types, then those of the classes it is nested in, and each of those
+        // classes' own names ([basic.lookup.unqual] p8, [class.nest]): in Paths::Env::Current()
+        // "Env" is the class itself (nested class names are not kept outside their class).
+        for (std::string cls = tag; !cls.empty() && classOf(cls);) {
+            std::string pre = cls + "::";
+            for (auto it = memberTypes_.lower_bound(pre); it != memberTypes_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
+                if (it->second && it->first.find("::", pre.size()) == std::string::npos &&
+                    !names.count(it->first.substr(pre.size())))
+                    names[it->first.substr(pre.size())] = cloneType(*it->second);
+            for (auto it = structs_.lower_bound(pre); it != structs_.end() && it->first.compare(0, pre.size(), pre) == 0; ++it)
+                if (it->second && it->first.find("::", pre.size()) == std::string::npos && !it->second->tag.empty() &&
+                    !names.count(it->first.substr(pre.size()))) {
+                    auto t = ty(Type::Kind::Struct);
+                    t->tag = it->second->tag;
+                    names[it->first.substr(pre.size())] = std::move(t);
+                }
+            const std::size_t cut = cls.rfind("::");
+            if (cls.find('<') == std::string::npos && !names.count(shortName(cls))) {
+                auto self = ty(Type::Kind::Struct);
+                self->tag = cls;
+                names[shortName(cls)] = std::move(self);
             }
+            if (cut == std::string::npos) break;
+            cls = cls.substr(0, cut);
+        }
         if (names.empty()) return;
         tscopes_.emplace_back();
         memberScope_ = static_cast<long>(tscopes_.size()) - 1;

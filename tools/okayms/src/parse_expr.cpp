@@ -26,6 +26,12 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
         // size is a multiple of its alignment).
         std::vector<Node> items;
         while (!is(TRBrace) && !is(TEnd)) {
+            bool expanded = false;
+            if (!pack_expansion_items(true, &items, &expanded)) return false;
+            if (expanded) {
+                if (!accept(TComma)) break;
+                continue;
+            }
             Node item;
             if (is(TLBrace)) {
                 if (!braced_temp(elem.struct_id, &item)) return false;
@@ -78,6 +84,15 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
     }
     std::vector<Node> items;
     while (!is(TRBrace) && !is(TEnd)) {
+        bool expanded = false;
+        const size_t first_new = items.size();
+        if (!pack_expansion_items(true, &items, &expanded)) return false;
+        if (expanded) {
+            for (size_t i = first_new; i < items.size(); ++i)
+                if (elem.base != 3 && elem.base != 0 && elem.pointers == 0 && !convert_class(&items[i], elem)) return false;
+            if (!accept(TComma)) break;
+            continue;
+        }
         Node item;
         if (is(TLBrace) && elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0) {
             if (!braced_temp(elem.struct_id, &item)) return false;
@@ -198,6 +213,7 @@ bool Parser::braced_temp(int bsid, Node* out) {
                     if (f.type.base != 3 && f.type.base != 0 && f.type.pointers == 0 && !f.type.is_array() &&
                         !convert_class(&item, f.type))
                         return false;
+                    if (f.type.memptr >= 0) class_ptr_convert(&item, f.type);
                 }
                 Node fn;
                 fn.kind = Node::Field;
@@ -236,6 +252,10 @@ bool Parser::braced_temp(int bsid, Node* out) {
         } else {
             Node binit;
             if (!parse_init(&binit)) return false;
+            if (has_memptr(bt) && binit.kind == Node::Block && binit.text == "init") {
+                binit = elide_braces(bt, binit);
+                memptr_fix_list(bt, &binit);  // C{..., nullptr} with a member pointer: -1 (Round 31)
+            }
             Node assign;
             assign.kind = Node::Assign;
             assign.op = TAssign;
@@ -1711,7 +1731,12 @@ bool Parser::parse_unary(Node* out) {
                 return parse_postfix(out);
             }
         }
-        if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
+        // E::k, a scoped enumerator (lower_cxx_spellings joined `L::Type::Hinge` to `Type::Hinge`): it is the enumerator
+        // even when a class of the enumeration's plain name exists elsewhere (sc::Type beside IKJointLimit::Type in
+        // JointLimit.hpp:114; Round 31). Before, `Type` was taken as that class and `Hinge` as its member function.
+        const bool scoped_enumerator = colons != std::string::npos && scope_sid < 0 && !is(TLParen) && !is(TLt) &&
+                                       enum_values.count(name) > 0;
+        if (scope_sid < 0 && colons != std::string::npos && !scoped_enumerator) scope_sid = scope_class(name.substr(0, colons));
         if (scope_sid >= 0 && colons != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
             // class has no member function of that name. Nested classes are kept under their plain name.
@@ -2207,25 +2232,33 @@ bool Parser::parse_unary(Node* out) {
             }
         }
     } else if (is(TLParen)) {
-        const Tok ahead = at + 1 < tokens.size() ? tokens[at + 1].kind : TEnd;
+        // (ns::T)x and (ns::T)(x): the namespace names kept before a type (strip_namespace_qualifiers keeps them where
+        // a call may follow, Round 31) are passed over to find the type's name.
+        size_t tn = at + 1;
+        while (tn + 2 < tokens.size() && tokens[tn].kind == TIdent && namespaces.count(tokens[tn].text) > 0 &&
+               tokens[tn + 1].kind == TColonColon && tokens[tn + 2].kind == TIdent)
+            tn += 2;
+        const bool tq = tn != at + 1;  // qualified by namespace names
+        const Tok ahead = tn < tokens.size() ? tokens[tn].kind : TEnd;
+        const Tok after_tn = tn + 1 < tokens.size() ? tokens[tn + 1].kind : TEnd;
         const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
-                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd)))) ||  // a parameter `seconds` hides chrono's type
-                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1) &&
-                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd)))) ||
+                                (ahead == TIdent && typedefs.find(tokens[tn].text) != typedefs.end() && !qualified_value_at(tn) &&
+                                 (tq || tokens[tn].nsq || (!local_visible(tokens[tn].text) && !member_hides(tokens[tn].text, after_tn)))) ||  // a parameter `seconds` hides chrono's type
+                                (ahead == TIdent && class_name_at(tn) && !qualified_value_at(tn) &&
+                                 (tq || tokens[tn].nsq || (!local_visible(tokens[tn].text) && !member_hides(tokens[tn].text, after_tn)))) ||
                                 // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
-                                (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text) &&
-                                 !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd) && template_id_cast_at(at + 1)) ||
+                                (ahead == TIdent && is_template_name_at(tn) && (tq || !local_visible(tokens[tn].text)) &&
+                                 !member_hides(tokens[tn].text, after_tn) && template_id_cast_at(tn)) ||
                                 // (decltype(x)*)p, and static_cast<decltype(f)*>(p) ([dcl.type.decltype])
-                                (ahead == TIdent && tokens[at + 1].text == "decltype" && at + 2 < tokens.size() &&
-                                 tokens[at + 2].kind == TLParen);
+                                (ahead == TIdent && tokens[tn].text == "decltype" && tn + 1 < tokens.size() &&
+                                 tokens[tn + 1].kind == TLParen);
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
         if (type_ahead) {
-            size_t k = at + 1;
+            size_t k = tn;
             if (tokens[k].kind == TIdent && tokens[k].text == "decltype") {
                 int depth = 0;  // past decltype( ... ): (decltype(x)(y) + 1) is a functional cast
                 for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
@@ -2249,9 +2282,9 @@ bool Parser::parse_unary(Node* out) {
             } else {
                 k = after_type_keywords(k);
             }
-            functional = k > at + 1 && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
+            functional = k > tn && k + 1 < tokens.size() && tokens[k].kind == TLParen && tokens[k + 1].kind != TStar;
             // (Vec3{0, 0, 0} - v): a braced temporary ([expr.type.conv] 2) in parentheses, not a cast (Round 30).
-            if (k > at + 1 && k < tokens.size() && tokens[k].kind == TLBrace) functional = true;
+            if (k > tn && k < tokens.size() && tokens[k].kind == TLBrace) functional = true;
         }
         if (type_ahead && !functional) {
             const bool reinterp = cur().text == "(reinterpret";
@@ -2356,6 +2389,41 @@ bool Parser::parse_unary(Node* out) {
             out->type = ty;
             out->kids.push_back(std::move(inner));
         } else {
+            // (name)(args) and (ns::name<T>)(args): a parenthesized name that is not a type, called. The parentheses
+            // keep a function-like macro of that name from being expanded (the preprocessor expands one only when '('
+            // follows the name, [cpp.replace] 10), as in `(std::max)(a, b)` under windows.h's max. A parenthesized
+            // name means the same function, object or overload set ([expr.prim.paren]), so (name)(args) is the call
+            // name(args); the tokens are rewritten in place to (name(args)), which keeps their count and reads the
+            // same when a template body is read again (Round 31; Round 30 did this only for names ending in min or
+            // max). Own difference: argument-dependent lookup, which a parenthesized name turns off
+            // ([basic.lookup.argdep] 1), is not turned off.
+            size_t k = at + 1;
+            if (k < tokens.size() && tokens[k].kind == TColonColon) ++k;
+            bool shape = k < tokens.size() && tokens[k].kind == TIdent;
+            while (shape && k + 2 < tokens.size() && tokens[k + 1].kind == TColonColon && tokens[k + 2].kind == TIdent) k += 2;
+            if (shape && k + 1 < tokens.size() && tokens[k + 1].kind == TLt &&
+                (func_templates.count(tokens[k].text) > 0 || is_template_name_at(k))) {
+                int angle = 0;  // (std::max<int>)(a, b)
+                for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                    if (tokens[k].kind == TLt) ++angle;
+                    else if (tokens[k].kind == TGt && --angle == 0) break;
+                }
+                shape = k < tokens.size() && tokens[k].kind == TGt;
+            }
+            const size_t close = k + 1;
+            if (shape && close + 1 < tokens.size() && tokens[close].kind == TRParen && tokens[close + 1].kind == TLParen) {
+                size_t end = close + 1;  // the ')' of the call
+                int depth = 0;
+                for (; end < tokens.size() && tokens[end].kind != TEnd; ++end) {
+                    if (tokens[end].kind == TLParen) ++depth;
+                    else if (tokens[end].kind == TRParen && --depth == 0) break;
+                }
+                if (end < tokens.size() && tokens[end].kind == TRParen) {
+                    const Token paren = tokens[close];
+                    for (size_t m = close; m < end; ++m) tokens[m] = tokens[m + 1];
+                    tokens[end] = paren;
+                }
+            }
             bool folded = false;
             if (!try_fold(out, &folded)) return false;
             if (!folded) {
@@ -2394,6 +2462,7 @@ bool Parser::parse_unary(Node* out) {
         no_const_subst = saved_subst;
         if (!inner_ok) return false;
         const Tok uop = out->op;
+        if (uop == TNot) memptr_truth(&inner);  // !pm: pm == -1 (Round 31)
         if (uop == TAmp && ((inner.kind == Node::Name && inner.kids.empty() && names_function(inner.text)) ||
                             (inner.kind == Node::Unary && inner.op == TEnd && inner.text == "<static-fn>"))) {
             // &f of a function ([expr.unary.op] 3): the function's address, which the name alone already is ([conv.func]).
@@ -2771,16 +2840,58 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     continue;
                 }
                 const auto class_obj = [](const Type& t) {
-                    return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id >= 0;
+                    return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id >= 0 && t.memptr < 0;
                 };
-                // c ? "text" : std::string(...): one operand of a class and one that is not; the other is converted to
-                // the class ([expr.cond] 4.3, a converting constructor), so the result is an object of that class
-                // (Round 30: LocalPlayerInput.hpp's `kb ? "keyboard" : "pad" + std::to_string(n)`).
-                const bool mixed = cur_locals != nullptr && typed && class_obj(ta) != class_obj(tb) &&
-                                   (class_obj(ta) ? tb : ta).memptr < 0 &&
-                                   ((class_obj(ta) ? tb : ta).pointers > 0 || (class_obj(ta) ? tb : ta).is_array()) &&
-                                   structs[static_cast<size_t>((class_obj(ta) ? ta : tb).struct_id)].name == "string";
-                if (mixed && !class_obj(ta)) ta = tb;
+                // Operands of other types where one is an object of a class ([expr.cond] 4): each is tried as a
+                // conversion to the other's type; when only one way works, that conversion is made (Round 31; Round 30
+                // did only std::string from a string literal).
+                //  - an lvalue of a class derived from the other operand's class (both lvalues): the base subobject,
+                //    and the result is an lvalue of the base ([expr.cond] 4.1);
+                //  - a converting constructor of the class takes the other operand: the result is an object of the
+                //    class made from it ([expr.cond] 4.3, LocalPlayerInput.hpp's `kb ? "keyboard" : "pad" + ...`);
+                //  - a conversion function of the class gives the other operand's type (an arithmetic type or a
+                //    pointer): the class operand is converted and the scalar ternary follows.
+                bool mixed = false;
+                if (cur_locals != nullptr && typed && (class_obj(ta) || class_obj(tb)) &&
+                    !(class_obj(ta) && class_obj(tb) && ta.struct_id == tb.struct_id)) {
+                    if (class_obj(ta) && class_obj(tb) && lvalue(mid) && lvalue(els) &&
+                        (derives_from(ta.struct_id, tb.struct_id) || derives_from(tb.struct_id, ta.struct_id))) {
+                        const Type base = derives_from(ta.struct_id, tb.struct_id) ? tb : ta;
+                        Type bp = base;
+                        bp.is_const = false;
+                        bp.pointers = 1;
+                        Node pa = node_addr(std::move(mid));
+                        Node pb = node_addr(std::move(els));
+                        class_ptr_convert(&pa, bp);
+                        class_ptr_convert(&pb, bp);
+                        tern.kids.push_back(cast_node(bp, std::move(pa)));
+                        tern.kids.push_back(cast_node(bp, std::move(pb)));
+                        *out = Node{};
+                        out->kind = Node::Unary;
+                        out->op = TStar;
+                        out->kids.push_back(std::move(tern));
+                        continue;
+                    }
+                    const bool a_class = class_obj(ta);
+                    const Type& ct = a_class ? ta : tb;  // a class operand (the first one when both are)
+                    const Type& ot = a_class ? tb : ta;
+                    Node& cnode = a_class ? mid : els;
+                    Node& onode = a_class ? els : mid;
+                    const bool to_class = converts_by_ctor(ct.struct_id, onode, ot);
+                    const bool to_other = class_obj(ot) ? converts_by_ctor(ot.struct_id, cnode, ct)
+                                                        : (ot.memptr < 0 && conv_for(ct.struct_id, ot) != nullptr);
+                    if (to_class && !to_other) {
+                        mixed = true;
+                        ta = ct;
+                    } else if (to_other && !to_class) {
+                        if (class_obj(ot)) {
+                            mixed = true;
+                            ta = ot;
+                        } else if (!convert_class(&cnode, ot)) {
+                            return false;
+                        }
+                    }
+                }
                 if (mixed || (cur_locals != nullptr && typed && ta.base == 3 &&
                     ta.pointers == 0 && !ta.is_array() && tb.base == 3 && tb.pointers == 0 &&
                     ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els)))) {
@@ -2794,7 +2905,7 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     chosen.kids.push_back(std::move(tern.kids[0]));
                     for (Node* branch : {&mid, &els}) {
                         Type bt;
-                        if (mixed && static_type(*branch, &bt) && !class_obj(bt)) {
+                        if (mixed && static_type(*branch, &bt) && !(class_obj(bt) && bt.struct_id == ta.struct_id)) {
                             // The operand that is not an object: the hidden object is made from it by a constructor.
                             Node ctor_stmt;
                             std::vector<Node> cargs;
@@ -2878,6 +2989,9 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     class_ptr_convert(&right, lt);
                     class_ptr_convert(out, rt);
                 }
+                // pm == nullptr and pm != 0: the null constant becomes the null member pointer, -1 ([expr.eq] 4).
+                if (lt.memptr >= 0 && lt.pointers == 0 && memptr_null_constant(right)) right = memptr_null(lt);
+                if (rt.memptr >= 0 && rt.pointers == 0 && memptr_null_constant(*out)) *out = memptr_null(rt);
             }
         }
         Node bin;
@@ -3191,7 +3305,8 @@ bool Parser::member_pointer_ahead() const {
     return find_field_named(d, tokens[k].text) >= 0;
 }
 
-// &C::m: a constant of type `T C::*`, the member's offset in C plus one (Type::memptr; Round 30).
+// &C::m: a constant of type `T C::*`, the member's offset in C (Type::memptr; Microsoft's representation from Round 31,
+// with -1 for null; Round 30 kept the offset plus one and 0 for null).
 bool Parser::parse_member_pointer(Node* out) {
     next();  // &
     int sid = scope_class(cur().text);
@@ -3226,13 +3341,13 @@ bool Parser::parse_member_pointer(Node* out) {
     memptr_types().emplace_back(cls, member);
     *out = Node{};
     out->kind = Node::IntLit;
-    out->number = static_cast<uint64_t>(f.offset + 1);
+    out->number = static_cast<uint64_t>(f.offset);
     out->type = mp;
     return true;
 }
 
 // obj.*pm and ptr->*pm ([expr.mptr.oper]): the member at the offset pm holds, as an lvalue of its type:
-// *(T*)((char*)&obj + pm - 1). A null pm is not checked (undefined behaviour in the standard).
+// *(T*)((char*)&obj + pm). A null pm is not checked (undefined behaviour in the standard).
 bool Parser::apply_member_pointer(Node object, bool arrow, Node* out) {
     Node pm;
     if (!parse_unary(&pm)) return false;
@@ -3261,15 +3376,10 @@ bool Parser::apply_member_pointer(Node object, bool arrow, Node* out) {
     sum.kind = Node::Binary;
     sum.op = TPlus;
     sum.kids.push_back(cast_node(bytes, std::move(addr)));
-    Node off;
-    off.kind = Node::Binary;
-    off.op = TMinus;
     Type wide;
     wide.base = 1;
     wide.wide = true;
-    off.kids.push_back(cast_node(wide, std::move(pm)));
-    off.kids.push_back(int_node(1));
-    sum.kids.push_back(std::move(off));
+    sum.kids.push_back(cast_node(wide, std::move(pm)));
     Type target = mp.second;
     target.is_ref = false;
     target.rref = false;

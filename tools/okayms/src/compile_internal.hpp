@@ -101,8 +101,8 @@ struct Type {
     // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
     int deduce = 0;
     // A pointer to a data member ([dcl.mptr], `T C::*`; Round 30): its index in memptr_types(), or -1. The value is an
-    // int: the member's offset in C plus one, and 0 for a null member pointer (own representation; Microsoft keeps the
-    // offset and uses -1 for null).
+    // int: the member's offset in C, and -1 for a null member pointer (Microsoft's representation for a class without
+    // virtual bases, from Round 31; Round 30 kept the offset plus one and 0 for null).
     int memptr = -1;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }

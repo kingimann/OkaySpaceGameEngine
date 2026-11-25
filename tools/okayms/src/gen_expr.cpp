@@ -1263,6 +1263,12 @@ bool Gen::gen_expr(const Node& node) {
         const int off = spill();
         if (!error.empty()) return false;
         if (!gen_expr(node.kids[1])) return false;
+        if (node.op == TComma) {
+            // a, b ([expr.comma]): the value and type of b, whatever the types (Round 31: `++x, w0 += dw0` with
+            // doubles in SoftwareRenderer.hpp:302 went to the floating-point operators and was refused).
+            --temp_depth;
+            return true;
+        }
         if ((left_type.pointers > 0 || left_type.is_array()) && node.op == TPlus) {
             const int scale = std::max(1, size_of(element_type(left_type)));
             b(0x48);
@@ -1314,10 +1320,6 @@ bool Gen::gen_expr(const Node& node) {
         const bool right_fp = is_fp_t(last_type);
         if (left_fp || right_fp) return fp_binary(node.op, left_type, off);
         const Type right_type = last_type;
-        if (node.op == TComma) {
-            --temp_depth;
-            return true;
-        }
         const bool shift = node.op == TShl || node.op == TShr;
         const bool left_ptr = is_ptr_t(left_type);
         const bool right_ptr = is_ptr_t(right_type);

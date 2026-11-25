@@ -196,41 +196,51 @@ bool Parser::try_fold(Node* out, bool* folded) {
     return true;
 }
 
+// At an item of a call's argument list or of a braced list: `g(xs)...` or `T(std::forward<A>(a))...`, a pattern that
+// names a parameter pack and ends with '...', is read once per element of the pack ([temp.variadic] 5; Round 31 also
+// in a braced list: `std::vector<LocArg>{LocArg(std::forward<A>(args))...}` of Localization.hpp). *done tells whether
+// the items were read; a bare `xs...` is left to the caller unless allow_bare.
+bool Parser::pack_expansion_items(bool allow_bare, std::vector<Node>* items, bool* done) {
+    *done = false;
+    const size_t start = at;
+    size_t e = start;
+    int depth = 0;
+    for (; e < tokens.size() && tokens[e].kind != TEnd; ++e) {
+        const Tok kind = tokens[e].kind;
+        if (kind == TLParen || kind == TLBrack || kind == TLBrace) ++depth;
+        else if (kind == TRParen || kind == TRBrack || kind == TRBrace) {
+            if (depth == 0) break;
+            --depth;
+        } else if (kind == TComma && depth == 0) break;
+    }
+    const bool bare = e == start + 2 && tokens[start].kind == TIdent;
+    if (!(e > start + 1 && tokens[e - 1].kind == TEllipsis && (allow_bare || !bare))) return true;
+    const std::vector<std::string> names = packs_in(start, e - 1);
+    if (names.empty()) return true;
+    const size_t count = param_packs[names[0]].size();
+    for (const std::string& n : names)
+        if (param_packs[n].size() != count) {
+            error = "the packs of an expansion differ in length";
+            return false;
+        }
+    for (size_t k = 0; k < count; ++k) {
+        Node element;
+        if (!parse_pack_element(start, e - 1, k, false, &element)) return false;
+        items->push_back(std::move(element));
+    }
+    at = e;
+    *done = true;
+    return true;
+}
+
 bool Parser::parse_call_args(std::vector<Node>* args) {
     if (accept(TRParen)) return true;
     do {
         {
             // f(g(xs)...): a pattern that is not a bare pack name is written once per element.
-            const size_t start = at;
-            size_t e = start;
-            int depth = 0;
-            for (; e < tokens.size() && tokens[e].kind != TEnd; ++e) {
-                const Tok kind = tokens[e].kind;
-                if (kind == TLParen || kind == TLBrack || kind == TLBrace) ++depth;
-                else if (kind == TRParen || kind == TRBrack || kind == TRBrace) {
-                    if (depth == 0) break;
-                    --depth;
-                } else if (kind == TComma && depth == 0) break;
-            }
-            const bool bare = e == start + 2 && tokens[start].kind == TIdent;
-            if (e > start + 1 && tokens[e - 1].kind == TEllipsis && !bare) {
-                const std::vector<std::string> names = packs_in(start, e - 1);
-                if (!names.empty()) {
-                    const size_t count = param_packs[names[0]].size();
-                    for (const std::string& n : names)
-                        if (param_packs[n].size() != count) {
-                            error = "the packs of an expansion differ in length";
-                            return false;
-                        }
-                    for (size_t k = 0; k < count; ++k) {
-                        Node element;
-                        if (!parse_pack_element(start, e - 1, k, false, &element)) return false;
-                        args->push_back(std::move(element));
-                    }
-                    at = e;
-                    continue;
-                }
-            }
+            bool expanded = false;
+            if (!pack_expansion_items(false, args, &expanded)) return false;
+            if (expanded) continue;
         }
         Node arg;
         if (is(TLBrace)) {
@@ -577,6 +587,7 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
 
 // An object of a class used where a number or a pointer is wanted: its conversion function is called.
 bool Parser::convert_class(Node* node, const Type& target) {
+    if (target.is_bool && target.pointers == 0 && !target.is_array()) memptr_truth(node);  // `if (pm)`, `bool b = pm;`
     Type t;
     if (!class_object_type(*node, &t)) return true;
     const Method* m = conv_for(t.struct_id, target);
@@ -597,6 +608,10 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
     Type rt;
     const bool lc = class_object_type(*left, &lt);
     const bool rc = class_object_type(*right, &rt);
+    if (op == TAndAnd || op == TOrOr) {
+        memptr_truth(left);  // pm && x: a member pointer is true when it is not null (Round 31)
+        memptr_truth(right);
+    }
     std::string name;
     if (!operator_name(op, &name)) return true;
     if (!lc && !rc) return true;

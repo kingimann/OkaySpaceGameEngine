@@ -2,6 +2,7 @@
 // It writes COFF with the compiler in this tree. It does not call okaycc.
 
 #include "okayms/compile.hpp"
+#include "okayms/file_io.hpp"
 #include "okayms/link.hpp"
 
 #include <cctype>
@@ -13,39 +14,19 @@
 
 namespace {
 
+using okayms::file_exists;
+using okayms::read_file;
+using okayms::write_file;
+
 std::string lower_copy(std::string text) {
     for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return text;
-}
-
-bool file_exists(const std::string& path) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    return static_cast<bool>(in);
-}
-
-std::vector<uint8_t> read_file(const std::string& path, std::string* error) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    if (!in) {
-        *error = "cannot open " + path;
-        return {};
-    }
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 std::string read_text(const std::string& path, std::string* error) {
     const std::vector<uint8_t> bytes = read_file(path, error);
     if (!error->empty()) return {};
     return std::string(bytes.begin(), bytes.end());
-}
-
-bool write_file(const std::string& path, const std::vector<uint8_t>& bytes, std::string* error) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    if (!out) {
-        *error = "cannot write " + path;
-        return false;
-    }
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
 }
 
 void fail(const std::string& message) { std::cerr << "okay-cl: " << message << "\n"; }
@@ -164,6 +145,7 @@ int main(int argc, char** argv) {
             else if (low.compare(0, 2, "fe") == 0) key = "fe";
             else if (low.compare(0, 1, "i") == 0) key = "i";
             else if (low.compare(0, 1, "d") == 0) key = "d";
+            else if (low.compare(0, 1, "u") == 0) key = "u";
             else {
                 fail("unknown flag: " + arg);
                 return 1;
@@ -174,6 +156,7 @@ int main(int argc, char** argv) {
             else if (key == "fe") exe_out = value;
             else if (key == "i") common.include_paths.push_back(value);
             else if (key == "d") common.defines.push_back(value);
+            else if (key == "u") common.undefines.push_back(value);
             else if (key == "entry") link.entry = value;
             else if (key == "libpath") libpaths.push_back(value);
             else if (!set_subsystem(value)) return 1;

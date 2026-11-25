@@ -1,11 +1,11 @@
 // The HTTP seam (okay/Platform/NativeFetch.hpp) on WinHTTP, against a loopback server on 127.0.0.1: the Windows half of
-// claude/third-party-1 ("stop the shipped programs from spawning curl"). The curl fallback is switched off
-// (OKAY_NO_CURL=1) and PATH is emptied, so every answer here comes from WinHTTP or the case fails.
+// claude/third-party-1 ("stop the shipped programs from spawning curl"; since claude/no-curl-1 there is no curl fallback at
+// all). PATH is emptied, so every answer here comes from WinHTTP or the case fails.
 // Checks: WinHTTP is compiled in (it was silently off from #1001 to claude/third-party-1), downloads (success, redirect,
 // 404, 503 retries, a size cap, cancel, a cut answer resumed with Range + If-Range, a file that changed (200 to the
 // resume: started again), no validator (the next try starts from 0), only a checksum (a resumed file that fails it is fetched again from 0)), HEAD, a Range prefix fetch, a POST with headers and
 // a body, and the PR #1186 review fixes: Send's timeout, a cancel and the whole-call limit on a silent server (before the
-// fix they waited for the receive timeout), a 407 that is no answer (curl would be tried), no redirect for a call with a
+// fix they waited for the receive timeout), a 407 that is no answer (a "proxy-auth" failure), no redirect for a call with a
 // credential header, CR/LF taken out of header lines, a body file with a non-ASCII name and one that is missing. Windows only (built by the Windows test job; also runs under Wine). No <thread>/<mutex> (rule 21a):
 // the server runs on a Win32 thread.
 #include <winsock2.h>   // before windows.h (NativeHttp.hpp includes it)
@@ -130,9 +130,8 @@ static bool NoParts(const fs::path& dir) {
 
 int main() {
     InitializeCriticalSection(&g_cs);
-    _putenv("OKAY_NO_CURL=1");   // the curl fallback is off: a WinHTTP miss shows up as a failure
     _putenv("PATH=");
-    _putenv("OKAY_HTTP_CURL=");
+    _putenv("OKAY_HTTP_CURL=1");   // the old kill switch does nothing any more: WinHTTP is the only client
     CHECK(NativeAvailable());
     WSADATA wsa; if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { std::printf("no winsock\n"); return 2; }
     g_listen = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -152,7 +151,7 @@ int main() {
         OwnDownloadSpec sp; sp.userAgent = "OkayTest/1"; sp.headers = {"Cache-Control: no-cache"};
         uint64_t last = 0; sp.onBytes = [&](uint64_t n) { last = n; };
         OwnDownloadResult r = FetchToFile(base + "/ok", out, sp);
-        CHECK(r.outcome == OwnOutcome::Ok && !r.viaCurl && Slurp(out) == pl && r.bytes == 5000 && last == 5000);
+        CHECK(r.outcome == OwnOutcome::Ok && Slurp(out) == pl && r.bytes == 5000 && last == 5000);
         const std::string h = LastHead();
         CHECK(h.find("User-Agent: OkayTest/1") != std::string::npos && h.find("Cache-Control: no-cache") != std::string::npos);
         CHECK(NoParts(dir));
@@ -181,7 +180,7 @@ int main() {
         OwnDownloadResult r = FetchToFile(base + "/slow", out, sp);
         CHECK_OUTCOME(r, OwnOutcome::Cancelled); CHECK(!fs::exists(out)); CHECK(NoParts(dir)); CHECK_MS(t0, 8000);
     }
-    {   // a cut answer: without retries it is no clear answer (and curl is off); with one retry it resumes with Range
+    {   // a cut answer: without retries it is no clear answer; with one retry it resumes with Range
         OwnDownloadSpec sp; sp.retryDelayMs = 10;
         OwnDownloadResult r = FetchToFile(base + "/trunc", out, sp);
         CHECK_OUTCOME(r, OwnOutcome::NotHandled); CHECK(!fs::exists(out)); CHECK(NoParts(dir));
@@ -229,12 +228,12 @@ int main() {
             if (x.error.rfind("timeout", 0) != 0) std::printf("  (error was \"%s\")\n", x.error.c_str());
         }
     }
-    {   // a 407 is no answer from WinHTTP: the seam goes on to curl (off here, so it reports that), even for a POST
+    {   // a 407 is no answer from WinHTTP: a failure that names the proxy, also for a POST
         OwnDownloadSpec sp; sp.retries = 2; sp.retryDelayMs = 10;
         OwnDownloadResult d = FetchToFile(base + "/proxyauth", out, sp);
         CHECK_OUTCOME(d, OwnOutcome::NotHandled); CHECK(d.attempts == 1); CHECK(!fs::exists(out));
         Result r = Send("POST", base + "/proxyauth", {}, "x");
-        CHECK(!r.reached && r.error.find("curl") != std::string::npos);
+        CHECK(!r.reached && r.error.rfind("proxy-auth", 0) == 0);
     }
     {   // redirects: a call with a credential header gets the 3xx itself (curl without -L); others follow
         Result r = Send("GET", base + "/redir", {"Authorization: Bearer secret"});
@@ -276,7 +275,7 @@ int main() {
         CHECK(h.rfind("POST /echo ", 0) == 0 && h.find("X-Authorization: tick") != std::string::npos);
         r = Send("GET", base + "/missing", {});
         CHECK(r.reached && r.status == 404 && r.body == "nope");
-        r = Send("POST", "http://127.0.0.1:1/nothing-listens", {}, "x");   // nobody there: not reached (and curl is off)
+        r = Send("POST", "http://127.0.0.1:1/nothing-listens", {}, "x");   // nobody there: not reached
         CHECK(!r.reached);
     }
 

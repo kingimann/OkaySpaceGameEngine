@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (round 15 added: our own compilers driven by okay-build; rounds 12 to 14 measured against CMake; the older rounds were not re-checked).
+> **Last checked:** 2026-11-25 (round 18 added: the engine library and 20 engine test programs built with okay-build and compared with CMake+Ninja+CTest; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -628,3 +628,218 @@ CMake, Ninja, Meson, make or any other project was read or used (rule 19a). No c
 - **Not done / unverified:** nothing ran on Windows; no okay-ms program was run (wine here cannot start anything); okay-build's own
   Windows host was not tried with these toolchains (there it always uses a response file over 30,000 characters, which okay-cl
   does not read). The include scan does not follow `#include MACRO` or a header found only in the compiler's built-in folders.
+
+## Round 16 on claude/okaybuild-16: tests that are CMake scripts, output rules for tests, CMake's regex dialect (2026-11-25)
+Written from the CMake documentation (used as a specification: script mode `cmake -P`, `message()`, `file()`, `execute_process()`,
+`cmake -E env`, `list(FILTER)`, the regular-expression syntax of `string(REGEX)`, and the test properties `PASS_REGULAR_EXPRESSION`,
+`FAIL_REGULAR_EXPRESSION`, `SKIP_REGULAR_EXPRESSION` and `WORKING_DIRECTORY`). Expected outputs, exit codes and test results in the
+new tests were taken by running real `cmake -P` and CTest on the same small scripts and projects on this machine. No code from CMake,
+CTest, Ninja or any other project was read or used (rule 19a). No cryptography.
+- **Found first.** 34 of the tree's 1,142 tests run `cmake` itself (33 `cmake -D... -P script.cmake`, 1 `cmake -E env`), so
+  `okay-build ctest` needed CMake for them. 5 tests decide their result from their output (`PASS_REGULAR_EXPRESSION`, `SKIP_REGULAR_EXPRESSION`);
+  okay-build dropped those properties without a word and judged by the exit code only. The reader's regular expressions were the C++
+  library's, not CMake's: `.` did not match a line break, `{` was a repeat count, and the replacement text `\\` stayed two backslashes.
+  The last one hid a real bug: `cmake/OkayModules.cmake` escapes a file pattern with `([][.+?^$(){}|\\])`; in the C++ dialect `[]` matches
+  nothing, so the escaping silently did nothing and the module list only came out right by luck.
+- **`okay-build script [-D NAME=VALUE]... -P FILE [ARG...]`** runs a CMake script with our own reader, the way `cmake -P` does:
+  `message()` (STATUS on standard output as `-- text`, plain text on standard error, `CMake Error at FILE:LINE (message):` for errors;
+  SEND_ERROR carries on and ends with exit 1, FATAL_ERROR stops with exit 1), `file(WRITE/APPEND/MAKE_DIRECTORY/REMOVE/TOUCH)` on the disk,
+  `execute_process()` (one command, folder, input file, output and error variables or files, quiet, strip, `RESULT_VARIABLE`,
+  `COMMAND_ERROR_IS_FATAL`), `include()`, `return()`, `CMAKE_ARGV<n>`. Anything a script does not understand stops it with the
+  command's name (never a guess). **`okay-build tool env [--unset=NAME] NAME=VALUE... COMMAND`** is `cmake -E env`.
+- **The manifest** writes a test's `cmake -D... -P` as `{okaybuild} script ...` and `cmake -E env` as `{okaybuild} tool env ...`; `ctest`
+  puts its own path for `{okaybuild}`. The audit line now reads "CMake scripts run by okay-build 34, run cmake itself 0" for the tree
+  (was "run cmake itself 34"). A test that reads a file the CMake code wrote at configure time (`okayscript_no_engine` reads
+  `okayscript_link_closure.txt`) failed under okay-build, because only a build wrote such files and only the ones compiles need;
+  `ctest` now writes the generate files a chosen test names, first.
+- **Output rules:** new ctest keys `pass_regex`, `fail_regex`, `skip_regex` (CMake patterns, a list; checked when the manifest is read).
+  A skip text skips; with a pass text the output decides and the exit code does not; a fail text fails; WILL_FAIL turns the result
+  round. The reason is printed (`FAIL x exit 0 0.0s (required regular expression not found)`) and goes into the JUnit file. The
+  `WORKING_DIRECTORY` test property is used (it was dropped); any other test property is counted as not understood.
+- **CMake's regex dialect** (`cmakeRegexToStd`, used for every pattern the reader matches): `.` matches any character including a line
+  break, `{ }` are plain, `\x` is the plain character x, and inside `[ ]` a backslash or `[` is plain and a `]` right after `[` is a member.
+  Replacement texts: `\1`..`\9`, `\0`, `\\` is one backslash. `list(FILTER ... INCLUDE|EXCLUDE REGEX)` added.
+- **Measured on the tree (Linux, g++ 13.3).** The manifest's compile commands, link lines and generated files are byte-identical to
+  round 15's for default options, editor+player+launcher on, and the MinGW cross build (only the test blocks changed). Not understood: 0.
+  The 32 script tests that need no engine program (19 `okayscript_cli_*`, `okayscript_no_engine`, 8 key checks: 7 `anticheat_keys_*`
+  and `update_keys_ok`, 4 wiring checks): **32 of 32 PASS with okay-build** (it built `okayscript_cli` in 10 steps,
+  38 s at `-j1`) and 32 of 32 pass with CMake+CTest on the same tree; the same 32 names; `okayscript_link_closure.txt` byte-identical.
+  The same scripts run directly with `okay-build script` and with `cmake -P` give the same exit codes (11 of 11 compared); standard output
+  and error are the same for the simple ones, but CMake wraps long error messages at about 75 characters and adds a "Call Stack"
+  for an error inside a function; okay-build prints the message on one line and no call stack.
+- **Tests:** `testCtestOutputRules` (8 checks) and `testCmakeScriptMode` (11 checks). On the tool from main, 18 of the first 18
+  failed (the 19th, the configure-time file check, was added later and not run against main). Whole suite
+  (`tools/okaybuild/build.sh`): **550 checks passed, 0 failed, 8 skipped** (was 531 passed, 0 failed, 8 skipped; the same 8 skips, all
+  for wine or libsodium). The MinGW build of okay-build itself (in `testWindowsHost`) still compiles.
+- **Not done / unverified:** `okay-build script` and `tool env` on Windows (script mode says "not done on Windows yet"; `tool env` is
+  written for Windows with `_spawnvp` but not built or run there). `execute_process` with several piped COMMANDs, `TIMEOUT`, `ENCODING`
+  and `ECHO_*`, and `execute_process(${CMAKE_COMMAND} ...)` inside a script stop the script as not understood. `RESULT_VARIABLE` of a
+  program that cannot be started is 127 (CMake gives an error text). A timed-out test is still turned round by WILL_FAIL (CTest may
+  not; not checked). `okayscript_bench` (needs `bench_okayscript`, which links the whole engine) and `walk_vs_run_old` (engine) were
+  not run here. Of the 5 tests with an output rule, the 3 `platform_default_env_*` (pass text, `test_platform`, 9 steps) PASS with
+  okay-build and with CTest; `playtest_runner_list` and `okayscript_bench` were not run (both link the whole engine; too large a build
+  for this shared machine this round).
+
+## Round 17 on claude/okaybuild-17: piped execute_process, CTest's crash and time-out rules, script mode on Windows, a larger slice against Ninja (2026-11-25)
+Written from the CMake documentation of `execute_process()` (used as a specification), the POSIX descriptions of `fork`, `execvp`,
+`pipe`, `dup2`, `poll` and `waitpid`, and Microsoft's documentation of `CreateProcessW`, `CreatePipe`, `SetHandleInformation`,
+`STARTF_USESTDHANDLES` and `FormatMessage`. Every expected text and result was taken by running real `cmake -P` and CTest 3.28 on small
+scripts and projects on this machine. No code from CMake, CTest, Ninja or any other project was read or used (rule 19a). No cryptography.
+- **`execute_process` in a script, now complete for what the CMake documentation lists.** Several `COMMAND`s are piped (each one's
+  output is the next one's input; standard error of every command goes to the error text). `RESULTS_VARIABLE` lists every command's
+  result. `TIMEOUT` ends the whole pipe ("Process terminated due to timeout"; 0 or less is no limit; a word that is not a number stops
+  the script with CMake's error). `COMMAND_ECHO STDOUT|STDERR|NONE` and the variable `CMAKE_EXECUTE_PROCESS_COMMAND_ECHO` print each command
+  in single quotes first. `ECHO_OUTPUT_VARIABLE` / `ECHO_ERROR_VARIABLE` show the output and keep it. Output that is not kept now goes
+  through as it arrives (it was printed at the end). `ENCODING` is taken and changes nothing (CMake only converts on Windows).
+  `OUTPUT_FILE` and `ERROR_FILE` naming the same file get both texts.
+- **A program that cannot start** now gives the system's reason for the whole run ("No such file or directory"), as CMake does, and
+  is told apart from a program that exits 127 (the child reports a failed `execvp` through a close-on-exec pipe). **A signal** gives
+  CMake's words ("Segmentation fault", "Subprocess killed", "Subprocess terminated", `SIGHUP`..., "Signal N"; the table was taken by
+  sending every signal under `cmake -P`). **`COMMAND_ERROR_IS_FATAL ANY|LAST`** with several commands gives CMake's messages (ANY lists the
+  failed command numbers; LAST, a start failure, a time-out and a signal each have their own text).
+- **CTest's rules for a test that does not end normally** (checked with CTest, then matched): a test that timed out, was ended by a
+  signal, or could not start **fails whatever WILL_FAIL, PASS_REGULAR_EXPRESSION or SKIP_REGULAR_EXPRESSION say**. okay-build turned all
+  three round with WILL_FAIL before (a timed-out `WILL_FAIL` test passed). A test that exits 124 or 127 is an ordinary exit code (okay-build
+  used to read 124 as "timed out"). The reason is printed (`FAIL x exit 128 0.0s (crashed: Segmentation fault)`, `(timeout)`,
+  `(not run: cannot start (No such file or directory))`) and goes into the JUnit file. CTest calls the last one "Not Run" and counts it
+  among the failures; okay-build counts it as failed too.
+- **`okay-build script` on Windows.** Script mode no longer says "not done on Windows yet": `execute_process` runs through our own
+  `CreateProcessW` pipe runner. Every pipe handle is made private; just before each `CreateProcessW` the three handles that child gets are
+  made inheritable, and private again afterwards, so no child holds another pipe's write end. Exit codes are numbers (CMake's words for
+  Windows exceptions are not known here), and a start failure gives `FormatMessage`'s text.
+- **Found and fixed while building the larger slice: a missing source anywhere stopped every build.** The real tree's
+  `launcher_imgui` needs Dear ImGui from a fetch that was not run, so `okay-build ... test_md2_reader` failed with "source
+  '_deps/imgui-src/imgui.cpp' does not exist", although that program does not need it. Ninja only complains about files a wanted
+  step uses. okay-build now checks a missing source after it has picked the wanted steps: a target nobody asked for may lack one;
+  a wanted target that needs it still gets the same error.
+- **Larger slice of the real tree, against CMake+Ninja+CTest (Linux, g++ 13.3, default options, `-j1`).** The slice: every program
+  that does not link the engine library, built from `okay-build cmake .`'s manifest. Left out: anything whose name or sources point
+  at cryptography or hashing (8 programs; rule 18 caution) and `test_okayui_host_layering` (it compiles the fetched Dear ImGui).
+  That is **136 programs, 419 steps** (Ninja: the same 419 for those programs). Cold build time is not a fair comparison here: the
+  machine was shared with other heavy jobs (Ninja 1,408 s for 425 steps, okay-build 949 s for 419). **Tests: the 159 tests that use
+  only these programs: CTest 157 passed and 2 skipped (exit 77), okay-build ctest the same 157 passed and the same 2 skipped**, test
+  by test the same result.
+- **Incremental rebuild correctness, measured.** After each change both tools rebuilt the slice; the objects whose files changed were
+  compared by target and file name. Results (objects rebuilt, Ninja / okay-build, same set?): no change 0 / 0, yes;
+  a test's own `.cpp` 1 / 1, yes; `tests/sib_fixtures.hpp` 1 / 1, yes; `shared/ProjectDelete.hpp` 2 / 2, yes;
+  `okayscript/.../Parser.hpp` 5 / 5, yes; `editor/EditorLayoutMath.hpp` 8 / 8, yes; `engine/.../Platform.hpp` 15 / 15, yes;
+  `engine/include/okay/Math/Vec3.hpp` 130 / 130, yes (792 s / 773 s). **Every content change rebuilt exactly the same objects as Ninja.**
+  One planned difference: touching a header without changing it (new time, same bytes) makes Ninja rebuild 1 object and okay-build
+  0, because okay-build compares the file's contents when the time changed. The script is not in the repository (it edited real
+  headers and was undone); the method is: append a comment line, build with both, compare object times.
+- **Tests:** `testExecutePipelines` (9 checks; the last one runs real `cmake -P` too when it is installed and compares the bytes of
+  8 scripts, else it is a skip), `testCtestEndStates` (5), 3 new checks in `testMissingHeader` (missing source only when wanted) and
+  1 in `testWindowsHost` (the Windows program has script mode). On the round-16 tool: 15 of the 15 new Linux checks that test new
+  behaviour failed (the 2 "still an error" checks passed, as they should); the Windows check fails on round 16's MinGW program (it
+  holds "script: not done on Windows yet"). After: all pass. Whole suite (`tools/okaybuild/build.sh`): **568 checks passed, 0 failed,
+  8 skipped** (was 550 passed, 0 failed, 8 skipped; the same 8 skips, all for wine or libsodium).
+- **Not done / unverified:** nothing ran on Windows (wine here cannot start programs), so the `CreateProcessW` pipe runner is only
+  compiled with MinGW, never run; CMake's words for Windows crash codes are not known, so okay-build gives numbers there.
+  `ENCODING` changes nothing. `execute_process(${CMAKE_COMMAND} ...)` inside a script still stops the script as not understood.
+  `okay-build ctest` itself is still not done on Windows. When a time-out kills a pipe, only the commands we started are killed, not
+  programs they started. The cold-build times above were taken on a busy machine and say nothing about speed. The engine library and
+  the programs that link it (about 950) were not built this round.
+
+## Round 18 on claude/okaybuild-18: the engine library against Ninja, compile lines in CMake's order, scripts that run CMake (2026-11-25)
+Written from the CMake documentation (used as a specification: `INCLUDE_DIRECTORIES`, `SYSTEM`, imported targets' include folders,
+`DEFINE_SYMBOL`, `POSITION_INDEPENDENT_CODE`, script mode and `CMAKE_ARGV<n>`) and the POSIX descriptions of `setpgid` and `kill`. Every
+expected line was taken by running real CMake 3.28 with Ninja, and `cmake -P`, on small projects on this machine. No code from CMake,
+Ninja or any other project was read or used (rule 19a). No cryptography was written or changed. `okay_crypto` was compiled, because
+the engine library needs it; no crypto or hash test was chosen.
+- **Compile lines in CMake's order.** Round 17's lines had the same words as CMake's, but in another order and with `-I` where CMake
+  writes `-isystem`. Now `okay-build cmake` writes `compile_order = cmake` in the toolchain block, and a GCC-style compile is laid out as
+  CMake's Ninja files do it: the definitions sorted without repeats (the account definitions among them), then the source's own
+  definitions sorted, then the source's include folders, the target's `-I` folders, its `-isystem` folders, then the flags. A new target
+  key `system_include` holds the system folders: `SYSTEM` in `target_include_directories`, `include_directories(SYSTEM ...)`, and the
+  folders of an IMPORTED target (here `SDL2::SDL2`). A folder that is a system folder anywhere is one, and system folders come after
+  the others. The target's own folders and options keep call order (PRIVATE and PUBLIC mixed). Folder names keep `.` and `..` as CMake
+  does (`okayui/../shared` and `shared` are two `-I` words in both tools). A shared library gets `-D<target>_EXPORTS` and `-fPIC` right
+  after the language standard. Hand-written manifests keep okay-build's own order (`compile_order = okay`, the default); the MSVC and
+  our-compiler presets do not use the CMake order.
+- **`okay-build compdb TARGET...`** lists only the compiles a build of those targets runs (it listed everything, and stopped on the
+  fetched Dear ImGui source that is missing here).
+- **`tools/okaybuild/examples/compare_cmake_commands.py --exact`** compares each object's command word for word, paired by target and
+  source. It leaves out only the compiler name, the output, the dependency-file options, `-c` and the source, and okay-build's
+  `-ffile-prefix-map`. Account definitions are compared by name and place, not value. `--map` spells CMake's build folder as okay-build's.
+- **Measured on the tree (Linux, g++ 13.3).** Default options (Release): **1,826 of 1,826 compile commands identical word for word**
+  (every target except the 37 that need the fetched Dear ImGui; CMake has 1,928). On round 17's tool: 0 of 486 for the engine libraries.
+  The engine library and what it links (`okay_engine` 458 objects, `okay_platform` 6, `okay_crypto` 9, `okay_physcore` 6,
+  `okayscript_lang` 7): 486 of 486 identical. The same with build type None and `-O0` (the build below): 506 of 506 for the libraries and
+  the 20 test programs, and again 1,826 of 1,826 for the tree.
+- **Built at `-j1`, build type None, `-O0`** (to fit the machine; the flags are compared above for Release too). Both tools ran 531 steps:
+  Ninja 2,868 s, okay-build 2,960 s (a shared, busy machine: not a speed comparison). **Archive members: the same names in the same order
+  in all 5 libraries** (`ar t`). **Objects: all 484 library objects byte-identical.** The 20 test objects differ only in the source path
+  that `__FILE__` puts in them (`/okay-src/...` from okay-build's path map, the real path from CMake). A no-op build with the final tool
+  of this round ran 0 of 531 steps, so its command lines are the ones measured.
+- **20 test programs that link the engine** (audio_formats, component_order, data_load_checks, frame_overlay, humanoid_bones,
+  lua_script, module_vs_weapons, navmesh_carving, net_backend, net_resume_resend, profiler_jobs, scheduler_scale, script_debug, survival,
+  text, tilemap_collision, ui_text_example, user_reports, voxel_more, wav_playback): **CTest 20 passed, okay-build ctest 20 passed**, test
+  by test the same.
+- **Round 17's rebuild check is in the repository:** `tools/okaybuild/examples/compare_rebuilds.py` (rewritten). It builds both trees,
+  then per change (`noop`, `edit:PATH`, `touch:PATH`) builds both again and compares the objects each rebuilt, by target and source. An edit
+  is undone afterwards (the bytes come back with a new time) and the undo is compared too. A touch that only Ninja rebuilds is reported as
+  the planned difference. Found while writing it: putting a touched file's bytes back made Ninja rebuild twice, so a touch is not undone.
+- **Scripts that run CMake.** In `okay-build script`, `${CMAKE_COMMAND} [-D N=V]... -P FILE` runs `okay-build script`, and
+  `${CMAKE_COMMAND} -E env ...` runs `okay-build tool env`; `CMAKE_COMMAND` is okay-build's own path, as CMake gives its own. Any other
+  `cmake` command still stops the script as not understood. Output, errors and results are byte for byte `cmake -P`'s on the test
+  script. **`CMAKE_ARGV1`.. were off by one** (okay-build counted its word `script`); they are now the words after the program, as in CMake.
+- **A TIMEOUT now ends the programs a command started.** With a TIMEOUT, the commands of one `execute_process` get a process group of
+  their own (as okay-build's test runner already does), and a time-out kills the group. Checked: `sh -c "sleep 30 & ...; wait"` with
+  TIMEOUT 0.5 leaves the sleep dead under CMake and now under okay-build; round 17 left it running. Without a TIMEOUT nothing changes, so
+  a command can still read the terminal.
+- **Tests:** `testCmakeCompileOrder` (8 checks), `testCompareRebuildsScript` (5), `testScriptRunsItself` (4). On round 17's tool, 8 of the
+  12 checks of the first and third failed (one only because the "not understood" message now names `cmake -E`); the rebuild script did not
+  exist in the repository. After: all pass. Whole suite (`tools/okaybuild/build.sh`): **585 checks passed, 0 failed, 8 skipped** (was 568
+  passed, 0 failed, 8 skipped; the same 8 skips, all for wine or libsodium).
+- **Not done / unverified:** nothing ran on Windows. The rebuild script was run on a small project and in the suite, not again on the
+  real tree this round (the disk fell below 5 GB after the two builds, so the trees were deleted). The build used `-O0` and build type
+  None, not the default Release. MSVC `/external:I` is not used for system folders (plain `/I`). The 37 targets that need the fetched
+  Dear ImGui were not compared. The engine programs other than these 20 (about 930) were not built.
+
+## Round 19 on claude/okaybuild-19: ctest on Windows, MSVC external folders, the MinGW compile lines against CMake (2026-11-25)
+Written from Microsoft's documentation (Job Objects: `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`; `CreateProcessW`
+with `CREATE_SUSPENDED` and `CREATE_UNICODE_ENVIRONMENT`; environment blocks; the exception codes of `GetExceptionCode`; the cl options
+`/external:I` and `/external:W0`) and the CMake documentation (used as a specification). Expected lines were taken by running real CMake 3.28
+with Ninja on small projects and on the tree. No code from CMake, CTest, Ninja or any other project was read or used (rule 19a). No
+cryptography was written or changed, and no crypto or hash test was run.
+- **`okay-build ctest` on Windows.** It said "not done on Windows yet". Now one thread starts the tests with `CreateProcessW` and waits on
+  their handles (no `<thread>` or `<mutex>`, rule 21a). Each test runs in its own Job Object: the process is started suspended, put in the
+  job, then resumed, so every program it starts is in the job too. A time-out ends the whole job (`TerminateJobObject`), as a process
+  group does on Linux. The test gets its folder and its environment (ours with the test's `NAME=VALUE` words over it; names compared
+  without case; the block sorted by name, as Microsoft asks). An exit code that is a Windows exception (0xC0000000 and up) counts as a
+  crash: `FAIL x ... (crashed: Exception 0xC0000005 (access violation))`; like a crash on Linux it fails whatever WILL_FAIL says. A test
+  that cannot start is "not run" with `FormatMessage`'s words. Programs a test leaves running when it ends are not killed (the same as on
+  Linux). The choice of the next test (DEPENDS, serial tests last) is now one piece of code that the Linux threads and the Windows loop share.
+- **MSVC system folders.** A target's `system_include` folders are now `/external:I DIR` after one `/external:W0` (no warnings from
+  those headers), after the plain `/I` folders. A header there is still a dependency (`/showIncludes` lists it). These options are not
+  experimental from cl 19.29 (Visual Studio 2019 16.10); `external_includes = off` in the toolchain block gives plain `/I` for an older
+  cl. Our own okay-cl keeps plain `/I`.
+- **The MinGW cross build against CMake.** Configured CMake with `cmake/mingw-w64-x86_64.toolchain.cmake` and the release script's
+  options (Release, tests off; launcher, player, editor and Xbox on) into a temp folder (configure and compile database only), and
+  `okay-build cmake` with the same options. Found: okay-build's `compile_commands.json` left out the 3 windres compiles that CMake lists,
+  and the windres lines had the definitions in another order (CMake sorts them, as on a compile line). Now with `compile_order = cmake`
+  the windres line has the same layout as a compile (sorted definitions, the source's own sorted, then the source's, the target's and the
+  system folders, all as `-I DIR`), compdb lists resource compiles, and every compdb entry has `"output"` as CMake writes it.
+  `compare_cmake_commands.py --exact` now also leaves out a windres line's source and `.res`. **Measured: 510 of 510 commands identical
+  word for word** (507 compiles and 3 windres lines; before this round 507 of 507 compiles, and the 3 windres lines missing). No SDL2
+  MinGW package is here, so the launcher, editor and player are not in either tool's list.
+- **Rebuild check on a small real slice** (`compare_rebuilds.py`, Linux, g++ 13.3, default options, `-j1`). Targets: `okayscript_cli`,
+  `test_okayscript_lang_lexer`, `test_okayscript_lang_parser`, `okay_physcore`, `okay_platform`, `test_md2_reader` (31 Ninja steps; none needs
+  the engine library). First builds: Ninja 80 s, okay-build 84 s (a shared machine). Objects rebuilt, Ninja / okay-build, same set?: no change
+  0 / 0, yes; `okayscript/.../Parser.hpp` 3 / 3, yes (undo 3 / 3); `Lexer.hpp` 4 / 4, yes (undo 4 / 4); `Physics/Core/Shape.hpp` 5 / 5, yes
+  (undo 5 / 5); `Platform/Platform.hpp` 6 / 6, yes (undo 6 / 6); `Render/Md2Reader.cpp` 1 / 1, yes (undo 1 / 1); `Core/Paths.hpp` 0 / 0, yes
+  (nothing in the slice includes it). Touching `Ast.hpp` without changing it: Ninja 8, okay-build 0 (the planned difference). **Every
+  content change rebuilt the same objects as Ninja.** The edited files have their bytes back; the build trees were deleted.
+- **Tests:** `testMsvcExternalIncludes` (7 checks), 3 new checks in `testWindowsHost` (no "not done" text; the Job Object functions are
+  imported; the exception names are in the program) and 2 in `testMingwToolchainFile` (compdb lists windres with `output`; the windres line
+  in CMake's order, taken from real CMake). On round 18's tool 9 of the 12 fail (the 3 that pass check things that already worked: the
+  build exits 0, a header in a system folder is a dependency, okay-cl keeps `/I`). After: all pass. Whole suite
+  (`tools/okaybuild/build.sh`): **597 checks passed, 0 failed, 8 skipped** (was 585 passed, 0 failed, 8 skipped; the same 8 skips, all
+  for wine or libsodium).
+- **Not done / unverified:** nothing ran on Windows. The Windows ctest is only compiled with MinGW (`-Wall -Wextra`, no new warnings);
+  wine here crashes before it starts any program, so the Job Objects, the environment block and the exception names were never run.
+  CTest's own words for Windows exceptions were not checked (no Windows CTest here); okay-build gives the code and Microsoft's name. On a
+  Windows older than 8, where a process already in a job cannot join a second one, a test runs without its job (a time-out then ends only
+  the test itself). `/external:I` was checked with a fake cl that records its words, not with a real cl. MSVC manifests from `okay-build
+  cmake` are still not made (it reads GCC-style toolchain files only). The MinGW launcher, editor and player were not compared (no SDL2
+  MinGW package here).

@@ -13,6 +13,7 @@
 //  - "Minimize to tray" is OFF by default (owner bug 2026-11-25: "when i minimize it i cant open it back up"): the "_"
 //    button is a normal task-bar minimize unless the person turns the option on;
 //  - while hidden, the watchdog checks the icon; when it is gone and cannot be added again, the window comes back.
+#include "FriendsList.hpp"   // your own status (Online / Away / Invisible / Do not disturb)
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -52,15 +53,18 @@ inline bool WantIcon(const Settings& s, bool traySupported, bool hidden) {
 
 // ---- The tray menu ------------------------------------------------------------------------------------------------
 /// Menu item ids (never 0: TrackPopupMenu returns 0 for "nothing chosen"). Recent projects are kRecentBase + index,
-/// the online statuses kStatusBase + status (0 Online, 1 Away, 2 Invisible: the launcher's g_onlineStatus).
+/// the online statuses kStatusBase + status (0 Online, 1 Away, 2 Invisible, 3 Do not disturb: the launcher's
+/// g_onlineStatus, okayfriends::MyStatusLabel).
 enum MenuId : int {
     kIdNone = 0, kIdOpen = 1, kIdCheckUpdates = 2, kIdSettings = 3, kIdChatIn = 4, kIdExit = 5,
     kIdOpenEditor = 6, kIdNotifications = 7, kIdDownloads = 8,
+    kIdFriends = 9,          // Friends: the friends list inside the launcher (the launcher comes back)
+    kIdFriendsWindow = 10,   // Friends: the friends list in its own window (the launcher stays where it is)
     kRecentBase = 100, kStatusBase = 200,
 };
 constexpr int kMaxRecent = 5;
-constexpr int kStatusCount = 3;
-inline const char* StatusLabel(int s) { return s == 1 ? "Away" : s == 2 ? "Invisible" : "Online"; }
+constexpr int kStatusCount = okayfriends::kMyStatusCount;
+inline const char* StatusLabel(int s) { return okayfriends::MyStatusLabel(s); }
 
 struct MenuItem {
     int id = kIdNone;             // 0 for a submenu's title
@@ -70,6 +74,7 @@ struct MenuItem {
     bool enabled = true;
     bool checked = false;
     std::vector<MenuItem> sub;    // non-empty: this item opens a submenu
+    bool radio = false;           // one of a group of choices (drawn with a round bullet when checked)
 };
 /// What the menu shows, read from the launcher when the menu opens.
 struct MenuState {
@@ -77,13 +82,28 @@ struct MenuState {
     bool editorAvailable = false;            // the editor program was found
     std::vector<std::string> recentProjects; // names, most recent first (MostRecentProjects)
     bool signedIn = false;
-    int onlineStatus = 0;                    // 0 Online, 1 Away, 2 Invisible
+    int onlineStatus = 0;                    // 0 Online, 1 Away, 2 Invisible, 3 Do not disturb
     int unreadNotifications = 0;
     int activeDownloads = 0;
+    // The Friends item (FriendsMenuItem).
+    bool friendsInOwnWindow = false;         // the friends window was last used popped out (the chat_window preference)
+    int friendsOnline = 0;                   // friends online now
+    int unreadChats = 0;                     // conversations with unread messages
 };
 inline MenuItem Item(int id, const std::string& label, bool sepBefore = false, bool enabled = true) {
     MenuItem m; m.id = id; m.label = label; m.separatorBefore = sepBefore; m.enabled = enabled; return m;
 }
+// ---- The Friends item (owner, 2026-11-25: "i dont see it in right click icon tray") ------------------------------
+/// "Friends (2 unread)" / "Friends (3 online)": opens the friends window where it was last used, popped out or inside
+/// the launcher (a popped-out window is shown and raised without bringing the launcher back). Greyed out signed out.
+inline MenuItem FriendsMenuItem(const MenuState& st) {
+    std::string label = "Friends";
+    if (st.signedIn && st.unreadChats > 0) label += " (" + std::to_string(st.unreadChats) + " unread)";
+    else if (st.signedIn && st.friendsOnline > 0) label += " (" + std::to_string(st.friendsOnline) + " online)";
+    MenuItem m = Item(st.friendsInOwnWindow ? kIdFriendsWindow : kIdFriends, label, true, st.signedIn);
+    return m;
+}
+
 /// The menu, top to bottom (owner, 2026-11-25: "add right click options for the tray icon").
 inline std::vector<MenuItem> BuildMenu(const MenuState& st) {
     std::vector<MenuItem> m;
@@ -97,12 +117,14 @@ inline std::vector<MenuItem> BuildMenu(const MenuState& st) {
         recent.sub.push_back(Item(kRecentBase + i, st.recentProjects[(size_t)i]));
     if (recent.sub.empty()) recent.sub.push_back(Item(kIdNone, "No projects yet", false, false));
     m.push_back(recent);
+    m.push_back(FriendsMenuItem(st));
     if (st.chatPoppedOut) m.push_back(Item(kIdChatIn, "Put chat back in the launcher"));
     MenuItem status = Item(kIdNone, st.signedIn ? std::string("Status: ") + StatusLabel(st.onlineStatus) : std::string("Status"),
                            true, st.signedIn);
     for (int s = 0; s < kStatusCount; ++s) {
         MenuItem it = Item(kStatusBase + s, StatusLabel(s));
         it.checked = st.signedIn && st.onlineStatus == s;
+        it.radio = true;
         status.sub.push_back(it);
     }
     m.push_back(status);
@@ -136,12 +158,21 @@ struct Effect {
     bool openNotifications = false; // the Notifications page
     bool openDownloads = false;     // the Downloads page
     int openProject = -1;           // open this recent project (index into MenuState::recentProjects) in the editor
-    int setStatus = -1;             // set the online status (0 Online, 1 Away, 2 Invisible)
+    int setStatus = -1;             // set the online status (0 Online, 1 Away, 2 Invisible, 3 Do not disturb)
+    bool openFriends = false;       // open the friends window (the chat window's Friends list)
+    bool friendsOwnWindow = false;  // ...in its own window (else inside the launcher)
 };
+/// The Friends item's effect (kept apart from EffectOf's switch).
+inline bool FriendsEffect(int id, Effect& e) {
+    if (id == kIdFriends) { e.show = true; e.openFriends = true; return true; }
+    if (id == kIdFriendsWindow) { e.openFriends = true; e.friendsOwnWindow = true; return true; }   // the launcher stays hidden
+    return false;
+}
 inline Effect EffectOf(int id) {
     Effect e;
     if (id >= kRecentBase && id < kRecentBase + kMaxRecent) { e.show = true; e.openProject = id - kRecentBase; return e; }
     if (id >= kStatusBase && id < kStatusBase + kStatusCount) { e.setStatus = id - kStatusBase; return e; }   // stays where it is
+    if (FriendsEffect(id, e)) return e;
     switch (id) {
         case kIdOpen:          e.show = true; break;
         case kIdOpenEditor:    e.show = true; e.openProject = 0; break;
@@ -222,6 +253,31 @@ inline IconEvent ClassifyIconMessage(unsigned ev, unsigned version) {
     }
 }
 
+/// The notify-icon balloon's own messages (the launcher's desktop notifications, launcher/DesktopNotify.hpp), from
+/// Microsoft's documentation: NIN_BALLOONSHOW = WM_USER + 2, NIN_BALLOONHIDE + 3, NIN_BALLOONTIMEOUT + 4,
+/// NIN_BALLOONUSERCLICK + 5. Version 4 sends them in LOWORD(lParam) like the clicks (DecodeIconMessage).
+constexpr unsigned kNinBalloonShow = 0x0402, kNinBalloonHide = 0x0403, kNinBalloonTimeout = 0x0404,
+                   kNinBalloonUserClick = 0x0405;
+enum class BalloonEvent { None, Shown, Closed, Clicked };
+inline BalloonEvent ClassifyBalloonMessage(unsigned ev) {
+    switch (ev) {
+        case kNinBalloonShow:      return BalloonEvent::Shown;
+        case kNinBalloonHide:
+        case kNinBalloonTimeout:   return BalloonEvent::Closed;
+        case kNinBalloonUserClick: return BalloonEvent::Clicked;
+        default:                   return BalloonEvent::None;
+    }
+}
+
+/// A launcher dialog has just started waiting ("Close the editor first" after Exit OkaySpace in the tray menu, or an
+/// update that waits for the editor). A launcher hidden in the tray or minimized draws nothing, so the dialog waited
+/// where nobody could see it and the launcher stayed running with the editor still open (owner bug 2026-11-25: "if i
+/// quit the launcher from the tray, the editor doesnt close"). True = bring the window back once, so the dialog shows.
+/// Only on the edge (`pendingBefore` false), so a person who minimizes it again while it waits is left alone.
+inline bool ShowForPendingDialog(bool pendingNow, bool pendingBefore, bool windowBackgrounded) {
+    return pendingNow && !pendingBefore && windowBackgrounded;
+}
+
 /// How long the main loop sleeps per pass while the launcher window is not drawn. Hidden in the tray is the slowest,
 /// unless a voice call is live (its audio is pumped by the loop) or the popped-out chat window is drawing.
 inline int IdleDelayMs(bool hiddenInTray, bool chatWindowShown, bool chatFocused, bool callActive) {
@@ -245,6 +301,11 @@ public:
     virtual void ShowWindow() = 0;                      // SW_SHOW, SW_RESTORE if minimized, SetForegroundWindow
     virtual int RunMenu(const std::vector<MenuItem>& items) = 0;   // TrackPopupMenu; the chosen id, kIdNone if dismissed
     virtual void Balloon(const std::string& title, const std::string& text) = 0;   // NIF_INFO notification
+    /// A desktop notification (launcher/DesktopNotify.hpp): NIF_INFO with the app's own icon, NIIF_NOSOUND when
+    /// `sound` is off. False = not shown (the caller falls back to the in-app toast).
+    virtual bool Notify(const std::string& title, const std::string& text, bool sound) {
+        (void)sound; Balloon(title, text); return true;
+    }
 };
 
 /// The tray state machine. One per launcher; every call is made on the main thread.
@@ -341,6 +402,12 @@ public:
     }
     /// The launcher is ending (normally or from a crash handler): take the icon away.
     void Shutdown() { RemoveIcon(); }
+    /// A desktop notification through the icon's balloon. False when there is no icon (both tray options off, or the
+    /// shell refused it) or the shell could not show it: the caller then uses the in-app toast.
+    bool Notify(const std::string& title, const std::string& text, bool sound) {
+        if (!m_supported || !m_icon) return false;
+        return m_shell->Notify(title, text, sound);
+    }
     /// True once, right after the first-hide note was shown (so the launcher saves its preferences).
     bool TakeHintJustShown() { const bool v = m_hintJustShown; m_hintJustShown = false; return v; }
 

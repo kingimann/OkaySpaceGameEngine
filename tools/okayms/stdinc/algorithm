@@ -143,6 +143,35 @@ template <typename It, typename V> It upper_bound(It first, It last, const V &va
     }
     return first;
 }
+// The same with a comparison ([lower.bound] 2, [upper.bound] 2): comp(element, value) and comp(value, element).
+template <typename It, typename V, typename Comp> It lower_bound(It first, It last, const V &value, Comp comp) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (comp(*mid, value)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename V, typename Comp> It upper_bound(It first, It last, const V &value, Comp comp) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (!comp(value, *mid)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
 template <typename It, typename Less> void sift_down_(It base, long long root, long long n, Less less) {
     for (;;) {
         long long child = root * 2 + 1;

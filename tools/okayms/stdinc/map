@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <utility>
 #include <vector>
+#include <iterator>
 namespace std {
 template <typename K, typename V, typename C = less<K> >
 class map {
@@ -53,7 +54,13 @@ public:
     const pair<K, V>* begin() const { return items_.begin(); }
     pair<K, V>* end() { return items_.end(); }
     const pair<K, V>* end() const { return items_.end(); }
+    std::reverse_iterator<pair<K, V>*> rbegin() { return std::reverse_iterator<pair<K, V>*>(end()); }
+    std::reverse_iterator<const pair<K, V>*> rbegin() const { return std::reverse_iterator<const pair<K, V>*>(end()); }
+    std::reverse_iterator<pair<K, V>*> rend() { return std::reverse_iterator<pair<K, V>*>(begin()); }
+    std::reverse_iterator<const pair<K, V>*> rend() const { return std::reverse_iterator<const pair<K, V>*>(begin()); }
     void clear() { items_.clear(); }
+    // Exchanges the contents with another map ([map.overview], [container.reqmts]).
+    void swap(map& other) { items_.swap(other.items_); }
     size_t count(const K& key) const { return found_at(lower(key), key) ? 1 : 0; }
     bool contains(const K& key) const { return found_at(lower(key), key); }
     pair<K, V>* find(const K& key) {

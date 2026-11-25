@@ -40,3 +40,15 @@ int _gmtime64_s(struct tm *out, const time_t *t);
 // the two runtime functions.
 #define localtime_s(out, t) _localtime64_s((out), (t))
 #define gmtime_s(out, t) _gmtime64_s((out), (t))
+// The POSIX thread-safe forms localtime_r and gmtime_r (POSIX.1-2017, <time.h>): they fill the caller's tm and return
+// it, or null. The Microsoft C runtime has no such functions; here they are the forms above. Function templates (made
+// only where they are called, so a file that only includes <ctime> imports nothing), named through macros so that
+// ::localtime_r(&t, &out) reads as well.
+template <typename T> struct tm *__okay_localtime_r(const T *t, struct tm *out) {
+    return _localtime64_s(out, t) == 0 ? out : (struct tm *)0;
+}
+template <typename T> struct tm *__okay_gmtime_r(const T *t, struct tm *out) {
+    return _gmtime64_s(out, t) == 0 ? out : (struct tm *)0;
+}
+#define localtime_r __okay_localtime_r
+#define gmtime_r __okay_gmtime_r

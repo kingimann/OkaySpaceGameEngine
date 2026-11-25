@@ -198,7 +198,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.9.2 OkayScript builtins - `Scripting/OkayScriptVM` - file-taking builtins call the check (L144)
   - 39.9.3 Visual script nodes - `VisualScript/NodesExtra` - the load-scene node refuses unsafe names; `Components/ActionList` does the same for `save_prefs` and scene actions
   - 39.9.4 Safe network spawns - `Net/AntiCheat` - only registered prefabs may be network-spawned (#351)
-  - 39.9.5 Launcher shell guard - `launcher/main.cpp` (L233) - `ShellSafeUrl` allows only plain http(s) URL characters before a URL reaches curl, wget, PowerShell or cmd
+  - 39.9.5 Launcher shell guard - `launcher/main.cpp` (L233) - `ShellSafeUrl` allows only plain http(s) URL characters before a URL reaches the browser or cmd (downloads no longer start curl, wget or PowerShell)
 - **Code:** `Core/SaveData`, `Scripting/OkayScriptVM`, `VisualScript/NodesExtra`, `Components/ActionList`, `launcher/main.cpp`
 - **API:** `Save::IsSafeRelative`, `ShellSafeUrl`
 - **Editor:** none

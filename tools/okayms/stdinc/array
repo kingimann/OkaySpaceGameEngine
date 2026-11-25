@@ -2,6 +2,7 @@
 // holding N elements, element access, iterators as pointers, size, fill). No exceptions: at() does not check.
 #pragma once
 #include <cstddef>
+#include <iterator>
 namespace std {
 template <typename T, size_t N>
 struct array {
@@ -24,6 +25,10 @@ struct array {
     const T* begin() const { return elems_; }
     T* end() { return elems_ + N; }
     const T* end() const { return elems_ + N; }
+    std::reverse_iterator<T*> rbegin() { return std::reverse_iterator<T*>(elems_ + N); }
+    std::reverse_iterator<const T*> rbegin() const { return std::reverse_iterator<const T*>(elems_ + N); }
+    std::reverse_iterator<T*> rend() { return std::reverse_iterator<T*>(elems_); }
+    std::reverse_iterator<const T*> rend() const { return std::reverse_iterator<const T*>(elems_); }
     size_t size() const { return N; }
     size_t max_size() const { return N; }
     bool empty() const { return N == 0; }

@@ -34,6 +34,7 @@ struct Mod {
     bool variadic = false;
     std::vector<Param> params;
     std::unique_ptr<Type> trailing;  // auto f(..) -> T: the return type ([dcl.fct] p2)
+    std::string memberOf;            // Ptr: T C::* ([dcl.mptr])
 };
 
 struct Parsed {
@@ -1075,12 +1076,19 @@ private:
         std::vector<std::unique_ptr<Stmt>> pre;  // hidden locals the initializers use
         std::unique_ptr<Stmt> body;
         bool hasBody = false;
+        bool defaulted = false;  // C(..) = default;
+        Pos pos;
+    };
+    struct DefaultedAssign {  // C &operator=(..) = default; in the class: made when it is finished
+        std::string mangled;
+        std::unique_ptr<Type> fn;
         Pos pos;
     };
     struct ClassCtx {
         std::string tag;
         Type* t = nullptr;
         std::vector<CtorDef> ctors;
+        std::vector<DefaultedAssign> defaultAssigns;
         bool dtorDeclared = false;
         bool dtorVirtual = false;
         std::unique_ptr<Stmt> dtorBody;
@@ -1974,20 +1982,67 @@ private:
         m.type = cloneType(*fn);
         T.params.push_back(std::move(m));
         auto decl = newMethodDecl(c.tag, T.params.back().mangled, *fn, fn->params, p);
-        auto body = sBlock(p);
-        auto other = [&](const std::string& field) {
-            auto dot = std::make_unique<Expr>();
-            dot->kind = Expr::Kind::Member;
-            dot->text = ".";
-            dot->line = p.line;
-            dot->col = p.col;
-            dot->file = p.file;
-            dot->kids.push_back(eName("__o", p));
-            dot->kids.push_back(eName(field, p));
-            return dot;
+        decl->body = memberwiseAssign(T, false, p);
+        extras_.push_back(std::move(decl));
+    }
+
+    // std::move(x) written out: *&x marked as an xvalue (ival 5, as the checker marks the result
+    // of a call returning T&&).
+    std::unique_ptr<Expr> eXvalue(std::unique_ptr<Expr> x, const Pos& p) {
+        auto d = std::make_unique<Expr>();
+        d->kind = Expr::Kind::Unary;
+        d->text = "*";
+        d->ival = 5;
+        d->line = p.line;
+        d->col = p.col;
+        d->file = p.file;
+        d->kids.push_back(eAddr(std::move(x), p));
+        return d;
+    }
+    // __o.field: a part of the object copied or moved from.
+    std::unique_ptr<Expr> eOther(const std::string& field, const Pos& p) {
+        auto dot = std::make_unique<Expr>();
+        dot->kind = Expr::Kind::Member;
+        dot->text = ".";
+        dot->line = p.line;
+        dot->col = p.col;
+        dot->file = p.file;
+        dot->kids.push_back(eName("__o", p));
+        dot->kids.push_back(eName(field, p));
+        return dot;
+    }
+    // this->field = __o.field, an array member element by element; for a move, a part of class
+    // type is moved.
+    void assignPart(Stmt& body, const std::string& field, const Type* ft, bool move, const Pos& p) {
+        auto from = [&](std::unique_ptr<Expr> x, const Type* t) {
+            return move && t && t->kind == Type::Kind::Struct ? eXvalue(std::move(x), p) : std::move(x);
         };
-        if (B) {
-            // *(B *)this = *(B *)&__o: the base part, with the base's own operator= when it has one.
+        if (ft && ft->kind == Type::Kind::Array) {
+            std::uint64_t n = ft->bound && ft->bound->kind == Expr::Kind::Int ? ft->bound->ival : 0;
+            for (std::uint64_t k = 0; k < n; ++k) {
+                auto idx = [&](std::unique_ptr<Expr> base) {
+                    auto el = std::make_unique<Expr>();
+                    el->kind = Expr::Kind::Index;
+                    el->line = p.line;
+                    el->col = p.col;
+                    el->file = p.file;
+                    el->kids.push_back(std::move(base));
+                    el->kids.push_back(eInt(k, p));
+                    return el;
+                };
+                body.stmts.push_back(sExpr(
+                    eAssign(idx(eArrow(eName("this", p), field, p)), from(idx(eOther(field, p)), ft->inner.get()), p), p));
+            }
+            return;
+        }
+        body.stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), field, p), from(eOther(field, p), ft), p), p));
+    }
+    // The body of an implicit or defaulted copy or move assignment ([class.copy.assign] p12): the
+    // base part (*(B *)this = *(B *)&__o, with the base's own operator= when it has one), then
+    // each member in turn, then return *this. A move assignment moves each part.
+    std::unique_ptr<Stmt> memberwiseAssign(const Type& T, bool move, const Pos& p) {
+        auto body = sBlock(p);
+        if (!T.base.empty() && classOf(T.base)) {
             auto castTo = [&](std::unique_ptr<Expr> x) {
                 auto cst = std::make_unique<Expr>();
                 cst->kind = Expr::Kind::Cast;
@@ -2007,32 +2062,11 @@ private:
                 d->kids.push_back(std::move(cst));
                 return d;
             };
-            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), castTo(eAddr(eName("__o", p), p)), p), p));
+            auto src = castTo(eAddr(eName("__o", p), p));
+            if (move) src = eXvalue(std::move(src), p);
+            body->stmts.push_back(sExpr(eAssign(castTo(eName("this", p)), std::move(src), p), p));
         }
-        for (auto& f : ownFields(T)) {
-            if (f.second && f.second->kind == Type::Kind::Array) {
-                std::uint64_t n = f.second->bound && f.second->bound->kind == Expr::Kind::Int ? f.second->bound->ival : 0;
-                for (std::uint64_t k = 0; k < n; ++k) {
-                    auto idx = [&](std::unique_ptr<Expr> base) {
-                        auto i = std::make_unique<Expr>();
-                        i->kind = Expr::Kind::Int;
-                        i->ival = k;
-                        auto el = std::make_unique<Expr>();
-                        el->kind = Expr::Kind::Index;
-                        el->line = p.line;
-                        el->col = p.col;
-                        el->file = p.file;
-                        el->kids.push_back(std::move(base));
-                        el->kids.push_back(std::move(i));
-                        return el;
-                    };
-                    body->stmts.push_back(
-                        sExpr(eAssign(idx(eArrow(eName("this", p), f.first, p)), idx(other(f.first)), p), p));
-                }
-                continue;
-            }
-            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), f.first, p), other(f.first), p), p));
-        }
+        for (auto& f : ownFields(T)) assignPart(*body, f.first, f.second, move, p);
         auto ret = std::make_unique<Stmt>();
         ret->kind = Stmt::Kind::Return;
         ret->line = p.line;
@@ -2047,8 +2081,59 @@ private:
         self->kids.push_back(eName("this", p));
         ret->expr = std::move(self);
         body->stmts.push_back(std::move(ret));
-        decl->body = std::move(body);
-        extras_.push_back(std::move(decl));
+        return body;
+    }
+    // The member initializers of an implicit or defaulted copy or move constructor ([class.copy.ctor]
+    // p14): the base from __o, then each member from __o's (moved for a move). An array member is
+    // copied element by element in the body. The constructor's one parameter becomes __o.
+    void memberwiseInits(CtorDef& d, const Type& T, bool move, const Pos& p) {
+        if (d.params.size() != 1) return;
+        d.params[0].name = "__o";
+        d.inits.clear();
+        d.body = sBlock(p);
+        d.hasBody = true;
+        if (!T.base.empty()) {
+            MemInit mi;
+            mi.name = shortName(T.base);
+            mi.args.push_back(move ? eXvalue(eName("__o", p), p) : eName("__o", p));
+            d.inits.push_back(std::move(mi));
+        }
+        for (auto& f : ownFields(T)) {
+            const Type* ft = f.second;
+            if (ft && ft->kind == Type::Kind::Array) {
+                assignPart(*d.body, f.first, ft, move, p);
+                continue;
+            }
+            MemInit mi;
+            mi.name = f.first;
+            auto from = eOther(f.first, p);
+            mi.args.push_back(move && ft && ft->kind == Type::Kind::Struct ? eXvalue(std::move(from), p) : std::move(from));
+            d.inits.push_back(std::move(mi));
+        }
+    }
+    // A defaulted constructor whose one parameter is a reference to its own class: a copy or move
+    // constructor; it gets the implicit one's member initializers ([dcl.fct.def.default] p5).
+    void defaultCopyCtor(CtorDef& d, const std::string& tag, const Type& T) {
+        if (d.params.size() != 1 || !d.params[0].type) return;
+        const Type* a = d.params[0].type.get();
+        if (a->kind != Type::Kind::Reference || !a->inner || a->inner->kind != Type::Kind::Struct || a->inner->tag != tag)
+            return;
+        memberwiseInits(d, T, a->rref, d.pos);
+    }
+    // A defaulted operator= whose parameter is a reference to its own class: the copy or move
+    // assignment, with the implicit one's body. Returns the definition (or null when it is not one).
+    std::unique_ptr<Decl> defaultAssign(const std::string& tag, const std::string& mangled, const Type& fn,
+                                        const Pos& p) {
+        const Type* T = classOf(tag);
+        if (!T || fn.params.size() != 1 || !fn.params[0].type) return nullptr;
+        const Type* a = fn.params[0].type.get();
+        if (a->kind != Type::Kind::Reference || !a->inner || a->inner->kind != Type::Kind::Struct || a->inner->tag != tag)
+            return nullptr;
+        auto f = cloneType(fn);
+        f->params[0].name = "__o";
+        auto decl = newMethodDecl(tag, mangled, *f, f->params, p);
+        decl->body = memberwiseAssign(*T, a->rref, p);
+        return decl;
     }
 
     // The class of a field: the field's own type, or the element type of a one-level array of a
@@ -2103,6 +2188,8 @@ private:
             T.params.push_back(std::move(cp));
             c.ctors.push_back(std::move(d));
         }
+        for (CtorDef& d : c.ctors)
+            if (d.defaulted) defaultCopyCtor(d, c.tag, T);
         // The implicit copy constructor: a class with no copy constructor of its own whose base or
         // member has one copies the base and each member with them. (Not made when a part could not
         // be copied that way: an array member, a base without a copy constructor.)
@@ -2146,23 +2233,8 @@ private:
             // deleted too ([class.copy.ctor] p10); its implicit move constructor is made instead,
             // moving each part (it used to be a copy constructor calling the deleted one).
             const bool asMove = deletedPart;
-            auto moved = [&](std::unique_ptr<Expr> x, const Type* t) {
-                // std::move(x) written out: *&x marked as an xvalue (ival 5, as the checker marks
-                // the result of a call returning T&&), for the base or member of class type t.
-                if (!asMove || !t) return x;
-                auto deref = std::make_unique<Expr>();
-                deref->kind = Expr::Kind::Unary;
-                deref->text = "*";
-                deref->ival = 5;
-                deref->line = p.line;
-                deref->col = p.col;
-                deref->file = p.file;
-                deref->kids.push_back(eAddr(std::move(x), p));
-                return deref;
-            };
             if (!userCopy && parts && ok) {
                 CtorDef d;
-                d.hasBody = true;
                 d.pos = p;
                 Param op;
                 op.name = "__o";
@@ -2172,30 +2244,7 @@ private:
                 refT->inner->tag = c.tag;
                 op.type = std::move(refT);
                 d.params.push_back(std::move(op));
-                if (B) {
-                    MemInit mi;
-                    mi.name = shortName(T.base);
-                    auto bt = ty(Type::Kind::Struct);
-                    bt->tag = T.base;
-                    mi.args.push_back(moved(eName("__o", p), bt.get()));
-                    d.inits.push_back(std::move(mi));
-                }
-                for (auto& f : ownFields(T)) {
-                    MemInit mi;
-                    mi.name = f.first;
-                    auto dot = std::make_unique<Expr>();
-                    dot->kind = Expr::Kind::Member;
-                    dot->text = ".";
-                    dot->line = p.line;
-                    dot->col = p.col;
-                    dot->file = p.file;
-                    dot->kids.push_back(eName("__o", p));
-                    dot->kids.push_back(eName(f.first, p));
-                    const Type* ft = f.second;
-                    bool cls = ft && ft->kind == Type::Kind::Struct;
-                    mi.args.push_back(cls ? moved(std::move(dot), ft) : std::move(dot));
-                    d.inits.push_back(std::move(mi));
-                }
+                memberwiseInits(d, T, asMove, p);
                 Param cp;
                 cp.name = "<ctor>";
                 auto fn = fnTypeOf(d.params);
@@ -2382,6 +2431,8 @@ private:
             auto fn = fnTypeOf(d.params);
             extras_.push_back(newMethodDecl(c.tag, mangleSpecial(c.tag, "C1", *fn), *fn, d.params, d.pos));
         }
+        for (DefaultedAssign& da : c.defaultAssigns)
+            if (auto decl = defaultAssign(c.tag, da.mangled, *da.fn, da.pos)) extras_.push_back(std::move(decl));
         emitVectorHelpers(c, T);
         for (CtorDef& d : c.ctors) {
             if (!d.hasBody) continue;
@@ -2854,6 +2905,7 @@ private:
                 } else if (eatP("=")) {
                     if (isKw("default")) {
                         cd.hasBody = true;
+                        cd.defaulted = true;
                         cd.body = sBlock(cd.pos);
                     } else if (isKw("delete")) {
                         deletedFns_.insert(t->params.back().mangled);  // C(const C&) = delete
@@ -2924,13 +2976,16 @@ private:
                 if (cx.cxx && !classy) classy = true;
                 bool pure = false;
                 bool cmethod = false;
+                bool defaulted = false;
                 while (isKw("const") || isKw("override") || isKw("final") || isKw("noexcept")) {
                     if (isKw("const")) cmethod = true;
-                    advance();
+                    if (isKw("noexcept")) skipNoexcept();  // noexcept(true) too
+                    else advance();
                 }
                 if (isP("=")) {
                     advance();
                     if (!atEnd() && cur().kind == Tok::Int && cur().uval == 0) pure = true;
+                    if (isKw("default")) defaulted = true;
                     advance();
                 }
                 Param field;
@@ -2964,6 +3019,11 @@ private:
                                               Pos{d.line, d.col, d.file});
                     deferBody(2, 0, decl.get(), fieldType->inner.get());
                     extras_.push_back(std::move(decl));
+                } else if (defaulted && d.name == "operator=") {
+                    // C &operator=(const C &) = default: memberwise, made when the class is finished.
+                    expectP(";", ";");
+                    cx.defaultAssigns.push_back(
+                        DefaultedAssign{t->params.back().mangled, cloneType(*fieldType), Pos{d.line, d.col, d.file}});
                 } else {
                     expectP(";", ";");
                     if (!pure) {
@@ -3225,6 +3285,7 @@ private:
         Guard nest(*this);
         if (!nest) return Parsed();
         std::vector<Mod::Kind> prefix;
+        std::vector<std::string> memberOf;  // the class of each T C::* in prefix
         while (!atEnd()) {
             if (eatKw("const") || eatKw("volatile")) continue;
             if (eatP("*")) {
@@ -3239,12 +3300,30 @@ private:
                 prefix.push_back(Mod::Kind::RRef);  // T&&: an rvalue (or forwarding) reference
                 continue;
             }
+            if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
+                // T C::*name: a pointer to a data member of class C ([dcl.mptr]).
+                std::size_t j = i_;
+                std::string q;
+                while (j + 1 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::")) {
+                    q += (q.empty() ? "" : "::") + toks_[j].text;
+                    j += 2;
+                }
+                std::string cls = j < toks_.size() && isP(toks_[j], "*") ? classPrefix(q) : "";
+                if (!cls.empty()) {
+                    i_ = j + 1;
+                    prefix.push_back(Mod::Kind::Ptr);
+                    memberOf.resize(prefix.size());
+                    memberOf.back() = cls;
+                    continue;
+                }
+            }
             break;
         }
         Parsed d = parseDirect(needName);
         for (int n = static_cast<int>(prefix.size()) - 1; n >= 0; --n) {
             Mod m;
             m.kind = prefix[static_cast<std::size_t>(n)];
+            if (static_cast<std::size_t>(n) < memberOf.size()) m.memberOf = memberOf[static_cast<std::size_t>(n)];
             d.mods.push_back(std::move(m));
         }
         return d;
@@ -3401,6 +3480,7 @@ private:
             Mod& m = mods[static_cast<std::size_t>(n)];
             if (m.kind == Mod::Kind::Ptr) {
                 t->kind = Type::Kind::Pointer;
+                t->memberOf = m.memberOf;
                 t->inner = std::move(base);
             } else if (m.kind == Mod::Kind::Ref || m.kind == Mod::Kind::RRef) {
                 if (base && base->kind == Type::Kind::Reference) {
@@ -5332,6 +5412,7 @@ private:
             CtorDef cd;
             cd.pos = pos;
             parseParams(cd.params);
+            skipNoexcept();  // C::C(C &&) noexcept = default; C::C() noexcept : x(1) {}
             parseInitList(cd);
             auto fn = fnTypeOf(cd.params);
             std::string mangled = mangleSpecial(tag, "C1", *fn);
@@ -5344,6 +5425,7 @@ private:
                 i_ += 3;  // S::S() = default;
                 cd.body = sBlock(pos);
                 cd.hasBody = true;
+                defaultCopyCtor(cd, tag, *T);  // S::S(S &&) = default: memberwise
                 auto decl = buildCtor(tag, cd);
                 if (decl) {
                     decl->isInline = decl->isInline || ooInline_;
@@ -5368,6 +5450,7 @@ private:
         advance();
         expectP("(", "(");
         expectP(")", ")");
+        skipNoexcept();
         if (!special(T, "<dtor>")) err("the class does not declare a destructor");
         auto vt = ty(Type::Kind::Void);
         if (isP("{")) {
@@ -5587,8 +5670,32 @@ private:
         if (type && type->kind == Type::Kind::Function)
             while (isKw("const") || isKw("noexcept")) {
                 if (isKw("const")) defConst = true;
-                advance();
+                if (isKw("noexcept")) skipNoexcept();  // noexcept(expr) too
+                else advance();
             }
+        if (!td && type && type->kind == Type::Kind::Function && isP("=") && i_ + 2 < toks_.size() &&
+            isKwTok(toks_[i_ + 1], "default") && isP(toks_[i_ + 2], ";")) {
+            // C &C::operator=(C &&) noexcept = default; ([dcl.fct.def.default]): the implicit one's
+            // body, memberwise.
+            std::size_t cc = d.name.rfind("::");
+            std::string clsTag = cc == std::string::npos ? "" : classPrefix(d.name.substr(0, cc));
+            if (!clsTag.empty() && d.name.substr(cc + 2) == "operator=") {
+                i_ += 3;
+                std::string mangled;
+                for (const Param& p : classOf(clsTag)->params)
+                    if (p.name == "operator=" && !p.mangled.empty() && p.type && sameParamTypes(*p.type, *type))
+                        mangled = p.mangled;
+                std::unique_ptr<Decl> decl;
+                if (!mangled.empty()) decl = defaultAssign(clsTag, mangled, *type, Pos{d.line, d.col, d.file});
+                if (!decl) err("only a copy or move assignment declared in the class can be defaulted here");
+                else {
+                    decl->isInline = inl;
+                    extras_.push_back(std::move(decl));
+                }
+                flushExtras(tu);
+                return;
+            }
+        }
         if (!td && type && type->kind == Type::Kind::Function && d.name.find("::") == std::string::npos)
             fnNames_.insert(d.name);
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
@@ -7142,7 +7249,9 @@ private:
     std::unique_ptr<Expr> parseRel() { return parseLeft(&Parser::parseShift, {"<", ">", "<=", ">="}); }
     std::unique_ptr<Expr> parseShift() { return parseLeft(&Parser::parseAdd, {"<<", ">>"}); }
     std::unique_ptr<Expr> parseAdd() { return parseLeft(&Parser::parseMul, {"+", "-"}); }
-    std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parseCast, {"*", "/", "%"}); }
+    std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parsePm, {"*", "/", "%"}); }
+    // a.*pm and p->*pm ([expr.mptr.oper]): the checker makes them a dereference.
+    std::unique_ptr<Expr> parsePm() { return parseLeft(&Parser::parseCast, {".*", "->*"}); }
 
     // The index just past the type name (N::T, T<args>, N::T<A>::U) at toks_[k]; toks_.size() if
     // a ';' comes inside its template arguments.
@@ -7259,11 +7368,52 @@ private:
         return e;
     }
 
+    // &C::m for a non-static data member m ([expr.unary.op] p3): a pointer to member, T C::*. It is
+    // kept as the member's offset plus one: (T C::*)((long)&((C *)0)->m + 1).
+    std::unique_ptr<Expr> tryMemberPointer() {
+        std::size_t j = i_ + 1;
+        std::string prefix;
+        while (j + 2 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::") &&
+               toks_[j + 2].kind == Tok::Ident) {
+            prefix += (prefix.empty() ? "" : "::") + toks_[j].text;
+            j += 2;
+        }
+        if (prefix.empty() || j + 1 >= toks_.size() || isP(toks_[j + 1], "(") || isP(toks_[j + 1], "<")) return nullptr;
+        std::string cls = classPrefix(prefix);
+        const Type* T = cls.empty() ? nullptr : classOf(cls);
+        if (!T) return nullptr;
+        const Param* f = nullptr;
+        for (const Param& q : T->params)
+            if (isDataField(q) && q.name == toks_[j].text) f = &q;
+        if (!f || f->bits >= 0 || f->type->kind == Type::Kind::Reference) return nullptr;
+        Pos p = here();
+        std::string field = f->name;
+        auto pmT = ty(Type::Kind::Pointer);
+        pmT->inner = cloneType(*f->type);
+        pmT->memberOf = cls;
+        i_ = j + 1;
+        auto cptr = ty(Type::Kind::Pointer);
+        cptr->inner = ty(Type::Kind::Struct);
+        cptr->inner->tag = cls;
+        auto at = eAddr(eArrow(eCastTo(std::move(cptr), eInt(0, p), p), field, p), p);
+        auto plus = std::make_unique<Expr>();
+        plus->kind = Expr::Kind::Bin;
+        plus->text = "+";
+        plus->line = p.line;
+        plus->col = p.col;
+        plus->file = p.file;
+        plus->kids.push_back(eCastTo(ty(Type::Kind::Long), std::move(at), p));
+        plus->kids.push_back(eInt(1, p));
+        return eCastTo(std::move(pmT), std::move(plus), p);
+    }
+
     std::unique_ptr<Expr> parseUnary() {
         if (atEnd()) {
             err("expected an expression");
             return zeroAt();
         }
+        if (isP("&"))
+            if (auto pm = tryMemberPointer()) return pm;
         if (isP("::") && i_ + 1 < toks_.size() &&
             (toks_[i_ + 1].kind == Tok::Ident || isKwTok(toks_[i_ + 1], "new") || isKwTok(toks_[i_ + 1], "delete")))
             advance();  // ::f(), ::new: the global name (see isTypeKw)

@@ -1425,7 +1425,13 @@ private:
                 return cvtFp(v, srcW, -iw);
             }
             int w = sizeOf(e.ty.get());
-            if (w >= 8 && !e.ty->unsign) return v;
+            if (w >= 8 && !e.ty->unsign) {
+                // (long)p is a number: p's pointer step goes ((long)p + 1 added the size of *p).
+                v.step = 0;
+                v.inner = 0;
+                v.fields.clear();
+                return v;
+            }
             return Val{narrow(v.op, w, e.ty->unsign), 0, 0};
         }
         case Expr::Kind::Comma: {

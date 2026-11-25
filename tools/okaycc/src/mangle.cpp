@@ -31,7 +31,15 @@ std::string mangleType(const Type& t) {
     case Type::Kind::Float: return "f";
     case Type::Kind::Double: return "d";
     // A const pointee is K<type> ([mangle.qualified-type]); top-level const is not mangled.
-    case Type::Kind::Pointer: return t.inner ? "P" + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Pv";
+    case Type::Kind::Pointer:
+        if (!t.memberOf.empty() && t.inner) {
+            // A pointer to member: M <class type> <member type> ([mangle.pointer-to-member-type]).
+            Type cls;
+            cls.kind = Type::Kind::Struct;
+            cls.tag = t.memberOf;
+            return "M" + mangleType(cls) + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner);
+        }
+        return t.inner ? "P" + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Pv";
     case Type::Kind::Reference:
         return t.inner ? (t.rref ? "O" : "R") + std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "Rv";
     case Type::Kind::Struct:

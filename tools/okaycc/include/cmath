@@ -202,6 +202,20 @@ inline double fmod(double x, double y) {
     return __okay_join(sign, mx, ex);
 }
 inline float fmod(float x, float y) { return (float)fmod((double)x, (double)y); }
+// remainder (C 7.12.10.2): x - n * y with n the nearest integer to x / y, ties to even. fmod by 2|y|
+// first (exact) leaves the quotient's parity known; each subtraction below is exact.
+inline double remainder(double x, double y) {
+    if (!(x == x) || !(y == y) || !(x - x == 0) || y == 0) return (x - x) / (y - y);  // NaN
+    double ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+    bool big = ay > 8.98846567431158e307;  // past half the largest double: 2|y| would overflow
+    if (!big) ax = fmod(ax, ay + ay);
+    if (big ? ax > ay * 0.5 : ax + ax > ay) {
+        ax -= ay;
+        if (big ? ax >= ay * 0.5 : ax + ax >= ay) ax -= ay;
+    }
+    return x < 0 ? -ax : ax;
+}
+inline float remainder(float x, float y) { return (float)remainder((double)x, (double)y); }
 inline double nearbyint(double x) {
     if (!(x - x == 0) || x == 0) return x;
     if (x >= 4503599627370496.0 || x <= -4503599627370496.0) return x;

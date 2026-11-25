@@ -66,6 +66,7 @@ std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults) {
     n->variadic = t.variadic;
     n->rref = t.rref;
     n->cnst = t.cnst;
+    n->memberOf = t.memberOf;
     n->base = t.base;
     n->nonpod = t.nonpod;
     n->hasVptr = t.hasVptr;
@@ -386,6 +387,7 @@ bool isVoidPtr(const Type& t) {
 bool sameType(const Type& a, const Type& b) {
     if (a.kind != b.kind || a.unsign != b.unsign) return false;
     if (a.kind == Type::Kind::Reference && a.rref != b.rref) return false;
+    if (a.kind == Type::Kind::Pointer && a.memberOf != b.memberOf) return false;
     if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }

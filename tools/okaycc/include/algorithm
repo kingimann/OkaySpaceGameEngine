@@ -2,6 +2,7 @@
 // Function templates of one name are told apart by their number of parameters only, so sort and
 // stable_sort take an optional comparison but min and max take none.
 #pragma once
+#include <initializer_list>
 #include <utility>
 namespace std {
 template <typename T>
@@ -192,5 +193,127 @@ const T &clamp(const T &v, const T &lo, const T &hi) {
     if (v < lo) return lo;
     if (hi < v) return hi;
     return v;
+}
+// Round 28 ([alg.min.max], [alg.replace], [alg.rotate], [alg.transform], [alg.partitions],
+// [alg.nth.element], [alg.partial.sort], [alg.equal], [binary.search], [set.union],
+// [set.intersection]).
+template <typename T>
+T min(initializer_list<T> l) {
+    const T *m = l.begin();
+    for (const T *p = l.begin(); p != l.end(); ++p)
+        if (*p < *m) m = p;
+    return *m;
+}
+template <typename T>
+T max(initializer_list<T> l) {
+    const T *m = l.begin();
+    for (const T *p = l.begin(); p != l.end(); ++p)
+        if (*m < *p) m = p;
+    return *m;
+}
+template <typename T>
+pair<T, T> minmax(const T &a, const T &b) {
+    if (b < a) return pair<T, T>(b, a);
+    return pair<T, T>(a, b);
+}
+template <typename It, typename V>
+void replace(It first, It last, const V &from, const V &to) {
+    for (; first != last; ++first)
+        if (*first == from) *first = to;
+}
+// rotate: the three-reversal method; returns where the old first element went.
+template <typename It>
+It rotate(It first, It middle, It last) {
+    if (first == middle) return last;
+    if (middle == last) return first;
+    reverse(first, middle);
+    reverse(middle, last);
+    reverse(first, last);
+    return first + (last - middle);
+}
+template <typename In, typename Out, typename F>
+Out transform(In first, In last, Out out, F f) {
+    for (; first != last; ++first, ++out) *out = f(*first);
+    return out;
+}
+template <typename In, typename In2, typename Out, typename F>
+Out transform(In first, In last, In2 first2, Out out, F f) {
+    for (; first != last; ++first, ++first2, ++out) *out = f(*first, *first2);
+    return out;
+}
+// stable_partition: the elements for which pred holds first, both groups in their old order
+// (an insertion pass: each such element is rotated back to the end of the first group).
+template <typename It, typename Pred>
+It stable_partition(It first, It last, Pred pred) {
+    It end = first;
+    for (It p = first; p != last; ++p)
+        if (pred(*p)) {
+            rotate(end, p, p + 1);
+            ++end;
+        }
+    return end;
+}
+template <typename It, typename Less>
+void nth_element(It first, It nth, It last, Less less) {
+    (void)nth;
+    sort(first, last, less);
+}
+template <typename It>
+void nth_element(It first, It nth, It last) {
+    (void)nth;
+    sort(first, last);
+}
+template <typename It, typename Less>
+void partial_sort(It first, It middle, It last, Less less) {
+    (void)middle;
+    sort(first, last, less);
+}
+template <typename It>
+void partial_sort(It first, It middle, It last) {
+    (void)middle;
+    sort(first, last);
+}
+template <typename It, typename It2>
+bool equal(It first, It last, It2 first2) {
+    for (; first != last; ++first, ++first2)
+        if (!(*first == *first2)) return false;
+    return true;
+}
+template <typename It, typename It2>
+bool equal(It first, It last, It2 first2, It2 last2) {
+    for (; first != last && first2 != last2; ++first, ++first2)
+        if (!(*first == *first2)) return false;
+    return first == last && first2 == last2;
+}
+template <typename It, typename V>
+bool binary_search(It first, It last, const V &value) {
+    It p = lower_bound(first, last, value);
+    return p != last && !(value < *p);
+}
+template <typename In, typename In2, typename Out>
+Out set_union(In first, In last, In2 first2, In2 last2, Out out) {
+    while (first != last && first2 != last2) {
+        if (*first < *first2) *out = *first, ++first;
+        else if (*first2 < *first) *out = *first2, ++first2;
+        else *out = *first, ++first, ++first2;
+        ++out;
+    }
+    for (; first != last; ++first, ++out) *out = *first;
+    for (; first2 != last2; ++first2, ++out) *out = *first2;
+    return out;
+}
+template <typename In, typename In2, typename Out>
+Out set_intersection(In first, In last, In2 first2, In2 last2, Out out) {
+    while (first != last && first2 != last2) {
+        if (*first < *first2) ++first;
+        else if (*first2 < *first) ++first2;
+        else {
+            *out = *first;
+            ++out;
+            ++first;
+            ++first2;
+        }
+    }
+    return out;
 }
 }  // namespace std

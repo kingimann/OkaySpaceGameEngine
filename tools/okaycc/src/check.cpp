@@ -1322,6 +1322,13 @@ private:
             if (p.name == n) return p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function;
         return false;
     }
+    // f().m, f().a.b: a member (through '.') of a call result. The checker makes it a member of a
+    // hidden object, (hidden = f(), hidden.m): an lvalue to the end of the full expression.
+    static bool memberOfCall(const Expr& e) {
+        if (e.kind != Expr::Kind::Member || e.text != "." || e.kids.size() != 2 || !e.kids[0]) return false;
+        const Expr& o = *e.kids[0];
+        return o.kind == Expr::Kind::Call || memberOfCall(o);
+    }
     static bool simpleOperand(const Expr& e) {
         switch (e.kind) {
         case Expr::Kind::Name: return true;
@@ -1390,7 +1397,7 @@ private:
               (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index)))
             return false;  // (*s.begin(), -f(), Name() += x, ++Counter(): operators on a call result)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
-            lhs.kind != Expr::Kind::Unary &&
+            lhs.kind != Expr::Kind::Unary && !memberOfCall(lhs) &&
             !((lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index) &&
               (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
                e.kind == Expr::Kind::Post)))
@@ -1435,7 +1442,7 @@ private:
             }
         }
         // (typeid(x) became *(const type_info *)... when the probe checked it: a dereference too.)
-        const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member ||
+        const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || subobjectOfTemp(lhs) ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
                               (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast));
         if (!simple && !(found && probe.lvalue && refCall)) {
@@ -1648,11 +1655,54 @@ private:
         return false;
     }
 
+    // a.*pm and p->*pm with pm a pointer to a data member (T C::*, kept as offset + 1):
+    // *(T *)((char *)&a + (long)pm - 1) ([expr.mptr.oper]).
+    void rewriteMemberPointer(Expr& e) {
+        ++quiet_;
+        ET pm = checkExpr(*e.kids[1]);
+        --quiet_;
+        const Type* pt = pm.type.get();
+        if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+        if (pm.bad || !pt || pt->kind != Type::Kind::Pointer || pt->memberOf.empty() || !pt->inner) {
+            err(e.line, e.col, "the right operand of '" + e.text + "' is not a pointer to a data member");
+            return;
+        }
+        auto toT = cloneType(*pt);
+        toT->memberOf.clear();
+        auto charP = prim(Type::Kind::Pointer);
+        charP->inner = prim(Type::Kind::Char);
+        auto cast = [&](std::unique_ptr<Type> t, std::unique_ptr<Expr> x) {
+            auto c = mkE(Expr::Kind::Cast, e);
+            c->ty = std::move(t);
+            c->kids.push_back(std::move(x));
+            return c;
+        };
+        auto bin = [&](const char* op, std::unique_ptr<Expr> a, std::unique_ptr<Expr> b) {
+            auto n = mkE(Expr::Kind::Bin, e);
+            n->text = op;
+            n->kids.push_back(std::move(a));
+            n->kids.push_back(std::move(b));
+            return n;
+        };
+        auto obj = std::move(e.kids[0]);
+        if (e.text == ".*") obj = eUnary("&", std::move(obj), e);
+        auto one = mkE(Expr::Kind::Int, e);
+        one->ival = 1;
+        auto at = bin("-", bin("+", cast(std::move(charP), std::move(obj)), cast(prim(Type::Kind::Long), std::move(e.kids[1]))),
+                      std::move(one));
+        auto ptr = cast(std::move(toT), std::move(at));
+        e.kind = Expr::Kind::Unary;
+        e.text = "*";
+        e.ival = 0;
+        e.kids.clear();
+        e.kids.push_back(std::move(ptr));
+    }
+
     // x->m where x is an object of a class with operator->: (x.operator->())->m ([over.ref]). The
     // result is a pointer here (an operator-> that returns another class is not followed further).
     void rewriteArrow(Expr& e) {
         Expr& lhs = *e.kids[0];
-        if (!simpleOperand(lhs) && lhs.kind != Expr::Kind::Call) return;
+        if (!simpleOperand(lhs) && lhs.kind != Expr::Kind::Call && !memberOfCall(lhs)) return;
         ++quiet_;
         ET probe = checkExpr(lhs);
         --quiet_;
@@ -1758,6 +1808,9 @@ private:
             e.kids[1]->kind == Expr::Kind::Brace)
             braceAssign(e);
         if (e.kind == Expr::Kind::Member && e.text == "->" && e.kids.size() == 2 && e.kids[0]) rewriteArrow(e);
+        if (e.kind == Expr::Kind::Bin && (e.text == ".*" || e.text == "->*") && e.kids.size() == 2 && e.kids[0] &&
+            e.kids[1])
+            rewriteMemberPointer(e);
         if (!rewriteOperator(e)) rewriteFreeOperator(e);
         ET r = checkExprBody(e);
         // (an object of a finished class is kept by name: its members are the class's, canonOf)
@@ -3024,10 +3077,17 @@ private:
                 return bad(e.line, e.col);
             }
             std::vector<ET> argTypes;
+            std::vector<bool> braced;  // f({a, b}): the list's first element stands for it below
             for (std::size_t i = 1; i < e.kids.size(); ++i) {
-                ET a = checkExpr(*e.kids[i]);
+                const Expr& k = *e.kids[i];
+                const bool list = k.kind == Expr::Kind::Brace && !k.kids.empty() && k.kids[0];
+                ++quiet_;
+                ET a = list ? checkExpr(*k.kids[0]) : ET{};
+                --quiet_;
+                if (!list) a = checkExpr(*e.kids[i]);
                 if (a.bad || !a.type) return bad(e.line, e.col);
                 argTypes.push_back(std::move(a));
+                braced.push_back(list);
             }
             const TemplateSig* chosen = nullptr;
             std::vector<std::unique_ptr<Type>> bound;
@@ -3044,15 +3104,40 @@ private:
                     bool wantsValue = i < cand.isType.size() && !cand.isType[i];
                     if (given[i] != wantsValue) ok = false;
                 }
-                for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
+                for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i) {
+                    if (braced[i]) {
+                        // A braced list deduces only an initializer_list<T> parameter, T from its
+                        // elements ([temp.deduct.call] p1).
+                        const Type* pt = cand.fn->params[i].type.get();
+                        if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                        std::string elem;
+                        if (pt && isInitListType(pt)) {
+                            std::size_t lt = pt->tag.find('<');
+                            elem = pt->tag.substr(lt + 1, pt->tag.size() - lt - 2);
+                        }
+                        // (an argument in an instance tag is written with its length first: 2\x02T)
+                        std::size_t digits = 0;
+                        while (digits < elem.size() && elem[digits] >= '0' && elem[digits] <= '9') ++digits;
+                        elem = elem.substr(digits);
+                        if (elem.size() < 2 || elem[0] != '\x02') {
+                            ok = false;
+                            continue;
+                        }
+                        Type pat;
+                        pat.kind = Type::Kind::Struct;
+                        pat.tag = elem;
+                        if (!deduceArg(pat, argTypes[i], cand, b)) ok = false;
+                        continue;
+                    }
                     if (cand.fn->params[i].type && !(hasPlaceholder(*cand.fn->params[i].type) && onlyGiven(*cand.fn->params[i].type, cand, c0.kids.size())) &&
                         !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
                         ok = false;
+                }
                 // A parameter that names no template parameter must take its argument as an
                 // ordinary one does ([temp.deduct.call] p4, [over.match.viable]): operator==(const
                 // optional<T> &, nullopt_t) is not a candidate for o == 7.
                 for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
-                    if (cand.fn->params[i].type && !hasPlaceholder(*cand.fn->params[i].type) &&
+                    if (cand.fn->params[i].type && !braced[i] && !hasPlaceholder(*cand.fn->params[i].type) &&
                         fitScore(*cand.fn->params[i].type, decay(copyET(argTypes[i]))) < 0)
                         ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)

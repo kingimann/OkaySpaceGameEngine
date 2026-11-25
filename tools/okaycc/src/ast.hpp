@@ -80,6 +80,9 @@ struct Type {
     bool variadic = false;
     bool rref = false;  // a Reference that is an rvalue reference T&& ([dcl.ref])
     bool cnst = false;  // declared const ([dcl.type.cv]); written before the type name only
+    // A Pointer that is a pointer to a data member of this class (T C::*, [dcl.mptr]). Its value is
+    // the member's offset plus one, so a null one is 0 (our own choice; Itanium keeps the offset and -1).
+    std::string memberOf;
     std::vector<Param> params;
     // Class facts (Itanium C++ ABI layout of a single-inheritance class).
     std::string base;                // tag of the one base class, or empty

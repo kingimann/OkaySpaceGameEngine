@@ -8,6 +8,7 @@
 // docs/gameplay/active_ragdoll.md.
 #include "okay/Animation/RagdollPhysics.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Physics/Core/VecConvert.hpp"
 #include "okay/Physics/Core/World.hpp"
 #include <cmath>
 #include <unordered_map>
@@ -17,10 +18,7 @@ namespace okay {
 namespace dyn {
 
 namespace {
-phys::V3 P3(const Vec3& v) { return {v.x, v.y, v.z}; }
-Vec3 E3(const phys::V3& v) { return {v.x, v.y, v.z}; }
-phys::Q PQ(const Quat& q) { return phys::NormalizeQ(phys::Q{q.x, q.y, q.z, q.w}); }
-Quat EQ(const phys::Q& q) { return Quat{q.x, q.y, q.z, q.w}; }
+using namespace phys::conv;   // P3, E3, PQ, EQ (Physics/Core/VecConvert.hpp)
 
 bool Ok(float f) { return std::isfinite(f); }
 bool Ok(const Vec3& v) { return Ok(v.x) && Ok(v.y) && Ok(v.z); }

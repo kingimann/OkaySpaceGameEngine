@@ -15,10 +15,7 @@ namespace okay {
 
 namespace {
 
-phys::V3 P3(const Vec3& v) { return {v.x, v.y, v.z}; }
-Vec3 E3(const phys::V3& v) { return {v.x, v.y, v.z}; }
-phys::Q PQ(const Quat& q) { return phys::NormalizeQ(phys::Q{q.x, q.y, q.z, q.w}); }
-Quat EQ(const phys::Q& q) { return Quat{q.x, q.y, q.z, q.w}; }
+using namespace phys::conv;   // P3, E3, PQ, EQ (Physics/Core/VecConvert.hpp)
 
 // The rotation that turns the core's long axis (+Y) into collider axis 0 / 1 / 2.
 phys::Q AxisRot(int axis) {

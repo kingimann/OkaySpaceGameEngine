@@ -51,6 +51,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     CoverArtAvatars.cpp   # game cover art, avatar textures (moved out of main.cpp)
     NavIcons.cpp          # the sidebar's line icons, round icon buttons, stars (moved out of main.cpp)
     NewsHistory.cpp       # What's New history, news.cfg (moved out of main.cpp)
+    BrowserPage.cpp       # the Browser page: our own web pages shown with our own page engine (engine/include/okay/Browser/)
     AdminPage.cpp         # reports, Admin > Reports, the Admin page, the ban banner (moved out of main.cpp)
     PublicProfilePage.cpp # public profiles: the page, showcase, badges (moved out of main.cpp)
     MemberModerationUI.cpp   # kick / ban / unban / admin role for servers and group chats (moved out of main.cpp)
@@ -113,6 +114,7 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()
+target_link_libraries(okayspace-launcher PRIVATE okay_browser)   # the Browser page (BrowserPage.cpp)
 # shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto (our own Ed25519 and SHA-512; libsodium is used for
 # Ed25519 instead where the build has it). Link the crypto library by itself so the launcher does not depend on the
 # engine for it. (okay_crypto is always defined: engine/ is always added.)

@@ -34,6 +34,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "BrowserPage.hpp"   // the Browser page: our own web pages in the launcher with our own page engine
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
@@ -3983,7 +3984,7 @@ void DrawChatLinkConfirm() {
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 6));
     const ImVec2 bs(okl::FitButtonW("Open", okl::UiPx(110.0f)), okl::UiPx(30.0f));
-    if (PrimaryButton("Open", bs)) { OpenExternal(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }
+    if (PrimaryButton("Open", bs)) { OpenPageLink(g_linkAskUrl); g_linkAskUrl.clear(); ImGui::CloseCurrentPopup(); }   // our own pages open in the Browser page
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         g_linkAskUrl.clear(); ImGui::CloseCurrentPopup();
@@ -14017,6 +14018,7 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
 #endif
+        SetBrowserHostAvailable(okayFrame);   // the Browser page draws with OkayUI: without a frame, links open in the system browser
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
         // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
@@ -14856,7 +14858,7 @@ int main(int argc, char** argv) {
         // switching tabs closes it.
         {
             static int pfTabWas = tab;
-            if (tab != pfTabWas) ClosePublicProfile();
+            if (tab != pfTabWas) { ClosePublicProfile(); CloseBrowserPage(); }
             pfTabWas = tab;
             static bool pfDemoOnce = false;   // dev screenshot hook: open a profile at startup
             if (!pfDemoOnce) {
@@ -14879,6 +14881,17 @@ int main(int argc, char** argv) {
                 tab = po.gotoTab;
                 if (!po.marketSearch.empty()) std::snprintf(marketFilter, sizeof(marketFilter), "%s", po.marketSearch.c_str());
             }
+        } else if (BrowserPageOpen() && okayFrame && !OkayPageCovered(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {
+            // ---- the Browser page (one of our own web pages), drawn by OkayUI over the current tab ----
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 8.0f, 8.0f);
+            ImGui::InvisibleButton("##okayui_browser", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the page, not the ImGui window under it
+#ifdef OKAY_HAVE_OKAYUI
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+#endif
+            DrawBrowserPage(rp.x, rp.y, ra.x, ra.y);
         } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create", nullptr);
             const ImVec4 crCardBg = okaytheme::kRaised;

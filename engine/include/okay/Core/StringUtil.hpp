@@ -14,6 +14,9 @@ inline std::string LowerAscii(std::string s) {
     return s;
 }
 
+// One byte of LowerAscii (for readers that fold as they scan).
+inline char LowerAsciiChar(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+
 // ASCII-only case-blind compare: "Jump" equals "jUMP" (no copy, no allocation).
 inline bool EqualsNoCaseAscii(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;

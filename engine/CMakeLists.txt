@@ -39,6 +39,20 @@ target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_compile_features(okay_physcore PUBLIC cxx_std_17)
 add_library(okay::physcore ALIAS okay_physcore)
 
+# Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation). Standard library
+# only, so the launcher, a future browser program and the tests link it without the rest of the engine
+# (docs/feature_map/17-launcher-platform.md 17.18).
+add_library(okay_browser STATIC
+    src/Browser/Url.cpp
+    src/Browser/Html.cpp
+    src/Browser/Css.cpp
+    src/Browser/Layout.cpp
+    src/Browser/Browser.cpp
+)
+target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_browser PUBLIC cxx_std_17)
+add_library(okay::browser ALIAS okay_browser)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -574,7 +588,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
-target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+target_link_libraries(okay_engine PUBLIC okay_crypto okay_physcore okay_browser)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 target_link_libraries(okay_engine PRIVATE okayscript_lang)   # the OkayScript lexer (okayscript/, engine-independent)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)

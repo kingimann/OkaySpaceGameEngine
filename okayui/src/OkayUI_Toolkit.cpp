@@ -129,6 +129,16 @@ void Avatar(const char* name, float size) {
     drawAvatar(x, y, d, name);
 }
 
+void CardFillColor(unsigned char out[4]) {
+    // The card is a step up from the panel: a little lighter on a dark theme (4% toward the text colour; Slate gives
+    // {38, 41, 49}), near white on a light one.
+    const unsigned char* pn = g_theme.panel;
+    const bool lightPanel = pn[0] * 0.2126f + pn[1] * 0.7152f + pn[2] * 0.0722f > 140.0f;
+    for (int k = 0; k < 3; ++k)
+        out[k] = (unsigned char)(lightPanel ? pn[k] + (255 - pn[k]) * 0.85f : pn[k] + (g_theme.text[k] - pn[k]) * 0.04f + 0.5f);
+    out[3] = 255;
+}
+
 void BeginCard(const char* id) {
     if (!g_lay.active || g_ncards >= 8) return;
     const int cid = hashLabel(id ? id : "card");
@@ -138,14 +148,8 @@ void BeginCard(const char* id) {
     g_lay.cy = py;                           // (no spacing yet: the card grows to fit)
     const float pad = 14.0f, rad = g_look ? 10.0f : rnd();
     if (*height > 0.0f) {
-        // The card is a step up from the panel: a little lighter on a dark theme, near white on a light one (the launcher
-        // hands its theme over in Style(): Slate gives the old {38, 42, 51}).
-        const unsigned char* pn = g_theme.panel;
-        const bool lightPanel = pn[0] * 0.2126f + pn[1] * 0.7152f + pn[2] * 0.0722f > 140.0f;
         unsigned char raised[4];
-        for (int k = 0; k < 3; ++k)
-            raised[k] = (unsigned char)(lightPanel ? pn[k] + (255 - pn[k]) * 0.85f : pn[k] + (g_theme.text[k] - pn[k]) * 0.04f + 0.5f);
-        raised[3] = 255;
+        CardFillColor(raised);
         rrect(px, py, w, *height, rad, g_theme.border);
         rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, g_look ? raised : g_theme.bg);
     }

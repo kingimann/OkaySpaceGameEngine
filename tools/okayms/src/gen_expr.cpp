@@ -5,6 +5,127 @@
 
 namespace okayms {
 namespace compiler {
+// The Microsoft interlocked intrinsics (Microsoft's documentation of _InterlockedExchange, _InterlockedExchangeAdd,
+// _InterlockedCompareExchange, _InterlockedIncrement and _InterlockedDecrement, with the 8, 16 and 64 suffixes): op 1
+// exchange, 2 exchange-add, 3 compare-exchange, 4 increment, 5 decrement; width in bytes (no suffix: a 32-bit long).
+// They are compiled to the x64 instructions with a LOCK prefix (xchg with memory is locked by itself), as the Intel and
+// AMD manuals describe XCHG, XADD and CMPXCHG, so they are atomic between threads and are full barriers.
+bool interlocked_intrinsic(const std::string& name, int* op, int* width) {
+    static const char* const kBase[] = {"_InterlockedExchangeAdd", "_InterlockedCompareExchange", "_InterlockedExchange",
+                                        "_InterlockedIncrement", "_InterlockedDecrement"};
+    static const int kOp[] = {2, 3, 1, 4, 5};
+    for (int k = 0; k < 5; ++k) {
+        const std::string base = kBase[k];
+        if (name.compare(0, base.size(), base) != 0) continue;
+        const std::string suffix = name.substr(base.size());
+        int w = 0;
+        if (suffix.empty()) w = 4;
+        else if (suffix == "8" && kOp[k] <= 3) w = 1;
+        else if (suffix == "16") w = 2;
+        else if (suffix == "64") w = 8;
+        else continue;
+        *op = kOp[k];
+        *width = w;
+        return true;
+    }
+    return false;
+}
+
+bool Gen::gen_interlocked(const Node& node, int op, int width) {
+    // The size prefixes of an instruction on [r10] with a register operand: 66 for 16 bits, REX.W for 64; REX.B for r10.
+    auto prefix = [&](bool reg_r11) {
+        if (width == 2) b(0x66);
+        uint8_t rex = 0x41;  // B: r10
+        if (width == 8) rex |= 0x08;
+        if (reg_r11) rex |= 0x04;  // R: r11
+        b(rex);
+    };
+    // A value operand is converted to the operand's width first (an int -1 given to a 64-bit form is -1 in 64 bits).
+    Type operand;
+    operand.base = 1;
+    operand.wide = width == 8;
+    if (!gen_expr(node.kids[0])) return false;  // the address
+    const int ptr_slot = spill();
+    if (op == 3) {
+        if (!gen_expr(node.kids[1])) return false;  // the exchange value
+        convert(last_type, operand);
+        last_type = operand;
+        const int xchg_slot = spill();
+        if (!gen_expr(node.kids[2])) return false;  // the comparand, in the accumulator
+        convert(last_type, operand);
+        b(0x41);  // push r11 (it may hold a local)
+        b(0x53);
+        b(0x4C);  // mov r11, [rbp+slot]
+        b(0x8B);
+        b(0x9D);
+        disp(xchg_slot);
+        --temp_depth;
+        b(0x4C);  // mov r10, [rbp+slot]: the whole 64-bit address (reload_r10 reads 32 bits)
+        b(0x8B);
+        b(0x95);
+        disp(ptr_slot);
+        --temp_depth;
+        b(0xF0);  // lock cmpxchg [r10], r11
+        prefix(true);
+        b(0x0F);
+        b(width == 1 ? 0xB0 : 0xB1);
+        b(0x1A);
+        b(0x41);  // pop r11
+        b(0x5B);
+    } else {
+        if (op >= 4) {
+            if (width == 8) {
+                b(0x48);  // mov rax, imm32 (sign-extended)
+                b(0xC7);
+                b(0xC0);
+                u32(op == 4 ? 1u : 0xFFFFFFFFu);
+            } else {
+                mov_eax_imm(op == 4 ? 1u : 0xFFFFFFFFu);
+            }
+        } else {
+            if (!gen_expr(node.kids[1])) return false;
+            convert(last_type, operand);
+        }
+        b(0x4C);  // mov r10, [rbp+slot]: the whole 64-bit address (reload_r10 reads 32 bits)
+        b(0x8B);
+        b(0x95);
+        disp(ptr_slot);
+        --temp_depth;
+        if (op == 1) {  // xchg [r10], rax
+            prefix(false);
+            b(width == 1 ? 0x86 : 0x87);
+            b(0x02);
+        } else {  // lock xadd [r10], rax
+            b(0xF0);
+            prefix(false);
+            b(0x0F);
+            b(width == 1 ? 0xC0 : 0xC1);
+            b(0x02);
+        }
+        if (op >= 4) {  // increment and decrement give the new value
+            if (width == 2) b(0x66);
+            if (width == 8) b(0x48);
+            b(0xFF);
+            b(op == 4 ? 0xC0 : 0xC8);
+        }
+    }
+    // The result is the old value (the new one for increment and decrement), sign-extended like the char, short and long
+    // the intrinsics return.
+    if (width == 1) {
+        b(0x0F);  // movsx eax, al
+        b(0xBE);
+        b(0xC0);
+    } else if (width == 2) {
+        b(0x0F);  // movsx eax, ax
+        b(0xBF);
+        b(0xC0);
+    }
+    last_type = Type{};
+    last_type.base = 1;
+    last_type.wide = width == 8;
+    return true;
+}
+
 bool Gen::gen_expr(const Node& node) {
     if (!error.empty()) return false;
     if (node.kind == Node::IntLit) {
@@ -48,6 +169,7 @@ bool Gen::gen_expr(const Node& node) {
         last_type = Type{};
         last_type.pointers = 1;
         last_type.base = 2;
+        if (node.type.pointers == 1 && (node.type.base == 4 || node.type.base == 1)) last_type = node.type;  // L"..." and U"..."
         return true;
     }
     if (node.kind == Node::Name) {
@@ -715,6 +837,11 @@ bool Gen::gen_expr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Call) {
+        int lk_op = 0;
+        int lk_width = 0;
+        if (interlocked_intrinsic(node.text, &lk_op, &lk_width) &&
+            node.kids.size() == static_cast<size_t>(lk_op == 3 ? 3 : (lk_op >= 4 ? 1 : 2)))
+            return gen_interlocked(node, lk_op, lk_width);
         if (node.text == "__okay_setjmp" && node.kids.size() == 1) {
             // The registers a restore must bring back go to the buffer: rbx rbp rdi rsi r12 to r15
             // rsp and the address after this sequence (the Windows x64 callee-saved set). The
@@ -1082,7 +1209,9 @@ bool Gen::gen_expr(const Node& node) {
         } else if (fn->imported) {
             b(0xFF);
             b(0x15);
-            relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + fn->name, kRelAmd64Rel32});
+            // The import slot of the symbol the declaration links to: an extern "C" function that is overloaded here
+            // (two declarations with other parameter types) still has its plain C name.
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + (fn->symbol.empty() ? fn->name : fn->symbol), kRelAmd64Rel32});
             u32(0);
         } else {
             b(0xE8);

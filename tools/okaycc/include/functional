@@ -1,12 +1,123 @@
-// <functional> for okay-cc (ISO/IEC 14882 [comparisons]). Our own header: the comparison objects.
+// <functional> for okay-cc (ISO/IEC 14882 [comparisons], [unord.hash], [func.wrap.func]). Our own
+// header: the comparison objects, std::hash and std::function.
 #pragma once
+#include <cstddef>
+#include <utility>
 namespace std {
 template <typename T>
 struct less {
     bool operator()(const T &a, const T &b) const { return a < b; }
 };
 template <typename T>
+struct equal_to {
+    bool operator()(const T &a, const T &b) const { return a == b; }
+};
+template <typename T>
 struct greater {
     bool operator()(const T &a, const T &b) const { return b < a; }
+};
+// std::hash ([unord.hash]): integers, enums and pointers hash to their value (as libstdc++ does for
+// integers; the value of a hash is unspecified). <string> adds hash<string>.
+template <typename T>
+struct hash {
+    unsigned long operator()(T v) const { return (unsigned long)v; }
+};
+template <typename T>
+struct hash<T *> {
+    unsigned long operator()(T *p) const { return (unsigned long)p; }
+};
+template <>
+struct hash<float> {
+    unsigned long operator()(float v) const {
+        if (v == 0.0f) return 0;  // +0 and -0 are equal, so they hash alike
+        unsigned int bits = *(unsigned int *)&v;
+        return (unsigned long)bits * 0x9E3779B97F4A7C15UL;
+    }
+};
+template <>
+struct hash<double> {
+    unsigned long operator()(double v) const {
+        if (v == 0.0) return 0;
+        unsigned long bits = *(unsigned long *)&v;
+        return bits * 0x9E3779B97F4A7C15UL;
+    }
+};
+
+// std::function ([func.wrap.func]): a call wrapper that owns a copy of any callable. The callable sits
+// in a heap holder behind a small abstract base (call, clone); copying a function clones the holder.
+// The partial specializations with R(A...) are written once with a pack; okay-cc copies them for
+// each pack length (src/packs.cpp). The base and holder are namespace-scope templates keyed by the
+// signature (okay-cc names a member template of a class template by its own name only).
+template <typename Sig>
+struct __fn_base;
+template <typename R, typename... A>
+struct __fn_base<R(A...)> {
+    virtual ~__fn_base() {}
+    virtual R __call(A... a) = 0;
+    virtual __fn_base<R(A...)> *__clone() const = 0;
+};
+template <typename F, typename Sig>
+struct __fn_holder;
+template <typename F, typename R, typename... A>
+struct __fn_holder<F, R(A...)> : __fn_base<R(A...)> {
+    F __f;
+    __fn_holder(const F &f) : __f(f) {}
+    R __call(A... a) { return __f(a...); }
+    __fn_base<R(A...)> *__clone() const { return new __fn_holder<F, R(A...)>(__f); }
+};
+template <typename Sig>
+class function;
+template <typename R, typename... A>
+class function<R(A...)> {
+    typedef __fn_base<R(A...)> __base;
+    __base *__p;
+
+public:
+    typedef R result_type;
+    function() : __p(nullptr) {}
+    function(nullptr_t) : __p(nullptr) {}
+    function(const function<R(A...)> &o) : __p(o.__p ? o.__p->__clone() : nullptr) {}
+    function(function<R(A...)> &o) : __p(o.__p ? o.__p->__clone() : nullptr) {}
+    function(function<R(A...)> &&o) : __p(o.__p) { o.__p = nullptr; }
+    template <typename F>
+    function(F f) : __p(new __fn_holder<F, R(A...)>(f)) {}
+    ~function() { delete __p; }
+    function<R(A...)> &operator=(const function<R(A...)> &o) {
+        if (this != &o) {
+            __base *n = o.__p ? o.__p->__clone() : nullptr;
+            delete __p;
+            __p = n;
+        }
+        return *this;
+    }
+    function<R(A...)> &operator=(function<R(A...)> &&o) {
+        if (this != &o) {
+            delete __p;
+            __p = o.__p;
+            o.__p = nullptr;
+        }
+        return *this;
+    }
+    function<R(A...)> &operator=(nullptr_t) {
+        delete __p;
+        __p = nullptr;
+        return *this;
+    }
+    template <typename F>
+    function<R(A...)> &operator=(F f) {
+        __base *n = new __fn_holder<F, R(A...)>(f);
+        delete __p;
+        __p = n;
+        return *this;
+    }
+    void swap(function<R(A...)> &o) {
+        __base *t = __p;
+        __p = o.__p;
+        o.__p = t;
+    }
+    explicit operator bool() const { return __p != nullptr; }
+    bool operator==(nullptr_t) const { return __p == nullptr; }
+    bool operator!=(nullptr_t) const { return __p != nullptr; }
+    R operator()(A... a) const { return __p->__call(a...); }
 };
 }  // namespace std

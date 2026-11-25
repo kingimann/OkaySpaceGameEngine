@@ -348,7 +348,7 @@ endif()
 # okay_cli_lib holds everything but main() so tests/test_okay_cli.cpp checks the same code.
 option(OKAY_BUILD_CLI "Build the okay command-line program" ON)
 if(OKAY_BUILD_CLI AND NOT EMSCRIPTEN)
-    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
+    add_library(okay_cli_lib STATIC tools/okay-cli/Cli.cpp tools/okay-cli/CommandTable.cpp tools/okay-cli/Vc.cpp tools/okay-cli/Engine.cpp tools/okay-cli/Content.cpp
                 tools/okay-cli/Git.cpp tools/okay-cli/Process.cpp
                 editor/ProjectBrowser.cpp editor/ProjectUpgrade.cpp)   # the editor's own import and project upgrade, no copy
     target_include_directories(okay_cli_lib PUBLIC ${CMAKE_SOURCE_DIR}/tools/okay-cli

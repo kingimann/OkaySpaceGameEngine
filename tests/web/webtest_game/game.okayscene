@@ -1,0 +1,38 @@
+okayscene 3
+name "Web test"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Main Camera"
+  guid "5b0c1d2e3f405162738495a6b7c8d9e0"
+  active 1
+  parent -1
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.08 0.09 0.12 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 1 16 0.3 2 18 1.5
+end
+gameobject 1 "Probe"
+  guid "6c1d2e3f405162738495a6b7c8d9e0f1"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  sprite 35 0.95 0.55 0.15 1 4 4 "" 0 0 1 1 5 0 0 0 0
+  script "okayscript" "// The web player test (tests/scripts/test_web_player.js): prints what reached the game and keeps a count in a save.
+var n = 0
+function start() {
+  n = load(\"presses\", 0)
+  print(\"WEBTEST start presses=\" + n + \" prefs=\" + prefs_get(\"pp\", 0))
+}
+function update(dt) {
+  if (key_down(\"space\")) {
+    n = n + 1
+    save(\"presses\", n)
+    print(\"WEBTEST key presses=\" + n)
+  }
+  if (key_down(\"p\")) {
+    prefs_set(\"pp\", prefs_get(\"pp\", 0) + 1)
+    print(\"WEBTEST prefs pp=\" + prefs_get(\"pp\", 0))
+  }
+  if (mouse_down(1)) { print(\"WEBTEST mouse right\") }
+  if (gamepad_down(0)) { print(\"WEBTEST pad a\") }
+}
+" "" 0
+end

@@ -882,14 +882,33 @@ jobs:
       - name: Verify wasm output
         run: |
           test -f build-web/web/okay-player.html
+          test -f build-web/web/okay-player.js
           test -f build-web/web/okay-player.wasm
           ls -la build-web/web/
 
+      # Pack the test game beside the player (scripts/web_package.py) and play it in headless Chromium: the first frame
+      # is drawn, a key press and a right-click reach the game script, a save and prefs survive a reload (IndexedDB),
+      # a Gamepad API pad reaches the game, Space and arrows do not scroll an embedding page (tests/scripts/test_web_player.js).
+      - name: Package the web test game
+        run: python3 -I scripts/web_package.py --build build-web/web --game tests/web/webtest_game --out build-web/site --zip build-web/webtest-web.zip
+
+      - name: Install Playwright and Chromium (test tools only; nothing of them ships)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw" && npm init -y >/dev/null && npm install --no-audit --no-fund playwright@1.63.0
+          npx --prefix "$RUNNER_TEMP/pw" playwright install --with-deps chromium
+
+      - name: Play the web test game in headless Chromium
+        run: NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tests/scripts/test_web_player.js build-web/site --json build-web/web_player_test.json
+
       - name: Upload WebGL build
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: okayspace-webgl
-          path: build-web/web/
+          path: |
+            build-web/web/
+            build-web/site/
+            build-web/web_player_test.json
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
       # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").

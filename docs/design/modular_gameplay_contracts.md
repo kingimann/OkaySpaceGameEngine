@@ -109,8 +109,9 @@ for example `reloadKey = 'r'`, `interactKey = 'e'`). `RemapModel` exists but has
 - Health is replicated only as the `__dmg` message to `HealthStat`; seats, doors, ammo, interactables are not.
 
 ### 1.9 Where the audit was wrong or incomplete
-- "Ragdoll bone colliders" for limb damage: false. `Ragdoll` is a Verlet particle chain over the 15
-  humanoid bones (`Ragdoll.hpp` header comment), no per-bone colliders. A hit zone has to come from the hit
+- "Ragdoll bone colliders" for limb damage: false when written. `Ragdoll` was then a Verlet particle chain over the 15
+  humanoid bones, no per-bone colliders. (Since claude/ragdoll-core-1 its limbs are physics-core bodies with
+  colliders, but only while it is physical; animated it has none.) A hit zone has to come from the hit
   point nearest a humanoid bone (`humanoid::MapHumanoidBones`, `HumanoidRetarget`), not from colliders.
 - "FocusGraph unused": it is used by `UINavigation.hpp:14,51`. `MipBudget` is referenced by
   `SceneOptimizationReport.cpp`, which has no editor caller. `RemapModel` really is unused by UI.
@@ -435,8 +436,8 @@ afflictions, `NetworkManager::ApplyHit`) build a `DamageEvent`.
 
 ### 3.3 HitZones
 `HitZones` component: named zones with multiplier and optional limb state, resolved from the nearest humanoid bone to
-`DamageEvent.point` (`humanoid::MapHumanoidBones`) or a named child collider. Not Ragdoll colliders (Ragdoll is a Verlet
-chain). First release multipliers; limb state later. Replaces nothing (new), module `health_damage`.
+`DamageEvent.point` (`humanoid::MapHumanoidBones`) or a named child collider. Not Ragdoll colliders (the Ragdoll's limb
+colliders exist only while it is physical). First release multipliers; limb state later. Replaces nothing (new), module `health_damage`.
 
 ### 3.4 Interactable (module `interaction`)
 ```cpp

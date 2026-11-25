@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include "EditorTabs.hpp"
+#include "okay/Core/Paths.hpp"
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -125,6 +127,55 @@ int main() {
         CHECK(TabsOverflow(297, 300, 3, true));    // within the slack: keep showing
         CHECK(!TabsOverflow(290, 300, 3, true));
         CHECK(!TabsOverflow(100, 0, 3, false));
+    }
+
+    {   // What is kept between runs goes to the per-user folder, never the working folder (owner report, 2.903.8:
+        // "the editor doesnt save layout or tabs i opened or closed").
+        okay::Paths::Env w;
+        w.appData = "C:/Users/u/AppData/Roaming"; w.localAppData = "C:/Users/u/AppData/Local"; w.home = "C:/Users/u";
+        const std::string winDir = EditorConfigDir(okay::Paths::ConfigDirFor(okay::Paths::Platform::Windows, w, "OkaySpace"), nullptr);
+        CHECK(winDir == "C:/Users/u/AppData/Roaming/OkaySpace/config/editor");
+        CHECK(EditorConfigFile(winDir, "imgui.ini") == "C:/Users/u/AppData/Roaming/OkaySpace/config/editor/imgui.ini");
+        CHECK(EditorConfigFile(winDir, "okay_settings.txt") == "C:/Users/u/AppData/Roaming/OkaySpace/config/editor/okay_settings.txt");
+        okay::Paths::Env l; l.home = "/home/u";
+        CHECK(EditorConfigDir(okay::Paths::ConfigDirFor(okay::Paths::Platform::Linux, l, "OkaySpace"), nullptr) == "/home/u/.config/OkaySpace/editor");
+        CHECK(EditorConfigDir("/x/config/", nullptr) == "/x/config/editor");
+        CHECK(EditorConfigDir("/x/config", "/tmp/t") == "/tmp/t");          // OKAY_EDITOR_CONFIG_DIR wins
+        CHECK(EditorConfigDir("/x/config", "") == "/x/config/editor");      // an empty override is no override
+        CHECK(EditorConfigDir("", nullptr).empty());                        // nothing known: the working folder, as before
+        CHECK(EditorConfigFile("", "imgui.ini") == "imgui.ini");
+        CHECK(EditorConfigFile("D:\\cfg\\", "a.txt") == "D:\\cfg\\a.txt");
+    }
+
+    {   // Which panels are open: one "panel_<key> 0|1" pair per panel, read back to the same panels.
+        CHECK(PanelSettingKey("Scene Manager") == "panel_scene_manager");
+        CHECK(PanelSettingKey("Items, Loot & Recipes") == "panel_items_loot_recipes");
+        CHECK(PanelSettingKey("UV Editor") == "panel_uv_editor");
+        CHECK(PanelSettingKey("  Console ") == "panel_console");
+        const std::vector<std::string> labels = {"Hierarchy", "Inspector", "Console", "Profiler", "Scene Manager", "Items, Loot & Recipes"};
+        for (std::size_t i = 0; i < labels.size(); ++i)   // two panels never share one line
+            for (std::size_t j = i + 1; j < labels.size(); ++j) CHECK(PanelSettingKey(labels[i]) != PanelSettingKey(labels[j]));
+        // Closed the Console, opened the Profiler and Scene Manager: written, then read back the way LoadSettings reads.
+        const std::vector<bool> open = {true, true, false, true, true, false};
+        std::vector<std::pair<std::string, bool>> panels;
+        for (std::size_t i = 0; i < labels.size(); ++i) panels.push_back({labels[i], open[i]});
+        const std::string text = "settingsver 3\nshowgrid 1\n" + WritePanelOpenLines(panels) + "panel_unknown_panel 1\nconsolecollapse 0\n";
+        std::vector<bool> back(labels.size());
+        for (std::size_t i = 0; i < labels.size(); ++i) back[i] = !open[i];   // start from the opposite of what was saved
+        std::istringstream in(text);
+        std::string k; int v = 0, seen = 0, unknown = 0, after = 0;
+        while (in >> k >> v) {
+            int idx = -1;
+            if (ReadPanelOpenLine(k, labels, idx)) { back[(std::size_t)idx] = v != 0; ++seen; }
+            else if (k.rfind("panel_", 0) == 0) ++unknown;
+            else if (k == "consolecollapse") ++after;
+        }
+        CHECK(seen == (int)labels.size());
+        CHECK(unknown == 1);   // a panel this editor does not have is skipped
+        CHECK(after == 1);     // and the lines after it are still read
+        CHECK(back == open);
+        int idx = 7;
+        CHECK(!ReadPanelOpenLine("showgrid", labels, idx) && idx == 7);   // other settings are not panel lines
     }
 
     TEST_MAIN_RESULT();

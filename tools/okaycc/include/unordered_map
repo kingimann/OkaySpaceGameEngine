@@ -1,0 +1,88 @@
+// <unordered_map> for okay-cc (ISO/IEC 14882 [unord.map]). Our own header: std::unordered_map over
+// the hash table of <__hash_table>. unordered_multimap is not done.
+#pragma once
+#include <__hash_table>
+namespace std {
+template <typename K, typename V, typename H = hash<K>, typename E = equal_to<K>>
+class unordered_map {
+public:
+    typedef K key_type;
+    typedef V mapped_type;
+    typedef pair<const K, V> value_type;
+    typedef __hash_it<K, V> iterator;
+    typedef __hash_it<K, V> const_iterator;
+    typedef __hash_node<K, V> node;
+    __hash_table<K, V, H, E> __t;
+
+    unordered_map() {}
+    unordered_map(const unordered_map<K, V, H, E> &o) { __t.copyFrom(o.__t); }
+    unordered_map(unordered_map<K, V, H, E> &&o) { __t.takeFrom(o.__t); }
+    unordered_map(initializer_list<value_type> il) {
+        for (const value_type *p = il.begin(); p != il.end(); ++p) __t.insertValue(*p);
+    }
+    unordered_map<K, V, H, E> &operator=(const unordered_map<K, V, H, E> &o) {
+        if (this != &o) {
+            __t.clear();
+            __t.copyFrom(o.__t);
+        }
+        return *this;
+    }
+    unordered_map<K, V, H, E> &operator=(unordered_map<K, V, H, E> &&o) {
+        if (this != &o) {
+            __t.clear();
+            free(__t.__b);
+            __t.takeFrom(o.__t);
+        }
+        return *this;
+    }
+    unsigned long size() const { return __t.__n; }
+    bool empty() const { return __t.__n == 0; }
+    void clear() { __t.clear(); }
+    void reserve(unsigned long n) {
+        if (n > __t.__nb) __t.rehash(n);
+    }
+    unsigned long bucket_count() const { return __t.__nb; }
+    iterator begin() const { return __t.begin(); }
+    iterator end() const { return __t.end(); }
+    iterator find(const K &k) const { return __t.at(__t.findNode(k)); }
+    unsigned long count(const K &k) const { return __t.findNode(k) ? 1 : 0; }
+    bool contains(const K &k) const { return __t.findNode(k) != nullptr; }
+    V &operator[](const K &k) { return __t.get(k)->kv.second; }
+    V &at(const K &k) const { return __t.findNode(k)->kv.second; }
+    pair<iterator, bool> insert(const value_type &kv) {
+        pair<node *, bool> r = __t.insertValue(kv);
+        return pair<iterator, bool>(__t.at(r.first), r.second);
+    }
+    template <typename A, typename B>
+    pair<iterator, bool> emplace(A &&a, B &&b) {
+        return insert(value_type(std::forward<A>(a), std::forward<B>(b)));
+    }
+    template <typename B>
+    pair<iterator, bool> try_emplace(const K &k, B &&b) {
+        node *had = __t.findNode(k);
+        if (had) return pair<iterator, bool>(__t.at(had), false);
+        return insert(value_type(k, std::forward<B>(b)));
+    }
+    template <typename B>
+    pair<iterator, bool> insert_or_assign(const K &k, B &&b) {
+        node *had = __t.findNode(k);
+        if (had) {
+            had->kv.second = std::forward<B>(b);
+            return pair<iterator, bool>(__t.at(had), false);
+        }
+        return insert(value_type(k, std::forward<B>(b)));
+    }
+    unsigned long erase(const K &k) {
+        node *x = __t.findNode(k);
+        if (!x) return 0;
+        __t.eraseNode(x);
+        return 1;
+    }
+    iterator erase(iterator it) {
+        iterator next = it;
+        ++next;
+        __t.eraseNode(it.n);
+        return next;
+    }
+};
+}  // namespace std

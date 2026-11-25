@@ -646,6 +646,8 @@ inline const std::vector<VsDef>& Registry() {
         {"OnPlayerJoined", "On Player Joined", CAT_NET, false, {""}, {}, {}, 0, nullptr},
         {"OnPlayerLeft",   "On Player Left", CAT_NET, false, {""}, {}, {}, 0, nullptr},
         {"NetSendEvent",   "Send Network Event", CAT_NET, true, {""}, {"Data"}, {}, 1, "event name"},
+        {"NetHostOnline",  "Host Online",    CAT_NET, true, {""}, {"Room"}, {"Room Code"}, 0, nullptr},
+        {"NetJoinCode",    "Join By Code",   CAT_NET, true, {""}, {"Room"}, {}, 0, nullptr},
         {"OnNetworkEvent", "On Network Event", CAT_NET, false, {""}, {}, {"Data"}, 1, "event name"},
         {"NetEventSender", "Event Sender",   CAT_NET, false, {}, {}, {"Player Id"}, 0, nullptr},
         {"NetPlayerCount", "Player Count",   CAT_NET, false, {}, {}, {"Count"}, 0, nullptr},
@@ -1934,6 +1936,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetPlayerIdAt") return "net.players()[" + VsInput(g, nodeId, 0, "0") + "]";
     if (t == "NetPlayerName") return "net.player_name(" + VsInput(g, nodeId, 0, "0") + ")";
     if (t == "NetLastError")  return "net.error()";
+    if (t == "NetHostOnline") return "net.room_code()";
     if (t == "NetTime")       return "net.time()";
     if (t == "NetPing")       return "net.ping()";
     if (t == "NetIsMine")     return "net.is_mine()";
@@ -2266,6 +2269,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     }
     else if (t=="NetDisconnect") out += ind + "net_disconnect()\n";
     else if (t=="NetHostOrJoin") out += ind + "net.host_or_join(" + VsNum(arg("45000"), "45000") + ")\n";
+    else if (t=="NetHostOnline") out += ind + "net.host_online(" + in(0, "\"\"") + ")\n";
+    else if (t=="NetJoinCode")   out += ind + "net.join_code(" + in(0, "\"\"") + ")\n";
     else if (t=="NetGiveOwnership") out += ind + "net.give(\"\", " + in(0, "0") + ")\n";
     else if (t=="NetRequestOwnership") out += ind + "net.request()\n";
     else if (t=="NetSimulate")   out += ind + "net.simulate(" + in(0, "0") + ", " + in(1, "0") + ", " + in(2, "0") + ")\n";

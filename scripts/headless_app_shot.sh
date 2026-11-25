@@ -3,7 +3,7 @@
 #   scripts/headless_app_shot.sh <program> <seconds> <out.png> [VAR=value ...]
 # Example (the own platform backend, our own ImGui input and renderer):
 #   scripts/headless_app_shot.sh build/bin/OkaySpace 25 own.png OKAY_PLATFORM_BACKEND=own
-# OKAY_UPDATE_ON_LAUNCH=0 is set: otherwise a launcher with network access downloads the newest release into the program's own folder and tries to swap it in.
+# OKAY_TEST_NO_SIGNIN=1 is set (the editor's sign-in gate is off for tests, editor/SignInGate.hpp). OKAY_UPDATE_ON_LAUNCH=0 is set: otherwise a launcher with network access downloads the newest release into the program's own folder and tries to swap it in.
 # APP_ARGS="--dev" in the environment passes arguments to the program (the editor needs --dev when it is not started by the launcher).
 # Needs Xvfb and ImageMagick's `import`. Settings go to a throw-away HOME, so nothing of yours is touched. The program is stopped with
 # SIGKILL (SDL turns SIGTERM into a close request, which makes the launcher ask "Exit or minimise?"). The program's log is next to the picture.
@@ -15,7 +15,7 @@ trap 'kill $xp 2>/dev/null; rm -rf "$tmp"' EXIT
 Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$tmp/disp" >/dev/null 2>&1 &
 xp=$!
 i=0; while [ ! -s "$tmp/disp" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
-export DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0
+export DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 OKAY_UPDATE_ON_LAUNCH=0 OKAY_TEST_NO_SIGNIN=1
 mkdir -p "$tmp/home"
 for kv in "$@"; do export "$kv"; done
 "$prog" $APP_ARGS >"${out%.png}.log" 2>&1 &

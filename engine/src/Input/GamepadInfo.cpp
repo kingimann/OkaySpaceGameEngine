@@ -219,6 +219,7 @@ std::string FormatUsbId(std::uint16_t v, std::uint16_t p) {
 
 std::string PadButtonName(int b, ControllerFamily f) {
     if (b < 0 || b >= Input::PadButtonCount) return "?";
+    if (b == Input::PadGuide) return PadExtraName(PadExtra::Guide, f);   // "PS", "Home", "Steam", "Guide" (the tables below end at RT)
     const GlyphStyle s = GlyphStyleOf(f);
     // PadButton order: A B X Y Back Start LB RB Up Down Left Right LS RS LT RT
     static const char* const kPs[Input::PadButtonCount] = {"Cross", "Circle", "Square", "Triangle", "Share", "Options", "L1", "R1",

@@ -14,12 +14,68 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
         return false;
     }
     const Type elem = lsd.targs[0].type;
-    if (elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0 &&
-        class_needs_dtor(structs[static_cast<size_t>(elem.struct_id)])) {
-        error = "an initializer_list of a class with a destructor is not supported";
-        return false;
-    }
+    const bool class_elems = elem.base == 3 && elem.pointers == 0 && !elem.is_array() && elem.struct_id >= 0 &&
+                             (obj_needs_ctor(elem) || obj_needs_dtor(elem));
     next();  // '{'
+    if (class_elems) {
+        // {"a", "b"} for an initializer_list<std::string>: each element is a hidden object made from its item by a
+        // constructor (copy-initialization, [dcl.init.list] 5) and destroyed after the full-expression, like other
+        // temporaries. Own simplification: the array does not live longer than the statement, so a list kept past it
+        // (a range for over a braced list of strings) is not supported. The elements are placed from the last to the
+        // first: locals grow downward, so element 0 is at the lowest address and the elements are contiguous (a class's
+        // size is a multiple of its alignment).
+        std::vector<Node> items;
+        while (!is(TRBrace) && !is(TEnd)) {
+            Node item;
+            if (is(TLBrace)) {
+                if (!braced_temp(elem.struct_id, &item)) return false;
+            } else if (!parse_expr(1, &item)) {
+                return false;
+            }
+            items.push_back(std::move(item));
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TRBrace, "'}'")) return false;
+        const size_t n = items.empty() ? 1 : items.size();
+        const std::string base = "__il" + std::to_string(tmp_count++) + "_";
+        for (size_t i = n; i-- > 0;) {
+            Local e;
+            e.name = base + std::to_string(i);
+            e.type = elem;
+            e.type.is_const = false;
+            place_local(cur_locals, e);
+        }
+        const bool has_dtor = obj_needs_dtor(elem);
+        for (size_t i = 0; i < items.size(); ++i) {
+            const std::string name = base + std::to_string(i);
+            std::vector<Node> cargs;
+            cargs.push_back(std::move(items[i]));
+            Node ctor_stmt;
+            if (!special_call(elem.struct_id, "<ctor>", node_addr(node_name(name)), std::move(cargs), &ctor_stmt))
+                return false;
+            stmt_pre.push_back(std::move(ctor_stmt));
+            if (has_dtor) stmt_temps.push_back(Temp{name, elem.struct_id});
+        }
+        Local hidden;
+        hidden.name = "__ilo" + std::to_string(tmp_count++);
+        hidden.type = list_type;
+        hidden.type.is_ref = false;
+        place_local(cur_locals, hidden);
+        Node count;
+        count.kind = Node::IntLit;
+        count.type.base = 1;
+        count.type.wide = true;
+        count.number = items.size();
+        std::vector<Node> largs;
+        largs.push_back(node_addr(node_name(base + "0")));
+        largs.push_back(std::move(count));
+        Node list_ctor;
+        if (!special_call(list_type.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(largs), &list_ctor))
+            return false;
+        stmt_pre.push_back(std::move(list_ctor));
+        *out = node_name(hidden.name);
+        return true;
+    }
     std::vector<Node> items;
     while (!is(TRBrace) && !is(TEnd)) {
         Node item;
@@ -210,6 +266,7 @@ bool Parser::parse_lambda(Node* out) {
     std::vector<Cap> caps;
     bool default_value = false;
     bool default_ref = false;
+    bool cap_this = false;
     while (!is(TRBrack)) {
         if (is(TAssign)) {
             default_value = true;
@@ -223,7 +280,10 @@ bool Parser::parse_lambda(Node* out) {
                 default_ref = true;
             }
         } else if (is(TIdent) && cur().text == "this") {
-            error = "a lambda that captures this is not supported";
+            cap_this = true;
+            next();
+        } else if (is(TStar) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 1].text == "this") {
+            error = "a lambda that captures *this is not supported";
             return false;
         } else if (is(TIdent)) {
             Cap c;
@@ -274,7 +334,7 @@ bool Parser::parse_lambda(Node* out) {
         if (local_visible(c.name)) list.push_back(c);
     if (default_value || default_ref) {
         for (size_t i = body_at; i < body_end; ++i) {
-            if (tokens[i].kind != TIdent || !local_visible(tokens[i].text)) continue;
+            if (tokens[i].kind != TIdent || !local_visible(tokens[i].text) || tokens[i].text == "this") continue;
             if (i > 0 && (tokens[i - 1].kind == TDot || tokens[i - 1].kind == TArrow || tokens[i - 1].kind == TColonColon))
                 continue;
             bool is_param = false;
@@ -286,15 +346,37 @@ bool Parser::parse_lambda(Node* out) {
             if (!is_param && !known) list.push_back(Cap{tokens[i].text, default_ref});
         }
     }
-    if (cur_locals == nullptr && !list.empty()) {
+    // `this` is captured when named, or by a default capture ([=] or [&]) in a member function ([expr.prim.lambda.capture]).
+    if ((default_value || default_ref) && cur_class >= 0 && local_visible("this")) cap_this = true;
+    if (cap_this && (cur_class < 0 || !local_visible("this"))) {
+        error = "a lambda captures this outside a member function";
+        return false;
+    }
+    if (cur_locals == nullptr && (!list.empty() || cap_this)) {
         error = "a lambda that captures needs a function around it";
         return false;
     }
     StructDef def;
     def.name = "__lam" + std::to_string(lambda_count++);
     def.cxx = true;
+    // The class around: the member function's class, or for a lambda in a lambda the class around that one.
+    def.lam_scope = cur_class;
+    if (cur_class >= 0 && structs[static_cast<size_t>(cur_class)].name.compare(0, 5, "__lam") == 0 && !cap_this)
+        def.lam_scope = structs[static_cast<size_t>(cur_class)].lam_scope;
     int offset = 0;
     int align = 1;
+    if (cap_this) {
+        Field field;
+        field.name = "__this";
+        field.type.base = 3;
+        field.type.struct_id = cur_class;
+        field.type.pointers = 1;
+        field.offset = 0;
+        offset = 8;
+        align = 8;
+        def.fields.push_back(field);
+        def.lam_outer = cur_class;
+    }
     for (const Cap& c : list) {
         Node probe = node_name(c.name);
         Type vt;
@@ -338,7 +420,7 @@ bool Parser::parse_lambda(Node* out) {
     m.params = decl.params;
     m.param_names = decl.param_names;
     m.defaults = decl.param_defaults;
-    m.is_static = list.empty();
+    m.is_static = list.empty() && !cap_this;
     m.has_body = true;
     m.body_at = body_at;
     // Does the body return a value?
@@ -352,6 +434,8 @@ bool Parser::parse_lambda(Node* out) {
         const bool saved_probe = lam_probe;
         const bool saved_seen = lam_probe_seen;
         const Type saved_type = lam_probe_type;
+        const std::string saved_probe_fn = lam_probe_fn;
+        lam_probe_fn = structs[static_cast<size_t>(sid)].methods[mi].qname;
         lam_probe = true;
         lam_probe_seen = false;
         lam_probe_type = Type{};
@@ -372,8 +456,15 @@ bool Parser::parse_lambda(Node* out) {
         lam_probe = saved_probe;
         lam_probe_seen = saved_seen;
         lam_probe_type = saved_type;
+        lam_probe_fn = saved_probe_fn;
         if (!probe_ok) return false;
-        while (funcs.size() > funcs_before) funcs.pop_back();
+        // Only the probe's own body goes: instances made while it was read (a member template called in it) are kept,
+        // because their classes already record them as made and they would not be made again.
+        {
+            const std::string own = structs[static_cast<size_t>(sid)].methods[mi].qname;
+            for (size_t fi = funcs.size(); fi-- > funcs_before;)
+                if (funcs[fi].name == own) funcs.erase(funcs.begin() + static_cast<std::ptrdiff_t>(fi));
+        }
         Method& mm = structs[static_cast<size_t>(sid)].methods[mi];
         mm.ret = found;
         mm.body_at = body_at;
@@ -393,7 +484,7 @@ bool Parser::parse_lambda(Node* out) {
     }
     at = resume;
     const std::string qname = structs[static_cast<size_t>(sid)].methods[mi].qname;
-    if (list.empty()) {
+    if (list.empty() && !cap_this) {
         *out = node_name(qname);
         return true;
     }
@@ -402,6 +493,23 @@ bool Parser::parse_lambda(Node* out) {
     hidden.type.base = 3;
     hidden.type.struct_id = sid;
     place_local(cur_locals, hidden);
+    if (cap_this) {
+        Node target;
+        target.kind = Node::Field;
+        target.op = TDot;
+        target.text = "__this";
+        target.kids.push_back(node_name(hidden.name));
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(std::move(target));
+        assign.kids.push_back(node_name("this"));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        stmt_pre.push_back(std::move(stmt));
+    }
     for (const Cap& c : list) {
         Node target;
         target.kind = Node::Field;
@@ -620,6 +728,19 @@ bool Parser::static_type(const Node& node, Type* out) const {
 // new T, new T(args): malloc, then the constructor (which returns its object). The program
 // declares malloc and free itself (the runtime provides them). Written from ISO/IEC 14882
 // [expr.new].
+// malloc(sizeof(T)): the storage of one new object.
+Node Parser::malloc_of(const Type& ty) const {
+    Node size;
+    size.kind = Node::IntLit;
+    size.number = static_cast<uint64_t>(size_of(ty));
+    size.type.base = 1;
+    Node alloc;
+    alloc.kind = Node::Call;
+    alloc.text = "malloc";
+    alloc.kids.push_back(std::move(size));
+    return alloc;
+}
+
 bool Parser::parse_new(Node* out) {
     next();
     // new (place) T(args) ([expr.new]): construct in storage that is already there; nothing is allocated.
@@ -688,6 +809,105 @@ bool Parser::parse_new(Node* out) {
     std::vector<Node> args;
     if (accept(TLParen)) {
         if (!parse_call_args(&args)) return false;
+    } else if (is(TLBrace) && !has_place) {
+        // new T{a, b} ([expr.new], [dcl.init.list]): a class with a constructor takes the list as constructor
+        // arguments; an aggregate gets its members in order, and the members after the last one given are zero; a
+        // scalar gets its one value (or zero for {}).
+        next();
+        std::vector<Node> items;
+        while (!is(TRBrace) && !is(TEnd)) {
+            Node item;
+            if (!parse_expr(1, &item)) return false;
+            items.push_back(std::move(item));
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TRBrace, "'}'")) return false;
+        const bool cls = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
+        if (cls && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)])) {
+            args = std::move(items);
+        } else {
+            Node cast;
+            cast.kind = Node::Unary;
+            cast.type = ty;
+            cast.type.pointers += 1;
+            cast.kids.push_back(malloc_of(ty));
+            Local hidden;
+            hidden.name = "__pn" + std::to_string(tmp_count++);
+            hidden.type = cast.type;
+            place_local(cur_locals, hidden);
+            auto add_stmt = [&](Node e) {
+                Node st;
+                st.kind = Node::ExprStmt;
+                st.kids.push_back(std::move(e));
+                stmt_pre.push_back(std::move(st));
+            };
+            Node set_ptr;
+            set_ptr.kind = Node::Assign;
+            set_ptr.op = TAssign;
+            set_ptr.kids.push_back(node_name(hidden.name));
+            set_ptr.kids.push_back(std::move(cast));
+            add_stmt(std::move(set_ptr));
+            auto zero = []() {
+                Node z;
+                z.kind = Node::IntLit;
+                z.number = 0;
+                z.type.base = 1;
+                return z;
+            };
+            auto deref = [&]() {
+                Node d;
+                d.kind = Node::Unary;
+                d.op = TStar;
+                d.kids.push_back(node_name(hidden.name));
+                return d;
+            };
+            if (!cls) {
+                if (items.size() > 1) {
+                    error = "too many values in new T{...}";
+                    return false;
+                }
+                Node store;
+                store.kind = Node::Assign;
+                store.op = TAssign;
+                store.kids.push_back(deref());
+                store.kids.push_back(items.empty() ? zero() : std::move(items[0]));
+                add_stmt(std::move(store));
+            } else {
+                const StructDef def = structs[static_cast<size_t>(ty.struct_id)];
+                size_t next_item = 0;
+                for (const Field& f : def.fields) {
+                    if (f.name == "__vptr") continue;
+                    const bool scalar = f.type.pointers > 0 || (f.type.base != 3 && !f.type.is_array());
+                    if (next_item >= items.size()) {
+                        if (!scalar) {
+                            error = "new T{...} leaves out a member that is not a number or pointer (" + f.name + ")";
+                            return false;
+                        }
+                    } else if (!scalar) {
+                        error = "new T{...} of a member that is an array or class is not supported (" + f.name + ")";
+                        return false;
+                    }
+                    Node field;
+                    field.kind = Node::Field;
+                    field.op = TDot;
+                    field.text = f.name;
+                    field.kids.push_back(deref());
+                    Node store;
+                    store.kind = Node::Assign;
+                    store.op = TAssign;
+                    store.kids.push_back(std::move(field));
+                    store.kids.push_back(next_item < items.size() ? std::move(items[next_item]) : zero());
+                    ++next_item;
+                    add_stmt(std::move(store));
+                }
+                if (next_item < items.size()) {
+                    error = "too many values in new T{...}";
+                    return false;
+                }
+            }
+            *out = node_name(hidden.name);
+            return true;
+        }
     }
     const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
     bool plain_copy = false;  // new C(other) where C has constructors but no copy constructor: the bytes are copied
@@ -702,19 +922,11 @@ bool Parser::parse_new(Node* out) {
         error = "new with arguments needs a class with a constructor";
         return false;
     }
-    Node size;
-    size.kind = Node::IntLit;
-    size.number = static_cast<uint64_t>(size_of(ty));
-    size.type.base = 1;
-    Node alloc;
-    alloc.kind = Node::Call;
-    alloc.text = "malloc";
-    alloc.kids.push_back(std::move(size));
     Node cast;
     cast.kind = Node::Unary;
     cast.type = ty;
     cast.type.pointers += 1;
-    cast.kids.push_back(has_place ? std::move(place) : std::move(alloc));
+    cast.kids.push_back(has_place ? std::move(place) : malloc_of(ty));
     if (!ctor && !args.empty()) {
         // new (p) int(v): the value is stored in a statement before this one, and the pointer is the result.
         Local hidden;
@@ -1067,7 +1279,68 @@ bool Parser::parse_unary(Node* out) {
         out->text = cur().text;
         out->type.pointers = 1;
         out->type.base = 2;
+        if (cur().ity == 16 || cur().ity == 32) {
+            // L"..." is an array of wchar_t (here unsigned short), U"..." of char32_t (unsigned int): the code unit
+            // bytes, and the zero unit's bytes after them (the generator adds the last zero byte).
+            out->type.base = cur().ity == 16 ? 4 : 1;
+            out->type.is_unsigned = true;
+            out->text.append(static_cast<size_t>(cur().ity == 16 ? 1 : 3), '\0');
+        }
         next();
+    } else if (is(TIdent) && cur().text == "dynamic_cast" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
+        // dynamic_cast<T*>(e) ([expr.dynamic.cast]): for a class T with virtual functions, a call of
+        // std::__okay_dynamic_cast (<typeinfo>) with e and T's type information, read back as a T*. A cast to a base
+        // (or the same class) needs no check. Own limits: pointers only, single inheritance.
+        next();
+        next();
+        Type ty;
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&ty, &imp, &exp)) return false;
+        while (accept(TStar)) ++ty.pointers;
+        if (is(TAmp) || is(TAndAnd)) {
+            error = "dynamic_cast to a reference is not supported";
+            return false;
+        }
+        if (!expect(TGt, "'>'") || !expect(TLParen, "'('")) return false;
+        Node inner;
+        if (!parse_expr(0, &inner)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        Type from;
+        if (!static_type(inner, &from)) {
+            error = "dynamic_cast of an expression whose type is not known";
+            return false;
+        }
+        if (ty.pointers != 1 || ty.base != 3 || ty.struct_id < 0) {
+            error = "dynamic_cast needs a pointer to a class";
+            return false;
+        }
+        if (from.pointers == 1 && from.base == 3 && from.struct_id >= 0 && derives_from(from.struct_id, ty.struct_id)) {
+            *out = cast_node(ty, std::move(inner));  // to a base or the same class: no check ([expr.dynamic.cast] 5)
+            return parse_postfix(out);
+        }
+        if (!names_function("std::__okay_dynamic_cast")) {
+            error = "dynamic_cast needs #include <typeinfo>";
+            return false;
+        }
+        const std::string sym = type_info_symbol(ty.struct_id, structs[static_cast<size_t>(ty.struct_id)].symname());
+        const int ti_sid = find_struct("type_info");
+        Type ti_ptr;
+        ti_ptr.base = 3;
+        ti_ptr.struct_id = ti_sid;
+        ti_ptr.pointers = 1;
+        std::vector<Node> cargs;
+        cargs.push_back(cast_node(void_ptr(), std::move(inner)));
+        cargs.push_back(cast_node(ti_ptr, node_addr(node_name(sym))));
+        Node call;
+        bool found = false;
+        if (!free_call("std::__okay_dynamic_cast", std::move(cargs), &call, &found)) return false;
+        if (!found) {
+            error = "dynamic_cast needs #include <typeinfo>";
+            return false;
+        }
+        *out = cast_node(ty, std::move(call));
+        return parse_postfix(out);
     } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
         const bool from_global = is(TColonColon);
         if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call
@@ -1078,7 +1351,7 @@ bool Parser::parse_unary(Node* out) {
             if (alias != global_alias.end()) name = alias->second;
         }
         int scope_sid = -1;
-        if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name)) {
+        if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name) && !(!tokens[at - 1].nsq && member_hides(name, cur().kind))) {
             // Box<int>::member in an expression.
             std::vector<TArg> targs;
             if (!parse_template_args(class_templates[name], &targs, false)) return false;
@@ -1194,7 +1467,7 @@ bool Parser::parse_unary(Node* out) {
                  (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
                 name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
         }
-        const size_t colons = name.find("::");
+        size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
             const auto found = building->statics.find(name);
             if (found != building->statics.end() && found->second.has_const) {
@@ -1203,10 +1476,27 @@ bool Parser::parse_unary(Node* out) {
             }
         }
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
+        if (scope_sid >= 0 && colons != std::string::npos && (is(TLParen) || is(TLBrace))) {
+            // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
+            // class has no member function of that name. Nested classes are kept under their plain name.
+            const std::string member = name.substr(colons + 2);
+            bool member_fn = false;
+            for (const Method& m : structs[static_cast<size_t>(scope_sid)].methods)
+                if (m.name == member) member_fn = true;
+            int tmpl_owner = -1;
+            if (find_member_tmpl(scope_sid, member, &tmpl_owner) != nullptr) member_fn = true;
+            if (!member_fn && member.find("::") == std::string::npos && find_struct(member) >= 0 &&
+                typedefs.count(member) == 0) {
+                name = member;
+                colons = std::string::npos;
+                scope_sid = -1;
+            }
+        }
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
             if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
                 return parse_postfix(out);
+            if (!is(TLParen) && !is(TLt) && static_method_ref(scope_sid, member, out)) return parse_postfix(out);
             std::vector<TArg> qtargs;
             if (is(TLt)) {
                 int tmpl_owner = -1;
@@ -1215,6 +1505,73 @@ bool Parser::parse_unary(Node* out) {
             }
             return qualified_call(out, scope_sid, member, std::move(qtargs)) && parse_postfix(out);
         }
+        if (cur_class >= 0 && colons == std::string::npos && structs[static_cast<size_t>(cur_class)].lam_scope >= 0 &&
+            ((name == "this" && structs[static_cast<size_t>(cur_class)].lam_outer >= 0) ||
+             (name != "this" && !local_visible(name) && find_field_named(structs[static_cast<size_t>(cur_class)], name) < 0))) {
+            // In the body of a lambda written in a member function: the class's static members are found by name; when
+            // the lambda captured `this`, `this` is the captured pointer and the other members are reached through it
+            // (also those of a class around an enclosing lambda).
+            const bool has_self = structs[static_cast<size_t>(cur_class)].lam_outer >= 0;
+            Node self;
+            self.kind = Node::Field;
+            self.op = TArrow;
+            self.text = "__this";
+            self.kids.push_back(node_name("this"));
+            int cls = has_self ? structs[static_cast<size_t>(cur_class)].lam_outer : structs[static_cast<size_t>(cur_class)].lam_scope;
+            if (name == "this") {
+                *out = std::move(self);
+                return parse_postfix(out);
+            }
+            while (cls >= 0) {
+                const StructDef& od = structs[static_cast<size_t>(cls)];
+                bool is_field = find_field_named(od, name) >= 0;
+                bool is_method = false;
+                bool any_object_fn = false;
+                for (const Method& m : od.methods)
+                    if (m.name == name) {
+                        is_method = true;
+                        if (!m.is_static) any_object_fn = true;
+                    }
+                int tmpl_owner = -1;
+                if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr) {
+                    is_method = true;
+                    any_object_fn = true;
+                }
+                if ((!is(TLParen) || static_object_call(cls, name)) && static_member_expr(cls, name, out))
+                    return parse_postfix(out);
+                if (is_method && is(TLParen) && !any_object_fn) return qualified_call(out, cls, name, {}) && parse_postfix(out);
+                if (!has_self) break;
+                if (is_field) {
+                    Node field;
+                    field.kind = Node::Field;
+                    field.op = TArrow;
+                    field.text = name;
+                    field.kids.push_back(std::move(self));
+                    *out = std::move(field);
+                    if (od.ref_caps.count(name) > 0) {
+                        Node inner = std::move(*out);
+                        *out = Node{};
+                        out->kind = Node::Unary;
+                        out->op = TStar;
+                        out->kids.push_back(std::move(inner));
+                    }
+                    return parse_postfix(out);
+                }
+                if (is_method && is(TLParen)) {
+                    if (!any_object_fn) return qualified_call(out, cls, name, {}) && parse_postfix(out);
+                    next();
+                    return method_call(out, std::move(self), true, name) && parse_postfix(out);
+                }
+                if (od.lam_outer < 0) break;
+                Node up;
+                up.kind = Node::Field;
+                up.op = TArrow;
+                up.text = "__this";
+                up.kids.push_back(std::move(self));
+                self = std::move(up);
+                cls = od.lam_outer;
+            }
+        }
         if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
@@ -1222,6 +1579,7 @@ bool Parser::parse_unary(Node* out) {
             bool is_field = false;
             for (const Field& field : def.fields)
                 if (field.name == name) is_field = true;
+            if (!is_field && !is(TLParen) && !is(TLt) && static_method_ref(cur_class, name, out)) return parse_postfix(out);
             Node self;
             self.kind = Node::Name;
             self.text = "this";
@@ -1252,7 +1610,10 @@ bool Parser::parse_unary(Node* out) {
                 bool any_object_fn = false;
                 for (const Method& m : def.methods)
                     if (m.name == name && !m.is_static) any_object_fn = true;
-                if (is_method && !any_object_fn && find_member_tmpl(cur_class, name, &tmpl_owner) == nullptr) {
+                // In a static member function there is no this: a member template named there is a static one
+                // (Log::Error calls Emit), called like the static functions.
+                const bool no_this = !local_visible("this");
+                if (is_method && !any_object_fn && (no_this || find_member_tmpl(cur_class, name, &tmpl_owner) == nullptr)) {
                     // Only static functions have this name: there is no object to call it on.
                     return qualified_call(out, cur_class, name, {}) && parse_postfix(out);
                 }
@@ -1488,6 +1849,8 @@ bool Parser::parse_unary(Node* out) {
         } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
                    !is(TMinusMinus) && global_const_node(name, out)) {
             // A const global with a constant initializer is a constant ([expr.const]).
+        } else if (!no_const_subst && local_const_node(name, out)) {
+            // A const local integer with a constant initializer is a constant too (`constexpr int kMax = 8; T a[kMax];`).
         } else {
             out->kind = Node::Name;
             out->text = name;
@@ -1516,14 +1879,28 @@ bool Parser::parse_unary(Node* out) {
         const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
-                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
+                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd)))) ||  // a parameter `seconds` hides chrono's type
+                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1) &&
+                                 (tokens[at + 1].nsq || (!local_visible(tokens[at + 1].text) && !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd)))) ||
+                                // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
+                                (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text) &&
+                                 !member_hides(tokens[at + 1].text, at + 2 < tokens.size() ? tokens[at + 2].kind : TEnd) && template_id_cast_at(at + 1));
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
         if (type_ahead) {
             size_t k = at + 1;
-            if (tokens[k].kind == TIdent) {
+            if (tokens[k].kind == TIdent && is_template_name_at(k)) {
+                int angle = 0;  // past the template's argument list: (Box<int>(x) + 1) is a functional cast
+                for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                    if (tokens[k].kind == TLt) ++angle;
+                    else if (tokens[k].kind == TGt && --angle == 0) {
+                        ++k;
+                        break;
+                    }
+                }
+            } else if (tokens[k].kind == TIdent) {
                 ++k;
             } else {
                 k = after_type_keywords(k);
@@ -1537,6 +1914,37 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
+            if (is(TAmp) || is(TAndAnd)) {
+                // (T&)x, (const T&)x, (T&&)x, and static_cast<const Base&>(derived), which is read as that: the object x
+                // seen as a T ([expr.static.cast] 2, [expr.cast]), here *(T*)&x. When x already has type T (and is not
+                // an lvalue, such as a call result) it is x itself.
+                next();
+                if (!expect(TRParen, "')'")) return false;
+                Node inner;
+                if (!parse_unary(&inner)) return false;
+                Type from;
+                const bool known = static_type(inner, &from);
+                if (known && from.base == ty.base && from.pointers == ty.pointers && from.struct_id == ty.struct_id &&
+                    !(inner.kind == Node::Name || inner.kind == Node::Field || inner.kind == Node::Index ||
+                      (inner.kind == Node::Unary && inner.op == TStar))) {
+                    *out = std::move(inner);
+                    return parse_postfix(out);
+                }
+                Type pt = ty;
+                pt.is_ref = false;
+                pt.rref = false;
+                pt.is_const = false;
+                pt.pointers += 1;
+                Node cast;
+                cast.kind = Node::Unary;
+                cast.type = pt;
+                cast.kids.push_back(node_addr(std::move(inner)));
+                *out = Node{};
+                out->kind = Node::Unary;
+                out->op = TStar;
+                out->kids.push_back(std::move(cast));
+                return parse_postfix(out);
+            }
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
@@ -1616,6 +2024,12 @@ bool Parser::parse_unary(Node* out) {
         no_const_subst = saved_subst;
         if (!inner_ok) return false;
         const Tok uop = out->op;
+        if (uop == TAmp && ((inner.kind == Node::Name && inner.kids.empty() && names_function(inner.text)) ||
+                            (inner.kind == Node::Unary && inner.op == TEnd && inner.text == "<static-fn>"))) {
+            // &f of a function ([expr.unary.op] 3): the function's address, which the name alone already is ([conv.func]).
+            *out = std::move(inner);
+            return parse_postfix(out);
+        }
         if (uop == TMinus || uop == TNot || uop == TTilde || uop == TStar) {
             bool done = false;
             if (!operator_unary(uop, false, &inner, &done)) return false;
@@ -1752,7 +2166,22 @@ bool Parser::parse_postfix(Node* out) {
         if (is(TLBrack)) {
             next();
             Node index;
-            if (!parse_expr(0, &index)) return false;
+            Type sub_t;
+            if (is(TLBrace) && class_object_type(*out, &sub_t) && sub_t.struct_id >= 0) {
+                // m[{a, b}] ([expr.sub] 1, [over.sub]): the list makes a temporary of the class operator[] takes.
+                int key_sid = -1;
+                for (const Method& m : structs[static_cast<size_t>(sub_t.struct_id)].methods)
+                    if (m.name == "operator[]" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].pointers == 0 &&
+                        m.params[0].struct_id >= 0)
+                        key_sid = m.params[0].struct_id;
+                if (key_sid < 0) {
+                    error = "a braced list in [] needs an operator[] that takes a class";
+                    return false;
+                }
+                if (!braced_temp(key_sid, &index)) return false;
+            } else if (!parse_expr(0, &index)) {
+                return false;
+            }
             if (!expect(TRBrack, "']'")) return false;
             {
                 bool done = false;
@@ -1880,6 +2309,27 @@ bool Parser::parse_postfix(Node* out) {
                     *out = node_name(hidden.name);
                 }
             }
+            {
+                // u.LowPart where LowPart is a member of an anonymous struct or union inside u: go through the hidden
+                // field(s) that hold it ([class.union.anon]).
+                Type holder;
+                std::vector<std::string> path;
+                if (static_type(*out, &holder) && holder.base == 3 && holder.struct_id >= 0 &&
+                    find_field_named(structs[static_cast<size_t>(holder.struct_id)], wrapped.text) < 0 &&
+                    anon_path(holder.struct_id, wrapped.text, &path)) {
+                    Tok step_op = op;
+                    for (const std::string& hidden : path) {
+                        Node step;
+                        step.kind = Node::Field;
+                        step.op = step_op;
+                        step.text = hidden;
+                        step.kids.push_back(std::move(*out));
+                        *out = std::move(step);
+                        step_op = TDot;
+                    }
+                    wrapped.op = TDot;
+                }
+            }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
             {
@@ -1927,8 +2377,7 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                 };
                 if (cur_locals != nullptr && static_type(mid, &ta) && static_type(els, &tb) && ta.base == 3 &&
                     ta.pointers == 0 && !ta.is_ref && !ta.is_array() && tb.base == 3 && tb.pointers == 0 && !tb.is_ref &&
-                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id &&
-                    !class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]) && !(lvalue(mid) && lvalue(els))) {
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els))) {
                     Local hidden;
                     hidden.name = "__tn" + std::to_string(tmp_count++);
                     hidden.type = ta;
@@ -1950,6 +2399,10 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                         chosen.kids.push_back(std::move(stmt));
                     }
                     stmt_pre.push_back(std::move(chosen));
+                    // A class with a destructor: the hidden object is destroyed after the full expression, like any
+                    // temporary ([class.temporary]).
+                    if (class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, ta.struct_id});
                     *out = node_name(hidden.name);
                     continue;
                 }

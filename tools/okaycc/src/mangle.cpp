@@ -37,6 +37,18 @@ std::string mangleType(const Type& t) {
         if (t.tag.empty()) return "i";
         if (t.tag.find("::") == std::string::npos) return mangleTag(t.tag);
         return "N" + mangleTag(t.tag) + "E";
+    // An array type is A <length> _ <element>, or A_ <element> with no length ([mangle.array-type]).
+    case Type::Kind::Array:
+        return "A" + std::string(t.unsized || !t.bound ? "" : (t.bound->kind == Expr::Kind::Int ? std::to_string(t.bound->ival) : "")) +
+               "_" + (t.inner ? mangleType(*t.inner) : "i");
+    // A function type is F <return type> <parameter types> E, v for no parameters
+    // ([mangle.function-type]).
+    case Type::Kind::Function: {
+        std::string out = "F" + (t.inner ? std::string(t.inner->cnst ? "K" : "") + mangleType(*t.inner) : "v");
+        if (t.params.empty()) out += "v";
+        for (const Param& p : t.params) out += p.type ? std::string(p.type->cnst ? "K" : "") + mangleType(*p.type) : "i";
+        return out + "E";
+    }
     default: return "i";
     }
 }

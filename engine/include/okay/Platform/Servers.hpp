@@ -111,8 +111,8 @@ public:
             for (const auto& o : SplitObjects(p.body)) {
                 std::string id = Field(o, "id");
                 for (auto& m : out) if (m.uid == id) {
-                    std::string disp = Field(o, "display_name");
-                    m.name = disp.empty() ? Field(o, "username") : disp;
+                    std::string disp = okay::account::PublicName(Field(o, "display_name"));
+                    m.name = disp.empty() ? okay::account::PublicName(Field(o, "username")) : disp;
                     m.avatar = Field(o, "avatar_url");
                     long seen = ParseIso(Field(o, "last_seen"));
                     m.online = seen > 0 && std::difftime(std::time(nullptr), (std::time_t)seen) < 180.0;
@@ -143,7 +143,7 @@ public:
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {
             ChannelMessage m; m.id = std::atol(Field(o, "id").c_str());
-            m.author = Field(o, "author_name"); m.body = Field(o, "body");
+            m.author = okay::account::PublicName(Field(o, "author_name")); m.body = Field(o, "body");
             m.when = ParseIso(Field(o, "created_at"));
             m.edited = Field(o, "edited") == "true";
             out.push_back(m);

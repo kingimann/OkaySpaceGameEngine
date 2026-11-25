@@ -2136,4 +2136,18 @@ void BehaviorTreeDevHooks(EditorState& ed) {
     }
 }
 
+void BehaviorTreeUnsavedTitles(std::vector<std::string>& titles) {
+    const Doc& d = D();
+    if (d.dirty && !d.tree.nodes.empty() && (!d.path.empty() || !d.undo.empty())) titles.push_back("Behavior tree: " + (d.path.empty() ? std::string("Untitled") : d.path));
+}
+bool BehaviorTreeSaveForQuit(EditorState&, std::string& why) {
+    Doc& d = D();
+    if (!d.dirty || d.tree.nodes.empty() || (d.path.empty() && d.undo.empty())) return true;   // (a new tree nobody edited is not work to lose)
+    if (d.path.empty()) { why = "The behavior tree has no file yet: save it from the Behavior Tree window first."; return false; }
+    std::string err;
+    if (DocSave(d.path, &err)) return true;
+    why = "Couldn't save " + d.path + (err.empty() ? std::string() : ": " + err);
+    return false;
+}
+
 } // namespace oked

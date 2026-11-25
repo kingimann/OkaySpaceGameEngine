@@ -5,6 +5,7 @@
 // the inspectors of the story components (main.cpp draws their headers).
 #include "EditorState.hpp"
 #include <string>
+#include <vector>
 
 namespace okay { class DialogueRunner; class QuestLog; class QuestTrigger; class StoryState; }
 
@@ -28,5 +29,11 @@ void DialogueRunnerInspector(okay::editor::EditorState& ed, okay::DialogueRunner
 void QuestLogInspector(okay::editor::EditorState& ed, okay::QuestLog& ql);
 void QuestTriggerInspector(okay::editor::EditorState& ed, okay::QuestTrigger& qt);
 void StoryStateInspector(okay::editor::EditorState& ed, okay::StoryState& st);
+
+// Unsaved work for the editor's quit question ("Unsaved Changes", editor/main.cpp UnsavedDocWindows): DialogueUnsavedTitles
+// adds a line per unsaved document; DialogueSaveForQuit writes each one that has a file and returns false (with `why`) when
+// one could not be written or has no file yet (then the editor stays open).
+void DialogueUnsavedTitles(std::vector<std::string>& titles);
+bool DialogueSaveForQuit(okay::editor::EditorState& ed, std::string& why);
 
 } // namespace oked

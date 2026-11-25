@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 29 headers, 231 names.
+Back to the [code index](../code_index.md). 29 headers, 235 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -25,13 +25,15 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `Session` struct, line 349: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 358: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 368: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 377: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 389: Which backend signs players in.
-- `AccountService` class, line 395: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1220: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 63: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 365: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 374: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 384: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 393: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 405: Which backend signs players in.
+- `SessionCheck` enum, line 408: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 414: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1260: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -78,7 +80,9 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 
 - `Friend` struct, line 31
 - `FriendEvent` struct, line 50
-- `Friends` class, line 58
+- `FeedLine` struct, line 60: One line of the friends' activity panel: the newest of a run of the same event (same person, same kind, same detail), how
+- `GroupFeed` function, line 65: The activity panel's lines from the feed (newest first): your own events are left out (the server's activity policy lets
+- `Friends` class, line 84
 
 ## `engine/include/okay/Platform/GameIpc.hpp`
 
@@ -232,24 +236,24 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 - `GLAttributes` struct, line 160
 - `GLCurrent` struct, line 167: What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
 - `Window` class, line 172
-- `SampleFormat` enum, line 233: ---- Audio -------------------------------------------------------------------
-- `AudioSpec` struct, line 238
-- `BytesPerSample` function, line 250
-- `AudioDevice` class, line 252
-- `DisplayInfo` struct, line 264: ---- Displays -----------------------------------------------------------------
-- `GamepadAxis` enum, line 275: ---- Game controllers ----------------------------------------------------------
-- `GamepadButton` enum, line 276
-- `Gamepad` class, line 281
-- `InitFlags` struct, line 326: ---- The backend ---------------------------------------------------------------
-- `Backend` class, line 330
-- `WrapSdl2Window` function, line 467: A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
-- `TranslateSdl2Event` function, line 473: Turn one SDL_Event (passed as 'const SDL_Event*') into a platform Event, for code that still polls SDL itself but
-- `TicksMs` function, line 478: ---- Free functions on the default backend ------------------------------------
-- `TicksMs32` function, line 480: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
-- `PerfCounter` function, line 481
-- `PerfFrequency` function, line 482
-- `DelayMs` function, line 483
-- `Log` function, line 485: Log one line through the default backend (stderr when there is none).
+- `SampleFormat` enum, line 236: ---- Audio -------------------------------------------------------------------
+- `AudioSpec` struct, line 241
+- `BytesPerSample` function, line 253
+- `AudioDevice` class, line 255
+- `DisplayInfo` struct, line 267: ---- Displays -----------------------------------------------------------------
+- `GamepadAxis` enum, line 278: ---- Game controllers ----------------------------------------------------------
+- `GamepadButton` enum, line 279
+- `Gamepad` class, line 284
+- `InitFlags` struct, line 329: ---- The backend ---------------------------------------------------------------
+- `Backend` class, line 333
+- `WrapSdl2Window` function, line 470: A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
+- `TranslateSdl2Event` function, line 476: Turn one SDL_Event (passed as 'const SDL_Event*') into a platform Event, for code that still polls SDL itself but
+- `TicksMs` function, line 481: ---- Free functions on the default backend ------------------------------------
+- `TicksMs32` function, line 483: Drop-in for SDL_GetTicks(): the same 32-bit millisecond count (wraps after 49 days).
+- `PerfCounter` function, line 484
+- `PerfFrequency` function, line 485
+- `DelayMs` function, line 486
+- `Log` function, line 488: Log one line through the default backend (stderr when there is none).
 
 ## `engine/include/okay/Platform/PlayFab/PlayFab.hpp`
 

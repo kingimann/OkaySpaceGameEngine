@@ -4,6 +4,7 @@
 #include "NavIcons.hpp"
 #include "PageLayout.hpp"
 #include "OkayTheme.hpp"
+#include "ImGuiDropdown.hpp"   // the dropdown look shared with the editor
 #include "HierarchyPanelModel.hpp"   // HierWrapWords: the one word wrapper (the editor's empty-panel note uses it too)
 #include <cfloat>
 #include <cstring>
@@ -96,6 +97,13 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         d->PathLineTo(ImVec2(c.x + r, c.y + r));    d->PathLineTo(ImVec2(c.x + r, c.y + 2.2f));
         d->PathStroke(col, 0, t);
         break;
+    case kIcoTerminal: {   // Command line: a rounded window with a ">" prompt and a cursor line
+        d->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), col, 2.0f, 0, t);
+        d->PathLineTo(ImVec2(c.x - r * 0.55f, c.y - r * 0.35f)); d->PathLineTo(ImVec2(c.x - r * 0.15f, c.y));
+        d->PathLineTo(ImVec2(c.x - r * 0.55f, c.y + r * 0.35f)); d->PathStroke(col, 0, t);
+        d->AddLine(ImVec2(c.x + r * 0.05f, c.y + r * 0.38f), ImVec2(c.x + r * 0.55f, c.y + r * 0.38f), col, t);
+        break;
+    }
     case kIcoAlert: {   // Crash reports: a warning triangle with "!"
         d->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y + r * 0.85f), ImVec2(c.x - r, c.y + r * 0.85f), col, t);
         d->AddLine(ImVec2(c.x, c.y - 2.6f), ImVec2(c.x, c.y + 2.0f), col, t);
@@ -139,8 +147,28 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
     case kIcoGlobe:     // Multiplayer: a globe
         d->AddCircle(c, r, col, 28, t);
         d->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t);
-        for (int k = 0; k <= 16; ++k)   // meridian: a narrow ellipse { const float a = -PI * 0.5f + PI * k / 8.0f; d->PathLineTo(ImVec2(c.x + std::cos(a) * r * 0.42f, c.y + std::sin(a) * r)); }
+        for (int k = 0; k <= 16; ++k) {   // meridian: a narrow ellipse
+            const float a = -PI * 0.5f + PI * k / 8.0f;
+            d->PathLineTo(ImVec2(c.x + std::cos(a) * r * 0.42f, c.y + std::sin(a) * r));
+        }
         d->PathStroke(col, 0, t);
+        break;
+    case kIcoSearch:    // Search: a magnifier
+        d->AddCircle(ImVec2(c.x - 1.4f, c.y - 1.4f), 5.0f, col, 20, t);
+        d->AddLine(ImVec2(c.x + 2.4f, c.y + 2.4f), ImVec2(c.x + 6.2f, c.y + 6.2f), col, t + 0.4f);
+        break;
+    case kIcoStar: {    // Rating: an outline star
+        for (int q = 0; q < 10; ++q) {
+            const float a = q * PI / 5 - PI / 2, rr = (q % 2) ? r * 0.45f : r;
+            d->PathLineTo(ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr + 0.6f));
+        }
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case kIcoSort:      // Sort: three lines, shorter downwards
+        d->AddLine(ImVec2(c.x - r, c.y - 4.5f), ImVec2(c.x + r, c.y - 4.5f), col, t);
+        d->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r * 0.4f, c.y), col, t);
+        d->AddLine(ImVec2(c.x - r, c.y + 4.5f), ImVec2(c.x - r * 0.2f, c.y + 4.5f), col, t);
         break;
     case kIcoRefresh: {
         d->PathArcTo(c, 5.6f, -PI * 0.35f, PI * 1.45f, 20); d->PathStroke(col, 0, t);
@@ -179,7 +207,7 @@ bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 bgHover,
             const float ang = -1.5707963f + k * 0.6283185f, rad = (k % 2 == 0) ? 7.0f : 3.0f;
             pts[k] = ImVec2(c.x + std::cos(ang) * rad, c.y + 0.5f + std::sin(ang) * rad);
         }
-        if (icon == kRibStarOn) for (int k = 0; k < 10; ++k) dl->AddTriangleFilled(ImVec2(c.x, c.y + 0.5f), pts[k], pts[(k + 1) % 10], IM_COL32(240, 196, 92, 255));
+        if (icon == kRibStarOn) for (int k = 0; k < 10; ++k) dl->AddTriangleFilled(ImVec2(c.x, c.y + 0.5f), pts[k], pts[(k + 1) % 10], okaytheme::WarningFillU32());
         else dl->AddPolyline(pts, 10, fg, ImDrawFlags_Closed, 1.5f);
         break;
     }
@@ -268,7 +296,7 @@ int ChipRow(const char* id, const std::vector<Chip>& chips, int selected, float 
     const ImVec2 o = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImVec4 accLt = okaytheme::AccentText(kAccent);
     int clicked = -1;
     ImGui::PushID(id);
     for (std::size_t i = 0; i < chips.size(); ++i) {
@@ -281,7 +309,7 @@ int ChipRow(const char* id, const std::vector<Chip>& chips, int selected, float 
         const bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
         ImGui::PopID();
         dl->AddRectFilled(a, b, on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.26f))
-                                   : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10)), ch * 0.5f);
+                                   : (h ? okaytheme::Ink(22) : okaytheme::Ink(10)), ch * 0.5f);
         if (on) dl->AddRect(a, b, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f)), ch * 0.5f, 0, 1.0f);
         if (focus) dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2), ImGui::GetColorU32(kAccent), ch * 0.5f + 2, 0, 1.5f);
         float tx = a.x + padX;
@@ -312,12 +340,12 @@ void EmptyState(int icon, const char* title, const char* sub, float topPad, bool
     ImGui::Dummy(ImVec2(0, topPad));
     const ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + R);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddCircleFilled(c, R, IM_COL32(255, 255, 255, 12), 40);
+    dl->AddCircleFilled(c, R, okaytheme::Ink(12), 40);
     DrawNavIcon(dl, icon, c, ImGui::GetColorU32(ImGuiCol_TextDisabled));
     if (ok) {   // the small green tick: nothing is waiting
         const ImVec2 bc(c.x + R * 0.66f, c.y + R * 0.66f);
         dl->AddCircleFilled(bc, UiPx(10.0f), ImGui::GetColorU32(ImGuiCol_WindowBg), 20);
-        dl->AddCircleFilled(bc, UiPx(8.0f), IM_COL32(64, 186, 104, 255), 20);
+        dl->AddCircleFilled(bc, UiPx(8.0f), okaytheme::SuccessFillU32(), 20);
         dl->PathLineTo(ImVec2(bc.x - 3.6f, bc.y + 0.2f)); dl->PathLineTo(ImVec2(bc.x - 1.0f, bc.y + 2.8f));
         dl->PathLineTo(ImVec2(bc.x + 3.8f, bc.y - 2.8f)); dl->PathStroke(IM_COL32_WHITE, 0, 1.8f);
     }
@@ -355,14 +383,14 @@ void CardBackground(ImDrawList* dl, ImVec2 a, ImVec2 b, bool hover, ImU32 hoverB
     const float r = UiPx(12.0f);
     dl->AddRectFilled(a, b, ImGui::GetColorU32(okaytheme::kRaised), r);
     if (!hover) return;
-    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 7), r);
-    dl->AddRect(a, b, hoverBorder ? hoverBorder : IM_COL32(255, 255, 255, 36), r, 0, borderW);
+    dl->AddRectFilled(a, b, okaytheme::Ink(7), r);
+    dl->AddRect(a, b, hoverBorder ? hoverBorder : okaytheme::Ink(36), r, 0, borderW);
 }
 
 void SkeletonBlock(ImDrawList* dl, ImVec2 a, ImVec2 b, float rounding) {
     const float t = (float)ImGui::GetTime();
     const float pulse = 0.5f + 0.5f * std::sin(t * 3.2f);
-    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, (int)(10 + 10 * pulse)), rounding);
+    dl->AddRectFilled(a, b, okaytheme::Ink((int)(10 + 10 * pulse)), rounding);
 }
 
 void SectionLabel(const char* title, int n) {
@@ -374,23 +402,10 @@ void SectionLabel(const char* title, int n) {
 }
 
 bool BeginSlateCombo(const char* label, const char* preview, int flags) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = ImGui::CalcItemWidth(), h = ImGui::GetFrameHeight(), chev = h;
+    // The look (chevron inside the box) is shared with the editor: shared/ImGuiDropdown.hpp. The launcher shortens the preview first.
+    const float w = ImGui::CalcItemWidth(), chev = ImGui::GetFrameHeight();
     const std::string pv = FitText(preview ? preview : "", std::max(0.0f, w - ImGui::GetStyle().FramePadding.x * 2 - chev * 0.7f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, std::max(ImGui::GetStyle().FrameRounding, UiPx(8.0f)));
-    const bool open = ImGui::BeginCombo(label, pv.c_str(), flags | ImGuiComboFlags_NoArrowButton);
-    ImGui::PopStyleVar();
-    // The chevron, inside the box (a "v" of two strokes), brighter while the list is open or the box is hovered.
-    const bool hot = open || ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
-    const ImVec2 c(p.x + w - chev * 0.5f, p.y + h * 0.5f + 1.0f);
-    const float r = std::max(3.5f, h * 0.15f);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (open) dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());   // (the window's own list belongs to the open popup now)
-    dl->PathLineTo(ImVec2(c.x - r, c.y - r * 0.5f));
-    dl->PathLineTo(ImVec2(c.x, c.y + r * 0.5f));
-    dl->PathLineTo(ImVec2(c.x + r, c.y - r * 0.5f));
-    dl->PathStroke(ImGui::GetColorU32(hot ? ImGuiCol_Text : ImGuiCol_TextDisabled), 0, 1.8f);
-    return open;
+    return okayshared::BeginChevronCombo(label, pv.c_str(), flags, UiPx(8.0f));
 }
 bool SlateCombo(const char* label, int* current, const char* const items[], int count, int popupMaxItems) {
     const char* preview = (*current >= 0 && *current < count) ? items[*current] : "";
@@ -411,6 +426,68 @@ bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated,
     std::vector<const char*> items;
     for (const char* q = itemsZeroSeparated; q && *q; q += std::strlen(q) + 1) items.push_back(q);
     return SlateCombo(label, current, items.data(), (int)items.size(), popupMaxItems);
+}
+
+bool g_panelShortcut = false;
+bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hoverBg, ImU32 fg, ImU32 fgHover) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool click = ImGui::InvisibleButton(id, ImVec2(d, d));
+    const bool h = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (h) dl->AddRectFilled(p, ImVec2(p.x + d, p.y + d), hoverBg, 6.0f);
+    DrawNavIcon(dl, kIcoPanel, ImVec2(p.x + d * 0.5f, p.y + d * 0.5f), h ? fgHover : fg);
+    if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s %s  (Ctrl+B)", open ? "Hide" : "Show", what); }
+    return click;
+}
+
+bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 ip, float S, float railX) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImGui::SetCursorScreenPos(ip);
+    const bool click = ImGui::InvisibleButton(id, ImVec2(S, S));
+    const bool hov = ImGui::IsItemHovered();
+    const bool lit = it.selected || hov;
+    ImU32 fill = it.fill ? it.fill : ImGui::GetColorU32(okaytheme::kControl);
+    if (it.plus && hov) fill = okaytheme::SuccessFillU32();
+    if (it.selected && !it.fill) fill = ImGui::GetColorU32(kAccentDim);
+    d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), fill, lit ? S * 0.32f : S * 0.5f);   // a circle; a rounded square when lit
+    const ImVec2 c(ip.x + S * 0.5f, ip.y + S * 0.5f);
+    const bool onColour = it.fill != 0 || (it.selected && !it.plus);
+    if (it.plus) {
+        const ImU32 pc = hov ? okaytheme::OnColorU32() : okaytheme::SuccessU32();
+        const float k = S * 0.16f;
+        d->AddLine(ImVec2(c.x - k, c.y), ImVec2(c.x + k, c.y), pc, 2.2f);
+        d->AddLine(ImVec2(c.x, c.y - k), ImVec2(c.x, c.y + k), pc, 2.2f);
+    } else if (it.navIcon >= 0) {
+        DrawNavIcon(d, it.navIcon, c, onColour ? okaytheme::OnColorU32() : (hov ? okaytheme::TextU32() : okaytheme::TextDimU32()));
+    } else if (!it.initials.empty()) {
+        const ImVec2 ts = ImGui::CalcTextSize(it.initials.c_str());
+        d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), onColour ? okaytheme::OnColorU32() : okaytheme::TextU32(), it.initials.c_str());
+    }
+    if (it.dot) {
+        const ImVec2 dc(ip.x + S - S * 0.12f, ip.y + S * 0.12f);
+        d->AddCircleFilled(dc, S * 0.15f, ImGui::GetColorU32(okaytheme::kSunken), 16);
+        d->AddCircleFilled(dc, S * 0.10f, okaytheme::DangerFillU32(), 16);
+    }
+    if (it.count >= 0) {   // a small number badge, bottom right
+        char n[12]; std::snprintf(n, sizeof(n), "%d", it.count);
+        const float fs = ImGui::GetFontSize() * 0.72f;
+        const ImVec2 ns = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, n);
+        const float bh = fs + UiPx(2.0f), bw = std::max(bh, ns.x + UiPx(6.0f));
+        const ImVec2 b0(ip.x + S - bw + UiPx(3.0f), ip.y + S - bh + UiPx(3.0f));
+        d->AddRectFilled(ImVec2(b0.x - 1.5f, b0.y - 1.5f), ImVec2(b0.x + bw + 1.5f, b0.y + bh + 1.5f), ImGui::GetColorU32(okaytheme::kRaised), bh);
+        d->AddRectFilled(b0, ImVec2(b0.x + bw, b0.y + bh), ImGui::GetColorU32(okaytheme::kControl), bh);
+        d->AddText(ImGui::GetFont(), fs, ImVec2(b0.x + (bw - ns.x) * 0.5f, b0.y + (bh - ns.y) * 0.5f), okaytheme::TextU32(), n);
+    }
+    if (lit) {   // the selection pill on the rail's left edge
+        const float ph = it.selected ? S * 0.8f : S * 0.4f;
+        d->AddRectFilled(ImVec2(railX, c.y - ph * 0.5f), ImVec2(railX + UiPx(4.0f), c.y + ph * 0.5f), okaytheme::TextU32(), 2.0f);
+    }
+    if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!it.tip.empty()) ImGui::SetTooltip("%s", it.tip.c_str()); }
+    return click;
+}
+void DrawRailDivider(ImVec2 a, ImVec2 b) {
+    const float y = (a.y + b.y) * 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), okaytheme::Ink(26), 2.0f);
 }
 
 float FitButtonW(const char* label, float minW) {

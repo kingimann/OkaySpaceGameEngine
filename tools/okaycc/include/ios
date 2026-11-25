@@ -1,0 +1,4 @@
+// <ios> for okay-cc (ISO/IEC 14882 [ios.syn]): ios_base, its flags and the manipulators. Our own header; every stream class is in
+// <__stream>.
+#pragma once
+#include <__stream>

@@ -10,6 +10,7 @@
 #include "okay/Input/InputRecorder.hpp"
 #include "okay/Input/InputDebug.hpp"
 #include "okay/Input/Haptics.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/StringUtil.hpp"
 #include <algorithm>
@@ -57,7 +58,7 @@ std::string Unescape(const std::string& s) {
     }
     return out;
 }
-const char* const kMouseNames[3] = {"left", "right", "middle"};
+const char* const kMouseNames[Input::kMouseButtons] = {"left", "right", "middle", "x1", "x2"};   // x1 / x2: the side buttons
 
 } // namespace
 
@@ -81,6 +82,13 @@ InputBinding InputBinding::Parse(const std::string& textIn) {
     if (kind == "wheel") {
         if (arg == "up") { b.kind = Kind::Wheel; b.code = 1; }
         else if (arg == "down") { b.kind = Kind::Wheel; b.code = -1; }
+        else if (arg == "right") { b.kind = Kind::Wheel; b.code = 2; }
+        else if (arg == "left") { b.kind = Kind::Wheel; b.code = -2; }
+        return b;
+    }
+    if (kind == "gesture") {
+        const int g = Gestures::NameIndex(arg);
+        if (g >= 0) { b.kind = Kind::Gesture; b.code = g; }
         return b;
     }
     if (kind == "chord") {
@@ -104,7 +112,7 @@ InputBinding InputBinding::Parse(const std::string& textIn) {
         b.kind = Kind::Key; b.code = (unsigned char)Input::KeyFromName(Unescape(arg));
     } else if (kind == "mouse") {
         if (arg == "delta") { b.kind = Kind::MouseDelta; return b; }
-        for (int i = 0; i < 3; ++i) if (arg == kMouseNames[i]) { b.kind = Kind::Mouse; b.code = i; }
+        for (int i = 0; i < Input::kMouseButtons; ++i) if (arg == kMouseNames[i]) { b.kind = Kind::Mouse; b.code = i; }
     } else if (kind == "pad") {
         const int id = Input::GamepadButtonFromName(arg);
         if (id >= 0) { b.kind = Kind::PadButton; b.code = id; }
@@ -141,7 +149,8 @@ std::string InputBinding::ToString() const {
         case Kind::StickRight: return "stick:right" + at;
         case Kind::DPad:       return "dpad" + at;
         case Kind::MouseDelta: return "mouse:delta";
-        case Kind::Wheel:      return code >= 0 ? "wheel:up" : "wheel:down";
+        case Kind::Wheel:      return code == 2 ? "wheel:right" : code == -2 ? "wheel:left" : code >= 0 ? "wheel:up" : "wheel:down";
+        case Kind::Gesture:    return std::string("gesture:") + Gestures::NameKey(code);
         case Kind::Chord: {
             std::string out = "chord:";
             for (int i = 0; i < 4 && keys[i]; ++i) {
@@ -161,7 +170,7 @@ std::string InputBinding::Label(Input::PadFamily family) const {
     const std::string who = player > 0 ? " (Pad " + std::to_string(player + 1) + ")" : "";
     switch (kind) {
         case Kind::Key:        return Input::KeyName((char)code);
-        case Kind::Mouse:      return code == 0 ? "Left Mouse" : code == 1 ? "Right Mouse" : "Middle Mouse";
+        case Kind::Mouse:      return code == 0 ? "Left Mouse" : code == 1 ? "Right Mouse" : code == 2 ? "Middle Mouse" : "Mouse " + std::to_string(code + 1);   // the side buttons: "Mouse 4", "Mouse 5"
         case Kind::PadButton:  return Input::GamepadButtonLabel(code, family) + who;
         case Kind::Keys4:      return Input::KeyName(keys[0]) + " " + Input::KeyName(keys[2]) + " " +
                                       Input::KeyName(keys[1]) + " " + Input::KeyName(keys[3]);
@@ -169,7 +178,8 @@ std::string InputBinding::Label(Input::PadFamily family) const {
         case Kind::StickRight: return "Right Stick" + who;
         case Kind::DPad:       return "D-pad" + who;
         case Kind::MouseDelta: return "Mouse";
-        case Kind::Wheel:      return code >= 0 ? "Wheel Up" : "Wheel Down";
+        case Kind::Wheel:      return code == 2 ? "Wheel Right" : code == -2 ? "Wheel Left" : code >= 0 ? "Wheel Up" : "Wheel Down";
+        case Kind::Gesture:    return Gestures::NameLabel(code);
         case Kind::Chord: {
             std::string out;
             for (int i = 0; i < 4 && keys[i]; ++i) { if (i) out += " + "; out += Input::KeyName(keys[i]); }
@@ -182,11 +192,14 @@ std::string InputBinding::Label(Input::PadFamily family) const {
 
 float InputBinding::Value() const {
     switch (kind) {
-        case Kind::Key:       return Input::GetKeyGame((char)code) ? 1.0f : 0.0f;
+        case Kind::Key:       return Input::GetKeyGameExact((char)code) ? 1.0f : 0.0f;
         case Kind::Mouse:     return Input::GetMouseButton(code) ? 1.0f : 0.0f;
-        case Kind::Wheel:     return Input::MouseWheel() * (code >= 0 ? 1.0f : -1.0f) > 0.0f ? 1.0f : 0.0f;
+        case Kind::Wheel:     // one notch this frame: code +1 up, -1 down, +2 right, -2 left
+            if (code == 2 || code == -2) return Input::MouseWheelX() * (code > 0 ? 1.0f : -1.0f) > 0.0f ? 1.0f : 0.0f;
+            return Input::MouseWheel() * (code >= 0 ? 1.0f : -1.0f) > 0.0f ? 1.0f : 0.0f;
+        case Kind::Gesture:   return Gestures::Happened(code) ? 1.0f : 0.0f;
         case Kind::Chord: {
-            for (int i = 0; i < 4 && keys[i]; ++i) if (!Input::GetKeyGame(keys[i])) return 0.0f;
+            for (int i = 0; i < 4 && keys[i]; ++i) if (!Input::GetKeyGameExact(keys[i])) return 0.0f;
             return 1.0f;
         }
         case Kind::PadButton:
@@ -204,8 +217,8 @@ float InputBinding::Value() const {
 Vec2 InputBinding::Vector() const {
     switch (kind) {
         case Kind::Keys4:
-            return {(Input::GetKeyGame(keys[3]) ? 1.0f : 0.0f) - (Input::GetKeyGame(keys[2]) ? 1.0f : 0.0f),
-                    (Input::GetKeyGame(keys[0]) ? 1.0f : 0.0f) - (Input::GetKeyGame(keys[1]) ? 1.0f : 0.0f)};
+            return {(Input::GetKeyGameExact(keys[3]) ? 1.0f : 0.0f) - (Input::GetKeyGameExact(keys[2]) ? 1.0f : 0.0f),
+                    (Input::GetKeyGameExact(keys[0]) ? 1.0f : 0.0f) - (Input::GetKeyGameExact(keys[1]) ? 1.0f : 0.0f)};
         case Kind::StickLeft:  return Input::GamepadAxis(player);
         case Kind::StickRight: return Input::GamepadRightAxis(player);
         case Kind::DPad:
@@ -583,6 +596,7 @@ void InputActions::Tick(float dt) {
     const float d = dt > 0.0f ? dt : 0.0f;
     InputHaptics::Update(d);
     InputRecorder::BeginFrame(d);   // playback puts the recorded frame over what the runtime fed
+    Gestures::ApplyBound();         // gestures bound with Gestures::Bind drive their actions (once per Gestures::Tick)
     t.Update(d);                    // the one evaluation: every action, map (context), chord, response and on-screen control
     InputRuntime::Update(d);        // local players read the same frame from their copies
     RefreshRuntime();
@@ -853,7 +867,7 @@ bool BindingDown(const InputBinding& b) {
         case K::Key: return Input::GetKeyDown((char)b.code);
         case K::Mouse: return Input::GetMouseButtonDown(b.code);
         case K::PadButton: return Input::GetGamepadButtonDown(b.code, b.player);
-        case K::Wheel: return b.Value() > 0.0f;   // one notch is already one frame
+        case K::Wheel: case K::Gesture: return b.Value() > 0.0f;   // one notch, or one gesture, is already one frame
         case K::Chord: {
             bool any = false;
             for (char k : b.keys) {

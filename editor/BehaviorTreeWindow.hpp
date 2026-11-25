@@ -6,6 +6,7 @@
 #include "EditorState.hpp"
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace okay { class Component; class GameObject; }
 
@@ -39,5 +40,11 @@ void BehaviorTreeAddComponentItems(okay::editor::EditorState& ed, okay::GameObje
 // navmesh into the scene and opens the tree, OKAY_UI_BTSEL=<node name> selects that
 // node, OKAY_UI_BTTAB=<n> picks the side tab.
 void BehaviorTreeDevHooks(okay::editor::EditorState& ed);
+
+// Unsaved work for the editor's quit question ("Unsaved Changes", editor/main.cpp UnsavedDocWindows): BehaviorTreeUnsavedTitles
+// adds a line per unsaved document; BehaviorTreeSaveForQuit writes each one that has a file and returns false (with `why`) when
+// one could not be written or has no file yet (then the editor stays open).
+void BehaviorTreeUnsavedTitles(std::vector<std::string>& titles);
+bool BehaviorTreeSaveForQuit(okay::editor::EditorState& ed, std::string& why);
 
 } // namespace oked

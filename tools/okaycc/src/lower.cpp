@@ -794,6 +794,14 @@ private:
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
             g.size = 8;
             g.reloc = addString(d.init->text);
+        } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "&" && !d.init->kids.empty() &&
+                   d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Name && find(d.init->kids[0]->text) &&
+                   find(d.init->kids[0]->text)->global) {
+            // T *p = &g; an address constant: 8 bytes the linker fills with g's address.
+            g.size = 8;
+            g.bytes.assign(8, 0);
+            Sym* target = find(d.init->kids[0]->text);
+            g.relocs.emplace_back(0, target->gname.empty() ? d.init->kids[0]->text : target->gname);
         } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
             g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
             std::int64_t n = static_cast<std::int64_t>(d.init->ival);
@@ -928,6 +936,15 @@ private:
 
     Addr lowerAddr(Expr& e) {
         Addr a;
+        if (e.kind == Expr::Kind::String) {
+            // A string literal is an lvalue array ([lex.string]): its address is where its bytes are
+            // (a reference to it, as a forwarding reference given "text" binds, takes this).
+            a.op = lowerExpr(e).op;
+            a.width = 1;
+            a.agg = true;
+            a.ok = true;
+            return a;
+        }
         if (e.kind == Expr::Kind::Comma && !e.kids.empty() && e.kids.back()) {
             // (x, y): x is evaluated for its effects, the address is y's.
             for (std::size_t i = 0; i + 1 < e.kids.size(); ++i)
@@ -1502,6 +1519,13 @@ private:
                 v.inner = p.inner;
                 return v;
             }
+            if (e.checked && e.checked->kind == Type::Kind::Array) {
+                // *p of an array (the result of a call returning T(&)[N]) is used through its
+                // address: the array decays to its first element, so nothing is loaded.
+                Val v = p;
+                if (e.checked->inner) v.step = sizeOf(e.checked->inner.get());
+                return v;
+            }
             Val v = loadAddr(a, p.inner, e.checked && e.checked->unsign);
             if (e.checked) v.fpw = fpWidthOf(e.checked.get());  // *p of a float or double
             return v;
@@ -1566,9 +1590,9 @@ private:
             return {};
         }
         Sym* simple = e.kids[0]->kind == Expr::Kind::Name ? find(e.kids[0]->text) : nullptr;
-        if (!simple || simple->global || simple->array) {
-            // Any other object (a field, an element, *p, a global): x++ is (x += 1) - 1 and ++x is
-            // x += 1, with the object evaluated once.
+        if (!simple || simple->global || simple->array || simple->ref) {
+            // Any other object (a field, an element, *p, a global, what a reference names): x++ is
+            // (x += 1) - 1 and ++x is x += 1, with the object evaluated once.
             auto one = std::make_unique<Expr>();
             one->kind = Expr::Kind::Int;
             one->ival = 1;
@@ -1576,6 +1600,12 @@ private:
             one->col = e.col;
             auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
             one->checked = std::make_unique<Type>();
+            // A pointer moves by the size of what it points to ([expr.pre.incr]): the += below is
+            // lowered as it is, without the checker's p = p + n scaling (++ on an int *& moved 1 byte).
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                int st = valueStep(lhsType.get());
+                if (st > 1) one->ival = static_cast<std::uint64_t>(st);
+            }
             auto asg = std::make_unique<Expr>();
             asg->kind = Expr::Kind::Assign;
             asg->text = e.text == "--" ? "-=" : "+=";
@@ -1586,6 +1616,16 @@ private:
             asg->kids.push_back(std::move(one));
             if (lhsType) asg->checked = cloneType(*lhsType);
             if (pre) return lowerExpr(*asg);
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                // p++ on a pointer: the new value less one step (the value of the += is not scaled
+                // again by a pointer subtraction).
+                Val after = lowerExpr(*asg);
+                int st = valueStep(lhsType.get());
+                int dst = fresh();
+                emitBin(e.text == "--" ? Inst::Op::Add : Inst::Op::Sub, dst, after.op,
+                        Operand::number(st > 1 ? st : 1));
+                return Val{Operand::vreg(dst), after.step, after.inner};
+            }
             auto back = std::make_unique<Expr>();
             back->kind = Expr::Kind::Bin;
             back->text = e.text == "--" ? "+" : "-";
@@ -1845,7 +1885,8 @@ private:
                 }
                 if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
                 storeNamed(*s, result);
-                if (s->global) return Val{result, s->step, s->inner};
+                // (a reference's register holds the referent's address: the value is result)
+                if (s->global || s->ref) return Val{result, s->step, s->inner};
                 return Val{Operand::vreg(s->reg), s->step, s->inner};
             }
             storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);
@@ -2091,6 +2132,15 @@ private:
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
+        }
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "zero:" && e.kids.size() == 2 &&
+            e.kids[1] && e.kids[1]->checked && e.kids[1]->checked->inner) {
+            // The checker's "\x01zero:"(&object): the object's bytes set to zero (value-initialization of
+            // an aggregate made from a braced list, [dcl.init.list] p3, [dcl.init] p8).
+            int bytes = sizeOf(e.kids[1]->checked->inner.get());
+            Val dst = lowerExpr(*e.kids[1]);
+            if (bytes > 0) zeroMem(dst.op, bytes);
+            return Val{Operand::number(0), 0, 0};
         }
         bool direct = false;
         std::string fname;
@@ -2841,7 +2891,8 @@ private:
                     s.reg = plan.regAt;
                     if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
                 }
-                if (s.boolean && s.reg >= 0) {
+                if (s.boolean && !s.ref && s.reg >= 0) {
+                    // A bool parameter is 0 or 1 ([conv.bool]); a bool& parameter is an address.
                     Operand n = asBool(Operand::vreg(s.reg));
                     emitMov(s.reg, n, 1, true);
                 }

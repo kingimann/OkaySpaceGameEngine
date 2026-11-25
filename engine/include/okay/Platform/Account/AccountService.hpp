@@ -54,6 +54,22 @@ namespace okay::account {
 
 namespace fs = std::filesystem;
 
+/// The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+/// (author_name, sender_name, display_name, username...) and old clients stored the email there; an email is cut to the
+/// part before the "@" ("alex.doe@x.com" -> "alex.doe"), and when nothing is left the name is "Player" plus the first
+/// characters of the account id (or just "Player"). Empty stays empty (callers have their own "unknown"). Every place the
+/// launcher and the editor read a person's name from the server goes through this (tests/test_public_name.cpp).
+inline std::string PublicName(const std::string& name, const std::string& userId = {}) {
+    if (name.find('@') == std::string::npos) return name;
+    std::string local = name.substr(0, name.find('@'));
+    while (!local.empty() && std::isspace((unsigned char)local.back())) local.pop_back();
+    while (!local.empty() && std::isspace((unsigned char)local.front())) local.erase(local.begin());
+    if (!local.empty()) return local;
+    std::string tag;
+    for (char c : userId) { if (std::isalnum((unsigned char)c)) tag += c; if (tag.size() == 4) break; }
+    return tag.empty() ? std::string("Player") : "Player-" + tag;
+}
+
 // ===========================================================================
 // SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/platform/sha256_comparison.md).
 // The wrapper keeps the interface the account service, the updater and the anti-cheat code already use.
@@ -387,6 +403,9 @@ struct ScoreEntry {
 ///   Supabase — a hosted Supabase project (auth/v1 REST + anon apikey).
 enum class Provider { Auto, Local, Custom, Supabase };
 
+/// How a check of the saved session with the server went (AccountService::CheckSession).
+enum class SessionCheck { Valid, Rejected, Unreachable, ServerError, NoSession };
+
 /// A client-side account service. Construct it with a config directory (where a
 /// saved session and any local accounts live) and, for online use, a server URL
 /// (+ an API key for managed providers like Supabase). With nothing configured
@@ -473,6 +492,19 @@ public:
         std::string u = base + "/auth/v1/recover";
         if (redirect.rfind("http", 0) == 0) u += "?redirect_to=" + detail::PercentEncode(redirect);
         return u;
+    }
+
+    /// Send the sign-up confirmation email again (Supabase only), for "Check your email" after creating an account.
+    Result ResendConfirmation(const std::string& email) {
+        if (provider_ != Provider::Supabase) return Fail("Confirmation emails need the online (Supabase) account server.");
+        if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
+        std::string base = serverUrl_;
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        ApiResponse r = HttpRequest("POST", base + "/auth/v1/resend",
+                                    "{\"type\":\"signup\",\"email\":\"" + detail::JsonEscape(email) + "\"}", /*authToken=*/{});
+        if (!r.reached) return Fail("Couldn't reach the account server.");
+        if (!r.ok) return Fail("Couldn't send the email again (HTTP " + std::to_string(r.status) + ").");
+        Result ok; ok.ok = true; return ok;
     }
 
     /// Send a password-reset email (Supabase only). The user follows the emailed
@@ -717,21 +749,34 @@ public:
     /// session is cleared so the player is signed out. Network errors leave the
     /// session intact (so being offline doesn't sign players out). The local
     /// backend has nothing to check, so it just reports whether someone is in.
-    bool VerifySession() {
-        if (!session_.loggedIn) return false;
-        if (!IsOnline()) return true;
+    /// `reached` (optional): false when the server could not be asked (the launcher's sign-in gate blocks then).
+    bool VerifySession(bool* reached = nullptr) {
+        const SessionCheck c = CheckSession();
+        if (reached) *reached = c != SessionCheck::Unreachable;
+        return c == SessionCheck::Valid || c == SessionCheck::Unreachable;   // offline: keep the session
+    }
+
+    /// The same check as VerifySession, saying which way it went: Valid (the server
+    /// confirmed it, or a local backend has someone signed in), Rejected (401/403
+    /// and the refresh failed: signed out), Unreachable (no answer: the session is
+    /// kept, but nothing confirmed it), ServerError (it answered with another
+    /// error: kept, not confirmed), NoSession (nobody is signed in). The editor's
+    /// sign-in gate (editor/SignInGate.hpp) opens only on Valid.
+    SessionCheck CheckSession() {
+        if (!session_.loggedIn) return SessionCheck::NoSession;
+        if (!IsOnline()) return SessionCheck::Valid;
         // Supabase exposes the signed-in user at auth/v1/user; our custom server
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
-        if (!r.reached) return true;                 // offline: keep the session
+        if (!r.reached) return SessionCheck::Unreachable;
         if (r.status == 401 || r.status == 403) {    // token expired/revoked
             // Try to renew from the refresh token before giving up — a 1-hour
             // Supabase access token expiring shouldn't sign the player out.
-            if (RefreshSupabaseToken()) return true;
+            if (RefreshSupabaseToken()) return SessionCheck::Valid;
             Logout();
-            return false;
+            return SessionCheck::Rejected;
         }
-        return r.ok;
+        return r.ok ? SessionCheck::Valid : SessionCheck::ServerError;   // any other failure: the session is kept, nothing confirmed it
     }
 
     /// Verify an ARBITRARY access token (not our own session) and, on success, hand
@@ -954,10 +999,7 @@ private:
         if (!user.empty() && !token.empty()) {
             // Older sessions may have been saved with the email as the display
             // name; show only the local-part so the UI never shows a raw email.
-            if (provider_ == Provider::Supabase) {
-                std::size_t at = user.find('@');
-                if (at != std::string::npos) user = user.substr(0, at);
-            }
+            if (provider_ == Provider::Supabase) user = PublicName(user);
             session_.loggedIn = true;
             session_.username = user;
             session_.token    = token;
@@ -1161,10 +1203,8 @@ private:
         // before usernames, or a bare email sign-up), derive a friendly handle
         // from the email's local-part ("alex.doe@x.com" -> "alex.doe").
         std::string display = detail::JsonField(r.body, "username");
-        if (display.empty()) {
-            std::size_t at = loginId.find('@');
-            display = at == std::string::npos ? loginId : loginId.substr(0, at);
-        }
+        if (display.empty()) display = loginId;
+        display = PublicName(display);
         std::string refresh = detail::JsonField(r.body, "refresh_token");
         return Succeed(display, token, refresh);
     }

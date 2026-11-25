@@ -405,6 +405,72 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kids.push_back(std::move(chosen));
         return true;
     }
+    if (is(TIf) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+        // if (init; cond) ([stmt.if] 3): the init statement runs first, in a scope around the whole if; its objects
+        // are destroyed after the if (as for a for-loop's declaration).
+        size_t k = at + 2;
+        int depth = 0;
+        bool has_init = false;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            const Tok kk = tokens[k].kind;
+            if (kk == TLParen || kk == TLBrace || kk == TLBrack) ++depth;
+            else if (kk == TRParen || kk == TRBrace || kk == TRBrack) {
+                if (depth == 0) break;
+                --depth;
+            } else if (kk == TSemi && depth == 0) {
+                has_init = true;
+                break;
+            }
+        }
+        if (has_init) {
+            next();
+            next();
+            push_scope();
+            dscopes.emplace_back();
+            Node init_s;
+            if (is_decl_start() && !is(TStatic)) {
+                if (!parse_stmt(&init_s, locals)) return false;
+            } else {
+                Node e;
+                if (!parse_expr(0, &e)) return false;
+                if (!expect(TSemi, "';'")) return false;
+                init_s.kind = Node::ExprStmt;
+                init_s.kids.push_back(std::move(e));
+                if (!stmt_pre.empty() || !stmt_temps.empty()) {
+                    error = "an if init statement with temporaries is not supported";
+                    return false;
+                }
+            }
+            // The condition follows the ';' and is read like the one of a plain if, up to its ')'.
+            Node if_s;
+            Node cond;
+            Node cond_decl;
+            bool cond_scoped = false;
+            if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+            Node then_s;
+            if (!parse_stmt(&then_s, locals)) return false;
+            if_s.kind = Node::If;
+            if_s.kids.push_back(std::move(cond));
+            if_s.kids.push_back(std::move(then_s));
+            if (accept(TElse)) {
+                Node else_s;
+                if (!parse_stmt(&else_s, locals)) return false;
+                if_s.kids.push_back(std::move(else_s));
+            }
+            close_condition_scope(&if_s, std::move(cond_decl), cond_scoped);
+            *out = Node{};
+            out->kind = Node::Block;
+            out->text = "scope";
+            out->kids.push_back(std::move(init_s));
+            out->kids.push_back(std::move(if_s));
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+            return true;
+        }
+    }
     if (is(TIf)) {
         next();
         out->kind = Node::If;
@@ -432,7 +498,10 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Node cond;
         Node cond_decl;
         bool cond_scoped = false;
+        const size_t wpre = stmt_pre.size();
+        const size_t wtemps = stmt_temps.size();
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+        if (!cond_scoped && !fold_loop_expr(wpre, wtemps, &cond)) return false;
         Node body;
         brk_dbase.push_back(dscopes.size());
         cont_dbase.push_back(dscopes.size());
@@ -474,15 +543,21 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         cond.kind = Node::Block;
         cond.text = "skip";
         if (!is(TSemi)) {
+            const size_t cpre = stmt_pre.size();
+            const size_t ctemps = stmt_temps.size();
             if (!parse_expr(0, &cond)) return false;
             if (!convert_class(&cond, bool_type())) return false;
+            if (!fold_loop_expr(cpre, ctemps, &cond)) return false;
         }
         if (!expect(TSemi, "';'")) return false;
         Node step;
         step.kind = Node::Block;
         step.text = "skip";
         if (!is(TRParen)) {
+            const size_t spre = stmt_pre.size();
+            const size_t stemps = stmt_temps.size();
             if (!parse_expr(0, &step)) return false;
+            if (!fold_loop_expr(spre, stemps, &step)) return false;
         }
         if (!expect(TRParen, "')'")) return false;
         Node body;
@@ -528,8 +603,11 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         next();
         if (!expect(TLParen, "'('")) return false;
         Node cond;
+        const size_t dpre = stmt_pre.size();
+        const size_t dtemps = stmt_temps.size();
         if (!parse_expr(0, &cond)) return false;
         if (!convert_class(&cond, bool_type())) return false;
+        if (!fold_loop_expr(dpre, dtemps, &cond)) return false;
         if (!expect(TRParen, "')'")) return false;
         if (!expect(TSemi, "';'")) return false;
         out->kids.push_back(std::move(body));
@@ -609,15 +687,26 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             hidden.name = "__br" + std::to_string(rv_count++);
             hidden.type = cur_ret;
             place_local(locals, hidden);
-            if (obj_needs_ctor(cur_ret)) {
+            Type ret_list;
+            if (obj_needs_ctor(cur_ret) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(cur_ret.struct_id, &ret_list)) {
+                // return {a, b, c}; for a class with an initializer-list constructor (a vector): that constructor is
+                // preferred for a list that is not empty ([over.match.list]).
+                Node list;
+                if (!init_list_temp(ret_list, &list)) return false;
+                std::vector<Node> largs;
+                largs.push_back(std::move(list));
+                Node call;
+                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(largs), &call))
+                    return false;
+                stmt_pre.push_back(std::move(call));
+            } else if (obj_needs_ctor(cur_ret)) {
                 next();
                 std::vector<Node> cargs;
-                if (!is(TRBrace)) {
-                    do {
-                        Node a;
-                        if (!parse_expr(1, &a)) return false;
-                        cargs.push_back(std::move(a));
-                    } while (accept(TComma));
+                while (!is(TRBrace) && !is(TEnd)) {  // a trailing comma is allowed ([dcl.init] 1)
+                    Node a;
+                    if (!parse_expr(1, &a)) return false;
+                    cargs.push_back(std::move(a));
+                    if (!accept(TComma)) break;
                 }
                 if (!expect(TRBrace, "'}'")) return false;
                 Node call;
@@ -643,9 +732,13 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (braced_ret || !accept(TSemi)) {
             if (!braced_ret && !parse_expr(0, &value)) return false;
-            if (lam_probe && !lam_probe_seen && !braced_ret) {
+            if (lam_probe && !lam_probe_seen && !braced_ret && (lam_probe_fn.empty() || lam_probe_fn == current_fn)) {
                 Type seen;
                 if (static_type(value, &seen)) {
+                    // A reference: a name declared as one, or the call of a function that returns one (the call is
+                    // read through, see reference_result).
+                    lam_probe_ref = seen.is_ref || (value.kind == Node::Unary && value.op == TStar && !value.kids.empty() &&
+                                                    value.kids[0].kind == Node::Call);
                     seen.is_ref = false;
                     seen.pconst = false;
                     if (seen.is_array()) {
@@ -664,7 +757,8 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             if (value.kind == Node::Name && !cur_ret_ref && obj_needs_dtor(cur_ret)) {
                 // return x; where x is a local object of the result class, or a temporary made for this
                 // statement: the object itself becomes the result, so its destructor does not run here.
-                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0) {
+                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0 ||
+                    value.text.compare(0, 4, "__tn") == 0) {  // __tn: the chosen value of c ? a : b
                     for (size_t ti = 0; ti < stmt_temps.size(); ++ti)
                         if (stmt_temps[ti].name == value.text) {
                             stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(ti));
@@ -940,6 +1034,22 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             return false;
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
         if (!fix_unsized(&decl.type, init)) return false;
+        if (init.kind == Node::StringLit && decl.type.is_array() && decl.type.more.empty() && decl.type.pointers == 0 &&
+            decl.type.base == 2) {
+            // char s[] = "text"; in a function ([dcl.init.string]): the characters and the zero are stored element by
+            // element (before, the literal's address was stored in the array's first bytes).
+            Node list;
+            list.kind = Node::Block;
+            list.text = "init";
+            for (size_t ci = 0; ci <= init.text.size() && static_cast<int>(ci) < decl.type.array_len; ++ci) {
+                Node ch;
+                ch.kind = Node::IntLit;
+                ch.type.base = 1;
+                ch.number = ci < init.text.size() ? static_cast<uint64_t>(static_cast<unsigned char>(init.text[ci])) : 0;
+                list.kids.push_back(std::move(ch));
+            }
+            init = std::move(list);
+        }
         local.type = decl.type;
         if (!is_static && wants_copy(decl.type, init)) {
             // C x = y; with y an object of the class: the copy constructor.
@@ -962,6 +1072,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             }
         }
     }
+    if (local.is_const && has_init && init.kind == Node::IntLit && init.type.base < 5 && decl.type.pointers == 0 &&
+        !decl.type.is_array() && !decl.type.is_ref && (decl.type.base == 1 || decl.type.base == 2 || decl.type.base == 4)) {
+        local.has_cval = true;
+        local.cval = init.number;
+    }
     bool static_dyn = false;
     std::vector<DynLeaf> static_leaves;
     if (is_static) {
@@ -972,6 +1087,10 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         global.bss = true;
         if (has_init && obj_needs_ctor(decl.type) && !decl.type.is_array() && !(init.kind == Node::Block && init.text == "init")) {
             static_dyn = true;  // static C x = value; : a constructor under the guard below
+        } else if (has_init && decl.type.is_array() && decl.type.more.empty() && decl.type.base == 3 &&
+                   decl.type.pointers == 0 && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) &&
+                   init.kind == Node::Block && init.text == "init") {
+            // static C a[] = {x, y}; : the elements are made under the guard below, each by its constructor.
         } else if (has_init) {
             global.bss = false;
             // A static array of string pointers: the addresses are relocations. A part that is not a constant
@@ -1061,8 +1180,38 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         if (is_static) {
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
-            if (has_init || decl.type.is_array()) {
-                error = "a static local object takes no braced initializer and is not an array";
+            if (decl.type.is_array()) {
+                // static C a[N]; or static C a[] = {...}; ([stmt.dcl] 3): every element is made the first time control
+                // passes the declaration, under the guard, and the whole array is destroyed at the program end.
+                if (!decl.type.more.empty()) {
+                    error = "a static local array of objects needs one dimension";
+                    return false;
+                }
+                Node then_block;
+                if (!static_guard_block(local.symbol, &then_block)) return false;
+                Node calls_block;
+                calls_block.kind = Node::Block;
+                calls_block.line = stmt_line;
+                if (has_init) {
+                    if (!array_init_calls(local.symbol, decl.type, init, &calls_block.kids)) return false;
+                } else if (obj_needs_ctor(decl.type)) {
+                    Node loop;
+                    if (!element_loop(local.symbol, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
+                    calls_block.kids.push_back(std::move(loop));
+                }
+                finish_static_guard(&then_block, std::move(calls_block), local.symbol, out);
+                if (obj_needs_dtor(decl.type)) {
+                    GlobalObj g;
+                    g.name = local.symbol;
+                    g.sid = sid;
+                    g.count = decl.type.array_len;
+                    g.guard = local.symbol + "_guard";
+                    static_objs.push_back(std::move(g));
+                }
+                return end_decl(more);
+            }
+            if (has_init) {
+                error = "a static local object takes no braced initializer";
                 return false;
             }
             Node then_block;
@@ -1185,6 +1334,80 @@ bool Parser::parse_condition(Node* cond, Node* decl, bool* scoped, std::vector<L
     return expect(TRParen, "')'");
 }
 
+// A loop's condition or step is evaluated on every pass, so what it needs before it (a temporary made for a reference
+// parameter: `it != p.end()`) cannot go before the loop statement. The statements made for it are joined to it with the
+// comma operator ([expr.comma]): (make the temporaries, value = condition, destroy the temporaries, value). Fails when a
+// statement made for it is not an expression.
+static bool flatten_expr_stmts(const Node& n, std::vector<Node>* out) {
+    if (n.kind == Node::ExprStmt && n.kids.size() == 1) {
+        out->push_back(n.kids[0]);
+        return true;
+    }
+    if (n.kind == Node::Block && n.text.empty()) {
+        for (const Node& k : n.kids)
+            if (!flatten_expr_stmts(k, out)) return false;
+        return true;
+    }
+    return false;
+}
+
+bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
+    if (stmt_pre.size() <= pre_from && stmt_temps.size() <= temps_from) return true;
+    std::vector<Node> parts;
+    for (size_t i = pre_from; i < stmt_pre.size(); ++i)
+        if (!flatten_expr_stmts(stmt_pre[i], &parts)) {
+            error = "a reference bound to a temporary in a loop condition is not supported";
+            return false;
+        }
+    stmt_pre.resize(pre_from);
+    std::vector<Temp> temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(temps_from), stmt_temps.end());
+    stmt_temps.resize(temps_from);
+    Type vt;
+    const bool typed = static_type(*e, &vt);
+    Node value = std::move(*e);
+    if (!temps.empty()) {
+        if (!typed || vt.base == 3 || vt.is_array() || vt.base >= 5) {
+            error = "a temporary with a destructor in a loop condition is not supported here";
+            return false;
+        }
+        Local hidden;
+        hidden.name = "__lc" + std::to_string(tmp_count++);
+        hidden.type = vt;
+        hidden.type.is_ref = false;
+        hidden.type.is_const = false;
+        place_local(cur_locals, hidden);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.kids.push_back(node_name(hidden.name));
+        assign.kids.push_back(std::move(value));
+        parts.push_back(std::move(assign));
+        for (size_t i = temps.size(); i-- > 0;) {
+            Node call;
+            if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+            if (!flatten_expr_stmts(call, &parts)) {
+                error = "a temporary with a destructor in a loop condition is not supported here";
+                return false;
+            }
+        }
+        value = node_name(hidden.name);
+    }
+    parts.push_back(std::move(value));
+    Node chain = std::move(parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+        Node comma;
+        comma.kind = Node::Binary;
+        comma.op = TComma;
+        Type rt;
+        if (static_type(parts[i], &rt)) comma.type = rt;
+        comma.kids.push_back(std::move(chain));
+        comma.kids.push_back(std::move(parts[i]));
+        chain = std::move(comma);
+    }
+    *e = std::move(chain);
+    return true;
+}
+
 void Parser::close_condition_scope(Node* stmt, Node decl, bool scoped) {
     if (!scoped) return;
     Node inner = std::move(*stmt);
@@ -1288,6 +1511,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     // A class with begin() and end() that return pointers: the pointer runs from one to the other ([stmt.ranged]).
     bool class_range = false;
+    bool iter_class = false;  // begin() and end() return iterator objects (path::iterator), not pointers
     Type iter_type;
     Node begin_call, end_call;
     if (range_type.base == 3 && range_type.pointers == 0 && !range_type.is_array() && range_type.struct_id >= 0 &&
@@ -1295,11 +1519,16 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
          (range.kind == Node::Unary && range.op == TStar))) {
         const Method* mb = find_method(range_type.struct_id, "begin", 0);
         const Method* me = find_method(range_type.struct_id, "end", 0);
-        if (mb == nullptr || me == nullptr || mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers) {
-            error = "a range for over a class needs begin() and end() that return pointers";
+        const bool class_iters = mb != nullptr && me != nullptr && mb->ret.pointers == 0 && !mb->ret.is_ref &&
+                                 mb->ret.base == 3 && mb->ret.struct_id >= 0 && me->ret.pointers == 0 &&
+                                 me->ret.base == 3 && me->ret.struct_id == mb->ret.struct_id;
+        if (mb == nullptr || me == nullptr ||
+            (!class_iters && (mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers))) {
+            error = "a range for over a class needs begin() and end() that return pointers or iterator objects";
             return false;
         }
         class_range = true;
+        iter_class = class_iters;
         iter_type = mb->ret;
         for (int w = 0; w < 2; ++w) {
             const Method* m = w == 0 ? mb : me;
@@ -1317,7 +1546,52 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     const int count = class_range ? 0 : range_type.array_len;
     Type elem = class_range ? iter_type : peel_array(range_type);
-    if (class_range) elem.pointers -= 1;
+    if (class_range && !iter_class) elem.pointers -= 1;
+    // With iterator objects ([stmt.ranged] 1): the element is *__ri, the test __ri != __re and the step ++__ri, each by
+    // the iterator class's operators. The iterators are destroyed after the loop.
+    Node iter_deref;
+    Node iter_cond;
+    Node iter_step;
+    const std::string iter_name = "__ri" + std::to_string(range_count);
+    const std::string iter_end_name = "__re" + std::to_string(range_count + 1);
+    if (iter_class) {
+        range_count += 2;
+        for (const std::string& n : {iter_name, iter_end_name}) {
+            Local it;
+            it.name = n;
+            it.type = iter_type;
+            place_local(locals, it);
+        }
+        bool done = false;
+        iter_deref = node_name(iter_name);
+        if (!operator_unary(TStar, false, &iter_deref, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator*";
+            return false;
+        }
+        Node left = node_name(iter_name);
+        Node right = node_name(iter_end_name);
+        done = false;
+        if (!operator_binary(TNe, &left, &right, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator!=";
+            return false;
+        }
+        iter_cond = std::move(left);
+        iter_step = node_name(iter_name);
+        done = false;
+        if (!operator_unary(TPlusPlus, false, &iter_step, &done)) return false;
+        if (!done) {
+            error = "the iterator of a range for has no operator++";
+            return false;
+        }
+        if (!static_type(iter_deref, &elem)) {
+            error = "cannot work out the type of the range elements";
+            return false;
+        }
+        elem.is_ref = false;
+        elem.rref = false;
+    }
     elem.is_const = false;
     at = decl_start;
     bool is_const = false;
@@ -1336,18 +1610,25 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     push_scope();
     dscopes.emplace_back();
     Local index;
-    index.name = "__ri" + std::to_string(range_count++);
     index.type.base = 1;
     Local range_end;
-    range_end.name = "__re" + std::to_string(range_count++);
-    if (class_range) {
-        index.type = iter_type;
-        range_end.type = iter_type;
+    if (iter_class) {
+        index.name = iter_name;  // placed above, where its operators were looked up
+        range_end.name = iter_end_name;
+    } else {
+        index.name = "__ri" + std::to_string(range_count++);
+        range_end.name = "__re" + std::to_string(range_count++);
+        if (class_range) {
+            index.type = iter_type;
+            range_end.type = iter_type;
+        }
+        place_local(locals, index);
+        if (class_range) place_local(locals, range_end);
     }
-    place_local(locals, index);
-    if (class_range) place_local(locals, range_end);
     Node element;
-    if (class_range) {
+    if (iter_class) {
+        element = iter_deref;
+    } else if (class_range) {
         element.kind = Node::Unary;
         element.op = TStar;
         element.kids.push_back(node_name(index.name));
@@ -1390,10 +1671,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     Node cond;
     cond.kind = Node::Binary;
     cond.op = class_range ? TNe : TLt;
-    cond.kids.push_back(node_name(index.name));
-    if (class_range) {
+    if (iter_class) {
+        cond = std::move(iter_cond);
+    } else if (class_range) {
+        cond.kids.push_back(node_name(index.name));
         cond.kids.push_back(node_name(range_end.name));
     } else {
+        cond.kids.push_back(node_name(index.name));
         Node limit;
         limit.kind = Node::IntLit;
         limit.number = static_cast<uint64_t>(count);
@@ -1405,6 +1689,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     step.op = TPlusPlus;
     step.number = 0;
     step.kids.push_back(node_name(index.name));
+    if (iter_class) step = std::move(iter_step);
     Node iteration;
     iteration.kind = Node::Block;
     iteration.kids.push_back(std::move(decl_node));
@@ -1450,6 +1735,13 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         out->kids.push_back(std::move(stmt));
     }
     out->kids.push_back(std::move(loop));
+    if (iter_class && obj_needs_dtor(iter_type)) {
+        for (const std::string& n : {range_end.name, index.name}) {
+            Node call;
+            if (!special_call(iter_type.struct_id, "<dtor>", node_addr(node_name(n)), {}, &call)) return false;
+            out->kids.push_back(std::move(call));
+        }
+    }
     return true;
 }
 

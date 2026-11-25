@@ -214,6 +214,9 @@ public:
     /// Ask the user's attention: flash the task bar button (FlashMode::Briefly a few times, UntilFocused until the
     /// window gets focus, Stop to end it). False = not supported here (nothing happens).
     virtual bool Flash(FlashMode mode) { (void)mode; return false; }
+    /// Keep the window above all normal windows (on) or put it back among them (off). False = not supported here
+    /// (sdl2 before 2.0.16, the own Linux backend). Win32: SetWindowPos with HWND_TOPMOST / HWND_NOTOPMOST.
+    virtual bool SetAlwaysOnTop(bool on) { (void)on; return false; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer

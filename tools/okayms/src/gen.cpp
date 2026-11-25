@@ -85,7 +85,6 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::StringLit) {
         if (!gen_expr(node)) return false;
         last_type.pointers = 1;
-        last_type.base = 2;
         last_type.array_len = -1;
         return true;
     }
@@ -180,6 +179,12 @@ bool Gen::gen_addr(const Node& node) {
         last_type = first;
         return true;
     }
+    if (node.kind == Node::Assign && node.op == TAssign && node.kids.size() == 2 && !has_effects(node.kids[0])) {
+        // a = b as an lvalue ([expr.ass] 1: the result is the left operand), as in `x = y = v` with objects: the
+        // assignment, then the left operand's address (read again; it has no effects, so none are repeated).
+        if (!gen_expr(node)) return false;
+        return gen_addr(node.kids[0]);
+    }
     error = "not an address";
     return false;
 }
@@ -255,8 +260,69 @@ void Gen::promote(Type* type) const {
     }
 }
 
+// Brace elision ([dcl.init.aggr] 16): in `v.push_back({a, b, c})` for a std::array<int, 3> the list names the elements
+// of the array inside the struct, not the struct's one member. The items from *pos on are given out member by member,
+// a nested aggregate taking as many as it needs; an item that is itself a braced list is taken whole.
+static Node elide_items(const std::vector<StructDef>* structs, const Type& type, const std::vector<Node>& items, size_t* pos) {
+    Node list;
+    list.kind = Node::Block;
+    list.text = "init";
+    auto aggregate = [&](const Type& t) { return t.array_len >= 0; };
+    auto take = [&](const Type& t) {
+        if (*pos >= items.size()) return;
+        const Node& item = items[*pos];
+        if (aggregate(t) && !(item.kind == Node::Block && item.text == "init")) {
+            list.kids.push_back(elide_items(structs, t, items, pos));
+        } else {
+            list.kids.push_back(item);
+            ++*pos;
+        }
+    };
+    if (type.array_len >= 0) {
+        const Type elem = peel_array(type);
+        for (int i = 0; i < type.array_len && *pos < items.size(); ++i) take(elem);
+    } else if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
+               type.struct_id < static_cast<int>(structs->size())) {
+        for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
+            if (field.name == "__vptr") continue;
+            if (*pos >= items.size()) break;
+            take(field.type);
+        }
+    }
+    return list;
+}
+
 bool Gen::store_init(const Type& type, int offset, const Node& node) {
     if (node.kind == Node::Block && node.text == "init") {
+        // A scalar item where a member or element is itself an aggregate: the braces were left out (elided).
+        bool elided = false;
+        // Own limit: only an array member is taken as elided (std::array's), not a member of class type, whose item may
+        // be an object of that class.
+        if (type.array_len >= 0) {
+            const Type elem = peel_array(type);
+            const bool agg = elem.array_len >= 0;
+            for (const Node& kid : node.kids)
+                if (agg && !(kid.kind == Node::Block && kid.text == "init")) elided = true;
+        } else if (type.base == 3 && type.pointers == 0 && structs != nullptr && type.struct_id >= 0 &&
+                   type.struct_id < static_cast<int>(structs->size())) {
+            size_t k = 0;
+            for (const Field& field : (*structs)[static_cast<size_t>(type.struct_id)].fields) {
+                if (field.name == "__vptr") continue;
+                if (k >= node.kids.size()) break;
+                const bool agg = field.type.array_len >= 0;
+                const Node& kid = node.kids[k++];
+                if (agg && !(kid.kind == Node::Block && kid.text == "init")) elided = true;
+            }
+        }
+        if (elided) {
+            size_t pos = 0;
+            const Node full = elide_items(structs, type, node.kids, &pos);
+            if (pos < node.kids.size()) {
+                error = "too many initializers";
+                return false;
+            }
+            return store_init(type, offset, full);
+        }
         // The elements not named are zero ([dcl.init.aggr]).
         Node zero;
         zero.kind = Node::IntLit;
@@ -282,6 +348,16 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
                 if (field.name == "__vptr") continue;
                 const bool nested = field.type.array_len >= 0 || (field.type.base == 3 && field.type.pointers == 0);
                 const Node& item = i < node.kids.size() ? node.kids[i] : nested ? empty : zero;
+                if (def.ref_members.count(field.name) > 0 && item.kind != Node::IntLit && item.kind != Node::Block) {
+                    // A reference member made from a braced list (`struct { T& r; } s{x};`, [dcl.init.aggr]): the field
+                    // holds the address of what it refers to.
+                    if (!gen_addr(item)) return false;
+                    b(0x48);  // mov [rbp+offset], rax
+                    b(0x89);
+                    b(0x85);
+                    disp(offset + field.offset);
+                    continue;
+                }
                 if (!store_init(field.type, offset + field.offset, item)) return false;
             }
             return true;
@@ -291,7 +367,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
     }
     if (node.kind != Node::IntLit) {
         // A value computed at run time: evaluated, converted to the element type and stored.
-        if (type.base == 3 || type.array_len >= 0) {
+        if ((type.base == 3 && type.pointers == 0) || type.array_len >= 0) {  // (a pointer to a class is a value)
             error = "initializer must be a constant";
             return false;
         }

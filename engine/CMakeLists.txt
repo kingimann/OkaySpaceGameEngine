@@ -130,7 +130,6 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
-    src/Components/ActiveRagdoll.cpp
     src/Components/RagdollShared.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
@@ -140,6 +139,7 @@ add_library(okay_engine
     src/Net/NetworkManagerEvents.cpp
     src/Net/Net.cpp
     src/Net/NetworkManagerMigration.cpp
+    src/Net/NetworkManagerOnline.cpp
     src/Net/Rollback.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp
@@ -210,6 +210,13 @@ add_library(okay_engine
     src/Script/EngineApi_Ui.cpp
     src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
+    src/Lua/LuaCompiler.cpp
+    src/Lua/LuaState.cpp
+    src/Lua/LuaLibBase.cpp
+    src/Lua/LuaLibString.cpp
+    src/Lua/LuaLibTable.cpp
+    src/Lua/LuaLibUtf8.cpp
+    src/Lua/LuaScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
@@ -270,7 +277,7 @@ add_library(okay_engine
     src/Animation/HumanoidActions.cpp
     src/Animation/HumanoidActionsStates.cpp
     src/Animation/HumanoidActionsRuntime.cpp
-    src/Animation/RagdollPhysics.cpp
+    src/Animation/CoreRagdoll.cpp
     src/Animation/DynamicCharacter.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp

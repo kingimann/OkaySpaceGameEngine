@@ -127,6 +127,26 @@ void World::DestroyBody(BodyId id) {
     m->bodies[id] = BodyData{};
     m->bodies[id].gen = gen;
     m->freeBodies.push_back(IdIndex(id));
+    if (!m->noCollide.empty())
+        m->noCollide.erase(std::remove_if(m->noCollide.begin(), m->noCollide.end(), [id](std::uint64_t k) {
+            return (BodyId)(k >> 32) == id || (BodyId)(k & 0xFFFFFFFFu) == id; }), m->noCollide.end());
+}
+
+void World::SetBodiesCollide(BodyId a, BodyId b, bool collide) {
+    if (!IsValid(a) || !IsValid(b) || a == b) return;
+    const std::uint64_t key = Impl::BodyPairKey(a, b);
+    const auto at = std::lower_bound(m->noCollide.begin(), m->noCollide.end(), key);
+    const bool listed = at != m->noCollide.end() && *at == key;
+    if (collide) {
+        if (!listed) return;
+        m->noCollide.erase(at);
+        for (BodyId id : {a, b}) {   // the two look for each other again
+            for (ColliderId c : m->bodies[id].colliders) m->MarkMoved(c);
+        }
+    } else if (!listed) {
+        m->noCollide.insert(at, key);
+        m->DropContactsBetween(a, b);
+    }
 }
 
 bool World::IsValid(BodyId id) const {
@@ -391,17 +411,7 @@ JointId World::CreateJoint(const JointDef& def) {
     j.def.driveTarget = NormalizeQ(def.driveTarget);
     if (def.bodyA != kInvalidId) { m->bodies[def.bodyA].joints.push_back(id); Wake(def.bodyA); }
     if (def.bodyB != kInvalidId) { m->bodies[def.bodyB].joints.push_back(id); Wake(def.bodyB); }
-    if (!def.collideConnected && def.bodyA != kInvalidId && def.bodyB != kInvalidId) {
-        // drop any contact between the two bodies now
-        for (ContactPair& cp : m->contacts) {
-            if (!cp.alive) continue;
-            const BodyId ba = m->colliders[cp.a].body, bb = m->colliders[cp.b].body;
-            if ((ba == def.bodyA && bb == def.bodyB) || (ba == def.bodyB && bb == def.bodyA)) {
-                cp.alive = false;
-                m->contactIndex.erase(cp.key);
-            }
-        }
-    }
+    if (!def.collideConnected && def.bodyA != kInvalidId && def.bodyB != kInvalidId) m->DropContactsBetween(def.bodyA, def.bodyB);
     return id;
 }
 void World::DestroyJoint(JointId id) {
@@ -457,6 +467,7 @@ bool CanCollide(const World& world, const World::Impl& w, ColliderId ia, Collide
     const bool sensor = a.def.sensor || b.def.sensor;   // (a trigger reports overlaps with anything, still or moving)
     if (ba.type != BodyType::Dynamic && bb.type != BodyType::Dynamic && !sensor) return false;
     if (!((a.def.mask >> (b.def.layer & 31)) & 1u) || !((b.def.mask >> (a.def.layer & 31)) & 1u)) return false;
+    if (!w.noCollide.empty() && std::binary_search(w.noCollide.begin(), w.noCollide.end(), World::Impl::BodyPairKey(a.body, b.body))) return false;
     // joined bodies that should not collide
     const BodyData& small = ba.joints.size() <= bb.joints.size() ? ba : bb;
     const BodyId other = &small == &ba ? b.body : a.body;

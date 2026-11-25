@@ -44,6 +44,9 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // Namespace names in front of this name were dropped (std::filesystem::path is read as path): it names something in
+    // a namespace, so a local variable of the same name does not hide it.
+    bool nsq = false;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
 };
@@ -87,6 +90,9 @@ struct Type {
     bool is_enum() const { return enum_id >= 0; }
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
+    // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
+    // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
+    int deduce = 0;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -213,6 +219,21 @@ struct StructDef {
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
+    // Anonymous struct and union members (`union { struct { DWORD Low; LONG High; }; long long Quad; }`,
+    // [class.union.anon] and the Microsoft anonymous struct): the hidden fields that hold them. Their members are
+    // named as members of this class (lookup goes through the hidden field).
+    std::vector<std::string> anon_fields;
+    // The class this one is nested in (-1 at namespace scope). Classes are kept under their plain names, so two nested
+    // classes of one name (Outer1::Entry and Outer2::Entry) are told apart by it: a name used inside a class finds the
+    // class nested there first (find_struct), and members of a nested class are decorated with the outer class too.
+    int parent = -1;
+    // A lambda's closure class that captured `this` ([expr.prim.lambda.capture] 10): the class of the member function the
+    // lambda was written in. The pointer is the closure's field "__this"; names of that class's members used in the
+    // body are read through it.
+    int lam_outer = -1;
+    // Any lambda's closure class written in a member function: that class. Its static members are found from the body
+    // without a capture ([expr.prim.lambda.closure] 13, names are looked up in the enclosing scopes).
+    int lam_scope = -1;
 };
 
 struct Global {
@@ -237,6 +258,9 @@ struct Global {
     // thread_local ([basic.stc.thread]): kept in the .tls$ section, one copy per thread made by the Windows loader from
     // the image's TLS template; reached through the thread's TLS array (gs:[0x58]) and _tls_index.
     bool tls = false;
+    // `extern T name;` ([basic.def] 2.3): declared here, defined in another file; no storage, an undefined symbol. A
+    // definition later in the same file takes its place.
+    bool external = false;
 };
 
 inline Type peel_array(const Type& type) {
@@ -287,6 +311,10 @@ struct Local {
     int reg = 0;
     // 0 is the parameter scope. A nested block uses a higher number.
     int scope = 0;
+    // `const int k = 8;` / `constexpr int k = 8;` in a function: an integer constant ([expr.const]), usable as an array
+    // length or template argument; cval is its value in the type's width.
+    bool has_cval = false;
+    uint64_t cval = 0;
 };
 
 struct FuncDecl {

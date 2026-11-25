@@ -29,7 +29,7 @@ void InputDebug::Enable(bool on) {
     if (on && !g_on) {   // start from the current state so the first frame is not a flood of "down"
         for (int i = 0; i < 256; ++i) g_keysPrev[i] = Input::GetKey((char)i);
         g_mousePrev = 0;
-        for (int b = 0; b < 3; ++b) if (Input::GetMouseButton(b)) g_mousePrev |= 1u << b;
+        for (int b = 0; b < Input::kMouseButtons; ++b) if (Input::GetMouseButton(b)) g_mousePrev |= 1u << b;
         for (int p = 0; p < Input::kMaxGamepads; ++p) {
             g_padPrev[p] = 0;
             for (int b = 0; b < Input::PadButtonCount; ++b) if (Input::GetGamepadButton(b, p)) g_padPrev[p] |= 1u << b;
@@ -55,10 +55,10 @@ void InputDebug::Record() {
             g_keysPrev[i] = now;
         }
     }
-    static const char* const kMouse[3] = {"left", "right", "middle"};
+    static const char* const kMouse[Input::kMouseButtons] = {"left", "right", "middle", "side 1", "side 2"};
     unsigned m = 0;
-    for (int b = 0; b < 3; ++b) if (Input::GetMouseButton(b)) m |= 1u << b;
-    for (int b = 0; b < 3; ++b)
+    for (int b = 0; b < Input::kMouseButtons; ++b) if (Input::GetMouseButton(b)) m |= 1u << b;
+    for (int b = 0; b < Input::kMouseButtons; ++b)
         if (((m ^ g_mousePrev) >> b) & 1u) Note(std::string("Mouse ") + kMouse[b] + (((m >> b) & 1u) ? " down" : " up"));
     g_mousePrev = m;
     if (Input::MouseWheel() != 0.0f) { char b[48]; std::snprintf(b, sizeof b, "Mouse wheel %+g", Input::MouseWheel()); Note(b); }

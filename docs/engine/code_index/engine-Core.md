@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 80 headers, 489 names.
+Back to the [code index](../code_index.md). 80 headers, 503 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -29,14 +29,19 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 - `ExtractSceneRefs` function, line 84: Built-in scanners, usable on their own.
 - `ExtractMaterialRefs` function, line 86: '.okaymat': the 'texture <path>' line ("-" means none).
 - `ExtractTextRefs` function, line 89: Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
-- `ScanOptions` struct, line 91
-- `ScanReport` struct, line 108
-- `MissingRef` struct, line 125
-- `StaleRef` struct, line 127: A reference that still points at an old path of a moved asset.
-- `AssetResolution` struct, line 130: Result of Resolve().
-- `AssetQuery` struct, line 138: Search query for an asset browser. Every filter that is set must match.
-- `AssetPage` struct, line 162
-- `AssetDatabase` class, line 168
+- `ExtractModelRefs` function, line 94: '.obj', '.mtl', '.dae' and ASCII '.fbx': Wavefront 'mtllib' and 'map_*' lines (options skipped,
+- `ScanOptions` struct, line 96
+- `ScanReport` struct, line 113
+- `MissingRef` struct, line 130
+- `StaleRef` struct, line 132: A reference that still points at an old path of a moved asset.
+- `AssetResolution` struct, line 135: Result of Resolve().
+- `AssetQuery` struct, line 143: Search query for an asset browser. Every filter that is set must match.
+- `AssetPage` struct, line 167
+- `AssetDatabase` class, line 173
+- `SetSceneAssetIndex` function, line 372: The asset database scene save/load uses to turn a path into a GUID and a GUID back into
+- `SceneAssetIndex` function, line 373
+- `SceneAssetGuid` function, line 375: The GUID text of 'path' in the bound index, or empty when there is no index or no such file.
+- `ResolveSceneAssetPath` function, line 377: 'storedPath', or the index's current path for 'guidText' when that file is still known.
 
 ## `engine/include/okay/Core/AssetManager.hpp`
 
@@ -169,7 +174,7 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 
 ## `engine/include/okay/Core/DataAsset.hpp`
 
-- `DataAsset` class, line 20: A "Scriptable Object" — a reusable data asset, saved as a small text file
+- `DataAsset` class, line 21: A "Scriptable Object" — a reusable data asset, saved as a small text file
 
 ## `engine/include/okay/Core/DataPack.hpp`
 
@@ -211,8 +216,11 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 
 ## `engine/include/okay/Core/EventBus.hpp`
 
-- `Subscription` class, line 19: RAII handle for a subscription made with EventBus::Listen (or Subscribe with
-- `EventBus` class, line 81: A lightweight, type-safe publish/subscribe event bus. Any struct/class can
+- `Subscription` class, line 20: RAII handle for a subscription made with EventBus::Listen (or Subscribe with
+- `EventBus` class, line 82: A lightweight, type-safe publish/subscribe event bus. Any struct/class can
+- `GamePaused` struct, line 288: The game paused or resumed. Published by Game on the calling thread when the paused flag changes.
+- `GameQuit` struct, line 291: A quit was asked for. 'accepted' is false when the quit guard vetoed it. ForceQuit from another
+- `EngineBus` function, line 298: The bus Game publishes on. One per process. Not thread safe.
 
 ## `engine/include/okay/Core/FileCopy.hpp`
 
@@ -334,10 +342,13 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 - `JobHandle` class, line 38: A reference to a submitted job. Cheap to copy. An empty handle counts as
 - `JobOptions` struct, line 66: Optional settings for one job.
 - `JobStats` struct, line 75: A snapshot of the counters, for the Profiler window or a debug overlay. The
-- `FormatJobStats` function, line 95: Text for a debug overlay, e.g. "jobs: 3 workers, 120 run (12 helped), queue 0/9, busy 41.2 ms".
-- `JobSystem` class, line 97
-- `EngineJobs` function, line 236: The job system the engine's own systems run their work on: physics bounding boxes,
-- `SetEngineJobs` function, line 239: Use 'js' for the engine's work from now on (nullptr = back to Global()). 'js' must
+- `FormatJobStats` function, line 96: Text for a debug overlay, e.g. "jobs: 3 workers, 120 run (12 helped), queue 0/9, busy 41.2 ms".
+- `JobFrameNote` struct, line 99: What the profiler can record without starting a job system that is not already running.
+- `NoteRunningJobs` function, line 104
+- `JobSystem` class, line 106
+- `EngineJobs` function, line 245: The job system the engine's own systems run their work on: physics bounding boxes,
+- `RunningEngineJobs` function, line 247: The system SetEngineJobs installed, or null when nothing has. Does not create Global().
+- `SetEngineJobs` function, line 250: Use 'js' for the engine's work from now on (nullptr = back to Global()). 'js' must
 
 ## `engine/include/okay/Core/LocCheck.hpp`
 
@@ -374,6 +385,9 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 - `LocMirrorText` function, line 34: 'text' with its characters in reverse order per line (combining marks stay with their letter,
 - `LocIsRtl` function, line 36: True for languages written right to left: Arabic, Hebrew, Persian, Urdu, Yiddish...
 - `LocPreview` class, line 38
+- `ShapeForDisplay` function, line 88: Visual order for a left-to-right renderer: Arabic letters take their joining form,
+- `ShapedForDisplay` function, line 98: ShapeForDisplay for the draw and measure path. Returns 'text' itself when nothing changes (no right-to-left
+- `ShapedCaretByte` function, line 103: For one line (no '\n'): the byte offset in ShapeForDisplay(line) where the caret is drawn when it sits
 
 ## `engine/include/okay/Core/LocScan.hpp`
 
@@ -446,9 +460,9 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 
 ## `engine/include/okay/Core/Profiler.hpp`
 
-- `Profiler` class, line 30: An advanced, frame profiler. Scoped CPU timers group into named
-- `Prof` function, line 312
-- `ProfScope` struct, line 314
+- `Profiler` class, line 31: An advanced, frame profiler. Scoped CPU timers group into named
+- `Prof` function, line 343
+- `ProfScope` struct, line 345
 
 ## `engine/include/okay/Core/Random.hpp`
 
@@ -624,10 +638,10 @@ Back to the [code index](../code_index.md). 80 headers, 489 names.
 
 - `BoxDownscale` function, line 23: Shrinks 'src' so its longest side is at most 'maxSide' (area-weighted box filter, colour
 - `MakePlaceholderThumbnail` function, line 27: A placeholder tile for assets without a thumbnail: a colour per kind, a border and the
-- `ThumbnailGenerator` class, line 31: Turns an asset file into a picture. 'Render' returns an invalid (empty) Image when it
-- `ImageThumbnailGenerator` class, line 39: png jpg jpeg bmp tga gif psd hdr, through okay::Image::Load.
-- `WaveformThumbnailGenerator` class, line 47: wav ogg mp3 flac: the whole clip drawn as a min/max waveform (decoded through AudioClip::Load). A file over 64 MB is
-- `ThumbnailCache` class, line 53
+- `ThumbnailGenerator` class, line 32: Turns an asset file into a picture. 'Render' returns an invalid (empty) Image when it
+- `ImageThumbnailGenerator` class, line 49: png jpg jpeg bmp tga gif psd hdr, through okay::Image::Load.
+- `WaveformThumbnailGenerator` class, line 57: wav ogg mp3 flac: the whole clip drawn as a min/max waveform (decoded through AudioClip::Load). A file over 64 MB is
+- `ThumbnailCache` class, line 63
 
 ## `engine/include/okay/Core/TickPacer.hpp`
 

@@ -45,7 +45,8 @@ std::unique_ptr<Type> classByName(const Type& in) {
     sh->hasVptr = in.hasVptr;
     sh->needCtor = in.needCtor;
     sh->needDtor = in.needDtor;
-    sh->vslots = in.vslots;
+    // (not the vtable slot names: they are read from the finished class, and copying them with
+    // every named class type was a large part of compile time)
     return sh;
 }
 bool finishedClassCopy(const Type& t) {
@@ -53,7 +54,7 @@ bool finishedClassCopy(const Type& t) {
            canonOf(&t) != &t;
 }
 
-std::unique_ptr<Type> cloneType(const Type& t) {
+std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults) {
     auto n = std::make_unique<Type>();
     n->kind = t.kind;
     n->tag = t.tag;
@@ -81,10 +82,11 @@ std::unique_ptr<Type> cloneType(const Type& t) {
             // whose member functions take other classes by reference, each copying the next).
             n->inner = classByName(in);
         } else {
-            n->inner = cloneType(in);
+            n->inner = cloneType(in, withDefaults);
         }
     }
     if (t.bound) n->bound = cloneExpr(*t.bound);
+    n->params.reserve(t.params.size());
     for (const Param& p : t.params) {
         Param c;
         c.name = p.name;
@@ -99,10 +101,10 @@ std::unique_ptr<Type> cloneType(const Type& t) {
                 // A by-value class parameter of a function type: its name and facts only.
                 c.type = classByName(pt);
             } else {
-                c.type = cloneType(pt);
+                c.type = cloneType(pt, withDefaults);
             }
         }
-        if (p.defArg) c.defArg = cloneExpr(*p.defArg);
+        if (p.defArg && withDefaults) c.defArg = cloneExpr(*p.defArg);
         n->params.push_back(std::move(c));
     }
     return n;

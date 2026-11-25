@@ -1331,6 +1331,10 @@ private:
         ++quiet_;
         ET probe = checkExpr(lhs);
         --quiet_;
+        // Left as it is (no member operator), the operand keeps its result for the next check.
+        ET orig;
+        const bool keepOrig = !simple && !probe.bad && probe.type;
+        if (keepOrig) orig = copyET(probe);
         if (!probe.bad && probe.type && probe.type->kind == Type::Kind::Reference && probe.type->inner &&
             probe.type->inner->kind == Type::Kind::Struct) {
             // A call that returns a reference to an object (f() != nullptr with T &f()): an lvalue.
@@ -1440,8 +1444,10 @@ private:
             e.kids = std::move(both->kids);
             return true;
         }
-        if (probe.bad || !usable || !st) return false;
-        if (!found || !probe.lvalue) return false;
+        if (probe.bad || !usable || !st || !found || !probe.lvalue) {
+            if (keepOrig) etCache_[&lhs] = std::move(orig);
+            return false;
+        }
         // The left operand was checked (and rewritten) by the probe: its result is kept, so the
         // member call below does not check it again. Checked twice per level, a chain such as
         // os << a << b << ... << z took time exponential in its length.
@@ -1645,6 +1651,19 @@ private:
         ET probe = checkExpr(e);
         --quiet_;
         const bool call = isCall(e);
+        // When nothing is converted, the result is kept for the check that follows, so a chain of
+        // operators (o << a << ' ' << b ...) is checked once per link, not twice per link and so
+        // exponentially (a 25-link chain in Components/NetworkSync.hpp took minutes).
+        struct Keep {
+            Checker& c;
+            Expr& e;
+            ET v;
+            bool on;
+            ~Keep() {
+                if (on) c.etCache_[&e] = std::move(v);
+            }
+        } keep{*this, e, ET(), !probe.bad && probe.type && !simpleOperand(e)};
+        if (keep.on) keep.v = copyET(probe);
         // A call result (f() in "if (f())", [conv] p4 contextual conversion) is converted on a hidden
         // copy: the member call below puts an object result in a hidden local.
         if (!probe.bad && probe.type && probe.type->kind == Type::Kind::Reference && probe.type->inner) {
@@ -1661,6 +1680,7 @@ private:
                 break;
             }
         if (!conv) return;
+        keep.on = false;  // e becomes obj.operator T(): checked anew
         auto self = std::make_unique<Expr>();
         self->kind = e.kind;
         self->text = e.text;
@@ -1694,6 +1714,7 @@ private:
                 return r;
             }
         }
+
         if ((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
             !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
             // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
@@ -1712,7 +1733,8 @@ private:
         if (e.kind == Expr::Kind::Member && e.text == "->" && e.kids.size() == 2 && e.kids[0]) rewriteArrow(e);
         if (!rewriteOperator(e)) rewriteFreeOperator(e);
         ET r = checkExprBody(e);
-        if (r.type) e.checked = cloneType(*r.type);
+        // (an object of a finished class is kept by name: its members are the class's, canonOf)
+        if (r.type) e.checked = finishedClassCopy(*r.type) ? classByName(*r.type) : cloneType(*r.type, false);
         return r;
     }
 

@@ -147,7 +147,9 @@ struct Tu {
     std::map<std::string, std::string> usingDecl;     // using N::f;  f -> N::f
 };
 
-std::unique_ptr<Type> cloneType(const Type& t);
+// withDefaults false: the default arguments of function parameters are left out (a checked
+// expression's type, which lowering reads only for its shape).
+std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults = true);
 std::unique_ptr<Type> classByName(const Type& in);
 bool finishedClassCopy(const Type& t);
 std::unique_ptr<Expr> cloneExpr(const Expr& e);

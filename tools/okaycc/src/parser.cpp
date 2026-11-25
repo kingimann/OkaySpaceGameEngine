@@ -220,6 +220,22 @@ private:
     std::set<std::string> implicitTags_;
     std::vector<std::unique_ptr<Decl>> extras_;
 
+    // A type named in the source: a finished class by its name and facts only (its members stay
+    // in structs_ and canonStructs, read through classOf and canonOf); anything else copied. Copying
+    // every member of a class at each use of its name was most of the compile time.
+    std::unique_ptr<Type> typeRef(const Type& t) const {
+        if ((t.kind == Type::Kind::Struct || t.kind == Type::Kind::Union) && !t.tag.empty() && !t.params.empty()) {
+            auto it = structs_.find(t.tag);
+            auto ct = canonStructs().find(t.tag);
+            if (it != structs_.end() && it->second && !it->second->params.empty() && ct != canonStructs().end() &&
+                ct->second && !ct->second->params.empty()) {
+                auto r = classByName(t);
+                r->vslots = it->second->vslots;
+                return r;
+            }
+        }
+        return cloneType(t);
+    }
     const Type* findTypedef(const std::string& name) const {
         for (int i = static_cast<int>(tscopes_.size()) - 1; i >= 0; --i) {
             auto it = tscopes_[static_cast<std::size_t>(i)].find(name);
@@ -877,8 +893,8 @@ private:
                 std::string q = inst->tag + "::" + toks_[i_ + 1].text;
                 auto mt = memberTypes_.find(q);
                 auto st = structs_.find(q);
-                if (mt != memberTypes_.end() && mt->second) inst = cloneType(*mt->second);
-                else if (st != structs_.end() && st->second) inst = cloneType(*st->second);
+                if (mt != memberTypes_.end() && mt->second) inst = typeRef(*mt->second);
+                else if (st != structs_.end() && st->second) inst = typeRef(*st->second);
                 else if (inst->tag.find('\x02') != std::string::npos || protoDepth_ > 0) {
                     // A member of an instance that still depends on template parameters
                     // (typename X<I, tuple<T...>>::type in a function template's prototype,
@@ -898,14 +914,14 @@ private:
             std::size_t qend = 0;
             if (const Type* qt = qualTypeAt(i_, qend)) {
                 i_ = qend;
-                return cloneType(*qt);
+                return typeRef(*qt);
             }
         }
         if (!atEnd() && cur().kind == Tok::Ident) {
             const Type* td = findTypedef(cur().text);
             if (td) {
                 advance();
-                return cloneType(*td);
+                return typeRef(*td);
             }
         }
         if (!atEnd() && cur().kind == Tok::Keyword) {
@@ -4664,7 +4680,7 @@ private:
         }
         auto it = structs_.find(tag);
         if (it == structs_.end() || !it->second) return ty(Type::Kind::Int);
-        return cloneType(*it->second);
+        return typeRef(*it->second);
     }
 
     struct MemberTmpl {
@@ -8097,6 +8113,9 @@ Tu frontEnd(const std::vector<Token>& raw, Diagnostics& diags) {
         Parser parser(toks, local);
         Tu tu = parser.parseTu();
         if (local.ok()) typecheckTu(tu, local);
+        if (std::getenv("OKAYCC_ROUNDS"))
+            std::fprintf(stderr, "round %d: %zu requests, dirty %d, %zu diags\n", round, instRequests().size(),
+                         instDirty() ? 1 : 0, local.items().size());
         if (instDirty() && round < 7) continue;
         for (const Diag& d : local.items()) {
             if (d.warning) diags.warning(d.file, d.line, d.column, d.message);

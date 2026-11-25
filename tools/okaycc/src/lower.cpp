@@ -718,9 +718,9 @@ private:
         }
         if ((t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) && init->kind == Expr::Kind::Brace) {
             auto fields = layoutOf(t);
-            for (std::size_t i = 0; i < init->kids.size() && i < fields.size() && i < t->params.size(); ++i)
-                if (init->kids[i] && t->params[i].type)
-                    fillInit(t->params[i].type.get(), init->kids[i].get(), b, off + fields[i].offset);
+            for (std::size_t i = 0; i < init->kids.size() && i < fields.size(); ++i)
+                if (const Type* ft = init->kids[i] ? fieldTypeOf(t, fields[i].name) : nullptr)
+                    fillInit(ft, init->kids[i].get(), b, off + fields[i].offset);
             return;
         }
         if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Char &&
@@ -1252,15 +1252,11 @@ private:
             auto fields = layoutOf(t);
             for (std::size_t i = 0; i < init.kids.size() && i < fields.size(); ++i) {
                 if (!init.kids[i]) continue;
+                const Type* ft = fieldTypeOf(t, fields[i].name);
                 if (init.kids[i]->kind == Expr::Kind::Brace) {
-                    const Type* ft = i < t->params.size() ? t->params[i].type.get() : nullptr;
                     initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
                     continue;
                 }
-                const Type* ct = t->params.empty() && !t->tag.empty() ? canonOf(t) : t;
-                const Type* ft = nullptr;
-                for (const Param& p : ct->params)
-                    if (p.name == fields[i].name && p.type && p.type->kind != Type::Kind::Function) ft = p.type.get();
                 Val v = toScalar(lowerExpr(*init.kids[i]), ft);
                 int w = fields[i].width > 8 ? 8 : fields[i].width;
                 storeBits(addAddr(base, off + fields[i].offset), v.op, w);
@@ -1764,6 +1760,15 @@ private:
         return o;
     }
 
+    // The type of data member 'name' of class t (t may be named only: its members are the
+    // finished class's).
+    static const Type* fieldTypeOf(const Type* t, const std::string& name) {
+        const Type* ct = t && t->params.empty() && !t->tag.empty() ? canonOf(t) : t;
+        if (!ct) return nullptr;
+        for (const Param& p : ct->params)
+            if (p.name == name && p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function) return p.type.get();
+        return nullptr;
+    }
     // A value converted to the arithmetic type of the object it initializes ([conv.fpint],
     // [conv.double], [conv.bool]): float x[2] = {1, 2} stores 1.0f and 2.0f, not the int bits.
     Val toScalar(Val v, const Type* to) {

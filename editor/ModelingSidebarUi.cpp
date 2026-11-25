@@ -25,7 +25,7 @@ TbIcon IconFor(PageIcon p) {
     return TbIcon::More;
 }
 // The open page gets an accent bar on its left edge (on top of the normal selected fill), so it stands out in both themes.
-void MarkCurrent(ImDrawList* dl, ImVec2 a, ImVec2 b, float scale) {
+void DrawOpenPageBar(ImDrawList* dl, ImVec2 a, ImVec2 b, float scale) {
     dl->AddRectFilled(a, ImVec2(a.x + 3.0f * scale, b.y), ImGui::GetColorU32(AccentCol(1.0f)), 1.5f);
 }
 } // namespace
@@ -77,7 +77,7 @@ PageListResult DrawPageList(SidebarState& s, int current, const std::function<co
             if (ImGui::Selectable("##pg", sel, 0, ImVec2(0, StripRowHeight(uiScale, lineH)))) r.clicked = i;
             ImGui::EndDisabled();
             const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            if (sel) MarkCurrent(dl, a, b, uiScale);
+            if (sel) DrawOpenPageBar(dl, a, b, uiScale);
             DrawTbIcon(dl, IconFor(pi.icon), ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), 18.0f * uiScale, tc);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : why);
             ImGui::PopID();
@@ -89,7 +89,7 @@ PageListResult DrawPageList(SidebarState& s, int current, const std::function<co
         ImGui::EndDisabled();
         if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
         const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-        if (sel) MarkCurrent(dl, a, b, uiScale);
+        if (sel) DrawOpenPageBar(dl, a, b, uiScale);
         const float padX = kRowPadX * uiScale, iconW = kIconColW * uiScale, rowH = b.y - a.y;
         DrawTbIcon(dl, IconFor(pi.icon), ImVec2(a.x + padX + iconW * 0.5f - 2.0f * uiScale, (a.y + b.y) * 0.5f), 18.0f * uiScale, tc);
         const float tx = a.x + padX + iconW, ty = a.y + (rowH - 2.0f * lineH) * 0.5f;

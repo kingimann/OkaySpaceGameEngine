@@ -7,6 +7,8 @@
 # Two files are compiled at a time (SURVEY_JOBS; the machine is shared). Results go to $SURVEY_OUT (default
 # /tmp/okayms-survey): ok.txt (the files that compile), errors.txt (file<TAB>first error), and the summary is printed.
 # No compiler is built when one is given; otherwise the src/ and cmd/okay-cl.cpp files are built into $SURVEY_OUT.
+# SURVEY_FLAGS adds flags to every compile (for example "/D_WIN32 /D_WIN64": okay-cl does not define _WIN32 itself, so
+# by default the engine files are compiled on their non-Windows paths).
 set -eu
 HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
 ROOT=$(CDPATH= cd "$HERE/../.." && pwd)
@@ -31,12 +33,14 @@ fi
 cd "$ROOT"
 : > "$OUT/errors.txt"
 : > "$OUT/ok.txt"
-export CL OUT LIMIT
+FLAGS=${SURVEY_FLAGS:-}
+export CL OUT LIMIT FLAGS
 find engine/src -name '*.cpp' | sort | xargs -P "$JOBS" -I{} sh -c '
   f="$1"
   obj="$OUT/obj/$(echo "$f" | tr / _).obj"
   rm -f "$obj"
-  msg=$(timeout "$LIMIT" "$CL" /c "$f" /Fo"$obj" /I engine/include /I engine/src /I shared /I tools/okayms/stdinc 2>&1)
+  # shellcheck disable=SC2086
+  msg=$(timeout "$LIMIT" "$CL" /c "$f" /Fo"$obj" /I engine/include /I engine/src /I shared /I tools/okayms/stdinc $FLAGS 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$obj" ]; then
     echo "$f" >> "$OUT/ok.txt"

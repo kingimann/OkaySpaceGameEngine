@@ -217,7 +217,7 @@ struct M { std::string n; float f; };
 static M Make(const char* n, float f) { M m; m.n = n; m.f = f; return m; }
 static std::vector<M> Build() { return { Make("a", 1.0f), Make("bb", 2.0f), }; }
 static std::vector<int> Ints() { return {1, 2, 3}; }
-static int part1(void) {
+static int prog_a(void) {
   std::vector<M> v = Build();
   if (v.size() != 2 || v[1].n != "bb") return 1;
   std::vector<int> w = Ints();
@@ -227,7 +227,7 @@ static int part1(void) {
 
 #include <filesystem>
 #include <string>
-static int part2(void) {
+static int prog_b(void) {
   std::filesystem::path q("x/yy/zzz");
   int m = 0; int len = 0;
   for (const auto& part : q) { ++m; len += (int)part.string().size(); }
@@ -239,9 +239,9 @@ static int part2(void) {
 }
 
 int entry(void) {
-  int r = part1();
+  int r = prog_a();
   if (r != 0) return r;
-  r = part2();
+  r = prog_b();
   return r == 0 ? 0 : 20 + r;
 }
 )OKMS", 0);
@@ -259,15 +259,15 @@ struct L {
 private:
   template <class... A> static int Emit(int lv, A&&... a) { return lv + (int)sizeof...(A); }
 };
-static int part1(void) { return L::Error(1, 2.0, "x") == 4 ? 0 : 1; }
+static int prog_a(void) { return L::Error(1, 2.0, "x") == 4 ? 0 : 1; }
 
 #include <atomic>
-static int part2(void){ std::atomic<const void*> o{nullptr}; int x; const void* e = nullptr; if (!o.compare_exchange_weak(e, &x, std::memory_order_acquire, std::memory_order_relaxed)) return 1; return o.load() == &x ? 0 : 2; }
+static int prog_b(void){ std::atomic<const void*> o{nullptr}; int x; const void* e = nullptr; if (!o.compare_exchange_weak(e, &x, std::memory_order_acquire, std::memory_order_relaxed)) return 1; return o.load() == &x ? 0 : 2; }
 
 int entry(void) {
-  int r = part1();
+  int r = prog_a();
   if (r != 0) return r;
-  r = part2();
+  r = prog_b();
   return r == 0 ? 0 : 20 + r;
 }
 )OKMS", 0);
@@ -283,7 +283,7 @@ static void r26_wide_literals(Tally& tally) {
 #include <algorithm>
 #include <vector>
 static int wlen(const wchar_t* s) { int n = 0; while (s[n]) ++n; return n; }
-static int part1(void) {
+static int prog_a(void) {
   const wchar_t* w = L"rbé";
   if (wlen(w) != 3 || w[0] != 'r' || w[2] != 0xE9) return 1;
   const wchar_t* e = L"\U0001F600";
@@ -302,7 +302,7 @@ static int part1(void) {
   return 0;
 }
 
-static int part2(void) {
+static int prog_b(void) {
   const char msg[] = "hello file";
   if (msg[0] != 104) return 10;
   char m2[] = "hi";
@@ -311,9 +311,9 @@ static int part2(void) {
 }
 
 int entry(void) {
-  int r = part1();
+  int r = prog_a();
   if (r != 0) return r;
-  r = part2();
+  r = prog_b();
   return r == 0 ? 0 : 20 + r;
 }
 )OKMS", 0);
@@ -359,11 +359,11 @@ static void r26_containers(Tally& tally) {
 #include <vector>
 #include <functional>
 struct Key { int v; };
-struct KeyLess { bool operator()(const Key& a, const Key& b) const { return a.v > b.v; } };
+struct ByValueDesc { bool operator()(const Key& a, const Key& b) const { return a.v > b.v; } };
 struct Res { int id; bool ok() const { return id > 0; } };
 static std::shared_ptr<const Res> MakeRes(int id) { std::shared_ptr<Res> r(new Res()); r->id = id; return r; }
 int entry(void) {
-  std::map<Key, int, KeyLess> m;
+  std::map<Key, int, ByValueDesc> m;
   Key a{1}, b{3}, c{2};
   m[a] = 10; m[b] = 30; m[c] = 20;
   if (m.size() != 3 || m.begin()->first.v != 3) return 1;
@@ -400,29 +400,28 @@ static void r26_locale(Tally& tally) {
 #include <string>
 #include <limits>
 #include <cctype>
-class TolerantNumGet : public std::num_get<char> {
-public:
-    explicit TolerantNumGet(std::size_t refs) : std::num_get<char>(refs) {}
-protected:
+// A facet of the test's own: "inf" (any case) reads as infinity for float and double, other text as usual.
+struct InfWord : std::num_get<char> {
+    InfWord() : std::num_get<char>(0) {}
     using std::num_get<char>::do_get;
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, float& v) const override {
-        return Get(in, end, str, err, v);
+    template <class Num>
+    static iter_type word(iter_type at, iter_type stop, std::ios_base::iostate& st, Num& out) {
+        char got[4] = {0, 0, 0, 0};
+        int n = 0;
+        for (; at != stop && n < 3; ++at) got[n++] = (char)std::tolower((unsigned char)*at);
+        const bool inf = got[0] == 'i' && got[1] == 'n' && got[2] == 'f';
+        out = inf ? std::numeric_limits<Num>::infinity() : Num(0);
+        if (!inf) st |= std::ios_base::failbit;
+        if (at == stop) st |= std::ios_base::eofbit;
+        return at;
     }
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, double& v) const override {
-        return Get(in, end, str, err, v);
+    iter_type do_get(iter_type b, iter_type e, std::ios_base& io, std::ios_base::iostate& st, float& out) const override {
+        if (b != e && (*b == 'i' || *b == 'I')) return word(b, e, st, out);
+        return std::num_get<char>::do_get(b, e, io, st, out);
     }
-private:
-    template <class F>
-    iter_type Get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, F& v) const {
-        if (in != end && (*in == 'i' || *in == 'I')) {
-            std::string word;
-            while (in != end && std::isalpha(static_cast<unsigned char>(*in))) { word += static_cast<char>(std::tolower(static_cast<unsigned char>(*in))); ++in; }
-            if (word == "inf") v = std::numeric_limits<F>::infinity();
-            else { v = 0; err |= std::ios_base::failbit; }
-            if (in == end) err |= std::ios_base::eofbit;
-            return in;
-        }
-        return std::num_get<char>::do_get(in, end, str, err, v);
+    iter_type do_get(iter_type b, iter_type e, std::ios_base& io, std::ios_base::iostate& st, double& out) const override {
+        if (b != e && (*b == 'i' || *b == 'I')) return word(b, e, st, out);
+        return std::num_get<char>::do_get(b, e, io, st, out);
     }
 };
 class TwoDigits : public std::num_put<char> {
@@ -438,7 +437,7 @@ protected:
     }
 };
 int entry(void) {
-  static const std::locale* tl = new std::locale(std::locale::classic(), new TolerantNumGet(0));
+  static const std::locale* tl = new std::locale(std::locale::classic(), new InfWord());
   std::istringstream in("inf 2.5");
   in.imbue(*tl);
   float a = 0, b = 0;
@@ -716,7 +715,7 @@ static int check(A* p) {
   if (dynamic_cast<D*>(p) != nullptr) r += 100;
   return r;
 }
-static int part1(void) {
+static int prog_a(void) {
   A a; B b; C c; D d;
   if (check(&a) != 0) return 1;
   if (check(&b) != 1) return 2;
@@ -729,12 +728,12 @@ static int part1(void) {
   return 0;
 }
 
-static int part2(void) { float a = 2.0f, b = 5.0f; float m = std::max({a, b, 1e-3f}); float n = std::min({a, b, 3.0f}); float k = std::max(a, b); return m == 5.0f && n == 2.0f && k == 5.0f ? 0 : 1; }
+static int prog_b(void) { float a = 2.0f, b = 5.0f; float m = std::max({a, b, 1e-3f}); float n = std::min({a, b, 3.0f}); float k = std::max(a, b); return m == 5.0f && n == 2.0f && k == 5.0f ? 0 : 1; }
 
 int entry(void) {
-  int r = part1();
+  int r = prog_a();
   if (r != 0) return r;
-  return part2() == 0 ? 0 : 20;
+  return prog_b() == 0 ? 0 : 20;
 }
 )OKMS", 0);
 }

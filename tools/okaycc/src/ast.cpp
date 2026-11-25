@@ -417,14 +417,32 @@ const Param* findSpecial(const Type* t, const char* name) {
 // True when 'd' is the same class as 'b' or is derived from it (single inheritance).
 bool derivedFrom(const Type& d, const Type& b) {
     if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
-    std::string cur = d.tag;
-    for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
-        if (cur == b.tag) return true;
-        auto it = canonStructs().find(cur);
-        if (it == canonStructs().end() || !it->second) return false;
-        cur = it->second->base;
+    return !basePath(d.tag, b.tag).empty() || d.tag == b.tag;
+}
+
+// The members to go through from class 'from' to its base class 'to' ([class.derived]): one
+// "__mb:<tag>" member per base after a primary one (parser.cpp, multiple inheritance), nothing
+// for a primary base, which is at the start of the object. {""} when 'to' is reached through
+// primary bases only; empty when it is not a base. Depth-first, bases in declaration order.
+std::vector<std::string> basePath(const std::string& from, const std::string& to, int depth) {
+    if (from == to) return {""};
+    if (depth > 32 || from.empty()) return {};
+    auto it = canonStructs().find(from);
+    if (it == canonStructs().end() || !it->second) return {};
+    const Type& c = *it->second;
+    if (!c.base.empty()) {
+        std::vector<std::string> p = basePath(c.base, to, depth + 1);
+        if (!p.empty()) return p;
     }
-    return false;
+    for (const Param& m : c.params) {
+        if (m.name.compare(0, 5, "__mb:") != 0 || !m.type) continue;
+        std::vector<std::string> p = basePath(m.type->tag, to, depth + 1);
+        if (p.empty()) continue;
+        if (p.size() == 1 && p[0].empty()) return {m.name};
+        p.insert(p.begin(), m.name);
+        return p;
+    }
+    return {};
 }
 
 bool hasSideEffects(const Expr& e) {

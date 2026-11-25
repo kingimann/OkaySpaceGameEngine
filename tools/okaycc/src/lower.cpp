@@ -19,6 +19,24 @@ public:
             if (d && d->function && d->body) lowerFunc(*d);
         return std::move(mod_);
     }
+    // The size of a type for the parser's constant expressions: 0 when it is not known yet (a class
+    // not finished, a template parameter).
+    static int typeSizeFor(const Type& t) {
+        const Type* c = &t;
+        if (c->kind == Type::Kind::Struct || c->kind == Type::Kind::Union) {
+            if (c->tag.empty() || c->tag.find('\x02') != std::string::npos || !canonStructs().count(c->tag)) return 0;
+        }
+        if (c->kind == Type::Kind::Function || c->kind == Type::Kind::Void) return 0;
+        return sizeOf(c);
+    }
+    // The offset of member 'field' in class 'tag' (-1 if none), for the parser's vtable groups.
+    static int memberOffset(const std::string& tag, const std::string& field) {
+        auto it = canonStructs().find(tag);
+        if (it == canonStructs().end() || !it->second) return -1;
+        for (const FieldOff& f : layoutOf(it->second.get()))
+            if (f.name == field) return f.offset;
+        return -1;
+    }
 
 private:
     struct FieldOff {
@@ -291,6 +309,19 @@ private:
                 f.tag = p.type->inner->tag;
                 if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
                     f.fields = layoutOf(p.type->inner.get());
+            }
+            if (p.name.compare(0, 5, "__mb:") == 0 && p.type) {
+                // The subobject of a base after the primary one (Itanium C++ ABI 2.4 II.3): the
+                // next member may go in its tail padding unless it is POD for the purpose of layout,
+                // so the offset moves on by its data size, not its size.
+                const Type* bc = canonOf(p.type.get());
+                if (bc && bc->nonpod) {
+                    int dsize = 0;
+                    for (const FieldOff& g : f.fields) dsize = std::max(dsize, g.offset + (g.bitWidth > 0 ? 4 : g.width));
+                    out.push_back(std::move(f));
+                    off += dsize;
+                    continue;
+                }
             }
             out.push_back(std::move(f));
             off += f.width;
@@ -844,8 +875,15 @@ private:
         if (!d.vt.empty()) {
             g.size = static_cast<int>(d.vt.size()) * 8;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
-            for (std::size_t k = 0; k < d.vt.size(); ++k)
-                if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+            for (std::size_t k = 0; k < d.vt.size(); ++k) {
+                if (d.vt[k].compare(0, 2, "\x01#") == 0) {  // a number: an offset-to-top
+                    std::int64_t n = std::stoll(d.vt[k].substr(2));
+                    for (int b = 0; b < 8; ++b)
+                        g.bytes[k * 8 + static_cast<std::size_t>(b)] = static_cast<std::uint8_t>(static_cast<std::uint64_t>(n) >> (8 * b));
+                } else if (!d.vt[k].empty()) {
+                    g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+                }
+            }
             g.rodata = true;
             g.weakSym = d.isInline;
         }
@@ -1205,7 +1243,7 @@ private:
                     initLocalBrace(base, t->inner.get(), *init.kids[i], at);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                Val v = toScalar(lowerExpr(*init.kids[i]), t->inner.get());
                 int w = es > 8 ? 8 : es;
                 Operand bits = w < 8 ? narrow(v.op, w, t->inner->unsign) : v.op;
                 storeBits(addAddr(base, at), bits, w);
@@ -1219,7 +1257,11 @@ private:
                     initLocalBrace(base, ft, *init.kids[i], off + fields[i].offset);
                     continue;
                 }
-                Val v = lowerExpr(*init.kids[i]);
+                const Type* ct = t->params.empty() && !t->tag.empty() ? canonOf(t) : t;
+                const Type* ft = nullptr;
+                for (const Param& p : ct->params)
+                    if (p.name == fields[i].name && p.type && p.type->kind != Type::Kind::Function) ft = p.type.get();
+                Val v = toScalar(lowerExpr(*init.kids[i]), ft);
                 int w = fields[i].width > 8 ? 8 : fields[i].width;
                 storeBits(addAddr(base, off + fields[i].offset), v.op, w);
             }
@@ -1720,6 +1762,22 @@ private:
         o.op = Operand::vreg(t);
         o.fpw = dstCode > 0 ? dstCode : 0;
         return o;
+    }
+
+    // A value converted to the arithmetic type of the object it initializes ([conv.fpint],
+    // [conv.double], [conv.bool]): float x[2] = {1, 2} stores 1.0f and 2.0f, not the int bits.
+    Val toScalar(Val v, const Type* to) {
+        if (!to || v.pair) return v;
+        if (to->kind == Type::Kind::Bool) return Val{asBool(v.op, v.fpw), 0, 0};
+        const int dst = fpWidthOf(to);
+        if (dst) return v.fpw == dst ? v : cvtFp(v, v.fpw, dst);
+        if (!v.fpw || !isIntish(*to)) return v;
+        const int iw = sizeOf(to);
+        if (iw < 4) {
+            Val n = cvtFp(v, v.fpw, -4);
+            return Val{narrow(n.op, iw, to->unsign), 0, 0};
+        }
+        return cvtFp(v, v.fpw, -(iw > 8 ? 8 : iw));
     }
 
     Val lowerBin(Expr& e) {
@@ -2516,9 +2574,12 @@ private:
                 fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
-                // static const float k = 0.5f, static double s = -1.0: the constant's bits; any
-                // other value is reported by fillInit.
+                // static const float k = 0.5f, static double s = -1.0: the constant's bits;
+                // static const char *hx = "0123": the address of the literal; any other value is
+                // reported by fillInit.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             }
             mod_.globals.push_back(std::move(g));
@@ -2994,6 +3055,11 @@ Module lowerSource(const std::string& source, Diagnostics& diags, const std::str
 }
 
 void setForceExceptions(bool on) { forceExceptions() = on; }
+
+namespace compiler {
+int memberOffset(const std::string& tag, const std::string& field) { return Lowerer::memberOffset(tag, field); }
+int typeSize(const Type& t) { return Lowerer::typeSizeFor(t); }
+}  // namespace compiler
 
 }  // namespace okaycc
 

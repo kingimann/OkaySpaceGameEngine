@@ -30,6 +30,11 @@ std::vector<InstReq>& instRequests() {
     return v;
 }
 
+std::set<std::string>& sfinaeFailed() {
+    static std::set<std::string> s;
+    return s;
+}
+
 std::map<std::string, std::string>& instNamespaces() {
     static std::map<std::string, std::string> m;
     return m;

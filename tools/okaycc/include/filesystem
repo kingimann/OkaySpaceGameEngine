@@ -2,9 +2,9 @@
 // the Linux x86-64 system calls: open 2, close 3, stat 4, lstat 6, rename 82, mkdir 83, rmdir 84,
 // unlink 87, chmod 90, getcwd 79, getdents64 217 (struct stat and struct linux_dirent64 as the
 // kernel's x86-64 ABI lays them out). Each operation has the error_code form and the throwing form
-// (filesystem_error). Not done: symbolic link operations, space(), hard links, resize_file, the
-// iterator over a path's elements; canonical() does not resolve symbolic links (it is
-// weakly_canonical of an existing path).
+// (filesystem_error). Not done: symbolic link operations, space(), hard links, resize_file;
+// canonical() does not resolve symbolic links (it is
+// weakly_canonical of an existing path). A path's iterator goes forward only.
 #pragma once
 #include <cstdint>
 #include <chrono>
@@ -218,9 +218,73 @@ public:
         return out;
     }
 
+    // The elements of the path, first to last ([fs.path.itr]): the root directory "/" of an
+    // absolute path, then each file name; a run of separators is one; a separator at the end
+    // gives an empty last element.
+    class iterator;
+    typedef iterator const_iterator;
+    iterator begin() const;
+    iterator end() const;
+
 private:
     std::string __s;
 };
+class path::iterator {
+public:
+    typedef path value_type;
+    typedef long difference_type;
+    typedef const path *pointer;
+    typedef const path &reference;
+    iterator() : __n(0), __pos(1), __len(0) {}
+    iterator(const std::string &s, unsigned long pos) : __s(s), __n(s.size()), __pos(pos), __len(0) { __set(); }
+    const path &operator*() const { return __e; }
+    const path *operator->() const { return &__e; }
+    iterator &operator++() {
+        if (__pos > __n) return *this;
+        if (__pos == __n) {  // past the empty element of a trailing separator
+            __pos = __n + 1;
+            __set();
+            return *this;
+        }
+        unsigned long k = __pos + __len;
+        const bool root = __pos == 0 && __s[0] == '/';
+        while (k < __n && __s[k] == '/') ++k;
+        if (k == __n) k = root || __pos + __len == __n ? __n + 1 : __n;
+        __pos = k;
+        __set();
+        return *this;
+    }
+    iterator operator++(int) {
+        iterator old = *this;
+        ++*this;
+        return old;
+    }
+    bool operator==(const iterator &o) const { return __pos == o.__pos; }
+    bool operator!=(const iterator &o) const { return __pos != o.__pos; }
+
+private:
+    std::string __s;
+    unsigned long __n;
+    unsigned long __pos;  // where the element starts; __n: the empty last element; __n + 1: the end
+    unsigned long __len;
+    path __e;
+    void __set() {
+        if (__pos >= __n) {
+            __len = 0;
+            __e = path();
+        } else if (__pos == 0 && __s[0] == '/') {
+            __len = 1;
+            __e = path("/");
+        } else {
+            unsigned long j = __s.find('/', __pos);
+            if (j == std::string::npos) j = __n;
+            __len = j - __pos;
+            __e = path(__s.substr(__pos, __len));
+        }
+    }
+};
+inline path::iterator path::begin() const { return iterator(__s, __s.empty() ? 1 : 0); }
+inline path::iterator path::end() const { return iterator(__s, __s.size() + 1); }
 inline path u8path(const std::string &s) { return path(s); }
 inline path u8path(const char *s) { return path(s); }
 // os << p writes the path quoted ([fs.path.io], std::quoted with '"' and '\\').

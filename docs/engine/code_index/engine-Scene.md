@@ -2,7 +2,7 @@
 
 # Code index: engine-Scene
 
-Back to the [code index](../code_index.md). 28 headers, 130 names.
+Back to the [code index](../code_index.md). 28 headers, 131 names.
 
 ## `engine/include/okay/Scene/ClearSpawn.hpp`
 
@@ -33,12 +33,13 @@ Back to the [code index](../code_index.md). 28 headers, 130 names.
 
 ## `engine/include/okay/Scene/GameObject.hpp`
 
-- `ActiveFlag` class, line 31: The type of GameObject::active: a bool that notes every change of its value, so
-- `ComponentRules` class, line 52: Process-wide, data-driven rules for AddComponent: components a type needs next to
-- `GameObject` class, line 72: A named container of Components living in a Scene — the engine's primary
-- `FirstComponentToSearch` function, line 385: Component lookups run every frame all over the engine. Every object's first
-- `RequireComponent` function, line 418: Declare that every 'T' needs a 'Req' on its object: AddComponent<T> adds one first
-- `DisallowMultipleComponent` function, line 429: Declare that an object holds at most one 'T': a second AddComponent<T> returns the
+- `SceneFileLoadScope` class, line 22: While one of these is alive, AddComponent does not also add the components a
+- `ActiveFlag` class, line 42: The type of GameObject::active: a bool that notes every change of its value, so
+- `ComponentRules` class, line 63: Process-wide, data-driven rules for AddComponent: components a type needs next to
+- `GameObject` class, line 83: A named container of Components living in a Scene — the engine's primary
+- `FirstComponentToSearch` function, line 396: Component lookups run every frame all over the engine. Every object's first
+- `RequireComponent` function, line 429: Declare that every 'T' needs a 'Req' on its object: AddComponent<T> adds one first
+- `DisallowMultipleComponent` function, line 440: Declare that an object holds at most one 'T': a second AddComponent<T> returns the
 
 ## `engine/include/okay/Scene/Layers.hpp`
 

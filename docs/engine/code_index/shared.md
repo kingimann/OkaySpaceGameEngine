@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 980 names.
+Back to the [code index](../code_index.md). 67 headers, 981 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -998,30 +998,31 @@ Back to the [code index](../code_index.md). 67 headers, 980 names.
 - `FormatVersion` function, line 116: The canonical text of a version: at least three numbers ("2.855" -> "2.855.0"), no "v". Empty when 'v' is not valid.
 - `NormalizeVersion` function, line 127: ParseVersion + FormatVersion: "v2.855" -> "2.855.0"; "" for text that is not a version (and for "dev").
 - `IsDevVersion` function, line 129: True for the unversioned development build ("dev").
-- `DisplayVersion` function, line 131: "v2.855.0" for a version, the text itself otherwise (what the dialogs print).
-- `CompareVersions` function, line 140: -1, 0 or 1 for a < b, a == b, a > b. Numbers compare one component at a time, a missing component is zero
-- `LineOf` function, line 158: The line of a version: its first two numbers ("2.850.1" -> "2.850", "v3" -> "3.0"); "" when 'text' is not a version.
-- `SameLine` function, line 164: True when both are versions of the same line ("2.850.0" and "2.850.1"; also true for two spellings of one version).
-- `LineLabel` function, line 169: How a dialog names a line: "v2.850.x"; "" when 'text' is not a version.
-- `ResolveKeepTarget` function, line 176: The installed editor that "Keep" should start for a project last written by 'projectVersion': the NEWEST installed
-- `Decision` enum, line 187
-- `DecisionName` function, line 196
-- `Decide` function, line 211: What the running editor should do about a project stamped 'projectVersion'. A development build (or a running
-- `FindStampInText` function, line 248: The raw value of the 'engine_version' line in 'text' (the last one if there are several). False when there is none.
-- `SetStampInText` function, line 263: 'text' with its 'engine_version' line set to 'version' and every other byte as it was: other lines, their order,
-- `KeepUnknownLines` function, line 294: The lines of 'existing' that a writer does not know, to be appended to the text it is about to write so a newer
-- `Stamp` struct, line 335: What <project>/project.okayproj says about the version.
-- `ProjectFile` function, line 343
-- `ReadProjectStamp` function, line 345
-- `ReadProjectVersion` function, line 360: The project's stamped version, normalized; "" when there is none (a project made before versions were recorded),
-- `RefreshStamp` function, line 366: Bring a remembered version up to date with the disk: re-read the stamp of the project in 'projectDir' into 'cached'
-- `WriteProjectVersion` function, line 377: Set the project's 'engine_version' and change nothing else in project.okayproj (see SetStampInText). A missing file
-- `LauncherDirOf` function, line 399: The launcher's folder, from the folder the running editor's exe is in: <L>/Tools -> <L>; a kept copy,
-- `VersionsDir` function, line 407: <launcher dir>/Versions
-- `InstalledEditorPath` function, line 409: <launcher dir>/Versions/<version>/Tools/<editor>; empty when 'version' is not a version.
-- `IsInstalled` function, line 415: True when that editor is there as a file.
-- `InstalledVersions` function, line 422: The versions that have an editor under <launcher dir>/Versions, newest first (a folder whose name is not a version,
-- `KeepVersionArgs` function, line 438: The command line (after the program) that opens 'scene' and says the version was chosen on purpose:
+- `WithV` function, line 132: The version with exactly one leading "v": "2.903.6" and "v2.903.6" both give "v2.903.6" (no "vv2.903.6" when the text
+- `DisplayVersion` function, line 138: "v2.855.0" for a version, the text itself otherwise (what the dialogs print).
+- `CompareVersions` function, line 147: -1, 0 or 1 for a < b, a == b, a > b. Numbers compare one component at a time, a missing component is zero
+- `LineOf` function, line 165: The line of a version: its first two numbers ("2.850.1" -> "2.850", "v3" -> "3.0"); "" when 'text' is not a version.
+- `SameLine` function, line 171: True when both are versions of the same line ("2.850.0" and "2.850.1"; also true for two spellings of one version).
+- `LineLabel` function, line 176: How a dialog names a line: "v2.850.x"; "" when 'text' is not a version.
+- `ResolveKeepTarget` function, line 183: The installed editor that "Keep" should start for a project last written by 'projectVersion': the NEWEST installed
+- `Decision` enum, line 194
+- `DecisionName` function, line 203
+- `Decide` function, line 218: What the running editor should do about a project stamped 'projectVersion'. A development build (or a running
+- `FindStampInText` function, line 255: The raw value of the 'engine_version' line in 'text' (the last one if there are several). False when there is none.
+- `SetStampInText` function, line 270: 'text' with its 'engine_version' line set to 'version' and every other byte as it was: other lines, their order,
+- `KeepUnknownLines` function, line 301: The lines of 'existing' that a writer does not know, to be appended to the text it is about to write so a newer
+- `Stamp` struct, line 342: What <project>/project.okayproj says about the version.
+- `ProjectFile` function, line 350
+- `ReadProjectStamp` function, line 352
+- `ReadProjectVersion` function, line 367: The project's stamped version, normalized; "" when there is none (a project made before versions were recorded),
+- `RefreshStamp` function, line 373: Bring a remembered version up to date with the disk: re-read the stamp of the project in 'projectDir' into 'cached'
+- `WriteProjectVersion` function, line 384: Set the project's 'engine_version' and change nothing else in project.okayproj (see SetStampInText). A missing file
+- `LauncherDirOf` function, line 406: The launcher's folder, from the folder the running editor's exe is in: <L>/Tools -> <L>; a kept copy,
+- `VersionsDir` function, line 414: <launcher dir>/Versions
+- `InstalledEditorPath` function, line 416: <launcher dir>/Versions/<version>/Tools/<editor>; empty when 'version' is not a version.
+- `IsInstalled` function, line 422: True when that editor is there as a file.
+- `InstalledVersions` function, line 429: The versions that have an editor under <launcher dir>/Versions, newest first (a folder whose name is not a version,
+- `KeepVersionArgs` function, line 445: The command line (after the program) that opens 'scene' and says the version was chosen on purpose:
 
 ## `shared/SdlDisplays.hpp`
 

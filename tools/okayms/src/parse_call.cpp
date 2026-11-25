@@ -36,14 +36,38 @@ bool Parser::parse_pack_element(size_t from, size_t to, size_t k, bool unary, No
     const std::vector<std::string> names = packs_in(from, to);
     std::vector<Token> saved(tokens.begin() + static_cast<std::ptrdiff_t>(from),
                              tokens.begin() + static_cast<std::ptrdiff_t>(to));
+    // A type pack named in the pattern (std::forward<A>(a)...) stands for its k-th type in element k: it is a typedef of
+    // that type while the element is read.
+    std::map<std::string, std::vector<Type>> type_elems;
+    std::map<std::string, Type> old_typedefs;
     if (k != static_cast<size_t>(-1)) {
-        for (size_t i = from; i < to; ++i)
-            if (tokens[i].kind == TIdent && param_packs.count(tokens[i].text) > 0)
+        for (size_t i = from; i < to; ++i) {
+            if (tokens[i].kind != TIdent) continue;
+            if (param_packs.count(tokens[i].text) > 0) {
                 tokens[i].text = param_packs[tokens[i].text][k];
+                continue;
+            }
+            auto tp = type_packs.find(tokens[i].text);
+            if (tp == type_packs.end() || k >= tp->second.size() || type_elems.count(tp->first) > 0) continue;
+            if (i + 1 < to && tokens[i + 1].kind == TEllipsis) continue;  // a nested A... stays a pack
+            type_elems[tp->first] = tp->second;
+            auto td = typedefs.find(tp->first);
+            if (td != typedefs.end()) old_typedefs[tp->first] = td->second;
+        }
+        for (const auto& te : type_elems) {
+            typedefs[te.first] = te.second[k];
+            type_packs.erase(te.first);
+        }
     }
     const size_t was_at = at;
     at = from;
     const bool ok = unary ? parse_unary(out) : parse_expr(1, out);
+    for (const auto& te : type_elems) {
+        type_packs[te.first] = te.second;
+        typedefs.erase(te.first);
+        auto od = old_typedefs.find(te.first);
+        if (od != old_typedefs.end()) typedefs[te.first] = od->second;
+    }
     const bool whole = at == to;
     at = was_at;
     std::copy(saved.begin(), saved.end(), tokens.begin() + static_cast<std::ptrdiff_t>(from));

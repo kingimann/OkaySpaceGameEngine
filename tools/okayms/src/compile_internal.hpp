@@ -87,6 +87,9 @@ struct Type {
     bool is_enum() const { return enum_id >= 0; }
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
+    // A placeholder return type ([dcl.spec.auto]): 1 `auto`, 2 `decltype(auto)`; 0 a written type. The function's
+    // body is read once to learn the type of its first return (parse_function_body), then the type is replaced.
+    int deduce = 0;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }

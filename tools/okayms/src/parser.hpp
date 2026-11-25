@@ -1291,6 +1291,20 @@ struct Parser {
         type->is_const = false;
         type->is_bool = false;
         type->wide = false;
+        type->deduce = 0;
+        if (is(TIdent) && cur().text == "auto") {
+            // A placeholder type ([dcl.spec.auto]); only a function's return type is read this way (auto variables are
+            // read where they are declared). The type is int until the function's body tells.
+            next();
+            type->deduce = 1;
+            return true;
+        }
+        if (is(TIdent) && cur().text == "decltype" && at + 3 < tokens.size() && tokens[at + 1].kind == TLParen &&
+            tokens[at + 2].kind == TIdent && tokens[at + 2].text == "auto" && tokens[at + 3].kind == TRParen) {
+            at += 4;
+            type->deduce = 2;
+            return true;
+        }
         if (is(TIdent) && cur().text == "decltype" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
             // decltype(expression) ([dcl.type.decltype]): the expression's type as okay-ms knows it. Own simplification:
             // a reference is not added for an lvalue in parentheses, and the expression is not evaluated (its code is
@@ -1889,7 +1903,25 @@ struct Parser {
         if (!is(TLParen)) return true;
         next();
         out->is_function = true;
-        return parse_param_list(out);
+        if (!parse_param_list(out)) return false;
+        if (out->type.deduce == 1 && is(TArrow)) {
+            // auto f(A) -> R ([dcl.fct]): a trailing return type. Own limit: it must follow the ')' directly.
+            next();
+            Type r;
+            bool imp = false;
+            bool exp = false;
+            const bool lead_const = accept(TConst);
+            if (!parse_type(&r, &imp, &exp)) return false;
+            if (accept(TConst) || lead_const) r.pconst = true;
+            while (accept(TStar)) ++r.pointers;
+            if (accept(TAmp)) r.is_ref = true;
+            else if (accept(TAndAnd)) {
+                r.is_ref = true;
+                if (r.pointers == 0) r.rref = true;
+            }
+            out->type = r;
+        }
+        return true;
     }
 
     // At a global declaration: R Box<args>::member( or Box<args>::member = ... where Box is a class
@@ -2254,6 +2286,10 @@ struct Parser {
     bool lam_probe = false;
     bool lam_probe_seen = false;
     Type lam_probe_type{};
+    // The function whose returns the probe looks at (a lambda or a function inside it has its own returns), and
+    // whether the first return's expression was a reference (for decltype(auto)).
+    std::string lam_probe_fn{};
+    bool lam_probe_ref = false;
 
     // ISO/IEC 14882 [expr]: the binary operators from the loosest to the tightest.
     int prec(Tok op) const {
@@ -3701,6 +3737,15 @@ struct Parser {
         if (!ok) return false;
         structs[static_cast<size_t>(sid)].methods[mi].tok_body = m.body_at;
         structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
+        if (m.ret.deduce != 0) {
+            // auto: the method's result type is the one its body gave (in the method's own form: a reference is is_ref).
+            Type r = fn.ret;
+            if (fn.ret_ref) {
+                r.pointers -= 1;
+                r.is_ref = true;
+            }
+            structs[static_cast<size_t>(sid)].methods[mi].ret = r;
+        }
         funcs.push_back(std::move(fn));
         if (m.name == "<dtor>" && m.is_virtual) return define_scalar_dtor(sid, m);
         return true;
@@ -4049,7 +4094,71 @@ struct Parser {
 
     // special is 1 for a constructor and 2 for a destructor: the parts of the object are
     // constructed before the body and destroyed after it. An implicit one has no body.
+    // auto f() { ... } and decltype(auto) f() { ... } ([dcl.spec.auto]): the body is read once with no result type,
+    // to learn the type of the first return statement (no return: void), and the function gets that type. `auto` drops
+    // a reference and a top-level const and turns an array into a pointer; `auto&` keeps the written reference;
+    // `decltype(auto)` keeps a reference when the returned expression is one (a call returning T&, a reference name).
+    // Own simplification: only the first return is looked at, and `return (x);` is not made a reference.
+    bool deduce_return(FuncDecl* fn, int cls, int special, bool implicit) {
+        const int mode = fn->ret.deduce;
+        const bool written_ref = fn->ret_ref;
+        FuncDecl probe = *fn;
+        probe.ret = Type{};
+        probe.ret.base = 0;
+        probe.ret_ref = false;
+        probe.sret = false;
+        const bool saved_probe = lam_probe;
+        const bool saved_seen = lam_probe_seen;
+        const Type saved_type = lam_probe_type;
+        const std::string saved_fn = lam_probe_fn;
+        const bool saved_ref = lam_probe_ref;
+        lam_probe = true;
+        lam_probe_seen = false;
+        lam_probe_ref = false;
+        lam_probe_type = Type{};
+        lam_probe_fn = fn->name;
+        const size_t funcs_before = funcs.size();
+        std::vector<Node> keep_pre = std::move(stmt_pre);
+        stmt_pre.clear();
+        std::vector<Temp> keep_temps = std::move(stmt_temps);
+        stmt_temps.clear();
+        const size_t probe_at = at;
+        const bool ok = parse_function_body(&probe, cls, special, implicit);
+        at = probe_at;
+        stmt_pre = std::move(keep_pre);
+        stmt_temps = std::move(keep_temps);
+        while (funcs.size() > funcs_before) funcs.pop_back();
+        Type found = lam_probe_type;
+        const bool seen = lam_probe_seen;
+        const bool seen_ref = lam_probe_ref;
+        lam_probe = saved_probe;
+        lam_probe_seen = saved_seen;
+        lam_probe_type = saved_type;
+        lam_probe_fn = saved_fn;
+        lam_probe_ref = saved_ref;
+        if (!ok) return false;
+        Type r;
+        if (seen) {
+            r = found;
+        } else {
+            r.base = 0;
+        }
+        r.deduce = 0;
+        if (written_ref || (mode == 2 && seen_ref)) r.is_ref = true;
+        fn->ret = r;
+        fn->ret_ref = false;
+        if (fn->ret.is_ref) {
+            fn->ret_ref = true;
+            fn->ret.is_ref = false;
+            fn->ret.pointers += 1;
+        }
+        if (fn->func_id >= 0) func_types[static_cast<size_t>(fn->func_id)].ret = fn->ret;
+        fn->sret = fn->ret.base == 3 && fn->ret.pointers == 0 && !fits_register(fn->ret);
+        return true;
+    }
+
     bool parse_function_body(FuncDecl* fn, int cls, int special = 0, bool implicit = false) {
+        if (fn->ret.deduce != 0 && !deduce_return(fn, cls, special, implicit)) return false;
         std::vector<Local>* saved_locals = cur_locals;
         const std::vector<std::vector<DObj>> saved_dscopes = dscopes;
         const size_t saved_dbase = fn_dbase;
@@ -4998,8 +5107,7 @@ struct Parser {
                 }
             }
         }
-        size_t paren = td.start;
-        while (paren < td.end && tokens[paren].kind != TLParen) ++paren;
+        size_t paren = first_decl_paren(td.start, td.end);
         if (paren == td.start || paren >= td.end) {
             error = "expected a function template";
             return false;
@@ -5185,6 +5293,23 @@ struct Parser {
 
     // In a class body, at 'template': a member function template. Its declaration is kept as a token
     // range together with the class's own template arguments at this point ([temp.mem]).
+    // The '(' that opens a declared function's parameters: the first one that is not part of a decltype(...) in the
+    // return type (decltype(auto) f(...)).
+    size_t first_decl_paren(size_t from, size_t end) const {
+        size_t k = from;
+        while (k < end && tokens[k].kind != TLParen) {
+            if (tokens[k].kind == TIdent && tokens[k].text == "decltype" && k + 1 < end && tokens[k + 1].kind == TLParen) {
+                int depth = 0;
+                for (++k; k < end; ++k) {
+                    if (tokens[k].kind == TLParen) ++depth;
+                    else if (tokens[k].kind == TRParen && --depth == 0) break;
+                }
+            }
+            ++k;
+        }
+        return k;
+    }
+
     bool parse_member_template(int self) {
         next();  // template
         if (!expect(TLt, "'<'")) return false;
@@ -5211,8 +5336,7 @@ struct Parser {
             ++k;
         }
         mt.td.end = k;
-        size_t paren = mt.td.start;
-        while (paren < mt.td.end && tokens[paren].kind != TLParen) ++paren;
+        size_t paren = first_decl_paren(mt.td.start, mt.td.end);
         if (paren == mt.td.start || paren >= mt.td.end || tokens[paren - 1].kind != TIdent) {
             error = "expected a member function template";
             return false;

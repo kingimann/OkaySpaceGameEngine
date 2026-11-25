@@ -643,9 +643,13 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (braced_ret || !accept(TSemi)) {
             if (!braced_ret && !parse_expr(0, &value)) return false;
-            if (lam_probe && !lam_probe_seen && !braced_ret) {
+            if (lam_probe && !lam_probe_seen && !braced_ret && (lam_probe_fn.empty() || lam_probe_fn == current_fn)) {
                 Type seen;
                 if (static_type(value, &seen)) {
+                    // A reference: a name declared as one, or the call of a function that returns one (the call is
+                    // read through, see reference_result).
+                    lam_probe_ref = seen.is_ref || (value.kind == Node::Unary && value.op == TStar && !value.kids.empty() &&
+                                                    value.kids[0].kind == Node::Call);
                     seen.is_ref = false;
                     seen.pconst = false;
                     if (seen.is_array()) {

@@ -352,6 +352,8 @@ bool Parser::parse_lambda(Node* out) {
         const bool saved_probe = lam_probe;
         const bool saved_seen = lam_probe_seen;
         const Type saved_type = lam_probe_type;
+        const std::string saved_probe_fn = lam_probe_fn;
+        lam_probe_fn = structs[static_cast<size_t>(sid)].methods[mi].qname;
         lam_probe = true;
         lam_probe_seen = false;
         lam_probe_type = Type{};
@@ -372,6 +374,7 @@ bool Parser::parse_lambda(Node* out) {
         lam_probe = saved_probe;
         lam_probe_seen = saved_seen;
         lam_probe_type = saved_type;
+        lam_probe_fn = saved_probe_fn;
         if (!probe_ok) return false;
         while (funcs.size() > funcs_before) funcs.pop_back();
         Method& mm = structs[static_cast<size_t>(sid)].methods[mi];

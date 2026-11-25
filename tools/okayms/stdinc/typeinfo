@@ -3,12 +3,19 @@
 // (".?AVC@@" for a class C, "H" for int), and puts the address of a class's object in the slot before its virtual
 // table, so typeid(*p) finds the dynamic type. name() returns that decorated text (MSVC returns "class C"). Two
 // objects compare equal when their text is equal, so the same type in two files is the same; before() orders by the
-// text. No exceptions: there is no bad_typeid or bad_cast.
+// text. Each object also points to the object of the class's base (single inheritance), and dynamic_cast<T*>(p) is
+// __okay_dynamic_cast below: it reads the dynamic type from the slot before p's table and walks up the bases until it
+// meets T. No exceptions: there is no bad_typeid or bad_cast (dynamic_cast to a reference is not supported).
 #pragma once
 #include <cstddef>
 namespace std {
 class type_info {
     const char* name_;
+
+public:
+    const type_info* base__;  // the base class's object, or null (okay-ms's dynamic_cast walks these)
+
+private:
 
     static int compare_text(const char* a, const char* b) {
         while (*a != 0 && *a == *b) {
@@ -33,4 +40,14 @@ public:
         return h;
     }
 };
+// dynamic_cast<T*>(p) for a class with virtual functions ([expr.dynamic.cast] 8): p when the object's dynamic type is T
+// or derives from T, else null. Single inheritance: a base starts where its derived class starts, so the address is
+// the same.
+inline void* __okay_dynamic_cast(const void* obj, const type_info* target) {
+    if (obj == 0) return 0;
+    const type_info* const* table = *(const type_info* const* const*)obj;
+    for (const type_info* ti = table[-1]; ti != 0; ti = ti->base__)
+        if (*ti == *target) return (void*)obj;
+    return 0;
+}
 }

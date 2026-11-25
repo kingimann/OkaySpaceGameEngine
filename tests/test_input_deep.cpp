@@ -304,7 +304,7 @@ int main() {
         CHECK(!Input::KeysByPosition() && KeyForLetter(Key::Z, 'w') == Key::Z);
         std::vector<char> chars;
         TapCharsForKey(Key::Up, [](char c) { return KeyForLetter(Key::Unknown, c); }, chars);
-        CHECK(chars.size() == 2 && chars[0] == 'w' && chars[1] == Input::KeyUp);
+        CHECK(chars.size() == 1 && chars[0] == Input::KeyUp);   // (Input::FeedKeys adds 'w' for the raw reads)
         chars.clear();
         TapCharsForKey(Key::D, [](char c) { return KeyForLetter(Key::Unknown, c); }, chars);
         CHECK(chars.size() == 1 && chars[0] == 'd');
@@ -332,7 +332,7 @@ int main() {
         held[(int)Key::Up] = held[(int)Key::Space] = held[(int)Key::N5] = held[(int)Key::KpEnter] = true;
         held[(int)Key::RGui] = held[(int)Key::LCtrl] = true;
         AppendHeldMainKeys(isHeld, us, true, d);
-        CHECK(has(d, 'w') && has(d, Input::KeyUp) && has(d, ' ') && has(d, '5') && has(d, '\r') && has(d, Input::KeyCmd) &&
+        CHECK(!has(d, 'w') && has(d, Input::KeyUp) && has(d, ' ') && has(d, '5') && has(d, '\r') && has(d, Input::KeyCmd) &&
               has(d, Input::KeyCtrl) && has(d, (char)27) && !has(d, Input::KeyShift) && !has(d, 'd'));
         for (bool& h : held) h = false;
         // AZERTY: holding the key labelled W (the HID place of Z) gives 'w'; with "keys by position" it gives 'z'.

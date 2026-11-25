@@ -15,4 +15,7 @@ template <typename A, typename B> pair<A, B> make_pair(const A& a, const B& b) {
 template <typename T> T&& move(T& x) { return x; }
 template <typename T> T&& forward(T& x) { return x; }
 template <typename T> void swap(T& a, T& b) { T t = move(a); a = move(b); b = move(t); }
+// [comparisons]: the function objects the ordered containers default to (also reached through <functional>).
+template <typename T> struct less { bool operator()(const T& a, const T& b) const { return a < b; } };
+template <typename T> struct greater { bool operator()(const T& a, const T& b) const { return a > b; } };
 }

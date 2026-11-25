@@ -1,0 +1,39 @@
+// okay-ms own standard header: <condition_variable>, written from ISO/IEC 14882 [thread.condition] on the Win32
+// condition variable that sleeps on a slim reader/writer lock (SleepConditionVariableSRW, okay_win32_sync). Works with
+// unique_lock<mutex>. Differences from the standard: no condition_variable_any; wait_for with a predicate waits up to
+// the whole duration again after each wake-up that finds the predicate false (the standard keeps one deadline);
+// wait_until is not here.
+#pragma once
+#include <chrono>
+#include <mutex>
+namespace std {
+enum class cv_status { no_timeout, timeout };
+
+class condition_variable {
+    void* cv_;
+
+public:
+    condition_variable() : cv_(0) {}
+    void notify_one() { WakeConditionVariable(&cv_); }
+    void notify_all() { WakeAllConditionVariable(&cv_); }
+    void wait(unique_lock<mutex>& lk) { SleepConditionVariableSRW(&cv_, lk.mutex__()->native_handle(), 0xFFFFFFFFu, 0); }
+    template <typename P>
+    void wait(unique_lock<mutex>& lk, P pred) {
+        while (!pred()) wait(lk);
+    }
+    template <typename R, typename Per>
+    cv_status wait_for(unique_lock<mutex>& lk, const chrono::duration<R, Per>& d) {
+        long long ms = chrono::duration_cast<chrono::milliseconds>(d).count();
+        if (ms < 0) ms = 0;
+        if (ms > 0xFFFFFFFELL) ms = 0xFFFFFFFELL;
+        return SleepConditionVariableSRW(&cv_, lk.mutex__()->native_handle(), (unsigned)ms, 0) != 0 ? cv_status::no_timeout
+                                                                                                 : cv_status::timeout;
+    }
+    template <typename R, typename Per, typename P>
+    bool wait_for(unique_lock<mutex>& lk, const chrono::duration<R, Per>& d, P pred) {
+        while (!pred())
+            if (wait_for(lk, d) == cv_status::timeout) return pred();
+        return true;
+    }
+};
+}

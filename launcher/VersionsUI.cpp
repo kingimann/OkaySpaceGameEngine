@@ -16,6 +16,7 @@
 
 #include "VersionsNet.hpp"
 #include "TestBuild.hpp"   // V(): a test build says so
+#include "NavIcons.hpp"   // okl::SlateCombo: the launcher's one dropdown look
 
 namespace okayversionsui {
 namespace {
@@ -332,7 +333,7 @@ void DrawDefaultEditor(const Host& h, float width) {
     const std::string thisLabel = "This version" + (cur.empty() ? std::string() : " (" + V(cur) + ")");
     const std::string preview = set.defaultEditor.empty() ? thisLabel : V(set.defaultEditor);
     ImGui::SetNextItemWidth(width);
-    if (ImGui::BeginCombo("##defed", preview.c_str())) {
+    if (okl::BeginSlateCombo("##defed", preview.c_str())) {
         if (ImGui::Selectable(thisLabel.c_str(), set.defaultEditor.empty())) { set.defaultEditor.clear(); if (h.savePrefs) h.savePrefs(); }
         for (const Installed& i : st.installed) {
             std::string label = V(i.version);
@@ -514,7 +515,7 @@ void DrawInstalled(const Host& h) {
     ImGui::SameLine(0, 10);
     ImGui::SetNextItemWidth(72);
     int keep = std::clamp(set.keepPrevious, 0, kMaxKeepPrevious);
-    if (ImGui::Combo("##keepprev", &keep, "0\0" "1\0" "2\0" "3\0" "4\0" "5\0" "6\0" "7\0" "8\0" "9\0")) {
+    if (okl::SlateCombo("##keepprev", &keep, "0\0" "1\0" "2\0" "3\0" "4\0" "5\0" "6\0" "7\0" "8\0" "9\0")) {
         set.keepPrevious = keep;
         if (h.savePrefs) h.savePrefs();
     }
@@ -761,7 +762,7 @@ bool DrawChannelCombo(const Host& h, float width) {
     Settings& set = GlobalSettings();
     int idx = set.channel == Channel::Lts ? 1 : 0;
     ImGui::SetNextItemWidth(width);
-    if (!ImGui::Combo("##updchannel", &idx, "Latest\0Long-term support (LTS)\0")) return false;
+    if (!okl::SlateCombo("##updchannel", &idx, "Latest\0Long-term support (LTS)\0")) return false;
     set.channel = idx == 1 ? Channel::Lts : Channel::Latest;
     if (h.savePrefs) h.savePrefs();
     if (h.channelChanged) h.channelChanged();

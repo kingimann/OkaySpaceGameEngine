@@ -15,6 +15,8 @@
 - [Guided modeling](guided_modeling.md): Guided procedural modeling: the design, detail levels, the speed work and the generator quality audit.
 - [Level tools: foliage, terrain layers, decals, cables, measuring and orthographic views](level_tools.md): Small tools for dressing a 3D level. Everything here is saved in the scene and has an undo step.
 - [Modeling](modeling.md): The Modeling window (built-in mesh editor) and its audit.
+- [Modeling side bar audit](../modeling_sidebar.md): the page list on the left of the Modeling window (internal record; the page sits at the top of `docs/`).
+- [Splitting `editor/main.cpp`](main_split_plan.md): moved; now Part B of the [modularization plan](../engine/modularization_plan.md).
 - [Project panel](project_panel.md): The Project panel is the editor's asset browser: a folder tree on the left, the folder's contents on the right (tiles or a list), a path bar with Back and Forward, search, and a strip at the bottom for the selected asset.
 - [Project versions and upgrading a project](project_upgrade.md): A project remembers which version of OkaySpace last saved it.
 - [Scene view: right-click to add](scene_right_click_add.md): Owner request (2026-11-18): "I want to be able to right click inside of the scene and add stuff."

@@ -1,0 +1,52 @@
+# Starts a test build (dev-build.yml, the dev channel) by itself, so the owner gets a new test build as work lands
+# (owner, 2026-11-25: "i want new test runs consistently as your pushing prs"):
+#   * every push to main: a test build of main;
+#   * every pull request push whose PR checks finished green (the "CI" run of the pull_request event): a test build of that PR's branch.
+# It only dispatches dev-build.yml from main (the reviewed copy, which alone may publish; docs/release/release_channels.md "Test builds").
+# workflow_run and push both run THIS file as it is on main, so a pull request cannot change what this starts. Nothing typed by anyone is
+# pasted into a shell script: the branch and the title go through environment variables and are reduced to plain letters before use.
+# The test builds queue on dev-build.yml's own lock; the launcher offers the newest one.
+name: Start test builds
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: write          # to dispatch dev-build.yml
+  contents: read
+
+jobs:
+  start:
+    name: Start a test build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A push to main, or a green PR check run from a branch of this repository (never a fork).
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    steps:
+      - name: Dispatch dev-build.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          PR_TITLE: ${{ github.event.workflow_run.display_title }}
+          PUSH_TITLE: ${{ github.event.head_commit.message }}
+        run: |
+          set -eu
+          plain() { printf '%s' "$1" | head -n1 | tr -c 'A-Za-z0-9 .,:()#/+=_-' ' ' | tr -s ' ' | cut -c1-140; }
+          if [ "$EVENT" = push ]; then
+            ref=main; note="$(plain "main: $PUSH_TITLE")"
+          else
+            ref="$PR_BRANCH"
+            case "$ref" in ''|*[!A-Za-z0-9._/-]*|-*) echo "not a plain branch name, no test build"; exit 0;; esac
+            note="$(plain "PR: $PR_TITLE")"
+          fi
+          gh workflow run dev-build.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$ref" -f note="$note"
+          echo "Started a test build of $ref: $note" | tee -a "$GITHUB_STEP_SUMMARY"

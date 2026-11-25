@@ -932,6 +932,10 @@ bool Parser::parse_unary(Node* out) {
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
             if (!parse_brackets(&ty)) return false;
+            if (ty.is_ref) {  // sizeof(T&) is the size of T ([expr.sizeof] 2)
+                ty.is_ref = false;
+                ty.rref = false;
+            }
             bytes = size_of(ty);
         } else {
             Node inner;
@@ -941,7 +945,10 @@ bool Parser::parse_unary(Node* out) {
                     for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
                         const Local& local = (*cur_locals)[static_cast<size_t>(i)];
                         if (local.name == inner.text && scope_visible(local.scope)) {
-                            bytes = size_of(local.type);
+                            Type lt = local.type;  // a reference names the object it refers to ([expr.sizeof] 2)
+                            lt.is_ref = false;
+                            lt.rref = false;
+                            bytes = size_of(lt);
                             break;
                         }
                     }
@@ -959,7 +966,11 @@ bool Parser::parse_unary(Node* out) {
             if (bytes == 0) {
                 // sizeof of any other expression: the size of its type, if the parser can tell it.
                 Type et;
-                if (static_type(inner, &et)) bytes = size_of(et);
+                if (static_type(inner, &et)) {
+                    et.is_ref = false;
+                    et.rref = false;
+                    bytes = size_of(et);
+                }
             }
             if (bytes == 0) {
                 error = "sizeof needs a type or a name";
@@ -1166,7 +1177,10 @@ bool Parser::parse_unary(Node* out) {
             const size_t first = name.find("::");
             const size_t last = name.rfind("::");
             const std::string suffix = name.substr(last + 2);
-            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) name = suffix;
+            // An ordinary function of that full name (std::filesystem::remove beside the algorithm std::remove) is the
+            // one called ([namespace.qual]); okay-ms keeps templates by their bare names only.
+            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0 && ovl.count(name) == 0)
+                name = suffix;
         }
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // std::string("abc"): a class of a namespace is registered by its bare name, as in a declaration.
@@ -1176,8 +1190,9 @@ bool Parser::parse_unary(Node* out) {
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) is_function = true;
             if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
-                (class_name_text(suffix) || (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
-                name = suffix;
+                (class_name_text(suffix) || (typedefs.count(suffix) == 0 && find_struct(suffix) >= 0) ||
+                 (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
+                name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
         }
         const size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
@@ -1190,7 +1205,8 @@ bool Parser::parse_unary(Node* out) {
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
-            if (!is(TLParen) && static_member_expr(scope_sid, member, out)) return parse_postfix(out);
+            if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
+                return parse_postfix(out);
             std::vector<TArg> qtargs;
             if (is(TLt)) {
                 int tmpl_owner = -1;
@@ -1201,7 +1217,8 @@ bool Parser::parse_unary(Node* out) {
         }
         if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
-            if (!is(TLParen) && static_member_expr(cur_class, name, out)) return parse_postfix(out);
+            if ((!is(TLParen) || static_object_call(cur_class, name)) && static_member_expr(cur_class, name, out))
+                return parse_postfix(out);
             bool is_field = false;
             for (const Field& field : def.fields)
                 if (field.name == name) is_field = true;
@@ -1228,7 +1245,10 @@ bool Parser::parse_unary(Node* out) {
                 for (const Method& m : def.methods)
                     if (m.name == name) is_method = true;
                 int tmpl_owner = -1;
-                if (find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) is_method = true;
+                // A constructor template (template <class It> string(It, It)) is not a member function: string(p, n)
+                // inside the class is a new object ([class.ctor] 2, [expr.type.conv]).
+                const bool own_name = name == def.name || (!def.tmpl.empty() && name == def.tmpl);
+                if (!own_name && find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) is_method = true;
                 bool any_object_fn = false;
                 for (const Method& m : def.methods)
                     if (m.name == name && !m.is_static) any_object_fn = true;
@@ -1390,14 +1410,19 @@ bool Parser::parse_unary(Node* out) {
             Type ty = functional_cast_type(name);
             next();
             Node inner;
-            if (is(TRParen)) {
+            // The list may be a pack expansion, T(a...) with T bound to a scalar ([temp.variadic]): it must give one
+            // value, or none.
+            std::vector<Node> list;
+            if (!parse_call_args(&list)) return false;
+            if (list.empty()) {
                 // T(): a value-initialised scalar is zero ([expr.type.conv]).
-                next();
                 inner.kind = Node::IntLit;
                 inner.type.base = 1;
+            } else if (list.size() == 1) {
+                inner = std::move(list[0]);
             } else {
-                if (!parse_expr(0, &inner)) return false;
-                if (!expect(TRParen, "')'")) return false;
+                error = "a cast to " + name + " takes one value";
+                return false;
             }
             if (!convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && ty.base == 1 && !ty.is_bool) {
@@ -1448,6 +1473,12 @@ bool Parser::parse_unary(Node* out) {
             out->number = enum_values[name];
             out->type.base = 1;
             out->type.enum_id = enum_id_of(name);
+            {
+                // A template value parameter of a 64-bit type (mt19937_64's a = 0xb5026f5aa96619e9): a value that does
+                // not fit in an int keeps all 64 bits.
+                const long long v = static_cast<long long>(out->number);
+                if (v < -2147483647LL - 1 || v > 2147483647LL) out->type.wide = true;
+            }
         } else if (class_enumerator(name, &out->number)) {
             // In::P1: an enumerator of an unscoped enumeration declared in class In ([class.member.lookup]); enumerators are
             // kept in one table here.
@@ -1756,17 +1787,29 @@ bool Parser::parse_postfix(Node* out) {
                 // p->~T() and o.~T(): an explicit destructor call ([class.dtor]); for a type without a destructor
                 // (a scalar, a plain struct) it does nothing ([expr.prim.id.dtor]).
                 next();
+                const std::string dtor_name = cur().text;
                 next();
                 if (!expect(TLParen, "'('") || !expect(TRParen, "')'")) return false;
                 Type ot;
                 Node call_expr;
                 call_expr.kind = Node::IntLit;
                 call_expr.type.base = 1;
-                if (static_type(*out, &ot) && ot.base == 3 && ot.struct_id >= 0 && ot.pointers == (op == TArrow ? 1 : 0) &&
-                    class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)])) {
+                int dsid = -1;
+                if (static_type(*out, &ot) && ot.base == 3 && ot.struct_id >= 0 && ot.pointers == (op == TArrow ? 1 : 0)) {
+                    dsid = ot.struct_id;
+                } else {
+                    // The object's type is not known here (static_cast<H*>(p)->~H()): the name after ~ says the class.
+                    auto dtd = typedefs.find(dtor_name);
+                    if (dtd != typedefs.end()) {
+                        if (dtd->second.base == 3 && dtd->second.pointers == 0) dsid = dtd->second.struct_id;
+                    } else {
+                        dsid = find_struct(dtor_name);
+                    }
+                }
+                if (dsid >= 0 && class_needs_dtor(structs[static_cast<size_t>(dsid)])) {
                     Node self = op == TArrow ? std::move(*out) : node_addr(std::move(*out));
                     Node stmt;
-                    if (!special_call(ot.struct_id, "<dtor>", std::move(self), {}, &stmt)) return false;
+                    if (!special_call(dsid, "<dtor>", std::move(self), {}, &stmt)) return false;
                     call_expr = std::move(stmt.kids[0]);
                 }
                 *out = std::move(call_expr);
@@ -1839,6 +1882,18 @@ bool Parser::parse_postfix(Node* out) {
             }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
+            {
+                // o.r for a reference member: the field holds the address of what it refers to ([dcl.ref]).
+                Type holder;
+                if (static_type(out->kids[0], &holder) && holder.base == 3 && holder.struct_id >= 0 &&
+                    structs[static_cast<size_t>(holder.struct_id)].ref_caps.count(out->text) > 0) {
+                    Node field = std::move(*out);
+                    *out = Node{};
+                    out->kind = Node::Unary;
+                    out->op = TStar;
+                    out->kids.push_back(std::move(field));
+                }
+            }
         }
     }
     return true;
@@ -1898,6 +1953,26 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     *out = node_name(hidden.name);
                     continue;
                 }
+            }
+            if (tern.kids[0].kind == Node::IntLit && tern.kids[0].type.base < 5 && mid.kind == Node::IntLit &&
+                els.kind == Node::IntLit && mid.type.base < 5 && els.type.base < 5 && mid.type.pointers == 0 &&
+                els.type.pointers == 0) {
+                // c ? a : b with integer constants is a constant ([expr.cond] 7, [expr.const]): the chosen operand
+                // in the common type of both (a static member such as `value = same ? 0 : 1 + next::value`).
+                // Operands of one type keep it ('-' : '+' stays a char, [expr.cond] 7.1); otherwise the usual
+                // arithmetic conversions.
+                const bool same = mid.type.base == els.type.base && mid.type.wide == els.type.wide &&
+                                  mid.type.is_unsigned == els.type.is_unsigned && mid.type.is_bool == els.type.is_bool &&
+                                  mid.text == els.text;
+                const Type common = const_common(mid.type, els.type);
+                Node chosen = tern.kids[0].number != 0 ? std::move(mid) : std::move(els);
+                if (!same) {
+                    chosen.number = const_norm(chosen.number, common);
+                    chosen.type = common;
+                    chosen.text.clear();
+                }
+                *out = std::move(chosen);
+                continue;
             }
             tern.kids.push_back(std::move(mid));
             tern.kids.push_back(std::move(els));
@@ -2115,7 +2190,7 @@ bool Parser::parse_type_trait(Node* out) {
                         v = true;
                 }
             if (!any_ctor && types.size() == 1) v = true;
-            if (has_ctor_template(a.struct_id)) v = true;
+            if (has_ctor_template_taking(a.struct_id, types.size() - 1)) v = true;
         }
     } else if (which == "__is_base_of") {
         if (types.size() != 2) {

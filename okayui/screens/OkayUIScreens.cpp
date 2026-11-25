@@ -100,7 +100,63 @@ WhatsNewResult DrawWhatsNew(const WhatsNewModel& m, float x, float y, float w, f
             UI::EndCard();
             UI::PopID();
         };
-        if (!m.releases.empty()) {
+        if (m.showSections) {   // "Releases" | "Test builds"
+            const char* names[2] = {"Releases", "Test builds"};
+            for (int k = 0; k < 2; ++k) {
+                if (k) UI::SameLine();
+                char lbl[48];
+                if (k == 1 && m.testView == WhatsNewModel::TestView::List) std::snprintf(lbl, sizeof(lbl), "%s (%d)", names[k], (int)m.testBuilds.size());
+                else std::snprintf(lbl, sizeof(lbl), "%s", names[k]);
+                const bool hit = m.section == k ? UI::PrimaryButton(lbl) : UI::Button(lbl);
+                res.sectionButtons[k] = UI::GetItemRect();
+                if (hit) res.sectionClicked = k;
+            }
+            UI::Spacing(4.0f);
+        }
+        if (m.showSections && m.section == 1) {   // ---- Test builds ----
+            using TV = WhatsNewModel::TestView;
+            switch (m.testView) {
+            case TV::Off:
+                UI::Text("Test builds are off");
+                UI::TextWrapped("Turn on Settings > Behavior > Get test builds to see and get builds made for testing, before they are released.");
+                if (UI::Button("Open update settings")) res.openUpdateSettings = true;
+                break;
+            case TV::Loading:
+                UI::Text("Looking for test builds...");
+                UI::TextDisabled("They show here after the next update check.");
+                break;
+            case TV::Failed:
+                UI::Text("Couldn't read the test builds");
+                UI::TextWrapped("The list could not be downloaded or was not signed. Check your connection; the next update check tries again.");
+                if (UI::Button("Check again")) res.checkAgain = true;
+                break;
+            case TV::Empty:
+                UI::Text("No test builds right now");
+                UI::TextDisabled("When a build is made for testing it shows here, newest first.");
+                break;
+            case TV::List:
+                for (std::size_t i = 0; i < m.testBuilds.size(); ++i) {
+                    const auto& b = m.testBuilds[i];
+                    UI::PushID((int)(1000 + i));
+                    char id[32]; std::snprintf(id, sizeof(id), "##tb%d", (int)i);
+                    UI::BeginCard(id);
+                    UI::Text(b.version.c_str());   // (the host passes it with its one "v")
+                    if (b.installed) { UI::SameLine(); UI::Badge("Installed"); }
+                    if (!b.date.empty()) { UI::SameLine(); UI::TextDisabled(b.date.c_str()); }
+                    UI::TextWrapped(b.note.empty() ? "No note was given for this build." : b.note.c_str());
+                    UI::TextDisabled(("Branch: " + (b.branch.empty() ? std::string("not given") : b.branch)).c_str());
+                    if (i == 0 && !m.testNotes.empty()) {
+                        UI::Spacing(2.0f);
+                        UI::TextDisabled("What changed in this build");
+                        for (const std::string& n : m.testNotes) BulletWrapped(n.c_str());
+                    }
+                    UI::EndCard();
+                    UI::PopID();
+                }
+                UI::TextDisabled("Test builds can be broken. Settings > Behavior > Get test builds turns them off.");
+                break;
+            }
+        } else if (!m.releases.empty()) {
             releaseCard(m.releases[0], !m.placeholder, 0);
             if (m.placeholder)
                 UI::TextDisabled("Notes for each release show up here once the launcher has checked for updates.");

@@ -127,6 +127,13 @@ inline std::string FormatVersion(const Version& v) {
 inline std::string NormalizeVersion(std::string_view text) { return FormatVersion(ParseVersion(text)); }
 /// True for the unversioned development build ("dev").
 inline bool IsDevVersion(std::string_view text) { return ParseVersion(text).dev; }
+/// The version with exactly one leading "v": "2.903.6" and "v2.903.6" both give "v2.903.6" (no "vv2.903.6" when the text
+/// already had one). Not normalized, so a test build's four numbers stay as they are. "" stays "".
+inline std::string WithV(std::string_view text) {
+    std::string t(TrimSpace(text));
+    while (!t.empty() && (t[0] == 'v' || t[0] == 'V')) t.erase(0, 1);
+    return t.empty() ? t : "v" + t;
+}
 /// "v2.855.0" for a version, the text itself otherwise (what the dialogs print).
 inline std::string DisplayVersion(std::string_view text) {
     const std::string n = NormalizeVersion(text);

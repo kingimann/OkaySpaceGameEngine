@@ -149,7 +149,8 @@ across launches until the player signs out.
 
 Once signed in, the client can make **authenticated requests** to your server:
 it attaches the session token as an `Authorization: Bearer <token>` header (sent
-via a curl config file, so the token never appears in the process list). Use
+through the one HTTP seam: WinHTTP on Windows; when curl is the fallback, the header goes in a file only the user can
+read, so the token never appears in the process list). Use
 this to build server features on top of accounts — cloud saves, profiles,
 leaderboards, and so on. Your server returns `401`/`403` for an
 invalid/expired token.

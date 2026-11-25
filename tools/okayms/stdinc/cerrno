@@ -1,0 +1,63 @@
+// okay-ms own standard header: <cerrno>, written from ISO/IEC 14882 [cerrno.syn] and ISO/IEC 9899 7.5. errno is a
+// modifiable int of its own in each thread (a thread_local here). The numbers of the error macros are those Microsoft
+// documents for its C runtime ("errno constants"). Own simplification: errno lives in an inline function, so each object
+// file has its own copy, and okay-ms's runtime functions (strtod, strtol) do not set it.
+#pragma once
+inline int& okay_errno__() {
+    static thread_local int value = 0;
+    return value;
+}
+#define errno (okay_errno__())
+#define EPERM 1
+#define ENOENT 2
+#define ESRCH 3
+#define EINTR 4
+#define EIO 5
+#define ENXIO 6
+#define E2BIG 7
+#define ENOEXEC 8
+#define EBADF 9
+#define ECHILD 10
+#define EAGAIN 11
+#define ENOMEM 12
+#define EACCES 13
+#define EFAULT 14
+#define EBUSY 16
+#define EEXIST 17
+#define EXDEV 18
+#define ENODEV 19
+#define ENOTDIR 20
+#define EISDIR 21
+#define EINVAL 22
+#define ENFILE 23
+#define EMFILE 24
+#define ENOTTY 25
+#define EFBIG 27
+#define ENOSPC 28
+#define ESPIPE 29
+#define EROFS 30
+#define EMLINK 31
+#define EPIPE 32
+#define EDOM 33
+#define ERANGE 34
+#define EDEADLK 36
+#define ENAMETOOLONG 38
+#define ENOLCK 39
+#define ENOSYS 40
+#define ENOTEMPTY 41
+#define EILSEQ 42
+#define EADDRINUSE 100
+#define EADDRNOTAVAIL 101
+#define EALREADY 103
+#define ECONNABORTED 106
+#define ECONNREFUSED 107
+#define ECONNRESET 108
+#define EINPROGRESS 112
+#define EISCONN 113
+#define EMSGSIZE 115
+#define ENOTCONN 126
+#define ENOTSOCK 128
+#define ENOTSUP 129
+#define EOVERFLOW 132
+#define ETIMEDOUT 138
+#define EWOULDBLOCK 140

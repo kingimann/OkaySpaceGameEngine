@@ -1,0 +1,312 @@
+// <memory> for okay-cc (ISO/IEC 14882 [unique.ptr], [util.smartptr.shared], [util.smartptr.weak]). Our own
+// header, minimal. unique_ptr owns one object (or an array, unique_ptr<T[]>) and destroys it with its deleter.
+// shared_ptr and weak_ptr share a count block: __uses strong owners and __weaks weak owners plus one for all the
+// strong ones together; the object is destroyed when __uses reaches 0 and the block is freed when __weaks
+// does. The block is a class with a virtual dispose(), so a shared_ptr<Base> made from a Derived* destroys
+// it as a Derived. make_shared allocates the object and the block separately. Not thread safe: the counts
+// are plain integers. The members of the smart pointers are public (with reserved names) because the
+// conversions between instances read each other's members.
+#pragma once
+#include <cstddef>
+#include <new>
+#include <utility>
+namespace std {
+
+template <typename T>
+struct default_delete {
+    default_delete() {}
+    void operator()(T *p) const { delete p; }
+};
+template <typename T>
+struct default_delete<T[]> {
+    default_delete() {}
+    void operator()(T *p) const { delete[] p; }
+};
+
+template <typename T, typename D = default_delete<T>>
+class unique_ptr {
+public:
+    T *__p;
+    D __d;
+    unique_ptr() : __p(nullptr), __d() {}
+    unique_ptr(nullptr_t) : __p(nullptr), __d() {}
+    explicit unique_ptr(T *p) : __p(p), __d() {}
+    unique_ptr(T *p, const D &d) : __p(p), __d(d) {}
+    unique_ptr(unique_ptr<T, D> &&o) : __p(o.__p), __d(o.__d) { o.__p = nullptr; }
+    template <typename U, typename E>
+    unique_ptr(unique_ptr<U, E> &&o) : __p(o.__p), __d() {
+        o.__p = nullptr;
+    }
+    ~unique_ptr() {
+        if (__p) __d(__p);
+    }
+    unique_ptr<T, D> &operator=(unique_ptr<T, D> &&o) {
+        if (this != &o) {
+            reset(o.__p);
+            o.__p = nullptr;
+            __d = o.__d;
+        }
+        return *this;
+    }
+    template <typename U, typename E>
+    unique_ptr<T, D> &operator=(unique_ptr<U, E> &&o) {
+        T *q = o.__p;
+        o.__p = nullptr;
+        reset(q);
+        return *this;
+    }
+    unique_ptr<T, D> &operator=(nullptr_t) {
+        reset();
+        return *this;
+    }
+    T *get() const { return __p; }
+    T *operator->() const { return __p; }
+    T &operator*() const { return *__p; }
+    explicit operator bool() const { return __p != nullptr; }
+    bool operator==(const unique_ptr<T, D> &o) const { return __p == o.__p; }
+    bool operator!=(const unique_ptr<T, D> &o) const { return __p != o.__p; }
+    bool operator==(nullptr_t) const { return __p == nullptr; }
+    bool operator!=(nullptr_t) const { return __p != nullptr; }
+    D &get_deleter() { return __d; }
+    T *release() {
+        T *q = __p;
+        __p = nullptr;
+        return q;
+    }
+    void reset() { reset(nullptr); }
+    void reset(T *q) {
+        T *old = __p;
+        __p = q;
+        if (old) __d(old);
+    }
+    void swap(unique_ptr<T, D> &o) {
+        T *q = __p;
+        __p = o.__p;
+        o.__p = q;
+        D e = __d;
+        __d = o.__d;
+        o.__d = e;
+    }
+};
+
+// The array form ([unique.ptr.runtime]): delete[], and [] in place of -> and *.
+template <typename T, typename D>
+class unique_ptr<T[], D> {
+public:
+    T *__p;
+    D __d;
+    unique_ptr() : __p(nullptr), __d() {}
+    unique_ptr(nullptr_t) : __p(nullptr), __d() {}
+    explicit unique_ptr(T *p) : __p(p), __d() {}
+    unique_ptr(unique_ptr<T[], D> &&o) : __p(o.__p), __d(o.__d) { o.__p = nullptr; }
+    ~unique_ptr() {
+        if (__p) __d(__p);
+    }
+    unique_ptr<T[], D> &operator=(unique_ptr<T[], D> &&o) {
+        if (this != &o) {
+            reset(o.__p);
+            o.__p = nullptr;
+        }
+        return *this;
+    }
+    T *get() const { return __p; }
+    T &operator[](size_t i) const { return __p[i]; }
+    explicit operator bool() const { return __p != nullptr; }
+    bool operator==(nullptr_t) const { return __p == nullptr; }
+    bool operator!=(nullptr_t) const { return __p != nullptr; }
+    T *release() {
+        T *q = __p;
+        __p = nullptr;
+        return q;
+    }
+    void reset() { reset(nullptr); }
+    void reset(T *q) {
+        T *old = __p;
+        __p = q;
+        if (old) __d(old);
+    }
+};
+
+template <typename T, typename... A>
+unique_ptr<T> make_unique(A &&...a) {
+    return unique_ptr<T>(new T(std::forward<A>(a)...));
+}
+// The count block of shared_ptr and weak_ptr.
+struct __sp_count {
+    long __uses;
+    long __weaks;
+    __sp_count() : __uses(1), __weaks(1) {}
+    virtual ~__sp_count() {}
+    virtual void __dispose() = 0;
+    void __add_use() { ++__uses; }
+    void __add_weak() { ++__weaks; }
+    void __drop_use() {
+        if (--__uses == 0) {
+            __dispose();
+            __drop_weak();
+        }
+    }
+    void __drop_weak() {
+        if (--__weaks == 0) delete this;
+    }
+};
+template <typename U>
+struct __sp_count_of : __sp_count {
+    U *__obj;
+    explicit __sp_count_of(U *p) : __obj(p) {}
+    void __dispose() override { delete __obj; }
+};
+
+template <typename T>
+class weak_ptr;
+
+template <typename T>
+class shared_ptr {
+public:
+    T *__p;
+    __sp_count *__c;
+    shared_ptr() : __p(nullptr), __c(nullptr) {}
+    shared_ptr(nullptr_t) : __p(nullptr), __c(nullptr) {}
+    template <typename U>
+    explicit shared_ptr(U *p) : __p(p), __c(p ? new __sp_count_of<U>(p) : nullptr) {}
+    shared_ptr(const shared_ptr<T> &o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_use();
+    }
+    shared_ptr(shared_ptr<T> &&o) : __p(o.__p), __c(o.__c) {
+        o.__p = nullptr;
+        o.__c = nullptr;
+    }
+    template <typename U>
+    shared_ptr(const shared_ptr<U> &o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_use();
+    }
+    template <typename U>
+    shared_ptr(shared_ptr<U> &&o) : __p(o.__p), __c(o.__c) {
+        o.__p = nullptr;
+        o.__c = nullptr;
+    }
+    ~shared_ptr() {
+        if (__c) __c->__drop_use();
+    }
+    shared_ptr<T> &operator=(const shared_ptr<T> &o) {
+        if (o.__c) o.__c->__add_use();
+        if (__c) __c->__drop_use();
+        __p = o.__p;
+        __c = o.__c;
+        return *this;
+    }
+    shared_ptr<T> &operator=(shared_ptr<T> &&o) {
+        if (this != &o) {
+            if (__c) __c->__drop_use();
+            __p = o.__p;
+            __c = o.__c;
+            o.__p = nullptr;
+            o.__c = nullptr;
+        }
+        return *this;
+    }
+    template <typename U>
+    shared_ptr<T> &operator=(const shared_ptr<U> &o) {
+        if (o.__c) o.__c->__add_use();
+        if (__c) __c->__drop_use();
+        __p = o.__p;
+        __c = o.__c;
+        return *this;
+    }
+    shared_ptr<T> &operator=(nullptr_t) {
+        reset();
+        return *this;
+    }
+    T *get() const { return __p; }
+    T *operator->() const { return __p; }
+    T &operator*() const { return *__p; }
+    explicit operator bool() const { return __p != nullptr; }
+    bool operator==(const shared_ptr<T> &o) const { return __p == o.__p; }
+    bool operator!=(const shared_ptr<T> &o) const { return __p != o.__p; }
+    bool operator==(nullptr_t) const { return __p == nullptr; }
+    bool operator!=(nullptr_t) const { return __p != nullptr; }
+    long use_count() const { return __c ? __c->__uses : 0; }
+    void reset() {
+        if (__c) __c->__drop_use();
+        __p = nullptr;
+        __c = nullptr;
+    }
+    template <typename U>
+    void reset(U *p) {
+        shared_ptr<T> n(p);
+        swap(n);
+    }
+    void swap(shared_ptr<T> &o) {
+        T *p = __p;
+        __sp_count *c = __c;
+        __p = o.__p;
+        __c = o.__c;
+        o.__p = p;
+        o.__c = c;
+    }
+};
+
+template <typename T>
+class weak_ptr {
+public:
+    T *__p;
+    __sp_count *__c;
+    weak_ptr() : __p(nullptr), __c(nullptr) {}
+    weak_ptr(const weak_ptr<T> &o) : __p(o.__p), __c(o.__c) {
+        if (__c) __c->__add_weak();
+    }
+    template <typename U>
+    weak_ptr(const shared_ptr<U> &s) : __p(s.__p), __c(s.__c) {
+        if (__c) __c->__add_weak();
+    }
+    ~weak_ptr() {
+        if (__c) __c->__drop_weak();
+    }
+    weak_ptr<T> &operator=(const weak_ptr<T> &o) {
+        if (o.__c) o.__c->__add_weak();
+        if (__c) __c->__drop_weak();
+        __p = o.__p;
+        __c = o.__c;
+        return *this;
+    }
+    template <typename U>
+    weak_ptr<T> &operator=(const shared_ptr<U> &s) {
+        if (s.__c) s.__c->__add_weak();
+        if (__c) __c->__drop_weak();
+        __p = s.__p;
+        __c = s.__c;
+        return *this;
+    }
+    long use_count() const { return __c ? __c->__uses : 0; }
+    bool expired() const { return use_count() == 0; }
+    shared_ptr<T> lock() const {
+        shared_ptr<T> s;
+        if (__c && __c->__uses > 0) {
+            __c->__add_use();
+            s.__p = __p;
+            s.__c = __c;
+        }
+        return s;
+    }
+    void reset() {
+        if (__c) __c->__drop_weak();
+        __p = nullptr;
+        __c = nullptr;
+    }
+};
+
+template <typename T, typename... A>
+shared_ptr<T> make_shared(A &&...a) {
+    return shared_ptr<T>(new T(std::forward<A>(a)...));
+}
+
+template <typename T, typename U>
+shared_ptr<T> static_pointer_cast(const shared_ptr<U> &s) {
+    shared_ptr<T> r;
+    r.__p = static_cast<T *>(s.__p);
+    r.__c = s.__c;
+    if (r.__c) r.__c->__add_use();
+    return r;
+}
+
+}  // namespace std

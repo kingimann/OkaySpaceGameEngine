@@ -771,6 +771,7 @@ private:
     struct CtorDef {
         std::vector<Param> params;
         std::vector<MemInit> inits;
+        std::vector<std::unique_ptr<Stmt>> pre;  // hidden locals the initializers use
         std::unique_ptr<Stmt> body;
         bool hasBody = false;
         Pos pos;
@@ -785,6 +786,7 @@ private:
         Pos dtorPos;
         bool dtorInline = false;  // a body for the complete-object destructor is emitted at class end
         bool cxx = false;
+        bool tmplCtor = false;  // has a constructor template
     };
     struct DVar {
         std::string name;
@@ -821,6 +823,7 @@ private:
             c.bits = p.bits;
             c.mangled = p.mangled;
             c.vslot = p.vslot;
+            c.cmethod = p.cmethod;
             c.pure = p.pure;
             if (p.type) c.type = cloneType(*p.type);
             out.push_back(std::move(c));
@@ -1163,14 +1166,16 @@ private:
 
     // A constructor body: base constructor, vtable pointer, members in declaration order, then the
     // user's own statements (ISO C++ [class.base.init]).
-    std::unique_ptr<Decl> buildCtor(const std::string& tag, CtorDef& d) {
+    std::unique_ptr<Decl> buildCtor(const std::string& tag, CtorDef& d, const std::string& symbol = "") {
         Type* T = classOf(tag);
         if (!T) return nullptr;
         Pos p = d.pos;
         auto fn = fnTypeOf(d.params);
-        std::string mangled = mangleSpecial(tag, "C1", *fn);
+        std::string mangled = symbol.empty() ? mangleSpecial(tag, "C1", *fn) : symbol;
         auto decl = newMethodDecl(tag, mangled, *fn, d.params, p);
         auto body = sBlock(p);
+        for (auto& st : d.pre) body->stmts.push_back(std::move(st));
+        d.pre.clear();
         auto take = [&](const std::string& n, const std::string& alt) -> MemInit* {
             for (MemInit& m : d.inits)
                 if (m.name == n || (!alt.empty() && m.name == alt)) return &m;
@@ -1512,7 +1517,7 @@ private:
     void finishClass(ClassCtx& c) {
         Type& T = *c.t;
         Type* B = T.base.empty() ? nullptr : classOf(T.base);
-        bool needCtor = !c.ctors.empty() || T.hasVptr || (B && B->needCtor);
+        bool needCtor = !c.ctors.empty() || c.tmplCtor || T.hasVptr || (B && B->needCtor);
         if (dmi_.count(c.tag) && !dmi_[c.tag].empty()) needCtor = true;
         bool needDtor = c.dtorDeclared || (B && B->needDtor);
         for (auto& f : ownFields(T)) {
@@ -1526,7 +1531,7 @@ private:
         }
         T.needCtor = needCtor;
         T.needDtor = needDtor;
-        if (!c.ctors.empty() || c.dtorDeclared || T.hasVptr || needCtor || needDtor) T.nonpod = true;
+        if (!c.ctors.empty() || c.tmplCtor || c.dtorDeclared || T.hasVptr || needCtor || needDtor) T.nonpod = true;
         Token at;
         at.line = c.dtorPos.line;
         at.column = c.dtorPos.col;
@@ -1952,6 +1957,7 @@ private:
                 c.bits = p.bits;
                 c.mangled = p.mangled;
                 c.vslot = p.vslot;
+                c.cmethod = p.cmethod;  // a const virtual is overridden only by a const one
                 c.pure = p.pure;
                 if (p.type) c.type = cloneType(*p.type);
                 t->params.push_back(std::move(c));
@@ -1982,11 +1988,17 @@ private:
             }
             if (isKw("template")) {
                 std::string savedTag = memberTag_;
+                std::string savedShort = memberShort_;
                 Type* savedCls = memberCls_;
                 memberTag_ = tag;
+                memberShort_ = shortTag;
                 memberCls_ = t.get();
-                parseTemplate();
+                if (parseTemplate()) {
+                    userCtors_.insert(tag);
+                    cx.tmplCtor = true;
+                }
                 memberTag_ = savedTag;
+                memberShort_ = savedShort;
                 memberCls_ = savedCls;
                 cx.cxx = true;
                 continue;
@@ -2628,6 +2640,92 @@ private:
         std::size_t skipTo = 0;    // just after its '>'
     };
     std::map<std::string, Spec> specs_;  // explicit specializations by instance tag
+    struct Partial {
+        TDecl td;                  // its own parameters
+        std::size_t start = 0;     // the 'class' keyword
+        std::size_t skipFrom = 0;  // the '<' of its pattern
+        std::size_t skipTo = 0;    // just after the pattern's '>'
+    };
+    std::map<std::string, std::vector<Partial>> partials_;
+
+    // Match a pattern type (parameters as "\x02P" placeholders) against an argument type, binding
+    // the parameters ([temp.deduct.type]). Instance tags are compared whole.
+    bool matchPattern(const Type& pat, const Type& arg, const TDecl& td, std::vector<std::unique_ptr<Type>>& bound) {
+        if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
+            for (std::size_t k = 0; k < td.params.size(); ++k) {
+                if (td.params[k].name != pat.tag.substr(1)) continue;
+                auto a = cloneType(arg);
+                if (pat.cnst) {
+                    if (!a->cnst) return false;
+                    a->cnst = false;
+                }
+                if (!bound[k]) {
+                    bound[k] = std::move(a);
+                    return true;
+                }
+                return sameType(*bound[k], *a);
+            }
+            return false;
+        }
+        if (pat.kind != arg.kind || pat.cnst != arg.cnst) return false;
+        if (pat.kind == Type::Kind::Array && pat.unsized != arg.unsized) return false;
+        if (pat.kind == Type::Kind::Reference && pat.rref != arg.rref) return false;
+        if (pat.inner || arg.inner) {
+            if (!pat.inner || !arg.inner) return false;
+            return matchPattern(*pat.inner, *arg.inner, td, bound);
+        }
+        return sameType(pat, arg);
+    }
+
+    // The first partial specialization of 'name' whose pattern matches 'args': its index, and its
+    // own arguments in 'own'; or -1.
+    int pickPartial(const std::string& name, const TDecl& primary, const std::vector<TArg>& args,
+                    std::vector<TArg>& own) {
+        auto it = partials_.find(name);
+        if (it == partials_.end()) return -1;
+        for (std::size_t n = 0; n < it->second.size(); ++n) {
+            const Partial ps = it->second[n];
+            bool typesOnly = true;
+            for (const TParam& tp : ps.td.params)
+                if (!tp.isType) typesOnly = false;
+            if (!typesOnly) continue;
+            // The pattern, read with each of the specialization's parameters standing for itself.
+            std::size_t saved = i_;
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            tscopes_.emplace_back();
+            for (const TParam& tp : ps.td.params) {
+                auto ph = ty(Type::Kind::Struct);
+                ph->tag = "\x02" + tp.name;
+                tscopes_.back()[tp.name] = std::move(ph);
+            }
+            i_ = ps.skipFrom;
+            std::vector<TArg> pat;
+            parseTemplateArgs(primary, pat, true);
+            tscopes_.pop_back();
+            i_ = saved;
+            halfGt_ = savedHalf;
+            if (pat.size() != args.size()) continue;
+            std::vector<std::unique_ptr<Type>> bound(ps.td.params.size());
+            bool ok = true;
+            for (std::size_t k = 0; k < pat.size() && ok; ++k) {
+                if (pat[k].isValue || args[k].isValue) ok = pat[k].isValue && args[k].isValue && pat[k].value == args[k].value;
+                else if (!pat[k].type || !args[k].type) ok = false;
+                else ok = matchPattern(*pat[k].type, *args[k].type, ps.td, bound);
+            }
+            for (auto& b : bound)
+                if (!b) ok = false;
+            if (!ok) continue;
+            own.clear();
+            for (auto& b : bound) {
+                TArg a;
+                a.type = std::move(b);
+                own.push_back(std::move(a));
+            }
+            return static_cast<int>(n);
+        }
+        return -1;
+    }
     std::size_t specSkipFrom_ = 0, specSkipTo_ = 0;
     std::vector<InstReq> work_;
     std::set<std::string> instDone_;
@@ -2686,10 +2784,32 @@ private:
         TArg a;
         if (tp.isType) {
             auto b = parseBase();
-            while (eatP("*")) {
-                auto ptr = ty(Type::Kind::Pointer);
-                ptr->inner = std::move(b);
-                b = std::move(ptr);
+            for (;;) {
+                if (eatP("*")) {
+                    auto ptr = ty(Type::Kind::Pointer);
+                    ptr->inner = std::move(b);
+                    b = std::move(ptr);
+                    while (eatKw("const")) {
+                    }
+                } else if (isP("&") || isP("&&")) {
+                    auto r = ty(Type::Kind::Reference);
+                    r->rref = isP("&&");
+                    advance();
+                    r->inner = std::move(b);
+                    b = std::move(r);
+                } else {
+                    break;
+                }
+            }
+            if (isP("[")) {
+                // T[] and T[N] ([dcl.array]): unique_ptr<int[]>.
+                advance();
+                auto arr = ty(Type::Kind::Array);
+                if (!isP("]")) arr->bound = parseAssign();
+                else arr->unsized = true;
+                expectP("]", "]");
+                arr->inner = std::move(b);
+                b = std::move(arr);
             }
             a.type = std::move(b);
         } else {
@@ -2723,12 +2843,15 @@ private:
             // A default may name the earlier parameters (class C = vector<T>, [temp.param] p10):
             // they are bound while it is read.
             std::size_t saved = i_;
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
             auto es = bindParams(td, out);
             i_ = td.params[idx].defStart;
             TArg a = parseOneArg(td.params[idx]);
             unbindParams(es);
             out.push_back(std::move(a));
             i_ = saved;
+            halfGt_ = savedHalf;
         }
     }
 
@@ -2766,15 +2889,17 @@ private:
         if (!tscopes_.empty()) tscopes_.pop_back();
     }
 
-    void parseTemplate() {
+    // Returns true when it declared a constructor template of the class being parsed.
+    bool parseTemplate() {
         advance();
         if (!eatP("<")) {
             err("expected '<' after 'template'");
             syncSemi();
-            return;
+            return false;
         }
         TDecl td;
-        while (!atEnd() && !isP(">")) {
+        bool closedByShift = false;  // "class D = default_delete<T>>": the '>>' also ends the list
+        while (!atEnd() && !isP(">") && !closedByShift) {
             TParam tp;
             if (isKw("typename") || isKw("class")) {
                 tp.isType = true;
@@ -2799,14 +2924,20 @@ private:
                     else if (isP(">")) {
                         if (depth == 0) break;
                         --depth;
+                    } else if (isP(">>") && depth <= 1) {
+                        closedByShift = depth == 1;
+                        break;
+                    } else if (isP(">>")) {
+                        depth -= 2;
                     } else if (isP(",") && depth == 0) break;
                     advance();
                 }
             }
             td.params.push_back(tp);
-            if (!eatP(",")) break;
+            if (closedByShift || !eatP(",")) break;
         }
-        expectP(">", ">");
+        if (closedByShift) advance();
+        else expectP(">", ">");
         td.start = i_;
         td.end = skipDecl(i_);
         if (td.params.empty() && (isKw("class") || isKw("struct")) && i_ + 2 < toks_.size() &&
@@ -2831,17 +2962,46 @@ private:
             tag += ">";
             specs_[tag] = sp;
             i_ = td.end;
-            return;
+            return false;
+        }
+        if ((isKw("class") || isKw("struct")) && i_ + 2 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident &&
+            isP(toks_[i_ + 2], "<") && ctmpl_.count(toks_[i_ + 1].text)) {
+            // template <class T, class D> class unique_ptr<T[], D> { ... }: a partial specialization
+            // ([temp.spec.partial]). Its pattern is matched against the arguments of each instance.
+            Partial ps;
+            ps.td = td;
+            ps.start = td.start;
+            ps.skipFrom = i_ + 2;
+            std::size_t gt = i_ + 2;
+            int depth = 0;
+            for (; gt < td.end; ++gt) {
+                if (isP(toks_[gt], "<")) ++depth;
+                else if (isP(toks_[gt], ">") && --depth == 0) break;
+                else if (isP(toks_[gt], ">>") && (depth -= 2) <= 0) break;
+            }
+            ps.skipTo = gt + 1;
+            partials_[toks_[i_ + 1].text].push_back(ps);
+            i_ = td.end;
+            return false;
         }
         if (isKw("class") || isKw("struct")) {
             if (i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) ctmpl_[toks_[i_ + 1].text] = td;
             else err("expected a class template name");
             i_ = td.end;
-            return;
+            return false;
         }
         std::string name;
         int paren = 0;
         for (std::size_t k = td.start; k < td.end; ++k) {
+            if (paren == 0 && toks_[k].kind == Tok::Ident && toks_[k].text == "operator" && k + 1 < td.end &&
+                toks_[k + 1].kind == Tok::Punct) {
+                // An operator template: template <class U> P &operator=(const P<U> &o) ([over.oper]).
+                std::string op = toks_[k + 1].text;
+                if ((op == "(" || op == "[") && k + 2 < td.end && isP(toks_[k + 2], op == "(" ? ")" : "]"))
+                    op += op == "(" ? ")" : "]";
+                name = "operator" + op;
+                break;
+            }
             if (isP(toks_[k], "(")) {
                 if (paren == 0 && k > td.start && toks_[k - 1].kind == Tok::Ident) {
                     name = toks_[k - 1].text;
@@ -2853,7 +3013,7 @@ private:
         if (name.empty()) {
             err("expected a function template");
             i_ = td.end;
-            return;
+            return false;
         }
         // The prototype, with each type parameter standing for itself, is what deduction matches.
         TemplateSig sig;
@@ -2878,10 +3038,26 @@ private:
                 enums_[tp.name] = 0;
             }
         }
-        i_ = td.start;
-        auto base = parseBase();
-        Parsed d = parseDeclarator(true);
-        sig.fn = apply(std::move(base), d.mods);
+        // A constructor template ([temp.mem] p1, [class.ctor]): "template <class U> C(U *p) : ...".
+        std::size_t nameAt = td.start;
+        while (nameAt < td.end && (isKwTok(toks_[nameAt], "explicit") || isKwTok(toks_[nameAt], "constexpr") ||
+                                   isKwTok(toks_[nameAt], "inline")))
+            ++nameAt;
+        bool isCtor = memberCls_ && !memberShort_.empty() && nameAt + 1 < td.end &&
+                      toks_[nameAt].kind == Tok::Ident && toks_[nameAt].text == memberShort_ &&
+                      isP(toks_[nameAt + 1], "(");
+        if (isCtor) {
+            i_ = nameAt + 2;
+            std::vector<Param> ps;
+            parseParams(ps);
+            sig.fn = fnTypeOf(ps);
+            name = "<ctor>";
+        } else {
+            i_ = td.start;
+            auto base = parseBase();
+            Parsed d = parseDeclarator(true);
+            sig.fn = apply(std::move(base), d.mods);
+        }
         for (const EnumSave& es : saved) {
             if (es.had) enums_[es.name] = es.old;
             else enums_.erase(es.name);
@@ -2898,6 +3074,7 @@ private:
             MemberTmpl mt;
             mt.td = td;
             mt.tag = memberTag_;
+            mt.isCtor = isCtor;
             if (!tscopes_.empty())
                 for (auto& kv : tscopes_.back()) mt.scope.emplace_back(kv.first, cloneType(*kv.second));
             Param m;
@@ -2907,12 +3084,13 @@ private:
             memberCls_->params.push_back(std::move(m));
             funcTemplateSigs()[mkey] = std::move(sig);
             memberTmpl_[mkey] = std::move(mt);
-            return;
+            return isCtor;
         }
         std::string key = name;
         for (int k = 1; ftmpl_.count(key); ++k) key = name + "#" + std::to_string(k);
         funcTemplateSigs()[key] = std::move(sig);
         ftmpl_[key] = td;
+        return false;
     }
 
     std::unique_ptr<Type> instantiateClass(const std::string& name) {
@@ -2954,6 +3132,36 @@ private:
             halfGt_ = savedHalf;
             instInProgress_.erase(tag);
         }
+        std::vector<TArg> own;
+        int pi = structs_.count(tag) || args.size() != td.params.size() ? -1 : pickPartial(name, td, args, own);
+        if (pi >= 0) {
+            const Partial ps = partials_[name][static_cast<std::size_t>(pi)];
+            instInProgress_.insert(tag);
+            std::size_t saved = i_;
+            auto savedPre = std::move(preStmts_);
+            preStmts_.clear();
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            auto es = bindParams(ps.td, own);
+            instOverrideName_ = name;
+            instOverrideTag_ = tag;
+            std::size_t savedFrom = specSkipFrom_, savedTo = specSkipTo_;
+            specSkipFrom_ = ps.skipFrom;
+            specSkipTo_ = ps.skipTo;
+            i_ = ps.start;
+            std::size_t mark = extras_.size();
+            parseBase();
+            for (std::size_t k = mark; k < extras_.size(); ++k)
+                if (extras_[k] && extras_[k]->function && extras_[k]->body) extras_[k]->fromInstance = true;
+            instOverrideName_.clear();
+            specSkipFrom_ = savedFrom;
+            specSkipTo_ = savedTo;
+            unbindParams(es);
+            i_ = saved;
+            preStmts_ = std::move(savedPre);
+            halfGt_ = savedHalf;
+            instInProgress_.erase(tag);
+        }
         if (!structs_.count(tag) && args.size() == td.params.size()) {
             instInProgress_.insert(tag);
             std::size_t saved = i_;
@@ -2986,10 +3194,12 @@ private:
     struct MemberTmpl {
         TDecl td;
         std::string tag;
+        bool isCtor = false;  // a constructor template
         std::vector<std::pair<std::string, std::unique_ptr<Type>>> scope;  // the class's own bindings
     };
     std::map<std::string, MemberTmpl> memberTmpl_;
     std::string memberTag_;
+    std::string memberShort_;  // the class's own name, as its constructors are written
     Type* memberCls_ = nullptr;
 
     // An instance of a member function template: its tokens read again inside the class's scope
@@ -3001,6 +3211,33 @@ private:
         auto es = bindParams(mt.td, r.args);
         i_ = mt.td.start;
         Pos pos = here();
+        if (mt.isCtor) {
+            // An instance of a constructor template: built like a constructor written outside its class.
+            while (isKw("explicit") || isKw("constexpr") || isKw("inline")) advance();
+            CtorDef cd;
+            cd.pos = here();
+            advance();
+            advance();
+            parseParams(cd.params);
+            parseInitList(cd);
+            if (isP("{")) {
+                auto vt = ty(Type::Kind::Void);
+                cd.body = parseBody(vt.get());
+                cd.hasBody = true;
+                auto decl = buildCtor(mt.tag, cd, r.name);
+                flushExtras(tu);
+                if (decl) {
+                    decl->isInline = true;
+                    tu.decls.push_back(std::move(decl));
+                }
+            } else {
+                err("a constructor template must be defined in its class");
+            }
+            unbindParams(es);
+            tscopes_.pop_back();
+            i_ = saved;
+            return;
+        }
         auto base = parseBase();
         Parsed d = parseDeclarator(true);
         auto type = apply(std::move(base), d.mods);
@@ -3053,11 +3290,31 @@ private:
             c.name = r.name;
             work_.push_back(std::move(c));
         }
-        while (!work_.empty() && !stop_) {
-            InstReq r = std::move(work_.back());
-            work_.pop_back();
-            if (!instDone_.insert(r.name).second) continue;
-            replayFunction(tu, r);
+        // A member template of a class instance that only another instance's body makes (the
+        // constructor template of shared_ptr<D> used inside make_shared<D>) waits until that body
+        // has been read; it is an error only when a whole pass makes nothing new.
+        std::vector<InstReq> waiting;
+        for (;;) {
+            bool progress = false;
+            while (!work_.empty() && !stop_) {
+                InstReq r = std::move(work_.back());
+                work_.pop_back();
+                if (instDone_.count(r.name)) continue;
+                if (!memberTmpl_.count(r.tmpl) && !ftmpl_.count(r.tmpl)) {
+                    waiting.push_back(std::move(r));
+                    continue;
+                }
+                instDone_.insert(r.name);
+                replayFunction(tu, r);
+                progress = true;
+            }
+            if (waiting.empty() || stop_) break;
+            if (!progress) {
+                for (const InstReq& r : waiting) err("unknown function template '" + r.tmpl + "'");
+                break;
+            }
+            for (auto& r : waiting) work_.push_back(std::move(r));
+            waiting.clear();
         }
     }
 
@@ -3186,6 +3443,9 @@ private:
             cd.inits.push_back(std::move(mi));
             if (!eatP(",")) break;
         }
+        // 'new T(args)' in an initializer declares a hidden pointer: it goes first in the constructor.
+        for (auto& st : preStmts_) cd.pre.push_back(std::move(st));
+        preStmts_.clear();
     }
 
     // "S::S(...) : init { }" and "S::~S() { }" written outside the class.

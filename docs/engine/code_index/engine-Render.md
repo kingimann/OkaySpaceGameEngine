@@ -2,7 +2,7 @@
 
 # Code index: engine-Render
 
-Back to the [code index](../code_index.md). 48 headers, 464 names.
+Back to the [code index](../code_index.md). 49 headers, 467 names.
 
 ## `engine/include/okay/Render/AmfReader.hpp`
 
@@ -401,6 +401,12 @@ Back to the [code index](../code_index.md). 48 headers, 464 names.
 
 - `ProcTextureNames` function, line 88: Names of every built-in procedural texture (for editor pickers), "proc:"-less.
 - `GenerateProcTexture` function, line 98: Generate a built-in procedural texture by its "proc:<name>" id (or bare
+
+## `engine/include/okay/Render/RenderContributions.hpp`
+
+- `RenderContribution` struct, line 14
+- `AddRenderContribution` function, line 21
+- `RenderContributionLines` function, line 24: Lines from contributions whose module is on, in registration order. Empty strings are dropped.
 
 ## `engine/include/okay/Render/Renderer.hpp`
 

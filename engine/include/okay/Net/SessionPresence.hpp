@@ -13,13 +13,20 @@
 
 namespace okay {
 
+/// What the join link says about the game itself, so a friend's launcher starts the right program and can say when the
+/// versions differ (shared/JoinPlan.hpp): the game's own version, the engine (editor) version, and what is hosting
+/// ("exported", "project" or "" to leave it out; a dedicated server always says "dedicated"). All optional.
+struct SessionTags { std::string gameVersion, engineVersion, target; };
+
 /// Describe `nm`'s session (nullptr / offline = "In the menus"). `lanAddr` is
 /// this machine's LAN address (LocalNetworkAddress()), used for a game hosted
 /// directly. `inviteLink`, if given, receives the link with the password in it
 /// (for private invites; the public link only says one is needed) — also in
-/// the returned presence's `invite`.
+/// the returned presence's `invite`. The link also carries `tags` and the player
+/// counts (the size only when hosting: a client does not know the server's).
 inline GamePresence DescribeSession(const NetworkManager* nm, const std::string& title,
-                                    const std::string& lanAddr, std::string* inviteLink = nullptr) {
+                                    const std::string& lanAddr, std::string* inviteLink = nullptr,
+                                    const SessionTags& tags = SessionTags()) {
     GamePresence g;
     g.title = title;
     g.status = "In the menus";
@@ -29,6 +36,9 @@ inline GamePresence DescribeSession(const NetworkManager* nm, const std::string&
     JoinLink l;
     l.game = title;
     l.room = nm->Room();
+    l.version = tags.gameVersion;
+    l.engine = tags.engineVersion;
+    l.target = nm->dedicated ? std::string("dedicated") : tags.target;
     if (nm->IsServer()) {
         g.hosting = true;
         g.players = nm->PlayerCount();
@@ -54,6 +64,8 @@ inline GamePresence DescribeSession(const NetworkManager* nm, const std::string&
         }
         g.status = nm->ServerName().empty() ? "In a match" : "Playing on " + nm->ServerName();
     }
+    l.players = g.players;
+    if (g.hosting) l.maxPlayers = g.maxPlayers;
     const std::string pass = nm->password;
     l.needsPassword = !pass.empty();
     g.join = l.Format();                         // public: never carries the password

@@ -12,7 +12,8 @@
 //     when the connection is back (given up after a week).
 //   * History: merge an older page or a resent copy into a log (one row per id, oldest first).
 //   * Unread counts per conversation and in total, from the rows the chat already fetches.
-//   * Links: which ones are safe to open, the real host to show, a confirm text, lookalikes.
+//   * Links: which ones are safe to open, the real host to show, a confirm text, lookalikes, and
+//     what a click does (ClickLink).
 //   * Limits: 4000 characters and 30 messages a minute (the same numbers the server enforces),
 //     with a plain sentence when one is hit.
 //   * Events: what arrived (new message, invite, answer), for the one place that posts
@@ -169,6 +170,19 @@ inline std::vector<QueuedMessage> DecodeQueue(const std::string& text) {
 /// A queued message older than a week is dropped rather than posted late.
 inline bool ShouldGiveUp(const QueuedMessage& m, long now) { return m.created > 0 && now - m.created > kGiveUpSeconds; }
 
+/// The queue read back after a restart: what is not too old, once per client id, with the tries counted from 0 again
+/// (the connection may be back). The same client ids are kept, so a message that did arrive is not stored twice.
+inline std::vector<QueuedMessage> ResumeQueue(const std::vector<QueuedMessage>& q, long now) {
+    std::vector<QueuedMessage> out;
+    std::set<std::string> ids;
+    for (QueuedMessage m : q) {
+        if (ShouldGiveUp(m, now) || !ids.insert(m.clientId).second) continue;
+        m.attempts = 0;
+        out.push_back(m);
+    }
+    return out;
+}
+
 // ---- history -----------------------------------------------------------------------------------
 
 /// Merge `incoming` (an older page, a re-poll, a resent copy) into `log`: one row per `id`, the incoming
@@ -187,6 +201,16 @@ inline long OldestId(const std::vector<Row>& log) {
     long m = 0;
     for (const Row& r : log) if (m == 0 || r.id < m) m = r.id;
     return m;
+}
+
+/// "Load older messages" adds rows above what is on screen. The scroll offset that keeps the same message under
+/// the reader: the old offset plus how much taller the content got (`oldMax` / `newMax` = the scroll range before
+/// and after, Dear ImGui's GetScrollMaxY). Never below 0 or past the new range.
+inline float KeepScrollAfterPrepend(float oldScroll, float oldMax, float newMax) {
+    float y = oldScroll + (newMax - oldMax);
+    if (y < 0) y = 0;
+    if (y > newMax) y = newMax;
+    return y;
 }
 
 // ---- unread counts -----------------------------------------------------------------------------
@@ -210,6 +234,18 @@ inline UnreadSummary CountUnread(const std::vector<UnreadRow>& rows, const std::
     }
     u.conversations = (int)u.perPeer.size();
     return u;
+}
+/// The `seen` map for CountUnread with a floor: nothing at or below `floor` counts as unread. The floor is the old
+/// "seen up to" mark from before per-conversation counts, so a conversation never opened does not suddenly show every
+/// old message as new. Only people in `rows` get an entry.
+inline std::map<std::string, long> SeenWithFloor(const std::map<std::string, long>& seen, const std::vector<UnreadRow>& rows, long floor) {
+    std::map<std::string, long> out = seen;
+    if (floor <= 0) return out;
+    for (const UnreadRow& r : rows) {
+        long& v = out[r.sender];
+        if (v < floor) v = floor;
+    }
+    return out;
 }
 /// The badge on an avatar or a tab: "" for none, the number, "99+" above 99.
 inline std::string BadgeText(int n) { return n <= 0 ? std::string() : n > 99 ? std::string("99+") : std::to_string(n); }
@@ -267,6 +303,27 @@ inline std::string ConfirmText(const std::string& url) {
     std::string t = "This link opens " + LinkHost(url) + " in your browser. Open it?";
     if (LooksDeceptive(url)) t += " Careful: this link may not be the site it looks like.";
     return t;
+}
+
+/// What a click on a link in a message does: Web asks first (Confirm, with `text` from ConfirmText), Join goes
+/// through the launcher's join (never the shell), Refuse shows `text` and opens nothing.
+struct LinkClick {
+    enum class Action { Confirm, Join, Refuse } action = Action::Refuse;
+    std::string url;    ///< trimmed
+    std::string text;   ///< the confirm question, or why it was refused
+};
+inline LinkClick ClickLink(const std::string& raw) {
+    LinkClick c;
+    c.url = raw;
+    while (!c.url.empty() && (c.url.front() == ' ' || c.url.front() == '\t')) c.url.erase(c.url.begin());
+    while (!c.url.empty() && (c.url.back() == ' ' || c.url.back() == '\t' || c.url.back() == '\n' || c.url.back() == '\r')) c.url.pop_back();
+    switch (ClassifyLink(c.url)) {
+        case LinkKind::Web:  c.action = LinkClick::Action::Confirm; break;
+        case LinkKind::Join: c.action = LinkClick::Action::Join; break;
+        case LinkKind::Unsafe: c.action = LinkClick::Action::Refuse; break;
+    }
+    c.text = ConfirmText(c.url);
+    return c;
 }
 
 // ---- limits ------------------------------------------------------------------------------------

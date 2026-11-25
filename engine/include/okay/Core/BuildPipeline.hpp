@@ -135,6 +135,9 @@ std::string ManifestToJson(const BuildManifest& m);
 bool ParseManifestJson(const std::string& text, BuildManifest& out, std::string* error = nullptr);
 /// A short text for logs and `--build-info`: "Game 1.2.0 (build 7), engine 2.852.0, 2026-11-12, windows, 3 scenes".
 std::string ManifestSummary(const BuildManifest& m);
+/// The game's own version from a build.json: the one in `dataDir` (when not ""), else the first found in `scenePath`'s
+/// folder or the two folders above it. "" when there is none. For the join link (a friend's launcher compares versions).
+std::string ManifestVersionNear(const std::string& dataDir, const std::string& scenePath);
 std::uint64_t HashText(const std::string& text);   ///< FNV-1a 64
 std::string HashHex(std::uint64_t h);              ///< 16 lower-case hex digits
 std::string UtcNowIso();                           ///< "2026-11-12T09:30:00Z"

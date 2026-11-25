@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 69 headers, 1006 names.
+Back to the [code index](../code_index.md). 69 headers, 1008 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -645,7 +645,8 @@ Back to the [code index](../code_index.md). 69 headers, 1006 names.
 - `Candidate` struct, line 19
 - `Action` enum, line 27
 - `Plan` struct, line 37
-- `PlanJoin` function, line 52
+- `GetVersionLabel` function, line 47: The button under a NeedEditor or VersionMismatch answer, which opens the Versions page ("" = no button).
+- `PlanJoin` function, line 60
 
 ## `shared/LauncherDemo.hpp`
 
@@ -740,10 +741,11 @@ Back to the [code index](../code_index.md). 69 headers, 1006 names.
 - `Mix` function, line 120
 - `WithAlpha` function, line 123
 - `ReadableOn` function, line 125: Any colour (a section's, a category's) as text on the page: lightened on the dark themes, darkened on Light.
-- `AccentText` function, line 129: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
-- `ApplySlateMetrics` function, line 136: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
-- `ApplyColors` function, line 145: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
-- `ApplySlateColors` function, line 211: The Slate colours (the editor and the launcher's default theme).
+- `OnFillSoft` function, line 132: The softer text on a filled colour (the time, "edited" and the receipt ticks on my chat bubble): the theme's onColor, made as
+- `AccentText` function, line 139: The accent as text or a selected label: lighter on the dark themes, darker on Light (so it reads on the page).
+- `ApplySlateMetrics` function, line 146: Rounding + borders (spacing/padding stay per-app). Call before ScaleAllSizes.
+- `ApplyColors` function, line 155: ImGui's colours from a palette and an accent (every theme; the editor passes Slate).
+- `ApplySlateColors` function, line 221: The Slate colours (the editor and the launcher's default theme).
 
 ## `shared/OkayThreads.hpp`
 

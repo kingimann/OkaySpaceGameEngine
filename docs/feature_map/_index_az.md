@@ -1877,6 +1877,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - friend code (17.3)
 - friends (17.3, 17.3.1, 17.4, 17.5, 17.8, 17.9, 37.9)
 - Friends and parties (37.9.3)
+- Friends list in the chat window (17.4.10)
 - Friends page and party card (17.3.4)
 - Friends, following, parties (17.3)
 - friendships (17.3)

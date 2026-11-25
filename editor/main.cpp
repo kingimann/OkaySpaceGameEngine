@@ -137,6 +137,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "QuitPromptState.hpp"          // the quit prompt's per-frame state (ImGui-free, tested)
+#include "LauncherWatch.hpp"            // close (through the quit prompt) when the launcher that started us has gone
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
@@ -2473,6 +2474,7 @@ double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
+oked::launcherwatch::State g_launcherWatch;   // the launcher from --launcher <pid> is checked once a second (editor/LauncherWatch.hpp)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
 
@@ -11372,6 +11374,8 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (oked::launcherwatch::ShowLauncherClosedNote(g_launcherWatch))
+            ImGui::TextUnformatted("The OkaySpace launcher was closed, so the editor is closing too.");
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
         ImGui::TextDisabled("Save writes everything listed here, then closes the editor.");
         {
@@ -52749,6 +52753,37 @@ static bool ProcessAlive(unsigned long pid) {
 #endif
 }
 
+// The launcher that let us in, watched for the rest of the run (editor/LauncherWatch.hpp). On Windows its handle is
+// opened once here and kept, so a later process that reuses the number is never mistaken for it; the check waits zero
+// milliseconds, so it never holds up a frame.
+static unsigned long g_launcherPid = 0;
+#if defined(_WIN32)
+static HANDLE g_launcherHandle = nullptr;
+#endif
+static void StartLauncherWatch(unsigned long pid) {
+    g_launcherPid = pid;
+#if defined(_WIN32)
+    g_launcherHandle = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!g_launcherHandle) return;   // (cannot watch it: the editor just stays open, as before)
+#endif
+    oked::launcherwatch::Start(g_launcherWatch);
+}
+static bool LauncherStillRunning() {
+#if defined(_WIN32)
+    return !g_launcherHandle || WaitForSingleObject(g_launcherHandle, 0) != WAIT_OBJECT_0;
+#else
+    return ProcessAlive(g_launcherPid);
+#endif
+}
+// Once a second: the launcher has gone, so close like File > Exit (the Unsaved Changes prompt first when needed).
+static void PollLauncherAlive() {
+    if (!oked::launcherwatch::CheckDue(g_launcherWatch, okay::platform::TicksMs32())) return;
+    if (oked::launcherwatch::OnChecked(g_launcherWatch, LauncherStillRunning())) {
+        ConsoleLog("The OkaySpace launcher was closed, so the editor is closing too.", 1);
+        g_quitRequested = true;
+    }
+}
+
 // The launcher next to the editor or one level up (the editor lives in Tools/ while the launcher sits at the top of the
 // install); empty when it is not there.
 static std::filesystem::path FindLauncherExe() {
@@ -52783,7 +52818,7 @@ static bool PassesLauncherGate(int argc, char** argv) {
         if (a == "--launcher" && i + 1 < argc) { launcherPid = std::strtoul(argv[i + 1], nullptr, 10); haveToken = true; }
         else if (a.rfind("--launcher=", 0) == 0) { launcherPid = std::strtoul(a.c_str() + 11, nullptr, 10); haveToken = true; }
     }
-    if (haveToken && ProcessAlive(launcherPid)) return true;
+    if (haveToken && ProcessAlive(launcherPid)) { StartLauncherWatch(launcherPid); return true; }
 
     // Not launched by a live launcher: bounce to the launcher and refuse.
     const std::filesystem::path launcher = FindLauncherExe();
@@ -55360,6 +55395,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
         { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); DrawActionPrompt(ed); if (ProjectUpgradeExitRequested()) running = false; }
         PollLauncherRequest(ed, running);   // the launcher asked us to save and close
+        PollLauncherAlive();                // the launcher that started us has gone: close (the save prompt first)
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }

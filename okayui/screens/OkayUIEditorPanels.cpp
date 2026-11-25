@@ -1090,21 +1090,16 @@ PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y
             res.version = UI::GetItemRect();
         }
         if (m.width && m.height) {
-            UI::SetNextItemWidth(WithLabel(110.0f, "Width"));
-            // the step buttons: two squares a frame tall before the label, 8 pixels apart (the framed InputInt)
-            auto steps = [](const UI::Rect& r, const char* label, UI::Rect& minus, UI::Rect& plus) {
-                const float right = r.x + r.w - (UI::CalcTextWidth(label) + 8.0f);
-                plus = UI::Rect{right - r.h, r.y, r.h, r.h};
-                minus = UI::Rect{plus.x - 8.0f - r.h, r.y, r.h, r.h};
-            };
-            if (UI::InputInt("Width##ps", m.width)) res.intent.changed = true;
+            // Plain number fields wide enough for five digits at any text size, with no -/+ buttons (editor/main.cpp: at 110 pixels the
+            // buttons took the room and 1280 x 720 showed as "12" and "72").
+            const float numW = UI::CalcTextWidth("000000") + 2.0f * g_metrics.framePadding.x;
+            UI::SetNextItemWidth(WithLabel(numW, "Width"));
+            if (UI::InputInt("Width##ps", m.width, 0)) res.intent.changed = true;
             res.width = UI::GetItemRect();
-            steps(res.width, "Width", res.widthMinus, res.widthPlus);
             UI::SameLine();
-            UI::SetNextItemWidth(WithLabel(110.0f, "Height"));
-            if (UI::InputInt("Height##ps", m.height)) res.intent.changed = true;
+            UI::SetNextItemWidth(WithLabel(numW, "Height"));
+            if (UI::InputInt("Height##ps", m.height, 0)) res.intent.changed = true;
             res.height = UI::GetItemRect();
-            steps(res.height, "Height", res.heightMinus, res.heightPlus);
         }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();

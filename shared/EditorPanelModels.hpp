@@ -364,7 +364,7 @@ struct PhysicsSettingsIntent {
 
 inline const char* kStepRateTip = "How many times a second physics runs. 50 is the usual rate.\nA drop lands in the same place at a low frame rate and a high one.\nSaved with the project.";
 inline const char* kSmoothTip = "Draw each body part way between its last two physics steps,\nso motion stays smooth when the frame rate and the step rate differ.";
-inline const char* kIterationsTip = "How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).";
+inline const char* kIterationsTip = "How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.";
 inline const char* kPhysicsSolverHeading = "Physics solver of the open scene (saved with the scene)";
 
 /// The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).

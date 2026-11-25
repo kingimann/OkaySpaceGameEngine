@@ -6,9 +6,17 @@
 >
 > **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **Since this was written (checked 2026-11-24):** most of the flips planned here have happened. The model readers became the
+> default on 2026-11-17; ufbx and `OKAY_OWN_FBX` were deleted on 2026-11-23 (#1187); `SDL_LoadWAV` and `OKAY_OWN_WAV` were
+> deleted the same day, our WAV decoder is the only WAV reader; ImGuiColorTextEdit was deleted, the script editor is on
+> `OkayUI::CodeEdit` only (#1200); WinHTTP is really on in Windows builds and every HTTP call goes through one seam (#1186);
+> the Settings > Experimental switches start ticked (rule 17). Still not deleted: Assimp, SDL2, Dear ImGui, curl (last fallback)
+> and libsodium (rule 18). The rows below that say "off" are the state when this page was written.
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
-> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> OFF: a seam). Assimp stays compiled in as the fallback. **2026-11-23:** ufbx and `OKAY_OWN_FBX` were deleted; our FBX reader
+> is the only FBX reader, with no fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
 > `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
 > `docs/status/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
 

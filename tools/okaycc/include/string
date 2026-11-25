@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <__string_view>
 namespace std {
 class string {
 public:
@@ -28,6 +29,8 @@ public:
         p_[n_] = 0;
     }
     string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
+    // from a string_view ([string.cons] p8, explicit as there)
+    explicit string(string_view v) : p_(nullptr), n_(0), cap_(0) { assignChars(v.data(), v.size()); }
     string(unsigned long n, char c) : p_(nullptr), n_(0), cap_(0) {
         release(grow(n));
         for (unsigned long i = 0; i < n; ++i) p_[i] = c;
@@ -104,6 +107,8 @@ public:
         return r;
     }
     string &operator+=(const string &o) { return append(o); }
+    string &operator+=(string_view v) { return append(v.data(), v.size()); }
+    string &append(string_view v) { return append(v.data(), v.size()); }
     string &operator+=(char c) {
         push_back(c);
         return *this;
@@ -249,6 +254,19 @@ private:
     unsigned long n_;
     unsigned long cap_;
 };
+// string and string_view ([string.view.cons], [string.view.comparison]).
+inline string_view::string_view(const string &s) : __p(s.data()), __n(s.size()) {}
+inline bool operator==(const string &a, string_view b) { return string_view(a) == b; }
+inline bool operator!=(const string &a, string_view b) { return string_view(a) != b; }
+inline bool operator==(string_view a, const string &b) { return a == string_view(b); }
+inline bool operator!=(string_view a, const string &b) { return a != string_view(b); }
+inline bool operator<(const string &a, string_view b) { return string_view(a) < b; }
+inline bool operator<(string_view a, const string &b) { return a < string_view(b); }
+inline string operator+(const string &a, string_view b) {
+    string r = a;
+    r += b;
+    return r;
+}
 // The non-member operators with a C string on the left ([string.op.plus], [string.cmp]).
 inline string operator+(const char *a, const string &b) {
     string r(a);
@@ -264,6 +282,18 @@ inline bool operator==(const char *a, const string &b) { return b == a; }
 inline bool operator!=(const char *a, const string &b) { return b != a; }
 // hash<string> ([basic.string.hash]): FNV-1a over the characters (Fowler, Noll and Vo; offset basis
 // 14695981039346656037, prime 1099511628211), our own choice of string hash.
+// hash<string_view>: the same FNV-1a as hash<string>, so equal text hashes alike.
+template <>
+struct hash<string_view> {
+    unsigned long operator()(string_view s) const {
+        unsigned long h = 14695981039346656037UL;
+        for (unsigned long i = 0; i < s.size(); ++i) {
+            h ^= (unsigned char)s[i];
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
+};
 template <>
 struct hash<string> {
     unsigned long operator()(const string &s) const {

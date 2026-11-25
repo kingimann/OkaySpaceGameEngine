@@ -1,0 +1,257 @@
+// <deque> for okay-cc (ISO/IEC 14882 [deque]). Our own header: a ring buffer of raw memory (malloc),
+// elements built and destroyed one by one (placement new, p->~T()). Element i of the deque is
+// slot (head + i) % capacity; growing moves the elements into a block twice as large, which, unlike
+// the standard deque, also moves the elements (references to them do not survive a push). The
+// iterators are random access: a block, its capacity, the head and an index.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <initializer_list>
+#include <new>
+#include <utility>
+namespace std {
+template <typename T>
+struct __deque_it {
+    T *d;
+    unsigned long cap;
+    unsigned long head;
+    unsigned long i;
+    T &operator*() const { return d[(head + i) % cap]; }
+    T *operator->() const { return &d[(head + i) % cap]; }
+    T &operator[](long k) const { return d[(head + i + k) % cap]; }
+    __deque_it<T> &operator++() {
+        ++i;
+        return *this;
+    }
+    __deque_it<T> operator++(int) {
+        __deque_it<T> o = *this;
+        ++i;
+        return o;
+    }
+    __deque_it<T> &operator--() {
+        --i;
+        return *this;
+    }
+    __deque_it<T> operator--(int) {
+        __deque_it<T> o = *this;
+        --i;
+        return o;
+    }
+    __deque_it<T> &operator+=(long k) {
+        i += k;
+        return *this;
+    }
+    __deque_it<T> &operator-=(long k) {
+        i -= k;
+        return *this;
+    }
+    __deque_it<T> operator+(long k) const {
+        __deque_it<T> o = *this;
+        o.i += k;
+        return o;
+    }
+    __deque_it<T> operator-(long k) const {
+        __deque_it<T> o = *this;
+        o.i -= k;
+        return o;
+    }
+    long operator-(const __deque_it<T> &o) const { return (long)i - (long)o.i; }
+    bool operator==(const __deque_it<T> &o) const { return i == o.i && d == o.d; }
+    bool operator!=(const __deque_it<T> &o) const { return !(*this == o); }
+    bool operator<(const __deque_it<T> &o) const { return i < o.i; }
+    bool operator>(const __deque_it<T> &o) const { return i > o.i; }
+    bool operator<=(const __deque_it<T> &o) const { return i <= o.i; }
+    bool operator>=(const __deque_it<T> &o) const { return i >= o.i; }
+};
+template <typename T>
+class deque {
+public:
+    typedef T value_type;
+    typedef unsigned long size_type;
+    typedef T &reference;
+    typedef const T &const_reference;
+    typedef __deque_it<T> iterator;
+    typedef __deque_it<T> const_iterator;
+    deque() : d_(nullptr), cap_(0), head_(0), n_(0) {}
+    explicit deque(unsigned long n) : d_(nullptr), cap_(0), head_(0), n_(0) { resize(n); }
+    deque(unsigned long n, const T &v) : d_(nullptr), cap_(0), head_(0), n_(0) {
+        for (unsigned long k = 0; k < n; ++k) push_back(v);
+    }
+    deque(initializer_list<T> il) : d_(nullptr), cap_(0), head_(0), n_(0) {
+        for (const T *p = il.begin(); p != il.end(); ++p) push_back(*p);
+    }
+    deque(const deque<T> &o) : d_(nullptr), cap_(0), head_(0), n_(0) {
+        grow(o.n_);
+        for (unsigned long k = 0; k < o.n_; ++k) push_back(o[k]);
+    }
+    deque(deque<T> &&o) : d_(o.d_), cap_(o.cap_), head_(o.head_), n_(o.n_) {
+        o.d_ = nullptr;
+        o.cap_ = 0;
+        o.head_ = 0;
+        o.n_ = 0;
+    }
+    ~deque() {
+        clear();
+        free(d_);
+    }
+    deque<T> &operator=(const deque<T> &o) {
+        if (this == &o) return *this;
+        clear();
+        grow(o.n_);
+        for (unsigned long k = 0; k < o.n_; ++k) push_back(o[k]);
+        return *this;
+    }
+    deque<T> &operator=(deque<T> &&o) {
+        if (this == &o) return *this;
+        clear();
+        free(d_);
+        d_ = o.d_;
+        cap_ = o.cap_;
+        head_ = o.head_;
+        n_ = o.n_;
+        o.d_ = nullptr;
+        o.cap_ = 0;
+        o.head_ = 0;
+        o.n_ = 0;
+        return *this;
+    }
+    unsigned long size() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    T &operator[](unsigned long k) { return d_[(head_ + k) % cap_]; }
+    const T &operator[](unsigned long k) const { return d_[(head_ + k) % cap_]; }
+    T &at(unsigned long k) { return d_[(head_ + k) % cap_]; }
+    const T &at(unsigned long k) const { return d_[(head_ + k) % cap_]; }
+    T &front() { return d_[head_]; }
+    const T &front() const { return d_[head_]; }
+    T &back() { return d_[(head_ + n_ - 1) % cap_]; }
+    const T &back() const { return d_[(head_ + n_ - 1) % cap_]; }
+    iterator begin() const { return make(0); }
+    iterator end() const { return make(n_); }
+    iterator cbegin() const { return make(0); }
+    iterator cend() const { return make(n_); }
+    void push_back(const T &v) {
+        grow(n_ + 1);
+        new (d_ + (head_ + n_) % cap_) T(v);
+        ++n_;
+    }
+    void push_back(T &&v) {
+        grow(n_ + 1);
+        new (d_ + (head_ + n_) % cap_) T(std::move(v));
+        ++n_;
+    }
+    void push_front(const T &v) {
+        grow(n_ + 1);
+        head_ = (head_ + cap_ - 1) % cap_;
+        new (d_ + head_) T(v);
+        ++n_;
+    }
+    void push_front(T &&v) {
+        grow(n_ + 1);
+        head_ = (head_ + cap_ - 1) % cap_;
+        new (d_ + head_) T(std::move(v));
+        ++n_;
+    }
+    template <typename... A>
+    T &emplace_back(A &&...a) {
+        grow(n_ + 1);
+        T *p = d_ + (head_ + n_) % cap_;
+        new (p) T(std::forward<A>(a)...);
+        ++n_;
+        return *p;
+    }
+    template <typename... A>
+    T &emplace_front(A &&...a) {
+        grow(n_ + 1);
+        head_ = (head_ + cap_ - 1) % cap_;
+        new (d_ + head_) T(std::forward<A>(a)...);
+        ++n_;
+        return d_[head_];
+    }
+    void pop_back() {
+        --n_;
+        (d_ + (head_ + n_) % cap_)->~T();
+    }
+    void pop_front() {
+        (d_ + head_)->~T();
+        head_ = (head_ + 1) % cap_;
+        --n_;
+    }
+    void clear() {
+        while (n_ > 0) pop_back();
+        head_ = 0;
+    }
+    void resize(unsigned long n) {
+        while (n_ > n) pop_back();
+        grow(n);
+        while (n_ < n) {
+            new (d_ + (head_ + n_) % cap_) T();
+            ++n_;
+        }
+    }
+    // erase one element or a range: the later elements move up ([deque.modifiers]).
+    iterator erase(iterator pos) { return erase(pos, pos + 1); }
+    iterator erase(iterator first, iterator last) {
+        unsigned long a = first.i;
+        unsigned long b = last.i;
+        if (a >= b) return make(a);
+        unsigned long k = a;
+        for (unsigned long j = b; j < n_; ++j, ++k) (*this)[k] = std::move((*this)[j]);
+        while (n_ > k) pop_back();
+        return make(a);
+    }
+    iterator insert(iterator pos, const T &v) {
+        unsigned long at0 = pos.i;
+        push_back(v);
+        for (unsigned long j = n_ - 1; j > at0; --j) {
+            T t = std::move((*this)[j]);
+            (*this)[j] = std::move((*this)[j - 1]);
+            (*this)[j - 1] = std::move(t);
+        }
+        return make(at0);
+    }
+    void swap(deque<T> &o) {
+        T *d = d_;
+        unsigned long c = cap_;
+        unsigned long h = head_;
+        unsigned long n = n_;
+        d_ = o.d_;
+        cap_ = o.cap_;
+        head_ = o.head_;
+        n_ = o.n_;
+        o.d_ = d;
+        o.cap_ = c;
+        o.head_ = h;
+        o.n_ = n;
+    }
+    void shrink_to_fit() {}
+
+private:
+    iterator make(unsigned long k) const {
+        iterator it;
+        it.d = d_;
+        it.cap = cap_ ? cap_ : 1;
+        it.head = head_;
+        it.i = k;
+        return it;
+    }
+    void grow(unsigned long need) {
+        if (need <= cap_) return;
+        unsigned long nc = cap_ ? cap_ * 2 : 8;
+        while (nc < need) nc *= 2;
+        T *nd = (T *)malloc(nc * sizeof(T));
+        for (unsigned long k = 0; k < n_; ++k) {
+            T *src = d_ + (head_ + k) % cap_;
+            new (nd + k) T(std::move(*src));
+            src->~T();
+        }
+        free(d_);
+        d_ = nd;
+        cap_ = nc;
+        head_ = 0;
+    }
+    T *d_;
+    unsigned long cap_;
+    unsigned long head_;
+    unsigned long n_;
+};
+}  // namespace std

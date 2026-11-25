@@ -325,6 +325,7 @@ private:
             return r;
         }
         case Expr::Kind::Name: {
+            if (e.text.compare(0, 4, "\x01" "sb:") == 0) return checkBinding(e);
             if (e.text.compare(0, 8, "\x01" "lambda:") == 0) return checkLambda(e);
             if (captureName(e)) return checkExprBody(e);
             if (method_ && scopeOf(e.text) <= 0) {  // a parameter or local hides a member ([basic.scope.block])
@@ -542,7 +543,7 @@ private:
             ET inner = decay(checkExpr(*e.kids[0]));
             if (inner.bad) return bad(e.line, e.col);
             if (e.text == "!" && inner.type && scalar(*inner.type)) {
-                r.type = prim(Type::Kind::Int);
+                r.type = truthType(e);
                 return r;
             }
             if ((e.text == "-" || e.text == "+") && inner.type && isFp(*inner.type)) {
@@ -1168,8 +1169,20 @@ private:
                 assignResult = eAssignNode(mkName(res, e), std::move(last), e);
                 last = mkName(res, e);
             }
+            // A reference result stays an lvalue ([expr.call] p14): *(tmp = x, &tmp.op()). (*(it - 1)
+            // gave a copy of the element, so swap(*j, *(j - 1)) in sort swapped two copies.)
+            const bool refRet = opRet && opRet->kind == Type::Kind::Reference;
+            if (refRet) last = eUnary("&", std::move(last), e);
             auto both = eCommaNode(std::move(assign), std::move(last), e);
             if (assignResult) both->kids.insert(both->kids.begin() + 1, std::move(assignResult));
+            if (refRet) {
+                e.kind = Expr::Kind::Unary;
+                e.text = "*";
+                e.ival = 0;
+                e.kids.clear();
+                e.kids.push_back(std::move(both));
+                return true;
+            }
             e.kind = Expr::Kind::Comma;
             e.text.clear();
             e.ival = 0;
@@ -1448,7 +1461,7 @@ private:
                     int w = (aw == 8 || bw == 8) ? 8 : 4;
                     return result(prim(w == 8 ? Type::Kind::Double : Type::Kind::Float));
                 }
-                return result(prim(Type::Kind::Int));
+                return result(truthType(e));
             }
         }
         // The usual arithmetic conversions (ISO C 6.3.1.8): char, short and bool become int; a long
@@ -1486,14 +1499,23 @@ private:
             bool ptrs = isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
                         sameType(*a.type->inner, *b.type->inner);
             bool null = (isPtr(*a.type) && b.nullc) || (isPtr(*b.type) && a.nullc);
-            if (arith || ptrs || null) return result(prim(Type::Kind::Int));
+            if (arith || ptrs || null) return result(truthType(e));
         } else if (op == "&&" || op == "||") {
-            if (scalar(*a.type) && scalar(*b.type)) return result(prim(Type::Kind::Int));
+            if (scalar(*a.type) && scalar(*b.type)) return result(truthType(e));
         }
         err(e.line, e.col, "invalid operands to '" + op + "'");
         return bad(e.line, e.col);
     }
 
+    // The type of a comparison, !, && and ||: bool in C++ ([expr.rel] p1, [expr.eq], [expr.log.and],
+    // [expr.unary.op] p9), int in C (ISO C 6.5.8 p6).
+    std::unique_ptr<Type> truthType(const Expr& e) {
+        bool cFile = e.file.size() >= 2 && e.file.compare(e.file.size() - 2, 2, ".c") == 0;
+        if (cFile) return prim(Type::Kind::Int);
+        auto t = prim(Type::Kind::Bool);
+        t->unsign = true;
+        return t;
+    }
     ET checkAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
         ET lhs = checkExpr(*e.kids[0]);
@@ -2166,6 +2188,53 @@ private:
         idx->kids.push_back(std::move(cast));
         idx->kids.push_back(eUnary("-", std::move(one), at));
         return idx;
+    }
+    // A structured binding's name ([dcl.struct.bind] p3-p5): element i of the hidden variable, an
+    // array element or the i-th non-static data member (base class members first, as laid out).
+    ET checkBinding(Expr& e) {
+        std::string rest = e.text.substr(4);
+        std::size_t colon = rest.rfind(':');
+        std::string var = rest.substr(0, colon);
+        int index = std::stoi(rest.substr(colon + 1));
+        ++quiet_;
+        auto probe = mkName(var, e);
+        ET v = checkExpr(*probe);
+        --quiet_;
+        if (v.bad || !v.type) return bad(e.line, e.col);
+        const Type* t = v.type.get();
+        if (t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
+        if (t->kind == Type::Kind::Array || t->kind == Type::Kind::Pointer) {
+            // (auto [x, y] = arr; makes the hidden variable a pointer to arr here, not a copy of
+            // the array: the names read and write arr itself.)
+            auto idx = mkE(Expr::Kind::Int, e);
+            idx->ival = static_cast<std::uint64_t>(index);
+            e.kind = Expr::Kind::Index;
+            e.text.clear();
+            e.kids.clear();
+            e.kids.push_back(mkName(var, e));
+            e.kids.push_back(std::move(idx));
+            return checkExpr(e);
+        }
+        const Type* cs = t->kind == Type::Kind::Struct ? canonOf(t) : nullptr;
+        if (!cs) {
+            err(e.line, e.col, "a structured binding needs a class or an array");
+            return bad(e.line, e.col);
+        }
+        int k = 0;
+        for (const Param& f : cs->params) {
+            if (!f.mangled.empty() || !f.type || f.type->kind == Type::Kind::Function || f.name.empty() ||
+                f.name[0] == '<' || f.name == "__vptr")
+                continue;
+            if (k++ != index) continue;
+            e.kind = Expr::Kind::Member;
+            e.text = ".";
+            e.kids.clear();
+            e.kids.push_back(mkName(var, e));
+            e.kids.push_back(mkName(f.name, e));
+            return checkExpr(e);
+        }
+        err(e.line, e.col, "too many names in a structured binding");
+        return bad(e.line, e.col);
     }
     ET checkTypeid(Expr& e) {
         auto ti = canonStructs().find("std::type_info");

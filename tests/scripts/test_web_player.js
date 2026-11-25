@@ -167,7 +167,9 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
   await page.reload();
   const again = await waitLog(/WEBTEST start presses=/, 120000, mark);
   const againCount = again ? parseFloat(again.split('presses=')[1]) : -1;
-  check('a save survives a reload', againCount === startCount + 1, again || 'no start line after the reload');
+  const keyLines = logs.filter(l => /WEBTEST key presses=/.test(l));
+  const lastSaved = keyLines.length ? parseFloat(keyLines[keyLines.length - 1].split('presses=')[1]) : startCount;
+  check('a save survives a reload', againCount === lastSaved && lastSaved > startCount, (again || 'no start line after the reload') + '; saved ' + lastSaved);
   check('prefs survive a reload', !!again && /prefs=[1-9]/.test(again), again || '');
 
   // ---- no page scroll when the game is embedded ----
@@ -181,6 +183,7 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
   const scrollY = await outer.evaluate(() => window.scrollY);
   check('Space and arrows do not scroll the page around the game', scrollY === 0, 'scrollY=' + scrollY);
 
+  if (failed || process.env.OKAY_WEB_TEST_LOG) console.log('--- page log ---\n' + logs.filter(l => process.env.OKAY_WEB_TEST_LOG || /WEBTEST|error|warn/i.test(l)).slice(-60).join('\n'));
   console.log(`${results.length - failed} passed, ${failed} failed`);
   if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify({ measure, results }, null, 1));
   await browser.close(); srv.close();

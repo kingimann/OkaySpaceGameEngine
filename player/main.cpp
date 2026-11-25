@@ -74,6 +74,10 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include "WebPlayer.hpp"   // platform/web: the IndexedDB save folder and the prefs write timing (the page side is okay_web.js)
+// The page (platform/web/okay_web.js) calls this when it is hidden or closed: write the prefs now, then it stores the saves.
+static std::function<void()> g_webFlush;
+extern "C" EMSCRIPTEN_KEEPALIVE void okay_web_flush() { if (g_webFlush) g_webFlush(); }
 #endif
 
 #include <algorithm>
@@ -1457,6 +1461,15 @@ int main(int argc, char** argv) {
         const std::string pref = pb->PrefPath(org, app);
         if (!pref.empty()) saveDir = pref;
     }
+#ifdef __EMSCRIPTEN__
+    // In the browser the save folder is the one the page keeps in IndexedDB (platform/web/okay_web.js), whatever the
+    // build's save setting: any other folder lives only in memory and is gone after a reload.
+    {
+        const std::string webSaves = okay::web::SaveDirFromEnv(std::getenv("OKAY_WEB_SAVE_DIR"));
+        if (!webSaves.empty()) saveDir = webSaves;
+        else pb->Log("web: no browser save folder; saves last until the page is closed");
+    }
+#endif
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
     // Build Settings > Game: how much the game logs, and an optional log file in the save folder.
     if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);
@@ -1502,6 +1515,13 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+#ifdef __EMSCRIPTEN__
+    // The desktop writes the prefs when the game closes; a browser tab just goes away, so write them half a second after
+    // the last change (and when the page is hidden, through okay_web_flush).
+    static okay::web::PendingWrite s_webPrefs(0.5);
+    Prefs::AddListener([](const std::string& key) { if (!key.empty()) s_webPrefs.Touch(okay::platform::TicksMs() / 1000.0); });
+    g_webFlush = [prefsPath] { if (s_webPrefs.Pending()) { Prefs::Save(prefsPath); s_webPrefs.Done(); } };
+#endif
     okay::Accessibility::Load();   // the player's saved accessibility choices (text size, contrast, motion, colour filter)
     okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
@@ -1644,6 +1664,9 @@ int main(int argc, char** argv) {
     okay::platform::WindowDesc wd;
     wd.highDpi = true;
     wd.resizable = cfg.resizable;
+#ifdef __EMSCRIPTEN__
+    wd.resizable = true;   // the page sizes the canvas (platform/web/shell.html); SDL follows its CSS size only for a resizable window
+#endif
     wd.fullscreen = cfg.fullscreen;
     wd.borderless = cfg.borderless;
     wd.maximized = cfg.startMaximized && cfg.resizable && !cfg.fullscreen;
@@ -2992,8 +3015,17 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("Render.Present"); renderer->Present(); }
         okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
+#ifdef __EMSCRIPTEN__
+        {   // The page hides its loading screen on the first frame; the prefs are written once they are quiet.
+            static bool s_shown = false;
+            if (!s_shown) { s_shown = true; EM_ASM({ if (Module['okayFirstFrame']) Module['okayFirstFrame'](); }); }
+            if (s_webPrefs.Due(okay::platform::TicksMs() / 1000.0)) { Prefs::Save(prefsPath); s_webPrefs.Done(); }
+        }
+#endif
 
-        // Optional frame-rate cap: sleep the remainder of the frame budget.
+        // Optional frame-rate cap: sleep the remainder of the frame budget. Not in the browser: there a wait would
+        // spin the page's only thread, so the cap is given to the browser's own frame loop below.
+#ifndef __EMSCRIPTEN__
         if (cfg.fpsCap > 0) {
             double budget = 1.0 / cfg.fpsCap;
             double freq = (double)okay::platform::PerfFrequency();
@@ -3001,6 +3033,7 @@ int main(int argc, char** argv) {
             double remain = budget - elapsed;
             if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
         }
+#endif
     };
 
     // Drive the frame loop: the browser owns the loop on web (a blocking while
@@ -3008,7 +3041,8 @@ int main(int argc, char** argv) {
 #ifdef __EMSCRIPTEN__
     (void)running;
     static auto* s_frame = &frame;
-    emscripten_set_main_loop([]() { (*s_frame)(); }, 0, 1);
+    // 0 = the browser's display rate (requestAnimationFrame); a frame-rate cap is the browser's timer at that rate.
+    emscripten_set_main_loop([]() { (*s_frame)(); }, cfg.fpsCap > 0 ? cfg.fpsCap : 0, 1);
 #else
     // Startup splash: show a logo over a solid colour, fading in and
     // out, before the game proper. Skippable with a key/click; closing quits.

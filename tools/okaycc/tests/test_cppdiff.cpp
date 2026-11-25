@@ -272,6 +272,8 @@ int main() {
         engineDiff("tests/progs_cpp_engine/mipbudget_main.cpp", "../../engine/src/Optimize/MipBudget.cpp");
         engineDiff("tests/progs_cpp_engine/dyntree_main.cpp", "../../engine/src/Physics/Core/DynamicTree.cpp");
         engineDiff("tests/progs_cpp_engine/spatialfx_main.cpp", "../../engine/src/Audio/SpatialFx.cpp");
+        // Round 20: GestureRecognizer.cpp (if-condition declarations, remove_if and erase of a range).
+        engineDiff("tests/progs_cpp_engine/gesture_main.cpp", "../../engine/src/Input/GestureRecognizer.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

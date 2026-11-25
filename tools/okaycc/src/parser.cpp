@@ -1572,7 +1572,8 @@ private:
                 if (f.second->kind == Type::Kind::Struct && !f.second->tag.empty()) {
                     Type* m = classOf(f.second->tag);
                     if (m && hasCopy(m)) parts = true;
-                    else if (m && m->needCtor) ok = false;
+                    // A member class with constructors but no copy constructor is copied by its
+                    // implicit copy, the bytes ([class.copy.ctor] p14), as in T x = y.
                 }
             }
             if (!userCopy && parts && ok) {

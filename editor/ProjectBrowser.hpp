@@ -307,6 +307,10 @@ private:
     std::string m_root;
     okay::AssetDatabase m_db;
     bool m_indexed = false;
+    bool m_watchStarted = false;   // the folder watch is running
+    bool m_watchTried = false;     // StartWatch was asked once
+    bool m_watchHeard = false;     // the watch reported a change since the last scan
+    std::uint64_t m_lastScanMs = 0;
     std::uint64_t m_nextPoll = 0;
     std::uint64_t m_revision = 0;
     std::uint64_t m_problemRev = ~0ull; int m_problemCount = 0;

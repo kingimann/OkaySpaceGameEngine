@@ -2,7 +2,7 @@
 
 # Code index: engine-UI
 
-Back to the [code index](../code_index.md). 16 headers, 77 names.
+Back to the [code index](../code_index.md). 16 headers, 78 names.
 
 ## `engine/include/okay/UI/FocusGraph.hpp`
 
@@ -113,10 +113,11 @@ Back to the [code index](../code_index.md). 16 headers, 77 names.
 - `UIDefaultFont` function, line 77
 - `UITextW` function, line 80: Width of 'text' in screen pixels at font-pixel size 'px', in the font DrawUIText will
 - `UIMeasureText` function, line 83: Same measurement for an explicit font (nullptr = the scene UI font). Uses the
-- `RichLinkRect` struct, line 86: A clickable [url=...] run of rich text as it was last drawn: the rectangle (in the space the UI was drawn in, the same as
-- `RichLinksOf` function, line 88: The link rectangles the last frame drew for the text object 'go' (empty for a text with no links). UIRichLinks reads this.
-- `DrawUICross` function, line 91: An anti-aliased X (search clear, close). 'size' is the box in logical pixels.
-- `DrawWorldText` function, line 106: Draw a world-anchored TextRenderer (screenSpace off) at screen point ('x', 'y') with font pixel 'px': its
+- `UICaretX` function, line 87: Where the caret is drawn on one line of text (no '\n') drawn by DrawUIText at x = 0, when it sits before
+- `RichLinkRect` struct, line 90: A clickable [url=...] run of rich text as it was last drawn: the rectangle (in the space the UI was drawn in, the same as
+- `RichLinksOf` function, line 92: The link rectangles the last frame drew for the text object 'go' (empty for a text with no links). UIRichLinks reads this.
+- `DrawUICross` function, line 95: An anti-aliased X (search clear, close). 'size' is the box in logical pixels.
+- `DrawWorldText` function, line 110: Draw a world-anchored TextRenderer (screenSpace off) at screen point ('x', 'y') with font pixel 'px': its
 
 ## `engine/include/okay/UI/UIShape.hpp`
 

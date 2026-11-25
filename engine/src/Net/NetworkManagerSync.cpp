@@ -225,12 +225,23 @@ void NetworkManager::BroadcastBinarySnapshots(double tick) {
     if (m_mode == Mode::Server) {
         for (auto it = m_relaySnap.begin(); it != m_relaySnap.end();)
             it = m_syncObjs.count(it->first) ? std::next(it) : m_relaySnap.erase(it);
+        const bool relayShown = InterpolationBuffer();
         for (auto& [ep, c] : m_clients) {
             if (c.room != m_localRoom) continue;
             net::DeltaBase mine = owned;
             for (const auto& [id, rel] : m_relaySnap) {
                 if (rel.room != c.room || mine.pose.count(id)) continue;
-                mine.pose[id] = rel.pose;
+                // With the interpolation buffer, pass on the pose this host shows for the
+                // object (its owner's states placed on the owner's own tick stamps), not the
+                // last one that came in: that one would go out stamped with this host's send
+                // tick, so how late it came (the trip from its owner, and where it fell
+                // between two of our sends) became a stamp error, and other players saw the
+                // object stop and jump every second or so.
+                const auto so = m_syncObjs.find(id);
+                if (relayShown && so != m_syncObjs.end() && so->second.t && !so->second.samples.empty())
+                    mine.pose[id] = net::QuantizePose(so->second.t->localPosition, so->second.t->localRotation);
+                else
+                    mine.pose[id] = rel.pose;
                 if (!rel.extra.empty()) mine.extra[id] = rel.extra;
             }
             CullInterest(mine, c);

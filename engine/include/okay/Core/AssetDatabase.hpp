@@ -87,11 +87,16 @@ std::vector<FoundRef> ExtractMaterialRefs(const std::string& text);
 /// Generic text scanner (clips, dialogue, quests, behavior trees, sequences, glTF, ...):
 /// quoted strings, `key=value` values and bare words that end in a known asset extension.
 std::vector<FoundRef> ExtractTextRefs(const std::string& text);
+/// `.obj`, `.mtl`, `.dae` and ASCII `.fbx`: Wavefront `mtllib` and `map_*` lines (options skipped,
+/// spaces kept), Collada `<init_from>` image paths and FBX `RelativeFilename:` / `FileName:` strings.
+/// Text with a NUL (a binary .fbx) gives nothing: its strings carry their lengths, so a rename
+/// must not splice a path into it. Spans cover the path text.
+std::vector<FoundRef> ExtractModelRefs(const std::string& text);
 
 struct ScanOptions {
     bool createMetas = true;           ///< write a `.okaymeta` for assets that have none
     bool indexUnmetaed = false;        ///< with createMetas off: still index assets that have no meta (in memory only, nothing is written);
-                                       ///< they get a GUID that lasts for the session and a meta appears only when something is stored (labels, settings, EnsureMeta)
+                                       ///< the GUID is derived from the project path, so a new session finds the same one; a meta appears only when something is stored (labels, settings, EnsureMeta)
     bool detectMoves = true;           ///< follow moved / renamed files by GUID, hash and name
     bool matchByName = true;           ///< last resort: one orphan meta + one new file with the same name and type
     bool verifyHashes = true;          ///< hash every file on a first scan (false: trust a meta's hash when the size matches)
@@ -226,6 +231,15 @@ public:
     bool EnsureMeta(const Guid& guid, std::string* error = nullptr);
     /// Remove the metas of orphaned assets from disk. Returns how many.
     int RemoveOrphanMetas();
+    /// Watch the scanned folder with the operating system (inotify on Linux, ReadDirectoryChangesW
+    /// on Windows). False when nothing was scanned or the watch cannot be opened. The watcher is
+    /// stopped when the database is destroyed.
+    bool StartWatch(std::string* error = nullptr);
+    /// Project-relative paths that changed since the last poll (a file or a folder). Empty when
+    /// nothing changed or no watch is running. When the operating system dropped events (its
+    /// queue overflowed) the list holds the scanned root itself: scan the whole folder.
+    std::vector<std::string> PollWatch();
+    void StopWatch();
 
     // --- Labels -------------------------------------------------------------------
     bool SetLabels(const Guid& guid, const std::vector<std::string>& labels, std::string* error = nullptr);
@@ -352,5 +366,14 @@ private:
     Slot* SlotOf(const Guid& guid);
     const Slot* SlotOf(const Guid& guid) const;
 };
+
+/// The asset database scene save/load uses to turn a path into a GUID and a GUID back into
+/// the file's current path. Null (the default) leaves every path as it was written.
+void SetSceneAssetIndex(const AssetDatabase* db);
+const AssetDatabase* SceneAssetIndex();
+/// The GUID text of `path` in the bound index, or empty when there is no index or no such file.
+std::string SceneAssetGuid(const std::string& path);
+/// `storedPath`, or the index's current path for `guidText` when that file is still known.
+std::string ResolveSceneAssetPath(const std::string& storedPath, const std::string& guidText);
 
 } // namespace okay

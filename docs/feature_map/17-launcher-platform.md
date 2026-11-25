@@ -117,11 +117,12 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.5.1 Threads, posts, votes - `Platform/Forums` - world-readable, writing needs sign-in; `docs/sql/social.sql` tables
   - 17.5.2 Sections and moderation - `docs/sql/forum_sections.sql` - anyone creates a section (creator becomes admin), join or leave, member, moderator, section bans
   - 17.5.3 Forums page - `launcher/main.cpp` (tab 9, L23674; background fetch L9795)
+  - 17.5.4 Public names - `docs/sql/public_names.sql` - the server fills every author/sender/actor name column from `profiles` (`public_name_for`), never an e-mail; old rows cleaned once; also covers chat, workshop, activity, admin log and blocks; owner must run it
 - **Code:** `Platform/Forums`, `docs/sql/forum_sections.sql`
 - **API:** `okay::Forums`
 - **Editor:** none
 - **Docs:** `docs/online/supabase-backend.md`
-- **Tests:** none: only `chat_json` touches the class
+- **Tests:** none for the class (only `chat_json` touches it); `public_names_sql` (local Postgres) for the name columns
 - **Status:** Works - shipping page; untested
 - **Open:** no test; staff tools live in 17.9
 - **Related:** 17.9, 17.4

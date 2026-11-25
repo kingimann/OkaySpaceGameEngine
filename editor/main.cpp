@@ -1007,6 +1007,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectLayout.hpp"      // the Project panel's One column / Two columns layouts: divider clamp, open-in-place rows, keys
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
+#include "WebRun.hpp"             // Build Settings > Web: the web build's size and the local Run in browser server
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 
@@ -14985,6 +14986,43 @@ void DrawFileDialogs(EditorState& ed) {
             }
         }
         ImGui::Spacing();
+        if (g_buildPlatform == 1) {   // ---- Web: the last web build's download size and Run in browser (editor/WebRun.hpp) ----
+            namespace wr = oked::webrun;
+            const std::string webDir = (std::filesystem::u8path(g_buildDirBuf) / "web").u8string();
+            static std::string s_webSizeFor;
+            static wr::Sizes s_webSizes;
+            static double s_webSizeAt = -10.0;
+            if (s_webSizeFor != webDir || ImGui::GetTime() - s_webSizeAt > 2.0) {   // a build-web.sh run finishes outside the editor
+                s_webSizes = wr::Measure(webDir); s_webSizeFor = webDir; s_webSizeAt = ImGui::GetTime();
+            }
+            ImGui::TextDisabled("Web build");
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", s_webSizes.built ? wr::SizeLine(s_webSizes).c_str()
+                                                      : "none yet in the output folder's web/: Build exports the game, then run its build-web.sh with Emscripten.");
+            wr::PreviewServer& srv = wr::Shared();
+            const bool serving = srv.Running() && srv.Root() == webDir;
+            ImGui::BeginDisabled(!s_webSizes.built);
+            if (ImGui::Button(serving ? "Open in browser" : "Run in browser")) {
+                std::string err;
+                if (!serving && !srv.Start(webDir, 0, &err)) {
+                    g_buildStatus = "Run in browser: " + err;
+                } else {
+                    const oked::launch::Result r = oked::launch::OpenLocalUrl(srv.Url());
+                    g_buildStatus = r.ok ? "Serving the web build at " + srv.Url() + " (this computer only)."
+                                         : "Run in browser: " + r.error + " Open " + srv.Url() + " in a browser.";
+                }
+                ConsoleLog(g_buildStatus);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Serves web/ on this computer (127.0.0.1) and opens it in the default browser.\n"
+                                  "Browsers do not run a WebAssembly game straight from a folder.");
+            ImGui::EndDisabled();
+            if (serving) {
+                ImGui::SameLine(); ImGui::TextDisabled("%s", srv.Url().c_str());
+                ImGui::SameLine(); if (ImGui::SmallButton("Stop##webrun")) srv.Stop();
+            }
+            ImGui::Spacing();
+        }
         // ---- Sections: a sidebar on the left, the chosen page on the right ----
         static int s_buildSec = 0;
         if (const char* e = std::getenv("OKAY_UI_BUILDSEC")) { static bool once = false; if (!once) { once = true; s_buildSec = std::atoi(e); } }
@@ -54691,6 +54729,7 @@ int main(int argc, char** argv) {
             (void)s_texHot;
             okay::textures::Pump();
         }
+        oked::webrun::Shared().Poll();   // Build Settings > Web > Run in browser: answer the browser (never waits)
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();

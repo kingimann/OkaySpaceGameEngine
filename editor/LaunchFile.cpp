@@ -311,5 +311,22 @@ Result Reveal(const std::string& path, bool selectFile) {
 #endif
 }
 
+Result OpenLocalUrl(const std::string& url) {
+    // Only a page on this computer (Build Settings > Web > Run in browser): http://127.0.0.1:<port>/ and nothing that a
+    // shell or the browser could read as an option or a second argument.
+    const std::string prefix = "http://127.0.0.1:";
+    if (url.compare(0, prefix.size(), prefix) != 0) return Fail("Only a page on this computer can be opened from here.");
+    for (char c : url)
+        if ((unsigned char)c <= ' ' || c == '"' || c == '\\' || c == '^' || c == '`' || (unsigned char)c >= 0x7f)
+            return Fail("The address has a character that is not allowed.");
+#if defined(_WIN32)
+    return ShellRun(ToWide(url), std::wstring());
+#else
+    const std::string opener = OpenProgram();
+    if (opener.empty()) return Fail("This system has no program to open a web page with (xdg-open or open).");
+    return Spawn({opener, url});
+#endif
+}
+
 } // namespace launch
 } // namespace oked

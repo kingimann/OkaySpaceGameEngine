@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -218,7 +219,16 @@ bool& ehActive();
 bool& forceExceptions();
 bool& instDirty();
 std::size_t mangledEnd(const std::string& s, std::size_t j);
+// A pack place of a primary class template made by packs.cpp (parameter "P__pk<j>") may not take
+// the filler type __okay_pack_end: that place is empty, so the copy for a longer pack must not match.
+bool packPlaceGetsEnd(const std::string& param, const Type& arg);
 std::unique_ptr<Type> typeFromMangle(const std::string& m);
+// Match the tag of a class template instance written with parameters (Node<T>: each parameter as
+// <length>\x02<name>) against an instance's tag Q piece by piece, calling bind(name, type) for each
+// parameter (false: a conflict, the match fails). strict: any other difference fails the match (a
+// partial specialization's pattern); otherwise it is ignored (deduction, which checks later).
+bool matchInstanceTag(const std::string& P, const std::string& Q, bool strict,
+                      const std::function<bool(const std::string&, std::unique_ptr<Type>)>& bind);
 std::string argMangle(const TArg& a);
 std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args);
 

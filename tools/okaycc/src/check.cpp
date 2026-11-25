@@ -135,7 +135,11 @@ private:
     }
 
     std::set<std::string> usedFns_;  // functions some checked code refers to
+    // auto locals whose initializer has no type until the file is read again with new instances
+    // (deduceAuto): until then a use has no type either.
+    std::set<std::string> pendingAuto_;
     ET lookup(const std::string& name, int line, int col, bool quiet = false) {
+        if (!pendingAuto_.empty() && instDirty() && pendingAuto_.count(name)) return bad(line, col);
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[static_cast<std::size_t>(i)].find(name);
             if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
@@ -761,6 +765,15 @@ private:
                 r.lvalue = true;
                 r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
+            }
+            if (scopeOf(st->tag + "::" + fname) == 0 && !hasSideEffects(*e.kids[0])) {
+                // obj.s for a static data member s ([expr.ref] p6.1): the object is not read; the
+                // member is the class's one object C::s.
+                std::string q = st->tag + "::" + fname;
+                e.kids.clear();
+                e.kind = Expr::Kind::Name;
+                e.text = q;
+                return checkExpr(e);
             }
             err(e.line, e.col, "struct has no field '" + fname + "'");
             return bad(e.line, e.col);
@@ -1884,6 +1897,7 @@ private:
         if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
             for (std::size_t i = 0; i < sig.names.size(); ++i) {
                 if (sig.names[i] != pat.tag.substr(1)) continue;
+                if (packPlaceGetsEnd(sig.names[i], arg)) return false;
                 std::unique_ptr<Type> a = cloneType(arg);
                 if (a->kind == Type::Kind::Array && a->inner && !keepArray_) a = ptrTo(std::move(a->inner));
                 if (!bound[i]) {
@@ -1894,37 +1908,23 @@ private:
             }
             return true;
         }
+        if (pat.kind == Type::Kind::Struct && pat.tag.find('\x02') != std::string::npos && pat.tag[0] != '\x02' &&
+            arg.kind != Type::Kind::Struct && arg.kind != Type::Kind::Union)
+            return false;  // a class template instance (Node<T>) is never deduced from a non-class
         if (pat.kind == Type::Kind::Struct && pat.tag.find('\x02') != std::string::npos &&
             arg.kind == Type::Kind::Struct) {
             // A class template instance written with the parameters (Node<T>): its tag holds the
             // marker; match it against the argument's tag piece by piece.
-            const std::string& P = pat.tag;
-            const std::string& Q = arg.tag;
-            std::size_t i = 0;
-            std::size_t j = 0;
-            while (i < P.size() && j < Q.size()) {
-                std::size_t k = i;
-                std::size_t n = 0;
-                while (k < P.size() && P[k] >= '0' && P[k] <= '9') n = n * 10 + static_cast<std::size_t>(P[k++] - '0');
-                if (k > i && k < P.size() && P[k] == '\x02' && n >= 1) {
-                    std::string name = P.substr(k + 1, n - 1);
-                    std::size_t end = mangledEnd(Q, j);
-                    if (end == j) return true;
-                    auto found = typeFromMangle(Q.substr(j, end - j));
-                    for (std::size_t b = 0; b < sig.names.size() && found; ++b)
-                        if (sig.names[b] == name) {
-                            if (!bound[b]) bound[b] = std::move(found);
-                            else if (!sameType(*bound[b], *found)) return false;
-                        }
-                    i = k + n;
-                    j = end;
-                    continue;
-                }
-                if (P[i] != Q[j]) return true;
-                ++i;
-                ++j;
-            }
-            return true;
+            return matchInstanceTag(pat.tag, arg.tag, false, [&](const std::string& name, std::unique_ptr<Type> found) {
+                for (std::size_t b = 0; b < sig.names.size(); ++b)
+                    if (sig.names[b] == name) {
+                        if (packPlaceGetsEnd(name, *found)) return false;
+                        if (!bound[b]) bound[b] = std::move(found);
+                        else if (!sameType(*bound[b], *found)) return false;
+                        break;
+                    }
+                return true;
+            });
         }
         if (pat.kind == Type::Kind::Pointer && pat.inner) {
             if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
@@ -2515,18 +2515,25 @@ private:
             }
             const TemplateSig* chosen = nullptr;
             std::vector<std::unique_ptr<Type>> bound;
+            // Explicit value arguments (get<0>(t), [temp.arg.explicit]): carried as "v" casts.
+            std::vector<bool> given(c0.kids.size(), false);
+            for (std::size_t i = 0; i < c0.kids.size(); ++i)
+                given[i] = c0.kids[i] && !c0.kids[i]->ty && c0.kids[i]->text == "v";
             for (const std::string& key : keys) {
                 const TemplateSig& cand = funcTemplateSigs()[key];
                 std::vector<std::unique_ptr<Type>> b(cand.names.size());
-                for (std::size_t i = 0; i < c0.kids.size() && i < b.size(); ++i)
-                    if (c0.kids[i] && c0.kids[i]->ty) b[i] = cloneType(*c0.kids[i]->ty);
                 bool ok = true;
+                for (std::size_t i = 0; i < c0.kids.size() && i < b.size(); ++i) {
+                    if (c0.kids[i] && c0.kids[i]->ty) b[i] = cloneType(*c0.kids[i]->ty);
+                    bool wantsValue = i < cand.isType.size() && !cand.isType[i];
+                    if (given[i] != wantsValue) ok = false;
+                }
                 for (std::size_t i = 0; i < cand.fn->params.size() && ok; ++i)
                     if (cand.fn->params[i].type && !(hasPlaceholder(*cand.fn->params[i].type) && onlyGiven(*cand.fn->params[i].type, cand, c0.kids.size())) &&
                         !deduceArg(*cand.fn->params[i].type, argTypes[i], cand, b))
                         ok = false;
                 for (std::size_t i = 0; i < b.size() && ok; ++i)
-                    if (!b[i]) ok = false;
+                    if (!b[i] && !(i < given.size() && given[i])) ok = false;
                 if (!ok) continue;
                 chosen = &cand;
                 name = key;
@@ -2540,11 +2547,17 @@ private:
             const TemplateSig& sig = *chosen;
             std::vector<TArg> args;
             for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                TArg a;
+                if (i < given.size() && given[i]) {
+                    a.isValue = true;
+                    a.value = static_cast<std::int64_t>(c0.kids[i]->ival);
+                    args.push_back(std::move(a));
+                    continue;
+                }
                 if (!bound[i]) {
                     err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
                     return bad(e.line, e.col);
                 }
-                TArg a;
                 a.type = std::move(bound[i]);
                 args.push_back(std::move(a));
             }
@@ -2559,6 +2572,13 @@ private:
                 r.args = std::move(args);
                 instRequests().push_back(std::move(r));
                 instDirty() = true;
+                if (!scopes_.front().count(inst) && !overloads_.count(inst)) {
+                    // Asked for in this round: its return type is known only once the file is read
+                    // again with the instance. Until then the call has no type, so nothing is
+                    // deduced from it (auto m = make_tuple(..); get<0>(m) chose the copy for no
+                    // elements when the call was taken to give an int).
+                    return bad(e.line, e.col);
+                }
             }
             c0.text = inst;
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "dtorauto:") {
@@ -3569,6 +3589,7 @@ private:
         }
         ET src = checkExpr(*d.init);
         if (src.bad || !src.type) {
+            if (instDirty()) pendingAuto_.insert(d.name);
             d.type = prim(Type::Kind::Int);
             add(d.name, cloneType(*d.type), false, d.line, d.col);
             return true;

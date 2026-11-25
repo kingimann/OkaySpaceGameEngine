@@ -1,0 +1,120 @@
+// <tuple> for okay-cc (ISO/IEC 14882 [tuple]). Our own header. A tuple is its first element and
+// the tuple of the rest (tuple<H, T...> holds an H and a tuple<T...>); okay-cc copies the
+// templates with a pack once per pack length (src/packs.cpp), so a tuple holds at most seven
+// elements here. get<I> walks down I links through __tuple_at, which is written out for each index
+// (a partial specialization with a value parameter is not matched by okay-cc yet). Comparisons are
+// member operators, element by element ([tuple.rel]).
+#pragma once
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+namespace std {
+template <typename... T>
+class tuple;
+
+template <>
+class tuple<> {
+public:
+    tuple() {}
+    template <typename O>
+    tuple<> &operator=(const O &) { return *this; }
+    void swap(tuple<> &) {}
+    bool operator==(const tuple<> &) const { return true; }
+    bool operator!=(const tuple<> &) const { return false; }
+    bool operator<(const tuple<> &) const { return false; }
+    bool operator>(const tuple<> &) const { return false; }
+    bool operator<=(const tuple<> &) const { return true; }
+    bool operator>=(const tuple<> &) const { return true; }
+};
+
+template <typename H, typename... T>
+class tuple<H, T...> {
+public:
+    H __h;
+    tuple<T...> __t;
+    tuple() : __h(), __t() {}
+    tuple(const H &h, const T &...t) : __h(h), __t(t...) {}
+    // Assignment from any tuple of as many elements (also tie(a, b) = t): element by element.
+    template <typename O>
+    tuple<H, T...> &operator=(const O &o) {
+        __h = o.__h;
+        __t = o.__t;
+        return *this;
+    }
+    void swap(tuple<H, T...> &o) {
+        std::swap(__h, o.__h);
+        __t.swap(o.__t);
+    }
+    bool operator==(const tuple<H, T...> &o) const { return __h == o.__h && __t == o.__t; }
+    bool operator!=(const tuple<H, T...> &o) const { return !(*this == o); }
+    bool operator<(const tuple<H, T...> &o) const {
+        if (__h < o.__h) return true;
+        if (o.__h < __h) return false;
+        return __t < o.__t;
+    }
+    bool operator>(const tuple<H, T...> &o) const { return o < *this; }
+    bool operator<=(const tuple<H, T...> &o) const { return !(o < *this); }
+    bool operator>=(const tuple<H, T...> &o) const { return !(*this < o); }
+};
+
+// tuple_size ([tuple.helper]).
+template <typename Tup>
+struct tuple_size;
+template <typename... T>
+struct tuple_size<tuple<T...>> : integral_constant<size_t, sizeof...(T)> {};
+
+// __tuple_at<I, tuple<...>>: the type of element I and the way to it.
+template <size_t I, typename Tup>
+struct __tuple_at;
+template <typename H, typename... T>
+struct __tuple_at<0, tuple<H, T...>> {
+    typedef H type;
+    static H &at(tuple<H, T...> &t) { return t.__h; }
+    static const H &at(const tuple<H, T...> &t) { return t.__h; }
+};
+#define __OKAY_TUPLE_AT(I, J)                                                       \
+    template <typename H, typename... T>                                           \
+    struct __tuple_at<I, tuple<H, T...>> {                                         \
+        typedef typename __tuple_at<J, tuple<T...>>::type type;                    \
+        static type &at(tuple<H, T...> &t) { return __tuple_at<J, tuple<T...>>::at(t.__t); } \
+        static const type &at(const tuple<H, T...> &t) { return __tuple_at<J, tuple<T...>>::at(t.__t); } \
+    };
+__OKAY_TUPLE_AT(1, 0)
+__OKAY_TUPLE_AT(2, 1)
+__OKAY_TUPLE_AT(3, 2)
+__OKAY_TUPLE_AT(4, 3)
+__OKAY_TUPLE_AT(5, 4)
+__OKAY_TUPLE_AT(6, 5)
+#undef __OKAY_TUPLE_AT
+
+template <size_t I, typename Tup>
+struct tuple_element {
+    typedef typename __tuple_at<I, Tup>::type type;
+};
+template <size_t I, typename Tup>
+using tuple_element_t = typename tuple_element<I, Tup>::type;
+
+template <size_t I, typename... T>
+typename __tuple_at<I, tuple<T...>>::type &get(tuple<T...> &t) {
+    return __tuple_at<I, tuple<T...>>::at(t);
+}
+template <size_t I, typename... T>
+const typename __tuple_at<I, tuple<T...>>::type &get(const tuple<T...> &t) {
+    return __tuple_at<I, tuple<T...>>::at(t);
+}
+
+// make_tuple takes its arguments by value, so arrays and functions decay ([tuple.creation]).
+template <typename... T>
+tuple<T...> make_tuple(T... v) {
+    return tuple<T...>(v...);
+}
+// tie(a, b) is a tuple of references to a and b.
+template <typename... T>
+tuple<T &...> tie(T &...v) {
+    return tuple<T &...>(v...);
+}
+template <typename... T>
+tuple<T &...> forward_as_tuple(T &...v) {
+    return tuple<T &...>(v...);
+}
+}  // namespace std

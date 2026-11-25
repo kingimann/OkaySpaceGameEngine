@@ -691,6 +691,13 @@ private:
                 qualOnly = true;
                 continue;
             }
+            // const typename X<T>::type: the word only says a type follows ([temp.res] p3).
+            if (!any && qualOnly && isKw("typename") && i_ + 1 < toks_.size() &&
+                (toks_[i_ + 1].kind == Tok::Ident || isP(toks_[i_ + 1], "::"))) {
+                advance();
+                if (isP("::") && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) advance();
+                continue;
+            }
             if (!any && isKw("auto")) {
                 advance();
                 return autoType();
@@ -744,7 +751,16 @@ private:
                 auto st = structs_.find(q);
                 if (mt != memberTypes_.end() && mt->second) inst = cloneType(*mt->second);
                 else if (st != structs_.end() && st->second) inst = cloneType(*st->second);
-                else break;
+                else if (inst->tag.find('\x02') != std::string::npos || protoDepth_ > 0) {
+                    // A member of an instance that still depends on template parameters
+                    // (typename X<I, tuple<T...>>::type in a function template's prototype,
+                    // [temp.dep.type]): known only in each instance, so it stands for itself here,
+                    // a placeholder that deduction does not bind. In a prototype a value parameter
+                    // reads as 0, so an instance with no such member is also left to the instances
+                    // (the copy of get<I> for an empty pack names __tuple_at<I, tuple<>>::type).
+                    inst = ty(Type::Kind::Struct);
+                    inst->tag = std::string("\x02") + "?" + toks_[i_ + 1].text;
+                } else break;
                 advance();
                 advance();
             }
@@ -3331,6 +3347,7 @@ private:
         std::size_t skipTo = 0;    // just after the pattern's '>'
     };
     std::map<std::string, std::vector<Partial>> partials_;
+    int protoDepth_ = 0;  // reading a function template's prototype (parameters stand for themselves)
 
     // Match a pattern type (parameters as "\x02P" placeholders) against an argument type, binding
     // the parameters ([temp.deduct.type]). Instance tags are compared whole.
@@ -3338,6 +3355,7 @@ private:
         if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
             for (std::size_t k = 0; k < td.params.size(); ++k) {
                 if (td.params[k].name != pat.tag.substr(1)) continue;
+                if (packPlaceGetsEnd(td.params[k].name, arg)) return false;
                 auto a = cloneType(arg);
                 if (pat.cnst) {
                     if (!a->cnst) return false;
@@ -3352,6 +3370,22 @@ private:
             return false;
         }
         if (pat.kind != arg.kind || pat.cnst != arg.cnst) return false;
+        if (pat.kind == Type::Kind::Struct && pat.tag.find('\x02') != std::string::npos) {
+            // A class template instance in the pattern (tuple_size<tuple<T...>>): its tag holds the
+            // parameters; match it against the argument's tag piece by piece ([temp.deduct.type] p8).
+            return matchInstanceTag(pat.tag, arg.tag, true, [&](const std::string& name, std::unique_ptr<Type> a) {
+                for (std::size_t k = 0; k < td.params.size(); ++k) {
+                    if (td.params[k].name != name) continue;
+                    if (packPlaceGetsEnd(name, *a)) return false;
+                    if (!bound[k]) {
+                        bound[k] = std::move(a);
+                        return true;
+                    }
+                    return sameType(*bound[k], *a);
+                }
+                return false;
+            });
+        }
         if (pat.kind == Type::Kind::Array && pat.unsized != arg.unsized) return false;
         if (pat.kind == Type::Kind::Reference && pat.rref != arg.rref) return false;
         if (pat.kind == Type::Kind::Function) {
@@ -3816,8 +3850,10 @@ private:
                 if (isKw("static") && memberCls_) isStaticTmpl = true;
                 advance();
             }
+            ++protoDepth_;
             auto base = parseBase();
             Parsed d = parseDeclarator(true);
+            --protoDepth_;
             sig.fn = apply(std::move(base), d.mods);
         }
         for (const EnumSave& es : saved) {

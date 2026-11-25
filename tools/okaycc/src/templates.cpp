@@ -16,6 +16,10 @@ std::vector<TArg> cloneArgs(const std::vector<TArg>& in) {
     return out;
 }
 
+bool packPlaceGetsEnd(const std::string& param, const Type& arg) {
+    return param.find("__pk") != std::string::npos && arg.kind == Type::Kind::Struct && arg.tag == "__okay_pack_end";
+}
+
 std::map<std::string, TemplateSig>& funcTemplateSigs() {
     static std::map<std::string, TemplateSig> m;
     return m;
@@ -102,6 +106,35 @@ std::size_t mangledEnd(const std::string& s, std::size_t j) {
     }
     if (std::string("vbchstijlmfd").find(c) != std::string::npos) return j + 1;
     return j;
+}
+
+bool matchInstanceTag(const std::string& P, const std::string& Q, bool strict,
+                      const std::function<bool(const std::string&, std::unique_ptr<Type>)>& bind) {
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < P.size() && j < Q.size()) {
+        std::size_t k = i;
+        std::size_t n = 0;
+        while (k < P.size() && P[k] >= '0' && P[k] <= '9') n = n * 10 + static_cast<std::size_t>(P[k++] - '0');
+        if (k > i && k < P.size() && P[k] == '\x02' && n >= 1) {
+            std::string name = P.substr(k + 1, n - 1);
+            std::size_t end = mangledEnd(Q, j);
+            if (end == j) return !strict;
+            auto found = typeFromMangle(Q.substr(j, end - j));
+            if (!found) {
+                if (strict) return false;
+            } else if (!bind(name, std::move(found))) {
+                return false;
+            }
+            i = k + n;
+            j = end;
+            continue;
+        }
+        if (P[i] != Q[j]) return !strict;
+        ++i;
+        ++j;
+    }
+    return !strict || (i == P.size() && j == Q.size());
 }
 
 // The type a mangled string names (builtin letters, pointers and class names).

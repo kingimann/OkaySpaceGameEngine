@@ -298,6 +298,19 @@ int main() {
         CHECK(!t2.stacked); CHECK_NEAR(t2.buttons[1].R(), 900.0f, 1e-4); CHECK(t2.search.w <= 420.0f);
         CHECK(L::NotesShown(6, false).shown == 6 && !L::NotesShown(6, false).toggle);
         CHECK(L::NotesShown(60, false).shown == L::kNotesCollapsed && L::NotesShown(60, true).shown == 60);
+        // Foldable side panels (Servers' channels: 224 px, narrow below 560; Forums' sections: 220 px, narrow below 820).
+        for (const auto& pnl : {std::pair<float, float>{224.0f, 560.0f}, std::pair<float, float>{220.0f, 820.0f}}) {
+            const float wide = 1400.0f, narrow = pnl.second - 100.0f;
+            const L::SidePanel open = L::LayoutSidePanel(wide, pnl.first, 10.0f, pnl.second, false, false);
+            const L::SidePanel folded = L::LayoutSidePanel(wide, pnl.first, 10.0f, pnl.second, true, false);
+            CHECK(open.shown && !open.overlay); CHECK(!folded.shown && !folded.overlay);
+            CHECK(folded.contentW > open.contentW);                          // folding gives the content the panel's room
+            CHECK(std::abs(folded.contentW - open.contentW - (pnl.first + 10.0f)) < 0.01f);
+            const L::SidePanel n0 = L::LayoutSidePanel(narrow, pnl.first, 10.0f, pnl.second, false, false);
+            const L::SidePanel n1 = L::LayoutSidePanel(narrow, pnl.first, 10.0f, pnl.second, false, true);
+            CHECK(!n0.shown && !n0.overlay);                                  // narrow: starts folded
+            CHECK(!n1.shown && n1.overlay && n1.contentW == narrow);         // and opens over the content, which keeps its width
+        }
         // The Marketplace's filters, views and item page.
         {
             L::MarketQuery q;

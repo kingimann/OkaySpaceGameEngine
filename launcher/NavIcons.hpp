@@ -49,6 +49,13 @@ void SectionLabel(const char* title, int n);
 bool BeginSlateCombo(const char* label, const char* preview, int flags = 0);
 bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated, int popupMaxItems = -1);
 bool SlateCombo(const char* label, int* current, const char* const items[], int count, int popupMaxItems = -1);
+/// The fold / unfold button of a side panel (the sidebar, Servers' channels, Forums' sections): the panel icon in a rounded
+/// square, `d` pixels; the tooltip names the panel and the shortcut. True when clicked.
+bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hoverBg, ImU32 fg, ImU32 fgHover);
+/// Ctrl+B this frame, for the page whose panel it folds (a page takes it with TakePanelShortcut; if no page did, it folds
+/// the launcher sidebar at the end of the frame).
+extern bool g_panelShortcut;
+inline bool TakePanelShortcut() { const bool b = g_panelShortcut; g_panelShortcut = false; return b; }
 /// A plain button exactly as wide as its label needs (UI-scaled padding), at least `minW`.
 bool FitButton(const char* label, float h, float minW = 0.0f, bool primary = false);
 float FitButtonW(const char* label, float minW = 0.0f);   // the width FitButton will take

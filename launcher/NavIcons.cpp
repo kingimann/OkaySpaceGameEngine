@@ -413,6 +413,18 @@ bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated,
     return SlateCombo(label, current, items.data(), (int)items.size(), popupMaxItems);
 }
 
+bool g_panelShortcut = false;
+bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hoverBg, ImU32 fg, ImU32 fgHover) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool click = ImGui::InvisibleButton(id, ImVec2(d, d));
+    const bool h = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (h) dl->AddRectFilled(p, ImVec2(p.x + d, p.y + d), hoverBg, 6.0f);
+    DrawNavIcon(dl, kIcoPanel, ImVec2(p.x + d * 0.5f, p.y + d * 0.5f), h ? fgHover : fg);
+    if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s %s  (Ctrl+B)", open ? "Hide" : "Show", what); }
+    return click;
+}
+
 float FitButtonW(const char* label, float minW) {
     const char* end = std::strstr(label, "##");   // the visible part of the label
     return okay::launcherlayout::ButtonW(ImGui::CalcTextSize(label, end).x, UiPx(14.0f), minW);

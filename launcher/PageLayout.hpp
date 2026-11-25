@@ -154,6 +154,20 @@ inline void PlaceHeader(HeaderSplit& h, float availW, float leftH, float rightW,
     }
 }
 
+// ---- Foldable side panels (the launcher sidebar, Servers' channel list, Forums' sections) ------------------------------------
+/// A page's side panel: beside the content when there is room and it is not folded; on a narrow page (`availW` below
+/// `narrowBelow`) it is never beside the content and opens over it instead (`overlay`, when the person asked for it).
+/// `contentW` is what the content gets.
+struct SidePanel { bool shown = true; bool overlay = false; float contentW = 0; };
+inline SidePanel LayoutSidePanel(float availW, float panelW, float gap, float narrowBelow, bool folded, bool overlayOpen) {
+    SidePanel p;
+    const bool narrow = availW < narrowBelow;
+    p.shown = !narrow && !folded;
+    p.overlay = narrow && overlayOpen;
+    p.contentW = std::max(0.0f, availW - (p.shown ? panelW + gap : 0.0f));
+    return p;
+}
+
 // ---- The Marketplace (a browse-and-shop page: a filter rail, a grid of item tiles, an item page) ----------------------------
 /// Where the filter rail and the grid go. Below `railMinPageW` the rail folds into a "Filters" button (it then opens over the
 /// grid). The grid has 3 to 6 columns of tiles at least `tileMinW` wide (fewer than 3 only when even 3 do not fit).
@@ -182,12 +196,12 @@ inline MarketTile LayoutMarketTile(float tileW, float lineH, float priceH, float
 }
 /// The item page: the picture and the details side by side on a wide page, the picture over the details on a narrow one.
 struct MarketDetail { bool twoColumns = true; Rect picture, info; };
-inline MarketDetail LayoutMarketDetail(float availW, float gap, float minInfoW) {
+inline MarketDetail LayoutMarketDetail(float availW, float gap, float minInfoW, float narrowMaxPicH = 1e9f) {
     MarketDetail d;
     const float picW = std::floor(availW * 0.55f);
     d.twoColumns = availW - picW - gap >= minInfoW;
     if (d.twoColumns) { d.picture = Rect{0, 0, picW, std::floor(picW * 0.75f)}; d.info = Rect{picW + gap, 0, availW - picW - gap, 0}; }
-    else { d.picture = Rect{0, 0, availW, std::floor(availW * 0.5f)}; d.info = Rect{0, d.picture.B() + gap, availW, 0}; }
+    else { d.picture = Rect{0, 0, availW, std::floor(std::min(availW * 0.5f, narrowMaxPicH))}; d.info = Rect{0, d.picture.B() + gap, availW, 0}; }   // (a short banner: the details stay in view)
     return d;
 }
 /// What the Marketplace shows: which view (0 Browse, 1 Your listings, 2 Saved), a category (-1 all), a minimum average

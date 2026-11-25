@@ -1934,6 +1934,8 @@ std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" 
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
 static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
+bool g_svChannelsFolded = false;  // Servers: the channel list folded away (persisted; PanelToggle / Ctrl+B)
+bool g_foSectionsFolded = false;  // Forums: the sections rail folded away (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
 int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
@@ -3327,6 +3329,8 @@ void LoadPrefs() {
             }
         }
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
+        else if (k == "servers_channels_folded") g_svChannelsFolded = (v != "0");
+        else if (k == "forums_sections_folded") g_foSectionsFolded = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
@@ -3452,6 +3456,8 @@ void SavePrefs() {
     for (const auto& kv : g_starred)
         f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
+    f << "servers_channels_folded=" << (g_svChannelsFolded ? 1 : 0) << "\n";
+    f << "forums_sections_folded=" << (g_foSectionsFolded ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
@@ -12262,6 +12268,7 @@ int main(int argc, char** argv) {
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
+        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         PumpBlocks(account);
@@ -12431,11 +12438,7 @@ int main(int argc, char** argv) {
                 // Collapse toggle on the right of the header.
                 ImVec2 tp(start.x + avail - 30.0f, start.y + 2.0f);
                 ImGui::SetCursorScreenPos(tp);
-                if (ImGui::InvisibleButton("##navtoggle", ImVec2(28, 28))) { g_navCollapsed = true; SavePrefs(); }
-                bool th = ImGui::IsItemHovered();
-                if (th) dl->AddRectFilled(tp, ImVec2(tp.x + 28, tp.y + 28), navHover, 6.0f);
-                DrawNavIcon(dl, kIcoPanel, ImVec2(tp.x + 14, tp.y + 14), th ? navTextHi : navIcon);
-                if (th) ImGui::SetTooltip("Collapse sidebar");
+                if (PanelToggle("##navtoggle", true, "the sidebar", 28.0f, navHover, navIcon, navTextHi)) { g_navCollapsed = true; SavePrefs(); }
                 ImGui::SetCursorScreenPos(ImVec2(start.x, br.y));
                 ImGui::Dummy(ImVec2(avail, 6));
             } else {
@@ -17920,7 +17923,7 @@ int main(int argc, char** argv) {
                     if (dvReviewsFor != w.id) { dvReviewsFor = w.id; dvReviews = ws.Reviews(w.id); }
                     if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) mq.Back();
                     ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-                    const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f));
+                    const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f), UiPx(200.0f));
                     const ImVec2 o = ImGui::GetCursorScreenPos();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     drawPicture(dl, ImVec2(o.x + D.picture.x, o.y + D.picture.y), ImVec2(o.x + D.picture.R(), o.y + D.picture.B()), w, UiPx(14.0f), 4.0f);
@@ -18432,8 +18435,16 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kSunken);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 12));
+                bool svPaneToggle = TakePanelShortcut();   // Ctrl+B on this page folds the channel list
                 ImGui::BeginChild("##svrail", ImVec2(72, colH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
                 ImGui::PopStyleVar();
+                if (!svList.empty()) {   // fold / unfold the channel list, at the top of the rail
+                    ImGui::SetCursorPosX((72.0f - 28.0f) * 0.5f);
+                    if (PanelToggle("##svfold", !g_svChannelsFolded, "the channels", 28.0f, IM_COL32(255, 255, 255, 18), cDim, cText)) svPaneToggle = true;
+                    const ImVec2 lp = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x + 16.0f, lp.y + 5.0f), ImVec2(lp.x + 72.0f - 16.0f, lp.y + 5.0f), IM_COL32(255, 255, 255, 22), 1.0f);
+                    ImGui::Dummy(ImVec2(0, 10));
+                }
                 {
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const float S = 44.0f;
@@ -18510,11 +18521,13 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("Join with code", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
                     ImGui::EndChild();
                 } else {
-                    // ---- Pane 2: server header + channels ------------------------------
+                    // ---- Pane 2: server header + channels (folds away: g_svChannelsFolded, PanelToggle, Ctrl+B; on a narrow
+                    //      page it opens over the chat instead, okay::launcherlayout::LayoutSidePanel) ----------------
+                    auto drawChannelPane = [&](float paneH) {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, colBg);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-                    ImGui::BeginChild("##svchan", ImVec2(224, colH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::BeginChild("##svchan", ImVec2(224, paneH), ImGuiChildFlags_AlwaysUseWindowPadding);
                     ImGui::PopStyleVar();
                     {
                         ImDrawList* d = ImGui::GetWindowDrawList();
@@ -18647,10 +18660,25 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor();
-                    ImGui::SameLine(0, 10);
+                    };
+                    static bool svPaneOverlay = false;
+                    const okay::launcherlayout::SidePanel svPane = okay::launcherlayout::LayoutSidePanel(availW - 82.0f, 224.0f, 10.0f, 560.0f, g_svChannelsFolded, svPaneOverlay);
+                    if (svPaneToggle) {   // the button at the top of the server rail, or Ctrl+B
+                        if (availW - 82.0f < 560.0f) svPaneOverlay = !svPaneOverlay;
+                        else { g_svChannelsFolded = !g_svChannelsFolded; SavePrefs(); }
+                    }
+                    if (svPane.shown) { drawChannelPane(colH); ImGui::SameLine(0, 10); }
+                    if (svPane.overlay) {   // narrow page: over the chat (a popup: opaque, on top, closes on a click outside)
+                        ImGui::SetNextWindowPos(ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y));
+                        ImGui::OpenPopup("##svchanpop");
+                    }
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                    if (ImGui::BeginPopup("##svchanpop")) { drawChannelPane(std::min(colH, 520.0f)); ImGui::EndPopup(); }
+                    else svPaneOverlay = false;
+                    ImGui::PopStyleVar();
 
                     // ---- Pane 3: channel chat (+ members on wide windows) ----------------
-                    const float leftUsed = 72 + 10 + 224 + 10;
+                    const float leftUsed = 72 + 10 + (svPane.shown ? 224 + 10 : 0);
                     if (svThreadRoot && std::none_of(svMsgs.begin(), svMsgs.end(), [&](const okay::ChannelMessage& x) { return x.id == svThreadRoot; }))
                         svThreadRoot = 0;   // root scrolled out / deleted / switched channel
                     const bool showMem = (svShowMembers || svThreadRoot) && (availW - leftUsed) > (svThreadRoot ? 520.0f : 620.0f);
@@ -19573,13 +19601,25 @@ int main(int argc, char** argv) {
                 d->AddText(ImGui::GetFont(), fs, ImVec2(c.x - is.x * 0.5f, c.y - is.y * 0.5f), IM_COL32_WHITE, ini);
             };
             auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; };
-            // Left rail: Home, joined sections, all sections, create.
+            // Left rail: Home, joined sections, all sections, create. It folds away (g_foSectionsFolded, PanelToggle, Ctrl+B) and opens
+            // over the list on a narrow page (okay::launcherlayout::LayoutSidePanel).
+            bool foRailToggle = TakePanelShortcut();
             auto drawSectionsRail = [&](float w, float h) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 10));
                 ImGui::BeginChild("##forail", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding);
                 ImDrawList* d = ImGui::GetWindowDrawList();
+                {   // "SECTIONS" and the fold button (PanelToggle, Ctrl+B)
+                    const ImVec2 hp = ImGui::GetCursorScreenPos();
+                    const float hw = ImGui::GetContentRegionAvail().x;
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + 8.0f, hp.y + 6.0f));
+                    SectionLabel("SECTIONS", -1);
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - 28.0f, hp.y));
+                    if (PanelToggle("##fofold", true, "the sections", 28.0f, IM_COL32(255, 255, 255, 18), cDim, cText)) foRailToggle = true;
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 34.0f));
+                    ImGui::Dummy(ImVec2(0, 0));
+                }
                 auto row = [&](const char* id, const std::string& label, bool sel, const okay::ForumSection* x, const std::string& right) -> bool {
                     ImVec2 rp = ImGui::GetCursorScreenPos();
                     const float rw = ImGui::GetContentRegionAvail().x, rh = 34.0f;
@@ -19905,8 +19945,34 @@ int main(int argc, char** argv) {
             if (openThread == 0) {
                 // Sections rail (left) on wide windows; the list lives beside it.
                 const float foAvailY = ImGui::GetContentRegionAvail().y - PageFooterH();
-                const bool showRail = foSecSup && ImGui::GetContentRegionAvail().x > 820.0f;
+                static bool foRailOverlay = false;
+                const float foW = ImGui::GetContentRegionAvail().x;
+                const okay::launcherlayout::SidePanel foPanel = okay::launcherlayout::LayoutSidePanel(foW, 220.0f, 14.0f, 820.0f, g_foSectionsFolded, foRailOverlay);
+                const bool showRail = foSecSup && foPanel.shown;
                 if (showRail) { drawSectionsRail(220.0f, foAvailY); ImGui::SameLine(0, 14); }
+                else if (foSecSup) {   // folded (or a narrow page): a thin rail with the button that shows the sections
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::BeginChild("##forailthin", ImVec2(44.0f, foAvailY), false, ImGuiWindowFlags_NoScrollbar);
+                    ImGui::SetCursorPos(ImVec2(8.0f, 8.0f));
+                    if (PanelToggle("##founfold", false, "the sections", 28.0f, IM_COL32(255, 255, 255, 18), cDim, cText)) foRailToggle = true;
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 14);
+                }
+                if (foRailToggle && foSecSup) {
+                    if (foW < 820.0f) foRailOverlay = !foRailOverlay;
+                    else { g_foSectionsFolded = !g_foSectionsFolded; SavePrefs(); }
+                }
+                if (foPanel.overlay && foSecSup) {   // narrow page: the sections open over the list (a popup: opaque, on top)
+                    ImGui::SetNextWindowPos(ImGui::GetCursorScreenPos());
+                    ImGui::OpenPopup("##forailpop");
+                }
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                if (ImGui::BeginPopup("##forailpop")) { drawSectionsRail(220.0f, std::min(foAvailY, 520.0f)); ImGui::EndPopup(); }
+                else foRailOverlay = false;
+                ImGui::PopStyleVar();
                 ImGui::BeginChild("##fomain", ImVec2(0, foAvailY), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 if (!showRail && foSecSup) drawSectionsStrip();
                 if (foSection != 0) drawSectionHeader();
@@ -20433,6 +20499,7 @@ int main(int argc, char** argv) {
         ImGui::EndChild();
         ImGui::End();
         focusSearch = false;   // Ctrl+F is consumed the frame it's pressed
+        if (TakePanelShortcut()) { g_navCollapsed = !g_navCollapsed; SavePrefs(); }   // Ctrl+B no page took: the launcher sidebar
 
         // ---- Floating Chat window (DMs), unless it has its own OS window ----
         if (!g_chatSeparate) DrawChatWindow(account);

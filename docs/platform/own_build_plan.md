@@ -795,3 +795,51 @@ the engine library needs it; no crypto or hash test was chosen.
   real tree this round (the disk fell below 5 GB after the two builds, so the trees were deleted). The build used `-O0` and build type
   None, not the default Release. MSVC `/external:I` is not used for system folders (plain `/I`). The 37 targets that need the fetched
   Dear ImGui were not compared. The engine programs other than these 20 (about 930) were not built.
+
+## Round 19 on claude/okaybuild-19: ctest on Windows, MSVC external folders, the MinGW compile lines against CMake (2026-11-25)
+Written from Microsoft's documentation (Job Objects: `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`; `CreateProcessW`
+with `CREATE_SUSPENDED` and `CREATE_UNICODE_ENVIRONMENT`; environment blocks; the exception codes of `GetExceptionCode`; the cl options
+`/external:I` and `/external:W0`) and the CMake documentation (used as a specification). Expected lines were taken by running real CMake 3.28
+with Ninja on small projects and on the tree. No code from CMake, CTest, Ninja or any other project was read or used (rule 19a). No
+cryptography was written or changed, and no crypto or hash test was run.
+- **`okay-build ctest` on Windows.** It said "not done on Windows yet". Now one thread starts the tests with `CreateProcessW` and waits on
+  their handles (no `<thread>` or `<mutex>`, rule 21a). Each test runs in its own Job Object: the process is started suspended, put in the
+  job, then resumed, so every program it starts is in the job too. A time-out ends the whole job (`TerminateJobObject`), as a process
+  group does on Linux. The test gets its folder and its environment (ours with the test's `NAME=VALUE` words over it; names compared
+  without case; the block sorted by name, as Microsoft asks). An exit code that is a Windows exception (0xC0000000 and up) counts as a
+  crash: `FAIL x ... (crashed: Exception 0xC0000005 (access violation))`; like a crash on Linux it fails whatever WILL_FAIL says. A test
+  that cannot start is "not run" with `FormatMessage`'s words. Programs a test leaves running when it ends are not killed (the same as on
+  Linux). The choice of the next test (DEPENDS, serial tests last) is now one piece of code that the Linux threads and the Windows loop share.
+- **MSVC system folders.** A target's `system_include` folders are now `/external:I DIR` after one `/external:W0` (no warnings from
+  those headers), after the plain `/I` folders. A header there is still a dependency (`/showIncludes` lists it). These options are not
+  experimental from cl 19.29 (Visual Studio 2019 16.10); `external_includes = off` in the toolchain block gives plain `/I` for an older
+  cl. Our own okay-cl keeps plain `/I`.
+- **The MinGW cross build against CMake.** Configured CMake with `cmake/mingw-w64-x86_64.toolchain.cmake` and the release script's
+  options (Release, tests off; launcher, player, editor and Xbox on) into a temp folder (configure and compile database only), and
+  `okay-build cmake` with the same options. Found: okay-build's `compile_commands.json` left out the 3 windres compiles that CMake lists,
+  and the windres lines had the definitions in another order (CMake sorts them, as on a compile line). Now with `compile_order = cmake`
+  the windres line has the same layout as a compile (sorted definitions, the source's own sorted, then the source's, the target's and the
+  system folders, all as `-I DIR`), compdb lists resource compiles, and every compdb entry has `"output"` as CMake writes it.
+  `compare_cmake_commands.py --exact` now also leaves out a windres line's source and `.res`. **Measured: 510 of 510 commands identical
+  word for word** (507 compiles and 3 windres lines; before this round 507 of 507 compiles, and the 3 windres lines missing). No SDL2
+  MinGW package is here, so the launcher, editor and player are not in either tool's list.
+- **Rebuild check on a small real slice** (`compare_rebuilds.py`, Linux, g++ 13.3, default options, `-j1`). Targets: `okayscript_cli`,
+  `test_okayscript_lang_lexer`, `test_okayscript_lang_parser`, `okay_physcore`, `okay_platform`, `test_md2_reader` (31 Ninja steps; none needs
+  the engine library). First builds: Ninja 80 s, okay-build 84 s (a shared machine). Objects rebuilt, Ninja / okay-build, same set?: no change
+  0 / 0, yes; `okayscript/.../Parser.hpp` 3 / 3, yes (undo 3 / 3); `Lexer.hpp` 4 / 4, yes (undo 4 / 4); `Physics/Core/Shape.hpp` 5 / 5, yes
+  (undo 5 / 5); `Platform/Platform.hpp` 6 / 6, yes (undo 6 / 6); `Render/Md2Reader.cpp` 1 / 1, yes (undo 1 / 1); `Core/Paths.hpp` 0 / 0, yes
+  (nothing in the slice includes it). Touching `Ast.hpp` without changing it: Ninja 8, okay-build 0 (the planned difference). **Every
+  content change rebuilt the same objects as Ninja.** The edited files have their bytes back; the build trees were deleted.
+- **Tests:** `testMsvcExternalIncludes` (7 checks), 3 new checks in `testWindowsHost` (no "not done" text; the Job Object functions are
+  imported; the exception names are in the program) and 2 in `testMingwToolchainFile` (compdb lists windres with `output`; the windres line
+  in CMake's order, taken from real CMake). On round 18's tool 9 of the 12 fail (the 3 that pass check things that already worked: the
+  build exits 0, a header in a system folder is a dependency, okay-cl keeps `/I`). After: all pass. Whole suite
+  (`tools/okaybuild/build.sh`): **597 checks passed, 0 failed, 8 skipped** (was 585 passed, 0 failed, 8 skipped; the same 8 skips, all
+  for wine or libsodium).
+- **Not done / unverified:** nothing ran on Windows. The Windows ctest is only compiled with MinGW (`-Wall -Wextra`, no new warnings);
+  wine here crashes before it starts any program, so the Job Objects, the environment block and the exception names were never run.
+  CTest's own words for Windows exceptions were not checked (no Windows CTest here); okay-build gives the code and Microsoft's name. On a
+  Windows older than 8, where a process already in a job cannot join a second one, a test runs without its job (a time-out then ends only
+  the test itself). `/external:I` was checked with a fake cl that records its words, not with a real cl. MSVC manifests from `okay-build
+  cmake` are still not made (it reads GCC-style toolchain files only). The MinGW launcher, editor and player were not compared (no SDL2
+  MinGW package here).

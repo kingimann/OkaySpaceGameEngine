@@ -3971,6 +3971,20 @@ private:
         std::vector<std::pair<std::string, std::unique_ptr<Type>>> scope;  // the class's own bindings
     };
     std::set<std::string> staticTmplShort_;  // bare names of static member function templates
+    // The template arguments given at a call travel as carriers (casts holding a type or a value);
+    // the checker deduces the rest.
+    void addCarriers(Expr& e, const std::vector<TArg>& args, const Token& at) {
+        for (const TArg& a : args) {
+            auto carrier = ex(Expr::Kind::Cast, at);
+            if (a.isValue) {
+                carrier->text = "v";
+                carrier->ival = static_cast<std::uint64_t>(a.value);
+            } else if (a.type) {
+                carrier->ty = cloneType(*a.type);
+            }
+            e.kids.push_back(std::move(carrier));
+        }
+    }
     // The key of the static member function template that the qualified name 'chain' (C::f, N::C::f
     // or f) names, seen from the class or namespace being parsed; empty if none.
     std::string staticTmplKey(const std::string& chain) const {
@@ -4659,6 +4673,62 @@ private:
 
     // A local of class type: run its constructor right after the declaration and remember it so
     // that its destructor runs when the scope ends.
+    // A static local (an object, or a scalar with a dynamic initializer): a global __slN_name (zero at
+    // first) and a guard __sgN declared before the function, and the local name as a reference to
+    // the global. Returns the block that runs once (it sets the guard; the caller adds the
+    // initialization).
+    std::unique_ptr<Stmt> staticGuarded(std::vector<std::unique_ptr<Stmt>>& out, const std::string& name,
+                                        const Type& type, const Pos& p, std::string& gname, std::string& guard) {
+        int n = newN_++;
+        gname = "__sl" + std::to_string(n) + "_" + name;
+        guard = "__sg" + std::to_string(n);
+        auto g = std::make_unique<Decl>();
+        g->name = gname;
+        g->line = p.line;
+        g->col = p.col;
+        g->file = p.file;
+        g->type = cloneType(type);
+        g->type->cnst = false;
+        beforeDecls_.push_back(std::move(g));
+        auto gf = std::make_unique<Decl>();
+        gf->name = guard;
+        gf->line = p.line;
+        gf->col = p.col;
+        gf->file = p.file;
+        gf->type = ty(Type::Kind::Int);
+        beforeDecls_.push_back(std::move(gf));
+        auto refDecl = std::make_unique<Decl>();
+        refDecl->name = name;
+        refDecl->line = p.line;
+        refDecl->col = p.col;
+        refDecl->file = p.file;
+        auto rt = ty(Type::Kind::Reference);
+        rt->inner = cloneType(type);
+        refDecl->type = std::move(rt);
+        refDecl->init = eName(gname, p);
+        out.push_back(declStmt(std::move(refDecl)));
+        auto thenB = sBlock(p);
+        thenB->stmts.push_back(sExpr(eAssign(eName(guard, p), eInt(1, p), p), p));
+        return thenB;
+    }
+    // if (!guard) { ... }
+    std::unique_ptr<Stmt> guardIf(const std::string& guard, std::unique_ptr<Stmt> thenB, const Pos& p) {
+        auto notG = std::make_unique<Expr>();
+        notG->kind = Expr::Kind::Unary;
+        notG->text = "!";
+        notG->line = p.line;
+        notG->col = p.col;
+        notG->file = p.file;
+        notG->kids.push_back(eName(guard, p));
+        auto iff = std::make_unique<Stmt>();
+        iff->kind = Stmt::Kind::If;
+        iff->line = p.line;
+        iff->col = p.col;
+        iff->file = p.file;
+        iff->expr = std::move(notG);
+        iff->thenS = std::move(thenB);
+        return iff;
+    }
     // An initializer the object file can hold as bytes: a literal, maybe negated or cast.
     static bool constantInit(const Expr& e) {
         switch (e.kind) {
@@ -4699,35 +4769,9 @@ private:
                 copyInit = std::move(decl->init);
             }
             std::string tag = decl->type->tag;
-            int n = newN_++;
-            std::string gname = "__sl" + std::to_string(n) + "_" + name;
-            std::string guard = "__sg" + std::to_string(n);
-            auto g = std::make_unique<Decl>();
-            g->name = gname;
-            g->line = p.line;
-            g->col = p.col;
-            g->file = p.file;
-            g->type = cloneType(*decl->type);
-            beforeDecls_.push_back(std::move(g));
-            auto gf = std::make_unique<Decl>();
-            gf->name = guard;
-            gf->line = p.line;
-            gf->col = p.col;
-            gf->file = p.file;
-            gf->type = ty(Type::Kind::Int);
-            beforeDecls_.push_back(std::move(gf));
-            auto refDecl = std::make_unique<Decl>();
-            refDecl->name = name;
-            refDecl->line = p.line;
-            refDecl->col = p.col;
-            refDecl->file = p.file;
-            auto rt = ty(Type::Kind::Reference);
-            rt->inner = cloneType(*decl->type);
-            refDecl->type = std::move(rt);
-            refDecl->init = eName(gname, p);
-            out.push_back(declStmt(std::move(refDecl)));
-            auto thenB = sBlock(p);
-            thenB->stmts.push_back(sExpr(eAssign(eName(guard, p), eInt(1, p), p), p));
+            std::string gname;
+            std::string guard;
+            auto thenB = staticGuarded(out, name, *decl->type, p, gname, guard);
             if (copyInit) {
                 std::vector<std::unique_ptr<Expr>> a;
                 a.push_back(eAddr(eName(gname, p), p));
@@ -4736,21 +4780,7 @@ private:
             } else if (classOf(tag)->needCtor || !ctorArgs.empty()) {
                 thenB->stmts.push_back(sExpr(ctorCall(tag, eAddr(eName(gname, p), p), std::move(ctorArgs), p), p));
             }
-            auto notG = std::make_unique<Expr>();
-            notG->kind = Expr::Kind::Unary;
-            notG->text = "!";
-            notG->line = p.line;
-            notG->col = p.col;
-            notG->file = p.file;
-            notG->kids.push_back(eName(guard, p));
-            auto iff = std::make_unique<Stmt>();
-            iff->kind = Stmt::Kind::If;
-            iff->line = p.line;
-            iff->col = p.col;
-            iff->file = p.file;
-            iff->expr = std::move(notG);
-            iff->thenS = std::move(thenB);
-            out.push_back(std::move(iff));
+            out.push_back(guardIf(guard, std::move(thenB), p));
             if (classOf(tag)->needDtor) staticObjs_.push_back(DVar{gname, tag, 0, guard});
             return;
         }
@@ -4763,52 +4793,11 @@ private:
             // static T x = e; with e not a constant (a call, a lambda called at once): the object is
             // zero first ([basic.start.static] p2) and takes e's value the first time control
             // passes the declaration ([stmt.dcl] p3), under a guard flag as for a static object.
-            int n = newN_++;
-            std::string gname = "__sl" + std::to_string(n) + "_" + name;
-            std::string guard = "__sg" + std::to_string(n);
-            auto g = std::make_unique<Decl>();
-            g->name = gname;
-            g->line = p.line;
-            g->col = p.col;
-            g->file = p.file;
-            g->type = cloneType(*decl->type);
-            g->type->cnst = false;
-            beforeDecls_.push_back(std::move(g));
-            auto gf = std::make_unique<Decl>();
-            gf->name = guard;
-            gf->line = p.line;
-            gf->col = p.col;
-            gf->file = p.file;
-            gf->type = ty(Type::Kind::Int);
-            beforeDecls_.push_back(std::move(gf));
-            auto refDecl = std::make_unique<Decl>();
-            refDecl->name = name;
-            refDecl->line = p.line;
-            refDecl->col = p.col;
-            refDecl->file = p.file;
-            auto rt = ty(Type::Kind::Reference);
-            rt->inner = cloneType(*decl->type);
-            refDecl->type = std::move(rt);
-            refDecl->init = eName(gname, p);
-            out.push_back(declStmt(std::move(refDecl)));
-            auto thenB = sBlock(p);
-            thenB->stmts.push_back(sExpr(eAssign(eName(guard, p), eInt(1, p), p), p));
+            std::string gname;
+            std::string guard;
+            auto thenB = staticGuarded(out, name, *decl->type, p, gname, guard);
             thenB->stmts.push_back(sExpr(eAssign(eName(gname, p), std::move(decl->init), p), p));
-            auto notG = std::make_unique<Expr>();
-            notG->kind = Expr::Kind::Unary;
-            notG->text = "!";
-            notG->line = p.line;
-            notG->col = p.col;
-            notG->file = p.file;
-            notG->kids.push_back(eName(guard, p));
-            auto iff = std::make_unique<Stmt>();
-            iff->kind = Stmt::Kind::If;
-            iff->line = p.line;
-            iff->col = p.col;
-            iff->file = p.file;
-            iff->expr = std::move(notG);
-            iff->thenS = std::move(thenB);
-            out.push_back(std::move(iff));
+            out.push_back(guardIf(guard, std::move(thenB), p));
             return;
         }
         const Type* ty0 = decl->type.get();
@@ -6515,16 +6504,7 @@ private:
                     // Explicit arguments travel as carriers; the checker deduces the rest.
                     std::vector<TArg> args;
                     parseTemplateArgs(memberTmpl_[key].td, args, true);
-                    for (const TArg& a : args) {
-                        auto carrier = ex(Expr::Kind::Cast, at);
-                        if (a.isValue) {
-                            carrier->text = "v";
-                            carrier->ival = static_cast<std::uint64_t>(a.value);
-                        } else if (a.type) {
-                            carrier->ty = cloneType(*a.type);
-                        }
-                        e->kids.push_back(std::move(carrier));
-                    }
+                    addCarriers(*e, args, at);
                 }
                 return e;
             }
@@ -6709,16 +6689,7 @@ private:
                     // Only the first template arguments are given: the checker deduces the rest from
                     // the call and finishes the instance. The given ones travel as carriers.
                     e->text = "\x01" "tmpl:" + name;
-                    for (const TArg& a : args) {
-                        auto carrier = ex(Expr::Kind::Cast, at);
-                        if (a.isValue) {
-                            carrier->text = "v";
-                            carrier->ival = static_cast<std::uint64_t>(a.value);
-                        } else if (a.type) {
-                            carrier->ty = cloneType(*a.type);
-                        }
-                        e->kids.push_back(std::move(carrier));
-                    }
+                    addCarriers(*e, args, at);
                     return e;
                 }
                 const TemplateSig& sig = funcTemplateSigs()[name];

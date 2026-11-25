@@ -1962,6 +1962,23 @@ private:
         bool classy = !tag.empty() && !isUnion;
         std::string shortTag = tplShort.empty() ? shortName(tag) : tplShort;
         bool pub = !isClass;
+        // Member function bodies defined in the class are read after the class is complete
+        // ([class.mem] p7: a function body is a complete-class context), so they see members and
+        // nested types declared after them, and the class's own constructors (new C(..) in a
+        // member function of C). Each is remembered by where its '{' is and read at the end.
+        std::vector<DeferredBody> deferred;
+        auto deferBody = [&](int kind, std::size_t index, Decl* decl, const Type* ret) {
+            DeferredBody db;
+            db.at = i_;
+            db.kind = kind;
+            db.index = index;
+            db.decl = decl;
+            db.ret = ret ? cloneType(*ret) : ty(Type::Kind::Void);
+            db.params = lastParams_;
+            lastParams_.clear();
+            skipBraces();
+            deferred.push_back(std::move(db));
+        };
         if (classy) cx.cxx = true;
         if (!baseTag.empty()) {
             Type* B = classOf(baseTag);
@@ -2067,8 +2084,7 @@ private:
                                 special(classOf(baseTag), "<dtor>")->vslot >= 0;
                 registerDtor(cx, isVirtual || baseVirt, dt);
                 if (isP("{")) {
-                    auto vt = ty(Type::Kind::Void);
-                    cx.dtorBody = parseBody(vt.get());
+                    deferBody(0, 0, nullptr, nullptr);
                     cx.dtorInline = true;
                 } else if (eatP("=")) {
                     if (isKw("default")) cx.dtorInline = true;
@@ -2095,8 +2111,7 @@ private:
                 cp.type = std::move(fn);
                 t->params.push_back(std::move(cp));
                 if (isP("{")) {
-                    auto vt = ty(Type::Kind::Void);
-                    cd.body = parseBody(vt.get());
+                    deferBody(1, cx.ctors.size(), nullptr, nullptr);
                     cd.hasBody = true;
                 } else if (eatP("=")) {
                     if (isKw("default")) {
@@ -2206,7 +2221,7 @@ private:
                 if (isP("{")) {
                     auto decl = newMethodDecl(tag, t->params.back().mangled, *fieldType, fieldType->params,
                                               Pos{d.line, d.col, d.file});
-                    decl->body = parseBody(fieldType->inner.get());
+                    deferBody(2, 0, decl.get(), fieldType->inner.get());
                     extras_.push_back(std::move(decl));
                 } else {
                     expectP(";", ";");
@@ -2264,13 +2279,51 @@ private:
                 if (cx.cxx) finishClass(cx);
                 structs_[tag] = cloneType(*t);
                 canonStructs()[tag] = cloneType(*t);
-                if (cx.cxx) {
-                    addTypedef(shortTag, cloneType(*t));
-                    emitClassDecls(cx);
-                }
+                if (cx.cxx) addTypedef(shortTag, cloneType(*t));
+                readDeferred(deferred, cx);
+                if (cx.cxx) emitClassDecls(cx);
             }
         }
+        if (!deferred.empty()) readDeferred(deferred, cx);  // an unnamed or redefined class
         return t;
+    }
+
+    // A member function body whose reading waits for the end of its class (parseStructType).
+    struct DeferredBody {
+        std::size_t at = 0;           // index of its '{'
+        int kind = 0;                 // 0 destructor, 1 constructor 'index', 2 member function 'decl'
+        std::size_t index = 0;
+        Decl* decl = nullptr;
+        std::unique_ptr<Type> ret;
+        std::vector<std::string> params;  // its parameter names (locals of the body)
+    };
+    void skipBraces() {
+        int depth = 0;
+        while (!atEnd()) {
+            if (isP("{")) ++depth;
+            else if (isP("}") && --depth == 0) {
+                advance();
+                return;
+            }
+            advance();
+        }
+    }
+    void readDeferred(std::vector<DeferredBody>& bodies, ClassCtx& cx) {
+        std::size_t saved = i_;
+        bool savedHalf = halfGt_;
+        halfGt_ = false;
+        for (DeferredBody& db : bodies) {
+            i_ = db.at;
+            lastParams_ = db.params;
+            auto body = parseBody(db.ret.get());
+            if (db.kind == 0) cx.dtorBody = std::move(body);
+            else if (db.kind == 1 && db.index < cx.ctors.size()) cx.ctors[db.index].body = std::move(body);
+            else if (db.kind == 2 && db.decl) db.decl->body = std::move(body);
+        }
+        bodies.clear();
+        lastParams_.clear();
+        i_ = saved;
+        halfGt_ = savedHalf;
     }
 
     // Parse a function body, noting the return type for destructor-before-return handling.
@@ -2328,7 +2381,11 @@ private:
 
     Parsed parseDirect(bool needName) {
         Parsed d;
-        if (eatP("(")) {
+        // In an abstract declarator a '(' before ')' or a type starts a parameter list, not a
+        // grouping ([dcl.ambig.res] p2): the int(int, char) of function<int(int, char)>.
+        bool params = !needName && isP("(") && i_ + 1 < toks_.size() &&
+                      (isP(toks_[i_ + 1], ")") || isP(toks_[i_ + 1], "...") || isTypeKw(toks_[i_ + 1]));
+        if (!params && eatP("(")) {
             d = parseDeclarator(needName);
             expectP(")", ")");
         } else if (!atEnd() && cur().kind == Tok::Ident) {
@@ -2718,6 +2775,17 @@ private:
         if (pat.kind != arg.kind || pat.cnst != arg.cnst) return false;
         if (pat.kind == Type::Kind::Array && pat.unsized != arg.unsized) return false;
         if (pat.kind == Type::Kind::Reference && pat.rref != arg.rref) return false;
+        if (pat.kind == Type::Kind::Function) {
+            // R(A...) against a function type ([temp.deduct.type] p8): the return type and each
+            // parameter type in turn.
+            if (pat.variadic != arg.variadic || pat.params.size() != arg.params.size()) return false;
+            if (!pat.inner || !arg.inner || !matchPattern(*pat.inner, *arg.inner, td, bound)) return false;
+            for (std::size_t k = 0; k < pat.params.size(); ++k)
+                if (!pat.params[k].type || !arg.params[k].type ||
+                    !matchPattern(*pat.params[k].type, *arg.params[k].type, td, bound))
+                    return false;
+            return true;
+        }
         if (pat.inner || arg.inner) {
             if (!pat.inner || !arg.inner) return false;
             return matchPattern(*pat.inner, *arg.inner, td, bound);
@@ -2848,6 +2916,12 @@ private:
                 } else {
                     break;
                 }
+            }
+            if (isP("(")) {
+                // A function type R(A, B) or a pointer to one R(*)(A) ([dcl.fct], [temp.arg.type]):
+                // function<void(int)>.
+                Parsed d = parseDeclarator(false);
+                b = apply(std::move(b), d.mods);
             }
             if (isP("[")) {
                 // T[] and T[N] ([dcl.array]): unique_ptr<int[]>.

@@ -3406,7 +3406,12 @@ private:
                 break;
             }
             if (ret_->kind == Type::Kind::Void) {
-                if (s.expr) err(s.line, s.col, "return type does not match");
+                // return f(); of a void expression in a void function ([stmt.return] p2).
+                if (s.expr) {
+                    ET v = checkExpr(*s.expr);
+                    if (!v.bad && (!v.type || v.type->kind != Type::Kind::Void))
+                        err(s.line, s.col, "return type does not match");
+                }
             } else if (!s.expr) {
                 err(s.line, s.col, "return type does not match");
             } else if (ret_->kind == Type::Kind::Reference && ret_->inner) {

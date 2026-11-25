@@ -1,0 +1,7 @@
+// <cstdarg> for okay-cc (ISO/IEC 14882 [cstdarg.syn], ISO C 7.16). Our own header: va_list and the
+// va_ macros of stdarg.h (System V AMD64 ABI 3.5.7), also as std::va_list.
+#pragma once
+#include <stdarg.h>
+namespace std {
+using ::va_list;
+}  // namespace std

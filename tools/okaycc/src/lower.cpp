@@ -794,6 +794,14 @@ private:
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
             g.size = 8;
             g.reloc = addString(d.init->text);
+        } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "&" && !d.init->kids.empty() &&
+                   d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Name && find(d.init->kids[0]->text) &&
+                   find(d.init->kids[0]->text)->global) {
+            // T *p = &g; an address constant: 8 bytes the linker fills with g's address.
+            g.size = 8;
+            g.bytes.assign(8, 0);
+            Sym* target = find(d.init->kids[0]->text);
+            g.relocs.emplace_back(0, target->gname.empty() ? d.init->kids[0]->text : target->gname);
         } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
             g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
             std::int64_t n = static_cast<std::int64_t>(d.init->ival);
@@ -2091,6 +2099,15 @@ private:
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
+        }
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "zero:" && e.kids.size() == 2 &&
+            e.kids[1] && e.kids[1]->checked && e.kids[1]->checked->inner) {
+            // The checker's "\x01zero:"(&object): the object's bytes set to zero (value-initialization of
+            // an aggregate made from a braced list, [dcl.init.list] p3, [dcl.init] p8).
+            int bytes = sizeOf(e.kids[1]->checked->inner.get());
+            Val dst = lowerExpr(*e.kids[1]);
+            if (bytes > 0) zeroMem(dst.op, bytes);
+            return Val{Operand::number(0), 0, 0};
         }
         bool direct = false;
         std::string fname;

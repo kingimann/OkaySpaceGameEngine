@@ -257,6 +257,9 @@ private:
             return true;
         case Expr::Kind::Unary:
             if (e.text == "sizeof" && e.ty) return true;
+            if (e.text == "&" && !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name &&
+                scopes_.size() == 1 && scopes_.front().count(e.kids[0]->text))
+                return true;  // the address of an object with static storage ([expr.const], ISO C 6.6 p9)
             return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
         case Expr::Kind::Cond:
             return e.kids.size() == 3 && e.kids[0] && e.kids[1] && e.kids[2] && isConst(*e.kids[0]) &&
@@ -964,13 +967,24 @@ private:
         ++quiet_;
         ET probe = checkExpr(lhs);
         --quiet_;
+        if (!probe.bad && probe.type && probe.type->kind == Type::Kind::Reference && probe.type->inner &&
+            probe.type->inner->kind == Type::Kind::Struct) {
+            // A call that returns a reference to an object (f() != nullptr with T &f()): an lvalue.
+            probe.type = cloneType(*probe.type->inner);
+            probe.lvalue = true;
+        }
         const bool usable = !probe.bad && probe.type && probe.type->kind == Type::Kind::Struct;
         const Type* st = usable ? canonOf(probe.type.get()) : nullptr;
         bool found = false;
         if (st)
             for (const Param& f : st->params)
                 if (f.name == op && !f.mangled.empty()) found = true;
-        if (!simple) {
+        const bool refCall = lhs.kind == Expr::Kind::Call ||
+                             (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
+                              lhs.kids[0]->kind == Expr::Kind::Call);
+        if (!simple && !(found && probe.lvalue && refCall)) {
+            // (A call that returns a reference to an object, *f() inside, is an lvalue: the member
+            // call below is made on it directly.)
             if (probe.bad) return false;
             if (!found || probe.lvalue) {
                 etCache_[&lhs] = copyET(probe);
@@ -1843,6 +1857,12 @@ private:
                 call->kids.push_back(mkName("\x01" "ctor:" + tag, b));
                 call->kids.push_back(self());
                 addE(std::move(call));
+            } else {
+                // An aggregate: members the list does not name are value-initialized, zero here.
+                auto call = mkE(Expr::Kind::Call, b);
+                call->kids.push_back(mkName("\x01" "zero:", b));
+                call->kids.push_back(self());
+                addE(std::move(call));
             }
             std::size_t i = 0;
             for (const Param& f : T->params) {
@@ -1876,6 +1896,13 @@ private:
 
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "zero:" && e.kids.size() == 2 &&
+            e.kids[1]) {
+            checkExpr(*e.kids[1]);  // made by braceToTemp: zero an aggregate's bytes (lowerCall)
+            ET r;
+            r.type = prim(Type::Kind::Void);
+            return r;
+        }
         if (e.kids[0]->kind == Expr::Kind::Member && e.kids[0]->text == "->" && e.kids[0]->kids.size() == 2 &&
             e.kids[0]->kids[0])
             rewriteArrow(*e.kids[0]);  // p->f() with a smart pointer p: p.operator->()->f()
@@ -2562,6 +2589,80 @@ private:
         return r;
     }
 
+    // Brace elision ([dcl.init.aggr] p15, ISO C 6.7.9 p20): in "std::array<int, 3> a = {1, 2, 3}" the
+    // list for the class is flat, but its one member is an array that takes all three values. The
+    // list is rebuilt with the braces written out, so the lowering sees {{1, 2, 3}}. An element that
+    // is an aggregate (an array, or a class with no constructor) takes as many of the following
+    // values as it needs unless the value is a braced list or an object of the element's own class.
+    const Type* aggregateOf(const Type* t) {
+        if (!t) return nullptr;
+        if (t->kind == Type::Kind::Array) return t;
+        if (t->kind != Type::Kind::Struct) return nullptr;
+        const Type* c = canonOf(t);
+        if (!c || c->needCtor || c->hasVptr || !c->base.empty()) return nullptr;
+        return c;
+    }
+    std::vector<const Type*> aggElems(const Type* agg, std::size_t& count) {
+        std::vector<const Type*> out;
+        count = 0;
+        if (agg->kind == Type::Kind::Array) {
+            out.push_back(agg->inner.get());
+            if (agg->bound && agg->bound->kind == Expr::Kind::Int) count = agg->bound->ival;
+            else count = static_cast<std::size_t>(-1);  // T a[] = {...}: every value
+            return out;
+        }
+        for (const Param& f : agg->params)
+            if (f.mangled.empty() && f.type && f.type->kind != Type::Kind::Function && !isSpecialName(f.name) &&
+                f.bits < 0)
+                out.push_back(f.type.get());
+        count = out.size();
+        return out;
+    }
+    std::unique_ptr<Expr> elide(const Type* t, std::vector<std::unique_ptr<Expr>>& items, std::size_t& pos,
+                                const Expr& at) {
+        auto out = mkE(Expr::Kind::Brace, at);
+        const Type* agg = aggregateOf(t);
+        if (!agg) return out;
+        std::size_t count = 0;
+        std::vector<const Type*> elems = aggElems(agg, count);
+        for (std::size_t k = 0; k < count && pos < items.size(); ++k) {
+            const Type* et = agg->kind == Type::Kind::Array ? elems[0] : elems[k];
+            std::unique_ptr<Expr>& it = items[pos];
+            const Type* sub = aggregateOf(et);
+            if (it && it->kind == Expr::Kind::Brace) {
+                normalizeBrace(et, *it);
+                out->kids.push_back(std::move(it));
+                ++pos;
+                continue;
+            }
+            bool direct = !sub || !it;
+            if (!direct && sub->kind == Type::Kind::Array && it->kind == Expr::Kind::String) direct = true;
+            if (!direct && sub->kind == Type::Kind::Struct) {
+                ++quiet_;
+                ET probe = checkExpr(*it);
+                --quiet_;
+                const Type* pt = probe.type.get();
+                if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                if (probe.bad || (pt && pt->kind == Type::Kind::Struct && canonOf(pt) == sub)) direct = true;
+            }
+            if (direct) {
+                out->kids.push_back(std::move(it));
+                ++pos;
+            } else {
+                out->kids.push_back(elide(et, items, pos, at));
+            }
+        }
+        return out;
+    }
+    void normalizeBrace(const Type* t, Expr& b) {
+        if (!aggregateOf(t)) return;
+        std::vector<std::unique_ptr<Expr>> items = std::move(b.kids);
+        std::size_t pos = 0;
+        auto rebuilt = elide(t, items, pos, b);
+        b.kids = std::move(rebuilt->kids);
+        for (; pos < items.size(); ++pos) b.kids.push_back(std::move(items[pos]));  // too many: reported later
+    }
+
     void checkBraceKids(Expr& b) {
         for (auto& k : b.kids) {
             if (!k) continue;
@@ -2992,6 +3093,7 @@ private:
             }
         }
         if (d.init && d.init->kind == Expr::Kind::Brace) {
+            normalizeBrace(d.type.get(), *d.init);
             checkBraceKids(*d.init);
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
             checkExpr(*d.init);
@@ -3295,8 +3397,8 @@ private:
             } else {
                 if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
                 ET v = decay(checkExpr(*s.expr));
-                if (!v.bad && v.type && ret_->kind == Type::Kind::Struct && v.type->kind == Type::Kind::Struct &&
-                    !canAssign(*ret_, v) && convertingTemp(*s.expr, *v.type, *ret_)) {
+                if (!v.bad && v.type && ret_->kind == Type::Kind::Struct && !canAssign(*ret_, v) &&
+                    convertingTemp(*s.expr, *v.type, *ret_)) {
                     // return d; for a class with a converting constructor ([stmt.return] p2, copy-initialization).
                     v = decay(checkExpr(*s.expr));
                 }

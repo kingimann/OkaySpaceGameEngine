@@ -240,6 +240,11 @@ private:
     }
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
+        // ::T, a name looked up from the global namespace ([basic.lookup.qual] p4). okay-cc reads
+        // ::T as T looked up from the current scope outward, which finds the global T unless an
+        // enclosing namespace declares its own T first.
+        if (isP(t, "::") && &t >= toks_.data() && &t + 1 < toks_.data() + toks_.size() && (&t + 1)->kind == Tok::Ident)
+            return isTypeKw(*(&t + 1));
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
             isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "class") || isKwTok(t, "union") || isKwTok(t, "enum") ||
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
@@ -570,6 +575,7 @@ private:
     // The base type with a leading const recorded on it (const B, const char): overload ranking
     // and template deduction need it ([over.ics.rank], [temp.deduct.call]).
     std::unique_ptr<Type> parseBase() {
+        if (isP("::") && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) advance();  // ::T (see isTypeKw)
         std::size_t start = i_;
         auto t = parseBase0();
         if (t) {
@@ -1239,7 +1245,10 @@ private:
                 arrayInit(body->stmts, *eArrow(eName("this", p), f.first, p), f.second, dm, p);
             } else if (dm) {
                 std::unique_ptr<Expr> v;
-                if (dm->kind == Expr::Kind::Brace) {
+                if (dm->kind == Expr::Kind::Brace && f.second && f.second->kind == Type::Kind::Struct) {
+                    // std::array<int, 3> row{}; an aggregate member: this->row = {...} ([expr.ass] p9).
+                    v = cloneExpr(*dm);
+                } else if (dm->kind == Expr::Kind::Brace) {
                     if (!dm->kids.empty() && dm->kids[0]) v = cloneExpr(*dm->kids[0]);
                     else {
                         v = std::make_unique<Expr>();
@@ -2246,7 +2255,11 @@ private:
         curRet_ = ret;
         dbase_ = dscopes_.size() - outerScopes;
         ++bodyDepth_;
+        std::size_t localMark = localNames_.size();
+        for (const std::string& n : lastParams_) localNames_.push_back(n);
+        lastParams_.clear();
         auto b = parseCompound();
+        localNames_.resize(localMark);
         --bodyDepth_;
         curRet_ = savedRet;
         dbase_ = savedBase;
@@ -2403,8 +2416,14 @@ private:
                 break;
             }
         }
+        lastParams_.clear();
+        for (const Param& q : params)
+            if (!q.name.empty()) lastParams_.push_back(q.name);
         return variadic;
     }
+    // The parameter names of the last parameter list read: they are locals of the body that follows
+    // ([basic.scope.param]), so a parameter named count hides std::count there.
+    std::vector<std::string> lastParams_;
 
     std::unique_ptr<Type> apply(std::unique_ptr<Type> base, std::vector<Mod>& mods) {
         for (int n = static_cast<int>(mods.size()) - 1; n >= 0; --n) {
@@ -3477,7 +3496,13 @@ private:
                 if (p.name == "<ctor>" && p.mangled == mangled) declared = true;
             if (!declared) err("no constructor with these parameters is declared in the class");
             auto vt = ty(Type::Kind::Void);
-            if (isP("{")) {
+            if (isP("=") && i_ + 2 < toks_.size() && isKwTok(toks_[i_ + 1], "default") && isP(toks_[i_ + 2], ";")) {
+                i_ += 3;  // S::S() = default;
+                cd.body = sBlock(pos);
+                cd.hasBody = true;
+                auto decl = buildCtor(tag, cd);
+                if (decl) extras_.push_back(std::move(decl));
+            } else if (isP("{")) {
                 cd.body = parseBody(vt.get());
                 cd.hasBody = true;
                 auto decl = buildCtor(tag, cd);
@@ -3498,6 +3523,11 @@ private:
         if (isP("{")) {
             auto body = parseBody(vt.get());
             auto decl = buildDtor(tag, std::move(body), pos, false);
+            if (decl) extras_.push_back(std::move(decl));
+        } else if (isP("=") && i_ + 2 < toks_.size() && isKwTok(toks_[i_ + 1], "default") && isP(toks_[i_ + 2], ";")) {
+            // S::~S() = default; ([dcl.fct.def.default]): an empty body; members are destroyed as usual.
+            i_ += 3;
+            auto decl = buildDtor(tag, sBlock(pos), pos, false);
             if (decl) extras_.push_back(std::move(decl));
         } else {
             err("expected a destructor body");
@@ -3547,6 +3577,12 @@ private:
                     // The definition of a static data member: T C::x = v;
                     std::string cls = classPrefix(d.name.substr(0, dc));
                     if (!cls.empty()) d.name = cls + "::" + d.name.substr(dc + 2);
+                }
+                if (init && type && (cexpr || type->cnst) && isIntish(*type)) {
+                    // A namespace-scope integer constant: array lengths that name it are known while
+                    // parsing (an array of objects with constructors needs its length then).
+                    const Expr* v = init.get();
+                    if (v->kind == Expr::Kind::Int) classConsts_[qualify(d.name)] = static_cast<long>(v->ival);
                 }
                 auto decl = makeDecl(d, std::move(type), std::move(init));
                 if (ext && !decl->init) decl->isExtern = true;
@@ -3780,9 +3816,44 @@ private:
         if (ty0 && ty0->kind == Type::Kind::Array && ty0->inner && ty0->inner->kind == Type::Kind::Struct &&
             !ty0->inner->tag.empty() && classOf(ty0->inner->tag) &&
             (classOf(ty0->inner->tag)->needCtor || classOf(ty0->inner->tag)->needDtor)) {
-            if (ty0->bound && ty0->bound->kind == Expr::Kind::Int && !decl->init) {
+            if (ty0->bound && ty0->bound->kind != Expr::Kind::Int) boundConsts(*decl->type->bound);
+            std::size_t given = decl->init && decl->init->kind == Expr::Kind::Brace ? decl->init->kids.size() : 0;
+            if (!ty0->bound && given > 0) {
+                // T a[] = {x, y}: the length is the number of initializers ([dcl.array] p3).
+                decl->type->bound = eInt(given, p);
+                decl->type->unsized = false;
+            }
+            if (ty0->bound && ty0->bound->kind == Expr::Kind::Int && (!decl->init || given > 0) &&
+                given <= ty0->bound->ival) {
                 arrayCount = ty0->bound->ival;
                 ty0 = ty0->inner.get();
+                if (decl->init) {
+                    // T a[3] = {x, y}: element i is copy-initialized from initializer i and the rest
+                    // are value-initialized ([dcl.init.aggr] p4-5): x and y are copied, a[2] is T().
+                    std::vector<std::unique_ptr<Expr>> elems = std::move(decl->init->kids);
+                    decl->init.reset();
+                    std::string etag = ty0->tag;
+                    Type* ecls = classOf(etag);
+                    out.push_back(declStmt(std::move(decl)));
+                    for (std::uint64_t k = 0; k < arrayCount; ++k) {
+                        auto at = eAddr(eIndex(name, k, p), p);
+                        if (k < elems.size() && elems[k] && elems[k]->kind == Expr::Kind::Brace) {
+                            out.push_back(sExpr(ctorCall(etag, std::move(at), std::move(elems[k]->kids), p), p));
+                        } else if (k < elems.size()) {
+                            std::vector<std::unique_ptr<Expr>> a;
+                            a.push_back(std::move(at));
+                            a.push_back(std::move(elems[k]));
+                            out.push_back(sExpr(eCall(eName("\x01" "cinit:" + etag, p), std::move(a), p), p));
+                        } else if (ecls && ecls->needCtor) {
+                            out.push_back(sExpr(ctorCall(etag, std::move(at), {}, p), p));
+                        }
+                    }
+                    if (ecls && ecls->needDtor && !dscopes_.empty()) {
+                        if (eh_) ehPushObject(out, eName(name, p), etag, arrayCount, p);
+                        dscopes_.back().push_back(DVar{name, etag, arrayCount, "", 0});
+                    }
+                    return;
+                }
             } else {
                 err("an array of objects with constructors needs a constant size and no initializer");
             }
@@ -4945,6 +5016,9 @@ private:
             err("expected an expression");
             return zeroAt();
         }
+        if (isP("::") && i_ + 1 < toks_.size() &&
+            (toks_[i_ + 1].kind == Tok::Ident || isKwTok(toks_[i_ + 1], "new") || isKwTok(toks_[i_ + 1], "delete")))
+            advance();  // ::f(), ::new: the global name (see isTypeKw)
         if (isP("++") || isP("--")) {
             Token op = cur();
             advance();

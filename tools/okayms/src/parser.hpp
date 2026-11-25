@@ -564,6 +564,7 @@ struct Parser {
                 if (!call && k < tokens.size() && tokens[k].kind == TIdent) {
                     if (global_qual && !out.empty() && out.back().kind == TColonColon) out.pop_back();
                     if (tokens[i].inl) tokens[k].inl = true;  // `inline std::uint32_t f()`: the mark moves to the type name
+                    tokens[k].nsq = true;
                     i = k - 1;  // the leading namespace names and their '::' are dropped
                     continue;
                 }
@@ -1265,6 +1266,11 @@ struct Parser {
         }
         // const ::okay::Vec3&: a type named from the global namespace (see parse_stmt_inner).
         if (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
+        // std::string(int, float) in function<std::string(int, float)>: the namespace names were kept because a '('
+        // follows; where a type is read they are dropped here.
+        while (is(TIdent) && namespaces.count(cur().text) > 0 && at + 2 < tokens.size() &&
+               tokens[at + 1].kind == TColonColon && tokens[at + 2].kind == TIdent)
+            at += 2;
         if (!parse_type_core(type, imported, exported)) return false;
         while (accept(TConst)) {
         }
@@ -2010,6 +2016,9 @@ struct Parser {
 
     bool is_decl_start() const {
         if (qualified_expr_ahead()) return false;
+        // A parameter or local variable hides a type of the same name ([basic.scope.hiding]): `(seconds * rate)` with a
+        // parameter `seconds` is not a cast to std::chrono::seconds (namespaces are not kept apart here).
+        if (is(TIdent) && !cur().nsq && cur_locals != nullptr && local_visible(cur().text)) return false;
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
@@ -2053,7 +2062,9 @@ struct Parser {
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
                 ((tokens[i + 1].kind == TComma || tokens[i + 1].kind == TGt) && i >= 1 &&
-                 (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma)));  // a template argument: Box<P, 3>
+                 (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma ||
+                  (tokens[i - 1].kind == TConst && i >= 2 &&
+                   (tokens[i - 2].kind == TLt || tokens[i - 2].kind == TComma)))));  // a template argument: Box<P, 3>, Box<const P>
     }
     bool is_class_name() const {
         if (!is(TIdent) || typedefs.find(cur().text) != typedefs.end()) return false;
@@ -4253,7 +4264,8 @@ struct Parser {
         at = probe_at;
         stmt_pre = std::move(keep_pre);
         stmt_temps = std::move(keep_temps);
-        while (funcs.size() > funcs_before) funcs.pop_back();
+        (void)funcs_before;  // what the probe made (template instances, lambdas) is kept: a class records an instance as
+                             // made, so it would not be made again when the body is read for real
         Type found = lam_probe_type;
         const bool seen = lam_probe_seen;
         const bool seen_ref = lam_probe_ref;
@@ -5640,8 +5652,43 @@ struct Parser {
             error = "no member function template " + name;
             return false;
         }
-        const MemberTmpl mt = *found;  // the map may change while the instance is compiled
-        if (!deduce_args(mt.td, name, &targs, call_args)) return false;
+        MemberTmpl mt = *found;  // a copy: the map may change while the instance is compiled
+        size_t overload = 0;
+        auto all = member_tmpl_all.find(std::make_pair(owner, name));
+        if (all != member_tmpl_all.end() && all->second.size() > 1) {
+            // Overloaded member templates (wait_for(lk, d) and wait_for(lk, d, pred)): the first, in the order declared,
+            // that takes this many arguments and whose arguments can be deduced ([temp.over]; own simplification: no
+            // partial ordering). The first pass wants the exact number of parameters, the second allows defaults and packs.
+            const std::vector<TArg> given = targs;
+            bool picked = false;
+            std::string first_error;
+            for (int pass = 0; pass < 2 && !picked; ++pass)
+                for (size_t ci = 0; ci < all->second.size() && !picked; ++ci) {
+                    const MemberTmpl& c = all->second[ci];
+                    bool pack = false;
+                    for (const Type& t : c.td.proto)
+                        if (t.pack) pack = true;
+                    if (pass == 0 && (pack || c.td.proto.size() != call_args.size())) continue;
+                    if (pass == 1 && !pack && c.td.proto.size() < call_args.size()) continue;
+                    std::vector<TArg> trial = given;
+                    const std::string keep_error = error;
+                    if (deduce_args(c.td, name, &trial, call_args)) {
+                        mt = c;
+                        targs = trial;
+                        overload = ci;
+                        picked = true;
+                    } else {
+                        if (first_error.empty()) first_error = error;
+                        error = keep_error;
+                    }
+                }
+            if (!picked) {
+                error = first_error.empty() ? "cannot deduce the arguments of " + name : first_error;
+                return false;
+            }
+        } else if (!deduce_args(mt.td, name, &targs, call_args)) {
+            return false;
+        }
         std::string key = name + "<";
         std::string codes;
         for (size_t i = 0; i < targs.size(); ++i) {
@@ -5650,6 +5697,10 @@ struct Parser {
             codes += arg_code(targs[i]);
         }
         key += ">";
+        if (overload > 0) {
+            key += "#" + std::to_string(overload);
+            codes += "@" + std::to_string(overload);
+        }
         *out = key;
         *owner_out = owner;
         for (const Method& m : structs[static_cast<size_t>(owner)].methods)
@@ -5675,6 +5726,15 @@ struct Parser {
         bool exported = false;
         Type type;
         ok = parse_type(&type, &imported, &exported);
+        if (ok && mt.bodyless) {
+            // T* S::f() or T& S::f(): the '*' and '&' of the result come before the class name.
+            while (accept(TStar)) ++type.pointers;
+            if (accept(TAmp)) type.is_ref = true;
+            else if (accept(TAndAnd)) {
+                type.is_ref = true;
+                if (type.pointers == 0) type.rref = true;
+            }
+        }
         if (ok && mt.bodyless && is(TIdent)) {
             // S :: or B<T> :: of the definition outside the class
             size_t q = at + 1;

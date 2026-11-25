@@ -432,7 +432,13 @@ bool Parser::parse_lambda(Node* out) {
         lam_probe_type = saved_type;
         lam_probe_fn = saved_probe_fn;
         if (!probe_ok) return false;
-        while (funcs.size() > funcs_before) funcs.pop_back();
+        // Only the probe's own body goes: instances made while it was read (a member template called in it) are kept,
+        // because their classes already record them as made and they would not be made again.
+        {
+            const std::string own = structs[static_cast<size_t>(sid)].methods[mi].qname;
+            for (size_t fi = funcs.size(); fi-- > funcs_before;)
+                if (funcs[fi].name == own) funcs.erase(funcs.begin() + static_cast<std::ptrdiff_t>(fi));
+        }
         Method& mm = structs[static_cast<size_t>(sid)].methods[mi];
         mm.ret = found;
         mm.body_at = body_at;
@@ -1260,7 +1266,7 @@ bool Parser::parse_unary(Node* out) {
                  (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
                 name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
         }
-        const size_t colons = name.find("::");
+        size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
             const auto found = building->statics.find(name);
             if (found != building->statics.end() && found->second.has_const) {
@@ -1269,6 +1275,22 @@ bool Parser::parse_unary(Node* out) {
             }
         }
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
+        if (scope_sid >= 0 && colons != std::string::npos && (is(TLParen) || is(TLBrace))) {
+            // Outer::Nested(args) and Outer::Nested{args}: a temporary of a nested class (std::thread::id()), when the
+            // class has no member function of that name. Nested classes are kept under their plain name.
+            const std::string member = name.substr(colons + 2);
+            bool member_fn = false;
+            for (const Method& m : structs[static_cast<size_t>(scope_sid)].methods)
+                if (m.name == member) member_fn = true;
+            int tmpl_owner = -1;
+            if (find_member_tmpl(scope_sid, member, &tmpl_owner) != nullptr) member_fn = true;
+            if (!member_fn && member.find("::") == std::string::npos && find_struct(member) >= 0 &&
+                typedefs.count(member) == 0) {
+                name = member;
+                colons = std::string::npos;
+                scope_sid = -1;
+            }
+        }
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
             if ((!is(TLParen) || static_object_call(scope_sid, member)) && static_member_expr(scope_sid, member, out))
@@ -1585,14 +1607,27 @@ bool Parser::parse_unary(Node* out) {
         const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
-                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
+                                 (tokens[at + 1].nsq || !local_visible(tokens[at + 1].text))) ||  // a parameter `seconds` hides chrono's type
+                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1) &&
+                                 (tokens[at + 1].nsq || !local_visible(tokens[at + 1].text))) ||
+                                // (std::vector<int>*)p, and static_cast<function<void()>*>(p), which is read as that
+                                (ahead == TIdent && is_template_name_at(at + 1) && !local_visible(tokens[at + 1].text));
         // (double(k) * 2) and (T(x) + 1): a type written like a call inside parentheses is a functional cast in an
         // expression, not a C cast ([expr.type.conv]). A function pointer type is (int (*)(int)), with '*' after '('.
         bool functional = false;
         if (type_ahead) {
             size_t k = at + 1;
-            if (tokens[k].kind == TIdent) {
+            if (tokens[k].kind == TIdent && is_template_name_at(k)) {
+                int angle = 0;  // past the template's argument list: (Box<int>(x) + 1) is a functional cast
+                for (++k; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                    if (tokens[k].kind == TLt) ++angle;
+                    else if (tokens[k].kind == TGt && --angle == 0) {
+                        ++k;
+                        break;
+                    }
+                }
+            } else if (tokens[k].kind == TIdent) {
                 ++k;
             } else {
                 k = after_type_keywords(k);

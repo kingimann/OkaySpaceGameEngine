@@ -3,7 +3,7 @@
 // iterators are plain pointers to pair<K, V> and an insert or erase in the middle moves the entries after it (linear
 // time, where the standard says logarithmic). Differences from the standard: the element is pair<K, V>, not
 // pair<const K, V> (the key can be written through an iterator, which the standard forbids); iterators and references
-// are invalidated by an insert or erase; ordering is by operator< on the key (no comparator argument); at() of a
+// are invalidated by an insert or erase; ordering is by the comparator C (std::less<K>, operator< on the key, unless another is given); at() of a
 // missing key returns a default value kept in the map (there are no exceptions). No allocator.
 #pragma once
 #include <cstddef>
@@ -11,10 +11,11 @@
 #include <utility>
 #include <vector>
 namespace std {
-template <typename K, typename V>
+template <typename K, typename V, typename C = less<K> >
 class map {
     vector<pair<K, V> > items_;
     V missing_;
+    C cmp_;
 
     // The index of the first entry whose key is not less than key.
     size_t lower(const K& key) const {
@@ -22,15 +23,16 @@ class map {
         size_t hi = items_.size();
         while (lo < hi) {
             const size_t mid = lo + (hi - lo) / 2;
-            if (items_[mid].first < key) lo = mid + 1;
+            if (cmp_(items_[mid].first, key)) lo = mid + 1;
             else hi = mid;
         }
         return lo;
     }
-    bool found_at(size_t at, const K& key) const { return at < items_.size() && !(key < items_[at].first); }
+    bool found_at(size_t at, const K& key) const { return at < items_.size() && !cmp_(key, items_[at].first); }
 
 public:
     typedef K key_type;
+    typedef C key_compare;
     typedef V mapped_type;
     typedef pair<K, V> value_type;
     typedef size_t size_type;

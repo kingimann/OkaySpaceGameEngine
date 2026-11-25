@@ -12,6 +12,7 @@
 // compiler has no dynamic_cast yet).
 #pragma once
 #include <cstddef>
+#include <cstdlib>
 #include <type_traits>
 #include <utility>
 namespace std {

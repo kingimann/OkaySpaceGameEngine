@@ -16,6 +16,13 @@ const okayms_test::ProgramRun kRunIo{"r26",
                                      {"msvcrt.dll:fopen", "msvcrt.dll:_wfopen", "msvcrt.dll:fwrite", "msvcrt.dll:fread",
                                       "msvcrt.dll:fseek", "msvcrt.dll:ftell", "msvcrt.dll:rewind", "msvcrt.dll:fclose",
                                       "msvcrt.dll:_wremove"}};
+const okayms_test::ProgramRun kRunSignal{"r26", {"msvcrt.dll:signal", "msvcrt.dll:raise"}};
+const okayms_test::ProgramRun kRunThreads{
+    "r26",
+    {"AcquireSRWLockExclusive", "ReleaseSRWLockExclusive", "TryAcquireSRWLockExclusive", "SleepConditionVariableSRW",
+     "WakeConditionVariable", "WakeAllConditionVariable", "CreateThread", "WaitForSingleObject", "CloseHandle",
+     "GetCurrentThreadId", "Sleep", "SwitchToThread", "GetSystemInfo", "QueryPerformanceCounter",
+     "QueryPerformanceFrequency", "GetSystemTimeAsFileTime"}};
 }  // namespace
 
 // The bump allocator of program_check.hpp (no C runtime is linked on the okay-ms side).
@@ -339,6 +346,240 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// std::map and std::set with a comparator argument, shared_ptr<const T>, vector::insert of a braced list and of n
+// copies, string::assign and the string constructor from a part of another string.
+static void r26_containers(Tally& tally) {
+    std::printf("r26_containers\n");
+    okayms_test::run_both(kRun, tally, "containers", std::string(kAlloc) + R"OKMS(
+#include <map>
+#include <set>
+#include <memory>
+#include <string>
+#include <vector>
+#include <functional>
+struct Key { int v; };
+struct KeyLess { bool operator()(const Key& a, const Key& b) const { return a.v > b.v; } };
+struct Res { int id; bool ok() const { return id > 0; } };
+static std::shared_ptr<const Res> MakeRes(int id) { std::shared_ptr<Res> r(new Res()); r->id = id; return r; }
+int entry(void) {
+  std::map<Key, int, KeyLess> m;
+  Key a{1}, b{3}, c{2};
+  m[a] = 10; m[b] = 30; m[c] = 20;
+  if (m.size() != 3 || m.begin()->first.v != 3) return 1;
+  std::set<int, std::greater<int>> s = {1, 5, 3};
+  if (*s.begin() != 5) return 2;
+  std::shared_ptr<const Res> r = MakeRes(7);
+  if (!r || r->id != 7 || !r->ok()) return 3;
+  std::vector<int> v = {1, 5};
+  v.insert(v.begin() + 1, {2, 3, 4});
+  if (v.size() != 5 || v[1] != 2 || v[3] != 4 || v[4] != 5) return 4;
+  v.insert(v.end(), 2, 9);
+  if (v.size() != 7 || v[6] != 9) return 5;
+  std::string src = "hello world";
+  std::string part;
+  part.assign(src, 6, 3);
+  if (part != "wor") return 6;
+  std::vector<std::string> parts;
+  parts.emplace_back(src, 0, 5);
+  if (parts[0] != "hello") return 7;
+  std::map<std::string, int> plain;
+  plain["b"] = 2; plain["a"] = 1;
+  if (plain.begin()->second != 1) return 8;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// std::locale with a num_get facet that reads "inf" and a num_put facet, imbued in string streams; locale::classic().
+static void r26_locale(Tally& tally) {
+    std::printf("r26_locale\n");
+    okayms_test::run_both(kRun, tally, "locale", std::string(kAlloc) + R"OKMS(
+#include <locale>
+#include <sstream>
+#include <string>
+#include <limits>
+#include <cctype>
+class TolerantNumGet : public std::num_get<char> {
+public:
+    explicit TolerantNumGet(std::size_t refs) : std::num_get<char>(refs) {}
+protected:
+    using std::num_get<char>::do_get;
+    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, float& v) const override {
+        return Get(in, end, str, err, v);
+    }
+    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, double& v) const override {
+        return Get(in, end, str, err, v);
+    }
+private:
+    template <class F>
+    iter_type Get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, F& v) const {
+        if (in != end && (*in == 'i' || *in == 'I')) {
+            std::string word;
+            while (in != end && std::isalpha(static_cast<unsigned char>(*in))) { word += static_cast<char>(std::tolower(static_cast<unsigned char>(*in))); ++in; }
+            if (word == "inf") v = std::numeric_limits<F>::infinity();
+            else { v = 0; err |= std::ios_base::failbit; }
+            if (in == end) err |= std::ios_base::eofbit;
+            return in;
+        }
+        return std::num_get<char>::do_get(in, end, str, err, v);
+    }
+};
+class TwoDigits : public std::num_put<char> {
+public:
+    explicit TwoDigits(std::size_t refs) : std::num_put<char>(refs) {}
+protected:
+    iter_type do_put(iter_type out, std::ios_base& str, char fill, double v) const override {
+        (void)str; (void)fill;
+        *out++ = '<';
+        *out++ = (char)('0' + (int)v % 10);
+        *out++ = '>';
+        return out;
+    }
+};
+int entry(void) {
+  static const std::locale* tl = new std::locale(std::locale::classic(), new TolerantNumGet(0));
+  std::istringstream in("inf 2.5");
+  in.imbue(*tl);
+  float a = 0, b = 0;
+  in >> a >> b;
+  if (!(a > 3.0e38f) || b != 2.5f) return 1;
+  std::istringstream plain("inf");
+  plain.imbue(std::locale::classic());
+  float c = 1;
+  plain >> c;
+  if (!plain.fail()) return 2;
+  std::ostringstream o;
+  static const std::locale* pl = new std::locale(std::locale::classic(), new TwoDigits(0));
+  o.imbue(*pl);
+  o << 7.0 << ' ' << 3;
+  if (o.str() != "<7> 3") return 3;
+  std::ostringstream o2;
+  o2.imbue(std::locale::classic());
+  o2 << 2.5;
+  if (o2.str() != "2.5") return 4;
+  return 0;
+}
+)OKMS", 0);
+}
+
+// <csignal>: signal and raise in msvcrt.dll, a handler that records the signal.
+static void r26_csignal(Tally& tally) {
+    std::printf("r26_csignal\n");
+    okayms_test::run_both(kRunSignal, tally, "csignal", std::string(kAlloc) + R"OKMS(
+#include <csignal>
+static volatile std::sig_atomic_t g_got = 0;
+static void OnSignal(int s) { g_got = s; }
+int entry(void) {
+  if (std::signal(SIGTERM, OnSignal) == SIG_ERR) return 1;
+  if (std::raise(SIGTERM) != 0) return 2;
+  if (g_got != SIGTERM) return 3;
+  std::signal(SIGTERM, SIG_DFL);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// <thread>, <mutex>, <condition_variable> on Win32: four threads add under a mutex, call_once, a waiter woken by
+// notify_all, recursive_mutex, wait_for that times out, hardware_concurrency. MinGW here has the win32 thread model (no
+// std::thread), so its side of this program only returns 0.
+static void r26_threads(Tally& tally) {
+    std::printf("r26_threads\n");
+    okayms_test::run_both(kRunThreads, tally, "threads", std::string(kAlloc) + R"OKMS(
+#ifdef __GNUC__
+int entry(void) { return 0; }  // MinGW here has the win32 thread model: no std::thread to compare with
+#else
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+#include <vector>
+struct Shared { std::mutex m; std::condition_variable cv; int count; bool ready; std::recursive_mutex rm; int depth; };
+static Shared g;
+static std::once_flag g_once;
+static int g_once_runs = 0;
+static void Work() {
+  for (int i = 0; i < 1000; ++i) { std::lock_guard<std::mutex> lk(g.m); ++g.count; }
+  std::call_once(g_once, [] { ++g_once_runs; });
+}
+int entry(void) {
+  g.count = 0; g.ready = false; g.depth = 0;
+  std::vector<std::thread> ts;
+  for (int i = 0; i < 4; ++i) ts.push_back(std::thread([] { Work(); }));
+  for (std::thread& t : ts) if (t.joinable()) t.join();
+  if (g.count != 4000) return 1;
+  if (g_once_runs != 1) return 2;
+  std::thread waiter([] {
+    std::unique_lock<std::mutex> lk(g.m);
+    g.cv.wait(lk, [] { return g.ready; });
+    g.count = -1;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  { std::lock_guard<std::mutex> lk(g.m); g.ready = true; }
+  g.cv.notify_all();
+  waiter.join();
+  if (g.count != -1) return 3;
+  g.rm.lock(); g.rm.lock(); ++g.depth; g.rm.unlock(); g.rm.unlock();
+  if (!g.rm.try_lock()) return 4;
+  g.rm.unlock();
+  if (std::thread::hardware_concurrency() == 0) return 5;
+  std::unique_lock<std::mutex> lk(g.m);
+  if (g.cv.wait_for(lk, std::chrono::milliseconds(5)) != std::cv_status::timeout) return 6;
+  if (std::this_thread::get_id() == std::thread::id()) return 7;
+  return 0;
+}
+#endif
+)OKMS", 0);
+}
+
+// Compiler fixes: a parameter hides a type of the same name, a member template instance made inside a lambda whose
+// result type is being worked out, overloaded member templates, Outer::Nested(), an out-of-class member template that
+// returns T*, C casts to template types, the new <cmath> functions.
+static void r26_fixes2(Tally& tally) {
+    std::printf("r26_fixes2\n");
+    okayms_test::run_both(kRun, tally, "fixes2", std::string(kAlloc) + R"OKMS(
+#include <cmath>
+#include <vector>
+#include <functional>
+#include <string>
+typedef long long seconds;
+static int scale(float seconds, int rate) { return (int)(seconds * rate); }
+static bool ready = true;
+struct C {
+  template <class P> int w(int a, P p) { return p() ? a : 0; }
+  template <class R> int over(R r) { return (int)r; }
+  template <class R, class P> int over(R r, P p) { return (int)r + p(); }
+  struct Inner { int v; Inner() : v(7) {} };
+};
+static C c;
+struct G {
+  int v;
+  template <typename T> T* Get() const;
+};
+template <typename T> T* G::Get() const { return (T*)&v; }
+static int via_fn(void* p) { std::function<int()>* f = static_cast<std::function<int()>*>(p); return (*f)(); }
+int entry(void) {
+  if (scale(2.0f, 3) != 6) return 1;
+  auto outer = [] { return c.w(3, [] { return ready; }); };
+  if (outer() != 3) return 2;
+  if (c.over(4) != 4 || c.over(4, [] { return 1; }) != 5) return 3;
+  if (C::Inner().v != 7) return 4;
+  G g; g.v = 9;
+  if (*g.Get<int>() != 9) return 5;
+  std::vector<int> v = {1, 2};
+  void* raw = &v;
+  if (((std::vector<int>*)raw)->size() != 2) return 6;
+  std::function<int()> f = [] { return 11; };
+  if (via_fn(&f) != 11) return 7;
+  if (std::lround(2.5f) != 3 || std::nearbyint(2.5f) != 2.0f || std::copysign(3.0f, -1.0f) != -3.0f) return 8;
+  if (std::nextafter(1.0f, 2.0f) <= 1.0f || std::ldexp(3.0f, 4) != 48.0f) return 9;
+  if (std::fabs(std::cbrt(-27.0f) + 3.0f) > 1e-5f || std::fabs(std::tanh(0.5f) - 0.46211716f) > 1e-6f) return 10;
+  if (std::fabs(std::remainder(7.0f, 2.0f) + 1.0f) > 1e-6f || std::fabs(std::exp2(3.0f) - 8.0f) > 1e-4f) return 11;
+  if (std::fabs(std::log1p(1e-6f) - 1e-6f) > 1e-10f) return 12;
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -351,5 +592,10 @@ int main(int argc, char** argv) {
     r26_static_tmpl_cas(tally);
     r26_wide_literals(tally);
     r26_file_io(tally);
-    return tally.finish(8);
+    r26_containers(tally);
+    r26_locale(tally);
+    r26_csignal(tally);
+    r26_threads(tally);
+    r26_fixes2(tally);
+    return tally.finish(13);
 }

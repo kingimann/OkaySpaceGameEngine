@@ -44,6 +44,9 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // Namespace names in front of this name were dropped (std::filesystem::path is read as path): it names something in
+    // a namespace, so a local variable of the same name does not hide it.
+    bool nsq = false;
     // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
     bool tls = false;
 };

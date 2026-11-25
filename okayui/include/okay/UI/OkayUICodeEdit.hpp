@@ -1,8 +1,10 @@
 #pragma once
 // OkayUI::CodeEdit: a multi-line code editor widget (own code; replaces the vendored ImGuiColorTextEdit).
 // Line-number gutter with breakpoint marks, caret and selection (mouse and keyboard), typing, auto-indent, clipboard,
-// undo/redo with grouping, find, bracket matching, scrolling, a pluggable syntax highlighter (plus a built-in C-like and
-// OkayScript one), read-only mode and error markers. See docs/ui/own_ui_code_editor.md.
+// undo/redo with grouping, find (also across lines) and replace, bracket matching, auto-closed brackets and quotes, auto-dedent,
+// matching-word highlight, indent guides, whitespace marks, word wrap, code folding, multiple carets and column selection, drag
+// and drop of text, scrolling, a pluggable syntax highlighter (plus a built-in C-like and OkayScript one), read-only mode and
+// error markers. See docs/ui/own_ui_code_editor.md.
 //
 // A CodeEdit is a plain object that owns its text and state (one per open script). Call Draw() once per frame inside an
 // OkayUI window; it reads the frame's input, edits, and draws the visible lines only. The editing operations are also
@@ -31,6 +33,15 @@ struct CodePos {
     bool operator<=(const CodePos& o) const { return !(o < *this); }
 };
 
+/// One caret and its selection (anchor == caret: no selection). The editor has a primary caret (Caret(), Anchor()) and any number
+/// of extra ones; every edit is done at all of them and is one undo step.
+struct CodeSelection {
+    CodePos caret, anchor;
+    CodePos Start() const { return caret < anchor ? caret : anchor; }
+    CodePos End() const { return caret < anchor ? anchor : caret; }
+    bool Empty() const { return caret == anchor; }
+};
+
 /// What a stretch of text is, for colouring. The palette maps each to a colour.
 enum CodeColor : unsigned char {
     CodeColor_Default = 0, CodeColor_Keyword, CodeColor_Type, CodeColor_Function, CodeColor_Known, CodeColor_Member,
@@ -56,6 +67,13 @@ struct CodeLanguage {
     /// `.name`. true: keyword, type, call, member, then known word (the Dear ImGui script editor's order: a built-in that is
     /// called shows in the call colour, `print(` like `Foo(`).
     bool callBeforeKnown = false;
+    /// Words that open and close a block (Lua: function do then repeat else / end until elseif else). A word in both lists closes
+    /// one block and opens the next. They drive folding, the extra indent after Enter and auto-dedent. Braces { } always count.
+    std::vector<std::string> blockOpenWords, blockCloseWords;
+    /// Typed as the only word of a line, these take one indent level off (Lua: end else elseif until). A typed '}' always does.
+    std::vector<std::string> dedentWords;
+    /// Also fold by indentation: a line followed by more deeply indented lines folds them (used where a line opens no block).
+    bool foldByIndent = false;
 };
 /// C and C++ words with "//" and block comments.
 CodeLanguage CLikeLanguage();
@@ -76,6 +94,9 @@ struct CodePalette {
     Color32 currentLineInactive = 0;
     /// A wash over the whole width of a line with a breakpoint, on top of the gutter dot (0: none).
     Color32 breakpointLine = 0;
+    /// The other places of the word under the caret (0: not shown), the indent guides (0: none), the marks of SetShowWhitespace
+    /// (0: the comment colour at half strength), the fold arrows and the box of a folded block (0: the line number colour).
+    Color32 wordMatch = 0, indentGuide = 0, whitespace = 0, fold = 0;
 };
 /// The Darcula-flavoured palette the script editor uses.
 CodePalette DefaultCodePalette();
@@ -131,6 +152,9 @@ public:
     // ---- editing (all of them do nothing in read-only mode) ----
     /// Replace the selection (or insert at the caret) with `text`. "\r\n" becomes "\n". Returns false if nothing changed.
     bool InsertText(const char* text);
+    /// Text typed at the keyboard (what Draw does with typed characters): like InsertText, plus, character by character, the
+    /// auto-closing of brackets and quotes (SetAutoClose) and the auto-dedent of '}' and the language's dedent words (SetAutoDedent).
+    bool Type(const char* text);
     bool Backspace(bool word = false);
     bool DeleteForward(bool word = false);
     /// Enter: split the line, keeping its indent (and one more level after '{', '(' or '[' ; "{|}" opens a blank line between).
@@ -160,8 +184,51 @@ public:
     /// Close the current undo group: the next edit starts a new one.
     void BreakUndoGroup() { breakGroup_ = true; }
 
+    // ---- many carets ----
+    /// How many carets there are (1 + the extra ones).
+    int CaretCount() const { return 1 + (int)extras_.size(); }
+    /// Every caret with its selection, in text order (the primary one among them).
+    std::vector<CodeSelection> Selections() const;
+    /// Add a caret (with a selection from `anchor`); it becomes the primary one. A caret on top of another merges with it.
+    void AddCaret(CodePos caret, CodePos anchor);
+    void AddCaret(CodePos caret) { AddCaret(caret, caret); }
+    /// Remove the caret at `p` (Ctrl+click on a caret); false when there is no caret there or it is the only one.
+    bool RemoveCaretAt(CodePos p);
+    /// Back to the primary caret alone.
+    void ClearExtraCarets();
+    /// Ctrl+D: with no selection select the word at the caret; with one, add a caret on the next place with the same text (whole
+    /// words when the first selection came from a word), wrapping round the end. False when there is nothing more to add.
+    bool SelectNextOccurrence();
+    /// A column (block) selection from one point to another: one caret per line, each selecting the same display columns
+    /// (lines too short get a caret at their end). The caret of `to`'s line is the primary one.
+    void SetColumnSelection(CodePos from, CodePos to);
+    /// Move (or with `copy` copy) the primary selection to `at`, as one undo step: what dropping dragged text does. False when
+    /// `at` is inside the selection (nothing to do) or there is no selection.
+    bool MoveSelectionTo(CodePos at, bool copy);
+
+    // ---- folding ----
+    /// Show the fold column in the gutter and allow folding (off by default; the script editor turns it on).
+    void SetFolding(bool on);
+    bool Folding() const { return folding_; }
+    /// The line where the block that line `header` opens ends (its closing brace's or `end`'s line, or its last indented line),
+    /// or -1 when the line opens no block that spans lines.
+    int FoldEnd(int header);
+    /// Fold the block line `line` opens (or the innermost block around it). False when there is none.
+    bool Fold(int line);
+    /// Unfold a folded block whose header is `line` or that hides `line`. False when nothing was folded there.
+    bool Unfold(int line);
+    bool ToggleFold(int line);
+    int FoldAll();       // fold every block; returns how many
+    void UnfoldAll();
+    bool IsFolded(int header) const;
+    /// True when the line is hidden inside a folded block.
+    bool IsLineHidden(int line) const;
+    /// The number of rows drawn: lines that are not folded away, each as many rows as word wrap makes of it.
+    int VisualRowCount() const;
+
     // ---- find ----
-    /// Set the search text. Every match in view is highlighted. "" clears it. A needle with a newline matches nothing.
+    /// Set the search text. Every match in view is highlighted. "" clears it. A needle with newlines matches across lines (its
+    /// first part must end its line and its last part start one).
     void SetFind(const std::string& needle, bool matchCase = false);
     const std::string& FindText() const { return find_; }
     /// Select the next / previous match after / before the selection, wrapping round the ends. False if there is none.
@@ -187,6 +254,21 @@ public:
     int TabSize() const { return tabSize_; }
     void SetInsertSpaces(bool b) { insertSpaces_ = b; }     // Tab inserts spaces (default) or a tab character
     void SetAutoIndent(bool b) { autoIndent_ = b; }
+    /// Typing ( [ { " ' adds the closer after the caret, typing a closer that is already next to the caret steps over it,
+    /// Backspace between a fresh pair removes both, and typing an opener or quote over a selection wraps it. Not inside strings
+    /// and comments (quotes: not after a letter). On by default.
+    void SetAutoClose(bool b) { autoClose_ = b; }
+    bool AutoClose() const { return autoClose_; }
+    /// Typing '}' (or a dedent word of the language, such as Lua's `end`) as the first thing on a line takes the line back to
+    /// the indent of its block. On by default.
+    void SetAutoDedent(bool b) { autoDedent_ = b; }
+    /// Draw a dot for every space and an arrow for every tab (off by default).
+    void SetShowWhitespace(bool b) { showWs_ = b; }
+    bool ShowWhitespace() const { return showWs_; }
+    /// Wrap long lines at the width of the view instead of scrolling sideways (off by default). Caret movement (Up and Down go by
+    /// rows), the selection, clicks and the gutter (one line number per line) follow the rows.
+    void SetWordWrap(bool b) { if (wrap_ != b) { wrap_ = b; rowsDirty_ = true; scrollX_ = 0; } }
+    bool WordWrap() const { return wrap_; }
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
@@ -200,7 +282,8 @@ public:
     /// the hover info of the word (letters, digits, '_') whose cell is under the point. "" for none.
     std::string HoverText(float x, float y) const;
     /// Key bindings for the line commands while the editor has the keyboard (on by default; the script editor's keys):
-    /// Ctrl+/ ToggleLineComment, Ctrl+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
+    /// Ctrl+/ ToggleLineComment, Ctrl+Shift+D DuplicateLines, Ctrl+Shift+K DeleteLines, Alt+Up and Alt+Down MoveLines.
+    /// (Ctrl+D is SelectNextOccurrence; folding: Ctrl+Shift+[ and ], Ctrl+Alt+[ fold all, Ctrl+Alt+] unfold all.)
     void SetLineCommandKeys(bool on) { lineKeys_ = on; }
     bool LineCommandKeys() const { return lineKeys_; }
     /// Draw the code (text and line numbers) in this font instead of the current OkayUI font: a font made by AddFontTtf
@@ -285,12 +368,39 @@ public:
 
 private:
     struct UndoEdit { CodePos from; std::string removed, inserted; };
-    struct UndoGroup { std::vector<UndoEdit> edits; CodePos caretBefore, anchorBefore, caretAfter, anchorAfter; int kind = 0; };
+    struct Sel { CodePos caret, anchor; int desired = -1; };
+    struct UndoGroup { std::vector<UndoEdit> edits; CodePos caretBefore, anchorBefore, caretAfter, anchorAfter; int kind = 0;
+                       std::vector<Sel> extrasBefore, extrasAfter; };
+    struct FoldRange { int header = 0, last = 0; };   // lines header+1 .. last are hidden
 
     void applyRaw(CodePos from, CodePos to, const std::string& ins);
     CodePos edit(int kind, CodePos from, CodePos to, const std::string& ins);
-    void beginCompound();
+    void beginCompound(int kind = 0);
     void endCompound();
+    template <class F> bool forEachCaret(int kind, int order, F&& op);
+    void normalizeSels();
+    bool typeOne(const std::string& ch);
+    bool backspaceOne(bool word);
+    bool selectionIsWord() const;
+    // rows: the lines that are drawn (folds hide some, word wrap splits some)
+    void ensureRows() const;
+    int rowCount() const;
+    int rowLine(int r) const;
+    int rowStart(int r) const;
+    int rowEnd(int r) const;
+    int rowCol(int r) const;
+    int rowOf(CodePos p) const;
+    CodePos posInRow(int r, float visualCol) const;
+    bool lineOpens(int line, int& openCol, int limit = -1, bool wordsOnly = false);
+    int hiddenLast(int header);
+    bool inCodeText(CodePos p);
+    int blockEnd(int line, int openCol);
+    void unfoldAround(int line);
+    void fixFolds();
+    int indentOf(int line) const;
+    bool matchAt(int line, int start, CodePos& end) const;
+    bool nextMatch(CodePos from, CodePos& a, CodePos& b) const;
+    void setFound(int line, int st);
     void lineRange(int& l0, int& l1) const;
     bool replaceSelection(const std::string& ins, int kind);
     bool deleteSelectionIfAny();
@@ -298,6 +408,7 @@ private:
     static CodePos endOf(CodePos from, const std::string& text);
     void setCaretKeep(CodePos c, CodePos a) { caret_ = c; anchor_ = a; reveal_ = true; }
     void moveCaret(CodePos p, bool extend, bool keepDesired = false);
+    void moveOne(CodeMove m, bool extend);
     CodePos wordLeft(CodePos p) const;
     CodePos wordRight(CodePos p) const;
     void ensureStates(int line);
@@ -328,12 +439,26 @@ private:
     int validTo_ = 0;
     std::vector<CodeToken> scratch_;
 
-    std::string find_; bool findCase_ = false;
+    std::string find_; bool findCase_ = false; std::vector<std::string> findParts_;
     std::vector<CodeMarker> markers_;
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
     bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true, lineKeys_ = true;
+    bool autoClose_ = true, autoDedent_ = true, showWs_ = false, wrap_ = false, folding_ = false;
+    // many carets: the extra ones (the primary is caret_ / anchor_), and the positions an edit at many carets keeps moving
+    std::vector<Sel> extras_, track_;
+    bool tracking_ = false; int opRank_ = 0;
+    int compoundDepth_ = 0; bool pushedGroup_ = false;
+    // the last auto-dedent (line, the indent taken off), put back when the word typed turns out longer ("end" -> "ending")
+    int dedentLine_ = -1; std::string dedentText_; unsigned dedentVersion_ = 0;
+    // folds and the row map (rebuilt when the text, the folds or the wrap width change)
+    std::vector<FoldRange> folds_; unsigned foldsVersion_ = 1, foldsCheckedAt_ = 0;
+    mutable bool rowsDirty_ = true, identity_ = true;
+    mutable unsigned rowsVersion_ = 0, rowsFolds_ = 0; mutable int rowsWrap_ = -1, rowsTab_ = 0;
+    mutable std::vector<int> rowLine_, rowByte_, rowCol_, lineRow_;
+    mutable std::vector<unsigned char> hidden_;
+    int wrapCols_ = 0, firstRow_ = 0; float foldW_ = 0.0f;
     const Font* font_ = nullptr; float fontPx_ = 0.0f;
     std::function<void(const std::string&)> clipSet_; std::function<std::string()> clipGet_;
     bool drawImpl(const char* id, float w, float h);
@@ -355,6 +480,8 @@ private:
     int maxBytes_ = 0; bool maxDirty_ = false;
     // mouse
     bool dragging_ = false, dragVBar_ = false, dragHBar_ = false;
+    bool boxSel_ = false, dropPending_ = false, dropping_ = false; CodePos dropAt_, pressPos_; int boxLine_ = 0; float boxCol_ = 0, pressX_ = 0, pressY_ = 0;
+    void setBox(int l0, float c0, int l1, float c1);
     float dragOff_ = 0;
     double lastClickT_ = -10; float lastClickX_ = 0, lastClickY_ = 0; int clicks_ = 0;
     double lastActivity_ = 0;

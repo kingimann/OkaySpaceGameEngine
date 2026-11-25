@@ -9,6 +9,47 @@ endif()
 add_executable(test_modules test_modules.cpp)
 target_link_libraries(test_modules PRIVATE okay::engine)
 add_test(NAME modules COMMAND test_modules)
+
+# module:weapons — visual-script weapon nodes come from the node registry.
+add_executable(test_module_vs_weapons test_module_vs_weapons.cpp)
+target_link_libraries(test_module_vs_weapons PRIVATE okay::engine)
+add_test(NAME module_vs_weapons COMMAND test_module_vs_weapons)
+
+# Review fix: first use of the module registry from many threads at once (uses <thread>, so not built for Windows).
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_module_registry_threads test_module_registry_threads.cpp)
+    target_link_libraries(test_module_registry_threads PRIVATE okay::engine Threads::Threads)
+    add_test(NAME module_registry_threads COMMAND test_module_registry_threads)
+endif()
+
+# module:sky_weather — DayNightCycle's property table is registered by that module.
+add_executable(test_module_props_sky test_module_props_sky.cpp)
+target_link_libraries(test_module_props_sky PRIVATE okay::engine)
+add_test(NAME module_props_sky COMMAND test_module_props_sky)
+
+add_executable(test_module_weapons_save test_module_weapons_save.cpp)
+target_link_libraries(test_module_weapons_save PRIVATE okay::engine)
+add_test(NAME module_weapons_save COMMAND test_module_weapons_save)
+
+add_executable(test_module_weapons_script test_module_weapons_script.cpp)
+target_link_libraries(test_module_weapons_script PRIVATE okay::engine)
+add_test(NAME module_weapons_script COMMAND test_module_weapons_script)
+
+add_executable(test_module_weapons_menu test_module_weapons_menu.cpp)
+target_link_libraries(test_module_weapons_menu PRIVATE okay::engine)
+add_test(NAME module_weapons_menu COMMAND test_module_weapons_menu)
+
+add_executable(test_particles_module_overlay test_particles_module_overlay.cpp)
+target_link_libraries(test_particles_module_overlay PRIVATE okay::engine)
+add_test(NAME particles_module_overlay COMMAND test_particles_module_overlay)
+
+add_executable(test_module_vehicles_save test_module_vehicles_save.cpp)
+target_link_libraries(test_module_vehicles_save PRIVATE okay::engine)
+add_test(NAME module_vehicles_save COMMAND test_module_vehicles_save)
+
+add_executable(test_module_survival_save test_module_survival_save.cpp)
+target_link_libraries(test_module_survival_save PRIVATE okay::engine)
+add_test(NAME module_survival_save COMMAND test_module_survival_save)
 # Project Settings > Modules: the model behind the page (editor/ModulesModel.hpp) and the project file line, no drawing.
 add_executable(test_modules_model test_modules_model.cpp)
 target_link_libraries(test_modules_model PRIVATE okay::engine)
@@ -23,6 +64,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
              ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
 endif()
+# Review fix: a record whose module is off, or has no reader, is kept by load then save (all six gated records).
+add_executable(test_module_records_kept test_module_records_kept.cpp)
+target_link_libraries(test_module_records_kept PRIVATE okay::engine)
+add_test(NAME module_records_kept COMMAND test_module_records_kept)
 
 # Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
 # get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
@@ -433,6 +478,11 @@ add_test(NAME script_components COMMAND test_script_components)
 add_executable(test_script_bindings test_script_bindings.cpp)
 target_link_libraries(test_script_bindings PRIVATE okay::engine)
 add_test(NAME script_bindings COMMAND test_script_bindings)
+# The Script Editor's completion and hover docs read the same table (editor/ScriptAssistBindings.cpp: no Dear ImGui).
+add_executable(test_script_assist_bindings test_script_assist_bindings.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptAssistBindings.cpp)
+target_include_directories(test_script_assist_bindings PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_script_assist_bindings PRIVATE okay::engine)
+add_test(NAME script_assist_bindings COMMAND test_script_assist_bindings)
 if(OKAY_PYTHON)
     # The generated script bindings (engine/src/Scripting/ScriptBindingsGenerated.cpp) match the headers.
     add_test(NAME script_bindings_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_script_bindings.py --check)
@@ -5280,6 +5330,10 @@ target_link_libraries(test_vs_facing PRIVATE okay::engine)
 target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_facing COMMAND test_vs_facing)
 
+# Grok physics: capsule character push-out, joints linked by object, shape casts that return every hit, closest point.
+add_executable(test_physics_grok test_physics_grok.cpp)
+target_link_libraries(test_physics_grok PRIVATE okay::engine)
+add_test(NAME physics_grok COMMAND test_physics_grok)
 # Grok input, on the ActionSet path: axial dead zone, per-set press buffer, Controls rows, smooth per controller.
 add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)

@@ -2062,9 +2062,11 @@ private:
                 Type* outer = classStack_.empty() ? nullptr : classStack_.back();
                 bool nest = outer && !outer->tag.empty() && instOverrideName_.empty() && outer->tag != tag &&
                             shortName(outer->tag) != tag &&
-                            ((!atEnd() && (isP("{") || isP(":") || isKw("final"))) ||
+                            ((!atEnd() && (isP("{") || isP(":") || isKw("final") || (isP(";") && bodyDepth_ == 0))) ||
                              structs_.count(outer->tag + "::" + tag));
                 tag = nest ? outer->tag + "::" + tag : qualify(tag);
+            } else if (!structs_.count(tag) && structs_.count(qualify(tag))) {
+                tag = qualify(tag);  // struct Dec::Impl { .. } inside Dec's namespace: n::Dec::Impl
             }
         }
         std::string tplShort;

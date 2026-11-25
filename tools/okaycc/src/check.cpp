@@ -1093,7 +1093,11 @@ private:
             op = "operator" + e.text;
             break;
         case Expr::Kind::Call:
-            if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) return false;
+            // f(args) and obj.f(args) with f an object of a class with operator() (a std::function
+            // member, [expr.call] p1, [over.call])
+            if (e.kids.empty() || !e.kids[0] ||
+                (e.kids[0]->kind != Expr::Kind::Name && e.kids[0]->kind != Expr::Kind::Member))
+                return false;
             op = "operator()";
             break;
         default: return false;
@@ -1191,9 +1195,14 @@ private:
             for (std::size_t i = 1; i < e.kids.size(); ++i) call->kids.push_back(std::move(e.kids[i]));
             std::unique_ptr<Expr> last = std::move(call);
             std::unique_ptr<Expr> assignResult;
-            const Type* opRet = nullptr;
+            // The result type of the operator the call will choose ([over.match.oper]): with
+            // overloads (Quat * Quat beside Quat * Vec3) the arguments decide, not the last one
+            // declared (qy * qx * qz kept its result in a Vec3).
+            std::vector<const Param *> opCands;
             for (const Param& f : st->params)
-                if (f.name == op && !f.mangled.empty() && f.type) opRet = f.type->inner.get();
+                if (f.name == op && !f.mangled.empty() && f.type) opCands.push_back(&f);
+            const Param* chosenOp = opCands.size() > 1 ? pickOverload(opCands, *last, 1) : (opCands.empty() ? nullptr : opCands[0]);
+            const Type* opRet = chosenOp ? chosenOp->type->inner.get() : nullptr;
             if (opRet && opRet->kind == Type::Kind::Struct) {
                 // An object result is kept in a hidden local too, so the whole expression is an
                 // address-bearing name like any other object.
@@ -2479,6 +2488,7 @@ private:
                 e.kids.insert(e.kids.begin() + 1, eUnary("&", std::move(obj), e));
             }
         }
+        if (e.kids[0]->kind == Expr::Kind::Name) argumentDependent(e);
         Expr& c0 = *e.kids[0];
         static const std::string kCtor = "\x01" "ctor:";
         static const std::string kTmpl = "\x01" "tmpl:";
@@ -3908,6 +3918,52 @@ private:
         }
         if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
             consumed(*s.expr);  // returned: it is the result object
+        }
+    }
+
+    // Whether ordinary unqualified lookup finds 'n' here: a local, a member of the class whose
+    // function this is, or a name of this scope or an enclosing one.
+    bool visibleName(const std::string& n) {
+        if (scopeOf(n) >= 0 || overloads_.count(n)) return true;
+        if (method_)
+            if (const Type* st = canonOf(method_))
+                for (const Param& f : st->params)
+                    if (f.name == n) return true;
+        for (std::string sc = inNs_; !sc.empty(); sc = outerScope(sc))
+            if (scopes_.front().count(sc + "::" + n) || overloads_.count(sc + "::" + n)) return true;
+        return false;
+    }
+    // f(args) where ordinary lookup finds no f: f in the namespaces of the arguments' classes
+    // ([basic.lookup.argdep] p2-p3), which is also how a friend defined in a class is found.
+    void argumentDependent(Expr& call) {
+        Expr& c0 = *call.kids[0];
+        const std::string& n = c0.text;
+        if (n.empty() || n[0] == '\x01' || n.find("::") != std::string::npos || visibleName(n)) return;
+        for (std::size_t i = 1; i < call.kids.size(); ++i) {
+            if (!call.kids[i]) continue;
+            // The argument's type from a copy; only plain operands (v, &v, p->m, a[i]) are read
+            // this way, as a copy of one that makes a temporary would declare it twice.
+            const Expr* ak = call.kids[i].get();
+            if (ak->kind == Expr::Kind::Unary && ak->text == "&" && !ak->kids.empty() && ak->kids[0]) ak = ak->kids[0].get();
+            if (!simpleOperand(*ak)) continue;
+            ++quiet_;
+            auto probe = cloneExpr(*call.kids[i]);
+            ET a = checkExpr(*probe);
+            --quiet_;
+            const Type* t = a.type.get();
+            while (t && (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Reference || t->kind == Type::Kind::Array) &&
+                   t->inner)
+                t = t->inner.get();
+            if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union) || t->tag.empty()) continue;
+            for (std::string sc = outerScope(t->tag); !sc.empty(); sc = outerScope(sc)) {
+                std::string q = sc + "::" + n;
+                if (scopes_.front().count(q) || overloads_.count(q)) {
+                    c0.text = q;
+                    return;
+                }
+                if (canonStructs().count(sc)) continue;  // a class around the class: go on outward
+                break;  // only the innermost namespace is associated
+            }
         }
     }
 

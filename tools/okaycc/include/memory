@@ -170,7 +170,9 @@ struct __esft_base {
     __esft_base() : __wc(nullptr) {}
     __esft_base(const __esft_base &) : __wc(nullptr) {}
     __esft_base &operator=(const __esft_base &) { return *this; }
-    ~__esft_base() {
+    // virtual: a class with virtual functions may derive from enable_shared_from_this (okay-cc
+    // puts the vtable pointer of single inheritance in the first base, so that base must have one)
+    virtual ~__esft_base() {
         if (__wc) __wc->__drop_weak();
     }
     void __own(__sp_count *c) {

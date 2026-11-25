@@ -406,7 +406,7 @@ int main() {
         float lowestPelvis = 9.0f;
         for (int i = 0; i < 150; ++i) { s.Run(1.0f / 60.0f); lowestPelvis = std::fmin(lowestPelvis, s.c.Body(Hips).position.y); }
         std::cout << "  big push: state " << S(s.c.State()) << " falls " << s.c.Falls() << " lowest pelvis "
-                  << lowestPelvis << "\n";
+                  << lowestPelvis << " widest joint gap " << s.MaxGap() << " m\n";
         CHECK(s.c.Falls() == 1);
         CHECK(s.c.State() == CharState::Down || s.c.State() == CharState::GettingUp);
         CHECK(lowestPelvis < 0.4f);

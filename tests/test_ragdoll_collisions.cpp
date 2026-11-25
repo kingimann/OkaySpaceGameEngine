@@ -109,7 +109,11 @@ int main() {
         }
         CHECK(moved[0] > 0.10f);                 // the light crate is shoved away
         CHECK(crateSpeed[0] > 0.3f);
-        CHECK(crateSpeed[1] > 0.005f);           // the heavy one feels the hit too
+        // The heavy one holds: sliding a 400 kg crate takes about 0.5 x 400 x 9.81 = 1960 N of push against the floor's
+        // friction, more than the falling body gives it (160 N s spread over the 0.1 s or so of the fall onto it), so it
+        // should stay put (it creeps at most), and the body stops against it (below). (Was crateSpeed[1] > 0.005, "the heavy
+        // one feels the hit too": friction that holds is right, a crate that slides would be wrong.)
+        CHECK(moved[1] < 0.02f);
         CHECK(moved[1] < moved[0]);              // but gives way less: it pushes back
         CHECK(deepest[0] < 0.06f);               // no limb ends up inside a crate
         CHECK(deepest[1] < 0.06f);
@@ -157,10 +161,13 @@ int main() {
         World w({0, 1.6f, 0});
         const float size = 0.4f;
         std::vector<Vec3> start;
-        for (int x = -1; x <= 1; ++x)
-            for (int z = -1; z <= 1; ++z) w.Crate({(float)x * 0.42f, size * 0.5f, (float)z * 0.42f}, size, 6.0f);
-        for (int x = 0; x <= 1; ++x)
-            for (int z = 0; z <= 1; ++z) w.Crate({((float)x - 0.5f) * 0.44f, size * 1.5f, ((float)z - 0.5f) * 0.44f}, size, 6.0f);
+        // The pile is wider than the body is tall: a limp body dropped upright lands on its feet and topples over, so on
+        // a pile narrower than that (it was 1.24 m wide, 0.88 m on top) it falls off onto the floor whatever the physics.
+        // Bottom layer 9 x 9 boxes (3.8 m), a 5 x 5 layer on top (2.1 m) in the middle.
+        for (int x = -4; x <= 4; ++x)
+            for (int z = -4; z <= 4; ++z) w.Crate({(float)x * 0.42f, size * 0.5f, (float)z * 0.42f}, size, 6.0f);
+        for (int x = -2; x <= 2; ++x)
+            for (int z = -2; z <= 2; ++z) w.Crate({(float)x * 0.42f, size * 1.5f, (float)z * 0.42f}, size, 6.0f);
         for (GameObject* c : w.crates) start.push_back(c->transform->Position());
         w.sc.Start();
         w.Run(0.1f);

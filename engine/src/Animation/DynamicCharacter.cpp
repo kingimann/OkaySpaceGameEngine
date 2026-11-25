@@ -21,12 +21,15 @@ constexpr int kParent[kBones] = {-1, Hips, Torso, Torso, LUpperArm, LForeArm, To
 constexpr int kChild[kBones] = {Torso, Head, -1, LForeArm, LHand, -1, RForeArm, RHand, -1,
                                 LShin, LFoot, -1, RShin, RFoot, -1};
 // Segment mass as a fraction of the body (Winter 2009, table 4.1: trunk split
-// into pelvis and thorax-abdomen; the neck goes with the head), with one change
-// of ours: each foot is three times its table weight (4.35 % instead of 1.45 %),
-// taken from the chest. A 1 kg foot under a 70 kg body is a mass ratio the
-// physics core's solver does not settle in one step per frame: the feet sank
-// into the ground and the stance bounced. The body's total is unchanged.
-constexpr float kMassFrac[kBones] = {0.142f, 0.297f, 0.081f, 0.028f, 0.016f, 0.006f, 0.028f, 0.016f, 0.006f,
+// into pelvis and thorax-abdomen; the neck goes with the head), with two changes
+// of ours, both taken from the chest: each foot is three times its table weight
+// (4.35 % instead of 1.45 %) and each hand twice (1.2 % instead of 0.6 %). A 1 kg
+// foot or a 0.4 kg hand on a chain that ends in a 20 kg chest is a mass ratio the
+// physics core's solver does not settle in one step per frame: the feet sank into
+// the ground and the stance bounced, and a hand caught between the floor and a
+// table was held 9 cm into the floor by its wrist (test_ragdoll, table drops).
+// The body's total is unchanged.
+constexpr float kMassFrac[kBones] = {0.142f, 0.285f, 0.081f, 0.028f, 0.016f, 0.012f, 0.028f, 0.016f, 0.012f,
                                      0.100f, 0.0465f, 0.0435f, 0.100f, 0.0465f, 0.0435f};
 // Capsule radius as a fraction of standing height (our own estimate).
 constexpr float kRadiusFrac[kBones] = {0.062f, 0.072f, 0.058f, 0.030f, 0.027f, 0.025f, 0.030f, 0.027f, 0.025f,

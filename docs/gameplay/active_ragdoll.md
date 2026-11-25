@@ -7,8 +7,8 @@
 > No code, data or assets from any commercial product were used or looked at.
 >
 > **Status:** first version (2026-11-22), on the physics core since 2026-11-25 (claude/ragdoll-core-1).
-> Works in the unit tests on a flat floor; two scene tests still fail (see "What is not done"). The
-> example scene runs in `active_ragdoll` but was not seen in a window after the move.
+> Works in the unit tests (`active_ragdoll`, `ragdoll`, `ragdoll_collisions`); see "What is not done".
+> The example scene runs in `active_ragdoll` but was not seen in a window after the move.
 
 ## Where it lives
 
@@ -77,18 +77,37 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ra
 
 ## Measured on the physics core (2026-11-25, Linux, g++ Release)
 
-- `active_ragdoll` 458 of 458 checks pass on the core (the push thresholds, recovery, get-up, hostile input and
+- `active_ragdoll` 459 of 459 checks pass on the core (the push thresholds, recovery, get-up, hostile input and
   determinism checks below are the same checks). Recovery time after a 35 N s push: 0.88 s.
-- Powered, the animation lifts an arm 70 degrees: the physical arm is 1.6 degrees off it after 2 s, still standing.
+- Powered, the animation lifts an arm 70 degrees: the physical arm is 1.9 degrees off it after 2 s, still standing.
 - Limp on flat ground (`ragdoll`): every part's centre stays above the floor (lowest 0.042 m), joints apart by
-  under 6 mm, at most 0.065 rad past a limit while landing and 0 at rest; it settles.
+  under 9 mm, at most 0.048 rad past a limit while landing and 0 at rest; it settles. Dropped across a table edge:
+  nothing inside the table or under the floor (14 drops).
 - Free fall: the pelvis drops 4.99 m in 1 s.
 - Against dynamic crates (`ragdoll_collisions`): a 4 kg crate is shoved 0.21 m, a 400 kg one 0.6 mm; no limb ends
-  inside either; legs do not pass through each other (smallest gap -0.5 mm) or the torso.
-- Two fixes found by these tests: lying on the floor the arms sank 0.09 m into it (the elbow stopped at -0.05 rad,
-  and the floor needed a few degrees past straight; now -0.2 rad), and with the scene's 10 solver iterations a body
-  landing on its leg pushed the shin 0.15 m into a crate under it (the ragdoll asks for 20 while it is physical,
-  `Physics3D::EngineGuest::GuestSolverIterations`).
+  inside either; legs do not pass through each other or the torso. On a pile of loose boxes it comes to rest on them.
+- Fixes found by these tests:
+  - Lying on the floor the arms sank 0.09 m into it: the elbow stopped at -0.05 rad and the floor needed a few
+    degrees past straight; now -0.2 rad.
+  - With the scene's 10 solver iterations a body landing on its leg pushed the shin 0.15 m into a crate under it;
+    the ragdoll asks for 20 while it is physical (`Physics3D::EngineGuest::GuestSolverIterations`); its own world
+    outside a scene (the unit tests) uses 20 too (with 10 and the joint share below, a 400 N s fall left a joint
+    4 cm apart).
+  - Contacts against joints in the core's position pass: a body's joints were corrected in full each position
+    iteration and its contacts by 0.2 of the overlap, so a limb its joints pressed into something stayed in it or
+    was pushed on through (a leg draped over a table edge with its knee 0.25 to 0.9 rad past the limit; a hand
+    between the table and the floor). Over 14 table drops (7 pushes x 2 directions): up to 0.17 m inside the table
+    and 0.10 m under the floor. More position iterations made it worse. The limbs' contacts now remove 0.8 of an
+    overlap (`ColliderDef::positionCorrection`, new; a pair uses the larger) and the ragdoll's joints 0.5 of their
+    drift (`JointDef::positionCorrection`, new, default 1 = as before), and each hand is twice its table weight:
+    0 inside the table and nothing under the floor in all 14. Other scenes are unchanged (both defaults keep the old
+    behaviour).
+  - The 400 kg crate: the test asked for a top speed above 0.005 m/s. Sliding it takes about 0.5 x 400 x 9.81 =
+    1960 N against the floor's friction, more than the falling body gives it, so it should hold; it moves 0.6 mm.
+    The check is now "moves under 2 cm" (with "moves less than the 4 kg one" and "stops the body").
+  - The loose-box pile: dropped upright, a limp body lands on its feet and topples over, so on the old pile (1.24 m
+    wide, 0.88 m on top) it fell off onto the floor. The pile is now wider than the body is tall (9 x 9 boxes, a
+    5 x 5 layer on top); it comes to rest on the boxes, the boxes move 3.5 cm, no limb inside one.
 
 ## Measured before the move (on the old XpbdRagdoll; the tests that assert these pass on the core)
 
@@ -197,14 +216,6 @@ shared `Math/TwoBoneIK` solve.
 
 ## What is not done
 
-- Two scene tests fail (2026-11-25): (1) `ragdoll` "table drop": face down across a table edge, the knees bend
-  about 0.25 rad past their limit under the legs' weight (the joints open up to 6 cm) and the shins end up to
-  0.096 m inside the table edge. The core's joint limits give under that load at 20 iterations; not fixed.
-  (2) `ragdoll_collisions` "pile": dropped standing onto a pile of loose 6 kg boxes, the body lands on its feet
-  and topples off onto the floor (no limb inside a box), so "lies on the boxes" and "the boxes moved 1 cm" fail;
-  and the 400 kg crate's top speed is 0.001 m/s against the 0.005 the test asks (it moves 0.6 mm). The tests
-  were written before the code and are left as they are.
-- The unit tests' own world (outside a scene) still steps with 10 solver iterations; only the scene uses 20.
 
 - No walking while physical: the character stands still while it stumbles (the controller is
   off), then takes over again.

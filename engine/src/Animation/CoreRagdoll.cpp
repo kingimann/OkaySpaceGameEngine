@@ -35,6 +35,15 @@ phys::Q FrameWithX(const phys::V3& to) {
 }
 
 constexpr float kTwoPi = 6.28318530717959f;
+// Contacts against joints in the core's position pass. A body's joints were corrected in full each position iteration
+// and its contacts by the world's 0.2 of the overlap, so a limb that its joints press into something (a leg draped over
+// a table edge, a hand between a table and the floor) stayed in it, or was pushed on through: test_ragdoll's table
+// drop, over 14 drops (7 pushes x 2 directions): up to 0.17 m inside the table and 0.10 m under the floor. The limbs'
+// contacts now remove 0.8 of an overlap (ColliderDef::positionCorrection) and their joints 0.5 of their drift
+// (JointDef::positionCorrection): 0 inside and above the floor in all 14. More position iterations made it worse (the
+// joints had more turns to win).
+constexpr float kLimbPositionCorrection = 0.8f;
+constexpr float kJointPositionCorrection = 0.5f;
 } // namespace
 
 struct CoreRagdoll::Impl {
@@ -95,6 +104,7 @@ struct CoreRagdoll::Impl {
         phys::ColliderDef cd;
         cd.shape = ShapeOf(b.desc, cd.local);
         cd.friction = b.desc.friction;
+        cd.positionCorrection = kLimbPositionCorrection;
         cd.user = user;
         const phys::ColliderId c = world->AddCollider(b.id, cd);
         if (c == phys::kInvalidId) return;
@@ -249,7 +259,7 @@ void CoreRagdoll::UseWorld(phys::World* world, std::weak_ptr<void> alive) {
     }
     if (!m->own) {
         m->own.reset(new phys::World());
-        m->own->velocityIterations = 10;
+        m->own->velocityIterations = 20;   // as the scene runs while a ragdoll is physical (Ragdoll.cpp)
     }
     m->world = m->own.get();
     m->shared = false;
@@ -341,6 +351,7 @@ int CoreRagdoll::AddJoint(const JointDesc& in) {
         d.swingSpan1 = d.swingSpan2 = swing;
     }
     phys::SetupJoint(d);
+    d.positionCorrection = kJointPositionCorrection;
     const phys::Q frame = FrameWithX(phys::Normalize(axis, phys::V3{1, 0, 0}));   // the same world frame on both sides: angles are 0 in the build pose
     d.frameA = phys::Xf{xp.ApplyInv(anchor), phys::NormalizeQ(phys::Conj(xp.q) * frame)};
     d.frameB = phys::Xf{xc.ApplyInv(anchor), phys::NormalizeQ(phys::Conj(xc.q) * frame)};

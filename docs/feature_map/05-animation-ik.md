@@ -182,7 +182,7 @@ PR #554 (animation integration) merged on 2026-11-10; #548-#551 were closed as d
 - **Editor:** Add Component > Ragdoll; the inspector is the generic property one
 - **Docs:** `docs/gameplay/active_ragdoll.md`
 - **Tests:** `ragdoll`, `active_ragdoll`, `ragdoll_collisions`
-- **Status:** Partly works - `active_ragdoll` passes; `ragdoll` fails its table-edge drop (knees give past their limit, shins 0.1 m into the table) and `ragdoll_collisions` its loose-box pile (see `docs/gameplay/active_ragdoll.md`); never run on Windows or seen in the editor window
+- **Status:** Works in the unit tests (`active_ragdoll`, `ragdoll`, `ragdoll_collisions` pass on Linux; `docs/gameplay/active_ragdoll.md` has the numbers); never run on Windows or seen in the editor window
 - **Open:** no walking while physical; get-up uses a helper force; stairs, slopes and imported rigs untested; ragdoll poses are not sent over the network; no cloth, spring-bone or secondary motion exists; animated hit and death clips are separate, see 5.12
 - **Related:** 5.12, 5.6, 11.7, 6.2, 6.3
 - **Words:** ragdoll, limp, death, hit reaction, flinch, active ragdoll, dynamic character, balance, stumble, get up, Ragdoll component

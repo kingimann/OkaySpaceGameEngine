@@ -147,7 +147,10 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
     case kIcoGlobe:     // Multiplayer: a globe
         d->AddCircle(c, r, col, 28, t);
         d->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t);
-        for (int k = 0; k <= 16; ++k)   // meridian: a narrow ellipse { const float a = -PI * 0.5f + PI * k / 8.0f; d->PathLineTo(ImVec2(c.x + std::cos(a) * r * 0.42f, c.y + std::sin(a) * r)); }
+        for (int k = 0; k <= 16; ++k) {   // meridian: a narrow ellipse
+            const float a = -PI * 0.5f + PI * k / 8.0f;
+            d->PathLineTo(ImVec2(c.x + std::cos(a) * r * 0.42f, c.y + std::sin(a) * r));
+        }
         d->PathStroke(col, 0, t);
         break;
     case kIcoSearch:    // Search: a magnifier

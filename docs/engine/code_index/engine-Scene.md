@@ -2,7 +2,7 @@
 
 # Code index: engine-Scene
 
-Back to the [code index](../code_index.md). 28 headers, 124 names.
+Back to the [code index](../code_index.md). 28 headers, 131 names.
 
 ## `engine/include/okay/Scene/ClearSpawn.hpp`
 
@@ -33,12 +33,13 @@ Back to the [code index](../code_index.md). 28 headers, 124 names.
 
 ## `engine/include/okay/Scene/GameObject.hpp`
 
-- `ActiveFlag` class, line 31: The type of GameObject::active: a bool that notes every change of its value, so
-- `ComponentRules` class, line 52: Process-wide, data-driven rules for AddComponent: components a type needs next to
-- `GameObject` class, line 72: A named container of Components living in a Scene — the engine's primary
-- `FirstComponentToSearch` function, line 385: Component lookups run every frame all over the engine. Every object's first
-- `RequireComponent` function, line 418: Declare that every 'T' needs a 'Req' on its object: AddComponent<T> adds one first
-- `DisallowMultipleComponent` function, line 429: Declare that an object holds at most one 'T': a second AddComponent<T> returns the
+- `SceneFileLoadScope` class, line 22: While one of these is alive, AddComponent does not also add the components a
+- `ActiveFlag` class, line 42: The type of GameObject::active: a bool that notes every change of its value, so
+- `ComponentRules` class, line 63: Process-wide, data-driven rules for AddComponent: components a type needs next to
+- `GameObject` class, line 83: A named container of Components living in a Scene — the engine's primary
+- `FirstComponentToSearch` function, line 396: Component lookups run every frame all over the engine. Every object's first
+- `RequireComponent` function, line 429: Declare that every 'T' needs a 'Req' on its object: AddComponent<T> adds one first
+- `DisallowMultipleComponent` function, line 440: Declare that an object holds at most one 'T': a second AddComponent<T> returns the
 
 ## `engine/include/okay/Scene/Layers.hpp`
 
@@ -46,8 +47,13 @@ Back to the [code index](../code_index.md). 28 headers, 124 names.
 
 ## `engine/include/okay/Scene/NearestLookup.hpp`
 
-- `FindNearest` function, line 23: The object called 'name' that is nearest to 'from' in the hierarchy: 'from' and everything below it
-- `CachedPartner` function, line 54: The partner a joint names, found with FindNearest once and remembered on the joint until the scene's objects change
+- `FindNearest` function, line 24: The object called 'name' that is nearest to 'from' in the hierarchy: 'from' and everything below it
+- `CachedPartner` function, line 55: The partner a joint names, found with FindNearest once and remembered on the joint until the scene's objects change
+- `Joint3DPartner` function, line 68: The other body of a Joint3D: the object ConnectTo linked, or the one its saved guid names, or (when
+- `Under` function, line 93
+- `PathFrom` function, line 102
+- `AtPath` function, line 117
+- `RetargetClonedJoints` function, line 143: After a hierarchy is cloned, a joint whose partner was inside that hierarchy must link the copy,
 
 ## `engine/include/okay/Scene/ObjectPool.hpp`
 
@@ -89,18 +95,19 @@ Back to the [code index](../code_index.md). 28 headers, 124 names.
 - `PropertyWriteResult` struct, line 66: What one write did, for code that records it (an undo stack) without installing a hook.
 - `PropertyRegistry` class, line 84: The table of component types and their properties. Every function is safe to
 - `RegisterBuiltinProperties` function, line 172: Register every built-in component's properties (GameObject, Transform, Camera,
-- `PropertySnapshotOptions` struct, line 183: What a snapshot, apply or copy includes. By default only authored data: no
-- `PropertySnapshot` struct, line 193: Every property value of an object at one moment, in a stable order (the
-- `SnapshotProperties` function, line 206
-- `SnapshotComponent` function, line 208: One component's properties. Entry.index is 0.
-- `PropertyDiffKind` enum, line 210
-- `PropertyDiff` struct, line 215: One difference between two snapshots. 'Changed': both have the property and the
-- `DiffProperties` function, line 225: What changed going from 'a' to 'b': Changed and Added in b's order, then Removed.
-- `ApplyPropertySnapshot` function, line 231: Write a snapshot's values back (each entry found on 'go' by component name and
-- `ApplyPropertyDiff` function, line 235: Apply the 'Changed' entries of a diff: the 'after' values going forward, the
-- `PropertyCopyOptions` struct, line 237
-- `CopyProperties` function, line 254: Copy property values from one object to another, component by component
-- `CopyComponentProperties` function, line 257: Copy every property of 'from' to 'to', which must be the same exact type. Structural
+- `AddPropertyContributor` function, line 178: A module hands over the function that registers its inspector fields. The function is
+- `PropertySnapshotOptions` struct, line 189: What a snapshot, apply or copy includes. By default only authored data: no
+- `PropertySnapshot` struct, line 199: Every property value of an object at one moment, in a stable order (the
+- `SnapshotProperties` function, line 212
+- `SnapshotComponent` function, line 214: One component's properties. Entry.index is 0.
+- `PropertyDiffKind` enum, line 216
+- `PropertyDiff` struct, line 221: One difference between two snapshots. 'Changed': both have the property and the
+- `DiffProperties` function, line 231: What changed going from 'a' to 'b': Changed and Added in b's order, then Removed.
+- `ApplyPropertySnapshot` function, line 237: Write a snapshot's values back (each entry found on 'go' by component name and
+- `ApplyPropertyDiff` function, line 241: Apply the 'Changed' entries of a diff: the 'after' values going forward, the
+- `PropertyCopyOptions` struct, line 243
+- `CopyProperties` function, line 260: Copy property values from one object to another, component by component
+- `CopyComponentProperties` function, line 263: Copy every property of 'from' to 'to', which must be the same exact type. Structural
 
 ## `engine/include/okay/Scene/ReflectedRecord.hpp`
 

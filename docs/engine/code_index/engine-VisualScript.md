@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 31 headers, 623 names.
+Back to the [code index](../code_index.md). 32 headers, 628 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -655,6 +655,14 @@ Back to the [code index](../code_index.md). 31 headers, 623 names.
 - `VsFaceToward` function, line 21: Turn 't' so it faces the world point 'target' (full 3D, world up as the hint). Nothing happens when the
 - `VsFaceTowardFlat` function, line 26: Turn 't' about the world up axis only so it faces the side of 'target' (level, no tilt).
 - `VsFaceAlongFlat` function, line 31: Turn 't' about the world up axis only so it faces along the world direction 'dir'.
+
+## `engine/include/okay/VisualScript/VsNodeRegistry.hpp`
+
+- `VsNodeEntry` struct, line 14
+- `FindRegisteredVsNode` function, line 24
+- `VsNodeSuppressed` function, line 27: True when this type was registered by a module that is currently off.
+- `RegisteredVsNodeTypes` function, line 30: Registered type names. 'enabledOnly' drops nodes whose module is off.
+- `RegisterWeaponVsNodes` function, line 34: The weapon nodes (swing, fire, reload, ammo, set). Owned by the weapons module;
 
 ## `engine/include/okay/VisualScript/VsPinType.hpp`
 

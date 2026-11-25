@@ -21,8 +21,8 @@ struct TtfFont::Info { ttf::Face face; float scale = 1.0f; };
 
 namespace {
 constexpr int kPad = 1;              // empty pixels around each glyph baked later
-constexpr int kWideAtlas = 1024;     // the atlas widens to this when other characters arrive
-constexpr int kMaxAtlasH = 4096;     // ... and grows down to this
+constexpr int kWideAtlas = 2048;    // the atlas widens up to this when other characters arrive
+constexpr int kMaxAtlasH = 8192;     // ... and grows down to this, then a further page is not required for dialogue text
 }
 
 TtfFont::TtfFont() = default;
@@ -81,7 +81,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     int aw = bakeHeightPx <= 24.0f ? 256 : 512, ah = aw;   // small faces need little room (95 glyphs of 12 px fit in 256 x 256); it doubles if they do not fit
     std::vector<unsigned char> gray;
     int rows = -1;
-    for (int attempt = 0; attempt < 4 && rows < 0; ++attempt) {   // 512, 1024, 2048, 4096: a 256 px bake of 95 glyphs needs about 2600 x 2600
+    for (int attempt = 0; attempt < 6 && rows < 0 && aw <= 8192 && ah <= 8192; ++attempt) {
         gray.assign((std::size_t)aw * ah, 0);
         ttf::ShelfPacker packer(aw, ah, kPad);
         bool fit = true;
@@ -89,7 +89,8 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
             fit = ttf::BakeGlyph(info->face, info->face.FindGlyph((std::uint32_t)(kFirst + i)), scale, packer,
                                  gray.data(), cdata[i]);
         if (fit) rows = packer.Bottom();
-        else { aw *= 2; ah *= 2; }   // didn't fit: try a bigger atlas
+        else if (aw >= 8192 || ah >= 8192) break;   // six doublings from 512 would reach 16384; stop at 8192
+        else { aw *= 2; ah *= 2; }
     }
     if (rows <= 0) { Log::Error("[ttf] atlas bake failed: ", path); return false; }
 

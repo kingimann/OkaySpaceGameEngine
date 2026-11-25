@@ -16,10 +16,21 @@ v2.903.9
   - OkayScript scripts run several times faster, and can now reach every
     engine component and its settings (GetComponent("Light").intensity).
     Game scripts cannot read or write files or open network connections.
-  - Known problem: on Windows, okay vc init, undo and resolve can refuse
-    to work when the project is in a folder with a shortened Windows name
-    (for example inside your user folder). The fix is being tested and
-    comes in the next update.
+  - Multiplayer fixes: an object a player owns no longer stutters and
+    jumps on other players' screens, Windows no longer drops the
+    connection on a harmless network error, and the two-player sample
+    scene's camera now shows the game.
+  - OkayScript can do much more: closures, modules (import), unpacking
+    (var [a, b] = list), map literals, generators, classes with
+    inheritance, finally, and text formatting. Scripts get maths, sorting,
+    sets, JSON, time and text-encoding helpers. The okayscript command line
+    can also read and write files; game scripts still cannot.
+  - Model files: the outside Assimp library is gone. Every model format is
+    read by our own code. The one format no longer read is Nendo (.ndo),
+    from a program not sold for about twenty years.
+  - The okay command line works on Windows when a project is inside your
+    user folder (okay vc init, undo and resolve).
+  - Controls: an axial dead zone and per-controller smoothing.
 
 v2.903.8
   The okay command line, OkayScript on its own, and our own FBX and WAV

@@ -267,6 +267,8 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 # files and labels tests (ctest -L module:<name>); the build itself is unchanged.
 # ---- OkayScript: the engine-independent scripting language (library, CLI, tests) ----
 # Before the engine: the engine's OkayScriptVM links okayscript_lang (its lexer lives there).
+# Test shards (-DOKAY_TEST_SHARD=K/N, CI only): included before the first folder that adds tests. Empty (default): does nothing.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayTestShard.cmake)
 add_subdirectory(okayscript)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)

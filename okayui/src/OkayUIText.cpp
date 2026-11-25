@@ -46,6 +46,8 @@ void MakeTextBox(CodeEdit& ed) {
     ed.SetShowBreakpointGutter(false);
     ed.SetAutoIndent(false);
     ed.SetInsertSpaces(false);
+    ed.SetAutoClose(false);     // a text box types what is typed: no bracket pairs, no dedent
+    ed.SetAutoDedent(false);
     ed.SetHighlighter(CodeHighlighter());
 }
 

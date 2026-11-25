@@ -3013,8 +3013,21 @@ static void LayerRenameMenu(int layer) {
     if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
     ImGui::EndPopup();
 }
-// The right-click menu of a custom tag: rename it (the list, and the tag on every object of this scene that
-// carries it) before "Remove tag from list".
+// Rename a custom tag: the list, and the tag on every object of this scene that carries it (one undo step), or say why not in
+// `err`. Shared by the tag menus of the Hierarchy and the Inspector header and by Project Settings > Tags and Layers.
+static bool TryRenameTag(EditorState& ed, const std::string& tag, const std::string& to, std::string& err) {
+    err.clear();
+    if (okay::Tags::Contains(to)) { err = "that tag is already in the list"; return false; }
+    if (!okay::Tags::IsValidName(to)) { err = okay::Tags::WhyInvalid(to); return false; }
+    ed.PushUndo();   // the objects that carry the tag change too
+    if (!okay::Tags::Rename(tag, to)) { err = "that tag cannot be renamed"; return false; }
+    const int n = ed.scene().ReplaceTag(tag, to);
+    SaveProjectSettings();
+    ed.dirty = true;
+    ConsoleLog("Renamed tag " + tag + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+    return true;
+}
+// The right-click menu of a custom tag: rename it (TryRenameTag) before "Remove tag from list".
 static void TagRenameMenu(EditorState& ed, const std::string& tag) {
     static char buf[okay::Tags::kMaxLength * 4 + 1] = "";
     static std::string err;
@@ -3025,19 +3038,7 @@ static void TagRenameMenu(EditorState& ed, const std::string& tag) {
     const bool click = ImGui::Button("Rename");
     if (enter || click) {
         const std::string to = buf;
-        if (to == tag) ImGui::CloseCurrentPopup();
-        else if (okay::Tags::Contains(to)) err = "that tag is already in the list";
-        else if (!okay::Tags::IsValidName(to)) err = okay::Tags::WhyInvalid(to);
-        else {
-            ed.PushUndo();   // the objects that carry the tag change too
-            if (okay::Tags::Rename(tag, to)) {
-                const int n = ed.scene().ReplaceTag(tag, to);
-                SaveProjectSettings();
-                ed.dirty = true;
-                ConsoleLog("Renamed tag " + tag + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
-                ImGui::CloseCurrentPopup();
-            } else err = "that tag cannot be renamed";
-        }
+        if (to == tag || TryRenameTag(ed, tag, to, err)) ImGui::CloseCurrentPopup();
     }
     if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
     ImGui::Separator();
@@ -16272,107 +16273,45 @@ void DrawAboutPopup() {
 
 // Project Settings > Tags and Layers: the project's tag list (okay::Tags, saved as tag= lines) with a Strict switch
 // (Tags::Strict: SetTag refuses a tag that is not listed) and the 32 layer names (okay::Layers, layer_name_N= lines).
-// Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists.
+// Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists. Drawn by OkayUI
+// only (okayuiscreens::DrawTagsLayers, editor/OkayPanels.cpp); the rules are here.
 static void DrawTagsAndLayersSettings(EditorState& ed) {
-    const ImVec4 bad(0.95f, 0.45f, 0.40f, 1.0f), warn(0.95f, 0.75f, 0.30f, 1.0f);
-    bool strict = okay::Tags::Strict();
-    if (ImGui::Checkbox("Strict tags##ps", &strict)) { okay::Tags::Strict() = strict; SaveProjectSettings(); }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("On: only tags on this list can be given to an object (the Inspector, scripts and SetTag refuse the rest),\nso a typo such as \"Enmey\" is caught. Off: any text is a valid tag.");
-    // Tags the open scene uses that the list lacks (an old scene, a typo): say so, and offer to list them.
-    const std::vector<std::string> unlisted = ed.scene().UnlistedTags();
-    if (!unlisted.empty()) {
-        std::string names;
-        for (std::size_t i = 0; i < unlisted.size() && i < 4; ++i) names += (i ? ", " : "") + unlisted[i];
-        if (unlisted.size() > 4) names += ", ...";
-        ImGui::TextColored(strict ? bad : warn, "%d tag%s in this scene %s not on the list: %s", (int)unlisted.size(),
-                           unlisted.size() == 1 ? "" : "s", unlisted.size() == 1 ? "is" : "are", names.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Add them##unlisted")) {
-            for (const std::string& t : unlisted) okay::Tags::Add(t);
-            SaveProjectSettings();
-        }
+    static okaypanels::TagsLayersState st;
+    okaypanels::TagsLayersModel m;
+    m.strict = okay::Tags::Strict();
+    m.builtin = okay::Tags::Builtin();
+    for (const std::string& t : okay::Tags::Custom()) m.custom.push_back(okaypanels::TagRow{t, ed.scene().CountWithTag(t)});
+    m.unlisted = ed.scene().UnlistedTags();
+    m.layers.resize(okaypanels::kLayerCount);
+    for (int i = 0; i < okaypanels::kLayerCount && i < okay::Layers::kCount; ++i) {
+        m.layers[(std::size_t)i].name = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        m.layers[(std::size_t)i].defaultName = okay::Layers::DefaultName(i);
     }
-    ImGui::Spacing();
-    ImGui::TextDisabled("Tags");
-    {   // built-in tags: always there, cannot be renamed or removed
-        std::string b;
-        for (const std::string& t : okay::Tags::Builtin()) b += (b.empty() ? "" : "  ") + t;
-        ImGui::TextWrapped("Built in: %s", b.c_str());
+    okaypanels::TagsLayersIntent in;
+    if (!oked::DrawTagsLayersOkayUI(m, st, in)) return;
+    if (in.strict >= 0) { okay::Tags::Strict() = in.strict == 1; SaveProjectSettings(); }
+    if (in.addUnlisted) {
+        for (const std::string& t : m.unlisted) okay::Tags::Add(t);
+        SaveProjectSettings();
     }
-    {
-        const std::vector<std::string> custom = okay::Tags::Custom();   // a copy: a row below edits the list
-        if (custom.empty()) ImGui::TextDisabled("No custom tags yet.");
-        const float rowH = ImGui::GetFrameHeightWithSpacing() + 2.0f;
-        if (!custom.empty()) ImGui::BeginChild("##pstags", ImVec2(0, std::min(rowH * 4.5f, 12.0f + rowH * (float)custom.size())), ImGuiChildFlags_Borders);
-        ImGuiListClipper clip;
-        clip.Begin((int)custom.size(), rowH);
-        while (clip.Step()) {
-            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
-                const std::string& t = custom[(std::size_t)i];
-                ImGui::PushID(i);
-                const int used = ed.scene().CountWithTag(t);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(t.c_str());
-                ImGui::SameLine(150.0f);
-                ImGui::TextDisabled("%d object%s", used, used == 1 ? "" : "s");
-                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 150.0f);
-                if (ImGui::SmallButton("Rename")) ImGui::OpenPopup("##pstagren");
-                if (ImGui::BeginPopup("##pstagren")) { TagRenameMenu(ed, t); ImGui::EndPopup(); }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Remove")) { okay::Tags::Remove(t); SaveProjectSettings(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take it off the list. Objects that carry it keep it.");
-                ImGui::PopID();
-            }
-        }
-        if (!custom.empty()) ImGui::EndChild();
+    if (in.addTag) {
+        const std::string nt = st.newTag;
+        if (okay::Tags::Contains(nt)) st.tagError = "that tag is already on the list";
+        else if (okay::Tags::Add(nt)) { SaveProjectSettings(); st.newTag[0] = '\0'; st.tagError.clear(); }
+        else st.tagError = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
     }
-    static char newTag[okay::Tags::kMaxLength * 4 + 1] = "";
-    static std::string tagErr;
-    ImGui::SetNextItemWidth(190);
-    const bool enter = ImGui::InputTextWithHint("##psnewtag", "new tag name", newTag, sizeof(newTag), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (ImGui::Button("Add tag##ps") || enter) {
-        const std::string nt = newTag;
-        if (okay::Tags::Contains(nt)) tagErr = "that tag is already on the list";
-        else if (okay::Tags::Add(nt)) { SaveProjectSettings(); newTag[0] = '\0'; tagErr.clear(); }
-        else tagErr = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+    if (in.removeTag >= 0 && (std::size_t)in.removeTag < m.custom.size()) { okay::Tags::Remove(m.custom[(std::size_t)in.removeTag].name); SaveProjectSettings(); }
+    if (in.renameTag >= 0 && (std::size_t)in.renameTag < m.custom.size()) {
+        if (TryRenameTag(ed, m.custom[(std::size_t)in.renameTag].name, in.renameTo, st.renameError)) { st.closeRename = true; st.renameError.clear(); }
     }
-    if (!tagErr.empty()) ImGui::TextColored(bad, "%s", tagErr.c_str());
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Layers (0 to 31)");
-    ImGui::BeginChild("##pslayers", ImVec2(0, 300), ImGuiChildFlags_Borders);
-    static std::string layerErr;
-    static int layerErrAt = -1;
-    for (int i = 0; i < okay::Layers::kCount; ++i) {
-        ImGui::PushID(i);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%2d", i);
-        ImGui::SameLine(34.0f);
-        char buf[okay::Layers::kMaxNameLength * 4 + 1];
-        std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(i) ? okay::Layers::Name(i).c_str() : "");
-        const std::string hint = okay::Layers::DefaultName(i)[0] ? std::string(okay::Layers::DefaultName(i)) : "Layer " + std::to_string(i);
-        ImGui::SetNextItemWidth(200);
-        const bool enterHit = ImGui::InputTextWithHint("##lname", hint.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (enterHit || ImGui::IsItemDeactivatedAfterEdit()) {
-            std::string e;
-            if (TryRenameLayer(i, buf, e)) { if (layerErrAt == i) layerErr.clear(); }
-            else { layerErr = e; layerErrAt = i; }
-        }
-        if (okay::Layers::IsNamed(i) && std::string(okay::Layers::DefaultName(i)) != okay::Layers::Name(i)) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) {
-                std::string e;
-                const std::string def = okay::Layers::DefaultName(i);
-                if (!TryRenameLayer(i, def, e)) { layerErr = e; layerErrAt = i; }
-            }
-        }
-        ImGui::PopID();
-    }
-    ImGui::EndChild();
-    if (!layerErr.empty()) ImGui::TextColored(bad, "Layer %d: %s", layerErrAt, layerErr.c_str());
-    if (ImGui::SmallButton("Reset all layer names##ps")) { okay::Layers::ResetNames(); layerErr.clear(); SaveProjectSettings(); }
+    auto renameLayer = [&](int i, const std::string& name) {
+        std::string e;
+        if (TryRenameLayer(i, name, e)) { if (st.layerErrorAt == i) st.layerError.clear(); }
+        else { st.layerError = e; st.layerErrorAt = i; }
+    };
+    if (in.renameLayer >= 0 && okay::Layers::IsValid(in.renameLayer)) renameLayer(in.renameLayer, in.layerName);
+    if (in.resetLayer >= 0 && okay::Layers::IsValid(in.resetLayer)) renameLayer(in.resetLayer, okay::Layers::DefaultName(in.resetLayer));
+    if (in.resetAllLayers) { okay::Layers::ResetNames(); st.layerError.clear(); SaveProjectSettings(); }
 }
 
 // Edit > Project Settings: project-wide defaults that builds inherit, plus
@@ -16392,23 +16331,24 @@ void DrawProjectSettings(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);   // wrapped: it ran off the window's edge
         ImGui::TextWrapped("Defaults a new build/scene inherits. Saved with the project as you change it.");
         ImGui::PopStyleColor();
+        // Player, Physics, Rendering and Tags and Layers are drawn by OkayUI only (editor/OkayPanels.cpp); the rules are here.
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
-            ImGui::SetNextItemWidth(160);
-            ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
-            // Wide enough for five digits at any text size, and no -/+ buttons: at 110 px the buttons took the
-            // room and 1280 x 720 showed as "12" and "72".
-            const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width##ps", &g_project.defaultWidth, 0); ImGui::SameLine();
-            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height##ps", &g_project.defaultHeight, 0);
+            okaypanels::PlayerSettingsModel pm;
+            pm.company = g_project.company; pm.companySize = sizeof(g_project.company);
+            pm.version = g_project.version; pm.versionSize = sizeof(g_project.version);
+            pm.width = &g_project.defaultWidth; pm.height = &g_project.defaultHeight;
+            okaypanels::PlayerSettingsIntent pin;
+            oked::DrawPlayerSettingsOkayUI(pm, pin);   // edited in place; saved with the project when it changes
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
-            ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
-            ImGui::SetNextItemWidth(160);
-            if (ImGui::DragFloat("Steps per second##ps", &g_project.physicsHz, 1.0f, 1.0f, 240.0f, "%.0f")) {
-                if (g_project.physicsHz < 1.0f) g_project.physicsHz = 1.0f;
-                if (g_project.physicsHz > 500.0f) g_project.physicsHz = 500.0f;
+            okaypanels::PhysicsSettingsModel pm;
+            pm.gravity2D = g_project.gravity2D; pm.gravity3D = g_project.gravity3D;
+            pm.stepsPerSecond = &g_project.physicsHz; pm.smooth = &g_project.smoothPhysics;
+            pm.solverIterations = ed.scene().physics3D().solverIterations;
+            okaypanels::PhysicsSettingsIntent pin;
+            oked::DrawPhysicsSettingsOkayUI(pm, pin);
+            if (pin.rateChanged) {
+                g_project.physicsHz = okaypanels::ClampStepsPerSecond(g_project.physicsHz);
                 okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
                 if (ed.isPlaying()) {
                     ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
@@ -16416,30 +16356,15 @@ void DrawProjectSettings(EditorState& ed) {
                 }
                 SaveProjectSettings();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How many times a second physics runs. 50 is the usual rate.\n"
-                                  "A drop lands in the same place at a low frame rate and a high one.\n"
-                                  "Saved with the project.");
-            if (ImGui::Checkbox("Smooth the motion##ps", &g_project.smoothPhysics)) {
+            if (pin.smoothChanged) {
                 okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
                 if (ed.isPlaying()) ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
                 SaveProjectSettings();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
-                                  "so motion stays smooth when the frame rate and the step rate differ.");
-            ImGui::Separator();
-            ImGui::TextDisabled("Physics solver of the open scene (saved with the scene)");
-            {
-                auto& p3 = ed.scene().physics3D();
-                int it = p3.solverIterations;
-                ImGui::SetNextItemWidth(160);
-                if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                    p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the solver repeats each step: more holds tall stacks and long joint chains stiffer\n(costs time). 10 suits most scenes.");
+            if (pin.solverIterations >= 4 && pin.solverIterations <= 30) {
+                ed.scene().physics3D().solverIterations = pin.solverIterations; ed.scene().physics().solverIterations = pin.solverIterations; ed.dirty = true;
             }
-            if (ImGui::Button("Apply to current scene##phys")) {
+            if (pin.apply) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
                 ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
@@ -16448,9 +16373,11 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SliderFloat("Ambient##ps", &g_project.ambient, 0.0f, 1.0f);
-            ImGui::Checkbox("Skybox##ps", &g_project.skybox);
-            if (ImGui::Button("Apply to current scene##rend")) {
+            okaypanels::RenderingSettingsModel rm;
+            rm.ambient = &g_project.ambient; rm.skybox = &g_project.skybox;
+            okaypanels::RenderingSettingsIntent rin;
+            oked::DrawRenderingSettingsOkayUI(rm, rin);
+            if (rin.apply) {
                 ed.scene().renderSettings.ambient = g_project.ambient;
                 ed.scene().renderSettings.skybox = g_project.skybox;
                 ed.dirty = true; ConsoleLog("Applied project rendering to the scene");
@@ -26856,20 +26783,7 @@ static bool DrawInspectorHeaderWithOkayUI(EditorState& ed, GameObject* go) {
     if (in.setLayer >= 0) { go->layer = in.setLayer; ed.dirty = true; }
     if (in.savePrefab) InspectorSaveAsPrefab(ed, go);
     if (in.renameTag) {   // TagRenameMenu's rules
-        const std::string& from = in.tagFrom; const std::string& to = in.tagTo;
-        if (to == from) st.closeRename = true;
-        else if (okay::Tags::Contains(to)) st.renameError = "that tag is already in the list";
-        else if (!okay::Tags::IsValidName(to)) st.renameError = okay::Tags::WhyInvalid(to);
-        else {
-            ed.PushUndo();   // the objects that carry the tag change too
-            if (okay::Tags::Rename(from, to)) {
-                const int n = ed.scene().ReplaceTag(from, to);
-                SaveProjectSettings();
-                ed.dirty = true;
-                ConsoleLog("Renamed tag " + from + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
-                st.closeRename = true; st.renameError.clear();
-            } else st.renameError = "that tag cannot be renamed";
-        }
+        if (in.tagTo == in.tagFrom || TryRenameTag(ed, in.tagFrom, in.tagTo, st.renameError)) { st.closeRename = true; st.renameError.clear(); }
     }
     if (in.removeTag) { okay::Tags::Remove(in.removeTagName); SaveProjectSettings(); }
     if ((in.renameLayer || in.resetLayer) && okay::Layers::IsValid(in.layerIndex)) {   // LayerRenameMenu's rules

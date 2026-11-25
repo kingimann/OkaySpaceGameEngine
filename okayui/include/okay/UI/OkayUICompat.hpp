@@ -471,7 +471,7 @@ enum SortDirection : int { SortDirection_None = 0, SortDirection_Ascending = 1, 
 enum PopupExtraFlags : int { Popup_NoOpenOverItems = 512 };   // accepted, no effect
 /// A drop target over an ImRect (the Dear ImGui form takes the rectangle type of its own).
 bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id = 0);
-/// InputInt with the step arguments of Dear ImGui (`stepFast` and `flags` are accepted and not used; a `step` of 0 still shows the +/- buttons).
+/// InputInt with the step arguments of Dear ImGui (`stepFast` and `flags` are accepted and not used; a `step` of 0 shows no +/- buttons, as in Dear ImGui).
 bool InputInt(const char* label, int* value, int step, int stepFast, int flags = 0);
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 /// TreeNode with an id and a printf-style label: `TreeNode("##id", "Incoming (%d)", n)`.

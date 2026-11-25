@@ -324,7 +324,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** Windows that configure the scene and project, show services status, and explain the editor: Lighting (scene settings), Project Settings, Services, Keyboard Shortcuts, About, update and quit prompts.
 - **Parts:**
   - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections
-  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings` ~16929) - project-wide defaults saved to `project.okayproj` (company, version, default size)
+  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings`), `okayui/screens/OkayUIEditorPanels.cpp` (the Player, Physics, Rendering and Tags and Layers sections, drawn by OkayUI only; Modules, Loading screen and the rest still Dear ImGui) - project-wide defaults saved to `project.okayproj` (company, version, default size)
   - 15.14.3 Services window - `editor/main.cpp` (`DrawServices` ~9805) - status of the online services that ship in the engine: Steam and Multiplayer
   - 15.14.4 Keyboard Shortcuts - `editor/main.cpp` (`DrawShortcutsWindow` ~10837) - list of editor shortcuts
   - 15.14.5 About, update and quit prompts - `editor/main.cpp` (`DrawAboutPopup` ~16869, `DrawUpdatePopup` ~17000, `DrawQuitPrompt` ~10801)

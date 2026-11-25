@@ -1,4 +1,5 @@
 // The editor's Crash Log, Audio Mixer, History, Problems, Stats and Profiler windows as the editor draws them now: the OkayUI screen only (no Dear ImGui copy),
+// and Project Settings' Player, Physics, Rendering and Tags and Layers sections, each a part of its window (okayuihost::HostPanelSection),
 // hosted in a Dear ImGui window by okayuihost::HostPanelWindow (shared/OkayUIImGuiEmbed.hpp, the function editor/OkayPanels.cpp
 // calls). The body's shapes go into the ImGui window's draw list, so Dear ImGui's popups and windows in front are drawn over it.
 // Before, a covered panel switched to its Dear ImGui version for as long as something lay over it.
@@ -99,6 +100,11 @@ struct Editor {
     ImVec2 winPos{kWinX, kWinY};
     bool imguiModal = false;     // a Dear ImGui modal opened over everything
     bool viewports = false;      // multi-viewports on (EnableFakeViewports)
+    // Sections mode (Project Settings): the window holds collapsing headers, each with an OkayUI-only section under it
+    // (okayuihost::HostPanelSection), instead of one panel body.
+    struct Section { const char* header; const char* id; std::function<float(float, float, float, float)> body; bool shown = false; bool fold = false; };
+    std::vector<Section> sections;
+    float scrollTo = -1.0f;      // >= 0: scroll the window there this frame
     Editor() {
         okayuitest::Reset();
         OkayUI::UseLauncherLook(true);
@@ -109,9 +115,52 @@ struct Editor {
     ~Editor() { ImGui::SetCurrentContext(im.ctx); embed.Release(); OkayUI::UseLauncherLook(false); }
     Editor(const Editor&) = delete;
     Editor& operator=(const Editor&) = delete;
+    // One section: hosted (the body in the window's draw list) or the old way (HostSection's: a placeholder as tall as the body
+    // drew last frame, the body left in OkayUI's frame, drawn after ImGui and clipped to the window).
+    void DrawSection(Section& sec) {
+        auto body = [&](float x, float y, float w, float h) {
+            OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+            const float drawnH = sec.body(x, y, w, h);
+            OkayUI::PopTextScale();
+            return drawnH;
+        };
+        if (hosted) { sec.shown = okayuihost::HostPanelSection(sec.id, offers, embed, cap, body); return; }
+        ImGuiWindow* win = ImGui::GetCurrentWindow();
+        float* hh = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(sec.id), -1.0f);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (*hh < 0.0f) {
+            OkayUI::PushClipRect(p.x, p.y, 0.0f, 0.0f);
+            *hh = body(p.x, p.y, w, 20000.0f);
+            OkayUI::PopClipRect();
+            ImGui::InvisibleButton(sec.id, ImVec2(w, *hh));
+            return;
+        }
+        ImGui::InvisibleButton(sec.id, ImVec2(w, *hh));
+        const ImRect c = win->InnerClipRect;
+        OkayUI::PushClipRect(c.Min.x, c.Min.y, c.GetWidth(), c.GetHeight());
+        *hh = body(p.x, p.y, w, *hh + 400.0f);
+        OkayUI::PopClipRect();
+        sec.shown = true;
+    }
     void Panel() {
         ImGui::SetNextWindowPos(winPos, ImGuiCond_Always);
         if (collapse) ImGui::SetNextWindowCollapsed(true, ImGuiCond_Always);
+        if (!sections.empty()) {
+            ImGui::SetNextWindowSize(ImVec2(kWinW, winH), ImGuiCond_FirstUseEver);
+            drawn = false;
+            for (Section& sec : sections) sec.shown = false;
+            if (ImGui::Begin(title, &open)) {
+                if (scrollTo >= 0.0f) { ImGui::SetScrollY(scrollTo); scrollTo = -1.0f; }
+                for (Section& sec : sections) {
+                    if (sec.fold) ImGui::SetNextItemOpen(false, ImGuiCond_Always);
+                    if (ImGui::CollapsingHeader(sec.header, ImGuiTreeNodeFlags_DefaultOpen)) DrawSection(sec);
+                }
+                drawn = true;
+            }
+            ImGui::End();
+            return;
+        }
         if (hosted) {
             drawn = okayuihost::HostPanelWindow(title, &open, "##panelbody", offers, embed, cap, ImVec2(kWinW, winH), [&](ImVec2 p, ImVec2 a) {
                 OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
@@ -508,10 +557,222 @@ void HiddenDrawsNothing() {
     CHECK(!e.drawn && e.offers.list.empty());
 }
 
+// ---- Project Settings' sections (okayuihost::HostPanelSection) -----------------------------------------------------------------
+
+struct SettingsData {
+    panelfix::PlayerData player;
+    panelfix::PhysicsData physics;
+    panelfix::RenderingData rendering;
+    P::TagsLayersModel tags = panelfix::TagsLayers();
+    P::TagsLayersState tagState;
+    okayuiscreens::PlayerSettingsResult pres;
+    okayuiscreens::PhysicsSettingsResult phres;
+    okayuiscreens::RenderingSettingsResult rres;
+    okayuiscreens::TagsLayersResult tres;
+    bool playerChanged = false, physicsApply = false, renderingChanged = false;
+    int removeTag = -1, renameTag = -1;
+    std::string renameTo;
+    void Add(Editor& e, bool withTags, bool withOthers = true) {
+        e.title = "Project Settings";
+        if (withOthers) {
+            e.sections.push_back({"Player", "##okayui_player", [this](float x, float y, float w, float h) {
+                pres = okayuiscreens::DrawPlayerSettings(player.model, x, y, w, h); if (pres.intent.changed) playerChanged = true; return pres.contentHeight; }});
+            e.sections.push_back({"Physics", "##okayui_physics", [this](float x, float y, float w, float h) {
+                phres = okayuiscreens::DrawPhysicsSettings(physics.model, x, y, w, h); if (phres.intent.apply) physicsApply = true; return phres.contentHeight; }});
+            e.sections.push_back({"Rendering", "##okayui_rendering", [this](float x, float y, float w, float h) {
+                rres = okayuiscreens::DrawRenderingSettings(rendering.model, x, y, w, h); if (rres.intent.changed) renderingChanged = true; return rres.contentHeight; }});
+        }
+        if (withTags)
+            e.sections.push_back({"Tags and Layers", "##okayui_tagslayers", [this](float x, float y, float w, float h) {
+                tres = okayuiscreens::DrawTagsLayers(tags, tagState, x, y, w, h);
+                if (tres.intent.removeTag >= 0) removeTag = tres.intent.removeTag;
+                if (tres.intent.renameTag >= 0) { renameTag = tres.intent.renameTag; renameTo = tres.intent.renameTo; }
+                return tres.contentHeight; }});
+    }
+};
+
+Diff SectionsAgainstOldWay(const char* name, bool tags, bool others) {
+    Bitmap oldWay(kW, kH);
+    {
+        SettingsData d;
+        Editor e;
+        e.hosted = false; e.winH = (float)kH - 40.0f; d.Add(e, tags, others);
+        e.Frames(6);
+        oldWay = e.ras.bmp;
+    }
+    SettingsData d;
+    Editor e;
+    e.winH = (float)kH - 40.0f; d.Add(e, tags, others);
+    e.Frames(6);
+    const Diff diff = Compare(oldWay, e.ras.bmp);
+    Save(name, "oldway", oldWay);
+    Save(name, "hosted", e.ras.bmp);
+    std::printf("  %s: hosted against the old way: average difference %.3f, clearly different %.3f%%\n", name, diff.avg, diff.clearly);
+    CHECK(OkayUI::GetDrawData().indexCount == 0);   // nothing of the sections is left in OkayUI's frame
+    CHECK(e.embed.Skipped() == 0);
+    for (const Editor::Section& sec : e.sections) CHECK(sec.shown);
+    return diff;
+}
+
+void SectionsSamePictureAsBefore() {
+    kH = 760;
+    CHECK(SectionsAgainstOldWay("settings_player_physics_rendering", false, true).clearly < 0.5);
+    kH = 900;
+    CHECK(SectionsAgainstOldWay("settings_tagslayers", true, false).clearly < 0.5);
+    kH = 420;
+}
+
+void SectionsPlaceholderIsTheBodyHeight() {
+    // The first frame only measures (nothing is shown); from the second the placeholder is exactly as tall as the body drew, so the
+    // next header follows the section as it did with a Dear ImGui body.
+    kH = 760;
+    SettingsData d;
+    Editor e;
+    e.winH = 720.0f; d.Add(e, false);
+    e.Frame();
+    CHECK(OkayUI::GetDrawData().indexCount == 0);
+    ImGuiWindow* w = ImGui::FindWindowByName("Project Settings");
+    CHECK(w && w->DrawList->VtxBuffer.Size < 3000);            // the first frame: the window and its headers only
+    e.Frames(2);
+    CHECK(d.pres.contentHeight > 40.0f && d.phres.contentHeight > d.pres.contentHeight);
+    const float playerBottom = d.pres.company.y + d.pres.contentHeight;   // the body's top is its first row's
+    CHECK(d.phres.gravity2D.y > playerBottom);                            // Physics' body starts below Player's, past its header
+    CHECK(d.phres.gravity2D.y - playerBottom < 80.0f);                     // ... one header and the spacing, not a guessed 300
+    kH = 420;
+}
+
+void SectionsCoveredByImGui() {
+    // A window in front and a tooltip cover the sections; the part under them takes no mouse. Before, the editor drew the Dear ImGui
+    // copy of a covered section instead; there is none now.
+    kH = 760;
+    SettingsData d;
+    Editor e;
+    e.winH = 720.0f; d.Add(e, false); e.front = true; e.tooltip = true;
+    e.Frames(4);
+    const int frontPx = Count(e.ras.bmp, 210, 160, 390, 245, kFront), tipPx = Count(e.ras.bmp, 110, 258, 210, 300, kFront);
+    std::printf("  sections: window in front %d of %d pixels its own colour; tooltip %d of %d\n", frontPx, 180 * 85, tipPx, 100 * 42);
+    CHECK(frontPx == 180 * 85 && tipPx == 100 * 42);
+    for (const Editor::Section& sec : e.sections) CHECK(sec.shown);   // still drawn: no switch to another version
+    e.sim.Move(300, 200); e.Frames(2);
+    CHECK(!e.offers.list.empty() && !e.offers.BodyHovered());
+    e.front = false; e.tooltip = false;
+    const OkayUI::Rect a = d.rres.apply;
+    e.sim.Move(a.x + 4.0f, a.y + a.h * 0.5f); e.Frames(2);
+    CHECK(e.offers.BodyHovered());
+    kH = 420;
+}
+
+void SectionsTakeClicks() {
+    kH = 760;
+    {
+        SettingsData d;
+        Editor e;
+        e.winH = 720.0f; d.Add(e, false);
+        e.Frames(3);
+        const OkayUI::Rect a = d.phres.apply;
+        CHECK(a.w > 0.0f && a.y + a.h < kWinY + e.winH);
+        e.Click(a.x + a.w * 0.5f, a.y + a.h * 0.5f);
+        CHECK(d.physicsApply);
+        const OkayUI::Rect sk = d.rres.skybox;
+        e.Click(sk.x + 8.0f, sk.y + sk.h * 0.5f);
+        CHECK(!d.rendering.skybox && d.renderingChanged);
+        // the Width field: a plain number (no steppers), typed into
+        const OkayUI::Rect wf = d.pres.width;
+        e.Click(wf.x + 12.0f, wf.y + wf.h * 0.5f);
+        e.sim.Press(okayuitest::Key_SelectAll); e.Frame(); e.sim.Type("1920"); e.Frame(); e.sim.Press(okayuitest::Key_Enter); e.Frame();
+        CHECK(d.player.width == 1920 && d.playerChanged);
+    }
+    kH = 900;
+    {   // Tags and Layers: Remove; the rename popup is an OkayUI overlay (top layer, offered), its Rename asks for the rename
+        SettingsData d;
+        Editor e;
+        e.winH = 860.0f; d.Add(e, true, false);
+        e.Frames(3);
+        CHECK(d.tres.removeButtons.size() == 4);
+        const OkayUI::Rect rm = d.tres.removeButtons[1];
+        e.Click(rm.x + rm.w * 0.5f, rm.y + rm.h * 0.5f);
+        CHECK(d.removeTag == 1);
+        const OkayUI::Rect rn = d.tres.renameButtons[0];
+        e.Click(rn.x + rn.w * 0.5f, rn.y + rn.h * 0.5f); e.Frames(1);
+        CHECK(d.tres.renameField.w > 0.0f && e.offers.Overlays() >= 1);
+        CHECK(OkayUI::GetDrawData().indexCount > 0);                 // the popup stayed in OkayUI's frame, over everything
+        const OkayUI::Rect f = d.tres.renameField;
+        e.Click(f.x + 10.0f, f.y + f.h * 0.5f);
+        e.sim.Press(okayuitest::Key_SelectAll); e.Frame(); e.sim.Type("Loot"); e.Frame();
+        const OkayUI::Rect b = d.tres.renameButton;
+        e.Click(b.x + b.w * 0.5f, b.y + b.h * 0.5f);
+        CHECK(d.renameTag == 0 && d.renameTo == "Loot");
+        // a Dear ImGui modal over the window closes the popup (it does not sit above the modal)
+        e.imguiModal = true; e.Frames(3);
+        CHECK(d.tres.renameField.w == 0.0f && e.offers.Overlays() == 0);
+    }
+    kH = 420;
+}
+
+void SectionsScrollWithTheWindow() {
+    // All four sections in a short window: it scrolls them like any items. Only the part the window shows is offered and drawn.
+    kH = 520;
+    SettingsData d;
+    Editor e;
+    e.winH = 480.0f; d.Add(e, true);
+    e.Frames(3);
+    ImGuiWindow* w = ImGui::FindWindowByName("Project Settings");
+    CHECK(w && w->ScrollMax.y > 600.0f);                          // Tags and Layers runs far past the window
+    const ImRect clip = w->InnerClipRect;
+    auto offersInside = [&] {
+        for (const Offers::O& o : e.offers.list)
+            if (!o.overlay && (o.x < clip.Min.x - 0.5f || o.y < clip.Min.y - 0.5f || o.x + o.w > clip.Max.x + 0.5f || o.y + o.h > clip.Max.y + 0.5f)) return false;
+        return true;
+    };
+    CHECK(offersInside());
+    const float applyY = d.phres.apply.y;
+    e.scrollTo = 200.0f; e.Frames(3);
+    CHECK(std::abs((applyY - d.phres.apply.y) - 200.0f) < 1.0f);  // the body moved with the window
+    CHECK(offersInside());
+    // the background below the window stays clear: nothing of the scrolled sections is drawn outside the window
+    const int below = (int)(kWinY + e.winH) + 2;
+    std::uint8_t bg[3];
+    {
+        const std::uint8_t* px = &e.ras.bmp.rgba[((std::size_t)(kH - 1) * (std::size_t)kW) * 4];
+        bg[0] = px[0]; bg[1] = px[1]; bg[2] = px[2];
+    }
+    CHECK(Count(e.ras.bmp, 0, below, kW, kH, bg) == kW * (kH - below));
+    // Player and Physics scrolled out of view: they offer nothing (Tags and Layers is in view)
+    e.scrollTo = 900.0f; e.Frames(3);
+    int bodies = 0;
+    for (const Offers::O& o : e.offers.list) bodies += o.overlay ? 0 : 1;
+    CHECK(bodies >= 1 && bodies <= 2);
+    CHECK(offersInside());
+    // a click on a layer field in view reaches it
+    const OkayUI::Rect lf = d.tres.layerFields[20];
+    if (lf.y > clip.Min.y && lf.y + lf.h < clip.Max.y) {
+        e.Click(lf.x + 20.0f, lf.y + lf.h * 0.5f);
+        CHECK(OkayUI::WantsTextInput());
+    }
+    kH = 420;
+}
+
+void SectionsHiddenDrawNothing() {
+    kH = 760;
+    SettingsData d;
+    Editor e;
+    e.winH = 720.0f; d.Add(e, false);
+    e.Frames(3);
+    // a folded header: that section is not drawn and offers nothing
+    e.sections[1].fold = true;
+    e.Frames(2);
+    CHECK(!e.sections[1].shown && e.sections[0].shown && e.sections[2].shown);
+    // a collapsed window: nothing at all
+    e.collapse = true; e.Frames(2);
+    for (const Editor::Section& sec : e.sections) CHECK(!sec.shown);
+    CHECK(e.offers.list.empty() && OkayUI::GetDrawData().indexCount == 0);
+    kH = 420;
+}
+
 } // namespace
 
 int main() {
-    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler)");
+    RUN_SUITE("okayui panels in Dear ImGui windows (Crash Log, Audio Mixer, History, Problems, Stats, Profiler; Project Settings' Player, Physics, Rendering, Tags and Layers)");
     kH = 420;
     SamePictureAsBefore();
     ImGuiInFrontCoversThePanel();
@@ -521,5 +782,11 @@ int main() {
     MenusCloseWhenImGuiTakesOver();
     PanelInAnotherOsWindow();
     HiddenDrawsNothing();
+    SectionsSamePictureAsBefore();
+    SectionsPlaceholderIsTheBodyHeight();
+    SectionsCoveredByImGui();
+    SectionsTakeClicks();
+    SectionsScrollWithTheWindow();
+    SectionsHiddenDrawNothing();
     TEST_MAIN_RESULT();
 }

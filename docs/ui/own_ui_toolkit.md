@@ -3220,3 +3220,37 @@ and the Project panel, prefab rows, diagnostic markers, the context menus); brin
 is a step of its own.
 
 **Not verified.** Windows, the editor program (not linked or started here), the panels in a real window, the diagnostics demo.
+
+## 26. Project Settings' Player, Physics, Rendering and Tags and Layers on OkayUI only (sections inside a Dear ImGui window)
+
+Sections 24 and 25 moved whole windows. Project Settings is one Dear ImGui window with many collapsing headers, so four of its sections
+moved on their own: Player, Physics, Rendering and Tags and Layers. Modules, Loading screen and the headers below stay Dear ImGui.
+
+**The host: `okayuihost::HostPanelSection`** (`shared/OkayUIImGuiEmbed.hpp`). `HostPanelWindow`'s way for a part of a window: one
+placeholder item as tall as the body drew on the last frame (the window lays it out and scrolls it like any item), and the body's shapes
+go into the window's draw list there, clipped to what the window shows. ImGui popups, tooltips and windows in front are drawn over it,
+so the old `HostSection` rule ("a covered section draws its Dear ImGui copy instead") is not needed and there is no copy. Only the part
+the window shows takes the mouse; the body's own menus (the tag rename popup) stay on OkayUI's top layer and close when Dear ImGui takes
+over, exactly as in a hosted window (the two share `detail::EmbedBody`). The mouse wheel stays the window's. The first frame only
+measures (the body is drawn into an empty clip and its shapes are thrown away), so a new window fits the right height at once.
+`editor/OkayPanels.cpp` `PanelSection` calls it (and, in `okay-editor-okayui`, draws the body at the cursor with a placeholder after it).
+
+**Checked against main's sections before wiring.** The rules stay in `editor/main.cpp` (`DrawTagsAndLayersSettings`, `DrawProjectSettings`),
+fed from the intents; the drawing is the screens in `okayui/screens/OkayUIEditorPanels.cpp`:
+
+- **Player**: main had dropped the width and height steppers (at 110 pixels they took the room and 1280 x 720 showed as "12" and
+  "72") for plain fields five digits wide. The screen now does the same, and OkayUI's `InputInt` takes Dear ImGui's rule that a step of
+  0 or less draws no steppers (also in the compatibility layer, which used to turn 0 into 1). Test: `okayui_values`
+  (`InputIntStepZeroTests`).
+- **Physics**: the solver tooltip is main's text now (`kIterationsTip`); the host clamps the step rate with `ClampStepsPerSecond`
+  (main clamped only below 1 and above 500; a NaN now becomes 50).
+- **Rendering** and **Tags and Layers**: the same rows, buttons and errors as main's. The tag rename's rules are one function now,
+  `TryRenameTag`, used by the Hierarchy's tag menu, the Inspector header and this section (the Inspector header had its own copy).
+
+**Tests.** `okayui_panels_imgui` hosts the sections in a Project Settings window: the picture against the old hosting (0.5% limit),
+the placeholder as tall as the body, a window in front and a tooltip covering the sections (no switch to another version, no mouse
+under them), clicks (Apply, Skybox, typing a width, Remove, the rename popup over everything and closed by an ImGui modal), scrolling
+(the body moves with the window, nothing is drawn or offered outside it, sections scrolled out offer nothing), a folded header and a
+collapsed window draw nothing. `okayui_editor_panels`: the Player golden was made again (no steppers), with a check of the field width.
+
+**Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build of `PanelSection`.

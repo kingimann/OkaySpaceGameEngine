@@ -1201,23 +1201,33 @@ std::vector<JavaScriptVM::Setting> JavaScriptVM::Settings(const std::string& sou
 }
 
 std::string JavaScriptVM::Format(const std::string& src) {
-    // Each line's indent is the bracket depth at its start, minus one for every closer it begins with.
-    // Brackets inside strings, comments and template text do not count; lines that start inside a
-    // template literal or a block comment are kept as written.
+    // Every open bracket remembers the indent of the line it was opened on. A line inside it is
+    // indented one step more; a line that starts with closers goes back to the indent of the line
+    // that opened the last of them, so "foo(() => {" adds one step, not two. Brackets inside strings,
+    // comments and template text do not count; lines that start inside a template literal or a
+    // block comment are kept as written.
     std::string out;
-    int depth = 0;
+    std::vector<int> opens;        // indent of the line each open bracket is on
     std::size_t i = 0;
     bool inBlockComment = false;
-    std::vector<int> tplStack;   // template literals open (their ${ depth marks)
+    std::vector<int> tplStack;     // template literals open: -1 in text, else the bracket count at ${
     while (i <= src.size()) {
         std::size_t e = src.find('\n', i);
         if (e == std::string::npos) e = src.size();
         std::string line = src.substr(i, e - i);
         bool verbatim = inBlockComment || (!tplStack.empty() && tplStack.back() == -1);
-        // scan the line
-        int lead = 0;
-        bool seenCode = false;
-        int d = depth;
+        // indent of this line: count the closers it starts with (outside strings and comments)
+        int ind = opens.empty() ? 0 : opens.back() + 1;
+        if (!verbatim) {
+            std::size_t lead = 0;
+            for (std::size_t k = 0; k < line.size(); ++k) {
+                char c = line[k];
+                if (c == ' ' || c == '\t' || c == '\r') continue;
+                if (c == '}' || c == ']' || c == ')') { ++lead; continue; }
+                break;
+            }
+            if (lead > 0) ind = lead <= opens.size() ? opens[opens.size() - lead] : 0;
+        }
         for (std::size_t k = 0; k < line.size(); ++k) {
             char c = line[k];
             if (inBlockComment) {
@@ -1227,37 +1237,33 @@ std::string JavaScriptVM::Format(const std::string& src) {
             if (!tplStack.empty() && tplStack.back() == -1) {   // inside template text
                 if (c == '\\') { ++k; continue; }
                 if (c == '`') { tplStack.pop_back(); continue; }
-                if (c == '$' && k + 1 < line.size() && line[k + 1] == '{') { tplStack.back() = d; ++d; ++k; }
+                if (c == '$' && k + 1 < line.size() && line[k + 1] == '{') {
+                    tplStack.back() = (int)opens.size(); opens.push_back(ind); ++k;
+                }
                 continue;
             }
-            if (c == ' ' || c == '\t' || c == '\r') continue;
             if (c == '/' && k + 1 < line.size() && line[k + 1] == '/') break;
-            if (c == '/' && k + 1 < line.size() && line[k + 1] == '*') { inBlockComment = true; ++k; seenCode = true; continue; }
+            if (c == '/' && k + 1 < line.size() && line[k + 1] == '*') { inBlockComment = true; ++k; continue; }
             if (c == '"' || c == '\'') {
                 for (++k; k < line.size() && line[k] != c; ++k)
                     if (line[k] == '\\') ++k;
-                seenCode = true;
                 continue;
             }
-            if (c == '`') { tplStack.push_back(-1); seenCode = true; continue; }
-            if (c == '{' || c == '[' || c == '(') { ++d; seenCode = true; continue; }
+            if (c == '`') { tplStack.push_back(-1); continue; }
+            if (c == '{' || c == '[' || c == '(') { opens.push_back(ind); continue; }
             if (c == '}' || c == ']' || c == ')') {
-                if (!tplStack.empty() && c == '}' && tplStack.back() == d - 1) { tplStack.back() = -1; --d; continue; }
-                --d;
-                if (!seenCode) ++lead;
+                if (!opens.empty()) opens.pop_back();
+                if (!tplStack.empty() && c == '}' && tplStack.back() == (int)opens.size()) tplStack.back() = -1;
                 continue;
             }
-            seenCode = true;
         }
         if (i) out += '\n';
         std::size_t a = line.find_first_not_of(" \t");
         if (verbatim) out += line;
         else if (a != std::string::npos) {
             std::size_t b = line.find_last_not_of(" \t\r");
-            int ind = std::max(0, depth - lead);
-            out += std::string((std::size_t)ind * 4, ' ') + line.substr(a, b - a + 1);
+            out += std::string((std::size_t)std::max(0, ind) * 4, ' ') + line.substr(a, b - a + 1);
         }
-        depth = std::max(0, d);
         if (e >= src.size()) break;
         i = e + 1;
     }

@@ -4,6 +4,7 @@
 // GetSystemTimeAsFileTime from kernel32). Own minimal version: the common units (nanoseconds to hours),
 // +, -, comparisons, duration_cast, time_point arithmetic; no calendar, no zones, no literals.
 #pragma once
+#include <ctime>
 __declspec(dllimport) int QueryPerformanceCounter(long long* counter);
 __declspec(dllimport) int QueryPerformanceFrequency(long long* frequency);
 __declspec(dllimport) void GetSystemTimeAsFileTime(unsigned long long* time);
@@ -89,6 +90,8 @@ struct steady_clock {
         const long long rest = counter % frequency;
         return time_point<steady_clock, nanoseconds>(nanoseconds(whole * 1000000000LL + rest * 1000000000LL / frequency));
     }
+    // [time.clock.steady]: the clock's own time_point type (last in the class, after the uses of the template).
+    typedef time_point<steady_clock, nanoseconds> time_point;
 };
 struct system_clock {
     typedef nanoseconds duration;
@@ -99,6 +102,15 @@ struct system_clock {
         const long long since_unix = (long long)ft - 116444736000000000LL;
         return time_point<system_clock, nanoseconds>(nanoseconds(since_unix * 100LL));
     }
+    // Whole seconds since the Unix epoch, as time() counts them ([time.clock.system.members]); toward minus infinity.
+    static time_t to_time_t(const time_point<system_clock, nanoseconds>& t) {
+        const long long ns = t.time_since_epoch().count();
+        return (time_t)(ns >= 0 ? ns / 1000000000LL : -((-ns + 999999999LL) / 1000000000LL));
+    }
+    static time_point<system_clock, nanoseconds> from_time_t(time_t t) {
+        return time_point<system_clock, nanoseconds>(nanoseconds((long long)t * 1000000000LL));
+    }
+    typedef time_point<system_clock, nanoseconds> time_point;
 };
 typedef steady_clock high_resolution_clock;
 }

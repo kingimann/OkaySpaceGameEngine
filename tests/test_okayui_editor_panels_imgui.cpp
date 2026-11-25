@@ -368,16 +368,46 @@ int main() {
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("import", imPic, okPic, t);
     }
-    for (int kind : {P::ImportTexture, P::ImportAudio}) {
-        panelfix::ImportData imD(kind), okD(kind);
+    {   // a sound's, picture only
+        panelfix::ImportData imD(P::ImportAudio), okD(P::ImportAudio);
         ImGuiRig im; OkayRig ok; Raster ras;
         auto imBody = [&] { oked::DrawImportSettingsBodyImGui(imD.model, imD.state, hooks); };
         auto okBody = [&] { okayuiscreens::DrawImportSettings(okD.model, okD.state, bx, by, bw, bh); };
         for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
         ras.DrawImGui(); const Bitmap imPic = ras.bmp;
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
-        Report(kind == P::ImportTexture ? "import-texture" : "import-audio", imPic, okPic, Timing{});
+        Report("import-audio", imPic, okPic, Timing{});
     }
+    kH = 1120; bh = kH - 2 * kPadY;
+    {   // a texture with every row (Kind, Anisotropic, Mip filter, compression, what is loaded, the tools): the picture, and the same clicks
+        panelfix::ImportData imD(P::ImportTexture), okD(P::ImportTexture);
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::ImportSettingsResult okRes;
+        bool imGen = false, okGen = false;
+        auto imBody = [&] { if (oked::DrawImportSettingsBodyImGui(imD.model, imD.state, hooks).generate) imGen = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawImportSettings(okD.model, okD.state, bx, by, bw, bh); if (okRes.intent.generate) okGen = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.anisoCombo.w > 0 && okRes.formatCombo.w > 0 && okRes.generate.w > 0 && okRes.contentHeight < bh);
+        auto both = [&](const UI::Rect& q) {
+            ok.sim.Move(q.x + 12.0f, q.y + q.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+            im.Click(q.x + 12.0f, q.y + q.h * 0.5f, imBody);
+        };
+        // the same click on the Cut-out box ticks it in both, and on Generate asks for the .dds in both
+        both(okRes.ddsCutout);
+        CHECK(okD.state.ddsCutout && imD.state.ddsCutout);
+        both(okRes.generate);
+        CHECK(okGen && imGen);
+        // the same click on "Compress on the GPU" turns it off in both (the Format row goes)
+        both(okRes.compress);
+        CHECK(!okD.edit.compress && !imD.edit.compress);
+        ok.Frame(okBody); CHECK(okRes.formatCombo.w == 0);
+        okD.edit.compress = imD.edit.compress = true; okD.state.ddsCutout = imD.state.ddsCutout = false;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        Report("import-texture", imPic, okPic, Timing{});
+    }
+    kH = 420; bh = kH - 2 * kPadY;
 
     // ================= Post-processing (the tallest canvas) =================
     kH = 1240; bh = kH - 2 * kPadY;
@@ -453,6 +483,34 @@ int main() {
         im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("rendering", imPic, okPic, t);
+    }
+
+    // ================= Loading screen (Project Settings) =================
+    kH = 420; bh = kH - 2 * kPadY;
+    {
+        panelfix::LoadingData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::LoadingScreenResult okRes;
+        bool imBrowse = false, okBrowse = false;
+        auto imBody = [&] { if (oked::DrawLoadingScreenBodyImGui(imD.model, hooks).browse) imBrowse = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawLoadingScreen(okD.model, bx, by, bw, bh); if (okRes.intent.browse) okBrowse = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.browse.w > 0 && okRes.showBar.w > 0);
+        auto both = [&](float x, float y) {
+            ok.sim.Move(x, y); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+            im.Click(x, y, imBody);
+        };
+        // the same clicks: Browse asks the host in both; the progress bar box turns it off in both; Clear empties the logo in both
+        both(okRes.browse.x + okRes.browse.w * 0.5f, okRes.browse.y + okRes.browse.h * 0.5f);
+        CHECK(okBrowse && imBrowse);
+        both(okRes.showBar.x + 12.0f, okRes.showBar.y + okRes.showBar.h * 0.5f);
+        CHECK(!okD.showBar && !imD.showBar);
+        both(okRes.clear.x + okRes.clear.w * 0.5f, okRes.clear.y + okRes.clear.h * 0.5f);
+        CHECK(okD.logo[0] == '\0' && imD.logo[0] == '\0');
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        Report("loadingscreen", imPic, okPic, Timing{});
     }
 
     // ================= section heights (the hosted sections of Project Settings, the Inspector and the Lighting window) =========
@@ -536,6 +594,14 @@ int main() {
                     ras.DrawOkay();  const Bitmap okPic = ras.bmp;
                     Report("import-audio-inspector", imPic, okPic, Timing{});
                 }
+            }
+            {
+                panelfix::LoadingData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawLoadingScreenBodyImGui(imD.model, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawLoadingScreen(okD.model, bx, by, bw, bh).contentHeight; });
+                }
+                same("loading screen", imH, okH);
             }
             {
                 panelfix::PostData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;

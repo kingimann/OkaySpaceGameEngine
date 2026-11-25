@@ -388,16 +388,27 @@ ProfilerIntent DrawProfilerBodyImGui(ProfilerModel& m, const PanelViewHooks&) {
 // ---- Import settings (the Project panel) -----------------------------------------------------------------------------------
 
 namespace {
-// The import panel's combo: 160 pixels, the label after it (BeginCombo and a Selectable per entry, as the editor drew it).
+// The import panel's combo (BeginCombo and a Selectable per entry, as the editor drew it): as wide as its longest choice, at least
+// 160 pixels, never wider than the room left of its label (ImportComboWidth).
 bool ImportCombo(const char* label, int& value, const char* const* items, int count) {
     bool changed = false;
-    ImGui::SetNextItemWidth(160);
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, ImGui::CalcTextSize(items[i]).x);
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    ImGui::SetNextItemWidth(ImportComboWidth(widest, sty.FramePadding.x, ImGui::GetFrameHeight(), ImGui::GetContentRegionAvail().x,
+                                             ImGui::CalcTextSize(label, nullptr, true).x, sty.ItemInnerSpacing.x));
     if (ImGui::BeginCombo(label, value >= 0 && value < count ? items[value] : "")) {
         for (int i = 0; i < count; ++i)
             if (ImGui::Selectable(items[i], value == i)) { value = i; changed = true; }
         ImGui::EndCombo();
     }
     return changed;
+}
+// A grey note under a setting, wrapped at the panel's edge.
+void ImportHint(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
 }
 } // namespace
 
@@ -406,46 +417,70 @@ ImportSettingsIntent DrawImportSettingsBodyImGui(ImportSettingsModel& m, ImportS
     if (!m.edit) return out;
     ImportFields& e = *m.edit;
     ImGui::TextDisabled("%s", kImportHeading);
-    if (m.newer) { ImGui::TextDisabled("%s", kImportNewerNote); return out; }
+    if (m.newer) { ImportHint(kImportNewerNote); return out; }
     switch (e.kind) {
         case ImportTexture: {
             int si = ImportSizeIndex(e.maxSize);
             if (ImportCombo("Largest side", si, kImportSizeNames, 11)) { e.maxSize = kImportSizes[si]; out.changed = true; }
-            ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            ImportHint("Bigger pictures are made smaller when loaded.");
             if (m.showSampler) {
-                if (ImportCombo("Filter", e.filter, kImportFilterNames, 3)) out.changed = true;
-                ImGui::TextDisabled("Point keeps hard pixel edges.");
+                int kind = ImportTexKindIndex(e);
+                if (ImportCombo("Kind", kind, kImportKindNames, 3)) { ImportSetTexKind(e, kind); out.changed = true; }
+                ImportHint("Colour pictures are filtered in linear light. Normal maps stay unit length in every mip.");
+                int fi = ImportFilterIndex(e);
+                if (ImportCombo("Filter", fi, kImportFilterNames, 4)) { ImportSetFilter(e, fi); out.changed = true; }
+                if (fi == 3) {
+                    int li = ImportAnisoIndex(e.anisotropy);
+                    if (ImportCombo("Anisotropy", li, kImportAnisoNames, 4)) { e.anisotropy = kImportAnisoLevels[li]; out.changed = true; }
+                }
+                ImportHint("Point keeps hard pixel edges. Anisotropic keeps floors sharp far away.");
                 if (ImportCombo("Wrap", e.wrap, kImportWrapNames, 3)) out.changed = true;
-                ImGui::TextDisabled("What is drawn past the picture's edge.");
+                ImportHint("What is drawn past the picture's edge.");
                 if (ImGui::Checkbox("Mipmaps", &e.mipmaps)) out.changed = true;
-                ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
-                ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+                if (e.mipmaps && ImportCombo("Mip filter", e.mipFilter, kImportMipFilterNames, 2)) out.changed = true;
+                ImportHint("Smaller copies for far away, made by our own filter. Off: always full size.");
+                if (ImGui::Checkbox("Compress on the GPU", &e.compress)) out.changed = true;
+                if (e.compress) {
+                    if (ImportCombo("Format", e.compression, kImportFormatNames, 5)) out.changed = true;
+                    ImportHint(kImportCompressNote);
+                }
+                if (!m.loadedNote.empty()) ImportHint(m.loadedNote.c_str());
             }
+            ImGui::Separator();
+            ImGui::TextDisabled("%s", kImportToolsHeading);
+            ImportCombo("Write", st.ddsOut, kImportDdsOutNames, 2);
+            ImportCombo("Filter##ddstool", st.ddsFilter, kImportDdsFilterNames, 3);
+            ImGui::Checkbox("Colour picture (filter in linear light)", &st.ddsColour);
+            ImGui::Checkbox("Normal map", &st.ddsNormal);
+            ImGui::Checkbox("Cut-out (keep see-through share)", &st.ddsCutout);
+            if (ImGui::Button("Generate mipmaps / compress")) out.generate = true;
+            ImportHint("Writes a .dds next to the picture. Open it in any DDS viewer.");
+            if (!m.toolMessage.empty()) ImGui::TextWrapped("%s", m.toolMessage.c_str());
             break;
         }
         case ImportModel: {
             ImGui::SetNextItemWidth(160);
             if (ImGui::DragFloat("Scale", &e.scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) out.changed = true;
-            ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
+            ImportHint("Multiplies its size when you add it to a scene.");
             if (ImportCombo("Normals", e.normals, kImportNormalsNames, 3)) out.changed = true;
             if (e.normals == 1) {
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::DragFloat("Smoothing angle", &e.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) out.changed = true;
-                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                ImportHint("Sharper edges stay hard. Not for rigged parts.");
             } else if (e.normals == 2) {
-                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                ImportHint("Each face shaded alone. Not for rigged parts.");
             }
             if (ImGui::Checkbox("Import animations", &e.importAnimations)) out.changed = true;
-            ImGui::TextDisabled("Off: no clips, rest pose.");
-            ImGui::TextDisabled("Used when the model is next added to a scene.");
+            ImportHint("Off: no clips, rest pose.");
+            ImportHint("Used when the model is next added to a scene.");
             break;
         }
         case ImportAudio: {
             if (ImportCombo("Loading", e.loadMode, kImportLoadNames, 2)) out.changed = true;
-            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            ImportHint("Read while it plays keeps a long file in a small fixed amount of memory.");
             if (ImGui::Checkbox("Mix down to one channel", &e.forceMono)) out.changed = true;
-            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-            ImGui::TextDisabled("Used the next time the file is loaded.");
+            ImportHint("Left and right become a single channel. Off keeps the recording as it is.");
+            ImportHint("Used the next time the file is loaded.");
             break;
         }
         default: return out;
@@ -569,6 +604,33 @@ RenderingSettingsIntent DrawRenderingSettingsBodyImGui(RenderingSettingsModel& m
     if (m.ambient && ImGui::SliderFloat("Ambient##ps", m.ambient, 0.0f, 1.0f)) out.changed = true;
     if (m.skybox && ImGui::Checkbox("Skybox##ps", m.skybox)) out.changed = true;
     if (ImGui::Button("Apply to current scene##rend")) out.apply = true;
+    return out;
+}
+
+// ---- Loading screen (Project Settings) -------------------------------------------------------------------------------------
+
+LoadingScreenIntent DrawLoadingScreenBodyImGui(LoadingScreenModel& m, const PanelViewHooks&) {
+    LoadingScreenIntent out;
+    ImGui::TextDisabled("%s", kLoadingScreenNote);
+    if (m.logo && m.logoSize > 0) {
+        ImGui::SetNextItemWidth(360);
+        if (ImGui::InputTextWithHint("##pssplashlogo", kSplashLogoHint, m.logo, m.logoSize)) out.changed = true;
+        ImGui::SameLine();
+        if (ImGui::Button("...##pssplash")) out.browse = true;   // the editor's TipButton("Browse...", "...##pssplash")
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Browse...");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##pssplash")) { if (m.logo[0]) out.changed = true; m.logo[0] = '\0'; }
+    }
+    if (m.accentOverride) {
+        if (ImGui::Checkbox("Custom splash accent##ps", m.accentOverride)) out.changed = true;
+        if (*m.accentOverride && m.accent) {
+            ImGui::SameLine(); ImGui::SetNextItemWidth(220);
+            if (ImGui::ColorEdit3("##pssplashaccent", m.accent)) out.changed = true;
+        }
+    }
+    if (m.bgTop) { ImGui::SetNextItemWidth(220); if (ImGui::ColorEdit3("Background top##ps", m.bgTop)) out.changed = true; }
+    if (m.bgBottom) { ImGui::SetNextItemWidth(220); if (ImGui::ColorEdit3("Background bottom##ps", m.bgBottom)) out.changed = true; }
+    if (m.showBar && ImGui::Checkbox("Show progress bar##ps", m.showBar)) out.changed = true;
     return out;
 }
 

@@ -37,6 +37,10 @@ std::string mangleType(const Type& t) {
         if (t.tag.empty()) return "i";
         if (t.tag.find("::") == std::string::npos) return mangleTag(t.tag);
         return "N" + mangleTag(t.tag) + "E";
+    // An array type is A <length> _ <element>, or A_ <element> with no length ([mangle.array-type]).
+    case Type::Kind::Array:
+        return "A" + std::string(t.unsized || !t.bound ? "" : (t.bound->kind == Expr::Kind::Int ? std::to_string(t.bound->ival) : "")) +
+               "_" + (t.inner ? mangleType(*t.inner) : "i");
     default: return "i";
     }
 }

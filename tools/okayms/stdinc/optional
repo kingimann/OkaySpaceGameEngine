@@ -1,0 +1,82 @@
+// okay-ms own standard header: <optional>, written from ISO/IEC 14882 [optional]: a value of T that may be there or
+// not. Own design: a buffer of 64-bit words big enough for T and a flag; the value is made in the buffer with placement
+// new and destroyed with an explicit destructor call. No bad_optional_access (value() of an empty optional returns the
+// buffer as it is; there are no exceptions), no monadic operations, values aligned to 8 bytes at most.
+#pragma once
+#include <cstddef>
+#include <new>
+#include <type_traits>
+#include <utility>
+namespace std {
+struct nullopt_t {
+    explicit nullopt_t(int) {}
+};
+static const nullopt_t nullopt(0);
+
+template <typename T>
+class optional {
+public:
+    unsigned long long store__[(sizeof(T) + 7) / 8];
+    bool has__;
+
+    T* ptr__() { return reinterpret_cast<T*>(store__); }
+    const T* ptr__() const { return reinterpret_cast<const T*>(store__); }
+    typedef T value_type;
+    optional() : has__(false) {}
+    optional(const nullopt_t&) : has__(false) {}
+    optional(const T& v) : has__(true) { new (store__) T(v); }
+    optional(const optional& o) : has__(o.has__) {
+        if (has__) new (store__) T(*o.ptr__());
+    }
+    ~optional() { reset(); }
+    optional& operator=(const optional& o) {
+        if (this == &o) return *this;
+        reset();
+        if (o.has__) {
+            new (store__) T(*o.ptr__());
+            has__ = true;
+        }
+        return *this;
+    }
+    optional& operator=(const nullopt_t&) {
+        reset();
+        return *this;
+    }
+    optional& operator=(const T& v) {
+        if (has__) {
+            *ptr__() = v;
+        } else {
+            new (store__) T(v);
+            has__ = true;
+        }
+        return *this;
+    }
+    void reset() {
+        if (has__) {
+            if constexpr (!is_trivially_destructible<T>::value) ptr__()->~T();
+            has__ = false;
+        }
+    }
+    template <typename... A>
+    T& emplace(A&&... a) {
+        reset();
+        new (store__) T(a...);
+        has__ = true;
+        return *ptr__();
+    }
+    bool has_value() const { return has__; }
+    explicit operator bool() const { return has__; }
+    T& value() { return *ptr__(); }
+    const T& value() const { return *ptr__(); }
+    T& operator*() { return *ptr__(); }
+    const T& operator*() const { return *ptr__(); }
+    T* operator->() { return ptr__(); }
+    const T* operator->() const { return ptr__(); }
+    T value_or(const T& other) const { return has__ ? *ptr__() : other; }
+    bool operator==(const nullopt_t&) const { return !has__; }
+    bool operator!=(const nullopt_t&) const { return has__; }
+    bool operator==(const optional& o) const { return has__ == o.has__ && (!has__ || *ptr__() == *o.ptr__()); }
+    bool operator!=(const optional& o) const { return !(*this == o); }
+};
+template <typename T> optional<T> make_optional(const T& v) { return optional<T>(v); }
+}  // namespace std

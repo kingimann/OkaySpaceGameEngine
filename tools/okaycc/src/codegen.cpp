@@ -7,6 +7,26 @@ namespace okaycc {
 namespace {
 
 const char* kArgReg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+
+// The atomic operations of okay-cc's <atomic>, inline instead of a call (Intel SDM vol. 2: XADD,
+// XCHG, CMPXCHG with LOCK, MFENCE; the address is in rdi, the operands in rsi and rdx, the old
+// value is left in rax). elf.cpp has the same sequences as machine code.
+const char* atomicAsm(const std::string& f) {
+    if (f == "__okay_atomic_xadd8") return "  lock xaddq %rsi, (%rdi)\n  movq %rsi, %rax\n";
+    if (f == "__okay_atomic_xadd4") return "  lock xaddl %esi, (%rdi)\n  movl %esi, %eax\n";
+    if (f == "__okay_atomic_xchg8") return "  xchgq %rsi, (%rdi)\n  movq %rsi, %rax\n";
+    if (f == "__okay_atomic_xchg4") return "  xchgl %esi, (%rdi)\n  movl %esi, %eax\n";
+    if (f == "__okay_atomic_xadd2") return "  lock xaddw %si, (%rdi)\n  movzwl %si, %eax\n";
+    if (f == "__okay_atomic_xadd1") return "  lock xaddb %sil, (%rdi)\n  movzbl %sil, %eax\n";
+    if (f == "__okay_atomic_xchg2") return "  xchgw %si, (%rdi)\n  movzwl %si, %eax\n";
+    if (f == "__okay_atomic_xchg1") return "  xchgb %sil, (%rdi)\n  movzbl %sil, %eax\n";
+    if (f == "__okay_atomic_cas2") return "  movl %esi, %eax\n  lock cmpxchgw %dx, (%rdi)\n  movzwl %ax, %eax\n";
+    if (f == "__okay_atomic_cas8") return "  movq %rsi, %rax\n  lock cmpxchgq %rdx, (%rdi)\n";
+    if (f == "__okay_atomic_cas4") return "  movl %esi, %eax\n  lock cmpxchgl %edx, (%rdi)\n";
+    if (f == "__okay_atomic_cas1") return "  movl %esi, %eax\n  lock cmpxchgb %dl, (%rdi)\n  movzbl %al, %eax\n";
+    if (f == "__okay_atomic_fence") return "  mfence\n";
+    return nullptr;
+}
 const char* kPhys[] = {"%rbx", "%r12", "%r13", "%r14", "%r15", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"};
 const RegHomes* curHomes = nullptr;
 
@@ -417,6 +437,8 @@ void emitInst(std::string& s, const Function& f, const Inst& in, const std::vect
         } else if (in.func == "syscall") {
             // Linux syscall. The C arguments are number, a, b, c in rdi, rsi, rdx, rcx.
             s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  syscall\n";
+        } else if (const char* seq = atomicAsm(in.func)) {
+            s += seq;
         } else {
             for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
                 loadXmm(s, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);

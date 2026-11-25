@@ -868,6 +868,26 @@ struct NetHostOrJoinNode : VsNode {
         return 0;
     }
 };
+// Host Online: host over the internet through the relay under a short room code (in0, empty = make one up);
+// out0 = the room code to give friends.
+struct NetHostOnlineNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->HostOnline(In(0, g, ctx).AsString())) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n ? n->RoomCode() : std::string(); }
+};
+// Join By Code: join the online game with room code in0, through the relay.
+struct NetJoinCodeNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->JoinCode(In(0, g, ctx).AsString())) g.Error(this, ctx, n->LastError());
+        return 0;
+    }
+};
 // Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
 struct NetSendEventNode : VsNode {
     std::string name;

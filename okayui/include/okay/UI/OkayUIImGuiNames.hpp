@@ -38,6 +38,7 @@ typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
 #define IM_ARRAYSIZE(_ARR) ((int)(sizeof(_ARR) / sizeof(*(_ARR))))
 #define IMGUI_VERSION "okayui"
+#define OKAY_IMGUI_IS_OKAYUI 1   // for code that also builds against Dear ImGui: here ImGui is OkayUI (an OkayUI body is drawn straight at the cursor)
 #define IMGUI_VERSION_NUM 0
 #define IMGUI_CHECKVERSION() ((void)0)
 #define IM_COL32_R_SHIFT 0

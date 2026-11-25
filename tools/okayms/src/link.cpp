@@ -200,8 +200,67 @@ Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects
     return link_executable(std::move(objects), options, map_text);
 }
 
-Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options,
+namespace {
+// Thread-local storage ([basic.stc.thread]; PE/COFF specification, "The .tls Section" and "The TLS Directory"). When
+// an object has a .tls$ section and none defines _tls_used (an MSVC C runtime would), one object is added at the end:
+// _tls_index (the loader writes this image's slot number into it), an empty callback list, and _tls_used, the
+// IMAGE_TLS_DIRECTORY64 {StartAddressOfRawData, EndAddressOfRawData, AddressOfIndex, AddressOfCallBacks,
+// SizeOfZeroFill, Characteristics}, whose RVA goes into data directory 9. AddressOfIndex and AddressOfCallBacks are
+// ADDR64 relocations; the start and end of the .tls section are written once it is placed (with base relocations, like
+// every absolute address). Own layout.
+bool wants_tls_directory(const std::vector<ObjectFile>& objects) {
+    bool tls = false;
+    for (const ObjectFile& object : objects) {
+        for (const Section& section : object.sections)
+            if (section.name.compare(0, 4, ".tls") == 0 && (section.name.size() == 4 || section.name[4] == '$')) tls = true;
+        for (const Symbol& symbol : object.symbols)
+            if (symbol.name == "_tls_used" && symbol.section > 0) return false;
+    }
+    return tls;
+}
+ObjectFile tls_directory() {
+    ObjectFile object;
+    Section dir;
+    dir.name = ".rdata";
+    dir.data.assign(40, 0);
+    dir.characteristics = kScnCntInitData | kScnMemRead | kScnAlign8;
+    Section data;
+    data.name = ".data";
+    data.data.assign(16, 0);  // _tls_index (4 bytes, padded to 8), then a callback list holding only its null end
+    data.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite | kScnAlign8;
+    object.sections.push_back(dir);   // section 1
+    object.sections.push_back(data);  // section 2
+    auto add = [&](const char* name, int16_t section, uint32_t value) {
+        Symbol sym;
+        sym.name = name;
+        sym.section = section;
+        sym.value = value;
+        object.symbols.push_back(sym);
+        return static_cast<uint32_t>(object.symbols.size() - 1);
+    };
+    add("_tls_used", 1, 0);
+    const uint32_t index = add("_tls_index", 2, 0);
+    const uint32_t callbacks = add("__okay_tls_callbacks", 2, 8);
+    for (uint32_t k = 0; k < 2; ++k) {
+        Relocation reloc;
+        reloc.offset = 16 + k * 8;
+        reloc.symbol = k == 0 ? index : callbacks;
+        reloc.type = kRelAmd64Addr64;
+        object.sections[0].relocations.push_back(reloc);
+    }
+    return object;
+}
+}  // namespace
+
+Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects_in, const LinkOptions& options,
                                              std::string* map_text) {
+    std::vector<ObjectFile> objects_tls;
+    const bool make_tls = wants_tls_directory(objects_in);
+    if (make_tls) {
+        objects_tls = objects_in;
+        objects_tls.push_back(tls_directory());
+    }
+    const std::vector<ObjectFile>& objects = make_tls ? objects_tls : objects_in;
     if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {
         return Result<std::vector<uint8_t>>::fail("file alignment must be a power of two from 512 to 65536");
     }
@@ -453,6 +512,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             }
         }
     }
+    if (make_tls) addr64_count += 2;  // the start and end of .tls in the TLS directory
     {
         const uint32_t reserve = addr64_count == 0 ? 12u : addr64_count * 12u;
         OutSection rel;
@@ -749,7 +809,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 if (reloc.type == kRelAbsolute) continue;
                 const bool relative = reloc.type >= kRelAmd64Rel32 && reloc.type <= static_cast<uint16_t>(kRelAmd64Rel32 + 5);
                 const bool known = reloc.type == kRelAmd64Addr64 || reloc.type == kRelAmd64Addr32 ||
-                                   reloc.type == kRelAmd64Addr32Nb || relative;
+                                   reloc.type == kRelAmd64Addr32Nb || reloc.type == kRelAmd64Secrel || relative;
                 if (!known) {
                     return Result<std::vector<uint8_t>>::fail(
                         "unsupported relocation " + std::to_string(reloc.type));
@@ -782,6 +842,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                         return Result<std::vector<uint8_t>>::fail("ADDR32 relocation does not fit");
                     }
                     write_u32(slot, static_cast<uint32_t>(sum));
+                } else if (reloc.type == kRelAmd64Secrel) {
+                    // The target's offset from the start of its image section (a thread_local's place in .tls).
+                    if (target.absolute) {
+                        return Result<std::vector<uint8_t>>::fail("SECREL relocation against an absolute symbol");
+                    }
+                    write_u32(slot, read_u32(slot) + target.offset);
                 } else if (reloc.type == kRelAmd64Addr32Nb) {
                     if (target.absolute) {
                         return Result<std::vector<uint8_t>>::fail("ADDR32NB relocation against an absolute symbol");
@@ -806,6 +872,20 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                     write_u32(slot, static_cast<uint32_t>(static_cast<int32_t>(result)));
                 }
             }
+        }
+    }
+    if (make_tls) {
+        // StartAddressOfRawData and EndAddressOfRawData of the TLS directory: the .tls section, now placed.
+        const auto tls_used = globals.find("_tls_used");
+        const auto tls_out = section_index.find(".tls");
+        if (tls_used != globals.end() && tls_out != section_index.end() && tls_used->second.defined) {
+            OutSection& dir = outs[tls_used->second.out_section];
+            const OutSection& tls = outs[tls_out->second];
+            const uint32_t at = tls_used->second.offset;
+            write_u64(dir.bytes.data() + at, options.image_base + tls.rva);
+            write_u64(dir.bytes.data() + at + 8, options.image_base + tls.rva + static_cast<uint32_t>(tls.bytes.size()));
+            fixup_rvas.push_back(dir.rva + at);
+            fixup_rvas.push_back(dir.rva + at + 8);
         }
     }
     if (idata_section >= 0) {
@@ -938,6 +1018,13 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     if (edata_section >= 0) {
         put32(0xC8, outs[static_cast<size_t>(edata_section)].rva);
         put32(0xC8 + 4, 40);
+    }
+    {
+        const auto tls_used = globals.find("_tls_used");
+        if (tls_used != globals.end() && tls_used->second.defined && !tls_used->second.absolute) {
+            put32(0xC8 + 72, outs[tls_used->second.out_section].rva + tls_used->second.offset);  // directory 9: TLS
+            put32(0xC8 + 76, 40);
+        }
     }
     if (reloc_section >= 0) {
         put32(0xC8 + 40, outs[static_cast<size_t>(reloc_section)].rva);

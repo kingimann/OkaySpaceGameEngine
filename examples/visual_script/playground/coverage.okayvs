@@ -1651,3 +1651,8 @@ node 1725 Fn.wrap_in_box
 node 1726 Fn.write_save
 node 1727 Fn.zip
 node 1728 Fn.zoom_camera
+node 1729 Fn.net.host_online
+node 1730 Fn.net.join_code
+node 1731 Fn.net.path
+node 1732 Fn.net.relay
+node 1733 Fn.net.room_code

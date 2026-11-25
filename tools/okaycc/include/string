@@ -1,8 +1,9 @@
 // <string> for okay-cc (ISO/IEC 14882 [basic.string]). Our own header, minimal: a std::string of
-// char that owns a zero-terminated buffer. No templates (basic_string), iterators or find yet.
+// char that owns a zero-terminated buffer. No templates (basic_string) yet; iterators are pointers.
 #pragma once
 #include <cstddef>
 #include <cstring>
+#include <functional>
 namespace std {
 class string {
 public:
@@ -20,6 +21,16 @@ public:
         n_ = o.n_;
         p_[n_] = 0;
     }
+    string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
+    string(unsigned long n, char c) : p_(nullptr), n_(0), cap_(0) {
+        release(grow(n));
+        for (unsigned long i = 0; i < n; ++i) p_[i] = c;
+        n_ = n;
+        p_[n_] = 0;
+    }
+    string(const char *first, const char *last) : p_(nullptr), n_(0), cap_(0) {
+        assignChars(first, (unsigned long)(last - first));
+    }
     ~string() { delete[] p_; }
     string &operator=(const string &o) {
         if (this == &o) return *this;
@@ -28,6 +39,15 @@ public:
         for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
         n_ = o.n_;
         p_[n_] = 0;
+        return *this;
+    }
+    string &operator=(const char *s) {
+        string t(s);  // s may point into this string
+        return *this = t;
+    }
+    string &operator=(char c) {
+        char one[1] = {c};
+        assignChars(one, 1);
         return *this;
     }
     unsigned long size() const { return n_; }
@@ -76,6 +96,94 @@ public:
         push_back(c);
         return *this;
     }
+    static constexpr unsigned long npos = 18446744073709551615UL;
+    char &front() { return p_[0]; }
+    char &back() { return p_[n_ - 1]; }
+    char *begin() { return p_; }
+    char *end() { return p_ + n_; }
+    char &at(unsigned long i) { return p_[i]; }
+    void pop_back() { p_[--n_] = 0; }
+    void reserve(unsigned long n) { release(grow(n)); }
+    void resize(unsigned long n, char c = 0) {
+        release(grow(n));
+        for (unsigned long i = n_; i < n; ++i) p_[i] = c;
+        n_ = n;
+        p_[n_] = 0;
+    }
+    // [string.substr]: at most n characters from pos (pos past the end is cut to the end; the
+    // standard throws out_of_range there, which this subset does not do).
+    string substr(unsigned long pos = 0, unsigned long n = npos) const {
+        if (pos > n_) pos = n_;
+        if (n > n_ - pos) n = n_ - pos;
+        return string(p_ + pos, n);
+    }
+    string &append(const char *s, unsigned long n) {
+        char *old = grow(n_ + n);
+        for (unsigned long i = 0; i < n; ++i) p_[n_ + i] = s[i];
+        n_ += n;
+        p_[n_] = 0;
+        release(old);
+        return *this;
+    }
+    string &erase(unsigned long pos = 0, unsigned long n = npos) {
+        if (pos > n_) pos = n_;
+        if (n > n_ - pos) n = n_ - pos;
+        for (unsigned long i = pos; i + n <= n_; ++i) p_[i] = p_[i + n];
+        n_ -= n;
+        return *this;
+    }
+    string &insert(unsigned long pos, const char *s) {
+        string tail = substr(pos);
+        n_ = pos < n_ ? pos : n_;
+        p_[n_] = 0;
+        *this += s;
+        return append(tail);
+    }
+    string &insert(unsigned long pos, const string &s) { return insert(pos, s.c_str()); }
+    // [string.find]: the first (or, for rfind, the last) place at or after (before) pos.
+    unsigned long find(char c, unsigned long pos = 0) const {
+        for (unsigned long i = pos; i < n_; ++i)
+            if (p_[i] == c) return i;
+        return npos;
+    }
+    unsigned long find(const char *s, unsigned long pos = 0) const {
+        unsigned long m = strlen(s);
+        for (unsigned long i = pos; i + m <= n_; ++i)
+            if (same(i, s, m)) return i;
+        return npos;
+    }
+    unsigned long find(const string &s, unsigned long pos = 0) const { return find(s.c_str(), pos); }
+    unsigned long rfind(char c, unsigned long pos = npos) const {
+        if (n_ == 0) return npos;
+        unsigned long i = pos < n_ ? pos : n_ - 1;
+        for (;; --i) {
+            if (p_[i] == c) return i;
+            if (i == 0) return npos;
+        }
+    }
+    unsigned long rfind(const char *s, unsigned long pos = npos) const {
+        unsigned long m = strlen(s);
+        if (m > n_) return npos;
+        unsigned long i = pos < n_ - m ? pos : n_ - m;
+        for (;; --i) {
+            if (same(i, s, m)) return i;
+            if (i == 0) return npos;
+        }
+    }
+    unsigned long find_first_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, true); }
+    unsigned long find_first_not_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, false); }
+    unsigned long find_first_not_of(char c, unsigned long pos = 0) const {
+        char set[2] = {c, 0};
+        return scan(set, pos, true, false);
+    }
+    unsigned long find_last_of(const char *set, unsigned long pos = npos) const { return scan(set, pos, false, true); }
+    unsigned long find_last_not_of(const char *set, unsigned long pos = npos) const { return scan(set, pos, false, false); }
+    unsigned long find_last_not_of(char c, unsigned long pos = npos) const {
+        char set[2] = {c, 0};
+        return scan(set, pos, false, false);
+    }
+    int compare(const char *s) const { return strcmp(p_, s); }
+    bool operator!=(const char *s) const { return strcmp(p_, s) != 0; }
     bool operator==(const char *s) const { return strcmp(p_, s) == 0; }
     bool operator==(const string &o) const { return strcmp(p_, o.p_) == 0; }
     bool operator!=(const string &o) const { return strcmp(p_, o.p_) != 0; }
@@ -84,6 +192,32 @@ public:
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
 private:
+    void assignChars(const char *s, unsigned long n) {
+        release(grow(n));
+        for (unsigned long i = 0; i < n; ++i) p_[i] = s[i];
+        n_ = n;
+        p_[n_] = 0;
+    }
+    bool same(unsigned long at, const char *s, unsigned long m) const {
+        for (unsigned long k = 0; k < m; ++k)
+            if (p_[at + k] != s[k]) return false;
+        return true;
+    }
+    // find_first_of / find_last_of and their _not_ forms: walk forward from pos or back from pos,
+    // stop at the first character whose membership in set is `in`.
+    unsigned long scan(const char *set, unsigned long pos, bool forward, bool in) const {
+        if (n_ == 0) return npos;
+        if (forward) {
+            for (unsigned long i = pos; i < n_; ++i)
+                if ((strchr(set, p_[i]) != nullptr && p_[i] != 0) == in) return i;
+            return npos;
+        }
+        unsigned long i = pos < n_ ? pos : n_ - 1;
+        for (;; --i) {
+            if ((strchr(set, p_[i]) != nullptr && p_[i] != 0) == in) return i;
+            if (i == 0) return npos;
+        }
+    }
     // Make room for n characters. The old buffer is freed only by the caller's release(), after the
     // new text has been copied in (s += s.c_str() reads from the old buffer while appending).
     char *grow(unsigned long n) {
@@ -102,5 +236,31 @@ private:
     char *p_;
     unsigned long n_;
     unsigned long cap_;
+};
+// The non-member operators with a C string on the left ([string.op.plus], [string.cmp]).
+inline string operator+(const char *a, const string &b) {
+    string r(a);
+    r += b;
+    return r;
+}
+inline string operator+(char a, const string &b) {
+    string r(1, a);
+    r += b;
+    return r;
+}
+inline bool operator==(const char *a, const string &b) { return b == a; }
+inline bool operator!=(const char *a, const string &b) { return b != a; }
+// hash<string> ([basic.string.hash]): FNV-1a over the characters (Fowler, Noll and Vo; offset basis
+// 14695981039346656037, prime 1099511628211), our own choice of string hash.
+template <>
+struct hash<string> {
+    unsigned long operator()(const string &s) const {
+        unsigned long h = 14695981039346656037UL;
+        for (unsigned long i = 0; i < s.size(); ++i) {
+            h ^= (unsigned char)s[i];
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
 };
 }  // namespace std

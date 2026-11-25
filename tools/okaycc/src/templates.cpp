@@ -51,6 +51,13 @@ std::size_t mangledEnd(const std::string& s, std::size_t j) {
         std::size_t k = mangledEnd(s, j + 1);
         return k == j + 1 ? j : k;
     }
+    if (c == 'A') {
+        std::size_t k = j + 1;
+        while (k < s.size() && s[k] >= '0' && s[k] <= '9') ++k;
+        if (k >= s.size() || s[k] != '_') return j;
+        std::size_t e = mangledEnd(s, k + 1);
+        return e == k + 1 ? j : e;
+    }
     if (c == 'L') {
         std::size_t k = s.find('E', j);
         return k == std::string::npos ? j : k + 1;
@@ -59,7 +66,29 @@ std::size_t mangledEnd(const std::string& s, std::size_t j) {
         std::size_t k = j;
         std::size_t n = 0;
         while (k < s.size() && s[k] >= '0' && s[k] <= '9') n = n * 10 + static_cast<std::size_t>(s[k++] - '0');
-        return k + n <= s.size() ? k + n : j;
+        if (k + n > s.size()) return j;
+        k += n;
+        if (k < s.size() && s[k] == 'I') {
+            // A class template instance: <name> I <arguments> E (Itanium C++ ABI 5.1.5).
+            ++k;
+            while (k < s.size() && s[k] != 'E') {
+                std::size_t e = mangledEnd(s, k);
+                if (e == k) return j;
+                k = e;
+            }
+            return k < s.size() ? k + 1 : j;
+        }
+        return k;
+    }
+    if (c == 'N') {
+        // A qualified name: N <part>... E.
+        std::size_t k = j + 1;
+        while (k < s.size() && s[k] != 'E') {
+            std::size_t e = mangledEnd(s, k);
+            if (e == k) return j;
+            k = e;
+        }
+        return k < s.size() ? k + 1 : j;
     }
     if (std::string("vbchstijlmfd").find(c) != std::string::npos) return j + 1;
     return j;
@@ -87,12 +116,60 @@ std::unique_ptr<Type> typeFromMangle(const std::string& m) {
         t->inner = std::move(inner);
         return t;
     }
-    if (c >= '0' && c <= '9') {
-        std::size_t k = 0;
-        std::size_t n = 0;
-        while (k < m.size() && m[k] >= '0' && m[k] <= '9') n = n * 10 + static_cast<std::size_t>(m[k++] - '0');
+    if (c == 'A') {
+        std::size_t k = 1;
+        std::uint64_t n = 0;
+        bool sized = false;
+        while (k < m.size() && m[k] >= '0' && m[k] <= '9') {
+            n = n * 10 + static_cast<std::uint64_t>(m[k++] - '0');
+            sized = true;
+        }
+        if (k >= m.size() || m[k] != '_') return nullptr;
+        auto inner = typeFromMangle(m.substr(k + 1));
+        if (!inner) return nullptr;
+        auto t = make(Type::Kind::Array);
+        t->inner = std::move(inner);
+        if (sized) {
+            t->bound = std::make_unique<Expr>();
+            t->bound->kind = Expr::Kind::Int;
+            t->bound->ival = n;
+        } else {
+            t->unsized = true;
+        }
+        return t;
+    }
+    if ((c >= '0' && c <= '9') || c == 'N') {
+        // A class: <length><name>, with I <arguments> E for an instance; N ... E when qualified.
+        // The tag is spelled as the parser spells it: "a::b<arg,arg>".
+        std::string tag;
+        std::size_t k = c == 'N' ? 1 : 0;
+        for (;;) {
+            std::size_t n = 0;
+            std::size_t d = k;
+            while (k < m.size() && m[k] >= '0' && m[k] <= '9') n = n * 10 + static_cast<std::size_t>(m[k++] - '0');
+            if (k == d || k + n > m.size()) return nullptr;
+            if (!tag.empty()) tag += "::";
+            tag += m.substr(k, n);
+            k += n;
+            if (k < m.size() && m[k] == 'I') {
+                ++k;
+                tag += "<";
+                bool first = true;
+                while (k < m.size() && m[k] != 'E') {
+                    std::size_t e = mangledEnd(m, k);
+                    if (e == k) return nullptr;
+                    if (!first) tag += ",";
+                    tag += m.substr(k, e - k);
+                    first = false;
+                    k = e;
+                }
+                tag += ">";
+                ++k;
+            }
+            if (c != 'N' || k >= m.size() || m[k] == 'E') break;
+        }
         auto t = make(Type::Kind::Struct);
-        t->tag = m.substr(k, n);
+        t->tag = tag;
         return t;
     }
     switch (c) {

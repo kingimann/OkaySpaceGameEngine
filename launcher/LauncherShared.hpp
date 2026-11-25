@@ -54,6 +54,7 @@ inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win
 inline uint32_t Id(SDL_Window* w)   { auto s = okay::pb::Win(w); return s ? s->Id() : 0; }
 inline bool IsFocused(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsFocused(); }
 inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::pb::Win(w)) s->Flash(m); }
+inline bool SetAlwaysOnTop(SDL_Window* w, bool on) { auto s = okay::pb::Win(w); return s && s->SetAlwaysOnTop(on); }
 } // namespace lw
 
 namespace okay { struct JoinLink; }

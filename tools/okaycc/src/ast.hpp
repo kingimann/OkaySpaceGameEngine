@@ -205,6 +205,10 @@ std::string mangleFunc(const std::string& qualified, const Type& fn);
 std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn);
 std::string mangleTypeNoCv(const Type& t);
 std::string mangleData(const std::string& qualified);
+std::string typeInfoSym(const Type& t);  // _ZTI<type>, the type's type_info object (RTTI)
+// Appends the weak _ZTS name and _ZTI object of t (and of its base classes) not yet in 'done'.
+void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::set<std::string>& done,
+                  int line, int col, const std::string& file);
 
 // templates.cpp
 std::vector<TArg> cloneArgs(const std::vector<TArg>& in);

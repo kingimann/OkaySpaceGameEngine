@@ -283,3 +283,7 @@ char *getenv(char *name) {
     }
     return 0;
 }
+
+/* errno (ISO C 7.5): one int for the program (one thread). <cerrno> makes errno (*__okay_errno()). */
+int __okay_errno_value;
+int *__okay_errno(void) { return &__okay_errno_value; }

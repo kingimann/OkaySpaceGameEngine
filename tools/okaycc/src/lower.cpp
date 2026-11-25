@@ -844,8 +844,9 @@ private:
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
         }
-        if (s->ref && s->agg) {
-            // A reference to an object: its value is the object's address (as for a local object).
+        if (s->ref && (s->agg || s->array)) {
+            // A reference to an object or an array: its value is the object's address (as for a
+            // local object; an array then decays to a pointer to its first element).
             Val v;
             v.op = Operand::vreg(s->reg);
             v.step = s->step;

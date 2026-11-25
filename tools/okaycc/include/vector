@@ -151,10 +151,29 @@ public:
         for (unsigned long i = 0; i < n; ++i) new (data_ + i) T(copy);
         size_ = n;
     }
+    // assign(first, last) and assign(list) ([sequence.reqmts]); two integers are a count and a value.
+    template <class It>
+    void assign(It first, It last) {
+        if constexpr (__okay_is_integral(It)) {
+            assign((unsigned long)first, (T)last);
+        } else {
+            vector<T> tmp;  // the range may be in this vector: copy it first
+            for (; first != last; ++first) tmp.push_back(*first);
+            swap(tmp);
+        }
+    }
+    void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
     void resize(unsigned long n) {
         while (size_ > n) pop_back();
         reserve(n);
         for (unsigned long i = size_; i < n; ++i) new (data_ + i) T();
+        size_ = n;
+    }
+    void resize(unsigned long n, const T &v) {  // new elements are copies of v ([vector.capacity])
+        T copy = v;  // v may be one of the elements
+        while (size_ > n) pop_back();
+        reserve(n);
+        for (unsigned long i = size_; i < n; ++i) new (data_ + i) T(copy);
         size_ = n;
     }
     T *erase(T *pos) {

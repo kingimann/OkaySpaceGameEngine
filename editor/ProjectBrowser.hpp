@@ -15,6 +15,7 @@
 #include "ProjectContextModel.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ThumbnailCache.hpp"
+#include "../shared/OkayThreads.hpp"   // okay::thr: the first index's worker (CLAUDE.md rule 21a)
 
 #include <cstdint>
 #include <functional>
@@ -149,6 +150,11 @@ public:
     /// nothing until the first Sync (the first scan can take a while on a big project and runs only when an
     /// operation or the info pane needs the database). Returns true when the scan found changes.
     bool Poll(std::uint64_t nowMs);
+    /// The Project panel's call every frame: the first index of the project runs on a worker (the frame never waits for it; the
+    /// finished index is taken in a later call), then Poll. Returns Poll's answer.
+    bool Update(std::uint64_t nowMs);
+    /// The first index is running on its worker.
+    bool Indexing() const;
     bool Indexed() const { return m_indexed; }
     /// How many assets use this one (0 when none), straight from the database's graph. Cheap: no scan.
     int UsersOf(const std::string& path);
@@ -321,6 +327,14 @@ private:
     std::vector<okay::Guid> GuidsUnder(const std::string& abs);   // the asset at a path, or every asset inside a folder
     double m_scanMs = 0;
     bool DoScan();                                                  // one incremental database scan (false: the folder cannot be read); raises m_revision on a change
+    static okay::ScanOptions ScanOpts();                            // the options every scan of the panel uses
+    static void Configure(okay::AssetDatabase& db);                 // the extractors the panel adds (m_db and the first index's scratch db)
+    void NoteScan(const okay::ScanReport& rep, std::uint64_t dbBefore, double ms);   // after a scan: revision, prune, Indexed
+    struct IndexJob;                                                // the first index on a worker (ProjectBrowser.cpp)
+    IndexJob* m_indexJob = nullptr;
+    okay::thr::Thread* m_indexThread = nullptr;
+    static int IndexWorker(void* job);
+    void DropIndexJob();
     bool m_scanChanged = false;                                     // the last scan found a change
     std::map<okay::Guid, std::vector<std::string>> m_missing;       // asset -> references that point at nothing (rebuilt per revision)
     std::uint64_t m_missingRev = ~0ull;

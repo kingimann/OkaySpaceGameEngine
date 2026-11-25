@@ -8728,8 +8728,10 @@ void DrawProject(EditorState& ed) {
         }
     }
     g_projectSelected = selected;
-    if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) { OKAY_BREADCRUMB("Project open: indexing the assets"); pb.Sync(); }   // first look at the project: index the assets once
-    pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    // The first look at the project indexes the assets (on a worker: okaypb::Browser::Update), then an incremental scan when due
+    // (waits at least 2 s and 30x as long as the last scan took).
+    if (!ed.projectDir().empty() && fs::is_directory(root, ec)) { if (!pb.Indexed()) OKAY_BREADCRUMB("Project open: indexing the assets"); pb.Update(okay::platform::TicksMs32()); }
+    else pb.Poll(okay::platform::TicksMs32());
     // A picture changed in another program, given new import settings, or reimported by hand: the Scene view shows the new
     // one now (before, only the panel's thumbnail was made again and the renderer kept the old pixels until a restart).
     for (const std::string& f : pb.TakeChangedFiles()) {

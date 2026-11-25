@@ -2,7 +2,7 @@
 
 Internal record of our own JavaScript engine and how `.js` scripts bind to the engine. Feature map row 13.9.
 Part 1 of the owner's request ("our own JavaScript engine, like three.js on top of this engine"): JavaScript as a game
-scripting language next to OkayScript, Lua and C#. Part 2, a web library with the same API, is not started.
+scripting language next to OkayScript, Lua and C#. Part 2, okay.js (`web/okayjs/`, feature map 18.12, `docs/scripting/okayjs.md`), is a browser library with the same script API: the same game script runs in both.
 
 ## Where it came from
 

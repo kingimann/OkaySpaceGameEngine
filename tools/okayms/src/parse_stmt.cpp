@@ -503,18 +503,50 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
         if (!cond_scoped && !fold_loop_expr(wpre, wtemps, &cond)) return false;
         Node body;
-        brk_dbase.push_back(dscopes.size());
-        cont_dbase.push_back(dscopes.size());
+        // while (T x = e) body is { T x = e; if (!x) break; body } on every pass ([stmt.while] 2): x is made and destroyed
+        // each time, so a break or continue in the body destroys it too (their bases leave out its scope).
+        const size_t loop_base = cond_scoped ? dscopes.size() - 1 : dscopes.size();
+        brk_dbase.push_back(loop_base);
+        cont_dbase.push_back(loop_base);
         const bool body_ok = parse_stmt(&body, locals);
         brk_dbase.pop_back();
         cont_dbase.pop_back();
         if (!body_ok) return false;
+        if (cond_scoped) {
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            Node leave;
+            leave.kind = Node::Block;
+            for (const Node& n : dt) leave.kids.push_back(n);
+            Node brk;
+            brk.kind = Node::Break;
+            leave.kids.push_back(std::move(brk));
+            Node test;
+            test.kind = Node::If;
+            Node stay;
+            stay.kind = Node::Block;
+            test.kids.push_back(std::move(cond));
+            test.kids.push_back(std::move(stay));
+            test.kids.push_back(std::move(leave));
+            Node pass;
+            pass.kind = Node::Block;
+            pass.text = "scope";
+            pass.kids.push_back(std::move(cond_decl));
+            pass.kids.push_back(std::move(test));
+            pass.kids.push_back(std::move(body));
+            for (Node& n : dt) pass.kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+            Node always;
+            always.kind = Node::IntLit;
+            always.number = 1;
+            always.type.base = 1;
+            out->kids.push_back(std::move(always));
+            out->kids.push_back(std::move(pass));
+            return true;
+        }
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(body));
-        if (cond_scoped) {
-            error = "a declaration in a while condition is not supported";  // the variable would need to be made again each pass
-            return false;
-        }
         return true;
     }
     if (is(TFor)) {

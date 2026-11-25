@@ -14,6 +14,7 @@ namespace {
 using okayms_test::Tally;
 const okayms_test::ProgramRun kRun{"r28", {}};
 const okayms_test::ProgramRun kRunCrt{"r28", {"msvcrt.dll:remove"}};
+const okayms_test::ProgramRun kRunThreads{"r28", {"CreateThread", "WaitForSingleObject"}};
 }  // namespace
 
 static const char* kAlloc = okayms_test::bump_alloc();
@@ -218,6 +219,178 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// Generic lambdas (a call operator template per `auto` parameter), closures that hold a shared_ptr by value (copied
+// and destroyed through the closure's implicit copy constructor and destructor: the use count must come back), a
+// while condition that declares a variable, and INFINITY.
+static void r28_lambdas(Tally& tally) {
+    std::printf("r28_lambdas\n");
+    okayms_test::run_both(kRun, tally, "lambdas", std::string(kAlloc) + R"OKMS(
+#include <vector>
+#include <algorithm>
+#include <utility>
+#include <memory>
+#include <cmath>
+struct State { int hits = 0; };
+template <class F> int call_twice(F f) { return f() + f(); }
+int* next_of(int* a, int& i) { return i < 4 ? &a[i++] : nullptr; }
+int entry(void) {
+  std::vector<std::pair<float, int>> k{{3.0f, 1}, {1.0f, 2}, {2.0f, 3}};
+  std::stable_sort(k.begin(), k.end(), [](auto& a, auto& b) { return a.first < b.first; });
+  CK(1, k[0].second == 2 && k[1].second == 3 && k[2].second == 1);
+  int base = 10;
+  auto add = [base](auto x, auto y) { return base + x + y; };
+  CK(2, add(1, 2) == 13 && add(1.5, 2.5) == 14.0);
+  auto twice = [&](const auto& v) -> int { return (int)v * 2; };
+  CK(3, twice(2.5) == 4 && twice(7) == 14);
+  auto st = std::make_shared<State>();
+  {
+    auto bump = [st]() { st->hits += 1; return st->hits; };
+    CK(4, st.use_count() == 2);
+    CK(5, call_twice(bump) == 3 && st->hits == 2);
+    auto copy = bump;
+    CK(6, st.use_count() == 3);
+  }
+  CK(7, st.use_count() == 1 && st->hits == 2);
+  int a[4] = {1, 2, 3, 4};
+  int i = 0, sum = 0;
+  while (int* p = next_of(a, i)) {
+    if (*p == 2) continue;
+    sum += *p;
+  }
+  CK(8, sum == 8 && i == 4);
+  float inf = INFINITY;
+  CK(9, inf > 1e38f && std::isinf(inf) && HUGE_VAL > 1e300);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// Classes: scoped enumerators named in a later enumerator, a friend function defined in its class, braced member
+// initializers, R& C::f() defined outside the class, a class's typedef in the parameters of a member defined outside
+// it, a nested class defined outside its class (struct Sys::Impl), a nested class and a local class calling a static
+// member of the class around them, and Get<T>() called without this-> in a member template.
+static void r28_classes(Tally& tally) {
+    std::printf("r28_classes\n");
+    okayms_test::run_both(kRun, tally, "classes", std::string(kAlloc) + R"OKMS(
+#include <functional>
+enum class Mask : unsigned { None = 0, A = 1u << 0, B = 1u << 1, C = 1u << 2, AB = A | B, All = AB | C };
+namespace n {
+struct Id {
+  int v;
+  friend constexpr bool operator==(Id a, Id b) { return a.v == b.v; }
+  friend bool operator!=(Id a, Id b) { return !(a == b); }
+};
+}
+struct Tables {
+  unsigned short base[4];
+  unsigned char extra[3];
+  int k;
+  constexpr Tables() : base{}, extra{}, k{5} { base[1] = 9; }
+};
+class Sys {
+public:
+  using Handler = std::function<int(int)>;
+  static constexpr int kAuto = -1;
+  Sys();
+  ~Sys();
+  static Sys& Global();
+  int& Count();
+  void SetHandler(Handler h);
+  int Run(int x);
+  static int Twice(int x) { return x * 2; }
+  class Lock {
+  public:
+    int Probe() const { return Twice(21); }
+  };
+private:
+  struct Impl;
+  Impl* impl_;
+  int count_ = 0;
+};
+struct Sys::Impl {
+  enum class Mode { Idle, Busy };
+  int base = 5;
+  Mode mode = Mode::Busy;
+  Handler handler;
+  int Apply(int x) const { return handler ? handler(x + base) : -1; }
+};
+Sys::Sys() : impl_(new Impl) {}
+Sys::~Sys() { delete impl_; }
+Sys& Sys::Global() {
+  struct Holder {
+    Sys s;
+    int w;
+    Holder() : w(kAuto) {}
+  };
+  static Holder h;
+  h.s.count_ = h.w;
+  return h.s;
+}
+int& Sys::Count() { return count_; }
+void Sys::SetHandler(Handler h) { impl_->handler = h; }
+int Sys::Run(int x) { return impl_->Apply(x) + (impl_->mode == Impl::Mode::Busy ? 1000 : 0); }
+struct Item { int v = 3; };
+struct Bag {
+  Item item;
+  template <typename T> T* Get() { return &item; }
+  template <typename T> T* Add() {
+    if (T* e = Get<T>()) return e;
+    return nullptr;
+  }
+};
+int entry(void) {
+  CK(1, (unsigned)Mask::AB == 3u && (unsigned)Mask::All == 7u);
+  n::Id a{1}, b{1}, c{2};
+  CK(2, a == b && a != c && !(a == c));
+  Tables t;
+  CK(3, t.base[0] == 0 && t.base[1] == 9 && t.extra[2] == 0 && t.k == 5);
+  Sys s;
+  s.SetHandler([](int x) { return x * 3; });
+  CK(4, s.Run(1) == 1018);
+  s.Count() = 4;
+  CK(5, s.Count() == 4 && Sys::Global().Count() == -1);
+  Sys::Lock l;
+  CK(6, l.Probe() == 42);
+  Bag bag;
+  CK(7, bag.Add<Item>()->v == 3);
+  return 0;
+}
+)OKMS", 0);
+}
+
+// thread_local of a class whose default member initializers are constants (Jobs.cpp's ThreadCtx): each thread starts
+// from those values.
+static void r28_thread_local_class(Tally& tally) {
+    std::printf("r28_thread_local_class\n");
+    okayms_test::run_both(kRunThreads, tally, "thread_local_class", std::string(kAlloc) + R"OKMS(
+extern "C" __declspec(dllimport) void* CreateThread(void* attrs, unsigned long long stack, unsigned long (*start)(void*), void* param, unsigned flags, unsigned* id);
+extern "C" __declspec(dllimport) unsigned WaitForSingleObject(void* handle, unsigned ms);
+struct Ctx {
+  const void* sys = nullptr;
+  int depth = 0;
+  int lane = -1;
+};
+thread_local Ctx t_ctx;
+static unsigned long worker(void* p) {
+  *(int*)p = (t_ctx.sys == nullptr ? 1 : 0) + t_ctx.depth * 10 + (t_ctx.lane == -1 ? 100 : 0);
+  t_ctx.depth = 7;
+  return 0;
+}
+int entry(void) {
+  CK(1, t_ctx.sys == nullptr && t_ctx.depth == 0 && t_ctx.lane == -1);
+  t_ctx.depth = 3;
+  t_ctx.lane = 2;
+  int out = 0;
+  void* h = CreateThread(0, 0, worker, &out, 0, 0);
+  if (h == 0) return 50;
+  WaitForSingleObject(h, 0xFFFFFFFFu);
+  CK(2, out == 101);
+  CK(3, t_ctx.depth == 3 && t_ctx.lane == 2);
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -226,5 +399,8 @@ int main(int argc, char** argv) {
     r28_templates(tally);
     r28_init_lookup(tally);
     r28_namespaces(tally);
-    return tally.finish(4);
+    r28_lambdas(tally);
+    r28_classes(tally);
+    r28_thread_local_class(tally);
+    return tally.finish(7);
 }

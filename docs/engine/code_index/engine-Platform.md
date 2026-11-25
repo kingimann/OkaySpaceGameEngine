@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 29 headers, 234 names.
+Back to the [code index](../code_index.md). 29 headers, 235 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -31,8 +31,9 @@ Back to the [code index](../code_index.md). 29 headers, 234 names.
 - `ApiResponse` struct, line 384: Result of an authenticated request to the account server (see Api). 'ok' is
 - `ScoreEntry` struct, line 393: One row of a server leaderboard: the player's name, their score, and their
 - `Provider` enum, line 405: Which backend signs players in.
-- `AccountService` class, line 411: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1246: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `SessionCheck` enum, line 408: How a check of the saved session with the server went (AccountService::CheckSession).
+- `AccountService` class, line 414: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1260: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 

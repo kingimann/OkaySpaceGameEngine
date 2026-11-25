@@ -1046,39 +1046,18 @@ struct LintTok {
     int line, col;
 };
 
-// Names and the punctuation the lint looks at, outside strings, templates and comments.
+// Names and the punctuation the lint looks at, from our lexer (so strings, templates and comments are skipped
+// exactly as the engine reads them). A source that does not tokenize gives none: its syntax error is reported.
 std::vector<LintTok> LintTokens(const std::string& s) {
+    std::vector<js::Token> toks;
+    js::SyntaxError err;
     std::vector<LintTok> out;
-    int line = 1, col = 1;
-    std::size_t i = 0;
-    auto adv = [&](std::size_t n) {
-        for (std::size_t k = 0; k < n && i < s.size(); ++k, ++i) {
-            if (s[i] == '\n') { ++line; col = 1; } else ++col;
-        }
-    };
-    while (i < s.size()) {
-        char c = s[i];
-        if (c == '/' && i + 1 < s.size() && s[i + 1] == '/') { while (i < s.size() && s[i] != '\n') adv(1); continue; }
-        if (c == '/' && i + 1 < s.size() && s[i + 1] == '*') {
-            adv(2);
-            while (i < s.size() && !(s[i] == '*' && i + 1 < s.size() && s[i + 1] == '/')) adv(1);
-            adv(2);
-            continue;
-        }
-        if (c == '"' || c == '\'' || c == '`') {
-            adv(1);
-            while (i < s.size() && s[i] != c && (c == '`' || s[i] != '\n')) adv(s[i] == '\\' ? 2 : 1);
-            adv(1);
-            continue;
-        }
-        if (std::isalpha((unsigned char)c) || c == '_' || c == '$') {
-            LintTok t{"", line, col};
-            while (i < s.size() && (std::isalnum((unsigned char)s[i]) || s[i] == '_' || s[i] == '$')) { t.text += s[i]; adv(1); }
-            out.push_back(t);
-            continue;
-        }
-        if (c == '.' || c == '(' || c == '{' || c == ')') { out.push_back(LintTok{std::string(1, c), line, col}); adv(1); continue; }
-        adv(1);
+    if (!js::Tokenize(s, toks, err)) return out;
+    for (const js::Token& t : toks) {
+        if (t.t == js::TT::Name) out.push_back(LintTok{js::Utf16To8(t.s), t.line, t.col});
+        else if (t.t == js::TT::Punct && (t.p == js::P_Dot || t.p == js::P_LParen || t.p == js::P_RParen || t.p == js::P_LBrace))
+            out.push_back(LintTok{t.p == js::P_Dot ? "." : t.p == js::P_LParen ? "(" : t.p == js::P_RParen ? ")" : "{", t.line, t.col});
+        else if (t.t != js::TT::End) out.push_back(LintTok{"", t.line, t.col});
     }
     return out;
 }

@@ -8,8 +8,8 @@
 // and the handle lookups of the generated layer. JavaScript uses all of these
 // (JavaScript/JavaScriptVM.cpp). The Lua backend still has private copies of the
 // same rules in engine/src/Lua/LuaScriptVM.cpp (Claude 3's lane): moving it onto
-// this file is handed over on #422, and until then those copies carry a
-// dup-allow mark with that reason here.
+// this file is handed over on #422, and until then the duplicate guard's
+// exception marks here name that reason.
 #include "../Script/ScriptInternal.hpp"
 #include "okay/VisualScript/VsValue.hpp"
 #include <set>

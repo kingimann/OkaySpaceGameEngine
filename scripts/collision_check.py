@@ -91,6 +91,15 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     claims, events = L.parse_claims(claims_comments or [], lanes)
     pr_branches = {p["head"]["ref"]: p for p in (prs or []) if p.get("head")}
     brs = L.branches(root)
+    # An archived branch (its tip is a parent of a commit on a `<lane>/archive` branch, CLAUDE.md rule 10) is parked, not live
+    # work, even if it was pushed recently or still exists on GitHub; the archive branches themselves are never live either.
+    archived = set()
+    for b in brs:
+        if b["name"].endswith("/archive"):
+            archived.add(b["sha"])
+            for line in L.git(root, "log", "--first-parent", "--format=%P", "origin/" + b["name"]).splitlines():
+                archived.update(line.split())
+    merged_heads = set(merged_heads) | archived
     if extra_branches:
         brs += extra_branches
     info, live = {}, {}

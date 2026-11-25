@@ -1,5 +1,6 @@
 #include "EditorCommon.hpp"
 #include "ProblemsPanel.hpp"
+#include "OkayPanels.hpp"     // DrawProblemsOkayUI: the panel is drawn by OkayUI only
 #include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
 #include "MainShared.hpp"
@@ -325,133 +326,55 @@ void DrawProblems(okay::editor::EditorState& ed) {
         ImGui::SetWindowFocus("Console###Console");
     else if (g_demo && g_demoFrame < 34)
         ImGui::SetNextWindowFocus();
-    const bool open = ImGui::Begin(title, &g_showProblems);
-    if (open) {
 
-    static char filter[96] = "";
-    static bool showErr = true, showWarn = true, showInfo = false;
-    const ImGuiStyle& st = ImGui::GetStyle();
-    auto pillW = [&](int count) {
-        char b[16]; std::snprintf(b, sizeof(b), "%d", count);
-        return ImGui::CalcTextSize(b).x + ImGui::GetFontSize() * 0.9f + st.FramePadding.x * 2.0f;
-    };
-    const float pills = pillW(totals.error) + pillW(totals.warning) + pillW(totals.info) + st.ItemSpacing.x;
-    SearchField("##pfilter", filter, sizeof(filter), "Search problems", -(pills + st.ItemSpacing.x));
-    auto pill = [&](const char* id, bool& on, const ImVec4& col, int count, const char* tip) {
-        char buf[32]; std::snprintf(buf, sizeof(buf), "%d%s", count, id);
-        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(1.0f, 0.5f));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
-        ImGui::PushStyleColor(ImGuiCol_Text, on ? col : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        if (ImGui::Button(buf, ImVec2(pillW(count), 0))) on = !on;
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar();
-        const ImVec2 mn = ImGui::GetItemRectMin();
-        const float dotR = ImGui::GetFontSize() * 0.2f;
-        ImGui::GetWindowDrawList()->AddCircleFilled(
-            ImVec2(mn.x + st.FramePadding.x + dotR, (mn.y + ImGui::GetItemRectMax().y) * 0.5f), dotR,
-            ImGui::GetColorU32(on ? col : ImVec4(col.x, col.y, col.z, 0.35f)));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-    };
-    ImGui::SameLine();
-    pill("##pe", showErr, SevColor(DiagSeverity::Error), totals.error, "Show errors");
-    ImGui::SameLine(0, st.ItemSpacing.x * 0.5f);
-    pill("##pw", showWarn, SevColor(DiagSeverity::Warning), totals.warning, "Show warnings");
-    ImGui::SameLine(0, st.ItemSpacing.x * 0.5f);
-    pill("##pi", showInfo, SevColor(DiagSeverity::Info), totals.info, "Show notes");
-    ImGui::Separator();
-
-    std::string needle = filter;
-    for (char& c : needle) c = (char)std::tolower((unsigned char)c);
-    std::vector<Diagnostic> rows = EditorDiagnostics().Items();
-    std::stable_sort(rows.begin(), rows.end(), [](const Diagnostic& a, const Diagnostic& b) {
-        if ((int)a.severity != (int)b.severity) return (int)a.severity > (int)b.severity;
-        return GroupOf(a) < GroupOf(b);
-    });
-
-    std::unordered_map<std::string, std::vector<int>> groups;
-    std::vector<std::string> order;
-    std::unordered_set<std::string> seenRow;
-    for (int i = 0; i < (int)rows.size(); ++i) {
-        const Diagnostic& d = rows[i];
-        if (d.severity == DiagSeverity::Error && !showErr) continue;
-        if (d.severity == DiagSeverity::Warning && !showWarn) continue;
-        if (d.severity == DiagSeverity::Info && !showInfo) continue;
-        if (!needle.empty()) {
-            std::string hay = d.message + " " + d.code + " " + d.source.objectPath + " " + d.hint;
-            for (char& c : hay) c = (char)std::tolower((unsigned char)c);
-            if (hay.find(needle) == std::string::npos) continue;
+    // Drawn by OkayUI only (editor/OkayPanels.cpp, okayui/screens/OkayUIEditorPanels.cpp; docs/ui/own_ui_toolkit.md section 25): the
+    // rows are the diagnostics in their own order; the panel sorts, filters, groups and drops repeats (okaypanels::GroupProblems).
+    static okaypanels::ProblemsState state;
+    const std::vector<Diagnostic> rows = EditorDiagnostics().Items();
+    okaypanels::ProblemsModel model;
+    model.errors = totals.error; model.warnings = totals.warning; model.infos = totals.info;
+    model.rows.reserve(rows.size());
+    for (const Diagnostic& d : rows) {
+        okaypanels::ProblemRow r;
+        r.id = (std::uint64_t)d.id;
+        r.severity = d.severity == DiagSeverity::Error ? okaypanels::ProblemError
+                   : d.severity == DiagSeverity::Warning ? okaypanels::ProblemWarning : okaypanels::ProblemInfo;
+        r.code = d.code; r.message = d.message; r.hint = d.hint;
+        r.objectPath = d.source.objectPath; r.objectGuid = d.source.objectGuid; r.nodeId = d.source.nodeId;
+        r.group = GroupOf(d);
+        r.canFix = d.fix.kind != DiagFixKind::None;
+        model.rows.push_back(std::move(r));
+    }
+    okaypanels::ProblemsIntent in;
+    ProblemsRects rects;
+    DrawProblemsOkayUI(title, &g_showProblems, model, state, in, g_demo ? &rects : nullptr);
+    auto valid = [&](int i) { return i >= 0 && i < (int)rows.size(); };
+    if (valid(in.fix)) {
+        const Diagnostic& d = rows[(std::size_t)in.fix];
+        ed.PushUndo();
+        std::string err;
+        if (ApplyDiagnosticFix(ed.scene(), d, &err)) {
+            ed.dirty = true;
+            ConsoleLog("Fixed: " + d.message);
+        } else {
+            ConsoleLog(err.empty() ? "Could not fix that." : err, 1);
         }
-        const std::string ident = d.code + "\n" + d.message + "\n" + d.source.objectGuid + "\n" + d.source.nodeId;
-        if (!seenRow.insert(ident).second) continue;
-        const std::string g = GroupOf(d);
-        if (!groups.count(g)) order.push_back(g);
-        groups[g].push_back(i);
     }
-
-    if (order.empty()) {
-        ImGui::Spacing();
-        ImGui::TextDisabled(totals.error + totals.warning + totals.info == 0
-                                ? "Nothing is wrong in this scene."
-                                : "Nothing matches this filter.");
-    }
-    for (const std::string& name : order) {
-        const std::vector<int>& idx = groups[name];
-        int errs = 0, warns = 0;
-        for (int i : idx) {
-            if (rows[i].severity == DiagSeverity::Error) ++errs;
-            else if (rows[i].severity == DiagSeverity::Warning) ++warns;
+    if (valid(in.open)) OpenDiagnostic(ed, rows[(std::size_t)in.open]);
+    if (valid(in.copy)) ImGui::SetClipboardText(okaypanels::ProblemCopyText(model.rows[(std::size_t)in.copy]).c_str());
+    if (g_demo) {   // where the demo clicks: the missing-collider row and its Fix button (OkayUI's pixels, back in ImGui's)
+        const ImVec2 o = ImGui::GetMainViewport()->Pos;
+        for (std::size_t k = 0; k < rects.rowIndex.size() && k < rects.rows.size(); ++k) {
+            const int i = rects.rowIndex[k];
+            if (!valid(i) || rows[(std::size_t)i].code != "player.missing_collider") continue;
+            const PanelRect& r = rects.rows[k];
+            g_rowClick = ImVec2(o.x + r.x + r.w * 0.5f, o.y + r.y + r.h * 0.5f); g_haveRow = true;
+            if (k < rects.fixButtons.size() && rects.fixButtons[k].w > 0.0f) {
+                const PanelRect& f = rects.fixButtons[k];
+                g_fixClick = ImVec2(o.x + f.x + f.w * 0.5f, o.y + f.y + f.h * 0.5f); g_haveFix = true;
+            }
         }
-        ImGui::Spacing();
-        ImGui::TextDisabled("%s    %d%s", name.c_str(), (int)idx.size(),
-                            errs ? "  error" : warns ? "  warning" : "");
-        ImGui::Indent(8.0f);
-        for (int i : idx) {
-            const Diagnostic& d = rows[i];
-            ImGui::PushID((int)d.id);
-            const bool canFix = d.fix.kind != DiagFixKind::None;
-            if (g_demo && g_demoFrame >= 14 && d.code == "player.missing_collider")
-                ImGui::SetScrollHereY(0.45f);
-            if (canFix) {
-                if (ImGui::SmallButton("Fix")) {
-                    ed.PushUndo();
-                    std::string err;
-                    if (ApplyDiagnosticFix(ed.scene(), d, &err)) {
-                        ed.dirty = true;
-                        ConsoleLog("Fixed: " + d.message);
-                    } else {
-                        ConsoleLog(err.empty() ? "Could not fix that." : err, 1);
-                    }
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", d.hint.c_str());
-                if (g_demo && d.code == "player.missing_collider") {
-                    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                    g_fixClick = ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-                    g_haveFix = true;
-                }
-                ImGui::SameLine();
-            }
-            ImGui::PushStyleColor(ImGuiCol_Text, SevColor(d.severity));
-            ImGui::TextUnformatted((std::string(SevName(d.severity)) + "   " + d.message).c_str());
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemClicked()) OpenDiagnostic(ed, d);
-            if (g_demo && d.code == "player.missing_collider") {
-                const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-                g_rowClick = ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-                g_haveRow = true;
-            }
-            if (ImGui::IsItemHovered()) {
-                std::string tip = d.message;
-                if (!d.hint.empty()) tip += "\n\n" + d.hint;
-                if (!d.code.empty()) tip += "\n\n" + d.code;
-                ImGui::SetTooltip("%s", tip.c_str());
-            }
-            ImGui::PopID();
-        }
-        ImGui::Unindent(8.0f);
     }
-
-    }
-    ImGui::End();
 
     if (g_demo) {
         const std::string dir = "/opt/cursor/artifacts";

@@ -7,13 +7,30 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace okayscript {
 namespace detail {
+
+/// Whether a value type has 64-bit whole numbers (IntPtr / V::Int): the standalone okayscript::Value does, the
+/// engine's value does not, so for the engine every integer path below compiles away and its rules stay the same.
+template <class V, class = void> struct HasInt : std::false_type {};
+template <class V> struct HasInt<V, std::void_t<decltype(std::declval<const V&>().IntPtr())>> : std::true_type {};
+/// The whole number in v, or nullptr (always nullptr for a value type without them).
+template <class V> inline const std::int64_t* IntOf(const V& v) {
+    if constexpr (HasInt<V>::value) return v.IntPtr();
+    else { (void)v; return nullptr; }
+}
+/// A whole number as a value: an Int where the value type has them, else the number (a 32-bit float).
+template <class V> inline V MakeInt(std::int64_t i) {
+    if constexpr (HasInt<V>::value) return V::Int(i);
+    else return V{(float)i};
+}
 
 // Number -> integer without undefined behaviour: NaN is 0, out-of-range values clamp.
 inline int SafeInt(double v) {
@@ -57,6 +74,17 @@ template <class V> bool IsLambdaValue(const V& v) {
     auto m = v.AsMap();
     return m && m->count("__lambda");
 }
+/// A new list of these values (the engine's value has no List constructor).
+template <class V> V ListOf(std::initializer_list<V> items) {
+    V v = V::MakeArray();
+    for (const V& x : items) v.AsArray()->push_back(x);
+    return v;
+}
+/// A value a call can run: a lambda, or a named function {"__fn": name} (a module's has "__mod" too).
+template <class V> bool IsCallableValue(const V& v) {
+    auto m = v.AsMap();
+    return m && (m->count("__lambda") || m->count("__fn"));
+}
 /// A plain-class object: a map tagged with the class that made it.
 template <class V> bool IsClassInstance(const V& v) {
     auto m = v.AsMap();
@@ -79,6 +107,12 @@ template <class V> bool IsNullish(const V& v) {
 /// `==` in scripts. Class objects are equal only to themselves; a handle equals the same handle, its name as text, or
 // null once its object is gone; text compares as text; anything else as numbers (so two lists of one length are equal).
 template <class V> bool ValuesEqual(const V& a, const V& b) {
+    if (const std::int64_t* x = detail::IntOf(a)) {
+        if (const std::int64_t* y = detail::IntOf(b)) return *x == *y;
+        if (b.IsNumber() || b.IsBool()) return (double)*x == (double)b.AsFloat();
+    } else if (const std::int64_t* y = detail::IntOf(b)) {
+        if (a.IsNumber() || a.IsBool()) return (double)a.AsFloat() == (double)*y;
+    }
     if (detail::IsClassInstance(a) || detail::IsClassInstance(b)) {
         if (detail::IsClassInstance(a) && detail::IsClassInstance(b)) return a.AsMap().get() == b.AsMap().get();
         return false;
@@ -114,10 +148,12 @@ template <class V> V CoerceToKind(unsigned char kind, const V& v, const std::str
     };
     switch (kind & 0x0F) {
         case KInt:
+            if (detail::IntOf(v)) return v;   // a whole number already
             if (v.IsNumber()) return V{(float)detail::SafeInt64(v.AsFloat())};   // drops the fraction, like (int)
             if (v.IsBool()) return V{v.AsBool() ? 1.0f : 0.0f};
             return fail(v.IsString() ? " (use int.Parse(text))" : "");
         case KFloat:
+            if (detail::IntOf(v)) return V{v.AsFloat()};
             if (v.IsNumber()) return v;
             if (v.IsBool()) return V{v.AsBool() ? 1.0f : 0.0f};
             return fail(v.IsString() ? " (use float.Parse(text))" : "");

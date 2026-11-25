@@ -514,7 +514,11 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->rt.classes.clear();
         m_impl->rt.self = Value{};
         m_impl->rt.selfClass.clear();
+        m_impl->rt.methodClass = nullptr;
         m_impl->rt.lambdas.clear();                  // they point into the program being replaced
+        m_impl->rt.closures.clear();                 // and so do the boxes lambdas keep,
+        m_impl->rt.generators.clear();               // paused generators,
+        m_impl->rt.classStatics.clear();             // and the static fields of its classes
         m_impl->rt.statics = Runtime::SharedStatics(source);
         m_impl->program = std::make_unique<okayscript::Program>();
         okayscript::ParseSource(source, *m_impl->program);   // as before, a syntax error leaves nothing loaded

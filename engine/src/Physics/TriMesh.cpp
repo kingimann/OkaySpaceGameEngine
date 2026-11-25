@@ -1,9 +1,14 @@
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/StringId.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <limits>
+#include <string_view>
+#include <vector>
 
 namespace okay {
 
@@ -11,6 +16,17 @@ namespace {
 constexpr int kLeafSize = 4;
 
 inline bool Finite3(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+
+// The box around the eight corners of [lo, hi] after the matrix m moves them (one place for all three users).
+void BoxThrough(const Mat4& m, const Vec3& lo, const Vec3& hi, Vec3& outMin, Vec3& outMax) {
+    const Vec3 first = m.MultiplyPoint(lo);
+    outMin = outMax = first;
+    for (int corner = 1; corner < 8; ++corner) {
+        const Vec3 q = m.MultiplyPoint({(corner & 1) ? hi.x : lo.x, (corner & 2) ? hi.y : lo.y, (corner & 4) ? hi.z : lo.z});
+        outMin = Vec3::Min(outMin, q);
+        outMax = Vec3::Max(outMax, q);
+    }
+}
 
 inline float Axis(const Vec3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; }
 
@@ -52,7 +68,50 @@ bool RayTri(const Vec3& o, const Vec3& d, const Vec3& a, const Vec3& b, const Ve
 }
 } // namespace
 
+int TriMesh::ClosedWinding() const {
+    if (m_winding != -2) return m_winding;
+    m_winding = 0;
+    const std::size_t n = m_tri.size() / 3;
+    if (n < 4) return 0;
+    auto vertexKey = [](const Vec3& v) {   // the corner's coordinates as bits, -0 and +0 alike, hashed with the engine's string hash
+        std::uint32_t w[3];
+        const float f[3] = {v.x, v.y, v.z};
+        for (int i = 0; i < 3; ++i) {
+            std::memcpy(&w[i], &f[i], sizeof(std::uint32_t));
+            if ((w[i] & 0x7fffffffu) == 0) w[i] = 0;
+        }
+        return (std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(w), sizeof w));
+    };
+    struct Edge { std::uint64_t key; std::uint8_t forward; };
+    std::vector<Edge> edges;
+    edges.reserve(n * 3);
+    double volume = 0.0;
+    for (std::size_t t = 0; t < n; ++t) {
+        const Vec3 c[3] = {m_tri[3 * t], m_tri[3 * t + 1], m_tri[3 * t + 2]};
+        const std::uint64_t k[3] = {vertexKey(c[0]), vertexKey(c[1]), vertexKey(c[2])};
+        for (int e = 0; e < 3; ++e) {
+            const std::uint64_t a = k[e], b = k[(e + 1) % 3];
+            if (a == b) return 0;
+            const std::uint64_t lo = std::min(a, b), hi = std::max(a, b);
+            const std::uint64_t ends[2] = {lo, hi};
+            edges.push_back({(std::uint64_t)StringId::HashOf(std::string_view(reinterpret_cast<const char*>(ends), sizeof ends)),
+                             (std::uint8_t)(a < b ? 1 : 0)});
+        }
+        const Vec3 cr = Vec3::Cross(c[1], c[2]);
+        volume += (double)c[0].x * cr.x + (double)c[0].y * cr.y + (double)c[0].z * cr.z;
+    }
+    std::sort(edges.begin(), edges.end(), [](const Edge& x, const Edge& y) { return x.key < y.key; });
+    for (std::size_t i = 0; i < edges.size(); i += 2)   // every edge exactly twice, once in each direction
+        if (i + 1 >= edges.size() || edges[i].key != edges[i + 1].key || edges[i].forward == edges[i + 1].forward ||
+            (i + 2 < edges.size() && edges[i + 2].key == edges[i].key))
+            return 0;
+    if (!(std::fabs(volume) > 1e-12)) return 0;
+    m_winding = volume > 0.0 ? 1 : -1;
+    return m_winding;
+}
+
 void TriMesh::Clear() {
+    m_winding = -2;
     m_tri.clear(); m_nodes.clear();
     m_bmin = m_bmax = Vec3{0, 0, 0};
     m_dropped = 0;
@@ -225,23 +284,12 @@ WorldView::WorldView(const TriMesh& mesh, const Mat4& l2w) : m_mesh(&mesh), m_l2
 }
 
 void WorldView::WorldBounds(Vec3& mn, Vec3& mx) const {
-    mn = {1e30f, 1e30f, 1e30f}; mx = {-1e30f, -1e30f, -1e30f};
     if (!Valid()) { mn = mx = Vec3{0, 0, 0}; return; }
-    const Vec3& lo = m_mesh->BoundsMin(); const Vec3& hi = m_mesh->BoundsMax();
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_l2w.MultiplyPoint({i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z});
-        mn = {std::min(mn.x, p.x), std::min(mn.y, p.y), std::min(mn.z, p.z)};
-        mx = {std::max(mx.x, p.x), std::max(mx.y, p.y), std::max(mx.z, p.z)};
-    }
+    BoxThrough(m_l2w, m_mesh->BoundsMin(), m_mesh->BoundsMax(), mn, mx);
 }
 
 void WorldView::LocalBounds(const Vec3& wmn, const Vec3& wmx, Vec3& lmn, Vec3& lmx) const {
-    lmn = {1e30f, 1e30f, 1e30f}; lmx = {-1e30f, -1e30f, -1e30f};
-    for (int i = 0; i < 8; ++i) {
-        Vec3 p = m_w2l.MultiplyPoint({i & 1 ? wmx.x : wmn.x, i & 2 ? wmx.y : wmn.y, i & 4 ? wmx.z : wmn.z});
-        lmn = {std::min(lmn.x, p.x), std::min(lmn.y, p.y), std::min(lmn.z, p.z)};
-        lmx = {std::max(lmx.x, p.x), std::max(lmx.y, p.y), std::max(lmx.z, p.z)};
-    }
+    BoxThrough(m_w2l, wmn, wmx, lmn, lmx);
     // Float slack so a triangle touching the box edge isn't culled by rounding.
     Vec3 pad = (lmx - lmn) * 1e-4f + Vec3(1e-5f, 1e-5f, 1e-5f);
     lmn = lmn - pad; lmx = lmx + pad;
@@ -250,6 +298,36 @@ void WorldView::LocalBounds(const Vec3& wmn, const Vec3& wmx, Vec3& lmn, Vec3& l
 void WorldView::WorldTri(int i, Vec3& a, Vec3& b, Vec3& c) const {
     Vec3 la, lb, lc; m_mesh->Triangle(i, la, lb, lc);
     a = m_l2w.MultiplyPoint(la); b = m_l2w.MultiplyPoint(lb); c = m_l2w.MultiplyPoint(lc);
+}
+
+bool WorldView::Nearest(const Vec3& p, float maxDist, Vec3& point, float& dist, bool& inside) const {
+    inside = false;
+    if (!Valid() || !(maxDist >= 0.0f)) return false;
+    auto boxLowerBound = [&](const Vec3& lo, const Vec3& hi) {   // a local box, as the world box around its eight corners
+        Vec3 mn, mx;
+        BoxThrough(m_l2w, lo, hi, mn, mx);
+        const float dx = std::max(std::max(mn.x - p.x, p.x - mx.x), 0.0f);
+        const float dy = std::max(std::max(mn.y - p.y, p.y - mx.y), 0.0f);
+        const float dz = std::max(std::max(mn.z - p.z, p.z - mx.z), 0.0f);
+        return std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-4f;   // (slack: a triangle on the box edge is never skipped)
+    };
+    auto triDistance = [&](int i) {
+        Vec3 a, b, c; WorldTri(i, a, b, c);
+        return (p - ClosestPointOnTriangle(p, a, b, c)).Magnitude();
+    };
+    int tri = -1;
+    const float best = m_mesh->Nearest(maxDist, boxLowerBound, triDistance, tri);
+    if (tri < 0) return false;
+    Vec3 a, b, c; WorldTri(tri, a, b, c);
+    point = ClosestPointOnTriangle(p, a, b, c);
+    dist = best;
+    const int winding = m_mesh->ClosedWinding();
+    if (winding != 0) {   // which side of the nearest triangle's plane (in the mesh's own space, where its winding is known)
+        Vec3 la, lb, lc; m_mesh->Triangle(tri, la, lb, lc);
+        const float side = Vec3::Dot(m_w2l.MultiplyPoint(p) - la, Vec3::Cross(lb - la, lc - la)) * (float)winding;
+        inside = side < 0.0f;
+    }
+    return true;
 }
 
 bool WorldView::Raycast(const Vec3& origin, const Vec3& dir, float maxT, float& t, Vec3& normal) const {

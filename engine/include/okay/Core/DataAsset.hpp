@@ -1,7 +1,8 @@
 #pragma once
+#include <cstdint>
 #include <string>
-#include <vector>
 #include <utility>
+#include <vector>
 
 namespace okay {
 
@@ -50,20 +51,32 @@ public:
     static void SetBaseDir(const std::string& dir);
     static const std::string& BaseDir();
     /// Load (and cache) the asset at `path`; repeated calls reuse the instance. A
-    /// file that can't be opened is not remembered as empty: you get an empty asset
-    /// to Set() into, and while it stays untouched each call tries the file again.
+    /// file that can't be opened is not remembered as loaded: you get an empty asset
+    /// to Set() into, and each later call tries the file again. Once the file exists
+    /// it is read, including when a script already Set() values into the empty asset
+    /// (those values were only a stand-in while the file was missing). A file that
+    /// was already loaded is not read again until Reload() or ReloadIfChanged().
     static DataAsset& Cached(const std::string& path);
     /// Re-read `path` into the cache (an edited or newly created file). False, with
     /// the cached copy kept, if it can't be read.
     static bool Reload(const std::string& path);
+    /// Re-read `path` when the file's size or modification time differs from the cached copy.
+    /// False when nothing is cached, the entry was never loaded from a file (a script's stand-in
+    /// values stay), the file is unchanged, or it cannot be read. The cached object is the same one.
+    static bool ReloadIfChanged(const std::string& path);
     /// Forget one cached asset: the next Cached() reads the file again. A reference an earlier
     /// Cached() call returned stays valid (it is emptied, not freed) and fills again on that next call.
     static void Invalidate(const std::string& path);
     static void InvalidateAll();   ///< Invalidate every cached path
 
 private:
+    void RememberStamp(const std::string& openedPath);
+
     std::vector<Field> m_fields;
     bool m_loaded = false;      // set by the cache once a file was read into it
+    bool m_stampOk = false;     // m_stampSize / m_stampTime describe the file that was loaded
+    std::uint64_t m_stampSize = 0;
+    std::int64_t m_stampTime = 0;
 };
 
 } // namespace okay

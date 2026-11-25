@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <thread>
 #include <map>
 #include <set>
 
@@ -93,6 +94,7 @@ int main() {
         CHECK((Names(art) == std::vector<std::string>{"hero.okaymat", "hero.png", "rock.png", "unused.png"}));
         CHECK(art[1].kind == okay::AssetType::Texture && !art[1].guid.IsNull() && !art[1].hasMeta && art[1].size > 0 && art[1].modified > 0);
         CHECK(b.AssetCount() == 8);                                       // every file is in the database, none of it written to disk
+        CHECK(okay::SceneAssetIndex() == &b.Db());                        // scene saves can write a sprite's asset id
         int metas = 0;
         for (fs::recursive_directory_iterator it(p.td.path), end; it != end; ++it) if (it->path().extension() == ".okaymeta") ++metas;
         CHECK(metas == 0);
@@ -447,6 +449,22 @@ int main() {
         CHECK(idleMs < 400.0);       // budget: an unchanged project re-checks 5,000 assets in well under half a second
         CHECK(editMs < 600.0);       // and picks up a few edits (re-reading only the changed files) within 600 ms
         CHECK(searchMs < 200.0 && listMs < 50.0);
+    }
+
+    // A watch event does not skip the poll gap. The file shows up on the next due poll.
+    {
+        RUN_SUITE("project_watch");
+        TempDir td;
+        WriteFile(td.at("a.okaydata"), "name = A\n");
+        Browser b(td.assets());
+        CHECK(b.Sync());
+        CHECK(b.AssetCount() == 1);
+        const std::uint64_t rev = b.Revision();
+        b.Poll(1000);                        // arms the watch and starts the gap
+        WriteFile(td.at("b.okaydata"), "name = B\n");
+        CHECK(!b.Poll(1001));                // inside the gap: the watch must not force a scan
+        CHECK(b.Poll(1000 + 100000) && b.AssetCount() >= 2);
+        CHECK(b.Revision() > rev);
     }
 
     TEST_MAIN_RESULT();

@@ -4,7 +4,7 @@
 >
 > **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
 >
-> **Last checked:** 2026-11-22 (step 29: Dear ImGui popups over the code, the ImGui editor's look, languages, clipboard, IME; see the end).
+> **Last checked:** 2026-11-24 (step 32: the script editor upgrade, editing basics, folding, many carets; see the end).
 
 Own code. Part of the "replace every third-party library" work (`docs/status/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/ui/own_ui_toolkit.md`, section 4.29).
 
@@ -119,15 +119,12 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 - **IME** (composition text, candidate window): the widget shows the preedit, takes the commit and reports the caret rectangle (`docs/ui/own_ui_toolkit.md` section 4.31). Since step 29 the editor's host sends it: the sdl2 seam reports `SDL_TEXTEDITING` as `TextEditing`, `InputCollector` passes the preedit, and the caret rectangle goes to Dear ImGui's IME data (the candidate window). Tested headless with synthetic events only; no input method was run (none on the Xvfb test machine, Windows not run).
 - **Ligatures**, **bidirectional text**, **wide-character cell widths**, **combining-mark clusters**.
-- **Multiple cursors** and **column (block) selection**.
-- **Code folding.**
-- **Word wrap.** Long lines scroll sideways.
-- **Auto-close brackets and quotes**, **auto-dedent when typing `}`**: not in the library the script editor uses either.
+- (Done in step 32: multiple cursors, column selection, code folding, word wrap, auto-close of brackets and quotes, auto-dedent.)
 - Line commands (`ToggleLineComment`, `DuplicateLines`, `DeleteLines`, `MoveLines`, tested headless in `LineCommandTests`) are bound to keys in `Draw` (`LineCommandKeyTests`). With the OkayUI editor active, `editor/main.cpp` leaves those keys to the widget (they would run twice) and its toolbar comment button calls `ToggleLineComment`; the Dear ImGui editor keeps its own handling. Ctrl+Shift+J (join lines) and Alt+Enter (quick fix) stay the script editor's. Written from the editor's documented behaviour, no outside code. `FormatOkayScript` stays the editor's.
 - **Autocomplete popup and the hover tooltip**: the editor draws them itself (they use `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`. Since step 29 they are drawn over the code (the code is drawn in Dear ImGui's order).
-- **Drag and drop of selected text**, **drop of files onto the editor**.
-- **Show whitespace**, **minimap**, **indent guides**, **matching word highlight**.
-- **Replace across several lines of the needle** (a find text with a newline matches nothing).
+- **Drop of files onto the editor** (drag and drop of selected text: done in step 32).
+- **Minimap** in the widget: the script editor draws its own beside the widget (`editor/main.cpp`, View > Minimap); show whitespace, indent guides and matching word highlight: done in step 32.
+- (Find and replace across lines: done in step 32.)
 - **Mouse cursor shape** is set (`MouseCursor_TextInput` over the text) but, like the rest of OkayUI, only the host shows it.
 - **Not verified**: a real window on screen with the SDL_Renderer or Direct3D 11 backend (only the headless draw-list rasteriser was used; it skips textured quads, so the launcher look's Roboto glyphs are not in the golden), Windows and macOS builds, a real keyboard (host key repeat, dead keys, layouts), the real system clipboard, the editor's script editor actually running on it.
 
@@ -218,3 +215,46 @@ Checked and left as is: the error's message after the end of a line is drawn by 
 NOT DONE (step 31): the editor was not run in a window after the switch; not built or run on Windows (only the changed headless
 files were syntax-checked with MinGW); the editor built on OkayUI itself (`OKAY_EDITOR_ON_OKAYUI`, off, not in CI) got a plain
 fallback `Render` that was not compiled; IME only with synthetic events.
+
+
+## Step 32: the script editor upgrade (2026-11-24, branch `claude/script-editor-1`)
+
+Written from the behaviour of common code editors as users see it (no other editor's code read or followed); Lua's block words
+from the Lua 5.4 reference manual's grammar.
+
+| What | Where | How it behaves |
+|---|---|---|
+| Auto-close | `CodeEdit::Type` (typed text; `InsertText` never pairs), `SetAutoClose` | `( [ { " '` add their closer; a closer already next to the caret is typed over; Backspace between a pair removes both; an opener or quote typed over a selection wraps it and keeps it selected. Not inside strings or comments, not before a word, a quote not after a letter. The script editor's own pairing in `main.cpp` (which used display columns as byte offsets and added a second blank line after Enter between braces) is removed; its View menu switch now sets the widget's |
+| Auto-dedent | `SetAutoDedent` | a `}` typed as the first thing on a line takes the indent of its `{` line (else one level less); a dedent word of the language (`CodeLanguage::dedentWords`, Lua: `end else elseif until`) typed alone takes one level off, once, and gives it back when the word goes on (`end` to `ending`). One undo step with the character |
+| Enter after a block word | `NewLine` | Lua's `then`, `do`, `function`, `repeat`, `else` (outside strings and comments) indent the next line, as `{` does |
+| Matching word | palette `wordMatch` (0 in `DefaultCodePalette`, set by the adapter) | the other whole-word places of the word at the caret (or the selected word) are tinted |
+| Indent guides | palette `indentGuide` | a 1 px line at every indent level left of the text; a blank line takes the smaller indent of its neighbours |
+| Whitespace | `SetShowWhitespace` | a dot per space, an arrow per tab |
+| Word wrap | `SetWordWrap` | rows break after the last space that leaves the row half full, else at the column limit; no horizontal scroll; Up and Down, PageUp and PageDown, clicks, drags, the selection, find washes, error underlines and the caret follow rows; one line number per line |
+| Find across lines | `SetFind` with `\n` | the first part must end its line, the middle parts are whole lines, the last part starts a line; FindNext, FindPrev, FindCount, ReplaceCurrent, ReplaceAll (one undo step, matches taken from the top without overlap) |
+| Folding | `SetFolding`, `Fold`, `Unfold`, `ToggleFold`, `FoldAll`, `UnfoldAll`, `FoldEnd`, `IsLineHidden` | blocks by `{ }` and the language's block words (strings and comments skipped), and by indent (`foldByIndent`, on for Lua); a fold column with arrows in the gutter, a `...` box after a folded line (a click unfolds), Ctrl+Shift+[ and ], Ctrl+Alt+[ and ] for all. The closing `}` or `end` line stays in view. Folds move with edits above them, are checked again after every edit (a block that lost its brace unfolds) and a caret put into a hidden line unfolds it |
+| Many carets | `AddCaret`, `RemoveCaretAt`, `ClearExtraCarets`, `Selections`, `SelectNextOccurrence`, `SetColumnSelection` | Ctrl+click adds (or removes) a caret, Ctrl+D selects the word then adds its next whole-word place, Alt+drag makes a column selection, Escape goes back to one. Every edit works at every caret as one undo step (typing a word at many carets is one step, as with one): typing with auto-close, Backspace, Delete, Enter, Tab, Cut, Copy (one line per caret), Paste (one line each when the counts match), the line commands (once per line), MoveLines, every movement key; undo and redo bring the carets back |
+| Drag and drop of text | `MoveSelectionTo` | a press inside the selection and a drag moves it (Ctrl at the drop: copies), one undo step; a press without a drag places the caret |
+
+Key change: Ctrl+D was Duplicate Lines (the Rider key the Dear ImGui editor used); it is now the next match (the owner's request),
+and Duplicate Lines is Ctrl+Shift+D. `editor/main.cpp` leaves line keys to the widget, so only the widget changed.
+
+The script editor (`editor/ScriptEditorCodeEdit.*`) turns folding on, gives the new colours from its palette (word match from the
+selection colour, guides and fold marks from the line numbers, whitespace from the comments) and takes a language's block words
+from `LanguageWords` (`blockOpenWords`, `blockCloseWords`, `dedentWords`, `foldByIndent`); a language with Lua's `--` comments and
+no block words of its own gets `LuaBlockWords()`. `editor/main.cpp` got View > Word Wrap, Show Whitespace, Fold All, Unfold All and
+the same in the command palette.
+
+Inside: a row map (`ensureRows`) turns lines into what is drawn; with no folds and no wrap there is none at all (a row is a line),
+so the 100,000-line numbers above are unchanged in that case. An edit at many carets runs the one-caret edit at each caret, from
+the bottom up (MoveLines up: from the top), while every caret's place is moved by each edit (`applyRaw`).
+
+Tests (all headless): `okayui_codeedit` (`AutoCloseTests`, `DedentTests`, `WordWrapTests`, `MultiLineFindTests`, `FoldTests`,
+`MultiCaretTests`, `DragDropTests`, `MultiCaretWidgetTests`, `FeatureDrawTests`; new golden images `codeedit_wrap.png` and
+`codeedit_features.png`, `codeedit_highlight.png` unchanged), `okayui_codeedit_fuzz` (a third scenario, `ExtraFuzz`, and the
+widget fuzz with the new options, Alt, Ctrl+D and the fold keys).
+
+NOT DONE (step 32): the editor was not run in a window with these changes, not on Windows; a real keyboard, mouse and IME were
+not used (synthetic input only); go to definition across the project's scripts; error markers with the column of the error (the
+diagnostics carry one, the script editor still gives a whole line); a minimap inside the widget (the script editor's own is kept).
+

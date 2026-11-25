@@ -846,14 +846,27 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
 // ---- Import settings (the Project panel) ----------------------------------------------------------------------------------------
 
 namespace {
-// The import panel's combo: a 160-pixel field and the label after it.
+// The import panel's combo: as wide as its longest choice, at least 160 pixels, never wider than the room left of its label
+// (ImportComboWidth, the editor's rule), the label after it.
 bool ImportCombo(const char* label, int& value, const char* const* items, int count, UI::Rect& rect) {
-    UI::SetNextItemWidth(WithLabel(160.0f, label));
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, UI::CalcTextWidth(items[i]));
+    const float labelW = WithLabel(0.0f, label);
+    const float frameW = ImportComboWidth(widest, g_metrics.framePadding.x, UI::GetFontSize() + 2.0f * g_metrics.framePadding.y,
+                                          UI::GetContentRegionAvail().x, labelW > 0.0f ? labelW - g_metrics.innerSpacing.x : 0.0f,
+                                          g_metrics.innerSpacing.x);
+    UI::SetNextItemWidth(WithLabel(frameW, label));
     int v = value >= 0 && value < count ? value : -1;
     const bool ch = UI::Combo(label, items, count, &v);
     rect = UI::GetItemRect();
     if (ch && v >= 0 && v < count && v != value) { value = v; return true; }
     return false;
+}
+// A grey note under a setting, wrapped at the panel's edge.
+void ImportHint(const char* text) {
+    UI::PushTextWrapPos(0.0f);
+    UI::TextDisabled(text);
+    UI::PopTextWrapPos();
 }
 } // namespace
 
@@ -867,52 +880,79 @@ ImportSettingsResult DrawImportSettings(ImportSettingsModel& m, ImportSettingsSt
         const float top = UI::GetCursorScreenPos().y;
         bool body = m.edit != nullptr;
         if (body) UI::TextDisabled(kImportHeading);
-        if (body && m.newer) { UI::TextDisabled(kImportNewerNote); body = false; }
+        if (body && m.newer) { ImportHint(kImportNewerNote); body = false; }
         ImportFields* e = body ? m.edit : nullptr;
+        auto box = [&](const char* label, bool* v, UI::Rect& rect) {
+            const bool ch = UI::Checkbox(label, v);
+            rect = UI::GetItemRect();
+            return ch;
+        };
         if (e) switch (e->kind) {
             case ImportTexture: {
                 int si = ImportSizeIndex(e->maxSize);
                 if (ImportCombo("Largest side", si, kImportSizeNames, 11, res.sizeCombo)) { e->maxSize = kImportSizes[si]; res.intent.changed = true; }
-                UI::TextDisabled("Bigger pictures are made smaller when loaded.");
+                ImportHint("Bigger pictures are made smaller when loaded.");
                 if (m.showSampler) {
-                    if (ImportCombo("Filter", e->filter, kImportFilterNames, 3, res.filterCombo)) res.intent.changed = true;
-                    UI::TextDisabled("Point keeps hard pixel edges.");
+                    int kind = ImportTexKindIndex(*e);
+                    if (ImportCombo("Kind", kind, kImportKindNames, 3, res.kindCombo)) { ImportSetTexKind(*e, kind); res.intent.changed = true; }
+                    ImportHint("Colour pictures are filtered in linear light. Normal maps stay unit length in every mip.");
+                    int fi = ImportFilterIndex(*e);
+                    if (ImportCombo("Filter", fi, kImportFilterNames, 4, res.filterCombo)) { ImportSetFilter(*e, fi); res.intent.changed = true; }
+                    if (fi == 3) {
+                        int li = ImportAnisoIndex(e->anisotropy);
+                        if (ImportCombo("Anisotropy", li, kImportAnisoNames, 4, res.anisoCombo)) { e->anisotropy = kImportAnisoLevels[li]; res.intent.changed = true; }
+                    }
+                    ImportHint("Point keeps hard pixel edges. Anisotropic keeps floors sharp far away.");
                     if (ImportCombo("Wrap", e->wrap, kImportWrapNames, 3, res.wrapCombo)) res.intent.changed = true;
-                    UI::TextDisabled("What is drawn past the picture's edge.");
-                    if (UI::Checkbox("Mipmaps", &e->mipmaps)) res.intent.changed = true;
-                    res.mipmaps = UI::GetItemRect();
-                    UI::TextDisabled("Smaller copies for far away. Off: always full size.");
-                    UI::TextDisabled("Applies in the editor view and OpenGL / software games.");
+                    ImportHint("What is drawn past the picture's edge.");
+                    if (box("Mipmaps", &e->mipmaps, res.mipmaps)) res.intent.changed = true;
+                    if (e->mipmaps && ImportCombo("Mip filter", e->mipFilter, kImportMipFilterNames, 2, res.mipFilterCombo)) res.intent.changed = true;
+                    ImportHint("Smaller copies for far away, made by our own filter. Off: always full size.");
+                    if (box("Compress on the GPU", &e->compress, res.compress)) res.intent.changed = true;
+                    if (e->compress) {
+                        if (ImportCombo("Format", e->compression, kImportFormatNames, 5, res.formatCombo)) res.intent.changed = true;
+                        ImportHint(kImportCompressNote);
+                    }
+                    if (!m.loadedNote.empty()) ImportHint(m.loadedNote.c_str());
                 }
+                Divider();
+                UI::TextDisabled(kImportToolsHeading);
+                ImportCombo("Write", st.ddsOut, kImportDdsOutNames, 2, res.ddsOutCombo);
+                ImportCombo("Filter##ddstool", st.ddsFilter, kImportDdsFilterNames, 3, res.ddsFilterCombo);
+                box("Colour picture (filter in linear light)", &st.ddsColour, res.ddsColour);
+                box("Normal map", &st.ddsNormal, res.ddsNormal);
+                box("Cut-out (keep see-through share)", &st.ddsCutout, res.ddsCutout);
+                if (UI::Button("Generate mipmaps / compress")) res.intent.generate = true;
+                res.generate = UI::GetItemRect();
+                ImportHint("Writes a .dds next to the picture. Open it in any DDS viewer.");
+                if (!m.toolMessage.empty()) UI::TextWrapped(m.toolMessage.c_str());
                 break;
             }
             case ImportModel: {
                 UI::SetNextItemWidth(WithLabel(160.0f, "Scale"));
                 if (UI::DragFloat("Scale", &e->scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) res.intent.changed = true;
                 res.scale = UI::GetItemRect();
-                UI::TextDisabled("Multiplies its size when you add it to a scene.");
+                ImportHint("Multiplies its size when you add it to a scene.");
                 if (ImportCombo("Normals", e->normals, kImportNormalsNames, 3, res.normalsCombo)) res.intent.changed = true;
                 if (e->normals == 1) {
                     UI::SetNextItemWidth(WithLabel(160.0f, "Smoothing angle"));
                     if (UI::DragFloat("Smoothing angle", &e->smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) res.intent.changed = true;
                     res.smoothing = UI::GetItemRect();
-                    UI::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                    ImportHint("Sharper edges stay hard. Not for rigged parts.");
                 } else if (e->normals == 2) {
-                    UI::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                    ImportHint("Each face shaded alone. Not for rigged parts.");
                 }
-                if (UI::Checkbox("Import animations", &e->importAnimations)) res.intent.changed = true;
-                res.animations = UI::GetItemRect();
-                UI::TextDisabled("Off: no clips, rest pose.");
-                UI::TextDisabled("Used when the model is next added to a scene.");
+                if (box("Import animations", &e->importAnimations, res.animations)) res.intent.changed = true;
+                ImportHint("Off: no clips, rest pose.");
+                ImportHint("Used when the model is next added to a scene.");
                 break;
             }
             case ImportAudio: {
                 if (ImportCombo("Loading", e->loadMode, kImportLoadNames, 2, res.loadCombo)) res.intent.changed = true;
-                UI::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
-                if (UI::Checkbox("Mix down to one channel", &e->forceMono)) res.intent.changed = true;
-                res.mono = UI::GetItemRect();
-                UI::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-                UI::TextDisabled("Used the next time the file is loaded.");
+                ImportHint("Read while it plays keeps a long file in a small fixed amount of memory.");
+                if (box("Mix down to one channel", &e->forceMono, res.mono)) res.intent.changed = true;
+                ImportHint("Left and right become a single channel. Off keeps the recording as it is.");
+                ImportHint("Used the next time the file is loaded.");
                 break;
             }
             default: e = nullptr; break;
@@ -1090,21 +1130,16 @@ PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y
             res.version = UI::GetItemRect();
         }
         if (m.width && m.height) {
-            UI::SetNextItemWidth(WithLabel(110.0f, "Width"));
-            // the step buttons: two squares a frame tall before the label, 8 pixels apart (the framed InputInt)
-            auto steps = [](const UI::Rect& r, const char* label, UI::Rect& minus, UI::Rect& plus) {
-                const float right = r.x + r.w - (UI::CalcTextWidth(label) + 8.0f);
-                plus = UI::Rect{right - r.h, r.y, r.h, r.h};
-                minus = UI::Rect{plus.x - 8.0f - r.h, r.y, r.h, r.h};
-            };
-            if (UI::InputInt("Width##ps", m.width)) res.intent.changed = true;
+            // Plain number fields wide enough for five digits at any text size, with no -/+ buttons (editor/main.cpp: at 110 pixels the
+            // buttons took the room and 1280 x 720 showed as "12" and "72").
+            const float numW = UI::CalcTextWidth("000000") + 2.0f * g_metrics.framePadding.x;
+            UI::SetNextItemWidth(WithLabel(numW, "Width"));
+            if (UI::InputInt("Width##ps", m.width, 0)) res.intent.changed = true;
             res.width = UI::GetItemRect();
-            steps(res.width, "Width", res.widthMinus, res.widthPlus);
             UI::SameLine();
-            UI::SetNextItemWidth(WithLabel(110.0f, "Height"));
-            if (UI::InputInt("Height##ps", m.height)) res.intent.changed = true;
+            UI::SetNextItemWidth(WithLabel(numW, "Height"));
+            if (UI::InputInt("Height##ps", m.height, 0)) res.intent.changed = true;
             res.height = UI::GetItemRect();
-            steps(res.height, "Height", res.heightMinus, res.heightPlus);
         }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();
@@ -3597,6 +3632,64 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             if (r.disabled) UI::EndDisabled();
         }
         while (indent-- > 0) UI::Unindent(g_metrics.indentSpacing);
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Loading screen (Project Settings) -----------------------------------------------------------------------------------------
+
+LoadingScreenResult DrawLoadingScreen(LoadingScreenModel& m, float x, float y, float w, float h) {
+    LoadingScreenResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("LoadingScreen##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        const float top = UI::GetCursorScreenPos().y;
+        {   // two lines of one text item (OkayUI's TextDisabled draws one line: split at the line break, no spacing between the lines)
+            const std::string note = kLoadingScreenNote;
+            std::size_t a = 0;
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{g_metrics.itemSpacing.x, 0.0f});
+            for (std::size_t b; (b = note.find('\n', a)) != std::string::npos; a = b + 1) UI::TextDisabled(note.substr(a, b - a).c_str());
+            UI::PopStyleVar();
+            UI::TextDisabled(note.substr(a).c_str());
+        }
+        if (m.logo && m.logoSize > 0) {
+            m.logo[m.logoSize - 1] = '\0';
+            UI::SetNextItemWidth(360.0f);
+            if (UI::InputTextWithHint("##pssplashlogo", kSplashLogoHint, m.logo, (int)std::min<std::size_t>(m.logoSize, 1u << 20))) res.intent.changed = true;
+            res.logo = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("...##pssplash")) res.intent.browse = true;
+            res.browse = UI::GetItemRect();
+            if (UI::IsItemHovered()) UI::SetTooltip("%s", "Browse...");
+            UI::SameLine();
+            UI::PushID("pssplash");   // LineButton measures its whole label: the id goes on the stack, not after "##"
+            if (LineButton("Clear")) { if (m.logo[0]) res.intent.changed = true; m.logo[0] = '\0'; }
+            UI::PopID();
+            res.clear = UI::GetItemRect();
+        }
+        // a colour row 220 pixels wide (Dear ImGui's SetNextItemWidth(220) before ColorEdit3)
+        auto colour = [&](const char* label, float* c, UI::Rect* rect) {
+            const float was = g_metrics.itemWidth;
+            g_metrics.itemWidth = 220.0f;
+            if (InspColorEdit(label, c, 3, rect)) res.intent.changed = true;
+            g_metrics.itemWidth = was;
+        };
+        if (m.accentOverride) {
+            if (UI::Checkbox("Custom splash accent##ps", m.accentOverride)) res.intent.changed = true;
+            res.accentBox = UI::GetItemRect();
+            if (*m.accentOverride && m.accent) { UI::SameLine(); colour("##pssplashaccent", m.accent, &res.accent); }
+        }
+        if (m.bgTop) colour("Background top##ps", m.bgTop, &res.bgTop);
+        if (m.bgBottom) colour("Background bottom##ps", m.bgBottom, &res.bgBottom);
+        if (m.showBar) {
+            if (UI::Checkbox("Show progress bar##ps", m.showBar)) res.intent.changed = true;
+            res.showBar = UI::GetItemRect();
+        }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();
     }

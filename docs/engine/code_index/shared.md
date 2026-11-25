@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 971 names.
+Back to the [code index](../code_index.md). 67 headers, 980 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -378,86 +378,94 @@ Back to the [code index](../code_index.md). 67 headers, 971 names.
 
 ## `shared/EditorPanelModels.hpp`
 
-- `ProblemSeverity` enum, line 35
-- `ProblemRow` struct, line 37
-- `ProblemsModel` struct, line 46
-- `ProblemsState` struct, line 52: What the person set on the panel; the host keeps one for the panel's lifetime.
-- `ProblemsIntent` struct, line 58: What the person asked for this frame (indexes into ProblemsModel::rows, -1 = nothing).
-- `ProblemGroup` struct, line 64
-- `ProblemSeverityName` function, line 70
-- `ProblemSeverityColor` function, line 75: Text colour of a row, 0..1.
-- `ProblemLower` function, line 81
-- `GroupProblems` function, line 88: The rows that pass the filter, grouped. Rows are ordered by severity (errors first) and then by group, keeping the model's
-- `ProblemGroupHeader` function, line 125: The dim line above a group: its name, how many rows, and "error" or "warning" when it has one.
-- `ProblemRowText` function, line 131
-- `ProblemRowTooltip` function, line 134: The tooltip of a row: the message, the hint and the code, a blank line between each.
-- `ProblemCopyText` function, line 142: What "Copy message" puts on the clipboard.
-- `ProblemsEmptyText` function, line 150
-- `StatCounter` struct, line 158
-- `FpsHistory` struct, line 161: The frame-rate history: the last 120 frames, a ring.
-- `StatsModel` struct, line 168
-- `StatsIntent` struct, line 180: What the person asked for this frame.
-- `FpsSummary` struct, line 185
-- `SummarizeFps` function, line 188: min, max and average over the history slots that hold a frame (> 0), and the plot's top: 20% above the highest, at least 75.
-- `FpsColor` function, line 198: The colour of the big number: green from 55 FPS, amber from 30, red below.
-- `FormatStatNumber` function, line 205: A census number: 12, 12.3k from 10,000, 1.2M from a million.
-- `StatsCopyText` function, line 211
-- `HistoryModel` struct, line 227
-- `HistoryKind` enum, line 233
-- `HistoryRow` struct, line 235
-- `HistoryRows` function, line 242: The rows top to bottom: future states newest-forward first, then the current state, then the past, most recent first.
-- `HistoryIntent` struct, line 253: What the person asked for this frame. The host applies 'undo' undos then 'redo' redos (one of them is zero).
-- `HistoryStatusText` function, line 258
-- `TagRow` struct, line 274
-- `LayerRow` struct, line 275
-- `TagsLayersModel` struct, line 280
-- `TagsLayersState` struct, line 289: What the panel keeps between frames. The host writes the error lines after it carried out an intent.
-- `TagsLayersIntent` struct, line 300: What the person asked for this frame (-1 = nothing). The host validates, saves the project and sets the errors in the state.
-- `UnlistedTagsText` function, line 318: "2 tags in this scene are not on the list: Enemy, Boss" (the first four names, then "...").
-- `BuiltinTagsText` function, line 325
-- `TagUseText` function, line 330
-- `LayerHint` function, line 332: The hint a layer field shows while empty: its built-in name, or "Layer N".
-- `LayerCanReset` function, line 334: A layer has a Reset button when it is named and the name is not its built-in one.
-- `LayerErrorText` function, line 335
-- `CopyToBuf` function, line 337: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
-- `PhysicsSettingsModel` struct, line 349
-- `PhysicsSettingsIntent` struct, line 357
-- `ClampStepsPerSecond` function, line 371: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
-- `DefaultItemWidth` function, line 374: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
-- `ProfilerSection` struct, line 380
-- `ProfilerTexture` struct, line 388: One picture of the editor's texture library (Render/TextureAsset.hpp), a row of the Profiler's Textures section.
-- `ProfilerTextures` struct, line 395: The Textures section: what the host's library says now.
-- `ProfilerModel` struct, line 403
-- `ProfilerIntent` struct, line 418
-- `ProfilerGraphTop` function, line 434: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
-- `ProfilerFrameCount` function, line 435
-- `ProfilerFixSelection` function, line 437: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
-- `ProfilerOtherMs` function, line 443
-- `ProfilerOverlay` function, line 447
-- `ProfilerBarText` function, line 452: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
-- `ProfilerDiagnosis` function, line 459: The plain-language diagnosis under the bars.
-- `ProfilerRows` function, line 481: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
-- `ProfilerHot` function, line 488: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
-- `ProfilerCells` function, line 490: The seven cells of a row: name, self, total, %, calls, avg, max.
-- `ProfilerTexturesNote` function, line 502: "Hot reload on, 3 reloaded, 1 let go of for the budget".
-- `ProfilerTextureName` function, line 508: The file name of a path (after the last / or \\).
-- `ProfilerCsv` function, line 513
-- `ProfilerEmptyText` function, line 522
-- `ImportKind` enum, line 530
-- `ImportFields` struct, line 533: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
-- `ImportSettingsModel` struct, line 546
-- `ImportSettingsState` struct, line 554: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
-- `ImportSettingsIntent` struct, line 559
-- `ImportSizeIndex` function, line 576: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
-- `ImportSame` function, line 581: The same settings as far as the panel shows them (the fields of the asset's kind).
-- `PostValues` struct, line 596: The open scene's post-processing values (scene render settings), copied in and back by the host.
-- `PostProcessModel` struct, line 612
-- `PostProcessIntent` struct, line 619
-- `PostChainText` function, line 640
-- `PlayerSettingsModel` struct, line 648
-- `PlayerSettingsIntent` struct, line 657
-- `RenderingSettingsModel` struct, line 659
-- `RenderingSettingsIntent` struct, line 664
+- `ProblemSeverity` enum, line 36
+- `ProblemRow` struct, line 38
+- `ProblemsModel` struct, line 47
+- `ProblemsState` struct, line 53: What the person set on the panel; the host keeps one for the panel's lifetime.
+- `ProblemsIntent` struct, line 59: What the person asked for this frame (indexes into ProblemsModel::rows, -1 = nothing).
+- `ProblemGroup` struct, line 65
+- `ProblemSeverityName` function, line 71
+- `ProblemSeverityColor` function, line 76: Text colour of a row, 0..1.
+- `ProblemLower` function, line 82
+- `GroupProblems` function, line 89: The rows that pass the filter, grouped. Rows are ordered by severity (errors first) and then by group, keeping the model's
+- `ProblemGroupHeader` function, line 126: The dim line above a group: its name, how many rows, and "error" or "warning" when it has one.
+- `ProblemRowText` function, line 132
+- `ProblemRowTooltip` function, line 135: The tooltip of a row: the message, the hint and the code, a blank line between each.
+- `ProblemCopyText` function, line 143: What "Copy message" puts on the clipboard.
+- `ProblemsEmptyText` function, line 151
+- `StatCounter` struct, line 159
+- `FpsHistory` struct, line 162: The frame-rate history: the last 120 frames, a ring.
+- `StatsModel` struct, line 169
+- `StatsIntent` struct, line 181: What the person asked for this frame.
+- `FpsSummary` struct, line 186
+- `SummarizeFps` function, line 189: min, max and average over the history slots that hold a frame (> 0), and the plot's top: 20% above the highest, at least 75.
+- `FpsColor` function, line 199: The colour of the big number: green from 55 FPS, amber from 30, red below.
+- `FormatStatNumber` function, line 206: A census number: 12, 12.3k from 10,000, 1.2M from a million.
+- `StatsCopyText` function, line 212
+- `HistoryModel` struct, line 228
+- `HistoryKind` enum, line 234
+- `HistoryRow` struct, line 236
+- `HistoryRows` function, line 243: The rows top to bottom: future states newest-forward first, then the current state, then the past, most recent first.
+- `HistoryIntent` struct, line 254: What the person asked for this frame. The host applies 'undo' undos then 'redo' redos (one of them is zero).
+- `HistoryStatusText` function, line 259
+- `TagRow` struct, line 275
+- `LayerRow` struct, line 276
+- `TagsLayersModel` struct, line 281
+- `TagsLayersState` struct, line 290: What the panel keeps between frames. The host writes the error lines after it carried out an intent.
+- `TagsLayersIntent` struct, line 301: What the person asked for this frame (-1 = nothing). The host validates, saves the project and sets the errors in the state.
+- `UnlistedTagsText` function, line 319: "2 tags in this scene are not on the list: Enemy, Boss" (the first four names, then "...").
+- `BuiltinTagsText` function, line 326
+- `TagUseText` function, line 331
+- `LayerHint` function, line 333: The hint a layer field shows while empty: its built-in name, or "Layer N".
+- `LayerCanReset` function, line 335: A layer has a Reset button when it is named and the name is not its built-in one.
+- `LayerErrorText` function, line 336
+- `CopyToBuf` function, line 338: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
+- `PhysicsSettingsModel` struct, line 350
+- `PhysicsSettingsIntent` struct, line 358
+- `ClampStepsPerSecond` function, line 372: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
+- `DefaultItemWidth` function, line 375: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
+- `ProfilerSection` struct, line 381
+- `ProfilerTexture` struct, line 389: One picture of the editor's texture library (Render/TextureAsset.hpp), a row of the Profiler's Textures section.
+- `ProfilerTextures` struct, line 396: The Textures section: what the host's library says now.
+- `ProfilerModel` struct, line 404
+- `ProfilerIntent` struct, line 419
+- `ProfilerGraphTop` function, line 435: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
+- `ProfilerFrameCount` function, line 436
+- `ProfilerFixSelection` function, line 438: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
+- `ProfilerOtherMs` function, line 444
+- `ProfilerOverlay` function, line 448
+- `ProfilerBarText` function, line 453: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
+- `ProfilerDiagnosis` function, line 460: The plain-language diagnosis under the bars.
+- `ProfilerRows` function, line 482: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
+- `ProfilerHot` function, line 489: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
+- `ProfilerCells` function, line 491: The seven cells of a row: name, self, total, %, calls, avg, max.
+- `ProfilerTexturesNote` function, line 503: "Hot reload on, 3 reloaded, 1 let go of for the budget".
+- `ProfilerTextureName` function, line 509: The file name of a path (after the last / or \\).
+- `ProfilerCsv` function, line 514
+- `ProfilerEmptyText` function, line 523
+- `ImportKind` enum, line 531
+- `ImportFields` struct, line 535: The values the panel edits, copied from and back to the engine's okay::ImportSettings (and, for a texture, its okay::TextureSettings
+- `ImportSettingsModel` struct, line 553
+- `ImportSettingsState` struct, line 564: What the panel keeps between frames: the message of a failed Apply (the host sets it and showFail when saving fails), and the
+- `ImportSettingsIntent` struct, line 572
+- `ImportSizeIndex` function, line 600: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
+- `ImportTexKindIndex` function, line 605: A texture's Kind row: 0 colour (sRGB), 1 normal map, 2 data (linear); and choosing one.
+- `ImportSetTexKind` function, line 606
+- `ImportFilterIndex` function, line 609: The Filter row: Point, Bilinear, Trilinear, or Anisotropic (Trilinear with more than one anisotropy sample); and choosing one
+- `ImportSetFilter` function, line 610
+- `ImportAnisoIndex` function, line 616: The Anisotropy row for a level (an unknown level shows as 8x).
+- `ImportComboWidth` function, line 623: A combo's field width in the import panel: as wide as its longest choice ('widest', plus the frame padding on both sides and the
+- `ImportSame` function, line 627: The same settings as far as the panel shows them (the fields of the asset's kind).
+- `PostValues` struct, line 644: The open scene's post-processing values (scene render settings), copied in and back by the host.
+- `PostProcessModel` struct, line 660
+- `PostProcessIntent` struct, line 667
+- `PostChainText` function, line 688
+- `PlayerSettingsModel` struct, line 696
+- `PlayerSettingsIntent` struct, line 705
+- `RenderingSettingsModel` struct, line 707
+- `RenderingSettingsIntent` struct, line 712
+- `LoadingScreenModel` struct, line 721
+- `LoadingScreenIntent` struct, line 731
 
 ## `shared/FileDialog.hpp`
 
@@ -796,8 +804,9 @@ Back to the [code index](../code_index.md). 67 headers, 971 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 30
-- `SharedImGuiEmbed` function, line 137: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `ImGuiEmbed` class, line 31
+- `SharedImGuiEmbed` function, line 138: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `HostPanelSection` function, line 241: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 

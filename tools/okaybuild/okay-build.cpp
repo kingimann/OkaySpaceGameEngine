@@ -37,6 +37,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <process.h>
 #else
 #include <condition_variable>
 #include <mutex>
@@ -147,7 +148,9 @@ struct Target {
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
-struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; };
+// pass_regex / fail_regex / skip_regex: CMake regular expressions matched against what the test printed (CTest's PASS_, FAIL_ and
+// SKIP_REGULAR_EXPRESSION); each is a list, any one matching counts.
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; vector<std::regex> passRx, failRx, skipRx; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -437,6 +440,11 @@ static Manifest parseManifest(const string& file) {
             else if (k == "labels") { for (auto& w : v) c.labels.push_back(w); }
             else if (k == "depends") { for (auto& w : v) c.depends.push_back(w); }
             else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
+            else if (k == "pass_regex" || k == "fail_regex" || k == "skip_regex") {
+                if (v.empty()) throw err(k + " wants at least one regular expression");
+                auto& dst = k == "pass_regex" ? c.passRx : k == "fail_regex" ? c.failRx : c.skipRx;
+                for (auto& w : v) { try { dst.emplace_back(cmr::cmakeRegexToStd(w)); } catch (const std::regex_error&) { throw err(k + ": bad regular expression '" + w + "'"); } }
+            }
             else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
             DistDecl& d = m.dist;
@@ -1542,14 +1550,17 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false, 
         }
     }
 }
-static int captureStdout(const vector<string>& argv, string& out, string& err) {
+// cwd: the folder the command starts in (empty: ours); inFile: its standard input (empty: ours); merge: standard error goes into `out` too.
+static int captureStdout(const vector<string>& argv, string& out, string& err, const string& cwd = "", const string& inFile = "", bool merge = false) {
     int op[2], ep[2];
     if (pipe(op) || pipe(ep)) return 127;
     pid_t pid = fork();
     if (pid < 0) { close(op[0]); close(op[1]); close(ep[0]); close(ep[1]); return 127; }
     if (pid == 0) {
-        dup2(op[1], 1); dup2(ep[1], 2);
+        dup2(op[1], 1); dup2(merge ? op[1] : ep[1], 2);
         close(op[0]); close(op[1]); close(ep[0]); close(ep[1]);
+        if (!cwd.empty() && chdir(cwd.c_str()) != 0) { dprintf(2, "okay-build: cannot enter '%s': %s\n", cwd.c_str(), strerror(errno)); _exit(127); }
+        if (!inFile.empty()) { int fd = open(inFile.c_str(), O_RDONLY); if (fd < 0) _exit(127); dup2(fd, 0); close(fd); }
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); _exit(127);
     }
@@ -2988,6 +2999,22 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
 }
 
 
+// The result of one ctest run, from CTest's documented test properties: SKIP_RETURN_CODE or a matching SKIP_REGULAR_EXPRESSION skips;
+// with PASS_REGULAR_EXPRESSION the output decides (the exit code is not looked at), else exit 0 passes; a matching
+// FAIL_REGULAR_EXPRESSION fails; WILL_FAIL turns pass and fail round. Returns 0 pass, 1 fail, 2 skip, with the reason in `why`.
+static int judgeTest(const CTestDecl& c, int code, const string& out, string& why) {
+    auto any = [&](const vector<std::regex>& rs) { for (auto& r : rs) if (std::regex_search(out, r)) return true; return false; };
+    if (c.skipCode >= 0 && code == c.skipCode) { why = "exit " + std::to_string(code); return 2; }
+    if (any(c.skipRx)) { why = "skip regular expression found"; return 2; }
+    bool pass; why = "exit " + std::to_string(code);
+    if (!c.passRx.empty()) { pass = any(c.passRx); if (!pass) why = "required regular expression not found"; }
+    else pass = code == 0;
+    if (pass && any(c.failRx)) { pass = false; why = "fail regular expression found"; }
+    if (c.willFail) { if (pass) why = c.passRx.empty() ? "exit " + std::to_string(code) + ", expected to fail" : "required regular expression found, expected to fail"; pass = !pass; }
+    return pass ? 0 : 1;
+}
+static string gSelfExe; // this program, for {okaybuild} in a ctest command (a CMake script test runs as `okay-build script`)
+
 // ---- ctest: run the manifest's `ctest` blocks (from CMake's add_test) the way CTest would: name, command, folder, time limit,
 // "will fail", "skip code". Words may hold {src} (the manifest folder), {bin} (<build dir>/ctest) and {target:NAME} (a built program).
 // Several run at once (-j); tests marked serial run alone afterwards. Filters are regular expressions on the test name.
@@ -3017,9 +3044,18 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
     for (auto* c : pick) { for (auto& w : c->cmd) scan(w, need); for (auto& w : c->needs) need.push_back(w); }
     std::sort(need.begin(), need.end()); need.erase(std::unique(need.begin(), need.end()), need.end());
     if (!need.empty()) { int rc = build(m, need, o); if (rc != 0) return rc; }
+    { // a generate file a chosen test names (a file the CMake code wrote at configure time, read by a script test) is written first
+        Graph used; auto gens = genFilePaths(m);
+        for (auto& gf : m.gens) {
+            bool named = false;
+            for (auto* c : pick) { for (auto& w : c->cmd) if (w.find(gf.path) != string::npos) named = true; for (auto& w : c->env) if (w.find(gf.path) != string::npos) named = true; }
+            if (named) for (auto& kv : gens) if (kv.second == &gf) used.gens.push_back({kv.first, &gf.text});
+        }
+        writeGenerated(used);
+    }
     auto subst = [&](string w) {
         auto all = [&](const string& what, const string& with) { for (size_t at = 0; (at = w.find(what, at)) != string::npos; at += with.size()) w.replace(at, what.size(), with); };
-        all("{src}", srcDir); all("{bin}", binDir);
+        all("{src}", srcDir); all("{bin}", binDir); all("{okaybuild}", gSelfExe);
         for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) {
             size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + 8, e - at - 8);
             string fileName = nm; for (auto& t : m.targets) if (t.name == nm && !t.outName.empty()) fileName = t.outName;
@@ -3066,11 +3102,10 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
     int failed = 0, skipped = 0;
     std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
     for (auto& r : runs) {
-        bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode;
-        bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
-        if (skip) { printf("SKIP %s (exit %d)\n", r.c->name.c_str(), r.code); ++skipped; continue; }
-        if (pass) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
-        ++failed; printf("FAIL %s exit %d %.1fs\n", r.c->name.c_str(), r.code, r.secs);
+        string why; int verdict = judgeTest(*r.c, r.code, r.out, why);
+        if (verdict == 2) { printf("SKIP %s (%s)\n", r.c->name.c_str(), why.c_str()); ++skipped; continue; }
+        if (verdict == 0) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
+        ++failed; printf("FAIL %s exit %d %.1fs%s\n", r.c->name.c_str(), r.code, r.secs, why.compare(0, 5, "exit ") == 0 ? "" : (" (" + why + ")").c_str());
         vector<string> ls; size_t pos = 0;
         while (pos < r.out.size()) { size_t e = r.out.find('\n', pos); if (e == string::npos) e = r.out.size(); ls.push_back(r.out.substr(pos, e - pos)); pos = e + 1; }
         for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
@@ -3083,13 +3118,13 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
             x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             x << "<testsuite name=\"ctest\" tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             for (auto& r : runs) {
-                bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode; bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+                string why; int verdict = judgeTest(*r.c, r.code, r.out, why); bool skip = verdict == 2, pass = verdict == 0;
                 char tm[32]; snprintf(tm, sizeof tm, "%.3f", r.secs);
                 x << "<testcase name=\"" << xmlEsc(r.c->name) << "\" classname=\"ctest\" time=\"" << tm << "\"";
                 if (pass) { x << "/>\n"; continue; }
-                if (skip) { x << "><skipped message=\"exit " << r.code << "\"/></testcase>\n"; continue; }
+                if (skip) { x << "><skipped message=\"" << xmlEsc(why) << "\"/></testcase>\n"; continue; }
                 string out = r.out; if (out.size() > 4000) out = out.substr(out.size() - 4000);
-                x << ">\n<failure message=\"" << (r.code == 124 ? "timed out" : "exit " + std::to_string(r.code)) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+                x << ">\n<failure message=\"" << xmlEsc(r.code == 124 ? "timed out" : why) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
             }
             x << "</testsuite>\n</testsuites>\n";
         }
@@ -3131,7 +3166,7 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
     if (!audit) return 0;
     printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
     printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
-    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
+    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, CMake scripts run by okay-build %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsCmakeScript, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
     printf("generated files   %d (written by the CMake code while it is read; the build writes them)\n", rep.generated);
     if (rep.fetches) printf("downloads         %d fetch block(s) written (run okay-build fetch; nothing is downloaded by a build)\n", rep.fetches);
     printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
@@ -3894,9 +3929,68 @@ static int cmdFetch(const Manifest& m, const vector<string>& names) {
     return 0;
 }
 
+// okay-build script [-D NAME=VALUE | -DNAME[:TYPE]=VALUE]... -P FILE [ARG...]: the same words `cmake -P` takes. See cmr::runCmakeScript.
+static int cmdScript(const vector<string>& a) {
+#ifdef _WIN32
+    (void)a; throw Fail("script: not done on Windows yet");
+#else
+    std::map<string, string> defs; string file; vector<string> argvWords{gSelfExe, "script"};
+    for (size_t i = 0; i < a.size(); ++i) {
+        string w = a[i];
+        if (!file.empty()) { argvWords.push_back(w); continue; }
+        argvWords.push_back(w);
+        if (w == "-P") { if (i + 1 >= a.size()) throw Fail("script: -P wants a file"); file = a[++i]; argvWords.push_back(file); continue; }
+        if (w.compare(0, 2, "-D") == 0) {
+            string d = w.size() > 2 ? w.substr(2) : (i + 1 < a.size() ? a[++i] : string());
+            if (w.size() == 2) argvWords.push_back(d);
+            auto eq = d.find('='); if (eq == string::npos || eq == 0) throw Fail("script: -D wants NAME=VALUE, got '" + d + "'");
+            string name = d.substr(0, eq); auto colon = name.find(':'); if (colon != string::npos) name = name.substr(0, colon); // NAME:TYPE=VALUE
+            defs[name] = d.substr(eq + 1); continue;
+        }
+        throw Fail("script: unknown word '" + w + "' (usage: okay-build script [-D NAME=VALUE]... -P FILE [ARG...])");
+    }
+    if (file.empty()) throw Fail("usage: okay-build script [-D NAME=VALUE]... -P FILE [ARG...]");
+    auto runner = [](const vector<string>& argv, const string& cwd, const string& in, bool merge, string& out, string& err) { return captureStdout(argv, out, err, cwd, in, merge); };
+    return cmr::runCmakeScript(file, defs, argvWords, runner);
+#endif
+}
+
+// okay-build tool env [--unset=NAME]... [NAME=VALUE]... [--] COMMAND [ARG...]: runs COMMAND with those changes to the environment and
+// returns its exit code (CMake's `cmake -E env`, which tests use).
+static int toolEnv(const vector<string>& a) {
+    size_t i = 1;
+    for (; i < a.size(); ++i) {
+        const string& w = a[i];
+        if (w == "--") { ++i; break; }
+        if (w.compare(0, 8, "--unset=") == 0) {
+#ifdef _WIN32
+            _putenv_s(w.substr(8).c_str(), "");
+#else
+            unsetenv(w.substr(8).c_str());
+#endif
+            continue;
+        }
+        auto eq = w.find('='); if (eq == string::npos || eq == 0) break;
+#ifdef _WIN32
+        _putenv_s(w.substr(0, eq).c_str(), w.substr(eq + 1).c_str());
+#else
+        setenv(w.substr(0, eq).c_str(), w.substr(eq + 1).c_str(), 1);
+#endif
+    }
+    if (i >= a.size()) throw Fail("usage: okay-build tool env [--unset=NAME]... [NAME=VALUE]... [--] COMMAND [ARG...]");
+    vector<char*> av; for (size_t k = i; k < a.size(); ++k) av.push_back(const_cast<char*>(a[k].c_str())); av.push_back(nullptr);
+    fflush(stdout); fflush(stderr);
+#ifdef _WIN32
+    intptr_t rc = _spawnvp(_P_WAIT, av[0], av.data()); if (rc < 0) throw Fail("tool env: cannot run '" + a[i] + "'"); return (int)rc;
+#else
+    execvp(av[0], av.data()); throw Fail("tool env: cannot run '" + a[i] + "': " + strerror(errno));
+#endif
+}
+
 static int toolMain(const vector<string>& a) {
-    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK");
+    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK | env [NAME=VALUE]... COMMAND...");
     const string& c = a[0];
+    if (c == "env") return toolEnv(a);
     if (c == "copy") {
         if (a.size() != 3) throw Fail("usage: okay-build tool copy SRC DST");
         writeAtomic(a[2], readAllBytes(a[1])); return 0;
@@ -3968,6 +4062,11 @@ int main(int argc, char** argv) {
 #else
     signal(SIGINT, onInt);
 #endif
+    gSelfExe = selfExe(argv[0]);
+    if (argc >= 2 && string(argv[1]) == "script") { // CMake's `cmake [-D NAME=VALUE]... -P FILE [ARG...]`, done by our own reader
+        try { return cmdScript(vector<string>(argv + 2, argv + argc)); }
+        catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }
+    }
     if (argc >= 2 && string(argv[1]) == "tool") {
         try { return toolMain(vector<string>(argv + 2, argv + argc)); }
         catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }

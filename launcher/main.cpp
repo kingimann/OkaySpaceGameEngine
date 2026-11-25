@@ -8743,7 +8743,7 @@ int FriendsListWorker(void*) {
         else fr.MarkPresence(PresenceText(), PresenceJoin());
         auto code = fr.MyCode();
         auto l = fr.List();
-        auto fd = fr.Feed(14);
+        auto fd = fr.Feed(40);   // (grouped into lines on the page)
         if (g_frMutex) okay::thr::LockMutex(g_frMutex);
         g_frList = std::move(l); g_frFeed = std::move(fd); g_frCode = std::move(code);
         g_frReady = true;
@@ -17645,53 +17645,28 @@ int main(int argc, char** argv) {
                 const ImU32 cGreen = IM_COL32(76, 200, 110, 255);
                 const ImU32 pageBg = ImGui::GetColorU32(ImGuiCol_WindowBg);
 
-                // ---- Toolbar: view chips (left) + my presence (right) ------------
+                // ---- Header: "3 friends · 1 online" (left), Add friend and my status (right); the views as tabs below ----
                 {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImVec2 cp = ImGui::GetCursorScreenPos();
-                    const float ch = ImGui::GetTextLineHeight() + 12.0f;
-                    float x = cp.x;
-                    auto chip = [&](int view, const char* label, int count, bool alert) {
-                        char txt[48];
-                        if (count >= 0) std::snprintf(txt, sizeof(txt), "%s", label); else std::snprintf(txt, sizeof(txt), "%s", label);
-                        ImVec2 ts = ImGui::CalcTextSize(txt);
-                        char cnt[8] = ""; if (count > 0) std::snprintf(cnt, sizeof(cnt), "%d", count);
-                        float cw = ts.x + 26.0f + (cnt[0] ? ImGui::CalcTextSize(cnt).x + 14.0f : 0.0f);
-                        ImGui::SetCursorScreenPos(ImVec2(x, cp.y));
-                        ImGui::PushID(view);
-                        if (ImGui::InvisibleButton("##frchip", ImVec2(cw, ch))) { fView = view; fErr.clear(); fOk.clear(); }
-                        bool h = ImGui::IsItemHovered();
-                        ImGui::PopID();
-                        const bool on = fView == view;
-                        const bool add = view == 3;
-                        ImU32 bg = add ? (on ? ImGui::GetColorU32(ImVec4(0.18f, 0.55f, 0.32f, 1)) : (h ? IM_COL32(46, 140, 82, 255) : IM_COL32(38, 120, 70, 255)))
-                                       : on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
-                                            : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9));
-                        dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch), bg, ch * 0.5f);
-                        dl->AddText(ImVec2(x + 13.0f, cp.y + (ch - ts.y) * 0.5f),
-                                    add ? IM_COL32_WHITE : on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), txt);
-                        if (cnt[0]) {
-                            ImVec2 cs = ImGui::CalcTextSize(cnt);
-                            float bx = x + 13.0f + ts.x + 7.0f, bw = cs.x + 10.0f;
-                            dl->AddRectFilled(ImVec2(bx, cp.y + (ch - 16) * 0.5f), ImVec2(bx + bw, cp.y + (ch + 16) * 0.5f),
-                                              alert ? IM_COL32(222, 76, 76, 255) : IM_COL32(255, 255, 255, 28), 8.0f);
-                            dl->AddText(ImVec2(bx + 5.0f, cp.y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
-                        }
-                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        x += cw + 8.0f;
-                    };
-                    chip(0, "Online", onlineN, false);
-                    chip(1, "All", acceptedN, false);
-                    chip(2, "Pending", reqN + sentN, reqN > 0);
-                    chip(4, "Following", (int)flFollowing.size(), false);
-                    chip(5, "Followers", (int)flFollowers.size(), false);
-                    chip(3, "Add friend", 0, false);
+                    const float ch = ImGui::GetFrameHeight() + UiPx(8.0f);
+                    {
+                        char sum[96];
+                        if (acceptedN == 0) std::snprintf(sum, sizeof(sum), "No friends yet");
+                        else std::snprintf(sum, sizeof(sum), "%d friend%s  \xC2\xB7  %d online", acceptedN, acceptedN == 1 ? "" : "s", onlineN);
+                        dl->AddText(ImVec2(cp.x, cp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cDim, sum);
+                    }
                     // Presence picker (right): dot + label, opens a small menu.
                     static const char* kStat[] = {"Online", "Away", "Invisible"};
                     static const ImU32 kStatCol[] = {IM_COL32(76, 200, 110, 255), IM_COL32(236, 180, 64, 255), IM_COL32(140, 146, 156, 255)};
                     int si = std::clamp(g_onlineStatus, 0, 2);
-                    float pw = ImGui::CalcTextSize(kStat[si]).x + 52.0f;
+                    float pw = ImGui::CalcTextSize(kStat[si]).x + UiPx(52.0f);
                     ImVec2 pp(cp.x + ImGui::GetContentRegionAvail().x - pw, cp.y);
+                    {   // Add friend: the page's main action, left of the status
+                        const float aw = FitButtonW("Add friend", UiPx(120.0f));
+                        ImGui::SetCursorScreenPos(ImVec2(pp.x - UiPx(10.0f) - aw, cp.y));
+                        if (PrimaryButton("Add friend", ImVec2(aw, ch))) { fView = 3; fErr.clear(); fOk.clear(); }
+                    }
                     ImGui::SetCursorScreenPos(pp);
                     if (ImGui::InvisibleButton("##presence", ImVec2(pw, ch))) ImGui::OpenPopup("##presencepop");
                     bool ph = ImGui::IsItemHovered();
@@ -17718,8 +17693,21 @@ int main(int argc, char** argv) {
                         }
                         ImGui::EndPopup();
                     }
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 14.0f));
-                    ImGui::Dummy(ImVec2(0, 0));
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + UiPx(14.0f)));
+                    // The views, as tabs under the header (Add friend is the button above, not a tab).
+                    static const int kViewOf[] = {0, 1, 2, 4, 5};
+                    std::vector<Chip> tabs(5);
+                    tabs[0].label = "Online"; tabs[0].count = onlineN; tabs[0].dot = cGreen;
+                    tabs[1].label = "All"; tabs[1].count = acceptedN;
+                    tabs[2].label = "Pending"; tabs[2].count = reqN + sentN; tabs[2].countBadge = reqN > 0;
+                    tabs[3].label = "Following"; tabs[3].count = (int)flFollowing.size();
+                    tabs[4].label = "Followers"; tabs[4].count = (int)flFollowers.size();
+                    for (Chip& c : tabs) if (c.count == 0) c.count = -1;
+                    int selTab = -1;
+                    for (int k = 0; k < 5; ++k) if (kViewOf[k] == fView) selTab = k;
+                    const int hit = ChipRow("##frtabs", tabs, selTab, ImGui::GetContentRegionAvail().x);
+                    if (hit >= 0) { fView = kViewOf[hit]; fErr.clear(); fOk.clear(); }
+                    ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
                 }
 
                 // Nickname editor popup state.
@@ -17848,7 +17836,7 @@ int main(int argc, char** argv) {
                 // Friend code card (side panel / add view).
                 auto codeCard = [&]() {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
                     ImGui::BeginChild("##frcode", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
                     ImGui::TextDisabled("YOUR FRIEND CODE");
                     ImGui::SetWindowFontScale(1.35f);
@@ -17856,8 +17844,9 @@ int main(int argc, char** argv) {
                     ImGui::TextUnformatted(fCode.empty() ? "\xE2\x80\xA6" : fCode.c_str());
                     ImGui::PopStyleColor();
                     ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
                     ImGui::BeginDisabled(fCode.empty());
-                    if (ImGui::Button("Copy code", ImVec2(-1, 0))) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
+                    if (ImGui::Button("Copy code", ImVec2(-1, ImGui::GetFrameHeight() + UiPx(6.0f)))) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
                     ImGui::EndDisabled();
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextDisabled("Share it so friends can add you.");
@@ -17869,30 +17858,38 @@ int main(int argc, char** argv) {
                 // Recent activity card.
                 auto activityCard = [&]() {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
                     ImGui::BeginChild("##fract", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-                    ImGui::TextDisabled("ACTIVITY");
-                    ImGui::Dummy(ImVec2(0, 2));
-                    if (fFeed.empty()) ImGui::TextDisabled("It's quiet\xE2\x80\xA6 nothing new from friends yet.");
+                    ImGui::TextDisabled("FRIENDS' ACTIVITY");
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    // Friends only (never your own events), repeats grouped: "maya played Neon Drift · 3 times this week".
+                    const std::string myName = kUiDemoUser ? std::string(kUiDemoUser) : account.CurrentSession().username;
+                    const long nowS = (long)std::time(nullptr);
+                    const std::vector<okay::FeedLine> lines = okay::GroupFeed(fFeed, kUiDemoUser ? std::string() : account.UserId(), myName, nowS);
+                    if (lines.empty()) ImGui::TextDisabled("It's quiet\xE2\x80\xA6 nothing new from friends yet.");
                     int n = 0;
-                    for (const auto& e : fFeed) {
+                    for (const okay::FeedLine& L : lines) {
                         if (n++ >= 8) break;
+                        const okay::FriendEvent& e = L.latest;
                         std::string av, who = e.actor;
-                        for (const auto& f : fCache) if (f.username == e.actor) { av = f.avatar; who = nameOf(&f); break; }
+                        for (const auto& f : fCache) if (f.username == e.actor || (!e.actorId.empty() && f.id == e.actorId)) { av = f.avatar; who = nameOf(&f); break; }
                         ImGui::PushID(n);
                         ImVec2 ip = ImGui::GetCursorScreenPos();
-                        DrawAvatar(av, who, 28.0f);
-                        ImGui::SetCursorScreenPos(ImVec2(ip.x + 38, ip.y - 1));
+                        DrawAvatar(av, who, UiPx(28.0f));
+                        ImGui::SetCursorScreenPos(ImVec2(ip.x + UiPx(40.0f), ip.y - 1));
                         ImGui::BeginGroup();
-                        const char* verb = e.kind == "playing" ? "is playing " : e.kind == "achievement" ? "unlocked "
+                        const bool live = e.kind == "playing" && L.count == 1 && nowS - e.when < 15 * 60;
+                        const char* verb = e.kind == "playing" ? (live ? "is playing " : "played ") : e.kind == "achievement" ? "unlocked "
                                          : e.kind == "publish" ? "published " : e.kind == "online" ? "came online" : "";
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
                         ImGui::TextWrapped("%s %s%s", who.c_str(), verb, e.detail.c_str());
                         ImGui::PopTextWrapPos();
-                        std::string ago = RelTime(e.when);
-                        if (!ago.empty()) ImGui::TextDisabled("%s", ago.c_str());
+                        std::string meta = RelTime(e.when);
+                        if (L.thisWeek > 1) meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::to_string(L.thisWeek) + " times this week";
+                        else if (L.count > 1) meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::to_string(L.count) + " times";
+                        if (!meta.empty()) ImGui::TextDisabled("%s", meta.c_str());
                         ImGui::EndGroup();
-                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
@@ -17902,10 +17899,10 @@ int main(int argc, char** argv) {
 
                 // ---- Body: list (left) + side panel (right on wide windows) ---------
                 const float availW = ImGui::GetContentRegionAvail().x;
-                const bool side = availW >= 760.0f;
-                const float sideW = side ? 280.0f : 0.0f;
+                const bool side = availW >= UiPx(760.0f);
+                const float sideW = side ? UiPx(300.0f) : 0.0f;
                 const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
-                ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - 18.0f : 0.0f, bodyH), false);
+                ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - UiPx(20.0f) : 0.0f, bodyH), false);
                 if (fView == 4 || fView == 5) {   // ---- Following / Followers ----
                     const bool ing = fView == 4;
                     if (!flSupported) emptyState(6, "Follows aren't switched on yet", "The server needs the follows update (docs/sql/follows.sql).");
@@ -18080,6 +18077,20 @@ int main(int argc, char** argv) {
                         for (auto* f : favs) if (f->online) on.push_back(f);
                         for (auto* f : online) on.push_back(f);
                         if (!on.empty()) { sectionLabel("ONLINE", (int)on.size()); for (auto* f : on) drawFriend(f, 0); shownN += (int)on.size(); }
+                        else if (acceptedN > 0 && ffilt.empty()) {
+                            // Nobody online but you have friends: say so in one line and list them by when they were last on,
+                            // instead of a page-sized empty state (owner screenshot, 2026-11-25).
+                            std::vector<const okay::Friend*> off;
+                            for (auto* f : favs) if (!f->online) off.push_back(f);
+                            for (auto* f : offline) off.push_back(f);
+                            std::stable_sort(off.begin(), off.end(), [](const okay::Friend* a, const okay::Friend* b) { return a->lastSeen > b->lastSeen; });
+                            ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                            ImGui::TextDisabled("No one's online right now. Your friends, by when they were last on:");
+                            ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                            sectionLabel("OFFLINE", (int)off.size());
+                            for (auto* f : off) drawFriend(f, 0);
+                            shownN += (int)off.size();
+                        }
                     } else if (fView == 1) {   // All
                         if (!favs.empty())    { sectionLabel("FAVORITES", (int)favs.size()); for (auto* f : favs) drawFriend(f, 0); }
                         if (!online.empty())  { sectionLabel("ONLINE", (int)online.size()); for (auto* f : online) drawFriend(f, 0); }
@@ -18109,10 +18120,10 @@ int main(int argc, char** argv) {
                 if (!side) { ImGui::Dummy(ImVec2(0, 12)); activityCard(); }
                 ImGui::EndChild();   // ##friendlist
                 if (side) {
-                    ImGui::SameLine(0, 18);
+                    ImGui::SameLine(0, UiPx(20.0f));
                     ImGui::BeginChild("##frside", ImVec2(0, bodyH), false);
                     codeCard();
-                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::Dummy(ImVec2(0, UiPx(16.0f)));
                     activityCard();
                     ImGui::EndChild();
                 }

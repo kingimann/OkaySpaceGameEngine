@@ -1,0 +1,33 @@
+// <exception> for okay-cc (ISO/IEC 14882 [support.exception]). Our own header: std::exception and
+// the classes thrown by the language itself. The exceptions themselves are okay-cc's own model
+// (lib/eh.c, see the plan), not the Itanium one; exception_ptr, nested_exception and
+// uncaught_exceptions are not done.
+#pragma once
+extern "C" void abort(void);
+namespace std {
+class exception {
+public:
+    exception() {}
+    exception(const exception &) {}
+    exception &operator=(const exception &) { return *this; }
+    virtual ~exception() {}
+    virtual const char *what() const { return "std::exception"; }
+};
+class bad_exception : public exception {
+public:
+    const char *what() const { return "std::bad_exception"; }
+};
+class bad_alloc : public exception {
+public:
+    const char *what() const { return "std::bad_alloc"; }
+};
+class bad_cast : public exception {
+public:
+    const char *what() const { return "std::bad_cast"; }
+};
+class bad_function_call : public exception {
+public:
+    const char *what() const { return "bad_function_call"; }
+};
+inline void terminate() { abort(); }
+}  // namespace std

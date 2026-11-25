@@ -14784,8 +14784,13 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); if (ImGui::SmallButton("Rescan web games")) s_webScanned = false;
                 ImGui::Dummy(ImVec2(0, 10));
             }
-            if (player.empty())
-                ImGui::TextColored(okaytheme::Current().danger, "Player runtime not found next to the launcher.");
+            if (player.empty()) {   // the player program is missing: say so plainly, with the way to get it back
+                EmptyState(kIcoAlert, "The game player is missing", "Games run in OkaySpacePlayer, which should sit next to the launcher. Reinstall this version from Versions to get it back.", UiPx(40.0f));
+                const float bw = FitButtonW("Open Versions", UiPx(160.0f));
+                ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                if (PrimaryButton("Open Versions", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(10.0f)))) { tab = 15; g_lastTab = 15; SavePrefs(); }
+            }
             else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
                 // No *built* games (dev scenes don't count): a friendly card that says
                 // how games get here, with the next step (the editor opens via a project).

@@ -149,6 +149,23 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         for (int k = 0; k <= 16; ++k)   // meridian: a narrow ellipse { const float a = -PI * 0.5f + PI * k / 8.0f; d->PathLineTo(ImVec2(c.x + std::cos(a) * r * 0.42f, c.y + std::sin(a) * r)); }
         d->PathStroke(col, 0, t);
         break;
+    case kIcoSearch:    // Search: a magnifier
+        d->AddCircle(ImVec2(c.x - 1.4f, c.y - 1.4f), 5.0f, col, 20, t);
+        d->AddLine(ImVec2(c.x + 2.4f, c.y + 2.4f), ImVec2(c.x + 6.2f, c.y + 6.2f), col, t + 0.4f);
+        break;
+    case kIcoStar: {    // Rating: an outline star
+        for (int q = 0; q < 10; ++q) {
+            const float a = q * PI / 5 - PI / 2, rr = (q % 2) ? r * 0.45f : r;
+            d->PathLineTo(ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr + 0.6f));
+        }
+        d->PathStroke(col, ImDrawFlags_Closed, t);
+        break;
+    }
+    case kIcoSort:      // Sort: three lines, shorter downwards
+        d->AddLine(ImVec2(c.x - r, c.y - 4.5f), ImVec2(c.x + r, c.y - 4.5f), col, t);
+        d->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r * 0.4f, c.y), col, t);
+        d->AddLine(ImVec2(c.x - r, c.y + 4.5f), ImVec2(c.x - r * 0.2f, c.y + 4.5f), col, t);
+        break;
     case kIcoRefresh: {
         d->PathArcTo(c, 5.6f, -PI * 0.35f, PI * 1.45f, 20); d->PathStroke(col, 0, t);
         ImVec2 e(c.x + std::cos(-PI * 0.35f) * 5.6f, c.y + std::sin(-PI * 0.35f) * 5.6f);
@@ -459,6 +476,16 @@ bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 ip, float S, float 
         const ImVec2 dc(ip.x + S - S * 0.12f, ip.y + S * 0.12f);
         d->AddCircleFilled(dc, S * 0.15f, ImGui::GetColorU32(okaytheme::kSunken), 16);
         d->AddCircleFilled(dc, S * 0.10f, okaytheme::DangerFillU32(), 16);
+    }
+    if (it.count >= 0) {   // a small number badge, bottom right
+        char n[12]; std::snprintf(n, sizeof(n), "%d", it.count);
+        const float fs = ImGui::GetFontSize() * 0.72f;
+        const ImVec2 ns = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, n);
+        const float bh = fs + UiPx(2.0f), bw = std::max(bh, ns.x + UiPx(6.0f));
+        const ImVec2 b0(ip.x + S - bw + UiPx(3.0f), ip.y + S - bh + UiPx(3.0f));
+        d->AddRectFilled(ImVec2(b0.x - 1.5f, b0.y - 1.5f), ImVec2(b0.x + bw + 1.5f, b0.y + bh + 1.5f), ImGui::GetColorU32(okaytheme::kRaised), bh);
+        d->AddRectFilled(b0, ImVec2(b0.x + bw, b0.y + bh), ImGui::GetColorU32(okaytheme::kControl), bh);
+        d->AddText(ImGui::GetFont(), fs, ImVec2(b0.x + (bw - ns.x) * 0.5f, b0.y + (bh - ns.y) * 0.5f), okaytheme::TextU32(), n);
     }
     if (lit) {   // the selection pill on the rail's left edge
         const float ph = it.selected ? S * 0.8f : S * 0.4f;

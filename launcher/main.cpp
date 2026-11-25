@@ -1998,6 +1998,7 @@ static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::geten
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_svChannelsFolded = false;  // Servers: the channel list folded away (persisted; PanelToggle / Ctrl+B)
 bool g_foSectionsFolded = false;  // Forums: the sections rail folded away (persisted)
+bool g_mktRailFolded = false;     // Marketplace: the filter rail folded to icons (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
 int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
@@ -3353,6 +3354,7 @@ void LoadPrefs() {
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "servers_channels_folded") g_svChannelsFolded = (v != "0");
         else if (k == "forums_sections_folded") g_foSectionsFolded = (v != "0");
+        else if (k == "market_rail_folded") g_mktRailFolded = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
@@ -3484,6 +3486,7 @@ void SavePrefs() {
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     f << "servers_channels_folded=" << (g_svChannelsFolded ? 1 : 0) << "\n";
     f << "forums_sections_folded=" << (g_foSectionsFolded ? 1 : 0) << "\n";
+    f << "market_rail_folded=" << (g_mktRailFolded ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
@@ -11249,7 +11252,7 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     for (const auto& w : items) {
         if (view == 3 && !friendNames.count(w.author)) continue;
         if (view == 4 && (me.empty() || w.author != me)) continue;
-        if (!w.status.empty() && w.status != "approved" && w.author != me) continue;
+        if (!okay::launcherlayout::MarketFeaturable(w.status)) continue;   // approved only (yours in review show in Your creations / Your listings)
         list.push_back(&w);
     }
     if (view == 0) {   // Featured: the ones staff featured, then the best rated
@@ -18281,7 +18284,13 @@ int main(int argc, char** argv) {
                 tab = 3; g_lastTab = 3; SavePrefs();
             };
             const float mktBtnH = ImGui::GetFrameHeight() + UiPx(8.0f);
-            const PL::MarketPage mp = PL::LayoutMarketPage(ImGui::GetContentRegionAvail().x, UiPx(236.0f), UiPx(24.0f), UiPx(176.0f), UiPx(16.0f), UiPx(760.0f));
+            const PL::MarketPage mp = PL::LayoutMarketPage(ImGui::GetContentRegionAvail().x, UiPx(236.0f), UiPx(24.0f), UiPx(176.0f), UiPx(16.0f), UiPx(760.0f),
+                                                           g_mktRailFolded, UiPx(60.0f));
+            const bool mktStaff = g_myRank >= 1;
+            if (TakePanelShortcut() && mq.detail == 0 && !wShowPublish) {   // Ctrl+B: fold the filter rail (narrow pages: open it over the grid)
+                if (mp.railShown || mp.iconRail) { g_mktRailFolded = !g_mktRailFolded; SavePrefs(); }
+                else wFiltersOpen = !wFiltersOpen;
+            }
             {
                 const ImVec2 o = ImGui::GetCursorScreenPos();
                 const float W = ImGui::GetContentRegionAvail().x, gap = UiPx(10.0f);
@@ -18289,7 +18298,7 @@ int main(int argc, char** argv) {
                     int myN = 0; for (const auto& w : wCache) if (!meName.empty() && w.author == meName) ++myN;
                     std::vector<Chip> views(3);
                     views[0].label = "Browse"; views[1].label = "Your listings"; views[1].count = myN; views[2].label = "Saved"; views[2].count = (int)g_wishlist.size();
-                    const float rightW = (mp.railShown ? 0.0f : FitButtonW("Filters") + gap) + FitButtonW("Refresh") + gap + FitButtonW("Sell an item");
+                    const float rightW = (mp.railShown || mp.iconRail ? 0.0f : FitButtonW("Filters") + gap) + FitButtonW("Refresh") + gap + FitButtonW("Sell an item");
                     const int hit = ChipRow("##mktviews", views, mq.view, std::max(UiPx(200.0f), W - rightW - gap));
                     if (hit >= 0) { mq.view = hit; if (hit == 1 && !signedIn) needSignIn("see your listings"); }
                 }
@@ -18306,7 +18315,7 @@ int main(int argc, char** argv) {
                     if (rightBtn("Sell an item", true)) { if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace"); }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Publish a game, model, texture, sound or script");
                     if (rightBtn("Refresh", false)) wNextRefresh = 0;
-                    if (!mp.railShown && mq.detail == 0 && rightBtn(wFiltersOpen ? "Hide filters" : "Filters", false)) wFiltersOpen = !wFiltersOpen;
+                    if (!mp.railShown && !mp.iconRail && mq.detail == 0 && rightBtn(wFiltersOpen ? "Hide filters" : "Filters", false)) wFiltersOpen = !wFiltersOpen;
                 }
                 ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + mktBtnH + UiPx(14.0f)));
                 ImGui::Dummy(ImVec2(0, 0));
@@ -18454,10 +18463,19 @@ int main(int argc, char** argv) {
                 // ---- The filter rail: search, categories, rating, sort, price (beside the grid, or in a popup on narrow pages) ----
                 auto drawRail = [&](float rw) {
                     if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), rw, 0, mktBtnH);
+                    const bool besidePill = mp.railShown;   // the fold button (beside the grid only; the popup closes on a click outside)
+                    const float fd = UiPx(28.0f);
+                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
+                    if (besidePill) {
+                        ImGui::SameLine(0, UiPx(8.0f));
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (mktBtnH - fd) * 0.5f);
+                        if (PanelToggle("##mktfold", true, "the filters", fd, okaytheme::Ink(18), cDim, cText)) { g_mktRailFolded = true; SavePrefs(); }
+                    }
                     ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
                     std::vector<int> counts((std::size_t)kMktKindN, 0);
-                    for (const auto& w : wCache) counts[(std::size_t)MktKindIndex(w.kind)]++;
+                    int allN = 0;
+                    for (const auto& w : wCache)
+                        if (PL::MarketListingVisible(w.status, !meName.empty() && w.author == meName, mktStaff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++allN; }
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const float rowH = lh + UiPx(14.0f);
                     auto railRow = [&](const char* id, const char* label, int count, ImU32 dot, bool on) {
@@ -18478,7 +18496,7 @@ int main(int argc, char** argv) {
                     };
                     SectionLabel("CATEGORIES", -1);
                     ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
-                    if (railRow("##cat_all", "Browse all", (int)wCache.size(), 0, mq.kind < 0)) mq.kind = -1;
+                    if (railRow("##cat_all", "Browse all", allN, 0, mq.kind < 0)) mq.kind = -1;
                     for (int k = 0; k < kMktKindN; ++k) {
                         char id[24]; std::snprintf(id, sizeof(id), "##cat%d", k);
                         if (railRow(id, kMktKinds[k].plural, counts[(std::size_t)k], ImGui::GetColorU32(kMktKinds[k].color), mq.kind == k)) mq.kind = mq.kind == k ? -1 : k;
@@ -18507,6 +18525,7 @@ int main(int argc, char** argv) {
                 std::vector<const okay::WorkshopItem*> order;
                 for (const auto& w : wCache) {
                     const bool mine = !meName.empty() && w.author == meName;
+                    if (!PL::MarketListingVisible(w.status, mine, mktStaff)) continue;   // in review / not approved: the seller and staff only
                     if (PL::MarketMatches(mq, MktKindIndex(w.kind), avgOf(w.id), IsWishlisted(w.id), mine, mlo(w.title + " " + w.description + " " + w.author)))
                         order.push_back(&w);
                 }
@@ -18523,6 +18542,93 @@ int main(int argc, char** argv) {
                     drawRail(ImGui::GetContentRegionAvail().x - UiPx(4.0f));
                     ImGui::EndChild();
                     ImGui::SetCursorScreenPos(ImVec2(bodyO.x + mp.grid.x, bodyO.y));
+                } else if (mp.iconRail && !detailItem) {   // folded: an icon rail (the same rail icons as Forums and Servers)
+                    static int mktPop = -1;   // 0 search, 1 rating, 2 sort: the popover open beside the rail
+                    const std::vector<PL::MarketRail> ent = PL::MarketRailEntries(kMktKindN);
+                    std::vector<bool> div;
+                    for (auto e : ent) div.push_back(e == PL::MarketRail::Divider);
+                    const float railW = mp.rail.w, S = UiPx(38.0f);
+                    std::vector<int> counts((std::size_t)kMktKindN, 0);
+                    int allN = 0;
+                    for (const auto& w : wCache)
+                        if (PL::MarketListingVisible(w.status, !meName.empty() && w.author == meName, mktStaff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++allN; }
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::BeginChild("##mktrailicons", ImVec2(railW, bodyH), false);
+                    const ImVec2 r0 = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(r0.x + (railW - UiPx(28.0f)) * 0.5f, r0.y + UiPx(8.0f)));
+                    if (PanelToggle("##mktunfold", false, "the filters", UiPx(28.0f), okaytheme::Ink(18), cDim, cText)) { g_mktRailFolded = false; SavePrefs(); }
+                    const std::vector<PL::Rect> rs = PL::LayoutIconRail(div, railW, UiPx(46.0f), S, UiPx(6.0f), UiPx(6.0f));
+                    int cat = 0;
+                    ImVec2 popAt;
+                    for (std::size_t i = 0; i < ent.size(); ++i) {
+                        const ImVec2 at(r0.x + rs[i].x, r0.y + rs[i].y);
+                        if (ent[i] == PL::MarketRail::Divider) { DrawRailDivider(at, ImVec2(at.x + rs[i].w, at.y + rs[i].h)); continue; }
+                        RailIcon it;
+                        ImGui::PushID((int)i);
+                        bool hit = false;
+                        switch (ent[i]) {
+                        case PL::MarketRail::Search:
+                            it.navIcon = kIcoSearch; it.tip = wSearch[0] ? std::string("Search: ") + wSearch : std::string("Search the marketplace");
+                            it.selected = wSearch[0] != 0; hit = DrawRailIcon("##rs", it, at, S, r0.x);
+                            if (hit) { mktPop = 0; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        case PL::MarketRail::All: {
+                            char t[48]; std::snprintf(t, sizeof(t), "Browse all  (%d)", allN);
+                            it.navIcon = 7; it.tip = t; it.selected = mq.kind < 0; it.count = allN;
+                            if (DrawRailIcon("##ra", it, at, S, r0.x)) mq.kind = -1;
+                            break;
+                        }
+                        case PL::MarketRail::Category: {
+                            const int k = cat++;
+                            char t[64]; std::snprintf(t, sizeof(t), "%s  (%d)", kMktKinds[k].plural, counts[(std::size_t)k]);
+                            it.tip = t; it.initials = std::string(1, kMktKinds[k].plural[0] == '2' ? '2' : kMktKinds[k].plural[0]);
+                            if (std::strcmp(kMktKinds[k].key, "sprite") == 0) it.initials = "2D";
+                            if (std::strcmp(kMktKinds[k].key, "model") == 0) it.initials = "3D";
+                            const ImVec4 kc = kMktKinds[k].color;
+                            it.fill = ImGui::GetColorU32(ImVec4(kc.x * 0.7f, kc.y * 0.7f, kc.z * 0.7f, 1.0f));
+                            it.selected = mq.kind == k; it.count = counts[(std::size_t)k];
+                            if (DrawRailIcon("##rc", it, at, S, r0.x)) mq.kind = mq.kind == k ? -1 : k;
+                            break;
+                        }
+                        case PL::MarketRail::Rating:
+                            it.navIcon = kIcoStar; it.selected = mq.minRating > 0.0f;
+                            it.tip = mq.minRating >= 4.0f ? "Rating: 4 stars and up" : mq.minRating >= 3.0f ? "Rating: 3 stars and up" : "Rating: any";
+                            if (DrawRailIcon("##rr", it, at, S, r0.x)) { mktPop = 1; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        case PL::MarketRail::Sort:
+                            it.navIcon = kIcoSort; it.tip = wSort == 1 ? "Sort: Popular" : wSort == 2 ? "Sort: Top rated" : "Sort: Newest";
+                            if (DrawRailIcon("##ro", it, at, S, r0.x)) { mktPop = 2; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        default: break;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    if (mktPop >= 0) { ImGui::SetNextWindowPos(popAt); ImGui::OpenPopup("##mktrailpop"); }
+                    ImGui::SetNextWindowSize(ImVec2(UiPx(280.0f), 0));
+                    if (ImGui::BeginPopup("##mktrailpop")) {
+                        static int shown = 0;
+                        if (mktPop >= 0) { shown = mktPop; mktPop = -1; if (shown == 0) ImGui::SetKeyboardFocusHere(); }
+                        if (shown == 0) {
+                            if (SearchPill("##mktsearchpop", "Search the marketplace", wSearch, sizeof(marketFilter), -1, ImGuiInputTextFlags_EnterReturnsTrue, mktBtnH))
+                                if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) ImGui::CloseCurrentPopup();
+                        } else if (shown == 1) {
+                            SectionLabel("RATING", -1);
+                            if (ImGui::Selectable("Any rating", mq.minRating <= 0.0f)) mq.minRating = 0.0f;
+                            if (ImGui::Selectable("4 stars and up", mq.minRating >= 4.0f)) mq.minRating = 4.0f;
+                            if (ImGui::Selectable("3 stars and up", mq.minRating >= 3.0f && mq.minRating < 4.0f)) mq.minRating = 3.0f;
+                        } else {
+                            SectionLabel("SORT BY", -1);
+                            if (ImGui::Selectable("Newest", wSort == 0)) wSort = 0;
+                            if (ImGui::Selectable("Popular", wSort == 1)) wSort = 1;
+                            if (ImGui::Selectable("Top rated", wSort == 2)) wSort = 2;
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(bodyO.x + mp.grid.x, bodyO.y));
                 } else if (wFiltersOpen && !detailItem) {   // narrow page: the rail opens over the grid (a popup: opaque, on top, closes on a click outside)
                     ImGui::SetNextWindowPos(ImVec2(bodyO.x, bodyO.y));
                     ImGui::SetNextWindowSize(ImVec2(std::min(UiPx(280.0f), mp.grid.w), 0));
@@ -18531,9 +18637,9 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopup("##mktfilters")) { drawRail(ImGui::GetContentRegionAvail().x); ImGui::EndPopup(); }
                 else wFiltersOpen = false;
 
-                ImGui::BeginChild("##market", ImVec2(detailItem ? 0.0f : (mp.railShown ? mp.grid.w : 0.0f), bodyH), false);
+                ImGui::BeginChild("##market", ImVec2(detailItem ? 0.0f : (mp.railShown || mp.iconRail ? mp.grid.w : 0.0f), bodyH), false);
                 const float GW = ImGui::GetContentRegionAvail().x;
-                const PL::Grid grid = PL::FitGrid(GW, UiPx(176.0f), UiPx(16.0f), 6);
+                const PL::Grid grid = PL::FitGrid(GW, PL::MarketTileMinW((int)order.size(), UiPx(176.0f)), UiPx(16.0f), 6);
                 ImGui::SetWindowFontScale(1.2f);
                 const float priceH = ImGui::GetTextLineHeight();
                 ImGui::SetWindowFontScale(1.0f);
@@ -18573,9 +18679,10 @@ int main(int argc, char** argv) {
                     std::snprintf(rt, sizeof(rt), "%s download%s", PL::ShortCount(w.downloads).c_str(), w.downloads == 1 ? "" : "s");
                     const std::string seller = w.author.empty() ? std::string("unknown") : w.author;
                     const float rtW = ImGui::CalcTextSize(rt).x;
-                    dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(seller, std::max(UiPx(30.0f), T.meta.w - rtW - UiPx(10.0f))).c_str());
-                    dl->AddText(ImVec2(a.x + T.meta.R() - rtW, a.y + T.meta.y), cDim, rt);
-                    if (!meName.empty() && w.author == meName && w.status != "approved" && !w.status.empty()) {   // my listing's review state
+                    const PL::TileMeta tm = PL::FitTileMeta(ImGui::CalcTextSize(seller.c_str()).x, rtW, T.meta.w, UiPx(10.0f));   // the seller first
+                    dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(seller, tm.sellerW).c_str());
+                    if (tm.showDownloads) dl->AddText(ImVec2(a.x + T.meta.R() - rtW, a.y + T.meta.y), cDim, rt);
+                    if (((!meName.empty() && w.author == meName) || mktStaff) && w.status != "approved" && !w.status.empty()) {   // the review state (seller, staff)
                         const char* st = w.status == "pending" ? "In review" : "Not approved";
                         const ImVec2 ss = ImGui::CalcTextSize(st);
                         const ImVec2 sp(a.x + UiPx(10.0f), a.y + UiPx(10.0f));
@@ -18750,7 +18857,8 @@ int main(int argc, char** argv) {
                     // Today's picks: the top-rated listings, on the plain Browse view only.
                     if (mq.view == 0 && mq.kind < 0 && mq.needle.empty() && mq.minRating <= 0.0f && wSort == 0) {
                         std::vector<const okay::WorkshopItem*> top;
-                        for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
+                        for (const auto& w : wCache) if (avgOf(w.id) > 0.0f && PL::MarketFeaturable(w.status)) top.push_back(&w);   // approved only
+                        if (!PL::ShowTodaysPicks((int)top.size(), (int)order.size(), grid.cols)) top.clear();   // too few: it would only repeat the grid
                         std::stable_sort(top.begin(), top.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return avgOf(a->id) > avgOf(b->id); });
                         if ((int)top.size() > grid.cols) top.resize((std::size_t)grid.cols);
                         if (!top.empty()) {
@@ -18803,6 +18911,19 @@ int main(int argc, char** argv) {
                         }
                         ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, (int)order.size(), tileH)));
                         ImGui::Dummy(ImVec2(GW, UiPx(16.0f)));
+                        if (mq.view == 0 && order.size() < 6 && mq.needle.empty() && mq.kind < 0) {   // a nearly empty marketplace: invite sellers
+                            const ImVec2 cp = ImGui::GetCursorScreenPos();
+                            const float ch = UiPx(84.0f), bw = FitButtonW("Sell an item", UiPx(140.0f));
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            dl->AddRect(cp, ImVec2(cp.x + GW, cp.y + ch), okaytheme::Ink(40), UiPx(12.0f), 0, 1.5f);
+                            dl->AddText(ImVec2(cp.x + UiPx(20.0f), cp.y + UiPx(18.0f)), cText, "Be the first to sell something");
+                            dl->AddText(ImVec2(cp.x + UiPx(20.0f), cp.y + UiPx(18.0f) + lh + UiPx(4.0f)), cDim,
+                                        FitText("Share a game, a model pack, textures or sounds. Everything is free for now.", GW - bw - UiPx(60.0f)).c_str());
+                            ImGui::SetCursorScreenPos(ImVec2(cp.x + GW - UiPx(20.0f) - bw, cp.y + (ch - mktBtnH) * 0.5f));
+                            if (PrimaryButton("Sell an item##cta", ImVec2(bw, mktBtnH))) { if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace"); }
+                            ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + UiPx(16.0f)));
+                            ImGui::Dummy(ImVec2(0, 0));
+                        }
                     }
                 }
                 ImGui::EndChild();

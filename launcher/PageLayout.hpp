@@ -197,12 +197,18 @@ inline std::vector<ForumRail> ForumRailEntries(int joinedSections, bool canCreat
 // ---- The Marketplace (a browse-and-shop page: a filter rail, a grid of item tiles, an item page) ----------------------------
 /// Where the filter rail and the grid go. Below `railMinPageW` the rail folds into a "Filters" button (it then opens over the
 /// grid). The grid has 3 to 6 columns of tiles at least `tileMinW` wide (fewer than 3 only when even 3 do not fit).
-struct MarketPage { bool railShown = true; Rect rail, grid; Grid tiles; };
-inline MarketPage LayoutMarketPage(float availW, float railW, float gap, float tileMinW, float tileGap, float railMinPageW) {
+/// Folded (`folded`, on a page wide enough for the rail) the rail is an icon rail `iconRailW` wide (`iconRail`) and the grid
+/// takes the rest.
+struct MarketPage { bool railShown = true, iconRail = false; Rect rail, grid; Grid tiles; };
+inline MarketPage LayoutMarketPage(float availW, float railW, float gap, float tileMinW, float tileGap, float railMinPageW,
+                                   bool folded = false, float iconRailW = 0.0f) {
     MarketPage m;
-    m.railShown = availW >= railMinPageW;
-    m.rail = m.railShown ? Rect{0, 0, railW, 0} : Rect{};
-    const float gx = m.railShown ? railW + gap : 0.0f;
+    const bool wide = availW >= railMinPageW;
+    m.railShown = wide && !folded;
+    m.iconRail = wide && folded;
+    const float rw = m.railShown ? railW : m.iconRail ? iconRailW : 0.0f;
+    m.rail = rw > 0 ? Rect{0, 0, rw, 0} : Rect{};
+    const float gx = rw > 0 ? rw + gap : 0.0f;
     m.grid = Rect{gx, 0, std::max(1.0f, availW - gx), 0};
     m.tiles = FitGrid(m.grid.w, tileMinW, tileGap, 6);
     return m;
@@ -249,6 +255,39 @@ inline bool MarketMatches(const MarketQuery& q, int kind, float avgRating, bool 
     if (!q.needle.empty() && haystack.find(q.needle) == std::string::npos) return false;
     return true;
 }
+/// Who sees a listing: an approved one everyone; one in review or not approved only its seller (with the badge) and staff.
+inline bool MarketListingVisible(const std::string& status, bool mine, bool staff) {
+    return status.empty() || status == "approved" || mine || staff;
+}
+/// Today's picks, Featured and Popular (Marketplace and Community) show approved listings only, the seller's own included.
+inline bool MarketFeaturable(const std::string& status) { return status.empty() || status == "approved"; }
+/// Today's picks only when there are enough approved, rated listings to pick from (`minItems`) and the grid under it holds more
+/// than one row (else it would only repeat the grid).
+inline bool ShowTodaysPicks(int approvedRated, int browseCount, int cols, int minItems = 6) {
+    return approvedRated >= minItems && browseCount > cols;
+}
+/// A tile's last line: the seller and "N downloads" side by side when both fit; else the seller alone on the whole line (the
+/// downloads are on the item page). The seller is shortened only when even the whole line is too narrow.
+struct TileMeta { bool showDownloads = true; float sellerW = 0; };
+inline TileMeta FitTileMeta(float sellerTextW, float downloadsW, float lineW, float gap) {
+    TileMeta t;
+    t.showDownloads = sellerTextW + gap + downloadsW <= lineW;
+    t.sellerW = t.showDownloads ? lineW - gap - downloadsW : lineW;
+    return t;
+}
+/// The smallest tile width: bigger tiles when there are only a few listings, so a near-empty grid is not a row of stamps.
+inline float MarketTileMinW(int items, float base) { return items <= 2 ? base * 1.45f : items <= 4 ? base * 1.2f : base; }
+/// What the Marketplace's folded filter rail holds: Search, a divider, All, one icon per category, a divider, Rating, Sort.
+enum class MarketRail { Search, Divider, All, Category, Rating, Sort };
+inline std::vector<MarketRail> MarketRailEntries(int categories) {
+    std::vector<MarketRail> v{MarketRail::Search, MarketRail::Divider, MarketRail::All};
+    for (int i = 0; i < categories; ++i) v.push_back(MarketRail::Category);
+    v.push_back(MarketRail::Divider);
+    v.push_back(MarketRail::Rating);
+    v.push_back(MarketRail::Sort);
+    return v;
+}
+
 /// "980", "1.5k", "12k", "1.2M": short enough for a tile.
 inline std::string ShortCount(long n) {
     char b[24];

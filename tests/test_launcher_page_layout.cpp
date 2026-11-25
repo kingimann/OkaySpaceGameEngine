@@ -314,6 +314,47 @@ void CheckIconRail(float winW, float winH) {
     (void)winW;
 }
 
+// The Marketplace: the filter rail folds to an icon rail (one icon per entry: search, all, each category, rating, sort; the grid
+// gets the room), Today's picks and Featured show approved listings only, never just repeat a short grid, and the seller's name
+// gets the whole line before it is shortened.
+void CheckMarketFold(float winW) {
+    const float W = PageW(winW);
+    const L::MarketPage open = L::LayoutMarketPage(W, Px(236.0f), Px(24.0f), Px(176.0f), Px(16.0f), Px(760.0f), false, Px(60.0f));
+    const L::MarketPage fold = L::LayoutMarketPage(W, Px(236.0f), Px(24.0f), Px(176.0f), Px(16.0f), Px(760.0f), true, Px(60.0f));
+    if (open.railShown) {
+        CHECK(fold.iconRail && !fold.railShown);
+        CHECK(fold.grid.w > open.grid.w);                    // folded: a wider grid
+        CHECK(fold.tiles.cols >= open.tiles.cols);
+        CHECK(fold.grid.x >= fold.rail.R());                  // the rail never covers the grid
+    } else CHECK(!fold.iconRail);                            // narrow pages: the Filters overlay, no rail
+    const auto ent = L::MarketRailEntries(9);
+    int icons = 0, cats = 0; std::vector<bool> div;
+    for (auto e : ent) { div.push_back(e == L::MarketRail::Divider); if (e != L::MarketRail::Divider) ++icons; if (e == L::MarketRail::Category) ++cats; }
+    CHECK(cats == 9 && icons == 9 + 4);
+    const auto rs = L::LayoutIconRail(div, Px(60.0f), Px(46.0f), Px(38.0f), Px(6.0f), Px(6.0f));
+    CHECK(rs.size() == ent.size());
+    for (std::size_t i = 1; i < rs.size(); ++i) CHECK(rs[i].y >= rs[i - 1].B());
+    // Approved only in the picks; unapproved listings are the seller's and staff's.
+    CHECK(L::MarketFeaturable("approved") && L::MarketFeaturable(""));
+    CHECK(!L::MarketFeaturable("pending") && !L::MarketFeaturable("rejected"));
+    CHECK(L::MarketListingVisible("approved", false, false));
+    CHECK(!L::MarketListingVisible("rejected", false, false) && L::MarketListingVisible("rejected", true, false) && L::MarketListingVisible("pending", false, true));
+    // No Today's picks with one item (it would show the same tile twice), nor when the grid is one row.
+    CHECK(!L::ShowTodaysPicks(1, 1, 4));
+    CHECK(!L::ShowTodaysPicks(5, 20, 4));
+    CHECK(!L::ShowTodaysPicks(8, 4, 4));
+    CHECK(L::ShowTodaysPicks(8, 20, 4));
+    // The seller's name: the whole line when the downloads do not fit beside it; shortened only past that.
+    const float lineW = Px(176.0f) - 2 * Px(12.0f);
+    const float nameW = TextW("imanfakhargomi"), dlW = TextW("0 downloads");
+    const L::TileMeta tm = L::FitTileMeta(nameW, dlW, lineW, Px(10.0f));
+    CHECK(tm.sellerW >= std::min(nameW, lineW) - 0.5f);   // never cut while the line has room for it
+    if (nameW + Px(10.0f) + dlW > lineW) CHECK(!tm.showDownloads);
+    CHECK(L::FitTileMeta(TextW("maya"), dlW, lineW, Px(10.0f)).showDownloads);
+    // A few listings: bigger tiles.
+    CHECK(L::MarketTileMinW(1, 176.0f) > L::MarketTileMinW(12, 176.0f));
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -333,6 +374,7 @@ void RunAll() {
         CheckMarketShop(s[0]);
         CheckShowcase(s[0]);
         CheckIconRail(s[0], s[1]);
+        CheckMarketFold(s[0]);
     }
 }
 

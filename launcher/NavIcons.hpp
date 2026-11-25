@@ -9,7 +9,8 @@
 namespace okl {
 
 // Icon ids past the launcher tabs (0..10), and the round chat-ribbon buttons.
-enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19, kIcoTerminal = 20 };
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19, kIcoTerminal = 20,
+       kIcoSearch = 21, kIcoStar = 22, kIcoSort = 23 };
 enum { kRibChat, kRibPlay, kRibCheck, kRibClose, kRibMore, kRibStar, kRibStarOn };   // kRibStar: an outline star, kRibStarOn: a filled gold one
 
 void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col);   // line icon `id` centred at c
@@ -60,7 +61,7 @@ inline bool TakePanelShortcut() { const bool b = g_panelShortcut; g_panelShortcu
 /// hovered or selected, with the rail's selection pill on the left edge, a tooltip with the full name, and an optional dot
 /// (new / unread). Content: `initials` on `fill`, or a line icon (`navIcon`), or a "+" (`plus`). Drawn in `r` (screen
 /// coordinates); `railX` is the rail's left edge (for the pill). True when clicked.
-struct RailIcon { std::string tip, initials; int navIcon = -1; bool plus = false; ImU32 fill = 0; bool selected = false, dot = false; };
+struct RailIcon { std::string tip, initials; int navIcon = -1; bool plus = false; ImU32 fill = 0; bool selected = false, dot = false; int count = -1; };   // count >= 0: a small number badge
 bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 pos, float d, float railX);
 /// The thin line between groups of a rail, centred in a band from `a` to `b`.
 void DrawRailDivider(ImVec2 a, ImVec2 b);

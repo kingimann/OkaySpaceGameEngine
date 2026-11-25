@@ -39,6 +39,7 @@ okaypanels::PostProcessIntent DrawPostProcessBodyImGui(okaypanels::PostProcessMo
 /// Project Settings > Player and > Rendering (each inside its collapsing header).
 okaypanels::PlayerSettingsIntent DrawPlayerSettingsBodyImGui(okaypanels::PlayerSettingsModel& m, const PanelViewHooks& hooks);
 okaypanels::RenderingSettingsIntent DrawRenderingSettingsBodyImGui(okaypanels::RenderingSettingsModel& m, const PanelViewHooks& hooks);
+okaypanels::LoadingScreenIntent DrawLoadingScreenBodyImGui(okaypanels::LoadingScreenModel& m, const PanelViewHooks& hooks);
 
 /// The Hierarchy panel's body (docs/own_ui_toolkit.md section 12), drawn from the shared model like the OkayUI port: only the rows in
 /// view are asked for. The editor itself still draws its own Hierarchy (editor/main.cpp DrawHierarchy); this body is the same panel

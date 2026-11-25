@@ -11,6 +11,7 @@
 //   Import settings the selected texture's, model's or sound's import settings, Apply and Revert (editor/ProjectPanelUI.cpp)
 //   Post-processing Lighting: the look preset, tonemapping, bloom, colour grading, vignette, FXAA, SSAO, depth of field (editor/main.cpp)
 //   Player, Rendering  Project Settings: company, version and window size; ambient light and the skybox (editor/main.cpp)
+//   Loading screen  Project Settings: the editor's startup splash for the project (logo, accent, background, progress bar)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
@@ -529,12 +530,18 @@ inline const char* ProfilerEmptyText(const ProfilerModel& m) {
 
 enum ImportKind : int { ImportNone = 0, ImportTexture = 1, ImportModel = 2, ImportAudio = 3 };
 
-/// The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
+/// The values the panel edits, copied from and back to the engine's okay::ImportSettings (and, for a texture, its okay::TextureSettings
+/// extra keys) by the host (editor/ProjectPanelUI.cpp).
 struct ImportFields {
     int kind = ImportNone;
     int maxSize = 2048;                  // texture: 0 (no limit) or one of kImportSizes
+    bool sRGB = true, normalMap = false; // texture: Kind (colour, normal map, data), ImportTexKindIndex
     int filter = 2, wrap = 0;            // texture: Point, Bilinear, Trilinear; Repeat, Clamp, Mirror
+    int anisotropy = 8;                  // texture: with Trilinear, more than 1 shows as Anisotropic (ImportFilterIndex)
     bool mipmaps = true;
+    int mipFilter = 0;                   // texture: Box, Kaiser
+    bool compress = false;               // texture: compress on the GPU
+    int compression = 0;                 // texture: Auto, BC1, BC3, BC4, BC5
     float scale = 1.0f;                  // model
     int normals = 0;                     // model: from the file, calculated (smooth), flat
     float smoothingAngle = 60.0f;        // model, for calculated normals
@@ -547,41 +554,82 @@ struct ImportSettingsModel {
     ImportFields* edit = nullptr;        // edited in place
     ImportFields original;               // what is saved (Apply and Revert are enabled while edit differs from it)
     bool newer = false;                  // written by a newer editor: shown, not changed
-    bool showSampler = false;            // texture filter, wrap and mipmaps (hidden while the Direct3D renderers do not read them)
+    bool showSampler = true;             // texture Kind, filter, wrap, mipmaps and compression (every renderer reads them)
+    std::string loadedNote;              // texture: what is loaded now ("Loaded: 1024 x 1024, ..."; "" = not loaded)
+    std::string toolMessage;             // texture: what the last "Generate mipmaps / compress" of this file said ("" = nothing)
 };
 
-/// What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
+/// What the panel keeps between frames: the message of a failed Apply (the host sets it and showFail when saving fails), and the
+/// choices of the texture tools ("Mipmaps and compression": writes a .dds next to the picture).
 struct ImportSettingsState {
     std::string failMsg;
     bool showFail = false;               // open the failure popup on the next frame
+    int ddsOut = 1;                      // Mipmaps (DDS, full quality), Mipmaps + compressed
+    int ddsFilter = 1;                   // Box, Lanczos, Kaiser
+    bool ddsColour = true, ddsNormal = false, ddsCutout = false;
 };
 
 struct ImportSettingsIntent {
     bool changed = false;                // a value changed (written through edit)
     bool apply = false;                  // "Apply": save edit next to the asset
     bool revert = false;                 // "Revert": edit back to original
+    bool generate = false;               // "Generate mipmaps / compress": write the .dds with the state's choices
 };
 
 inline const int kImportSizes[11] = {0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
 inline const char* const kImportSizeNames[11] = {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"};
-inline const char* const kImportFilterNames[3] = {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"};
+inline const char* const kImportKindNames[3] = {"Colour (sRGB)", "Normal map", "Data (linear: masks, roughness)"};
+inline const char* const kImportFilterNames[4] = {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)", "Anisotropic (sharp at angles)"};
+inline const int kImportAnisoLevels[4] = {2, 4, 8, 16};
+inline const char* const kImportAnisoNames[4] = {"2x", "4x", "8x", "16x"};
 inline const char* const kImportWrapNames[3] = {"Repeat", "Clamp", "Mirror"};
+inline const char* const kImportMipFilterNames[2] = {"Box (sharp)", "Kaiser (smoother, less shimmer)"};
+inline const char* const kImportFormatNames[5] = {"Auto (BC1 / BC3 / BC5)", "BC1 (colour, no alpha)", "BC3 (colour + alpha)", "BC4 (one channel)", "BC5 (two channels, normal maps)"};
+inline const char* const kImportDdsOutNames[2] = {"Mipmaps (DDS, full quality)", "Mipmaps + compressed (BC1/BC3/BC5 DDS)"};
+inline const char* const kImportDdsFilterNames[3] = {"Box (fast)", "Lanczos (sharper)", "Kaiser (smooth)"};
 inline const char* const kImportNormalsNames[3] = {"From the file", "Calculate (smooth)", "Flat (faceted)"};
 inline const char* const kImportLoadNames[2] = {"Load the whole file", "Read it while it plays"};
 inline const char* kImportHeading = "IMPORT SETTINGS";
 inline const char* kImportNewerNote = "Made by a newer editor. Shown, but not changed here.";
 inline const char* kImportSavedNote = "Saved next to the asset.";
+inline const char* kImportToolsHeading = "MIPMAPS AND COMPRESSION";
+inline const char* kImportCompressNote = "Less video memory, slightly softer. Kept in .okaycache next to the picture. OpenGL and Direct3D 11 keep "
+                                         "it compressed; software and Direct3D 12 decode it. BC7 is not written yet.";
 
 /// The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
 inline int ImportSizeIndex(int maxSize) {
     for (int i = 0; i < 11; ++i) if (kImportSizes[i] == maxSize) return i;
     return 7;
 }
+/// A texture's Kind row: 0 colour (sRGB), 1 normal map, 2 data (linear); and choosing one.
+inline int ImportTexKindIndex(const ImportFields& e) { return e.normalMap ? 1 : e.sRGB ? 0 : 2; }
+inline void ImportSetTexKind(ImportFields& e, int k) { e.normalMap = k == 1; e.sRGB = k == 0; }
+/// The Filter row: Point, Bilinear, Trilinear, or Anisotropic (Trilinear with more than one anisotropy sample); and choosing one
+/// (Anisotropic starts at 8x, Trilinear sets one sample, Point and Bilinear keep the level).
+inline int ImportFilterIndex(const ImportFields& e) { return (e.filter == 2 && e.anisotropy > 1) ? 3 : e.filter; }
+inline void ImportSetFilter(ImportFields& e, int fi) {
+    e.filter = fi == 3 ? 2 : fi;
+    if (fi == 3 && e.anisotropy < 2) e.anisotropy = 8;
+    if (fi == 2) e.anisotropy = 1;
+}
+/// The Anisotropy row for a level (an unknown level shows as 8x).
+inline int ImportAnisoIndex(int level) {
+    for (int i = 0; i < 4; ++i) if (kImportAnisoLevels[i] == level) return i;
+    return 2;
+}
+/// A combo's field width in the import panel: as wide as its longest choice (`widest`, plus the frame padding on both sides and the
+/// arrow button, one frame tall), but never wider than the panel's room left of its label, and never under 160 pixels (a fixed
+/// 160 showed "Load the whole fi").
+inline float ImportComboWidth(float widest, float framePadX, float frameH, float avail, float labelW, float innerX) {
+    return std::max(160.0f, std::min(widest + framePadX * 2.0f + frameH, avail - labelW - innerX));
+}
 /// The same settings as far as the panel shows them (the fields of the asset's kind).
 inline bool ImportSame(const ImportFields& a, const ImportFields& b) {
     if (a.kind != b.kind) return false;
     switch (a.kind) {
-        case ImportTexture: return a.maxSize == b.maxSize && a.filter == b.filter && a.wrap == b.wrap && a.mipmaps == b.mipmaps;
+        case ImportTexture: return a.maxSize == b.maxSize && a.sRGB == b.sRGB && a.normalMap == b.normalMap && a.filter == b.filter &&
+                                   a.anisotropy == b.anisotropy && a.wrap == b.wrap && a.mipmaps == b.mipmaps && a.mipFilter == b.mipFilter &&
+                                   a.compress == b.compress && a.compression == b.compression;
         case ImportModel: return a.scale == b.scale && a.normals == b.normals && a.smoothingAngle == b.smoothingAngle && a.importAnimations == b.importAnimations;
         case ImportAudio: return a.loadMode == b.loadMode && a.forceMono == b.forceMono;
         default: return true;
@@ -665,6 +713,28 @@ struct RenderingSettingsIntent {
     bool changed = false;
     bool apply = false;                  // "Apply to current scene"
 };
+
+// ============================================================================================================================
+// Loading screen (Project Settings: the editor's startup splash for this project)
+// ============================================================================================================================
+
+struct LoadingScreenModel {
+    char* logo = nullptr;                // the logo PNG's path, char[logoSize], edited in place ("" = the built-in cube)
+    std::size_t logoSize = 0;
+    bool* accentOverride = nullptr;      // a custom accent colour, edited in place
+    float* accent = nullptr;             // float[3]
+    float* bgTop = nullptr;              // float[3]: the background's top and bottom colours
+    float* bgBottom = nullptr;
+    bool* showBar = nullptr;             // show the progress bar
+};
+
+struct LoadingScreenIntent {
+    bool changed = false;                // a value changed (written through the pointers; "Clear" empties the logo)
+    bool browse = false;                 // "..." (Browse...): the host opens a file dialog for the logo
+};
+
+inline const char* kLoadingScreenNote = "Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.";
+inline const char* kSplashLogoHint = "Logo image (PNG) \xE2\x80\x94 blank = built-in cube";
 
 } // namespace okaypanels
 

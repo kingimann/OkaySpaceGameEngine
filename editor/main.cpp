@@ -124,7 +124,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
-#include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client first, curl only as its last fallback)
+#include "okay/Platform/NativeFetch.hpp"      // the HTTP seam (WinHTTP / our own client)
 #include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
 #include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI

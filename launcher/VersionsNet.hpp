@@ -1,6 +1,6 @@
 #pragma once
 // The real download behind the Versions page, through the HTTP seam (okay/Platform/NativeFetch.hpp: WinHTTP on Windows,
-// our own client on Linux when on, curl only as the last fallback), plus a cancellable child-process runner. No SDL or ImGui.
+// our own client on Linux), plus a cancellable child-process runner. No SDL or ImGui.
 #include <cstdint>
 #include <filesystem>
 #include <functional>

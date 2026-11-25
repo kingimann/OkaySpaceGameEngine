@@ -163,8 +163,9 @@ static string binNormal(const string& p) {
     while (!n.empty() && n.back() == '/') n.pop_back();
     return n.empty() || n == "." ? string("{bin}") : "{bin}/" + n;
 }
+static bool plainShellChar(char ch) { return isalnum((unsigned char)ch) || strchr("_./+-=,:{}@%", ch) != nullptr; } // needs no quoting for sh
 static string shellWord(const string& w) { // a word for sh: kept bare when it is plain, else in single quotes
-    if (!w.empty() && w.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./+-=,:{}@%") == string::npos) return w;
+    if (!w.empty() && std::all_of(w.begin(), w.end(), plainShellChar)) return w;
     string q = "'"; for (char ch : w) { if (ch == '\'') q += "'\\''"; else q += ch; } return q + "'";
 }
 static bool inBin(const string& p) { // a file strictly inside {bin}, already tidied by binNormal()
@@ -844,7 +845,8 @@ inline void Interp::configureFile(const vector<string>& a) {
         auto replaceVars = [&](const string& l) {
             string o;
             for (size_t i = 0; i < l.size(); ++i) {
-                if (l[i] == '@') { size_t j = l.find('@', i + 1); if (j != string::npos && j > i + 1 && l.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./+-", i + 1) == j) { o += value(l.substr(i + 1, j - i - 1)); i = j; continue; } }
+                if (l[i] == '@') { size_t j = l.find('@', i + 1); auto nameChar = [](char ch) { return isalnum((unsigned char)ch) || strchr("_./+-", ch) != nullptr; };
+                    if (j != string::npos && j > i + 1 && std::all_of(l.begin() + (long)i + 1, l.begin() + (long)j, nameChar)) { o += value(l.substr(i + 1, j - i - 1)); i = j; continue; } }
                 if (!atOnly && l[i] == '$' && i + 1 < l.size() && l[i + 1] == '{') { size_t j = l.find('}', i + 2); if (j != string::npos) { o += value(l.substr(i + 2, j - i - 2)); i = j; continue; } }
                 o += l[i];
             }

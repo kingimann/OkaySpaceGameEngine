@@ -108,6 +108,14 @@ static bool applyPreset(Toolchain& c, const string& name) {
     else return false;
     d.name = name; c = d; return true;
 }
+// The toolchain keys that take a list of words, by name (nullptr: not one of them).
+static vector<string>* toolchainList(Toolchain& c, const string& k) {
+    static const std::pair<const char*, vector<string> Toolchain::*> keys[] = {
+        {"flags", &Toolchain::flags}, {"link_flags", &Toolchain::linkFlags}, {"c_flags", &Toolchain::cFlags}, {"cxx_flags", &Toolchain::cxxFlags},
+        {"link_lead", &Toolchain::linkLead}, {"exe_link_flags", &Toolchain::exeLinkFlags}, {"shared_link_flags", &Toolchain::sharedLinkFlags}, {"std_libs", &Toolchain::stdLibs}};
+    for (auto& kv : keys) if (k == kv.first) return &(c.*kv.second);
+    return nullptr;
+}
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
     string dir, cmd, output, depfile, pool, salt; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
@@ -342,10 +350,8 @@ static Manifest parseManifest(const string& file) {
             if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
-            else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
-            else if (k == "c_flags") add(c.cFlags); else if (k == "cxx_flags") add(c.cxxFlags); else if (k == "link_lead") add(c.linkLead);
-            else if (k == "exe_link_flags") add(c.exeLinkFlags); else if (k == "shared_link_flags") add(c.sharedLinkFlags);
-            else if (k == "rc") one(c.rc); else if (k == "std_libs") add(c.stdLibs); else if (k == "exe_import_lib") c.exeImportLib = oneFlag(v, "exe_import_lib");
+            else if (toolchainList(c, k)) add(*toolchainList(c, k));
+            else if (k == "rc") one(c.rc); else if (k == "exe_import_lib") c.exeImportLib = oneFlag(v, "exe_import_lib");
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");

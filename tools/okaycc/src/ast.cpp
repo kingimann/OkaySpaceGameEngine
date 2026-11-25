@@ -8,7 +8,10 @@ Param::Param() = default;
 Param::Param(Param&&) noexcept = default;
 Param& Param::operator=(Param&&) noexcept = default;
 Param::~Param() = default;
-Expr::Expr() = default;
+Expr::Expr() {
+    static std::uint64_t next = 0;
+    serial = ++next;
+}
 Expr::~Expr() = default;
 Type::Type() = default;
 Type::~Type() = default;

@@ -33,7 +33,7 @@ public:
     static int memberOffset(const std::string& tag, const std::string& field) {
         auto it = canonStructs().find(tag);
         if (it == canonStructs().end() || !it->second) return -1;
-        for (const FieldOff& f : layoutOf(it->second.get()))
+        for (const FieldOff& f : layoutOf(it->second.get(), false))
             if (f.name == field) return f.offset;
         return -1;
     }
@@ -189,15 +189,29 @@ private:
             return static_cast<int>(n) * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
-            auto fields = layoutOf(t);
+            // The size needs only the members held by value (a pointer is 8 bytes whatever it points
+            // to), so the layout taken here does not follow pointers. A finished class's size is
+            // kept: each pointer member asks for the size of the class it points to (its step), and
+            // asked again at every level, a web of classes that point to each other cost time
+            // exponential in its depth.
+            const Type* c = t->params.empty() ? canonOf(t) : t;
+            const bool keep = c == canonOf(c) && !c->tag.empty() && c->tag.find('\x02') == std::string::npos &&
+                              !c->params.empty();
+            if (keep) {
+                auto hit = sizeMemo().find(c->tag);
+                if (hit != sizeMemo().end() && hit->second.cls == c && hit->second.members == c->params.size())
+                    return hit->second.size;
+            }
+            auto fields = layoutOf(t, false);
             int end = 0;
             for (const FieldOff& f : fields) {
                 int span = f.bitWidth > 0 ? 4 : f.width;
                 int e = f.offset + span;
                 if (e > end) end = e;
             }
-            if (end == 0) return t->tag.empty() ? 0 : 1;
-            return alignUp(end, alignOf(t));
+            int size = end == 0 ? (t->tag.empty() ? 0 : 1) : alignUp(end, alignOf(t));
+            if (keep) sizeMemo()[c->tag] = SizeMemo{c, c->params.size(), size};
+            return size;
         }
         case Type::Kind::Union: {
             int sz = 0;
@@ -222,19 +236,37 @@ private:
         return 0;
     }
 
-    static std::vector<FieldOff> layoutOf(const Type* t) {
+    struct SizeMemo {
+        const Type* cls = nullptr;
+        std::size_t members = 0;
+        int size = 0;
+    };
+    static std::map<std::string, SizeMemo>& sizeMemo() {
+        static std::map<std::string, SizeMemo> memo;
+        return memo;
+    }
+
+    // The members of a class with their offsets. deep: also each member's step (the size of what a
+    // pointer member points to) and the members of a member held by value; the members of a class
+    // a pointer member points to are not laid out here but found by its tag when they are needed
+    // (fieldsFor), so a class that points to many others is not laid out with all of them inside.
+    // Not deep (for a size or an offset): the offsets and sizes only.
+    static std::vector<FieldOff> layoutOf(const Type* t, bool deep = true) {
         std::vector<FieldOff> out;
         if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union)) return out;
         // A use made before the class was complete has no fields of its own; take the finished
         // type, unless this tag is being laid out right now (a pointer to itself).
-        static std::set<std::string> inProgress;
+        static std::set<std::string> inProgressDeep, inProgressFlat;
+        std::set<std::string>& inProgress = deep ? inProgressDeep : inProgressFlat;
         struct Mark {
+            std::set<std::string>* in = nullptr;
             std::string tag;
             bool set = false;
             ~Mark() {
-                if (set) inProgress.erase(tag);
+                if (set) in->erase(tag);
             }
         } mark;
+        mark.in = &inProgress;
         if (t->params.empty() && !t->tag.empty() && !inProgress.count(t->tag)) t = canonOf(t);
         if (!t->tag.empty() && inProgress.insert(t->tag).second) {
             mark.tag = t->tag;
@@ -246,12 +278,14 @@ private:
                 f.name = p.name;
                 f.offset = 0;
                 f.width = sizeOf(p.type.get());
-                f.step = valueStep(p.type.get());
-                f.inner = innerOf(p.type.get());
+                if (deep) {
+                    f.step = valueStep(p.type.get());
+                    f.inner = innerOf(p.type.get());
+                }
                 f.agg = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union ||
                                    p.type->kind == Type::Kind::Array);
                 if (p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union))
-                    f.fields = layoutOf(p.type.get());
+                    f.fields = layoutOf(p.type.get(), deep);
                 out.push_back(std::move(f));
             }
             return out;
@@ -295,20 +329,22 @@ private:
             off = alignUp(off, alignOf(p.type.get()));
             f.offset = off;
             f.width = sizeOf(p.type.get());
-            f.step = valueStep(p.type.get());
-            f.inner = innerOf(p.type.get());
+            if (deep) {
+                f.step = valueStep(p.type.get());
+                f.inner = innerOf(p.type.get());
+            }
             bool nested = p.type && p.type->kind == Type::Kind::Struct;
             bool arr = p.type && p.type->kind == Type::Kind::Array;
             bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
                            p.type->inner->kind == Type::Kind::Struct;
             f.agg = nested || arr;
             if (nested) {
-                f.fields = layoutOf(p.type.get());
+                f.fields = layoutOf(p.type.get(), deep);
                 f.tag = p.type->tag;
             } else if (pstruct) {
+                // (by its tag, fieldsFor; a class with no tag is laid out here)
                 f.tag = p.type->inner->tag;
-                if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
-                    f.fields = layoutOf(p.type->inner.get());
+                if (deep && p.type->inner->tag.empty()) f.fields = layoutOf(p.type->inner.get());
             }
             if (p.name.compare(0, 5, "__mb:") == 0 && p.type) {
                 // The subobject of a base after the primary one (Itanium C++ ABI 2.4 II.3): the
@@ -327,7 +363,7 @@ private:
             off += f.width;
         }
         if (bitCursor >= 0) off += 4;
-        if (!t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
+        if (deep && !t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
         return out;
     }
 
@@ -615,7 +651,27 @@ private:
         init = std::move(lit);
     }
 
-    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+    // uns: compare, divide and take the remainder as unsigned values ([expr.arith.conv]).
+    // arith: >> of a signed value keeps the sign (as the code emitted for it does).
+    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out, bool uns = false,
+                     bool arith = false) {
+        if (arith && op == ">>") {
+            if (y < 0 || y >= 63) return false;
+            out = x >> y;
+            return true;
+        }
+        if (uns) {
+            const auto ux = static_cast<std::uint64_t>(x), uy = static_cast<std::uint64_t>(y);
+            if (op == "<") { out = ux < uy; return true; }
+            if (op == "<=") { out = ux <= uy; return true; }
+            if (op == ">") { out = ux > uy; return true; }
+            if (op == ">=") { out = ux >= uy; return true; }
+            if (op == "/" || op == "%") {
+                if (uy == 0) return false;
+                out = static_cast<std::int64_t>(op == "/" ? ux / uy : ux % uy);
+                return true;
+            }
+        }
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
             return true;
@@ -1821,10 +1877,6 @@ private:
             if (!cmp) r.fpw = dw;
             return r;
         }
-        std::int64_t folded = 0;
-        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
-            fold(e.text, a.op.imm, b.op.imm, folded))
-            return Val{Operand::number(folded), 0, 0};
         if ((e.text == "+" || e.text == "-") && a.step != 0 && b.step == 0) {
             Val off = scale(b, a.step);
             int dst = fresh();
@@ -1873,6 +1925,13 @@ private:
                 arith = true;
             }
         }
+        // Two constants: the operation done here, with the signedness worked out above
+        // ((unsigned long)-1 < 0ul was folded as signed: true; numeric_limits<unsigned
+        // long>::digits was 63).
+        std::int64_t folded = 0;
+        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
+            fold(e.text, a.op.imm, b.op.imm, folded, uns, arith))
+            return Val{Operand::number(folded), 0, 0};
         int dst = fresh();
         emitBin(binOp(e.text), dst, a.op, b.op, uns);
         if (arith) fn_.blocks[static_cast<std::size_t>(cur_)].code.back().arith = true;

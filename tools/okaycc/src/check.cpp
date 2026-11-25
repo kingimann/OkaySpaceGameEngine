@@ -33,6 +33,20 @@ public:
             if (d && d->function && d->type) addFunction(*d);
             else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
         }
+        // The decltype expressions of the partial specializations chosen ([temp.spec.partial.match]
+        // p2): one that has no type is a substitution failure, and the next round chooses again.
+        for (SpecCheck& c : specChecks()) {
+            bool failed = false;
+            for (auto& x : c.exprs) {
+                if (!x) continue;
+                ++quiet_;
+                ET r = checkExpr(*x);
+                --quiet_;
+                memo_.clear();
+                if (r.bad) failed = true;
+            }
+            if (failed && sfinaeFailed().insert(c.key).second) instDirty() = true;
+        }
         for (auto& d : tu.decls)
             if (d && !d->vt.empty())
                 for (const std::string& sym : d->vt) usedFns_.insert(sym);  // a vtable uses its slots
@@ -767,10 +781,14 @@ private:
             } else if (st->kind != Type::Kind::Struct && st->kind != Type::Kind::Union) {
                 err(e.line, e.col, "operand of '.' is not a struct");
                 return bad(e.line, e.col);
-            } else if (!obj.lvalue && st->kind == Type::Kind::Struct && !quiet_ &&
-                       (e.kids[0]->kind == Expr::Kind::Call || e.kids[0]->kind == Expr::Kind::Comma)) {
+            } else if (!obj.lvalue && st->kind == Type::Kind::Struct &&
+                       (e.kids[0]->kind == Expr::Kind::Call || e.kids[0]->kind == Expr::Kind::Comma) &&
+                       (!quiet_ || dataMember(st, e.kids[1]->text))) {
                 // f().n or T(args).n: the object is a temporary; it gets a name that lives to the
                 // end of the full expression ([class.temporary]/4) and the field is read from it.
+                // A probe does this too for a data member: what a probe leaves in the tree (an
+                // argument bound by reference as &f().n) must be what the real check finds. (A
+                // probe of f().g, the callee of a member call, leaves it as it is.)
                 std::string tmp;
                 std::unique_ptr<Expr> first;
                 if (e.kids[0]->kind == Expr::Kind::Comma && e.kids[0]->ival == 9 && !e.kids[0]->text.empty()) {
@@ -1008,7 +1026,49 @@ private:
             comma.kids.insert(comma.kids.end() - 1, std::move(pop));
         }
     }
-    std::map<const Expr*, ET> etCache_;
+    // The result of each expression checked in the statement being checked, kept with what the
+    // node was when it was checked (its serial, kind, text, value, type and children), so that a
+    // node checked again unchanged is not checked again. Operators check their operands once as a
+    // probe and once for real, one level after another: a chain a + b + c + ... or o << a << b
+    // << ... was checked in time exponential in its length (a 24-term sum took 11 seconds, a 25-link
+    // << chain in Components/NetworkSync.hpp several minutes). A probe's result (quiet) is used only
+    // by another probe: a real check makes changes a probe does not (the hidden object of f().x,
+    // test callmember26), so it checks the node itself. A real check's result serves both.
+    struct Memo {
+        std::uint64_t serial = 0;
+        Expr::Kind kind = Expr::Kind::Int;
+        std::string text;
+        std::uint64_t ival = 0;
+        const Type* ty = nullptr;
+        std::vector<const Expr*> kids;
+        bool real = false;
+        ET et;
+    };
+    std::unordered_map<const Expr*, Memo> memo_;
+    static bool sameNode(const Memo& m, const Expr& e) {
+        if (m.serial != e.serial || m.kind != e.kind || m.ival != e.ival || m.ty != e.ty.get() || m.text != e.text ||
+            m.kids.size() != e.kids.size())
+            return false;
+        for (std::size_t i = 0; i < m.kids.size(); ++i)
+            if (m.kids[i] != e.kids[i].get()) return false;
+        return true;
+    }
+    void remember(const Expr& e, const ET& r) {
+        Memo& m = memo_[&e];
+        m.serial = e.serial;
+        m.kind = e.kind;
+        m.text = e.text;
+        m.ival = e.ival;
+        m.ty = e.ty.get();
+        m.kids.clear();
+        for (const auto& k : e.kids) m.kids.push_back(k.get());
+        m.real = quiet_ == 0;
+        m.et = copyET(r);
+    }
+    // the type a checked node carries for the lowering
+    void markChecked(Expr& e, const ET& r) {
+        if (r.type) e.checked = finishedClassCopy(*r.type) ? classByName(*r.type) : cloneType(*r.type, false);
+    }
 
     // A local object of the function being checked, named (not a parameter, a reference, a static
     // or a global): returning it moves it (the parser's return handling), it is not copied.
@@ -1254,6 +1314,14 @@ private:
         return true;
     }
 
+    // Whether class st has a data member named n (its own or a base's copied into it).
+    static bool dataMember(const Type* st, const std::string& n) {
+        const Type* c = canonOf(st);
+        if (!c) return false;
+        for (const Param& p : c->params)
+            if (p.name == n) return p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function;
+        return false;
+    }
     static bool simpleOperand(const Expr& e) {
         switch (e.kind) {
         case Expr::Kind::Name: return true;
@@ -1348,16 +1416,9 @@ private:
             // object on the right that no member operator takes (os << v with a non-member
             // operator<<(ostream &, const V &)) goes to the non-member one.
             Expr& rhs = *e.kids[1];
-            ET rt;
-            auto cached = etCache_.find(&rhs);
-            if (cached != etCache_.end()) {
-                rt = copyET(cached->second);
-            } else {
-                ++quiet_;
-                rt = checkExpr(rhs);
-                --quiet_;
-                if (!simpleOperand(rhs)) etCache_[&rhs] = copyET(rt);
-            }
+            ++quiet_;
+            ET rt = checkExpr(rhs);
+            --quiet_;
             const Type* rty = rt.bad || !rt.type ? nullptr : rt.type.get();
             if (rty && rty->kind == Type::Kind::Struct) {
                 const Type* rc = canonOf(rty);
@@ -1381,10 +1442,7 @@ private:
             // (A call that returns a reference to an object, *f() inside, is an lvalue: the member
             // call below is made on it directly.)
             if (probe.bad) return false;
-            if (!found || probe.lvalue) {
-                etCache_[&lhs] = copyET(probe);
-                return false;
-            }
+            if (!found || probe.lvalue) return false;
             // An object that is not an lvalue (the result of a call): put it in a hidden local and
             // call the operator on that. A T(args) temporary already is one: use it as it is.
             std::string tmp;
@@ -1442,10 +1500,6 @@ private:
         }
         if (probe.bad || !usable || !st) return false;
         if (!found || !probe.lvalue) return false;
-        // The left operand was checked (and rewritten) by the probe: its result is kept, so the
-        // member call below does not check it again. Checked twice per level, a chain such as
-        // os << a << b << ... << z took time exponential in its length.
-        if (!simple) etCache_[e.kids[lhsAt].get()] = copyET(probe);
         auto member = mkE(Expr::Kind::Member, e);
         member->text = ".";
         member->kids.push_back(std::move(e.kids[lhsAt]));
@@ -1496,28 +1550,21 @@ private:
         if (!freeOps_.count(op) && !tmplOp) return false;
         for (std::size_t i = 0; i < arity; ++i)
             if (!e.kids[i]) return false;
-        // The operand types: a cached result is read without taking it; anything else is probed
-        // quietly and cached, so the real check later uses this same result.
+        // The operand types, probed quietly (a probe's result is kept for other probes, memo_).
         std::vector<ET> types;
         bool anyClass = false;
         for (std::size_t i = 0; i < arity; ++i) {
             Expr& k = *e.kids[i];
-            auto cached = etCache_.find(&k);
-            if (cached != etCache_.end()) {
-                types.push_back(copyET(cached->second));
-            } else {
-                if (!simpleOperand(k) && k.kind != Expr::Kind::Int && k.kind != Expr::Kind::Float &&
-                    k.kind != Expr::Kind::Char && k.kind != Expr::Kind::String && k.kind != Expr::Kind::Call &&
-                    k.kind != Expr::Kind::Bin && k.kind != Expr::Kind::Comma && k.kind != Expr::Kind::Unary &&
-                    k.kind != Expr::Kind::Cast)
-                    return false;
-                ++quiet_;
-                ET t = checkExpr(k);
-                --quiet_;
-                if (t.bad || !t.type) return false;
-                if (!simpleOperand(k)) etCache_[&k] = copyET(t);
-                types.push_back(std::move(t));
-            }
+            if (!simpleOperand(k) && k.kind != Expr::Kind::Int && k.kind != Expr::Kind::Float &&
+                k.kind != Expr::Kind::Char && k.kind != Expr::Kind::String && k.kind != Expr::Kind::Call &&
+                k.kind != Expr::Kind::Bin && k.kind != Expr::Kind::Comma && k.kind != Expr::Kind::Unary &&
+                k.kind != Expr::Kind::Cast && k.kind != Expr::Kind::Member)
+                return false;  // (f().name + x: a member of a call result too)
+            ++quiet_;
+            ET t = checkExpr(k);
+            --quiet_;
+            if (t.bad || !t.type) return false;
+            types.push_back(std::move(t));
             if (types.back().type && types.back().type->kind == Type::Kind::Struct) anyClass = true;
         }
         if (!anyClass) return false;
@@ -1687,10 +1734,10 @@ private:
     ET checkExpr(Expr& e) {
         if (!e.file.empty()) file_ = e.file;
         {
-            auto cached = etCache_.find(&e);
-            if (cached != etCache_.end()) {
-                ET r = std::move(cached->second);
-                etCache_.erase(cached);
+            auto kept = memo_.find(&e);
+            if (kept != memo_.end() && (kept->second.real || quiet_ > 0) && sameNode(kept->second, e)) {
+                ET r = copyET(kept->second.et);
+                markChecked(e, r);
                 return r;
             }
         }
@@ -1714,7 +1761,8 @@ private:
         if (!rewriteOperator(e)) rewriteFreeOperator(e);
         ET r = checkExprBody(e);
         // (an object of a finished class is kept by name: its members are the class's, canonOf)
-        if (r.type) e.checked = finishedClassCopy(*r.type) ? classByName(*r.type) : cloneType(*r.type, false);
+        markChecked(e, r);
+        remember(e, r);
         return r;
     }
 
@@ -2076,8 +2124,6 @@ private:
             }
             Expr& ak = *call.kids[firstArg + i];
             ET raw = checkExpr(ak);
-            // kept for the argument check that follows (see etCache_)
-            if (!simpleOperand(ak)) etCache_[&ak] = copyET(raw);
             ets.push_back(decay(std::move(raw)));
         }
         const Param* best = nullptr;
@@ -2722,30 +2768,37 @@ private:
         e.kids.push_back(std::move(cast));
         return checkExpr(e);
     }
-    // dynamic_cast<C *>(p): an upcast (or to the same class) is a plain conversion; otherwise
-    // (tmp = p, tmp && __okay_dyncast(type_info of *tmp, &_ZTI<C>)) ? (C *)tmp : (C *)0 (lib/eh.c).
+    // dynamic_cast<C *>(p): an upcast (or to the same class) is a plain conversion ([expr.dynamic.cast]
+    // p5); otherwise (C *)__okay_dyncast_ptr(p, &_ZTI<C>) (lib/eh.c), which finds the whole object
+    // and a C in it, also through bases after the primary one (a cast down from or across a second
+    // base moves the address). dynamic_cast<void *>(p) is the whole object (p7); dynamic_cast<C &>(x)
+    // is *(C *)__okay_dyncast_ref(&x, ..), which ends the program on failure.
     ET checkDyncast(Expr& e) {
         if (!e.ty || e.kids.size() != 2 || !e.kids[1]) return bad(e.line, e.col);
         const Type& T = *e.ty;
-        if (T.kind != Type::Kind::Pointer || !T.inner || T.inner->kind != Type::Kind::Struct) {
-            err(e.line, e.col, "dynamic_cast is only done to a pointer to a class");
+        const bool toRef = T.kind == Type::Kind::Reference && T.inner && T.inner->kind == Type::Kind::Struct;
+        const bool toVoid = T.kind == Type::Kind::Pointer && T.inner && T.inner->kind == Type::Kind::Void;
+        if (!toRef && !toVoid && (T.kind != Type::Kind::Pointer || !T.inner || T.inner->kind != Type::Kind::Struct)) {
+            err(e.line, e.col, "dynamic_cast is only done to a pointer or a reference to a class");
             return bad(e.line, e.col);
         }
-        ET a = decay(checkExpr(*e.kids[1]));
+        ET a = toRef ? checkExpr(*e.kids[1]) : decay(checkExpr(*e.kids[1]));
         if (a.bad || !a.type) return bad(e.line, e.col);
-        const Type* to = canonOf(T.inner.get());
-        const Type* from = isPtr(*a.type) && a.type->inner && a.type->inner->kind == Type::Kind::Struct
-                               ? canonOf(a.type->inner.get())
-                               : nullptr;
-        if (!to || !from) {
-            err(e.line, e.col, "dynamic_cast needs a pointer to a class");
+        const Type* at = a.type.get();
+        if (toRef && at->kind == Type::Kind::Reference && at->inner) at = at->inner.get();
+        const Type* to = toVoid ? nullptr : canonOf(T.inner.get());
+        const Type* from = toRef ? (at->kind == Type::Kind::Struct ? canonOf(at) : nullptr)
+                           : isPtr(*at) && at->inner && at->inner->kind == Type::Kind::Struct ? canonOf(at->inner.get())
+                                                                                              : nullptr;
+        if ((!to && !toVoid) || !from || (toRef && !a.lvalue)) {
+            err(e.line, e.col, toRef ? "dynamic_cast needs an object of a class" : "dynamic_cast needs a pointer to a class");
             return bad(e.line, e.col);
         }
         auto target = cloneType(T);
         std::unique_ptr<Expr> operand = std::move(e.kids[1]);
         e.kids.clear();
         e.ty.reset();
-        if (to->tag == from->tag || derivedFrom(*from, *to)) {
+        if (to && (to->tag == from->tag || derivedFrom(*from, *to))) {
             e.kind = Expr::Kind::Cast;
             e.text.clear();
             e.ty = std::move(target);
@@ -2756,20 +2809,16 @@ private:
             err(e.line, e.col, "dynamic_cast of a class without virtual functions");
             return bad(e.line, e.col);
         }
-        Type toCls;
-        toCls.kind = Type::Kind::Struct;
-        toCls.tag = to->tag;
-        std::string sym = ensureTypeInfo(toCls, e);
-        if (!scopes_.front().count("__okay_dyncast")) {
+        const char* fname = toRef ? "__okay_dyncast_ref" : "__okay_dyncast_ptr";
+        if (!scopes_.front().count(fname)) {
             auto fn = prim(Type::Kind::Function);
-            fn->inner = prim(Type::Kind::Int);
-            for (int k = 0; k < 2; ++k) {
-                Param prm;
-                prm.type = ptrTo(prim(Type::Kind::Long));
-                fn->params.push_back(std::move(prm));
-            }
+            fn->inner = ptrTo(prim(Type::Kind::Char));
+            fn->params.emplace_back();
+            fn->params.back().type = ptrTo(prim(Type::Kind::Char));
+            fn->params.emplace_back();
+            fn->params.back().type = ptrTo(prim(Type::Kind::Long));
             auto d = std::make_unique<Decl>();
-            d->name = "__okay_dyncast";
+            d->name = fname;
             d->line = e.line;
             d->col = e.col;
             d->file = e.file;
@@ -2778,41 +2827,40 @@ private:
             Sym s;
             s.type = std::move(fn);
             s.func = true;
-            scopes_.front()["__okay_dyncast"] = std::move(s);
+            scopes_.front()[fname] = std::move(s);
             tiDecls_.push_back(std::move(d));
         }
-        auto srcT = cloneType(*a.type);
-        std::string tmp = newTemp(*srcT, e, false);
-        auto deref = eUnary("*", mkName(tmp, e), e);
         auto call = mkE(Expr::Kind::Call, e);
-        call->kids.push_back(mkName("__okay_dyncast", e));
+        call->kids.push_back(mkName(fname, e));
         auto a1 = mkE(Expr::Kind::Cast, e);
-        a1->ty = ptrTo(prim(Type::Kind::Long));
-        a1->kids.push_back(vtableTypeInfo(std::move(deref), e));
+        a1->ty = ptrTo(prim(Type::Kind::Char));
+        a1->kids.push_back(toRef ? eUnary("&", std::move(operand), e) : std::move(operand));
         call->kids.push_back(std::move(a1));
         auto a2 = mkE(Expr::Kind::Cast, e);
         a2->ty = ptrTo(prim(Type::Kind::Long));
-        a2->kids.push_back(eUnary("&", mkName(sym, e), e));
+        if (toVoid) {
+            a2->kids.push_back(mkE(Expr::Kind::Int, e));
+        } else {
+            Type toCls;
+            toCls.kind = Type::Kind::Struct;
+            toCls.tag = to->tag;
+            a2->kids.push_back(eUnary("&", mkName(ensureTypeInfo(toCls, e), e), e));
+        }
         call->kids.push_back(std::move(a2));
-        auto test = mkE(Expr::Kind::Bin, e);
-        test->text = "&&";
-        test->kids.push_back(mkName(tmp, e));
-        test->kids.push_back(std::move(call));
-        auto yes = mkE(Expr::Kind::Cast, e);
-        yes->ty = cloneType(*target);
-        yes->kids.push_back(mkName(tmp, e));
-        auto no = mkE(Expr::Kind::Cast, e);
-        no->ty = std::move(target);
-        no->kids.push_back(mkE(Expr::Kind::Int, e));
-        auto cond = mkE(Expr::Kind::Cond, e);
-        cond->kids.push_back(std::move(test));
-        cond->kids.push_back(std::move(yes));
-        cond->kids.push_back(std::move(no));
-        e.kind = Expr::Kind::Comma;
-        e.text.clear();
         e.ival = 0;
-        e.kids.push_back(eAssignNode(mkName(tmp, e), std::move(operand), e));
-        e.kids.push_back(std::move(cond));
+        e.text.clear();
+        if (!toRef) {
+            e.kind = Expr::Kind::Cast;
+            e.ty = std::move(target);
+            e.kids.push_back(std::move(call));
+            return checkExpr(e);
+        }
+        auto cast = mkE(Expr::Kind::Cast, e);
+        cast->ty = ptrTo(cloneType(*target->inner));  // (T is gone with e.ty)
+        cast->kids.push_back(std::move(call));
+        e.kind = Expr::Kind::Unary;
+        e.text = "*";
+        e.kids.push_back(std::move(cast));
         return checkExpr(e);
     }
 
@@ -2853,6 +2901,27 @@ private:
             mem->kids.push_back(mkName(isEnd ? "end" : "begin", e));
             e.kids.clear();
             e.kids.push_back(std::move(mem));
+        }
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text.compare(0, 8, "\x01" "lambda:") == 0) {
+            // [&] { .. }(args), a lambda called where it is written ([expr.prim.lambda.closure] p1):
+            // the closure object is made ((captures, tmp) or tmp), then called as any closure
+            // object is: (captures, tmp(args)).
+            if (checkExpr(*e.kids[0]).bad) return bad(e.line, e.col);
+            Expr& k = *e.kids[0];
+            if (k.kind == Expr::Kind::Comma && k.kids.size() == 2 && k.kids[1] && k.kids[1]->kind == Expr::Kind::Name) {
+                auto seq = std::move(k.kids[0]);
+                auto obj = std::move(k.kids[1]);
+                auto call = mkE(Expr::Kind::Call, e);
+                call->kids = std::move(e.kids);
+                call->kids[0] = std::move(obj);
+                e.kind = Expr::Kind::Comma;
+                e.text.clear();
+                e.ival = 0;
+                e.kids.clear();
+                e.kids.push_back(std::move(seq));
+                e.kids.push_back(std::move(call));
+                return checkExprBody(e);
+            }
         }
         if (!closureFn_.empty() && !(e.kids[0]->kind == Expr::Kind::Name &&
                                      (e.kids[0]->text.empty() || e.kids[0]->text[0] == '\x01'))) {
@@ -3426,10 +3495,6 @@ private:
                         selfArg->text = "&";
                         selfArg->line = mem.line;
                         selfArg->col = mem.col;
-                        // The object was checked just above: keep its result for the check of the
-                        // argument &obj below (a chain of calls, a.f().g().h(), is then checked once
-                        // per link instead of twice per link, which was exponential).
-                        if (!simpleOperand(*mem.kids[0])) etCache_[mem.kids[0].get()] = copyET(obj);
                         selfArg->kids.push_back(std::move(mem.kids[0]));
                     }
                     std::unique_ptr<Expr> callee;
@@ -4651,9 +4716,10 @@ private:
     }
 
     void checkStmt(Stmt& s) {
-        // A kept result is only for the expression being checked: nodes of earlier statements may
-        // have been freed and their addresses reused.
-        if (s.kind != Stmt::Kind::Block) etCache_.clear();
+        // Kept results (memo_) are only for the statement being checked.
+        if (s.kind != Stmt::Kind::Block) {
+            memo_.clear();
+        }
         if (!s.file.empty()) file_ = s.file;
         switch (s.kind) {
         case Stmt::Kind::Block: {

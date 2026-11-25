@@ -12,6 +12,7 @@
 #include "token.hpp"
 
 #include <cstdio>
+#include <ctime>
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -260,11 +261,15 @@ private:
     bool isP(const Token& t, const char* s) const {
         if (t.kind != Tok::Punct) return false;
         if (t.text == s) return true;
-        if (std::string(s) == "[" && t.text == "<:") return true;
-        if (std::string(s) == "]" && t.text == ":>") return true;
-        if (std::string(s) == "{" && t.text == "<%") return true;
-        if (std::string(s) == "}" && t.text == "%>") return true;
-        return false;
+        // the digraphs ([lex.digraph]); no string is made here, this test runs for every token
+        if (t.text.size() != 2 || !s[0] || s[1]) return false;
+        switch (s[0]) {
+        case '[': return t.text == "<:";
+        case ']': return t.text == ":>";
+        case '{': return t.text == "<%";
+        case '}': return t.text == "%>";
+        default: return false;
+        }
     }
     bool isP(const char* s) const { return !atEnd() && isP(cur(), s); }
     bool nextIs(const char* s) const {
@@ -779,6 +784,7 @@ private:
             t->tag = "\x03" "decltype";
             t->bound = parseExpr();
             expectP(")", ")");
+            if (collectDecltype_ && t->bound) collectDecltype_->push_back(cloneExpr(*t->bound));
             return t;
         }
         if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
@@ -1260,6 +1266,9 @@ private:
         return false;
     }
     std::set<std::string> userCtors_;
+    // Names of functions declared at namespace scope: a function hides a class of the same name
+    // ([class.name] p2), so sigaction(..) calls the function, not struct sigaction's constructor.
+    std::set<std::string> fnNames_;
     std::set<std::string> deletedFns_;  // symbols of special members declared "= delete"
     std::vector<Type*> classStack_;  // classes whose body is being parsed, innermost last
     std::unique_ptr<Expr> braceTemp(const Type& td, std::vector<std::unique_ptr<Expr>> args, const Pos& pos) {
@@ -1337,6 +1346,13 @@ private:
                         // (name = "text" for a std::string field).
                         auto field = eArrow(eName(tmp, pos), f.name, pos);
                         field->text = ".";
+                        if (f.type && f.type->kind == Type::Kind::Reference) {
+                            // A reference member is bound to the value, not assigned through
+                            // ([dcl.init.aggr] p4, [dcl.init.ref]): its slot (ival 11) takes the
+                            // address. (It wrote through the slot's garbage: a crash.)
+                            field->ival = 11;
+                            v = eAddr(std::move(v), pos);
+                        }
                         addE(eAssign(std::move(field), std::move(v), pos));
                     }
                 }
@@ -2463,6 +2479,15 @@ private:
             tplShort = shortName(tag);
             tag += "__local" + std::to_string(localClassN_++);
         }
+        if (tag.empty() && !isUnion && bodyDepth_ > 0 && classStack_.empty() && isP("{")) {
+            // An unnamed class defined in a C++ function (struct { T &r; } cv{x}; in
+            // Render/Mesh.hpp): a hidden name, so it is a class like any other and a braced
+            // initializer initializes its members ([dcl.init.aggr]). (In C, unnamed structs keep
+            // the C rules.)
+            const std::string& f = at.file;
+            bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+            if (!cSource && !f.empty()) tag = "__unnamed" + std::to_string(localClassN_++);
+        }
         if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
             tplShort = instOverrideName_;
             tag = instOverrideTag_;
@@ -2489,6 +2514,7 @@ private:
           for (;;) {
             while (isKw("public") || isKw("private") || isKw("protected") || isKw("virtual")) advance();
             std::string bn;
+            std::size_t bnAt = 0;
             std::string one;
             if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
                 // N::B<T> as a base (std::enable_shared_from_this<C>): the template after its namespaces.
@@ -2500,6 +2526,7 @@ private:
                 if (bt && !bt->tag.empty() && classOf(bt->tag)) one = bt->tag;
                 else err("unknown base class");
             } else if (!atEnd() && cur().kind == Tok::Ident) {
+                bnAt = i_;
                 bn = cur().text;
                 advance();
                 while (eatP("::")) {
@@ -2510,6 +2537,8 @@ private:
                 }
             }
             const Type* td = findTypedef(bn);
+            std::size_t qend = 0;
+            if (!td && bn.find("::") != std::string::npos) td = qualTypeAt(bnAt, qend);  // std::true_type
             if (!one.empty()) {
             } else if (classOf(qualify(bn))) one = qualify(bn);
             else if (classOf(bn)) one = bn;
@@ -2555,6 +2584,15 @@ private:
                 if (!isUnion && (isClass || !ns_.empty() || !cSource) && !findTypedef(shortName(tag)))
                     addTypedef(shortName(tag), cloneType(*inc));
                 return inc;
+            }
+            {
+                // The class was first named where its name was not left behind as a type name (in
+                // a parameter list: void f(class Camera *c); [basic.scope.pdecl] p7): `class
+                // Camera;` here makes the name a type name in this scope.
+                const std::string& f = at.file;
+                bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+                if (!isUnion && !cSource && isP(";") && !findTypedef(shortName(tag)))
+                    addTypedef(shortName(tag), cloneType(*it->second));
             }
             return cloneType(*it->second);
         }
@@ -3496,10 +3534,34 @@ private:
     // constants of classes (trait values), !, -, ~, the binary operators, ?: and casts. False when
     // 'e' is not one the parser can work out (the checker sees it then).
     bool evalConst(const Expr& e, long& out) {
+        int width = 8;
+        bool uns = false;
+        return evalConstTyped(e, out, width, uns);
+    }
+    // A value of the given width (4 or 8 bytes after the integral promotions) and signedness, held
+    // sign- or zero-extended in a long.
+    static long fitConst(long v, int width, bool uns) {
+        if (width >= 8) return v;
+        const unsigned long bits = static_cast<unsigned long>(v) & 0xffffffffUL;
+        if (!uns && (bits & 0x80000000UL)) return static_cast<long>(bits | ~0xffffffffUL);
+        return static_cast<long>(bits);
+    }
+    // The constant value of e, with its type's width and signedness ([expr.const]; the usual
+    // arithmetic conversions, [expr.arith.conv]): (unsigned long)-1 < 0ul is false, not true, so
+    // numeric_limits<unsigned long>::digits is 64.
+    bool evalConstTyped(const Expr& e, long& out, int& width, bool& uns) {
+        width = 4;
+        uns = false;
         switch (e.kind) {
         case Expr::Kind::Int:
-        case Expr::Kind::Char: out = static_cast<long>(e.ival); return true;
+        case Expr::Kind::Char:
+            out = static_cast<long>(e.ival);
+            uns = e.litUnsigned;
+            if (e.litRank > 0 || (uns ? e.ival > 0xffffffffULL : e.ival > 0x7fffffffULL)) width = 8;
+            if (!uns && e.ival > 0x7fffffffffffffffULL) uns = true;
+            return true;
         case Expr::Kind::Name: {
+            width = 8;
             if (e.text.find("::") == std::string::npos && classConst(e.text, out)) return true;
             if (memberConst(e.text, out)) return true;
             for (std::size_t keep = ns_.size(); keep > 0; --keep) {
@@ -3515,54 +3577,114 @@ private:
                 const int n = typeSize(*e.ty);
                 if (n <= 0) return false;
                 out = n;
+                width = 8;
+                uns = true;
                 return true;
             }
             long v = 0;
-            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
-            if (e.text == "!") out = !v;
-            else if (e.text == "-") out = -v;
+            if (e.kids.empty() || !e.kids[0] || !evalConstTyped(*e.kids[0], v, width, uns)) return false;
+            if (e.text == "!") {
+                out = !v;
+                width = 4;
+                uns = false;
+                return true;
+            }
+            if (e.text == "-") out = static_cast<long>(0UL - static_cast<unsigned long>(v));
             else if (e.text == "~") out = ~v;
             else if (e.text == "+") out = v;
             else return false;
+            out = fitConst(out, width, uns);
             return true;
         }
         case Expr::Kind::Cast: {
             long v = 0;
-            if (e.kids.empty() || !e.kids[0] || !evalConst(*e.kids[0], v)) return false;
-            out = e.ty && e.ty->kind == Type::Kind::Bool ? (v != 0) : v;
+            if (e.kids.empty() || !e.kids[0] || !evalConstTyped(*e.kids[0], v, width, uns)) return false;
+            const Type* t = e.ty.get();
+            if (t && t->kind == Type::Kind::Bool) {
+                out = v != 0;
+                width = 4;
+                uns = false;
+                return true;
+            }
+            if (t && (t->kind == Type::Kind::Char || t->kind == Type::Kind::Short || t->kind == Type::Kind::Int ||
+                      t->kind == Type::Kind::Long)) {
+                // to a narrower type: its bits, then the promotion to int
+                const int w = t->kind == Type::Kind::Char ? 1 : t->kind == Type::Kind::Short ? 2 : t->kind == Type::Kind::Int ? 4 : 8;
+                unsigned long bits = static_cast<unsigned long>(v);
+                if (w < 8) {
+                    const unsigned long mask = (1UL << (8 * w)) - 1;
+                    bits &= mask;
+                    if (!t->unsign && (bits >> (8 * w - 1)) & 1UL) bits |= ~mask;
+                }
+                out = static_cast<long>(bits);
+                width = w < 4 ? 4 : w;
+                uns = t->unsign && w >= 4;
+                return true;
+            }
+            out = v;
             return true;
         }
         case Expr::Kind::Cond: {
             long c = 0;
-            if (e.kids.size() != 3 || !e.kids[0] || !evalConst(*e.kids[0], c)) return false;
-            return e.kids[c ? 1 : 2] && evalConst(*e.kids[c ? 1 : 2], out);
+            int cw = 4;
+            bool cu = false;
+            if (e.kids.size() != 3 || !e.kids[0] || !evalConstTyped(*e.kids[0], c, cw, cu)) return false;
+            return e.kids[c ? 1 : 2] && evalConstTyped(*e.kids[c ? 1 : 2], out, width, uns);
         }
         case Expr::Kind::Bin: {
             long a = 0;
             long b = 0;
-            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1] || !evalConst(*e.kids[0], a)) return false;
+            int wa = 4, wb = 4;
+            bool ua = false, ub = false;
+            if (e.kids.size() != 2 || !e.kids[0] || !e.kids[1] || !evalConstTyped(*e.kids[0], a, wa, ua)) return false;
             if (e.text == "&&" && !a) return (out = 0, true);
             if (e.text == "||" && a) return (out = 1, true);
-            if (!evalConst(*e.kids[1], b)) return false;
+            if (!evalConstTyped(*e.kids[1], b, wb, ub)) return false;
             const std::string& o = e.text;
-            if (o == "&&" || o == "||") out = b != 0;
-            else if (o == "==") out = a == b;
+            if (o == "&&" || o == "||") {
+                out = b != 0;
+                return true;
+            }
+            if (o == "<<" || o == ">>") {
+                // the type of the promoted left operand
+                width = wa;
+                uns = ua;
+                if (b < 0 || b >= 8 * width) return false;
+                if (o == "<<") out = static_cast<long>(static_cast<unsigned long>(a) << b);
+                else out = uns ? static_cast<long>(static_cast<unsigned long>(fitConst(a, width, true)) >> b) : a >> b;
+                out = fitConst(out, width, uns);
+                return true;
+            }
+            // the usual arithmetic conversions: the wider type; at one width, unsigned if either is
+            width = wa > wb ? wa : wb;
+            uns = wa == wb ? (ua || ub) : (wa > wb ? ua : ub);
+            a = fitConst(a, width, uns);
+            b = fitConst(b, width, uns);
+            const unsigned long xa = static_cast<unsigned long>(a), xb = static_cast<unsigned long>(b);
+            bool cmp = true;
+            if (o == "==") out = a == b;
             else if (o == "!=") out = a != b;
-            else if (o == "<") out = a < b;
-            else if (o == ">") out = a > b;
-            else if (o == "<=") out = a <= b;
-            else if (o == ">=") out = a >= b;
-            else if (o == "+") out = a + b;
-            else if (o == "-") out = a - b;
-            else if (o == "*") out = a * b;
-            else if (o == "/" && b) out = a / b;
-            else if (o == "%" && b) out = a % b;
-            else if (o == "&") out = a & b;
-            else if (o == "|") out = a | b;
-            else if (o == "^") out = a ^ b;
-            else if (o == "<<") out = a << b;
-            else if (o == ">>") out = a >> b;
-            else return false;
+            else if (o == "<") out = uns ? xa < xb : a < b;
+            else if (o == ">") out = uns ? xa > xb : a > b;
+            else if (o == "<=") out = uns ? xa <= xb : a <= b;
+            else if (o == ">=") out = uns ? xa >= xb : a >= b;
+            else {
+                cmp = false;
+                if (o == "+") out = static_cast<long>(xa + xb);
+                else if (o == "-") out = static_cast<long>(xa - xb);
+                else if (o == "*") out = static_cast<long>(xa * xb);
+                else if (o == "/" && b) out = uns ? static_cast<long>(xa / xb) : a / b;
+                else if (o == "%" && b) out = uns ? static_cast<long>(xa % xb) : a % b;
+                else if (o == "&") out = a & b;
+                else if (o == "|") out = a | b;
+                else if (o == "^") out = a ^ b;
+                else return false;
+                out = fitConst(out, width, uns);
+            }
+            if (cmp) {
+                width = 4;
+                uns = false;
+            }
             return true;
         }
         default: return false;
@@ -3974,6 +4096,7 @@ private:
         std::size_t skipTo = 0;    // just after the pattern's '>'
     };
     std::map<std::string, std::vector<Partial>> partials_;
+    std::vector<std::unique_ptr<Expr>>* collectDecltype_ = nullptr;  // decltype(e) read now go here
     int protoDepth_ = 0;  // reading a function template's prototype (parameters stand for themselves)
 
     // Match a pattern type (parameters as "\x02P" placeholders) against an argument type, binding
@@ -4072,12 +4195,46 @@ private:
             for (auto& b : bound)
                 if (!b) ok = false;
             if (!ok) continue;
-            own.clear();
+            std::vector<TArg> mine;
             for (auto& b : bound) {
                 TArg a;
                 a.type = std::move(b);
-                own.push_back(std::move(a));
+                mine.push_back(std::move(a));
             }
+            bool hasDecltype = false;
+            for (std::size_t k = ps.skipFrom; k < ps.skipTo && k < toks_.size(); ++k)
+                if (isKwTok(toks_[k], "decltype")) hasDecltype = true;
+            if (hasDecltype) {
+                // SFINAE in the pattern ([temp.spec.partial.match] p2, [temp.deduct] p8): the
+                // pattern with these arguments must be formed. The decltype expressions in it are
+                // given to the checker (specChecks); one that had no type in an earlier round has
+                // put this key in sfinaeFailed(), and the specialization does not match.
+                std::string key = name + "|" + std::to_string(n) + "|";
+                for (const TArg& a : args) key += argMangle(a) + ",";
+                if (sfinaeFailed().count(key)) continue;
+                bool known = false;
+                for (const SpecCheck& c : specChecks())
+                    if (c.key == key) known = true;
+                if (!known) {
+                    SpecCheck chk;
+                    chk.key = key;
+                    std::vector<std::unique_ptr<Expr>>* savedCollect = collectDecltype_;
+                    collectDecltype_ = &chk.exprs;
+                    std::size_t at = i_;
+                    bool half = halfGt_;
+                    halfGt_ = false;
+                    auto es = bindParams(ps.td, mine);
+                    i_ = ps.skipFrom;
+                    std::vector<TArg> formed;
+                    parseTemplateArgs(primary, formed, true);
+                    unbindParams(es);
+                    i_ = at;
+                    halfGt_ = half;
+                    collectDecltype_ = savedCollect;
+                    specChecks().push_back(std::move(chk));
+                }
+            }
+            own = std::move(mine);
             return static_cast<int>(n);
         }
         return -1;
@@ -5417,6 +5574,8 @@ private:
                 if (isKw("const")) defConst = true;
                 advance();
             }
+        if (!td && type && type->kind == Type::Kind::Function && d.name.find("::") == std::string::npos)
+            fnNames_.insert(d.name);
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
             std::size_t cc = d.name.rfind("::");
             std::string prefix = cc == std::string::npos ? "" : d.name.substr(0, cc);
@@ -7788,6 +7947,7 @@ private:
                 // T(args) for a class T: a temporary, constructed in a hidden local declared before
                 // the statement. Its destructor does not run (see the plan: temporaries).
                 const Type* td = instTd ? instTd.get() : findTypedef(cur().text);
+                if (td && !instTd && fnNames_.count(cur().text)) td = nullptr;
                 if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
                     Token at = cur();
                     if (!instTd) advance();
@@ -8110,12 +8270,16 @@ Tu frontEnd(const std::vector<Token>& raw, Diagnostics& diags) {
     for (int round = 0; round < 8; ++round) {
         Diagnostics local;
         instDirty() = false;
+        specChecks().clear();
+        const std::clock_t t0 = std::clock();
         Parser parser(toks, local);
         Tu tu = parser.parseTu();
+        const std::clock_t t1 = std::clock();
         if (local.ok()) typecheckTu(tu, local);
         if (std::getenv("OKAYCC_ROUNDS"))
-            std::fprintf(stderr, "round %d: %zu requests, dirty %d, %zu diags\n", round, instRequests().size(),
-                         instDirty() ? 1 : 0, local.items().size());
+            std::fprintf(stderr, "round %d: %zu requests, dirty %d, %zu diags, parse %.2f s, check %.2f s\n", round,
+                         instRequests().size(), instDirty() ? 1 : 0, local.items().size(),
+                         double(t1 - t0) / CLOCKS_PER_SEC, double(std::clock() - t1) / CLOCKS_PER_SEC);
         if (instDirty() && round < 7) continue;
         for (const Diag& d : local.items()) {
             if (d.warning) diags.warning(d.file, d.line, d.column, d.message);

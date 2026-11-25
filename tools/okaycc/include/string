@@ -31,6 +31,11 @@ public:
     string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
     // from a string_view ([string.cons] p8, explicit as there)
     explicit string(string_view v) : p_(nullptr), n_(0), cap_(0) { assignChars(v.data(), v.size()); }
+    // n characters of v from pos ([string.cons] p6: the template taking a T that converts to a view)
+    string(string_view v, unsigned long pos, unsigned long n) : p_(nullptr), n_(0), cap_(0) {
+        if (pos > v.size()) pos = v.size();
+        assignChars(v.data() + pos, v.size() - pos < n ? v.size() - pos : n);
+    }
     string(unsigned long n, char c) : p_(nullptr), n_(0), cap_(0) {
         release(grow(n));
         for (unsigned long i = 0; i < n; ++i) p_[i] = c;
@@ -153,6 +158,10 @@ public:
     string &assign(const string &o, unsigned long pos, unsigned long n = npos) {
         if (pos > o.n_) pos = o.n_;
         return assign(o.p_ + pos, o.n_ - pos < n ? o.n_ - pos : n);
+    }
+    string &assign(string_view v, unsigned long pos, unsigned long n = npos) {
+        if (pos > v.size()) pos = v.size();
+        return assign(v.data() + pos, v.size() - pos < n ? v.size() - pos : n);
     }
     string &assign(unsigned long n, char c) {
         string t(n, c);

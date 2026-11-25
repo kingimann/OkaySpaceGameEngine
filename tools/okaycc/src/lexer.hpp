@@ -47,6 +47,7 @@ private:
     void lexIdent(Token& t);
     void lexNumber(Token& t);
     void lexHex(std::string& spelling, Token& t);
+    bool digitSep(bool hex);
     void lexChar(Token& t, const std::string& prefix, int width);
     void lexString(Token& t, const std::string& prefix, int width);
     bool tryPunct(Token& t);

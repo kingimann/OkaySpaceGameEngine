@@ -1,0 +1,136 @@
+// <thread> for okay-cc (ISO/IEC 14882 [thread.threads]). Our own header. A program compiled by
+// okay-cc has one thread of execution (lib/alloc.c, errno, thread_local and the exception records are
+// not made for more), so a std::thread here does not run beside the code that made it: its function
+// waits until somebody has to wait for it, and then runs to the end on the one thread:
+//  - join() runs it (if it has not run yet), detach() runs it at once;
+//  - a condition_variable wait whose condition is false runs the threads that are still waiting
+//    (<condition_variable>), as only they could make it true;
+//  - hardware_concurrency() is 1, so code that splits work by the number of cores makes one part.
+// A thread whose function never returns (a server loop that waits for a stop flag set after join)
+// does not stop. When okay-cc has real threads, std::thread becomes a clone system call.
+#pragma once
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <functional>
+#include <utility>
+extern "C" int nanosleep(struct timespec *req, struct timespec *rem);
+namespace std {
+struct __okay_thread_rec {
+    function<void()> __fn;
+    unsigned long __id;
+    bool __done;
+    __okay_thread_rec *__next;  // the list of threads that have not run yet
+};
+inline __okay_thread_rec *__okay_threads_waiting = nullptr;
+inline unsigned long __okay_thread_next_id = 2;  // 1 is the program's own thread
+inline unsigned long __okay_thread_current = 1;
+// Run one thread to the end (it leaves the waiting list first, so it is run once).
+inline void __okay_thread_run(__okay_thread_rec *r) {
+    if (r->__done) return;
+    __okay_thread_rec **pp = &__okay_threads_waiting;
+    while (*pp && *pp != r) pp = &(*pp)->__next;
+    if (*pp) *pp = r->__next;
+    r->__done = true;
+    unsigned long outer = __okay_thread_current;
+    __okay_thread_current = r->__id;
+    r->__fn();
+    __okay_thread_current = outer;
+}
+// Run the thread that has waited longest; false if none is waiting.
+inline bool __okay_thread_run_one() {
+    __okay_thread_rec *r = __okay_threads_waiting;
+    if (!r) return false;
+    while (r->__next) r = r->__next;  // the list is newest first
+    __okay_thread_run(r);
+    return true;
+}
+class thread {
+public:
+    class id {
+    public:
+        unsigned long __v;
+        id() : __v(0) {}
+        explicit id(unsigned long v) : __v(v) {}
+        bool operator==(const id &o) const { return __v == o.__v; }
+        bool operator!=(const id &o) const { return __v != o.__v; }
+        bool operator<(const id &o) const { return __v < o.__v; }
+    };
+    thread() : __r(nullptr) {}
+    template <class F>
+    explicit thread(F f) : __r(new __okay_thread_rec) {
+        __r->__fn = f;
+        __start();
+    }
+    template <class F, class A1>
+    thread(F f, A1 a1) : __r(new __okay_thread_rec) {
+        __r->__fn = [f, a1]() { f(a1); };
+        __start();
+    }
+    template <class F, class A1, class A2>
+    thread(F f, A1 a1, A2 a2) : __r(new __okay_thread_rec) {
+        __r->__fn = [f, a1, a2]() { f(a1, a2); };
+        __start();
+    }
+    thread(const thread &) = delete;
+    thread(thread &&o) : __r(o.__r) { o.__r = nullptr; }
+    ~thread() {
+        if (__r) {
+            fputs("terminate called: a std::thread was destroyed while joinable\n", stderr);
+            abort();
+        }
+    }
+    thread &operator=(thread &&o) {
+        if (__r) {
+            fputs("terminate called: a joinable std::thread was assigned to\n", stderr);
+            abort();
+        }
+        __r = o.__r;
+        o.__r = nullptr;
+        return *this;
+    }
+    bool joinable() const { return __r != nullptr; }
+    id get_id() const { return __r ? id(__r->__id) : id(); }
+    void join() {
+        if (!__r) return;
+        __okay_thread_run(__r);
+        delete __r;
+        __r = nullptr;
+    }
+    void detach() { join(); }
+    void swap(thread &o) {
+        __okay_thread_rec *t = __r;
+        __r = o.__r;
+        o.__r = t;
+    }
+    static unsigned int hardware_concurrency() { return 1; }
+
+private:
+    __okay_thread_rec *__r;
+    void __start() {
+        __r->__id = __okay_thread_next_id++;
+        __r->__done = false;
+        __r->__next = __okay_threads_waiting;
+        __okay_threads_waiting = __r;
+    }
+};
+inline void swap(thread &a, thread &b) { a.swap(b); }
+namespace this_thread {
+inline thread::id get_id() { return thread::id(__okay_thread_current); }
+inline void yield() {}
+template <class R, class P>
+void sleep_for(const std::chrono::duration<R, P> &d) {
+    long ns = std::chrono::duration_cast<std::chrono::nanoseconds>(d).count();
+    if (ns <= 0) return;
+    struct timespec t;
+    t.tv_sec = ns / 1000000000L;
+    t.tv_nsec = ns % 1000000000L;
+    nanosleep(&t, nullptr);
+}
+template <class C, class D>
+void sleep_until(const std::chrono::time_point<C, D> &tp) {
+    sleep_for(tp - C::now());
+}
+}  // namespace this_thread
+}  // namespace std

@@ -22,6 +22,7 @@
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Privacy.hpp"
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/StringUtil.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -217,10 +218,6 @@ inline std::string BadgeText(int n) { return n <= 0 ? std::string() : n > 99 ? s
 
 enum class LinkKind { Web, Join, Unsafe };
 
-namespace detail {
-inline std::string Lower(std::string s) { for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a'); return s; }
-}  // namespace detail
-
 /// The host of an http(s) URL, lowercased, without user info or port ("" when there is none).
 inline std::string LinkHost(const std::string& url) {
     const std::size_t s = url.find("://");
@@ -229,10 +226,10 @@ inline std::string LinkHost(const std::string& url) {
     std::string auth = url.substr(a, e == std::string::npos ? std::string::npos : e - a);
     const std::size_t at = auth.rfind('@');
     if (at != std::string::npos) auth = auth.substr(at + 1);
-    if (!auth.empty() && auth[0] == '[') { const std::size_t rb = auth.find(']'); return detail::Lower(auth.substr(0, rb == std::string::npos ? auth.size() : rb + 1)); }
+    if (!auth.empty() && auth[0] == '[') { const std::size_t rb = auth.find(']'); return okay::str::LowerAscii(auth.substr(0, rb == std::string::npos ? auth.size() : rb + 1)); }
     const std::size_t colon = auth.find(':');
     if (colon != std::string::npos) auth = auth.substr(0, colon);
-    return detail::Lower(auth);
+    return okay::str::LowerAscii(auth);
 }
 /// Web: an http(s) link made only of plain URL characters, with a host; Join: an okay://join link (opened
 /// inside the launcher, never by the shell); Unsafe: everything else (javascript:, data:, file:, vbscript:,
@@ -241,7 +238,7 @@ inline LinkKind ClassifyLink(const std::string& raw) {
     std::string u = raw;
     while (!u.empty() && (u.front() == ' ' || u.front() == '\t')) u.erase(u.begin());
     while (!u.empty() && (u.back() == ' ' || u.back() == '\t' || u.back() == '\n' || u.back() == '\r')) u.pop_back();
-    const std::string low = detail::Lower(u);
+    const std::string low = okay::str::LowerAscii(u);
     if (low.compare(0, 12, "okay://join?") == 0) return LinkKind::Join;
     if (low.compare(0, 7, "http://") != 0 && low.compare(0, 8, "https://") != 0) return LinkKind::Unsafe;
     if (u.size() > 4096) return LinkKind::Unsafe;

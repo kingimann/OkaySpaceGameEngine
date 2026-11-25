@@ -212,8 +212,8 @@ public:
             j += ",\"expires_at\":" + Friends::JStr(IsoAfter(inv.expires - inv.created));
         return j + "}";
     }
-    static GameInvite FromRow(const std::string& o) {   // dup-allow: column-to-field mapping of game_invites, not the reports table
-        GameInvite g;
+    static GameInvite FromRow(const std::string& o) {
+        GameInvite g;   // dup-allow: column-to-field mapping of game_invites, not the reports table
         g.id = std::atol(Friends::Field(o, "id").c_str());
         g.senderId = Friends::Field(o, "sender"); g.recipientId = Friends::Field(o, "recipient");
         g.kind = Friends::Field(o, "kind"); g.title = Friends::Field(o, "title"); g.link = Friends::Field(o, "link");

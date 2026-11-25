@@ -110,7 +110,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Mouse & Touch",   "The mouse position and buttons, the cursor, taps and swipes.", "Input"},
     {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use.", "Input"},
     // ---- Online
-    {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
+    {"Multiplayer",     "Host or join, rooms and invites, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
     {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
     {"Server Security", "Anti-cheat: validate what clients send, rate limits, kicks and budgets.", "Online"},
     {"Accounts & Online Saves", "Log in, cloud saves, leaderboards and PlayFab.", "Online"},
@@ -256,6 +256,7 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Gamepad & Controls", "Controllers", "Which controller is plugged in, its family and battery, lightbar, trigger rumble, Controller Setup and rumble patterns."},
     // Online
     {"Multiplayer", "Hosting & Joining", "Host, join, leave and ask who is the server."},
+    {"Multiplayer", "Online Rooms & Invites", "Host over the internet, join by room code or link, invite friends, host migration."},
     {"Multiplayer", "Server Browser", "List servers and join one."},
     {"Multiplayer", "Matchmaking & Relay", "Find a match, queue, and play through a relay."},
     {"Multiplayer", "Messages & RPC", "Send messages and call functions on other players."},

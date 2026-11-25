@@ -21,6 +21,23 @@ using namespace compiler;
 Result<CompileOutput> compile_c(const CompileInput& input) {
     Preprocessor pp;
     pp.includes = input.include_paths;
+    // The predefined macros of the compiler okay-ms stands in for (Microsoft's "Predefined macros" page, x64): every
+    // Windows target defines _WIN32, a 64-bit one _WIN64, an x64 one _M_X64 and _M_AMD64 as 100. _MSC_VER 1916 is the
+    // last Visual Studio 2017 compiler, the first with the C++17 language complete; the engine tests only whether it is
+    // defined (then it uses __forceinline, <intrin.h> with _umul128/_BitScanForward64/_BitScanReverse64, and
+    // #pragma comment(lib), which okay-ms all handle). /U NAME leaves one out.
+    {
+        const std::pair<const char*, const char*> predefined[] = {
+            {"_WIN32", "1"}, {"_WIN64", "1"}, {"_M_X64", "100"}, {"_M_AMD64", "100"}, {"_MSC_VER", "1916"},
+            {"_MSC_FULL_VER", "191627045"}, {"_MSVC_LANG", "201703L"}, {"_INTEGRAL_MAX_BITS", "64"},
+            {"__cplusplus", "201703L"}};
+        for (const auto& p : predefined) {
+            if (std::find(input.undefines.begin(), input.undefines.end(), p.first) != input.undefines.end()) continue;
+            Macro macro;
+            macro.body = p.second;
+            pp.macros[p.first] = macro;
+        }
+    }
     for (const std::string& def : input.defines) {
         const size_t eq = def.find('=');
         Macro macro;

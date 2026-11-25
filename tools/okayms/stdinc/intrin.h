@@ -24,3 +24,40 @@ short _InterlockedDecrement16(short volatile* addend);
 long _InterlockedDecrement(long volatile* addend);
 __int64 _InterlockedDecrement64(__int64 volatile* addend);
 }
+
+// Bit scans and the 64 x 64 -> 128-bit product, as Microsoft documents _BitScanForward, _BitScanReverse (and the 64-bit
+// forms) and _umul128 for x64: a scan stores the index of the lowest (forward) or highest (reverse) set bit and returns
+// 1, or returns 0 when the mask is 0 (the index is then left as it was); _umul128 returns the low half and stores the
+// high half. Here they are plain inline functions (written from those descriptions), not single instructions yet.
+inline unsigned char _BitScanForward64(unsigned long* index, unsigned __int64 mask) {
+    if (mask == 0) return 0;
+    unsigned long i = 0;
+    while ((mask & 1) == 0) {
+        mask >>= 1;
+        ++i;
+    }
+    *index = i;
+    return 1;
+}
+inline unsigned char _BitScanReverse64(unsigned long* index, unsigned __int64 mask) {
+    if (mask == 0) return 0;
+    unsigned long i = 63;
+    while ((mask >> i) == 0) --i;
+    *index = i;
+    return 1;
+}
+inline unsigned char _BitScanForward(unsigned long* index, unsigned long mask) {
+    return _BitScanForward64(index, mask);
+}
+inline unsigned char _BitScanReverse(unsigned long* index, unsigned long mask) {
+    return _BitScanReverse64(index, mask);
+}
+inline unsigned __int64 _umul128(unsigned __int64 a, unsigned __int64 b, unsigned __int64* high) {
+    // Base 2^32 digits: each partial sum fits in 64 bits because (2^32-1)^2 + 2 (2^32-1) = 2^64 - 1.
+    const unsigned __int64 a0 = a & 0xFFFFFFFFull, a1 = a >> 32, b0 = b & 0xFFFFFFFFull, b1 = b >> 32;
+    const unsigned __int64 low = a0 * b0;
+    const unsigned __int64 t = a1 * b0 + (low >> 32);
+    const unsigned __int64 u = a0 * b1 + (t & 0xFFFFFFFFull);
+    *high = a1 * b1 + (t >> 32) + (u >> 32);
+    return (u << 32) | (low & 0xFFFFFFFFull);
+}

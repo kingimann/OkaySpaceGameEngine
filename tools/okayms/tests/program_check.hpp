@@ -7,6 +7,7 @@
 #include "check.hpp"
 #include "okayms/coff.hpp"
 #include "okayms/compile.hpp"
+#include "okayms/file_io.hpp"
 #include "okayms/link.hpp"
 
 #include <cstdio>
@@ -30,9 +31,8 @@ inline int wine_exit(const std::string& exe) {
 }
 
 inline bool write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream out(path.c_str(), std::ios::binary);
-    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
+    std::string error;
+    return okayms::write_file(path, bytes, &error);
 }
 
 inline bool has_symbol(const okayms::ObjectFile& object, const std::string& name) {

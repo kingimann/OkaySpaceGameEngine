@@ -1423,6 +1423,14 @@ target_include_directories(test_editor_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/e
 target_compile_definitions(test_editor_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME editor_signin_gate COMMAND test_editor_signin_gate)
 
+# The editor closes when the launcher that started it has gone (editor/LauncherWatch.hpp): once a second, one close
+# request through the quit prompt, not repeated after Cancel; plus source checks of the editor and launcher wiring.
+add_executable(test_editor_launcher_watch test_editor_launcher_watch.cpp)
+target_compile_features(test_editor_launcher_watch PRIVATE cxx_std_17)
+target_include_directories(test_editor_launcher_watch PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_editor_launcher_watch PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME editor_launcher_watch COMMAND test_editor_launcher_watch)
+
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
 add_executable(test_sha256_unify test_sha256_unify.cpp)
@@ -5515,7 +5523,23 @@ set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 # closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
 add_executable(test_launcher_tray test_launcher_tray.cpp)
 target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
-target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
 add_test(NAME launcher_tray COMMAND test_launcher_tray)
 set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)
+
+# The launcher's desktop notifications (launcher/DesktopNotify.hpp): pop-up, in-app or tab only (focus, the switches,
+# Do not disturb, presence, blocked and muted senders), bursts, rate limits, the one-at-a-time queue, once per version,
+# where a click goes, and the tray balloon's messages (launcher/TrayLogic.hpp). Headless; no SDL, ImGui or Win32.
+add_executable(test_launcher_notify test_launcher_notify.cpp)
+target_compile_features(test_launcher_notify PRIVATE cxx_std_17)
+target_include_directories(test_launcher_notify PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_notify COMMAND test_launcher_notify)
+set_tests_properties(launcher_notify PROPERTIES TIMEOUT 60)
+# The chat window's Friends list (launcher/FriendsList.hpp): grouping, the friend menu, status, layout. Headless.
+add_executable(test_launcher_friends test_launcher_friends.cpp)
+target_compile_features(test_launcher_friends PRIVATE cxx_std_17)
+target_include_directories(test_launcher_friends PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_launcher_friends PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_friends COMMAND test_launcher_friends)
+set_tests_properties(launcher_friends PROPERTIES TIMEOUT 60)

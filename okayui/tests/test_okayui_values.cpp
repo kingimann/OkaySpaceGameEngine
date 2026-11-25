@@ -465,6 +465,24 @@ void TypedInputTests() {
     CHECK_NEAR(f, 2.0f, 1e-4);
 }
 
+void InputIntStepZeroTests() {
+    // A step of 0 is a plain number field, Dear ImGui's InputInt(label, v, 0): no -/+ buttons, the whole width is the value box, and
+    // a click where a button would be types into the box instead of stepping. A negative step likewise.
+    Rig r; int a = 5, b = 5; UI::Rect ra, rb;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(240); UI::InputInt("", &a, 0); ra = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(240); UI::InputInt("", &b, -3); rb = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    CHECK(ra.w > 230.0f && rb.w > 230.0f);
+    r.Click(ra.x + ra.w - 6.0f, CenterY(ra)); r.Frames(1);           // the right end, where "+" sits with a step
+    CHECK(a == 5);                                                   // no step
+    r.sim.Type("1920"); r.Frame(); r.Tap(Key_Enter); r.Frame();      // the click opened typing in the box
+    CHECK(a == 1920);
+    r.Click(rb.x + rb.w - 6.0f, CenterY(rb)); r.Tap(Key_Escape); r.Frame();
+    CHECK(b == 5);
+}
+
 void TabBarTests() {
     Rig r; UI::Rect rA, rB, rC, rPlus, rCx; bool bodyA = false, bodyB = false, bodyC = false, plus = false, openC = true, barOpen = false; int force = 0;
     // GetItemRect right after a header call is that header's rectangle.
@@ -1111,6 +1129,7 @@ int main() {
     TypedNumberTests();
     TypedSingleTests();
     TypedInputTests();
+    InputIntStepZeroTests();
     TabBarTests();
     TooltipAndHelperTests();
     KeyStateTests();

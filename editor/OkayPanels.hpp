@@ -1,9 +1,9 @@
 #pragma once
-// Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24 and 25; the Crash Log, the Audio Mixer, History, Problems, Stats and the Profiler are
-// drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet): the Crash
-// Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, Project Settings' Tags and Layers, Physics, Player and Rendering
-// sections, the Project panel's import settings and the Lighting window's Post-processing section. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
-// okayui/screens/OkayUIPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI).
+// Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24, 25, 26 and 27; the Crash Log, the Audio Mixer, History, Problems, Stats,
+// the Profiler, Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, the Project panel's import settings and
+// Lighting's Post-processing section are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
+// ImGui window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
+// and OkayUIEditorPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI); without it the functions draw nothing.
 #include "EditorPanelModels.hpp"
 
 #include <cstdint>
@@ -43,21 +43,24 @@ bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel
 /// undo step there, as it did before); "Copy name" goes to the clipboard here, Undo, Redo and jumps come back in `intent`.
 bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent);
 
-/// Project Settings' Tags and Layers and Physics sections with OkayUI, drawn inside the current ImGui window (under their collapsing
-/// header) in a placeholder as tall as the section was on the last frame; only the part of it the window shows is drawn and takes
-/// the mouse. Same return value as above.
+/// Project Settings' Tags and Layers, Physics, Player and Rendering sections, drawn by OkayUI only (no Dear ImGui version) inside the
+/// current ImGui window, under their collapsing headers: a placeholder as tall as the section was on the last frame, the body drawn
+/// into the window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so ImGui popups and windows in front cover it.
+/// Only the part the window shows takes the mouse. Same return value as above (false: the window shows nothing of it).
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent);
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent);
 /// The Profiler window with OkayUI. It fills its model only while the window is visible, through `fill`.
 bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent);
-/// Sections drawn inside the current ImGui window like Tags and Layers above: the Project panel's import settings, Lighting >
-/// Post-processing, and Project Settings > Player and > Rendering. `id` keeps two hosts of the same section apart (the import settings
-/// are shown in two places). Same return value as above.
+/// The Project panel's import settings and Lighting > Post-processing: OkayUI only, like the Project Settings sections above (no Dear
+/// ImGui version). `id` keeps two hosts of the same section apart (the import settings are shown in two places).
 bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
                               okaypanels::ImportSettingsIntent& intent);
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent);
+/// Project Settings > Player and > Rendering: OkayUI only, like Tags and Layers above.
 bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent);
 bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent);
+/// Project Settings > Loading screen: OkayUI only, like the sections above.
+bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel& model, okaypanels::LoadingScreenIntent& intent);
 
 /// The Hierarchy panel with OkayUI (docs/own_ui_toolkit.md section 12). The window keeps the keyboard focus flag (`model.focused` is
 /// set here from the ImGui window). A file dragged in from a Dear ImGui panel arrives through model.externalDrag*, which the caller

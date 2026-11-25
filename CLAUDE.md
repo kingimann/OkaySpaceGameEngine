@@ -109,28 +109,23 @@ then this file gets updated. Keep this file short and true.
 
 ## Releases
 
-11. **Release small and often** ("merge whatever is green and release"). Bump `CMakeLists.txt`, add a
-    `ROADMAP.md` row and a plain-language `dist/CHANGELOG.txt` entry, merge, dispatch `release.yml` (ref `main`,
-    channel `latest`). **Keep sending releases even if the previous one is not out yet** (owner, 2026-11-15: "keep
-    sending out releases even if the previous one isn't out yet, so I can keep testing"): every release has its own new
-    version, and the publish step is serialized by a lock and never moves "latest" backwards (branch
-    `claude/release-parallel`; until it is merged, check that no other release is publishing before you dispatch).
-11a. **Releases are fast. The owner does not wait hours.** (Owner rule, 2026-11-17: "i want faster releases, even if
-    they're small, i don't want to wait for big releases", then "make that a rule, i have said that to you so many
-    times, i don't wanna wait hours".)
-    - **Ship what is green now.** The moment a change is merged and green, it goes into a release. Never hold a
-      release to wait for another PR or to make it "bigger", and never batch. A one-change release is fine.
-    - **Start the release at once.** Open the version PR as soon as there is something to ship, in parallel with
-      everything else. If something is waiting on a slow job, do not sit and wait for it: start the next release
-      step or the next piece of work.
-    - **A slow release path is a bug to fix first.** If getting a release to the owner takes more than about 30
-      minutes of waiting on CI or on manual steps, fixing that is the top-priority job until it is fast (CI speed:
-      `claude/ci-speed-1`; one-dispatch releases with no version PR: `claude/fast-release-1`). Use the fast path as
-      soon as it is merged and tested.
-    - **Say the time.** Tell the owner what the release is waiting on and roughly how long, in plain words, and
-      tell them as soon as it is published so they can test.
-    - This rule does not weaken rules 6, 12 and 13: never merge or publish anything red, never re-run an existing
-      version, always check the checksums. Speed comes from a shorter pipeline, not from skipping checks.
+11. **Test builds all the time; releases are one big update.** (Owner, 2026-11-25: "test runs consistent updates so i
+    can test everything as they come and you fix and update, releases should be one big update after all those test
+    runs", and "i want new test runs consistently as your pushing prs". This replaces 2026-11-15's and 2026-11-17's
+    "release small and often".)
+    - **Test builds are automatic.** `.github/workflows/test-build-on-push.yml` starts a test build (`dev-build.yml`,
+      the launcher's test channel) on every push to main and for every PR whose checks finish green. Start one by hand
+      for anything else the owner should try. Tell the owner what each one has; fix what they find and push again.
+    - **A release gathers many test builds into one big update, and only the owner starts one.** (Owner, 2026-11-25: "i
+      will tell you when to send out releases, only send out test builds if i dont say release".) Never dispatch
+      `release.yml` or open a version PR unless the owner said "release" for it; otherwise send test builds. Bump `CMakeLists.txt`, add a `ROADMAP.md` row and a full, plain-language
+      `dist/CHANGELOG.txt` block (it IS the launcher's What's New and the GitHub release notes, in full), merge, then
+      dispatch `release.yml` (ref `main`, channel `latest`) from a main commit whose full run is green.
+    - **The pipeline stays fast.** A slow path to a test build or a release is a bug to fix first (the sharded test job
+      takes about 30 minutes). Do not merge to main while a release's full run is going: each push cancels the run.
+    - **Say the time** in plain words, and only times that are real.
+    - Rules 6, 12 and 13 still hold: never merge or publish anything red, never re-run an existing version, always
+      check the checksums.
 12. **Never re-run the release workflow for a version that already exists.** It rebuilds the programs and changes
     their checksums.
 13. **Check the release really worked**: the Supabase publish step, the "make latest" step, and `versions.json`

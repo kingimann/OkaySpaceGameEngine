@@ -19,6 +19,7 @@
 #include "okay/Platform/ChatDelivery.hpp"
 #include "okay/Net/JoinLink.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -97,6 +98,80 @@ inline InviteView ViewLegacyInvite(const std::string& senderName, const std::str
     InviteView v = ViewInvite(g, now, PresenceSeen::Unknown, "");
     if (v.state == InviteState::Pending) v.sub = "Sent " + invitedetail::Left(now - sent) + " ago.";
     return v;
+}
+
+/// The sender's own copy of an invite card: what happened to the invite they sent to `recipientName`.
+inline InviteView ViewSentInvite(const GameInvite& inv, long now, const std::string& recipientName) {
+    InviteView v;
+    const std::string who = recipientName.empty() ? std::string("your friend") : okay::account::PublicName(recipientName, inv.recipientId);
+    v.text = "You invited " + who + " " + invitedetail::What(inv.kind, inv.title);
+    if (inv.status == "accepted")  { v.state = InviteState::Accepted;  v.sub = who + " accepted."; return v; }
+    if (inv.status == "declined")  { v.state = InviteState::Declined;  v.sub = who + " declined."; return v; }
+    if (inv.status == "cancelled") { v.state = InviteState::Cancelled; v.sub = "You withdrew this invite."; return v; }
+    if (inv.expires > 0 && now >= inv.expires) { v.state = InviteState::Expired; v.sub = "This invite has expired."; return v; }
+    v.state = InviteState::Pending;
+    v.sub = inv.expires > 0 ? "Waiting for an answer \xC2\xB7 expires in " + invitedetail::Left(inv.expires - now) + "."
+                            : std::string("Waiting for an answer.");
+    return v;
+}
+
+/// What one invite card in chat shows and which buttons it has. `rec` is the game_invites record the card's link
+/// names (nullptr or id 0 = no record: an older launcher, the SQL not run, or the lookup not finished yet).
+struct InviteCard {
+    InviteView view;
+    bool fromRecord = false;   ///< the state comes from the server's record
+    bool accept = false;       ///< Accept (answers the record, then joins)
+    bool decline = false;      ///< Decline
+    bool withdraw = false;     ///< Withdraw (my own pending invite)
+    bool join = false;         ///< the plain "Join game" of a card without a record
+    std::string joinLabel;     ///< "Join game" / "Try to join"
+};
+inline InviteCard CardForInvite(const std::string& title, bool mine, const std::string& senderName, const std::string& recipientName,
+                                const GameInvite* rec, long sent, long now, PresenceSeen seen, const std::string& senderLink) {
+    InviteCard c;
+    if (rec && rec->id > 0) {
+        c.fromRecord = true;
+        if (mine) {
+            c.view = ViewSentInvite(*rec, now, recipientName);
+            c.withdraw = c.view.state == InviteState::Pending;
+        } else {
+            GameInvite g = *rec;
+            if (g.senderName.empty()) g.senderName = senderName;
+            c.view = ViewInvite(g, now, seen, senderLink);
+            c.accept = c.decline = c.view.canAccept;
+        }
+        return c;
+    }
+    if (mine) {
+        c.view.text = "You sent an invite " + invitedetail::What("game", title);
+        if (sent > 0) c.view.sub = "Sent " + invitedetail::Left(now - sent) + " ago.";
+        return c;
+    }
+    c.view = ViewLegacyInvite(senderName, title, sent, now);
+    c.join = true;   // an invite with no record can still be tried
+    c.joinLabel = c.view.state == InviteState::Expired ? "Try to join" : "Join game";
+    return c;
+}
+
+/// Invite answered: notification events for invites I sent that were pending last time (`known`: id -> the status
+/// seen then) and are now accepted or declined. Invites not in `known` (the first look) give no event.
+/// `names`: recipient uid -> public name.
+inline std::vector<chat::Event> AnsweredInviteEvents(const std::vector<GameInvite>& sent, const std::map<long, std::string>& known,
+                                                     const std::map<std::string, std::string>& names) {
+    std::vector<chat::Event> out;
+    for (auto it = sent.rbegin(); it != sent.rend(); ++it) {
+        const GameInvite& g = *it;
+        const auto k = known.find(g.id);
+        if (k == known.end() || k->second != "pending") continue;
+        if (g.status != "accepted" && g.status != "declined") continue;
+        const auto n = names.find(g.recipientId);
+        const std::string who = okay::account::PublicName(n != names.end() ? n->second : std::string(), g.recipientId);
+        chat::Event e; e.kind = chat::Event::Kind::InviteAnswered;
+        e.fromUid = g.recipientId; e.fromName = who; e.peerUid = g.recipientId; e.inviteId = g.id;
+        e.text = who + (g.status == "accepted" ? " accepted" : " declined") + " your invite " + invitedetail::What(g.kind, g.title) + ".";
+        out.push_back(e);
+    }
+    return out;
 }
 
 /// respond_invite / cancel_invite answered this: the change was made.

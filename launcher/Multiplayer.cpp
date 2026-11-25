@@ -8,6 +8,10 @@
 #include "CoverArtAvatars.hpp"    // DrawAvatar
 #include "NavIcons.hpp"
 #include "OkayTheme.hpp"
+#include "DesktopNotify.hpp"        // InviteTabKey: one Notifications row per invite record
+#include "JoinPlan.hpp"             // okay::joinplan::PlanJoin: which program a join starts
+#include "okay/Core/BuildPipeline.hpp"   // ManifestVersionNear: an exported game's own version
+#include "VersionsUI.hpp"           // RequestPage: "Get version X" opens the Versions page
 #include "okay/Platform/Platform.hpp"
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -125,6 +129,7 @@ static void MpRemember(const okay::JoinLink& l) {   // history: direct servers o
 // ---- Joining -------------------------------------------------------------------
 static std::string g_mpPassLink;  static bool g_mpPassReq = false;   // ask for a password, then join
 static std::string g_mpPickLink;  static bool g_mpPickReq = false;   // "which of your games is this?"
+static okay::joinplan::Plan g_mpPlan; static bool g_mpPlanReq = false;   // "can't join yet": the versions differ / no editor
 void MpLaunch(const okay::JoinLink& in) {
     okay::JoinLink l = in;
     const std::string link = l.Format();
@@ -136,10 +141,36 @@ void MpLaunch(const okay::JoinLink& in) {
             MpRemember(l);
             return;
         }
-    const MpLibGame* g = nullptr;
+    // Which program (shared/JoinPlan.hpp): the player with an exported game (also for a dedicated server), the editor of
+    // the right version with a project when the friend is playing their project in the editor, or a question.
     const auto lib = MpLibrary();
-    for (const auto& x : lib) if (SameTitle(x.title, l.game)) { g = &x; break; }
-    if (!g) { g_mpPickLink = link; g_mpPickReq = true; return; }   // not in the library (by that name): ask
+    std::vector<okay::joinplan::Candidate> cands;
+    for (const auto& x : lib) {
+        okay::joinplan::Candidate c; c.kind = okay::joinplan::Candidate::Kind::Exported; c.title = x.title; c.path = x.scene;
+        c.gameVersion = okay::buildpipe::ManifestVersionNear("", x.scene);   // its build.json ("" = unknown: no version check)
+        cands.push_back(c);
+    }
+    std::vector<std::string> editors;
+    if (l.target == "project") {   // only then are the projects and editor versions read
+        for (auto& c : MpJoinProjects()) cands.push_back(c);
+        editors = MpInstalledEditors();
+    }
+    const okay::joinplan::Plan plan = okay::joinplan::PlanJoin(l, cands, editors);
+    using JA = okay::joinplan::Action;
+    if (plan.action == JA::AskWhichGame || plan.action == JA::Missing) { g_mpPickLink = link; g_mpPickReq = true; return; }   // ask
+    if (plan.action == JA::Invalid) { Toast(plan.text, 2); return; }
+    if (plan.action == JA::NeedEditor || plan.action == JA::VersionMismatch) { g_mpPlan = plan; g_mpPlanReq = true; return; }
+    if (plan.action == JA::OpenEditor) {
+        const okay::joinplan::Candidate& pc = cands[plan.index];
+        if (!MpOpenProjectForJoin(plan.editorVersion, pc.path)) { Toast("Couldn't open " + pc.title + " in the editor v" + plan.editorVersion + ".", 2); return; }
+        ImGui::SetClipboardText(link.c_str());   // the editor has no --join: Play, then join with the copied link
+        MpRemember(l);
+        Toast("Opening " + pc.title + " in the editor v" + plan.editorVersion + ". Press Play, then join " +
+              (l.host.empty() ? std::string("the match") : l.host) + " (the join link is copied).", 1);
+        return;
+    }
+    const MpLibGame* g = plan.index >= 0 && plan.index < (int)lib.size() ? &lib[plan.index] : nullptr;
+    if (!g) { g_mpPickLink = link; g_mpPickReq = true; return; }
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
     if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
@@ -609,7 +640,7 @@ static void DrawInvitePopups() {
         if (!party && !ParseChatInvite(f.body, ci)) continue;
         pops.push_back({f, okay::platform::TicksMs32()});
         if (pops.size() > 3) pops.erase(pops.begin());
-        UpsertNotif("invite:" + std::to_string(f.id), party ? f.fromName + " invited you to their party"
+        UpsertNotif(okl::notify::InviteTabKey(f.id, party ? 0 : ci.link.inviteId), party ? f.fromName + " invited you to their party"
                                                             : f.fromName + " invited you to play " + ci.title,
                     party ? "Open the Multiplayer page to join." : "Open the chat with " + f.fromName + " to join.", 2, 14);
         PlayChatChime();
@@ -768,6 +799,31 @@ void DrawMpDialogs() {
         if ((PrimaryButton("Join", ImVec2(okl::FitButtonW("Join", okl::UiPx(120.0f)), okl::UiPx(30.0f))) || enter) && pw[0]) { l.password = pw; ImGui::CloseCurrentPopup(); MpLaunch(l); }
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // ---- Can't join yet: the game's version differs from the host's, or the editor version is not installed ----
+    if (g_mpPlanReq) { g_mpPlanReq = false; ImGui::OpenPopup("Can't join yet##mpplan"); }
+    ImGui::SetNextWindowSize(ImVec2(okl::UiPx(440.0f), 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Can't join yet##mpplan", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + okl::UiPx(420.0f));
+        ImGui::TextUnformatted(g_mpPlan.text.c_str());
+        ImGui::PopTextWrapPos();
+        if (!g_mpPlan.theirVersion.empty()) {
+            ImGui::Dummy(ImVec2(0, 4));
+            const bool mismatch = g_mpPlan.action == okay::joinplan::Action::VersionMismatch;
+            ImGui::TextDisabled(mismatch ? "Their version" : "Editor needed"); ImGui::SameLine(okl::UiPx(130.0f));
+            ImGui::TextUnformatted(g_mpPlan.theirVersion.c_str());
+            if (mismatch) { ImGui::TextDisabled("Your version"); ImGui::SameLine(okl::UiPx(130.0f)); ImGui::TextUnformatted(g_mpPlan.yourVersion.c_str()); }
+        }
+        ImGui::Dummy(ImVec2(0, 6));
+        const std::string get = okay::joinplan::GetVersionLabel(g_mpPlan);
+        if (!get.empty() && PrimaryButton(get.c_str(), ImVec2(okl::FitButtonW(get.c_str(), okl::UiPx(160.0f)), okl::UiPx(30.0f)))) {
+            okayversionsui::RequestPage(g_mpPlan.theirVersion);   // (the main loop switches to the Versions page)
+            ImGui::CloseCurrentPopup();
+        }
+        if (!get.empty()) ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), okl::UiPx(30.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 

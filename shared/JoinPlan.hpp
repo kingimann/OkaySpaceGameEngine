@@ -39,7 +39,15 @@ struct Plan {
     int index = -1;                 ///< into the candidate list
     std::string editorVersion;      ///< for OpenEditor
     std::string text;               ///< what to tell the person ("" for RunPlayer / OpenEditor)
+    std::string theirVersion;       ///< NeedEditor: the editor version wanted; VersionMismatch: the host's game version
+    std::string yourVersion;        ///< VersionMismatch: the version you have
 };
+
+/// The button under a NeedEditor or VersionMismatch answer, which opens the Versions page ("" = no button).
+inline std::string GetVersionLabel(const Plan& p) {
+    if ((p.action != Action::NeedEditor && p.action != Action::VersionMismatch) || p.theirVersion.empty()) return {};
+    return "Get version " + p.theirVersion;
+}
 
 namespace detail {
 inline std::string Key(const std::string& t) {
@@ -64,7 +72,7 @@ inline Plan PlanJoin(const JoinLink& l, const std::vector<Candidate>& lib, const
         const std::string want = !l.engine.empty() ? l.engine : lib[project].engineVersion;
         const std::string ed = okayver::ResolveKeepTarget(want, installedEditors);
         if (ed.empty()) {
-            p.action = Action::NeedEditor; p.index = project;
+            p.action = Action::NeedEditor; p.index = project; p.theirVersion = okayver::NormalizeVersion(want);
             p.text = host + " is playing " + l.game + " in editor " + okayver::LineLabel(want) +
                      ", which is not installed. Install it from the Versions page to join.";
             return p;
@@ -75,7 +83,7 @@ inline Plan PlanJoin(const JoinLink& l, const std::vector<Candidate>& lib, const
     if (exported >= 0) {
         const Candidate& c = lib[exported];
         if (!l.version.empty() && !c.gameVersion.empty() && okayver::CompareVersions(l.version, c.gameVersion) != 0) {
-            p.action = Action::VersionMismatch; p.index = exported;
+            p.action = Action::VersionMismatch; p.index = exported; p.theirVersion = l.version; p.yourVersion = c.gameVersion;
             p.text = host + " is playing " + c.title + " " + l.version + "; you have " + c.gameVersion +
                      ". Update the game (or ask " + host + " to) so you both have the same version.";
             return p;

@@ -4,6 +4,7 @@
 #include "FriendsList.hpp"
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -203,6 +204,18 @@ static void TestLayout() {
 
 // launcher/main.cpp wires it: one chat view (the Friends list is part of it, not a second window), the tray item opens it,
 // Do not disturb keeps the chime quiet, and the status labels come from one place.
+static void TestUnreadNumbers() {
+    const std::map<std::string, int> per = {{"u-maya", 3}, {"u-jon", 120}};
+    CHECK(UnreadFor(per, "u-maya", true) == 3);       // the real number, not "1"
+    CHECK(UnreadFor(per, "u-maya", false) == 0);       // open, or already seen: no number
+    CHECK(UnreadFor(per, "u-sam", true) == 1);         // known only as "something new"
+    CHECK(UnreadFor(per, "u-sam", false) == 0);
+    CHECK(BadgeText(UnreadFor(per, "u-jon", true)) == "99+");
+    CHECK(NavUnread(true, 7, 2) == 7);
+    CHECK(NavUnread(true, 0, 2) == 0);                 // counted: all read, even if the old mark says 2
+    CHECK(NavUnread(false, 0, 2) == 2);                // not counted yet
+}
+
 static void TestWiring() {
     std::ifstream f(OKAY_LAUNCHER_MAIN);
     CHECK(f.good());
@@ -215,6 +228,11 @@ static void TestWiring() {
     CHECK(src.find("\"Online\\0Away\\0Invisible\\0\"") == std::string::npos);   // the old three-status combos are gone
     CHECK(src.find("k == \"chat_friends\"") != std::string::npos);          // the Friends side is remembered
     CHECK(src.find("okaychat::ListFolded(") == std::string::npos);           // the fold goes through LayoutColumn
+    // Real unread numbers: the rows, tabs and Friends list use UnreadFor; the nav item and the tray use the counted total.
+    CHECK(src.find("okayfriends::UnreadFor(us.perPeer, r.uid, r.unread)") != std::string::npos);
+    CHECK(src.find("unreadKeys") == std::string::npos);                       // the old "something new" set is gone
+    CHECK(src.find("navRow(\"##navchat\", \"Chat\", kIcoChat, g_chatWinOpen, ChatUnreadTotal()") != std::string::npos);
+    CHECK(src.find("st.unreadChats = ChatUnreadTotal();") != std::string::npos);
 }
 
 int main() {
@@ -225,6 +243,7 @@ int main() {
     TestUnread();
     TestMyStatus();
     TestLayout();
+    TestUnreadNumbers();
     TestWiring();
     std::printf("launcher_friends: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

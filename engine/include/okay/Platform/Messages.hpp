@@ -961,4 +961,27 @@ public:
     }
 };
 
+/// New group chat messages since the last look, for desktop notifications (okay::chat::Event::Kind::GroupMessage).
+/// `lastSeen` (group id -> newest message id seen) is updated; a group seen for the first time only sets its mark, so
+/// the first look after a start is not a burst. Messages I sent (`myName`, my public name), messages already read
+/// (last_read) and muted groups (`mutedKeys` holds "g:<id>") give no event.
+inline std::vector<chat::Event> GroupMessageEvents(const std::vector<Messages::GroupConvo>& groups, std::map<long, long>& lastSeen,
+                                                   const std::string& myName, const std::set<std::string>& mutedKeys = {}) {
+    std::vector<chat::Event> out;
+    for (const Messages::GroupConvo& g : groups) {
+        auto it = lastSeen.find(g.id);
+        const bool first = it == lastSeen.end();
+        const long prev = first ? 0 : it->second;
+        lastSeen[g.id] = std::max(prev, g.lastId);
+        if (first || g.lastId <= prev || g.lastId <= g.lastRead) continue;
+        const std::string who = okay::account::PublicName(g.lastSender);
+        if (!myName.empty() && who == myName) continue;
+        if (mutedKeys.count("g:" + std::to_string(g.id))) continue;
+        chat::Event e; e.kind = chat::Event::Kind::GroupMessage;
+        e.fromName = who; e.groupId = g.id; e.messageId = g.lastId; e.text = g.lastBody;
+        out.push_back(e);
+    }
+    return out;
+}
+
 } // namespace okay

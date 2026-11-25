@@ -807,7 +807,7 @@ bool DynamicCharacter::Build(const RigInput& rig) {
                 const Vec3 armDir = SafeNorm(rig.pos[b] - rig.pos[kParent[b]], Vec3::Down);
                 j.hinge = true;
                 j.hingeAxis = SafeNorm(Vec3::Cross(armDir, fwd), lat);
-                j.hingeMin = -0.05f; j.hingeMax = 2.6f;
+                j.hingeMin = -0.2f; j.hingeMax = 2.6f;    // (an elbow straightens a little past straight: lying on the floor the arm needs it)
                 break;
             }
             case LShin: case RShin: {

@@ -199,6 +199,10 @@ public:
         virtual ~EngineGuest() = default;
         /// May this guest's colliders meet that scene collider?
         virtual bool GuestCollides(const Collider3D* other) const = 0;
+        /// The solver iterations the guest needs now (the world uses the larger of this and solverIterations; 0 = no
+        /// wish). A ragdoll's limbs are light against its chest: with too few iterations a body landing on a leg
+        /// pushes the leg into what is under it.
+        virtual int GuestSolverIterations() const { return 0; }
     };
     /// The engine world for a guest, made now if the scene has not stepped yet. The guest writes GuestUser(guest) into
     /// ColliderDef::user of every collider it adds. `alive` expires when the world is destroyed (Clear): from then

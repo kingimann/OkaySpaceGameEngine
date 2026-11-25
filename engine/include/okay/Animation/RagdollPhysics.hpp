@@ -286,6 +286,9 @@ public:
 
     /// The gap between the two anchor points of a joint (m), for tests.
     float JointGap(int joint) const;
+    /// How far a joint is past its limits now (radians, 0 = inside), measured the way the core's joint measures it
+    /// (twist about the joint's X axis, then the swing; a hinge's swing is all error), for tests.
+    float JointLimitExcess(int joint) const;
 
 private:
     struct Impl;

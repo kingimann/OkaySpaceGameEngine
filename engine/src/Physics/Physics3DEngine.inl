@@ -388,7 +388,10 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
     phys::World& W = E.world;
     m_stats = PhysicsStepStats{};
     W.gravity = P3(gravity);
-    W.velocityIterations = std::min(std::max(solverIterations, 4), 30);
+    int iterations = solverIterations;
+    for (std::uint64_t g : E.guests)   // a guest may need a stiffer solve while its bodies move (a ragdoll's light limbs)
+        iterations = std::max(iterations, reinterpret_cast<const EngineGuest*>((std::uintptr_t)g)->GuestSolverIterations());
+    W.velocityIterations = std::min(std::max(iterations, 4), 30);
     W.positionIterations = 3;
     W.shouldCollide = [this, &E](phys::ColliderId a, phys::ColliderId b) {
         Collider3D* ca = E.Back(a);

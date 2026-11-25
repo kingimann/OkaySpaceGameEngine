@@ -21,6 +21,10 @@ namespace {
 using namespace humanoid;
 
 bool ArFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+// The scene's solver iterations while the body is physical (Physics3D::EngineGuest::GuestSolverIterations). Measured
+// in test_ragdoll_collisions: with the default 10 a body landing on its leg pushed the shin 0.15 m into a crate under
+// it; with 20 nothing went in. It costs about twice the solver time of that scene while a ragdoll is physical.
+constexpr int kRagdollSolverIterations = 20;
 } // namespace
 
 // This component as a guest of the scene's physics world: the limbs are bodies in that world and pass through
@@ -37,6 +41,9 @@ struct ActiveRagdoll::WorldGuest : Physics3D::EngineGuest {
         for (const Transform* t = other->gameObject->transform; t; t = t->Parent())
             if (t->gameObject == self) return false;
         return true;
+    }
+    int GuestSolverIterations() const override {
+        return owner && owner->IsPhysical() ? kRagdollSolverIterations : 0;
     }
 };
 

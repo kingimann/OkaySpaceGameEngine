@@ -12,7 +12,7 @@ namespace okay {
 class InputHaptics {
 public:
     struct Step { float low = 0, high = 0, seconds = 0; };
-    /// Start a built-in pattern on a controller (0..3). False for an unknown name. Replaces one already playing there.
+    /// Start a built-in pattern on a controller (0..Input::kMaxGamepads-1). False for an unknown name. Replaces one already playing there.
     static bool Play(const std::string& pattern, int player = 0);
     /// Start your own steps.
     static bool Play(const std::vector<Step>& steps, int player = 0);

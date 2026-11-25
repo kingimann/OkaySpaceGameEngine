@@ -141,7 +141,17 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         Token tok;
         tok.line = line;
         tok.adj = c == '>' && i > 0 && text[i - 1] == '>';
-        if (std::isalpha(c) || c == '_') {
+        // An encoding prefix on a string literal ([lex.string]): L"..." and u"..." are UTF-16 (wchar_t is 16 bits on
+        // Windows), U"..." UTF-32, u8"..." UTF-8 (the bytes as written).
+        int str_prefix = 0;
+        if ((c == 'L' || c == 'u' || c == 'U') && i + 1 < text.size() && text[i + 1] == '"') {
+            str_prefix = c == 'U' ? 32 : 16;
+            ++i;
+        } else if (c == 'u' && i + 2 < text.size() && text[i + 1] == '8' && text[i + 2] == '"') {
+            str_prefix = 8;
+            i += 2;
+        }
+        if (str_prefix == 0 && (std::isalpha(c) || c == '_')) {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
             tok.text = text.substr(i, j - i);
@@ -294,10 +304,42 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if (c == '"') {
+        if (c == '"' || str_prefix != 0) {
             std::string value;
             ++i;
             while (i < text.size() && text[i] != '"') {
+                if (text[i] == '\\' && i + 1 < text.size() && (text[i + 1] == 'u' || text[i + 1] == 'U')) {
+                    // \uXXXX and \UXXXXXXXX ([lex.charset] universal-character-name): the code point, written as UTF-8
+                    // (a wide literal is re-encoded below).
+                    const size_t digits = text[i + 1] == 'u' ? 4 : 8;
+                    uint32_t cp = 0;
+                    size_t k = i + 2;
+                    for (size_t d = 0; d < digits; ++d, ++k) {
+                        const int h = k < text.size() ? hex_digit(text[k]) : -1;
+                        if (h < 0) {
+                            *error = "bad universal character name at line " + std::to_string(line);
+                            return {};
+                        }
+                        cp = cp * 16 + static_cast<uint32_t>(h);
+                    }
+                    i = k;
+                    if (cp < 0x80) {
+                        value.push_back(static_cast<char>(cp));
+                    } else if (cp < 0x800) {
+                        value.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    } else if (cp < 0x10000) {
+                        value.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    } else {
+                        value.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                        value.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    }
+                    continue;
+                }
                 if (text[i] == '\\') {
                     ++i;
                     unsigned char escaped = 0;
@@ -317,7 +359,42 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             ++i;
             tok.kind = TString;
+            if (str_prefix == 16 || str_prefix == 32) {
+                // The text is read as UTF-8 and written again as UTF-16 (surrogate pairs above U+FFFF) or UTF-32, little
+                // endian, without the terminating zero (the code generator adds one zero byte; the parser one more
+                // unit). A byte that does not start a UTF-8 sequence stands for itself.
+                std::string units;
+                auto put = [&](uint32_t u, int bytes) {
+                    for (int k = 0; k < bytes; ++k) units.push_back(static_cast<char>((u >> (8 * k)) & 0xFF));
+                };
+                for (size_t k = 0; k < value.size();) {
+                    const unsigned char b0 = static_cast<unsigned char>(value[k]);
+                    uint32_t cp = b0;
+                    int more = 0;
+                    if (b0 >= 0xF0 && b0 < 0xF8) { cp = b0 & 0x07; more = 3; }
+                    else if (b0 >= 0xE0) { cp = b0 & 0x0F; more = 2; }
+                    else if (b0 >= 0xC0) { cp = b0 & 0x1F; more = 1; }
+                    if (more > 0 && k + static_cast<size_t>(more) < value.size()) {
+                        for (int m = 1; m <= more; ++m) cp = (cp << 6) | (static_cast<unsigned char>(value[k + static_cast<size_t>(m)]) & 0x3F);
+                        k += static_cast<size_t>(more) + 1;
+                    } else {
+                        cp = b0;
+                        k += 1;
+                    }
+                    if (str_prefix == 32) {
+                        put(cp, 4);
+                    } else if (cp >= 0x10000) {
+                        cp -= 0x10000;
+                        put(0xD800 + (cp >> 10), 2);
+                        put(0xDC00 + (cp & 0x3FF), 2);
+                    } else {
+                        put(cp, 2);
+                    }
+                }
+                value = units;
+            }
             tok.text = value;
+            tok.ity = str_prefix == 8 ? 0 : str_prefix;
             tokens.push_back(tok);
             continue;
         }

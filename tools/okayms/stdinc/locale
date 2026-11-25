@@ -1,0 +1,198 @@
+// okay-ms own standard header: <locale>, written from ISO/IEC 14882 [localization] ([locale], [locale.num.get],
+// [locale.nm.put], [facet.num.get.virtuals], [facet.num.put.virtuals]). Own minimal version for char:
+// - std::locale holds at most two facets, a num_get and a num_put (the only ones okay-ms's streams ask for); every other
+//   behaviour is the "C" locale's. locale::classic() is the "C" locale with no facets; locale(other, facet) is other with
+//   that facet put in. A stream that is imbued with a locale reads and writes its floating values through these facets
+//   (okay_iostream); its other numbers are read and written by the stream's own code.
+// - num_get<char> and num_put<char> are written against istreambuf_iterator and ostreambuf_iterator (<iterator>). The
+//   virtual functions are the standard's do_get and do_put, so a class derived from them overrides those; get and put
+//   call them. The default do_get reads the "C" locale number syntax (sign, digits, point, exponent; [facet.num.get]
+//   stage 2) and converts it with the stream's own digit loop; the default do_put formats like the stream does.
+// - A facet is never deleted (the reference count of the standard is not kept): a locale is usually made once and
+//   kept for the life of the program.
+// - No ctype, collate, moneypunct, time or messages facets, no use_facet or has_facet, no named locales (locale("de")).
+#pragma once
+#include <cstddef>
+#include <iterator>
+#include <okay_iostream>
+#include <string>
+#include <type_traits>
+namespace std {
+
+template <typename CharT, typename InputIt = istreambuf_iterator<CharT> >
+class num_get : public __num_get_facet {
+public:
+    typedef CharT char_type;
+    typedef InputIt iter_type;
+    explicit num_get(size_t refs = 0) { (void)refs; }
+    iter_type get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, double& v) const {
+        return do_get(in, end, str, err, v);
+    }
+    iter_type get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, float& v) const {
+        return do_get(in, end, str, err, v);
+    }
+    iter_type get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, long long& v) const {
+        return do_get(in, end, str, err, v);
+    }
+    void __get_double(streambuf* sb, ios_base& str, ios_base::iostate& err, double& v) const {
+        iter_type in;
+        in.buf__ = sb;
+        iter_type end;
+        do_get(in, end, str, err, v);
+    }
+    void __get_float(streambuf* sb, ios_base& str, ios_base::iostate& err, float& v) const {
+        iter_type in;
+        in.buf__ = sb;
+        iter_type end;
+        do_get(in, end, str, err, v);
+    }
+
+protected:
+    // Stage 2 of [facet.num.get.virtuals]: the characters of a number in the "C" locale, as text.
+    iter_type scan__(iter_type in, iter_type end, ios_base::iostate& err, bool real, string& t) const {
+        if (in != end && (*in == '-' || *in == '+')) {
+            t += (char)*in;
+            ++in;
+        }
+        bool digits = false;
+        while (in != end) {
+            const char c = (char)*in;
+            const bool digit = c >= '0' && c <= '9';
+            const bool more = real && (c == '.' || c == 'e' || c == 'E' ||
+                                       ((c == '-' || c == '+') && !t.empty() && (t[t.size() - 1] == 'e' || t[t.size() - 1] == 'E')));
+            if (!digit && !more) break;
+            if (digit) digits = true;
+            t += c;
+            ++in;
+        }
+        if (in == end) err |= ios_base::eofbit;
+        if (!digits) err |= ios_base::failbit;
+        return in;
+    }
+    static double value__(const string& t) {
+        double m = 0;
+        int ex = 0;
+        bool point = false;
+        bool neg = false;
+        size_t i = 0;
+        if (!t.empty() && (t[0] == '-' || t[0] == '+')) {
+            neg = t[0] == '-';
+            i = 1;
+        }
+        for (; i < t.size() && t[i] != 'e' && t[i] != 'E'; ++i) {
+            if (t[i] == '.') {
+                point = true;
+                continue;
+            }
+            m = m * 10.0 + (double)(t[i] - '0');
+            if (point) --ex;
+        }
+        if (i < t.size()) {
+            ++i;
+            bool eneg = false;
+            if (i < t.size() && (t[i] == '-' || t[i] == '+')) eneg = t[i++] == '-';
+            int e = 0;
+            for (; i < t.size(); ++i) e = e * 10 + (t[i] - '0');
+            ex += eneg ? -e : e;
+        }
+        for (; ex > 0; --ex) m *= 10.0;
+        for (; ex < 0; ++ex) m /= 10.0;
+        return neg ? -m : m;
+    }
+    virtual iter_type do_get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, double& v) const {
+        (void)str;
+        string t;
+        in = scan__(in, end, err, true, t);
+        v = (err & ios_base::failbit) ? 0.0 : value__(t);
+        return in;
+    }
+    virtual iter_type do_get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, float& v) const {
+        (void)str;
+        string t;
+        in = scan__(in, end, err, true, t);
+        v = (err & ios_base::failbit) ? 0.0f : (float)value__(t);
+        return in;
+    }
+    virtual iter_type do_get(iter_type in, iter_type end, ios_base& str, ios_base::iostate& err, long long& v) const {
+        (void)str;
+        string t;
+        in = scan__(in, end, err, false, t);
+        v = (err & ios_base::failbit) ? 0 : (long long)value__(t);
+        return in;
+    }
+};
+
+template <typename CharT, typename OutputIt = ostreambuf_iterator<CharT> >
+class num_put : public __num_put_facet {
+public:
+    typedef CharT char_type;
+    typedef OutputIt iter_type;
+    explicit num_put(size_t refs = 0) { (void)refs; }
+    iter_type put(iter_type out, ios_base& str, char_type fill, double v) const { return do_put(out, str, fill, v); }
+    iter_type put(iter_type out, ios_base& str, char_type fill, long long v) const { return do_put(out, str, fill, v); }
+    void __put_double(streambuf* sb, ios_base& str, char fill, double v) const {
+        iter_type out;
+        out.buf__ = sb;
+        do_put(out, str, fill, v);
+    }
+
+protected:
+    // The text padded to the stream's width with fill, on the side its adjustfield says ([facet.num.put.virtuals]
+    // stage 3); the width is used up.
+    static iter_type write__(iter_type out, ios_base& str, char_type fill, const string& t) {
+        const size_t w = str.width() > 0 ? (size_t)str.width() : 0;
+        const bool left = (str.flags() & ios_base::adjustfield) == ios_base::left;
+        size_t pad = w > t.size() ? w - t.size() : 0;
+        if (!left)
+            for (; pad > 0; --pad) *out++ = fill;
+        for (size_t i = 0; i < t.size(); ++i) *out++ = t[i];
+        for (; pad > 0; --pad) *out++ = fill;
+        str.width(0);
+        return out;
+    }
+    virtual iter_type do_put(iter_type out, ios_base& str, char_type fill, double v) const {
+        return write__(out, str, fill, std::okay_io::float_text(v, str.flags(), str.precision()));
+    }
+    virtual iter_type do_put(iter_type out, ios_base& str, char_type fill, long long v) const {
+        char digits[24];
+        int n = 0;
+        const bool neg = v < 0;
+        unsigned long long m = neg ? 0ULL - (unsigned long long)v : (unsigned long long)v;
+        do {
+            digits[n++] = (char)('0' + (int)(m % 10));
+            m /= 10;
+        } while (m != 0);
+        string t;
+        if (neg) t += '-';
+        while (n > 0) t += digits[--n];
+        return write__(out, str, fill, t);
+    }
+};
+
+class locale {
+public:
+    const __num_get_facet* get__;
+    const __num_put_facet* put__;
+    locale() : get__(nullptr), put__(nullptr) {}
+    locale(const locale& o) : get__(o.get__), put__(o.put__) {}
+    // other, with f put in place of the facet of its kind ([locale.cons] 9).
+    template <typename Facet>
+    locale(const locale& other, Facet* f) : get__(other.get__), put__(other.put__) {
+        if constexpr (is_base_of<__num_get_facet, Facet>::value) get__ = static_cast<const __num_get_facet*>(f);
+        if constexpr (is_base_of<__num_put_facet, Facet>::value) put__ = static_cast<const __num_put_facet*>(f);
+    }
+    locale& operator=(const locale& o) {
+        get__ = o.get__;
+        put__ = o.put__;
+        return *this;
+    }
+    bool operator==(const locale& o) const { return get__ == o.get__ && put__ == o.put__; }
+    bool operator!=(const locale& o) const { return !(*this == o); }
+    string name() const { return get__ == nullptr && put__ == nullptr ? string("C") : string("*"); }
+    static const locale& classic() {
+        static locale c;
+        return c;
+    }
+};
+
+}  // namespace std

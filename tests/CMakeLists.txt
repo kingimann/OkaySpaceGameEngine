@@ -2816,6 +2816,9 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/public_names.sql (server-filled public names, never an email) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME public_names_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_public_names_sql.sh)
+    set_tests_properties(public_names_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME reactions_sql_static COMMAND ${OKAY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql_static.py)
     # docs/sql/reactions_privacy.sql (SEC1 item 4) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME reactions_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql.sh)
@@ -5021,6 +5024,13 @@ add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}
 target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
+
+# Input pieces that were not connected: the built game's input asset, gesture bindings, mouse side buttons and sideways
+# wheel, the Guide button, punctuation / numpad / lock keys, eight controllers, controller toasts.
+add_executable(test_input_wiring test_input_wiring.cpp)
+target_link_libraries(test_input_wiring PRIVATE okay::engine)
+target_compile_definitions(test_input_wiring PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_wiring COMMAND test_input_wiring)
 
 # The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
 add_executable(test_vs_search_nav test_vs_search_nav.cpp)

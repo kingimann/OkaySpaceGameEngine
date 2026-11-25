@@ -48,6 +48,7 @@ bool Gen::gen_expr(const Node& node) {
         last_type = Type{};
         last_type.pointers = 1;
         last_type.base = 2;
+        if (node.type.pointers == 1 && (node.type.base == 4 || node.type.base == 1)) last_type = node.type;  // L"..." and U"..."
         return true;
     }
     if (node.kind == Node::Name) {

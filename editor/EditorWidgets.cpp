@@ -2,6 +2,7 @@
 // toolbar icons and the icon / search / toggle buttons every panel uses.
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
+#include "ImGuiDropdown.hpp"   // the dropdown look shared with the launcher
 
 namespace oked {
 
@@ -173,6 +174,62 @@ void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col) {
             dl->AddLine(ImVec2(c.x - s * 0.22f, y), ImVec2(c.x + s * 0.42f, y), col, t);
         }
         break; }
+    case TbIcon::Star: {    // five points: the Easy page
+        ImVec2 pts[10];
+        for (int k = 0; k < 10; ++k) {
+            const float a = -IM_PI * 0.5f + k * IM_PI / 5.0f, r = (k & 1) ? s * 0.2f : s * 0.46f;
+            pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r + s * 0.04f);
+        }
+        dl->AddPolyline(pts, 10, col, ImDrawFlags_Closed, t);
+        break; }
+    case TbIcon::Shapes: {  // a ball in front of a box: add shapes
+        const float r = s * 0.24f;
+        dl->AddRect(ImVec2(c.x - s * 0.44f, c.y - s * 0.44f), ImVec2(c.x + s * 0.08f, c.y + s * 0.08f), col, 1.0f, 0, t);
+        dl->AddCircle(ImVec2(c.x + s * 0.16f, c.y + s * 0.16f), r, col, 16, t);
+        break; }
+    case TbIcon::Steps: {   // a staircase: step by step
+        const float u = s * 0.28f, x0 = c.x - s * 0.42f, y0 = c.y + s * 0.42f;
+        ImVec2 p[8] = {ImVec2(x0, y0), ImVec2(x0, y0 - u), ImVec2(x0 + u, y0 - u), ImVec2(x0 + u, y0 - 2 * u),
+                       ImVec2(x0 + 2 * u, y0 - 2 * u), ImVec2(x0 + 2 * u, y0 - 3 * u), ImVec2(x0 + 3 * u, y0 - 3 * u), ImVec2(x0 + 3 * u, y0)};
+        dl->AddPolyline(p, 8, col, ImDrawFlags_Closed, t);
+        break; }
+    case TbIcon::Spin: {    // a profile spun round an axis: make shapes
+        dl->AddLine(ImVec2(c.x, c.y - s * 0.48f), ImVec2(c.x, c.y + s * 0.48f), col, t * 0.7f);
+        dl->AddEllipse(ImVec2(c.x, c.y - s * 0.22f), ImVec2(s * 0.42f, s * 0.13f), col, 0.0f, 18, t);
+        dl->AddEllipse(ImVec2(c.x, c.y + s * 0.26f), ImVec2(s * 0.28f, s * 0.1f), col, 0.0f, 18, t);
+        break; }
+    case TbIcon::Bend: {    // a bar bent round a corner, with a cut mark: bend and cut
+        dl->PathArcTo(ImVec2(c.x - s * 0.42f, c.y + s * 0.42f), s * 0.62f, -IM_PI * 0.5f, 0.0f, 14);
+        dl->PathStroke(col, 0, t + 0.4f);
+        dl->AddLine(ImVec2(c.x + s * 0.06f, c.y - s * 0.44f), ImVec2(c.x + s * 0.44f, c.y - s * 0.06f), col, t);
+        break; }
+    case TbIcon::Brush: {   // a brush: fix the surface (pick, sculpt, paint)
+        dl->AddLine(ImVec2(c.x + s * 0.42f, c.y - s * 0.42f), ImVec2(c.x - s * 0.02f, c.y + s * 0.02f), col, t + 0.6f);
+        dl->AddCircleFilled(ImVec2(c.x - s * 0.2f, c.y + s * 0.2f), s * 0.17f, col);
+        dl->AddLine(ImVec2(c.x - s * 0.3f, c.y + s * 0.3f), ImVec2(c.x - s * 0.44f, c.y + s * 0.44f), col, t + 1.0f);
+        break; }
+    case TbIcon::Sparkle: { // a four-point sparkle and a small one: effects
+        auto spark = [&](ImVec2 o, float r) {
+            dl->AddTriangleFilled(ImVec2(o.x, o.y - r), ImVec2(o.x + r * 0.22f, o.y), ImVec2(o.x - r * 0.22f, o.y), col);
+            dl->AddTriangleFilled(ImVec2(o.x, o.y + r), ImVec2(o.x - r * 0.22f, o.y), ImVec2(o.x + r * 0.22f, o.y), col);
+            dl->AddTriangleFilled(ImVec2(o.x - r, o.y), ImVec2(o.x, o.y - r * 0.22f), ImVec2(o.x, o.y + r * 0.22f), col);
+            dl->AddTriangleFilled(ImVec2(o.x + r, o.y), ImVec2(o.x, o.y + r * 0.22f), ImVec2(o.x, o.y - r * 0.22f), col);
+        };
+        spark(ImVec2(c.x - s * 0.08f, c.y + s * 0.06f), s * 0.38f);
+        spark(ImVec2(c.x + s * 0.3f, c.y - s * 0.3f), s * 0.16f);
+        break; }
+    case TbIcon::Import: {  // an arrow down into a tray: bring in a model
+        const float w = s * 0.44f;
+        dl->AddLine(ImVec2(c.x, c.y - s * 0.46f), ImVec2(c.x, c.y + s * 0.08f), col, t);
+        dl->AddTriangleFilled(ImVec2(c.x, c.y + s * 0.18f), ImVec2(c.x - s * 0.17f, c.y - s * 0.02f), ImVec2(c.x + s * 0.17f, c.y - s * 0.02f), col);
+        ImVec2 tray[4] = {ImVec2(c.x - w, c.y + s * 0.06f), ImVec2(c.x - w, c.y + s * 0.42f), ImVec2(c.x + w, c.y + s * 0.42f), ImVec2(c.x + w, c.y + s * 0.06f)};
+        dl->AddPolyline(tray, 4, col, 0, t);
+        break; }
+    case TbIcon::PanelLeft: {   // a window with its left column marked: show / hide the page list
+        const ImVec2 a(c.x - s * 0.44f, c.y - s * 0.36f), b(c.x + s * 0.44f, c.y + s * 0.36f);
+        dl->AddRect(a, b, col, 2.0f, 0, t);
+        dl->AddRectFilled(ImVec2(a.x, a.y), ImVec2(a.x + s * 0.3f, b.y), col, 2.0f);
+        break; }
     case TbIcon::Sort: {
         for (int k = 0; k < 3; ++k) {
             float y = c.y - s * 0.3f + k * s * 0.3f, w = s * (0.25f + 0.2f * k);
@@ -255,6 +312,86 @@ bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hin
     }
     return changed;
 }
+// ---- Controls with a state you can see ---------------------------------------------------------------------------
+namespace {
+// The label as drawn: the text before "##" (Dear ImGui's id suffix).
+const char* ChipLabelEnd(const char* label) { const char* e = std::strstr(label, "##"); return e ? e : label + std::strlen(label); }
+}
+float ToggleChipWidth(const char* label) {
+    const float h = ImGui::GetFrameHeight(), padX = ImGui::GetStyle().FramePadding.x;
+    return padX + h * 0.5f + padX * 0.6f + ImGui::CalcTextSize(label, ChipLabelEnd(label)).x + padX;
+}
+bool ToggleChip(const char* label, bool* v, const char* tip) {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float h = ImGui::GetFrameHeight(), padX = st.FramePadding.x, w = ToggleChipWidth(label);
+    const bool hit = ImGui::InvisibleButton(label, ImVec2(w, h));
+    if (hit) *v = !*v;
+    const bool hot = ImGui::IsItemHovered(), held = ImGui::IsItemActive(), on = *v;
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, ImGui::GetColorU32(held ? ImGuiCol_ButtonActive : hot ? ImGuiCol_ButtonHovered : ImGuiCol_Button), st.FrameRounding);
+    if (on) dl->AddRect(mn, mx, ImGui::GetColorU32(AccentCol(0.9f)), st.FrameRounding, 0, 1.5f);
+    // The box: outlined and empty when off, accent with a white tick when on.
+    const float b = h * 0.5f, by = mn.y + (h - b) * 0.5f;
+    const ImVec2 b0(mn.x + padX, by), b1(mn.x + padX + b, by + b);
+    if (on) {
+        dl->AddRectFilled(b0, b1, ImGui::GetColorU32(AccentCol(1.0f)), 3.0f);
+        const ImU32 white = IM_COL32(255, 255, 255, 255);
+        dl->AddLine(ImVec2(b0.x + b * 0.2f, b0.y + b * 0.52f), ImVec2(b0.x + b * 0.42f, b0.y + b * 0.74f), white, 2.0f);
+        dl->AddLine(ImVec2(b0.x + b * 0.42f, b0.y + b * 0.74f), ImVec2(b0.x + b * 0.8f, b0.y + b * 0.26f), white, 2.0f);
+    } else {
+        dl->AddRect(b0, b1, ImGui::GetColorU32(ImGuiCol_Text, hot ? 0.9f : 0.6f), 3.0f, 0, 1.5f);
+    }
+    dl->AddText(ImVec2(b1.x + padX * 0.6f, mn.y + (h - ImGui::GetTextLineHeight()) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text, on || hot ? 1.0f : 0.85f), label, ChipLabelEnd(label));
+    if (tip && hot) ImGui::SetTooltip("%s", tip);
+    return hit;
+}
+bool StateButton(const char* label, bool enabled, const ImVec2& size, const char* tip, const char* whyNot) {
+    if (!enabled) {   // no fill, a faint outline, dimmed text: plainly not available
+        ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.0f));   // fully clear
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(0.0f));   // fully clear
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentCol(0.0f));   // fully clear
+        ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::BeginDisabled(true);
+        ImGui::Button(label, size);
+        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(5);
+        if (whyNot && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", whyNot);
+        return false;
+    }
+    // Usable: the normal filled button with an accent outline, so it never reads as greyed out.
+    ImGui::PushStyleColor(ImGuiCol_Border, AccentCol(0.75f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return clicked;
+}
+bool BeginDropdown(const char* label, const char* preview, int flags) {
+    return okayshared::BeginChevronCombo(label, preview, flags, ImGui::GetStyle().FrameRounding);
+}
+// (OkayUI's compatibility header in window mode has no overline / dimmed tab colours: only the three it knows are set there.)
+#if IMGUI_VERSION_NUM > 0
+static constexpr int kClearTabColorCount = 6;
+#else
+static constexpr int kClearTabColorCount = 3;
+#endif
+void PushClearTabColors() {
+    ImGui::PushStyleColor(ImGuiCol_Tab, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+    ImGui::PushStyleColor(ImGuiCol_TabHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+    ImGui::PushStyleColor(ImGuiCol_TabSelected, AccentCol(1.0f));
+#if IMGUI_VERSION_NUM > 0
+    ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, ImVec4(1, 1, 1, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_TabDimmed, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+    ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, AccentCol(0.85f));
+#endif
+}
+void PopClearTabColors() { ImGui::PopStyleColor(kClearTabColorCount); }
 // Right-align the next `w` pixels of items on the current line.
 void SameLineRight(float w) {
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);

@@ -8,6 +8,7 @@
 // - begin, end and size take a container only: okay-ms cannot read a parameter that is a reference to an array
 //   (T (&a)[N]) yet.
 // - No reverse_iterator, insert_iterator, front_insert_iterator, istream_iterator or ostream_iterator.
+// - ostreambuf_iterator writes through okay-ms's own streambuf (put); include a stream header before using it.
 #pragma once
 #include <cstddef>
 #include <type_traits>
@@ -120,6 +121,28 @@ public:
     }
     bool operator==(const istreambuf_iterator& o) const { return at_end__() == o.at_end__(); }
     bool operator!=(const istreambuf_iterator& o) const { return at_end__() != o.at_end__(); }
+};
+// Writes each character given to it to a stream's device ([ostreambuf.iterator]): *it = c, ++it, it++.
+template <typename CharT>
+class ostreambuf_iterator {
+public:
+    streambuf* buf__;
+    typedef void value_type;
+    typedef output_iterator_tag iterator_category;
+    ostreambuf_iterator() : buf__(0) {}
+    template <typename S>
+    ostreambuf_iterator(S& stream) : buf__(stream.rdbuf()) {}
+    ostreambuf_iterator& operator=(CharT c) {
+        if (buf__) {
+            const char one = (char)c;
+            buf__->put(&one, 1);
+        }
+        return *this;
+    }
+    ostreambuf_iterator& operator*() { return *this; }
+    ostreambuf_iterator& operator++() { return *this; }
+    ostreambuf_iterator& operator++(int) { return *this; }
+    bool failed() const { return buf__ == 0; }
 };
 
 }  // namespace std

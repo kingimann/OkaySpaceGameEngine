@@ -888,7 +888,7 @@ void RegisterPlayerInput() {
     PropertyBuilder<LocalPlayerInput> b("LocalPlayerInput", "playerinput", "Input");
     b.AddString("actions", &LocalPlayerInput::actions).Tooltip("Path of a .okayinput asset (empty = the default asset)")
      .AddEnum("device", &LocalPlayerInput::device, {"Any", "Keyboard", "Controller"}).Tooltip("Which device this player uses; Any switches with the last one used")
-     .AddInt("controller", &LocalPlayerInput::controller).Range(0, 3, 1).Tooltip("Which controller (0 = first) when the device is Controller")
+     .AddInt("controller", &LocalPlayerInput::controller).Range(0, Input::kMaxGamepads - 1, 1).Tooltip("Which controller (0 = first) when the device is Controller")
      .AddString("scheme", &LocalPlayerInput::scheme).Tooltip("Control scheme to start in (empty = the one that fits the device)")
      .AddBool("autoSwitch", &LocalPlayerInput::autoSwitch).Tooltip("With device Any: follow the device used last")
      .AddString("startMaps", &LocalPlayerInput::startMaps).Tooltip("Comma list of action maps switched on at start; the others are off (empty = as the asset says)");

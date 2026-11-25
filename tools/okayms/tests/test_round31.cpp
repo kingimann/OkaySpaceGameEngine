@@ -404,6 +404,49 @@ static void r31_memfn_names(Tally& tally) {
     CHECK(tally, okayms_test::has_symbol(compiled.value.object, "?take@@YAHP8S@@EBAHXZ@Z"));
 }
 
+// A name that is an enumeration in one namespace and a class in another ([namespace.qual], [basic.lookup.unqual]):
+// okay::scripting's `enum class Result` (ScriptBindings.hpp) and okay::http's `struct Result` (NativeHttp.hpp). Written
+// `okay::http::Result`, or `Result` inside okay::http, it is the class; inside okay::scripting the enumeration
+// (AccountService.hpp:1250, 16 files: "cannot deduce template arguments of move" on the class's member).
+static void r31_enum_class_names(Tally& tally) {
+    std::printf("r31_enum_class_names\n");
+    okayms_test::run_both(kRun, tally, "enum_class_names", std::string(kAlloc) + R"OKMS(
+#include <string>
+#include <utility>
+namespace okay { namespace scripting {
+enum class Result { NotFound, Ok, Error };
+inline Result Get(int a) { return a > 0 ? Result::Ok : a < 0 ? Result::Error : Result::NotFound; }
+} }
+namespace okay { namespace http {
+struct Result { bool reached = false; long status = 0; std::string body; };
+inline Result Send(int a) { Result r; r.reached = a > 0; r.status = a; r.body = "xy"; return r; }
+} }
+namespace okay { namespace account {
+struct ApiResponse { bool ok = false; long status = 0; std::string body; };
+struct Api {
+  ApiResponse Call(int a) const {
+    okay::http::Result nr = okay::http::Send(a);
+    ApiResponse out;
+    if (!nr.reached) return out;
+    out.status = nr.status;
+    out.body = std::move(nr.body);
+    out.ok = true;
+    return out;
+  }
+};
+} }
+int entry(void) {
+  okay::account::Api api;
+  okay::account::ApiResponse r = api.Call(3);
+  CK(1, r.ok && r.status == 3 && r.body == "xy" && !api.Call(0).ok);
+  CK(2, okay::scripting::Get(1) == okay::scripting::Result::Ok && (int)okay::scripting::Get(-1) == 2);
+  okay::http::Result h;
+  CK(3, !h.reached && h.body.empty());
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -418,5 +461,6 @@ int main(int argc, char** argv) {
     r31_memptr_names(tally);
     r31_memfn(tally);
     r31_memfn_names(tally);
-    return tally.finish(10);
+    r31_enum_class_names(tally);
+    return tally.finish(11);
 }

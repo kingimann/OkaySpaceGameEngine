@@ -1581,6 +1581,45 @@ struct Parser {
         }
         return search_up(cur_class);
     }
+    // The namespace of each enumeration declared at namespace scope, by enum_id (Round 31).
+    std::map<int, std::string> enum_ns_{};
+    static bool ns_encloses(const std::string& outer, const std::string& inner) {
+        return outer.empty() || outer == inner ||
+               (inner.size() > outer.size() && inner.compare(0, outer.size(), outer) == 0 && inner.compare(outer.size(), 2, "::") == 0);
+    }
+    static bool ns_names(const std::string& ns, const std::string& q) {
+        return ns == q || (ns.size() > q.size() && ns.compare(ns.size() - q.size(), q.size(), q) == 0 &&
+                           ns.compare(ns.size() - q.size() - 2, 2, "::") == 0);
+    }
+    // At a type name that is both an enumeration of one namespace and a class of another (okay::scripting's
+    // `enum class Result` and okay::http's `struct Result`; AccountService.hpp:1250, 16 files): whether the class is
+    // meant ([namespace.qual], [basic.lookup.unqual]). Enumerations and classes are kept in two tables; the
+    // enumeration's table had the last word, whatever namespace was written or open (Round 31). Returns the class, or
+    // -1 for the enumeration.
+    int enum_name_loses(const std::string& name) const {
+        const auto td = typedefs.find(name);
+        if (td == typedefs.end() || td->second.enum_id < 0 || td->second.pointers != 0) return -1;
+        const auto en = enum_ns_.find(td->second.enum_id);
+        if (en == enum_ns_.end()) return -1;
+        bool any = false;
+        for (size_t i = 0; i < structs.size() && !any; ++i) any = structs[i].name == name && structs[i].parent < 0;
+        if (!any) return -1;
+        const std::string& qual = cur().qual;
+        if (cur().nsq && !qual.empty()) {
+            if (ns_names(en->second, qual)) return -1;
+            for (size_t i = 0; i < structs.size(); ++i)
+                if (structs[i].name == name && structs[i].parent < 0 && ns_names(structs[i].ns, qual)) return static_cast<int>(i);
+            return -1;
+        }
+        // Unqualified: the declaration in the nearest enclosing namespace.
+        const int best = find_struct(name);
+        if (best < 0 || structs[static_cast<size_t>(best)].parent >= 0) return -1;
+        const std::string& cns = structs[static_cast<size_t>(best)].ns;
+        const bool class_in = ns_encloses(cns, current_ns);
+        const bool enum_in = ns_encloses(en->second, current_ns);
+        if ((class_in && !enum_in) || (class_in && enum_in && cns.size() > en->second.size())) return best;
+        return -1;
+    }
     int find_struct(const std::string& name) const {
         int first = -1;
         int count = 0;
@@ -2041,6 +2080,7 @@ struct Parser {
                     enum_types_declared.push_back(ed);
                 }
                 typedefs[cur().text] = enum_type;
+                if (struct_nest == 0) enum_ns_[enum_type.enum_id] = current_ns;
                 cur_enum_id = enum_type.enum_id;
                 next();
             }
@@ -2070,7 +2110,13 @@ struct Parser {
             return qualify(type, had_typename);
         }
         if (is(TIdent) && typedefs.find(cur().text) != typedefs.end() && nested_class_in_scope(cur().text) < 0) {
-            *type = typedefs[cur().text];
+            const int cls = enum_name_loses(cur().text);
+            if (cls >= 0) {
+                type->base = 3;
+                type->struct_id = cls;
+            } else {
+                *type = typedefs[cur().text];
+            }
             next();
             return qualify(type, had_typename);
         }

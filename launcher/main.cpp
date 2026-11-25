@@ -7172,8 +7172,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 add(24, InviteMessageBody("Star Arena", "okay://join?game=Star%20Arena&addr=192.168.1.20:45000&name=Maya%27s%20lobby&host=maya&inv=101").c_str(), 4, false);
                 add(25, "omw!", 3, true);
                 add(26, InviteMessageBody("Kart Rush", "okay://join?game=Kart%20Rush&relay=relay.okayspace.net:45100&code=K7Q-29X&pass=cup&host=kingimann&inv=102").c_str(), 2, true);
-                add(27, okay::Parties::InviteBody("0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c", "Alex Rivera").c_str(), 1, false);
-                add(28, JoinRequestBody("Neon Drift").c_str(), 1, false);
+                if (std::strcmp(std::getenv("OKAY_CHAT_DEMO_INVITE"), "cards") != 0) {   // "cards": only the two game invites (their records' state)
+                    add(27, okay::Parties::InviteBody("0f6a2c1e-5b7d-4e8a-9c3f-2d1b0a9e8f7c", "Alex Rivera").c_str(), 1, false);
+                    add(28, JoinRequestBody("Neon Drift").c_str(), 1, false);
+                }
                 for (auto& f : friends) if (f.id == "demo-uid") {   // Alex is in a joinable match (chat header bar)
                     f.playing = "Playing Neon Drift \xC2\xB7 Hosting Night Race (3/6)";
                     okay::JoinLink l; l.game = "Neon Drift"; l.addr = "192.168.1.44:45000"; l.name = "Night Race"; l.host = "alexr";

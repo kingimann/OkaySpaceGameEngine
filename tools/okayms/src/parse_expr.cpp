@@ -14,12 +14,68 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
         return false;
     }
     const Type elem = lsd.targs[0].type;
-    if (elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0 &&
-        class_needs_dtor(structs[static_cast<size_t>(elem.struct_id)])) {
-        error = "an initializer_list of a class with a destructor is not supported";
-        return false;
-    }
+    const bool class_elems = elem.base == 3 && elem.pointers == 0 && !elem.is_array() && elem.struct_id >= 0 &&
+                             (obj_needs_ctor(elem) || obj_needs_dtor(elem));
     next();  // '{'
+    if (class_elems) {
+        // {"a", "b"} for an initializer_list<std::string>: each element is a hidden object made from its item by a
+        // constructor (copy-initialization, [dcl.init.list] 5) and destroyed after the full-expression, like other
+        // temporaries. Own simplification: the array does not live longer than the statement, so a list kept past it
+        // (a range for over a braced list of strings) is not supported. The elements are placed from the last to the
+        // first: locals grow downward, so element 0 is at the lowest address and the elements are contiguous (a class's
+        // size is a multiple of its alignment).
+        std::vector<Node> items;
+        while (!is(TRBrace) && !is(TEnd)) {
+            Node item;
+            if (is(TLBrace)) {
+                if (!braced_temp(elem.struct_id, &item)) return false;
+            } else if (!parse_expr(1, &item)) {
+                return false;
+            }
+            items.push_back(std::move(item));
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TRBrace, "'}'")) return false;
+        const size_t n = items.empty() ? 1 : items.size();
+        const std::string base = "__il" + std::to_string(tmp_count++) + "_";
+        for (size_t i = n; i-- > 0;) {
+            Local e;
+            e.name = base + std::to_string(i);
+            e.type = elem;
+            e.type.is_const = false;
+            place_local(cur_locals, e);
+        }
+        const bool has_dtor = obj_needs_dtor(elem);
+        for (size_t i = 0; i < items.size(); ++i) {
+            const std::string name = base + std::to_string(i);
+            std::vector<Node> cargs;
+            cargs.push_back(std::move(items[i]));
+            Node ctor_stmt;
+            if (!special_call(elem.struct_id, "<ctor>", node_addr(node_name(name)), std::move(cargs), &ctor_stmt))
+                return false;
+            stmt_pre.push_back(std::move(ctor_stmt));
+            if (has_dtor) stmt_temps.push_back(Temp{name, elem.struct_id});
+        }
+        Local hidden;
+        hidden.name = "__ilo" + std::to_string(tmp_count++);
+        hidden.type = list_type;
+        hidden.type.is_ref = false;
+        place_local(cur_locals, hidden);
+        Node count;
+        count.kind = Node::IntLit;
+        count.type.base = 1;
+        count.type.wide = true;
+        count.number = items.size();
+        std::vector<Node> largs;
+        largs.push_back(node_addr(node_name(base + "0")));
+        largs.push_back(std::move(count));
+        Node list_ctor;
+        if (!special_call(list_type.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(largs), &list_ctor))
+            return false;
+        stmt_pre.push_back(std::move(list_ctor));
+        *out = node_name(hidden.name);
+        return true;
+    }
     std::vector<Node> items;
     while (!is(TRBrace) && !is(TEnd)) {
         Node item;
@@ -1619,6 +1675,11 @@ bool Parser::parse_unary(Node* out) {
         no_const_subst = saved_subst;
         if (!inner_ok) return false;
         const Tok uop = out->op;
+        if (uop == TAmp && inner.kind == Node::Name && inner.kids.empty() && names_function(inner.text)) {
+            // &f of a function ([expr.unary.op] 3): the function's address, which the name alone already is ([conv.func]).
+            *out = std::move(inner);
+            return parse_postfix(out);
+        }
         if (uop == TMinus || uop == TNot || uop == TTilde || uop == TStar) {
             bool done = false;
             if (!operator_unary(uop, false, &inner, &done)) return false;

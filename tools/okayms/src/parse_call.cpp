@@ -369,12 +369,42 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     call.kind = Node::Call;
     call.number = 1;
     call.type = m->ret;
+    Node hoist;  // a virtual call's object with side effects: the store of its address (see below)
     if (!dynamic) {
         call.text = m->qname;
     } else {
         if (has_effects(self)) {
-            error = "a virtual call needs an object expression without side effects";
-            return false;
+            // p->f() where p is an expression with effects (sp->f() through a smart pointer's operator->): its value
+            // goes to a hidden local first, so it is computed once ([expr.call] 7: the object expression is evaluated
+            // once). For a result in rax the store and the call are one comma expression, in place; for a floating
+            // point or class result the store goes before the statement.
+            if (cur_locals == nullptr) {
+                error = "a virtual call needs an object expression without side effects";
+                return false;
+            }
+            Local hidden;
+            hidden.name = "__vo" + std::to_string(tmp_count++);
+            hidden.type.base = 3;
+            hidden.type.struct_id = sid;
+            hidden.type.pointers = 1;
+            place_local(cur_locals, hidden);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(self));
+            self = node_name(hidden.name);
+            const Type& r = m->ret;
+            const bool in_rax = r.is_ref || r.pointers > 0 || r.base == 0 ||
+                                ((r.base == 1 || r.base == 2 || r.base == 4) && !r.is_array());
+            if (in_rax) {
+                hoist = std::move(assign);
+            } else {
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                stmt_pre.push_back(std::move(stmt));
+            }
         }
         FuncType ft;
         ft.ret = m->ret;
@@ -424,6 +454,22 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     }
     if (!m->is_static) call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
+    if (hoist.kind == Node::Assign) {
+        Type ct = m->ret;
+        if (ct.is_ref) {
+            ct.is_ref = false;
+            ct.rref = false;
+            ct.pointers += 1;
+        }
+        Node comma;
+        comma.kind = Node::Binary;
+        comma.op = TComma;
+        comma.type = ct;
+        comma.kids.push_back(std::move(hoist));
+        comma.kids.push_back(std::move(call));
+        *out = reference_result(std::move(comma), m->ret.is_ref, m->ret.rref);
+        return true;
+    }
     *out = reference_result(std::move(call), m->ret.is_ref, m->ret.rref);
     return true;
 }

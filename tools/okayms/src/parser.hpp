@@ -621,15 +621,18 @@ struct Parser {
     // A constructor template of class sid that takes n arguments (one for a conversion, [over.ics.user]): string's
     // template <class It> string(It, It) does not make a string from one value.
     bool has_ctor_template_taking(int sid, size_t n) const {
-        for (const auto& mt : member_tmpls) {
-            if (mt.first.first != sid || mt.first.second != mt.second.owner) continue;
-            size_t fixed = 0;
-            bool pack = false;
-            for (const Type& t : mt.second.td.proto) {
-                if (t.pack) pack = true;
-                else ++fixed;
+        for (const auto& all : member_tmpl_all) {
+            if (all.first.first != sid) continue;
+            for (const MemberTmpl& mt : all.second) {
+                if (all.first.second != mt.owner) continue;
+                size_t fixed = 0;
+                bool pack = false;
+                for (const Type& t : mt.td.proto) {
+                    if (t.pack) pack = true;
+                    else ++fixed;
+                }
+                if (pack ? n >= fixed : n == fixed) return true;
             }
-            if (pack ? n >= fixed : n == fixed) return true;
         }
         return false;
     }
@@ -715,6 +718,19 @@ struct Parser {
                 fn.op = TArrow;
                 fn.text = f.name;
                 fn.kids.push_back(self);
+                if (dflt == nullptr && f.type.base == 3 && f.type.pointers == 0 && !f.type.is_ref && !f.type.is_array() &&
+                    f.type.struct_id >= 0 && obj_needs_ctor(f.type)) {
+                    // No default constructor ran (the class has none: a member has no default constructor), so a
+                    // member of class type is made from its item by its own constructor ([dcl.init.aggr] 4.2).
+                    std::vector<Node> margs;
+                    margs.push_back(std::move(args[k]));
+                    ++k;
+                    Node mcall;
+                    if (!special_call(f.type.struct_id, "<ctor>", node_addr(std::move(fn)), std::move(margs), &mcall))
+                        return false;
+                    steps.push_back(std::move(mcall));
+                    continue;
+                }
                 Node assign;
                 assign.kind = Node::Assign;
                 assign.op = TAssign;
@@ -1342,12 +1358,36 @@ struct Parser {
                 while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
                                       cur().text == "protected" || cur().text == "virtual"))
                     next();
-                if (!is(TIdent) || find_struct(cur().text) < 0) {
-                    error = "expected a base class";
-                    return false;
+                if (is(TIdent) && (is_template_name_at(at) || (typedefs.count(cur().text) > 0 &&
+                                                                 find_struct(cur().text) < 0))) {
+                    // class X : public Base<X> ([class.derived], [temp.names]): a base named by a template-id or a
+                    // typedef. X is declared (incomplete) first, so the base's arguments may name it (CRTP).
+                    if (!name.empty() && find_struct(name) < 0) {
+                        StructDef fwd;
+                        fwd.name = name;
+                        fwd.incomplete = true;
+                        fwd.cxx = true;
+                        fwd.is_class = as_class;
+                        fwd.is_union = as_union;
+                        structs.push_back(fwd);
+                    }
+                    Type bt;
+                    bool imp = false;
+                    bool exp = false;
+                    if (!parse_type(&bt, &imp, &exp)) return false;
+                    if (bt.base != 3 || bt.pointers != 0 || bt.struct_id < 0) {
+                        error = "expected a base class";
+                        return false;
+                    }
+                    base_id = bt.struct_id;
+                } else {
+                    if (!is(TIdent) || find_struct(cur().text) < 0) {
+                        error = "expected a base class";
+                        return false;
+                    }
+                    base_id = find_struct(cur().text);
+                    next();
                 }
-                base_id = find_struct(cur().text);
-                next();
                 if (!is(TLBrace)) {
                     error = "only one base class is supported";
                     return false;
@@ -1994,6 +2034,18 @@ struct Parser {
         if (i >= 2 && tokens[i - 1].kind == TLParen && tokens[i - 2].kind == TSizeof && i + 1 < tokens.size() &&
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
+        if (i >= 1 && tokens[i - 1].kind == TIdent && tokens[i - 1].text == "new") return true;  // new S, new S()
+        if (i >= 2 && tokens[i - 1].kind == TRParen && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen) {
+            // new (place) S(args): the '(' of the placement goes back to a `new`
+            int depth = 0;
+            for (size_t k = i - 1; k > 0; --k) {
+                if (tokens[k].kind == TRParen) ++depth;
+                else if (tokens[k].kind == TLParen && --depth == 0) {
+                    if (tokens[k - 1].kind == TIdent && tokens[k - 1].text == "new") return true;
+                    break;
+                }
+            }
+        }
         if (i + 3 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
             (find_struct(tokens[i + 2].text) >= 0 || typedefs.count(tokens[i + 2].text) > 0) && tokens[i + 3].kind != TLParen)
             return true;  // S::Nested names a nested class, enumeration or typedef of a plain struct
@@ -2268,6 +2320,7 @@ struct Parser {
         return false;
     }
     bool parse_condition(Node* cond, Node* decl, bool* scoped, std::vector<Local>* locals);
+    bool fold_loop_expr(size_t pre_from, size_t temps_from, Node* e);
     void close_condition_scope(Node* stmt, Node decl, bool scoped);
     bool init_list_temp(const Type& list_type, Node* out);
     bool is_init_list_class(const Type& t) const {
@@ -2490,7 +2543,10 @@ struct Parser {
             return -1;
         }
         if (a.pointers > 0) return p.is_bool && p.base == 2 ? 3 : -1;
-        if (a.base == 3) return conv_for(a.struct_id, p) != nullptr ? 3 : -1;
+        // A conversion function (operator bool, operator int) is a user-defined conversion too ([over.ics.user]): it
+        // ranks with a converting constructor, so a constructor template that takes the class itself is preferred to
+        // `S(int)` reached through `operator bool`.
+        if (a.base == 3) return conv_for(a.struct_id, p) != nullptr ? 4 : -1;
         if (a.base == 0 || p.base == 0) return -1;
         // A reference to a non-const scalar binds only to an lvalue of that same type ([dcl.init.ref] 5): int& does not
         // take a double, so from_chars(first, last, int_value) does not pick the double overload.
@@ -3338,17 +3394,25 @@ struct Parser {
                 ++field.type.pointers;
                 ref_member = true;
             }
-            if (!is(TIdent)) {
-                error = "expected a field name";
-                return false;
+            if (!ref_member && is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
+                // R (*name)(A); a member that points to a function ([dcl.fct], [class.mem]).
+                Declarator fd;
+                if (!parse_declarator(field.type, &fd)) return false;
+                field.name = fd.name;
+                field.type = fd.type;
+            } else {
+                if (!is(TIdent)) {
+                    error = "expected a field name";
+                    return false;
+                }
+                field.name = cur().text;
+                next();
+                if (ref_member) {
+                    def.ref_caps.insert(field.name);
+                    def.ref_members.insert(field.name);
+                }
+                if (!parse_brackets(&field.type)) return false;
             }
-            field.name = cur().text;
-            next();
-            if (ref_member) {
-                def.ref_caps.insert(field.name);
-                def.ref_members.insert(field.name);
-            }
-            if (!parse_brackets(&field.type)) return false;
             if (field.type.array_len == 0 && !static_member) {
                 error = "an array member needs a length";
                 return false;
@@ -3534,7 +3598,7 @@ struct Parser {
                     ft.struct_id != self && class_has_copy(ft.struct_id))
                     part_copies = true;
             }
-            if (!has_ctor && class_needs_ctor(structs[static_cast<size_t>(self)])) {
+            if (!has_ctor && class_needs_ctor(structs[static_cast<size_t>(self)]) && parts_default_constructible(def, self)) {
                 Method m;
                 m.name = "<ctor>";
                 m.ret.base = 3;
@@ -3814,6 +3878,43 @@ struct Parser {
     // declaration order; a destructor stores the table pointer, runs its block, then destroys the
     // members in reverse order and the base. Written from ISO/IEC 14882 [class.base.init] and
     // [class.dtor].
+    // Can a class with no constructor written get the implicit default constructor ([class.default.ctor] 2)? Not when
+    // its base or a member of class type (without a default member initializer) has constructors and none of them takes
+    // no arguments: the implicit one is then deleted, and only aggregate initialization makes such an object.
+    bool takes_no_args(int sid) const {
+        const StructDef& d = structs[static_cast<size_t>(sid)];
+        bool any = false;
+        for (const Method& m : d.methods) {
+            if (m.name != "<ctor>" || m.owner != sid) continue;
+            any = true;
+            if (m.implicit && !m.implicit_copy) return true;
+            size_t required = m.params.size();
+            while (required > 0 && required - 1 < m.defaults.size() &&
+                   !(m.defaults[required - 1].kind == Node::Block && m.defaults[required - 1].kids.empty() &&
+                     m.defaults[required - 1].text.empty()))
+                --required;
+            if (required == 0) return true;
+        }
+        return !any || has_ctor_template_taking(sid, 0);
+    }
+    bool parts_default_constructible(const StructDef& d, int self) const {
+        if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)]) && !takes_no_args(d.base)) return false;
+        for (size_t fi = d.base_fields; fi < d.fields.size(); ++fi) {
+            const Field& f = d.fields[fi];
+            const Type& ft = f.type;
+            if (ft.base != 3 || ft.pointers != 0 || ft.is_ref || ft.struct_id < 0 || ft.struct_id == self) continue;
+            if (f.init_at >= 0 || f.init_zero) continue;
+            if (class_needs_ctor(structs[static_cast<size_t>(ft.struct_id)]) && !takes_no_args(ft.struct_id)) return false;
+        }
+        return true;
+    }
+
+    static int find_field_named(const StructDef& d, const std::string& name) {
+        for (size_t i = 0; i < d.fields.size(); ++i)
+            if (d.fields[i].name == name) return static_cast<int>(i);
+        return -1;
+    }
+
     bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
         const StructDef def = structs[static_cast<size_t>(cls)];
         std::vector<Node> pre;
@@ -3832,7 +3933,32 @@ struct Parser {
                 }
                 Init init;
                 init.name = cur().text;
-                next();
+                size_t after_ns = at;
+                while (after_ns + 2 < tokens.size() && tokens[after_ns].kind == TIdent &&
+                       namespaces.count(tokens[after_ns].text) > 0 && tokens[after_ns + 1].kind == TColonColon &&
+                       tokens[after_ns + 2].kind == TIdent)
+                    after_ns += 2;  // std::string(s): the namespace names were kept because a '(' follows
+                const bool type_named = after_ns != at ||
+                                        (at + 1 < tokens.size() &&
+                                         (tokens[at + 1].kind == TColonColon || tokens[at + 1].kind == TLt ||
+                                          (typedefs.count(cur().text) > 0 && find_field_named(def, cur().text) < 0)));
+                at = after_ns;
+                init.name = cur().text;
+                if (type_named && is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen &&
+                    typedefs.count(cur().text) == 0) {
+                    next();  // ns::Base(x): the class's own name
+                } else if (type_named) {
+                    // std::string(s) or Base<T>(x) ([class.base.init]): a base named by a qualified name, a template-id
+                    // or a typedef; it is matched to the base by the class it names.
+                    Type bt;
+                    bool imp = false;
+                    bool exp = false;
+                    if (!parse_type(&bt, &imp, &exp)) return false;
+                    if (bt.base == 3 && bt.pointers == 0 && bt.struct_id >= 0)
+                        init.name = structs[static_cast<size_t>(bt.struct_id)].name;
+                } else {
+                    next();
+                }
                 if (!expect(TLParen, "'('")) return false;
                 const size_t hoist_from = stmt_pre.size();
                 if (!parse_call_args(&init.args)) return false;
@@ -4319,6 +4445,9 @@ struct Parser {
     };
     std::map<std::pair<std::string, std::string>, OolMemberTmpl> ool_member_tmpls{};
     std::map<std::pair<int, std::string>, MemberTmpl> member_tmpls{};
+    // Every member template of one name, in the order declared (overloaded constructor templates: shared_ptr(Y*) and
+    // shared_ptr(const shared_ptr<Y>&)); member_tmpls keeps the last one.
+    std::map<std::pair<int, std::string>, std::vector<MemberTmpl>> member_tmpl_all{};
     TDecl inst_td{};
     struct DeferredInst {
         int sid = -1;
@@ -5366,6 +5495,7 @@ struct Parser {
         unbind_params(saved);
         if (!ok) return false;
         at = mt.td.end;
+        member_tmpl_all[std::make_pair(self, mname)].push_back(mt);
         member_tmpls[std::make_pair(self, mname)] = std::move(mt);
         return true;
     }
@@ -5396,11 +5526,15 @@ struct Parser {
         tsym_out->clear();
         int owner = -1;
         const StructDef& def = structs[static_cast<size_t>(sid)];
-        const MemberTmpl* found = nullptr;
-        for (auto it = member_tmpls.begin(); it != member_tmpls.end(); ++it)
-            if (it->first.first == sid && it->first.second == it->second.owner) found = &it->second;
+        // The constructor templates of the class that take this many arguments, in the order declared.
+        std::vector<MemberTmpl> cands;
+        for (auto it = member_tmpl_all.begin(); it != member_tmpl_all.end(); ++it) {
+            if (it->first.first != sid) continue;
+            for (const MemberTmpl& c : it->second)
+                if (it->first.second == c.owner && c.td.proto.size() == args.size()) cands.push_back(c);
+        }
         (void)owner;
-        if (found == nullptr || found->td.proto.size() != args.size()) return true;
+        if (cands.empty()) return true;
         if (args.size() == 1) {
             Type at;
             if (static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array()) {
@@ -5415,12 +5549,35 @@ struct Parser {
             const int score = call_score(m.params, args);
             if (score >= 0 && score < 4) return true;
         }
-        const MemberTmpl mt = *found;
+        // The first template whose arguments can be deduced from the call ([temp.deduct.call]; own simplification: no
+        // partial ordering between two that both deduce, the one declared first is taken).
+        size_t pick = 0;
         std::vector<TArg> targs;
-        if (!deduce_args(mt.td, mt.owner, &targs, args)) return false;
+        bool deduced = false;
+        std::string first_error;
+        for (size_t ci = 0; ci < cands.size() && !deduced; ++ci) {
+            targs.clear();
+            const std::string keep_error = error;
+            if (deduce_args(cands[ci].td, cands[ci].owner, &targs, args)) {
+                deduced = true;
+                pick = ci;
+            } else {
+                if (first_error.empty()) first_error = error;
+                error = keep_error;
+            }
+        }
+        if (!deduced) {
+            error = first_error;
+            return false;
+        }
+        const MemberTmpl mt = cands[pick];
         std::string codes;
         for (const TArg& a : targs) codes += arg_code(a);
-        const std::string tsym = "?$?0" + codes;
+        // Two templates deduced with the same arguments are different instances: the later ones get their position.
+        size_t index = 0;
+        for (size_t ci = 0; ci < cands.size(); ++ci)
+            if (cands[ci].td.start == mt.td.start) index = ci;
+        const std::string tsym = "?$?0" + codes + (index > 0 ? "@" + std::to_string(index) : std::string());
         *tsym_out = tsym;
         if (find_ctor_instance(sid, tsym) != nullptr) return true;
         const auto ctx_bound = bind_params(mt.ctx, mt.ctx_args);
@@ -6812,6 +6969,13 @@ struct Parser {
                 continue;
             }
             decl.type.is_const = is_const;
+            // An inline variable ([dcl.inline]): own simplification as for inline functions, each file keeps its own
+            // copy (an internal symbol), so two files that include it link.
+            bool inline_var = false;
+            if (!decl.is_function)
+                for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
+                    if (tokens[k].inl) inline_var = true;
+            if (inline_var) is_static = true;
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
                 if (decl_tls) {
                     error = "a thread_local object with a constructor or destructor at namespace scope is not supported "
@@ -6820,6 +6984,20 @@ struct Parser {
                 }
                 Node ginit;
                 bool has_ginit = false;
+                Type gil_type;
+                if (!decl.type.is_array() && !gctor_args && is(TLBrace) &&
+                    !(tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &gil_type))) {
+                    // C g{a, b}; ([dcl.init.list] 3.7): the constructor that takes the arguments runs at startup.
+                    next();
+                    while (!is(TRBrace) && !is(TEnd)) {
+                        Node a;
+                        if (!parse_expr(1, &a)) return false;
+                        gargs.push_back(std::move(a));
+                        if (!accept(TComma)) break;
+                    }
+                    if (!expect(TRBrace, "'}'")) return false;
+                    gctor_args = true;
+                }
                 if (!decl.type.is_array() && !gctor_args && is(TAssign) && at + 1 < tokens.size() &&
                     tokens[at + 1].kind != TLBrace) {
                     // C g = value; ([dcl.init]): the constructor that takes the value (a converting or copy

@@ -432,7 +432,10 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Node cond;
         Node cond_decl;
         bool cond_scoped = false;
+        const size_t wpre = stmt_pre.size();
+        const size_t wtemps = stmt_temps.size();
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+        if (!cond_scoped && !fold_loop_expr(wpre, wtemps, &cond)) return false;
         Node body;
         brk_dbase.push_back(dscopes.size());
         cont_dbase.push_back(dscopes.size());
@@ -474,15 +477,21 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         cond.kind = Node::Block;
         cond.text = "skip";
         if (!is(TSemi)) {
+            const size_t cpre = stmt_pre.size();
+            const size_t ctemps = stmt_temps.size();
             if (!parse_expr(0, &cond)) return false;
             if (!convert_class(&cond, bool_type())) return false;
+            if (!fold_loop_expr(cpre, ctemps, &cond)) return false;
         }
         if (!expect(TSemi, "';'")) return false;
         Node step;
         step.kind = Node::Block;
         step.text = "skip";
         if (!is(TRParen)) {
+            const size_t spre = stmt_pre.size();
+            const size_t stemps = stmt_temps.size();
             if (!parse_expr(0, &step)) return false;
+            if (!fold_loop_expr(spre, stemps, &step)) return false;
         }
         if (!expect(TRParen, "')'")) return false;
         Node body;
@@ -528,8 +537,11 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         next();
         if (!expect(TLParen, "'('")) return false;
         Node cond;
+        const size_t dpre = stmt_pre.size();
+        const size_t dtemps = stmt_temps.size();
         if (!parse_expr(0, &cond)) return false;
         if (!convert_class(&cond, bool_type())) return false;
+        if (!fold_loop_expr(dpre, dtemps, &cond)) return false;
         if (!expect(TRParen, "')'")) return false;
         if (!expect(TSemi, "';'")) return false;
         out->kids.push_back(std::move(body));
@@ -1187,6 +1199,80 @@ bool Parser::parse_condition(Node* cond, Node* decl, bool* scoped, std::vector<L
     if (!parse_expr(0, cond)) return false;
     if (!convert_class(cond, bool_type())) return false;
     return expect(TRParen, "')'");
+}
+
+// A loop's condition or step is evaluated on every pass, so what it needs before it (a temporary made for a reference
+// parameter: `it != p.end()`) cannot go before the loop statement. The statements made for it are joined to it with the
+// comma operator ([expr.comma]): (make the temporaries, value = condition, destroy the temporaries, value). Fails when a
+// statement made for it is not an expression.
+static bool flatten_expr_stmts(const Node& n, std::vector<Node>* out) {
+    if (n.kind == Node::ExprStmt && n.kids.size() == 1) {
+        out->push_back(n.kids[0]);
+        return true;
+    }
+    if (n.kind == Node::Block && n.text.empty()) {
+        for (const Node& k : n.kids)
+            if (!flatten_expr_stmts(k, out)) return false;
+        return true;
+    }
+    return false;
+}
+
+bool Parser::fold_loop_expr(size_t pre_from, size_t temps_from, Node* e) {
+    if (stmt_pre.size() <= pre_from && stmt_temps.size() <= temps_from) return true;
+    std::vector<Node> parts;
+    for (size_t i = pre_from; i < stmt_pre.size(); ++i)
+        if (!flatten_expr_stmts(stmt_pre[i], &parts)) {
+            error = "a reference bound to a temporary in a loop condition is not supported";
+            return false;
+        }
+    stmt_pre.resize(pre_from);
+    std::vector<Temp> temps(stmt_temps.begin() + static_cast<std::ptrdiff_t>(temps_from), stmt_temps.end());
+    stmt_temps.resize(temps_from);
+    Type vt;
+    const bool typed = static_type(*e, &vt);
+    Node value = std::move(*e);
+    if (!temps.empty()) {
+        if (!typed || vt.base == 3 || vt.is_array() || vt.base >= 5) {
+            error = "a temporary with a destructor in a loop condition is not supported here";
+            return false;
+        }
+        Local hidden;
+        hidden.name = "__lc" + std::to_string(tmp_count++);
+        hidden.type = vt;
+        hidden.type.is_ref = false;
+        hidden.type.is_const = false;
+        place_local(cur_locals, hidden);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.kids.push_back(node_name(hidden.name));
+        assign.kids.push_back(std::move(value));
+        parts.push_back(std::move(assign));
+        for (size_t i = temps.size(); i-- > 0;) {
+            Node call;
+            if (!special_call(temps[i].sid, "<dtor>", node_addr(node_name(temps[i].name)), {}, &call)) return false;
+            if (!flatten_expr_stmts(call, &parts)) {
+                error = "a temporary with a destructor in a loop condition is not supported here";
+                return false;
+            }
+        }
+        value = node_name(hidden.name);
+    }
+    parts.push_back(std::move(value));
+    Node chain = std::move(parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+        Node comma;
+        comma.kind = Node::Binary;
+        comma.op = TComma;
+        Type rt;
+        if (static_type(parts[i], &rt)) comma.type = rt;
+        comma.kids.push_back(std::move(chain));
+        comma.kids.push_back(std::move(parts[i]));
+        chain = std::move(comma);
+    }
+    *e = std::move(chain);
+    return true;
 }
 
 void Parser::close_condition_scope(Node* stmt, Node decl, bool scoped) {

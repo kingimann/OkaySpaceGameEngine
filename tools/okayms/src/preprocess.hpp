@@ -514,6 +514,44 @@ struct Preprocessor {
     // The path of each file being read, innermost last (the main source has none).
     std::vector<std::string> path_stack;
 
+    // True when the line has a function-like macro name followed by '(' whose ')' is not on the line (string and
+    // character literals are skipped).
+    bool open_macro_call(const std::string& line) const {
+        int depth = 0;
+        bool in_call = false;
+        for (size_t k = 0; k < line.size();) {
+            const char c = line[k];
+            if (c == '"' || c == '\'') {
+                const char q = c;
+                ++k;
+                while (k < line.size() && line[k] != q) k += line[k] == '\\' ? 2 : 1;
+                ++k;
+                continue;
+            }
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                size_t e = k;
+                while (e < line.size() && (std::isalnum(static_cast<unsigned char>(line[e])) || line[e] == '_')) ++e;
+                if (!in_call) {
+                    const auto found = macros.find(line.substr(k, e - k));
+                    if (found != macros.end() && found->second.function_like) {
+                        size_t p = e;
+                        while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) ++p;
+                        if (p < line.size() && line[p] == '(') {
+                            in_call = true;
+                            depth = 0;
+                        }
+                    }
+                }
+                k = e;
+                continue;
+            }
+            if (in_call && c == '(') ++depth;
+            if (in_call && c == ')' && --depth == 0) in_call = false;
+            ++k;
+        }
+        return in_call && depth > 0;
+    }
+
     // Quoted names are looked up next to the including file first ([cpp.include]), then in the
     // include paths. *found is the path the text was read from.
     std::string find_include(const std::string& name, bool quote, const std::string& dir, std::string* found) {
@@ -772,8 +810,29 @@ struct Preprocessor {
                 continue;
             }
             current_line = ln;
+            // A call of a function-like macro whose arguments go on over the next lines ([cpp.replace] 10: the
+            // arguments may span lines): those lines are joined to this one, and each joined line leaves a blank line
+            // behind so that every output line keeps its origin.
+            int joined = 0;
+            while (active() && open_macro_call(line) && i < text.size()) {
+                size_t next_end = text.find('\n', i);
+                if (next_end == std::string::npos) next_end = text.size();
+                std::string more = text.substr(i, next_end - i);
+                if (!more.empty() && more.back() == '\r') more.pop_back();
+                size_t m = 0;
+                while (m < more.size() && (more[m] == ' ' || more[m] == '\t')) ++m;
+                if (m < more.size() && more[m] == '#') break;
+                line += " " + more;
+                i = next_end < text.size() ? next_end + 1 : next_end;
+                ++joined;
+            }
             out += active() ? expand(line, 0) + "\n" : std::string("\n");
             origin.push_back({file, ln});
+            for (int k = 0; k < joined; ++k) {
+                ++ln;
+                out += "\n";
+                origin.push_back({file, ln});
+            }
         }
         --depth;
         return out;

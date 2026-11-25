@@ -952,6 +952,8 @@ void emitData(Image& im, const Module& m) {
             im.fixes.push_back(f);
             u64(im, 0);
         } else if (!g.relocs.empty()) {
+            // Addresses at their offsets; the other bytes as they are (a table of structs mixes
+            // pointers and numbers: { "name", 0.25f, ... }).
             int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
             for (int off = 0; off < total; off += 8) {
                 std::string sym;
@@ -963,8 +965,11 @@ void emitData(Image& im, const Module& m) {
                     f.at = im.bytes.size();
                     f.target = sym;
                     im.fixes.push_back(f);
+                    u64(im, 0);
+                    continue;
                 }
-                u64(im, 0);
+                for (int k = off; k < off + 8 && k < total; ++k)
+                    u8(im, static_cast<std::size_t>(k) < g.bytes.size() ? g.bytes[static_cast<std::size_t>(k)] : 0);
             }
         } else if (!g.bytes.empty()) {
             bool zero = true;

@@ -1518,6 +1518,7 @@ void BindJoint2D() {
 void BindJoint3D() {
     ClassBinding c = MakeClass<Joint3D>("Joint3D", nullptr, 0);
     c.methods = {
+        {"NoteLinkedName", {}, 0, ArgKind::Void, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Joint3D&>(self); s.NoteLinkedName(); return V{}; }, false},
         {"Linked", {}, 0, ArgKind::Object, [](Component& self, const V* a, int n) -> V { (void)a; (void)n; auto& s = static_cast<Joint3D&>(self); return sb::RetObject(s.Linked()); }, true},
     };
     AddClass(std::move(c));

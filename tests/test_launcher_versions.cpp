@@ -1136,78 +1136,40 @@ int main() {
     }
 
 #if !defined(_WIN32)
-    // ---- the real download: the HTTP seam's curl fallback (no native client here; a stub curl on PATH: no network) ----------------------------------------------------
+    // ---- the real download in a build with no HTTP client (this test is built without OKAY_OWN_HTTP): DownloadFile fails with
+    // the reason and starts nothing. A stub curl on PATH records any run: it must never run (no curl fallback any more). The
+    // download itself is tested against a loopback server by test_launcher_download_own (our own client) and
+    // test_winhttp_loopback (WinHTTP).
     {
         using namespace okayversions::net;
         TempDir t;
         const fs::path bin = t.path / "bin dir";
-        const auto stub = [&](const std::string& body) {
-            Put(bin / "curl", "#!/bin/sh\n" + body);
-            fs::permissions(bin / "curl", fs::perms::owner_all);
-        };
+        const fs::path log = t.path / "curl.log";
+        Put(bin / "curl", "#!/bin/sh\necho run >> '" + log.string() + "'\nexit 0\n");
+        fs::permissions(bin / "curl", fs::perms::owner_all);
         const char* oldPath = std::getenv("PATH");
         const std::string saved = oldPath ? oldPath : "";
         setenv("PATH", (bin.string() + ":" + saved).c_str(), 1);
-        // The stub finds the argument after -o (the destination) and the last argument (the address), like curl.
-        const std::string prelude = "dest=; url=; while [ $# -gt 0 ]; do case \"$1\" in -o) dest=\"$2\"; shift;; *) url=\"$1\";; esac; shift; done\n";
         const fs::path dest = t.path / "dl dir \xC3\xA4" / "file.part";
+        Put(dest, "old");
         std::vector<std::uint64_t> bytes;
         auto onBytes = [&](std::uint64_t b) { bytes.push_back(b); };
-
-        stub(prelude + "printf 'hello %s' \"$url\" > \"$dest\"\nexit 0\n");
         DownloadResult r = DownloadFile("https://example.test/v2.850.1/OkayEngine.exe", dest, 1000, onBytes, [] { return false; });
-        CHECK(r.status == DownloadStatus::Ok && Get(dest) == "hello https://example.test/v2.850.1/OkayEngine.exe" && !bytes.empty() && bytes.back() == Get(dest).size());
-        stub("echo \"$@\" > \"" + (t.path / "args.txt").string() + "\"\n" + prelude + "printf x > \"$dest\"\n");
-        r = DownloadFile("https://example.test/a.exe", dest, 1000, onBytes, [] { return false; });
-        std::string args = Get(t.path / "args.txt");
-        // (the seam's curl fallback writes to "<dest>.okdl-<random>.part" and renames it to dest once complete)
-        CHECK(r.status == DownloadStatus::Ok && Has(args, "-L") && Has(args, "-f") && Has(args, "--proto-redir =https") && Has(args, "-o " + dest.string() + ".okdl-") &&
-              Has(args, ".part https://example.test/a.exe") && Get(dest) == "x");
+        CHECK(r.status == DownloadStatus::Failed && Has(r.error, "no-client") && !fs::exists(dest) && bytes.empty());
         r = DownloadFile("http://127.0.0.1:8080/a.exe", dest, 1000, onBytes, [] { return false; });
-        args = Get(t.path / "args.txt");
-        CHECK(r.status == DownloadStatus::Ok && !Has(args, "--proto-redir") && Has(args, "http://127.0.0.1:8080/a.exe"));
-
-        // Not allowed addresses never reach the program.
+        CHECK(r.status == DownloadStatus::Failed && Has(r.error, "no-client"));
+        // Not allowed addresses never reach any client.
         for (const char* url : {"http://example.test/x", "file:///etc/passwd", "https://example.test/a b", "https://example.test/$(id)", ""}) {
             CHECK(DownloadFile(url, dest, 1000, onBytes, [] { return false; }).status == DownloadStatus::Failed);
         }
-        // An HTTP error (curl -f exits 22), a full disk (23) and a program that is not there.
-        stub("exit 22\n");
-        r = DownloadFile("https://example.test/x", dest, 1000, onBytes, [] { return false; });
-        CHECK(r.status == DownloadStatus::Failed && Has(r.error, "does not have") && !fs::exists(dest));
-        stub("exit 23\n");
-        CHECK(DownloadFile("https://example.test/x", dest, 1000, onBytes, [] { return false; }).status == DownloadStatus::DiskFull);
-        stub("exit 6\n");
-        r = DownloadFile("https://example.test/x", dest, 1000, onBytes, [] { return false; });
-        CHECK(r.status == DownloadStatus::Failed && Has(r.error, "6"));
-        stub(prelude + "exit 0\n");                                                                         // "succeeded" but wrote nothing
-        CHECK(DownloadFile("https://example.test/x", dest, 1000, onBytes, [] { return false; }).status == DownloadStatus::Failed);
-        // Cancel: the child is ended within a poll or two even though it would run for a minute, and the partial file is removed.
-        stub(prelude + "printf 'partial' > \"$dest\"\nexec sleep 60\n");
-        int polls = 0;
-        const auto t0 = std::chrono::steady_clock::now();
-        r = DownloadFile("https://example.test/x", dest, 1000, onBytes, [&] { return ++polls > 3; });
-        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        CHECK(r.status == DownloadStatus::Cancelled && !fs::exists(dest) && secs < 10.0);
-        // A body bigger than the file should be is stopped and fails.
-        stub(prelude + "head -c 5000 /dev/zero > \"$dest\"\nexec sleep 60\n");
-        r = DownloadFile("https://example.test/x", dest, 1000, onBytes, [] { return false; });
-        CHECK(r.status == DownloadStatus::Failed && Has(r.error, "more data") && !fs::exists(dest));
-
-        // The real download function inside a real install, end to end: the stub plays the server.
+        // The real download function inside a real install: it fails cleanly and leaves nothing behind.
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
         const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", true)}, "2.856.0", "2.850.1"));
-        const fs::path serve = t.path / "serve";
-        for (const char* f : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) Put(serve / f, Body("2.850.1", f));
-        stub(prelude + "cp \"" + serve.string() + "/${url##*/}\" \"$dest\"\n");
         IO io;
         io.download = &DownloadFile;
-        CHECK(Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, io).ok() && Complete(launcher, "2.850.1") && NoScratch(launcher));
-        // ...and with a tampered file on the "server": refused, nothing kept.
-        fs::remove_all(okayver::VersionsDir(launcher));
-        Put(serve / "OkayEngine.exe", std::string(Body("2.850.1", "OkayEngine.exe").size(), 'Q'));
-        const Result bad = Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, io);
-        CHECK(bad.outcome == Outcome::Failed && Has(bad.message, "checksum") && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1") && NoScratch(launcher));
+        const Result res = Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, io);
+        CHECK(res.outcome == Outcome::Failed && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1") && NoScratch(launcher));
+        CHECK(!fs::exists(log));   // curl never ran
 
         // RunProcess on its own.
         RunResult rr = RunProcess({"sh", "-c", "exit 3"}, [] { return true; });

@@ -10,12 +10,28 @@
 #include "ProjectVersion.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 // A fixed wall clock: nothing the page or the launcher code reads from time() may move the picture.
 extern "C" std::time_t time(std::time_t* t) { const std::time_t v = 1700000000; if (t) *t = v; return v; }
+
+// What launcher/main.cpp and launcher/NavIcons.cpp give the page (NavIcons.cpp itself needs the launcher's real Dear ImGui): the UI scale at 1,
+// a button as wide as its label plus padding, and the plain combo box.
+namespace okl {
+float g_uiScale = 1.0f;
+float FitButtonW(const char* label, float minW) {
+    const char* end = std::strstr(label, "##");
+    const float w = ImGui::CalcTextSize(label, end).x + 28.0f;
+    return w > minW ? w : minW;
+}
+bool BeginSlateCombo(const char* label, const char* preview, int flags) { return ImGui::BeginCombo(label, preview, flags); }
+bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated, int popupMaxItems) {
+    return ImGui::Combo(label, current, itemsZeroSeparated, popupMaxItems);
+}
+}
 
 using namespace okayuitest;
 namespace UI = OkayUI;

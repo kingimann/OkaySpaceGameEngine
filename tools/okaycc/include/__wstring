@@ -1,0 +1,94 @@
+// basic_string for the wide character types, for okay-cc (ISO/IEC 14882 [basic.string],
+// [string.classes]: u16string, u32string, wstring). Our own header, included by <string>. The
+// characters live in a std::vector<C> that always ends in a zero, so c_str() and data() are
+// zero-terminated. std::string is still its own class (not basic_string<char>) in okay-cc; this
+// template is used only for char16_t, char32_t and wchar_t, with the members those strings are
+// used with in the engine (building, iterating, comparing, converting).
+#pragma once
+#include <cstddef>
+#include <vector>
+namespace std {
+template <typename C>
+class basic_string {
+    vector<C> v_;  // the characters and a final zero
+
+public:
+    typedef C value_type;
+    typedef C *iterator;
+    typedef const C *const_iterator;
+    typedef unsigned long size_type;
+    static const unsigned long npos = (unsigned long)-1;
+    basic_string() { v_.push_back(C()); }
+    basic_string(const C *s) {
+        for (; s && *s; ++s) v_.push_back(*s);
+        v_.push_back(C());
+    }
+    basic_string(const C *s, unsigned long n) {
+        for (unsigned long i = 0; i < n; ++i) v_.push_back(s[i]);
+        v_.push_back(C());
+    }
+    basic_string(unsigned long n, C c) {
+        for (unsigned long i = 0; i < n; ++i) v_.push_back(c);
+        v_.push_back(C());
+    }
+    template <typename It>
+    basic_string(It first, It last) {
+        for (; first != last; ++first) v_.push_back((C)*first);
+        v_.push_back(C());
+    }
+    unsigned long size() const { return v_.size() - 1; }
+    unsigned long length() const { return size(); }
+    bool empty() const { return size() == 0; }
+    void reserve(unsigned long n) { v_.reserve(n + 1); }
+    void clear() {
+        v_.clear();
+        v_.push_back(C());
+    }
+    const C *c_str() const { return v_.data(); }
+    const C *data() const { return v_.data(); }
+    C *begin() { return v_.data(); }
+    C *end() { return v_.data() + size(); }
+    const C *begin() const { return v_.data(); }
+    const C *end() const { return v_.data() + size(); }
+    C &operator[](unsigned long i) { return v_[i]; }
+    const C &operator[](unsigned long i) const { return v_[i]; }
+    C &back() { return v_[size() - 1]; }
+    void push_back(C c) {
+        v_.back() = c;
+        v_.push_back(C());
+    }
+    void pop_back() {
+        v_.pop_back();
+        v_.back() = C();
+    }
+    basic_string<C> &operator+=(C c) {
+        push_back(c);
+        return *this;
+    }
+    basic_string<C> &operator+=(const basic_string<C> &o) {
+        for (unsigned long i = 0; i < o.size(); ++i) push_back(o[i]);
+        return *this;
+    }
+    basic_string<C> &append(const C *s, unsigned long n) {
+        for (unsigned long i = 0; i < n; ++i) push_back(s[i]);
+        return *this;
+    }
+    basic_string<C> substr(unsigned long pos, unsigned long n = (unsigned long)-1) const {
+        if (pos > size()) pos = size();
+        if (n > size() - pos) n = size() - pos;
+        return basic_string<C>(data() + pos, n);
+    }
+    int compare(const basic_string<C> &o) const {
+        unsigned long n = size() < o.size() ? size() : o.size();
+        for (unsigned long i = 0; i < n; ++i)
+            if (v_[i] != o.v_[i]) return v_[i] < o.v_[i] ? -1 : 1;
+        return size() == o.size() ? 0 : (size() < o.size() ? -1 : 1);
+    }
+    bool operator==(const basic_string<C> &o) const { return compare(o) == 0; }
+    bool operator!=(const basic_string<C> &o) const { return compare(o) != 0; }
+    bool operator<(const basic_string<C> &o) const { return compare(o) < 0; }
+};
+typedef basic_string<char16_t> u16string;
+typedef basic_string<char32_t> u32string;
+typedef basic_string<wchar_t> wstring;
+}  // namespace std

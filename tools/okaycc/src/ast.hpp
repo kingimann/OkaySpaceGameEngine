@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -146,7 +147,9 @@ struct Tu {
     std::map<std::string, std::string> usingDecl;     // using N::f;  f -> N::f
 };
 
-std::unique_ptr<Type> cloneType(const Type& t);
+// withDefaults false: the default arguments of function parameters are left out (a checked
+// expression's type, which lowering reads only for its shape).
+std::unique_ptr<Type> cloneType(const Type& t, bool withDefaults = true);
 std::unique_ptr<Type> classByName(const Type& in);
 bool finishedClassCopy(const Type& t);
 std::unique_ptr<Expr> cloneExpr(const Expr& e);
@@ -173,6 +176,7 @@ struct TArg {
 struct TemplateSig {
     std::vector<std::string> names;
     std::vector<bool> isType;
+    std::vector<bool> hasDef;  // the parameter has a default argument (template <class T, class = void>)
     std::unique_ptr<Type> fn;  // prototype, a type parameter T appears as a struct with tag "\x02T"
 };
 
@@ -197,6 +201,7 @@ bool isVoidPtr(const Type& t);
 bool isSpecialName(const std::string& n);
 const Param* findSpecial(const Type* t, const char* name);
 bool derivedFrom(const Type& d, const Type& b);
+std::vector<std::string> basePath(const std::string& from, const std::string& to, int depth = 0);
 bool hasSideEffects(const Expr& e);
 
 // mangle.cpp
@@ -205,18 +210,48 @@ std::string mangleFunc(const std::string& qualified, const Type& fn);
 std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn);
 std::string mangleTypeNoCv(const Type& t);
 std::string mangleData(const std::string& qualified);
+std::string typeInfoSym(const Type& t);  // _ZTI<type>, the type's type_info object (RTTI)
+// Appends the weak _ZTS name and _ZTI object of t (and of its base classes) not yet in 'done'.
+void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::set<std::string>& done,
+                  int line, int col, const std::string& file);
 
 // templates.cpp
 std::vector<TArg> cloneArgs(const std::vector<TArg>& in);
 std::map<std::string, TemplateSig>& funcTemplateSigs();
 std::vector<InstReq>& instRequests();
+// Function template instances whose signature could not be formed for their arguments
+// ([temp.deduct] p8, SFINAE), as "<template key>|<instance name>" (the overloads name#k of one
+// template may give one instance name): the parser records them; overload resolution skips them.
+std::set<std::string>& sfinaeFailed();
+// The argument for a defaulted template parameter that deduction left to the instance.
+const char* const kDefaultArgTag = "__okay_default";
+// The namespace each template instance (a class's tag, a function's name) was declared in: its
+// tag or name is not qualified, but unqualified names in it are looked up there ([temp.res] p10).
+std::map<std::string, std::string>& instNamespaces();
 bool& ehActive();
 bool& forceExceptions();
 bool& instDirty();
 std::size_t mangledEnd(const std::string& s, std::size_t j);
+// A pack place of a primary class template made by packs.cpp (parameter "P__pk<j>") may not take
+// the filler type __okay_pack_end: that place is empty, so the copy for a longer pack must not match.
+bool packPlaceGetsEnd(const std::string& param, const Type& arg);
+// A prototype type with its template parameters replaced by the arguments.
+std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const std::vector<TArg>& args);
 std::unique_ptr<Type> typeFromMangle(const std::string& m);
+// Match the tag of a class template instance written with parameters (Node<T>: each parameter as
+// <length>\x02<name>) against an instance's tag Q piece by piece, calling bind(name, type) for each
+// parameter (false: a conflict, the match fails). strict: any other difference fails the match (a
+// partial specialization's pattern); otherwise it is ignored (deduction, which checks later).
+bool matchInstanceTag(const std::string& P, const std::string& Q, bool strict,
+                      const std::function<bool(const std::string&, std::unique_ptr<Type>)>& bind);
 std::string argMangle(const TArg& a);
 std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args);
+
+// lower.cpp
+// The byte offset of member 'field' in the finished class 'tag', or -1.
+int memberOffset(const std::string& tag, const std::string& field);
+// The size of a scalar type or a finished class, or 0 when it is not known yet.
+int typeSize(const Type& t);
 
 // parser.cpp
 Tu frontEnd(const std::vector<Token>& toks, Diagnostics& diags);

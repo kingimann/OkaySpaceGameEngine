@@ -3,12 +3,68 @@
 // exceptions (an index is not checked), iterators are pointers, no wide strings. Storage comes from the global
 // malloc and free (see <cstdlib>). The functions found by the engine headers are here: construct, copy, assign,
 // append, +, ==, <, [], size, c_str, substr, find, rfind, erase, insert, compare, push_back, clear, resize, to_string.
-// std::string_view is defined here too (see below).
+// std::string_view and std::char_traits are defined here too (see below).
 #pragma once
 #include <cstddef>
 #include <cstdlib>
 #include <utility>
+#include <iterator>
 namespace std {
+// The character operations the string classes are described with ([char.traits]): length, compare, copy, move,
+// assign, find, eq, lt, and the int conversions with eof() = -1. Characters compare as unsigned values
+// ([char.traits.specializations.char] 2). okay-ms's string and string_view do not take a traits argument.
+template <typename C>
+struct char_traits {
+    typedef C char_type;
+    typedef int int_type;
+    static bool eq(C a, C b) { return a == b; }
+    static bool lt(C a, C b) {
+        if (sizeof(C) == 1) return (unsigned char)a < (unsigned char)b;
+        return a < b;
+    }
+    static size_t length(const C* s) {
+        size_t n = 0;
+        while (!eq(s[n], C())) ++n;
+        return n;
+    }
+    static int compare(const C* a, const C* b, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            if (lt(a[i], b[i])) return -1;
+            if (lt(b[i], a[i])) return 1;
+        }
+        return 0;
+    }
+    static const C* find(const C* s, size_t n, const C& c) {
+        for (size_t i = 0; i < n; ++i)
+            if (eq(s[i], c)) return s + i;
+        return 0;
+    }
+    static C* copy(C* d, const C* s, size_t n) {
+        for (size_t i = 0; i < n; ++i) d[i] = s[i];
+        return d;
+    }
+    static C* move(C* d, const C* s, size_t n) {
+        if (d < s) {
+            for (size_t i = 0; i < n; ++i) d[i] = s[i];
+        } else {
+            for (size_t i = n; i > 0; --i) d[i - 1] = s[i - 1];
+        }
+        return d;
+    }
+    static C* assign(C* d, size_t n, C c) {
+        for (size_t i = 0; i < n; ++i) d[i] = c;
+        return d;
+    }
+    static void assign(C& d, const C& c) { d = c; }
+    static int_type eof() { return -1; }
+    static int_type to_int_type(C c) {
+        if (sizeof(C) == 1) return (int_type)(unsigned char)c;
+        return (int_type)c;
+    }
+    static C to_char_type(int_type i) { return (C)i; }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type not_eof(int_type i) { return i == eof() ? 0 : i; }
+};
 class string;
 // std::string_view ([string.view]): a pointer and a length naming characters it does not own. It is here, before string,
 // so that string can be built from one and compared with one; <string_view> includes this header.
@@ -62,6 +118,11 @@ public:
             if (a != b) return a < b ? -1 : 1;
         }
         return size_ == o.size_ ? 0 : (size_ < o.size_ ? -1 : 1);
+    }
+    // The part [pos, pos + n) compared with o, or with o's part [pos2, pos2 + n2) ([string.view.ops]).
+    int compare(size_t pos, size_t n, string_view o) const { return substr(pos, n).compare(o); }
+    int compare(size_t pos, size_t n, string_view o, size_t pos2, size_t n2) const {
+        return substr(pos, n).compare(o.substr(pos2, n2));
     }
     bool starts_with(string_view p) const { return size_ >= p.size_ && substr(0, p.size_).compare(p) == 0; }
     bool starts_with(char c) const { return size_ > 0 && data_[0] == c; }
@@ -269,6 +330,10 @@ public:
     const char* begin() const { return data_; }
     char* end() { return data_ + size_; }
     const char* end() const { return data_ + size_; }
+    std::reverse_iterator<char*> rbegin() { return std::reverse_iterator<char*>(data_ + size_); }
+    std::reverse_iterator<const char*> rbegin() const { return std::reverse_iterator<const char*>(data_ + size_); }
+    std::reverse_iterator<char*> rend() { return std::reverse_iterator<char*>(data_); }
+    std::reverse_iterator<const char*> rend() const { return std::reverse_iterator<const char*>(data_); }
 
     void reserve(size_t n) { reserve_exact(n); }
     void clear() {
@@ -314,6 +379,13 @@ public:
     }
     string& append(const char* s) { return append(s, length_of(s)); }
     string& append(const string& other) { return append(other.data_, other.size_); }
+    // append(str, pos, n) ([string.append] 3): at most n characters of str from pos (pos past the end is clamped here,
+    // where the standard throws out_of_range).
+    string& append(const string& other, size_t pos, size_t n = npos) {
+        if (pos > other.size_) pos = other.size_;
+        if (n > other.size_ - pos) n = other.size_ - pos;
+        return append(other.data_ + pos, n);
+    }
     string& append(string_view v) { return append(v.data(), v.size()); }
     string& append(size_t n, char c) {
         reserve_exact(size_ + n);
@@ -366,6 +438,22 @@ public:
         return npos;
     }
     size_t rfind(char c) const { return rfind(c, npos); }
+    // The last place at or before pos where s starts ([string.rfind]).
+    size_t rfind(const char* s, size_t pos) const {
+        const size_t n = length_of(s);
+        if (n > size_) return npos;
+        size_t i = size_ - n < pos ? size_ - n : pos;
+        while (true) {
+            size_t k = 0;
+            while (k < n && data_[i + k] == s[k]) ++k;
+            if (k == n) return i;
+            if (i == 0) return npos;
+            --i;
+        }
+    }
+    size_t rfind(const char* s) const { return rfind(s, npos); }
+    size_t rfind(const string& s, size_t pos) const { return rfind(s.data_, pos); }
+    size_t rfind(const string& s) const { return rfind(s.data_, npos); }
     size_t find_first_of(const char* set, size_t pos) const {
         for (size_t i = pos; i < size_; ++i)
             for (size_t k = 0; set[k] != 0; ++k)
@@ -383,8 +471,8 @@ public:
         return npos;
     }
     size_t find_first_not_of(const char* set) const { return find_first_not_of(set, 0); }
-    size_t find_last_not_of(const char* set) const {
-        size_t i = size_;
+    size_t find_last_not_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
         while (i > 0) {
             --i;
             bool in = false;
@@ -394,6 +482,45 @@ public:
         }
         return npos;
     }
+    size_t find_last_not_of(const char* set) const { return find_last_not_of(set, npos); }
+    size_t find_last_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (data_[i] == set[k]) return i;
+        }
+        return npos;
+    }
+    size_t find_last_of(const char* set) const { return find_last_of(set, npos); }
+    // The one-character and string forms of the four searches ([string.find]): a char is a set of one.
+    size_t find_first_of(char c, size_t pos) const { return find(c, pos); }
+    size_t find_first_of(char c) const { return find(c, 0); }
+    size_t find_first_of(const string& set, size_t pos) const { return find_first_of(set.data_, pos); }
+    size_t find_first_of(const string& set) const { return find_first_of(set.data_, 0); }
+    size_t find_last_of(char c, size_t pos) const { return rfind(c, pos); }
+    size_t find_last_of(char c) const { return rfind(c, npos); }
+    size_t find_last_of(const string& set, size_t pos) const { return find_last_of(set.data_, pos); }
+    size_t find_last_of(const string& set) const { return find_last_of(set.data_, npos); }
+    size_t find_first_not_of(char c, size_t pos) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (data_[i] != c) return i;
+        return npos;
+    }
+    size_t find_first_not_of(char c) const { return find_first_not_of(c, (size_t)0); }
+    size_t find_first_not_of(const string& set, size_t pos) const { return find_first_not_of(set.data_, pos); }
+    size_t find_first_not_of(const string& set) const { return find_first_not_of(set.data_, 0); }
+    size_t find_last_not_of(char c, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            if (data_[i] != c) return i;
+        }
+        return npos;
+    }
+    size_t find_last_not_of(char c) const { return find_last_not_of(c, npos); }
+    size_t find_last_not_of(const string& set, size_t pos) const { return find_last_not_of(set.data_, pos); }
+    size_t find_last_not_of(const string& set) const { return find_last_not_of(set.data_, npos); }
 
     string& erase(size_t pos, size_t n) {
         if (pos >= size_) return *this;
@@ -414,6 +541,33 @@ public:
     }
     string& insert(size_t pos, const char* s) { return insert(pos, s, length_of(s)); }
     string& insert(size_t pos, const string& s) { return insert(pos, s.data_, s.size_); }
+    // insert(pos, n, c) ([string.insert] 5): n copies of c at pos.
+    string& insert(size_t pos, size_t n, char c) {
+        string run;
+        run.append(n, c);
+        return insert(pos, run.data_, run.size_);
+    }
+
+    // replace(pos, n, s) ([string.replace]): the n characters at pos (fewer at the end) become s. s may point into
+    // this string, so it is copied first.
+    string& replace(size_t pos, size_t n, const char* s, size_t len) {
+        if (pos > size_) pos = size_;
+        if (n > size_ - pos) n = size_ - pos;
+        string with(s, len);
+        string tail(data_ + pos + n, size_ - pos - n);
+        size_ = pos;
+        data_[size_] = 0;
+        append(with.data_, with.size_);
+        append(tail.data_, tail.size_);
+        return *this;
+    }
+    string& replace(size_t pos, size_t n, const char* s) { return replace(pos, n, s, length_of(s)); }
+    string& replace(size_t pos, size_t n, const string& s) { return replace(pos, n, s.data_, s.size_); }
+    string& replace(size_t pos, size_t n, size_t count, char c) {
+        string run;
+        run.append(count, c);
+        return replace(pos, n, run.data_, run.size_);
+    }
 
     int compare(const char* s) const {
         size_t i = 0;
@@ -491,5 +645,51 @@ inline string to_string(long long v) {
 }
 inline string to_string(int v) { return to_string((long long)v); }
 inline string to_string(unsigned v) { return to_string((unsigned long long)v); }
+
+// stoi, stol, stoll, stoul, stoull, stof and stod ([string.conversions] 1-6), on strtol and its siblings: idx gets the
+// number of characters read. Differences: no exceptions (text that is not a number gives 0, where the standard throws
+// invalid_argument or out_of_range). Function templates (S is the string type), so they are made only in a file that
+// calls them, with one overload per number of arguments (okay-ms does not read default arguments of function
+// templates). Round 29.
+template <typename S> long long __okay_sto_ll(const S& s, size_t* idx, int base) {
+    const char* b = s.c_str();
+    char* e = 0;
+    const long long v = strtoll(b, &e, base);
+    if (idx) *idx = (size_t)(e - b);
+    return v;
+}
+template <typename S> unsigned long long __okay_sto_ull(const S& s, size_t* idx, int base) {
+    const char* b = s.c_str();
+    char* e = 0;
+    const unsigned long long v = strtoull(b, &e, base);
+    if (idx) *idx = (size_t)(e - b);
+    return v;
+}
+template <typename S> double __okay_sto_d(const S& s, size_t* idx) {
+    const char* b = s.c_str();
+    char* e = 0;
+    const double v = strtod(b, &e);
+    if (idx) *idx = (size_t)(e - b);
+    return v;
+}
+template <typename S> int stoi(const S& s) { return (int)__okay_sto_ll(s, (size_t*)0, 10); }
+template <typename S> int stoi(const S& s, size_t* idx) { return (int)__okay_sto_ll(s, idx, 10); }
+template <typename S> int stoi(const S& s, size_t* idx, int base) { return (int)__okay_sto_ll(s, idx, base); }
+template <typename S> long stol(const S& s) { return (long)__okay_sto_ll(s, (size_t*)0, 10); }
+template <typename S> long stol(const S& s, size_t* idx) { return (long)__okay_sto_ll(s, idx, 10); }
+template <typename S> long stol(const S& s, size_t* idx, int base) { return (long)__okay_sto_ll(s, idx, base); }
+template <typename S> long long stoll(const S& s) { return __okay_sto_ll(s, (size_t*)0, 10); }
+template <typename S> long long stoll(const S& s, size_t* idx) { return __okay_sto_ll(s, idx, 10); }
+template <typename S> long long stoll(const S& s, size_t* idx, int base) { return __okay_sto_ll(s, idx, base); }
+template <typename S> unsigned long stoul(const S& s) { return (unsigned long)__okay_sto_ull(s, (size_t*)0, 10); }
+template <typename S> unsigned long stoul(const S& s, size_t* idx) { return (unsigned long)__okay_sto_ull(s, idx, 10); }
+template <typename S> unsigned long stoul(const S& s, size_t* idx, int base) { return (unsigned long)__okay_sto_ull(s, idx, base); }
+template <typename S> unsigned long long stoull(const S& s) { return __okay_sto_ull(s, (size_t*)0, 10); }
+template <typename S> unsigned long long stoull(const S& s, size_t* idx) { return __okay_sto_ull(s, idx, 10); }
+template <typename S> unsigned long long stoull(const S& s, size_t* idx, int base) { return __okay_sto_ull(s, idx, base); }
+template <typename S> float stof(const S& s) { return (float)__okay_sto_d(s, (size_t*)0); }
+template <typename S> float stof(const S& s, size_t* idx) { return (float)__okay_sto_d(s, idx); }
+template <typename S> double stod(const S& s) { return __okay_sto_d(s, (size_t*)0); }
+template <typename S> double stod(const S& s, size_t* idx) { return __okay_sto_d(s, idx); }
 }
 #include <okay_ustring>

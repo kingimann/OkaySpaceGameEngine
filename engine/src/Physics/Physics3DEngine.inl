@@ -354,6 +354,8 @@ Physics3D::~Physics3D() = default;
 
 void Physics3D::Clear() {
     m_engine.reset();   // the world holds bodies for components about to be freed
+    m_queryIndex.reset();   // and the query broad phase holds their colliders
+    m_query = QueryCache{};
 }
 
 void Physics3D::SetSleep(float linearSpeed, float angularSpeed, float seconds) {
@@ -473,13 +475,17 @@ void Physics3D::StepEngine(Scene& scene, float dt) {
         EngineBridge::BodyRec& r = it->second;
         r.seen = true;
         const phys::BodyId id = r.id;
-        if (W.GetType(id) != type) W.SetType(id, type);
         // settings (cheap setters; they take effect from this step)
-        W.SetDamping(id, std::max(rb->drag, 0.0f), std::max(rb->angularDrag, 0.0f));
-        W.SetGravityScale(id, rb->gravityScale);
-        W.SetLocks(id, (std::uint8_t)((rb->freezeX ? 1 : 0) | (rb->freezeY ? 2 : 0) | (rb->freezeZ ? 4 : 0)), rb->freezeRotation ? 7 : 0);
-        W.SetBullet(id, rb->continuousCollision);
-        W.SetAllowSleep(id, rb->allowSleep);
+        phys::BodySettings set;
+        set.type = type;
+        set.linearDamping = std::max(rb->drag, 0.0f);
+        set.angularDamping = std::max(rb->angularDrag, 0.0f);
+        set.gravityScale = rb->gravityScale;
+        set.lockLinear = (std::uint8_t)((rb->freezeX ? 1 : 0) | (rb->freezeY ? 2 : 0) | (rb->freezeZ ? 4 : 0));
+        set.lockAngular = rb->freezeRotation ? 7 : 0;
+        set.bullet = rb->continuousCollision;
+        set.allowSleep = rb->allowSleep;
+        W.Configure(id, set);
         if (type == phys::BodyType::Dynamic && std::fabs(W.GetMass(id) - rb->mass) > 1e-6f * std::max(1.0f, rb->mass))
             W.SetMass(id, rb->mass > 0.0f ? rb->mass : 1.0f);
         // what game code changed since the last step. A NaN or infinite pose, speed or force is refused (logged once):
@@ -1049,56 +1055,127 @@ void ConsiderSolid(NearestSolid3D& best, bool& any, float maxDistance, Collider3
     best.distance = d;
 }
 
+namespace {
+bool SameNums(const std::vector<float>& kept, const float* now, std::size_t n) {
+    return kept.size() == n && (n == 0 || std::memcmp(kept.data(), now, n * sizeof(float)) == 0);
+}
+// A terrain as a height grid for ClosestPoint: built once, and again only when its samples, size or scale changed (where
+// it stands is not part of the grid). The samples are compared number by number, so an edit is seen by the next call.
+bool TerrainGrid(Terrain* t, HeightGridMemo& m, EnginePiece& out, PhysicsQueryStats& st) {
+    if (!t->transform || t->heights.empty()) return false;
+    const Vec3 s = t->transform->LossyScale();
+    const float nums[5] = {(float)t->resolution, t->size, s.x, s.y, s.z};
+    if (m.shape.mesh && SameNums(m.nums, nums, 5) && SameNums(m.heights, t->heights.data(), t->heights.size())) {
+        out.shape = m.shape;
+        out.world = phys::Xf{P3(t->transform->Position()), PQ(t->transform->Rotation())};
+        return true;
+    }
+    ++st.gridBuilds;
+    if (!PieceOfTerrain(t, out)) return false;
+    m.shape = out.shape;
+    m.nums.assign(nums, nums + 5);
+    m.heights = t->heights;
+    return true;
+}
+// The same for a Heightfield collider (its samples are text).
+bool FieldGrid(HeightfieldCollider3D* hf, HeightGridMemo& m, EnginePiece& out, MeshCache& cache, PhysicsQueryStats& st) {
+    const shape3d::Frame f = shape3d::FrameOf(*hf);
+    const float nums[8] = {(float)hf->Cols(), (float)hf->Rows(), hf->CX(), hf->CZ(), hf->heightScale, f.s.x, f.s.y, f.s.z};
+    if (m.shape.mesh && SameNums(m.nums, nums, 8) && m.text == hf->heights) {
+        out.shape = m.shape;
+        out.world = phys::Xf{P3(f.c), PQ(f.r)};
+        return true;
+    }
+    ++st.gridBuilds;
+    std::vector<EnginePiece> pieces;
+    if (!PiecesOfCollider(hf, /*dynamicBody*/ false, pieces, cache) || pieces.empty()) return false;
+    out = pieces[0];
+    m.shape = out.shape;
+    m.nums.assign(nums, nums + 8);
+    m.text = hf->heights;
+    return true;
+}
+} // namespace
+
 NearestSolid3D Physics3D::ClosestPoint(Scene& scene, const Vec3& point, float maxDistance,
                                         GameObject* ignore, std::uint32_t layerMask) {
     NearestSolid3D best;
     if (!(maxDistance >= 0.0f) || !std::isfinite(maxDistance) || !std::isfinite(point.x + point.y + point.z)) return best;
-    bool any = false;
-    MeshCache cache;
-    for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
-        {   // a collider that cannot be nearer than what is found (or within reach) is skipped before any shape is built
-            Vec3 mn, mx;
-            col->WorldAABB(mn, mx);
-            if (std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) {
-                const float dx = std::max(std::max(mn.x - point.x, point.x - mx.x), 0.0f);
-                const float dy = std::max(std::max(mn.y - point.y, point.y - mx.y), 0.0f);
-                const float dz = std::max(std::max(mn.z - point.z, point.z - mx.z), 0.0f);
-                const float lowest = std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-3f;
-                if (lowest > maxDistance || (any && lowest >= best.distance)) continue;
-            }
-        }
-        if (col->shape() == Collider3D::Shape::Mesh) {   // the mesh's own triangle tree (built once, kept by the collider)
-            auto* mc = static_cast<MeshCollider3D*>(col);
-            if (mc->HasTriangles()) {
-                const trimesh::WorldView view(mc->Tris(), mc->WorldMatrix());
-                const bool closed = mc->Tris().ClosedWinding() != 0;   // inside a closed mesh is 0 away, however far the skin is
-                Vec3 cp = point;
-                float d = 0.0f;
-                bool inside = false;
-                if (view.Nearest(point, closed ? 1e30f : maxDistance, cp, d, inside)) {
-                    if (inside) { cp = point; d = 0.0f; }
-                    ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
-                }
-                continue;
-            }
-        }
-        std::vector<EnginePiece> pieces;
-        if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
-        for (const EnginePiece& piece : pieces) {
-            Vec3 cp = point;
-            const float d = DistanceToPiece(piece, point, maxDistance, cp);
-            ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
-        }
-    }
-    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+    ++m_queryStats.queries;
+    QueryIndex& ix = SyncQueryIndex(scene);
+    // Terrains first (there are few). A collider wins a tie with a terrain, and the nearest terrain is also the furthest a
+    // collider can be and still be the answer.
+    NearestSolid3D ground;
+    bool anyGround = false;
+    for (Terrain* terr : m_query.terrains) {
         if (!TerrainPasses(terr, ignore, layerMask)) continue;
         EnginePiece piece;
-        if (!PieceOfTerrain(terr, piece)) continue;
+        if (!TerrainGrid(terr, ix.terrainGrids[terr], piece, m_queryStats)) continue;
         Vec3 cp = point;
         const float d = DistanceToPiece(piece, point, maxDistance, cp);
-        ConsiderSolid(best, any, maxDistance, nullptr, terr->gameObject, cp, d);
+        ConsiderSolid(ground, anyGround, maxDistance, nullptr, terr->gameObject, cp, d);
     }
+    // Colliders: ask the broad phase for the ones within `reach` of the point and take the nearest of them, in list order.
+    // When that one is within `reach`, nothing outside the box can be nearer or tie with it; otherwise look four times
+    // as far, up to the reach the caller gave (or until the box holds every collider).
+    const float cap = anyGround ? std::min(maxDistance, ground.distance) : maxDistance;
+    bool any = false;
+    MeshCache cache;
+    std::vector<Collider3D*> nearby;
+    for (float reach = std::min(cap, 1.0f);; reach = std::min(cap, reach * 4.0f)) {
+        const float r = reach * 1.0001f + 0.01f;
+        const bool all = NearBox(point - Vec3{r, r, r}, point + Vec3{r, r, r}, nearby);
+        best = NearestSolid3D{};
+        any = false;
+        for (Collider3D* col : nearby) {
+            ++m_queryStats.considered;
+            if (!Passes(col, ignore, layerMask, /*queryTriggers*/ false)) continue;
+            bool outsideBounds = false;   // the point is clear of the collider's box, so it is not inside the collider
+            {   // a collider that cannot be nearer than what is found (or within reach) is skipped before any shape is built
+                Vec3 mn, mx;
+                col->WorldAABB(mn, mx);
+                if (std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) {
+                    const float dx = std::max(std::max(mn.x - point.x, point.x - mx.x), 0.0f);
+                    const float dy = std::max(std::max(mn.y - point.y, point.y - mx.y), 0.0f);
+                    const float dz = std::max(std::max(mn.z - point.z, point.z - mx.z), 0.0f);
+                    const float lowest = std::sqrt(dx * dx + dy * dy + dz * dz) - 1e-3f;
+                    if (lowest > maxDistance || (any && lowest >= best.distance)) continue;
+                    outsideBounds = lowest > 0.0f;
+                }
+            }
+            ++m_queryStats.shapeTests;
+            if (col->shape() == Collider3D::Shape::Mesh) {   // the mesh's own triangle tree (built once, kept by the collider)
+                auto* mc = static_cast<MeshCollider3D*>(col);
+                if (mc->HasTriangles()) {
+                    const trimesh::WorldView view(mc->Tris(), mc->WorldMatrix());
+                    const bool closed = mc->Tris().ClosedWinding() != 0;   // inside a closed mesh is 0 away, however far the skin is
+                    Vec3 cp = point;
+                    float d = 0.0f;
+                    bool inside = false;
+                    if (view.Nearest(point, closed ? 1e30f : maxDistance, cp, d, inside)) {
+                        // (Nearest reads "inside" off the nearest triangle's plane, which is wrong beside an edge or a
+                        //  corner: a point outside the mesh's box is never inside it)
+                        if (inside && !outsideBounds) { cp = point; d = 0.0f; }
+                        ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+                    }
+                    continue;
+                }
+            }
+            std::vector<EnginePiece> pieces;
+            if (col->shape() == Collider3D::Shape::Heightfield) {   // its grid is kept between calls
+                EnginePiece piece;
+                if (!FieldGrid(static_cast<HeightfieldCollider3D*>(col), ix.fieldGrids[col], piece, cache, m_queryStats)) continue;
+                pieces.push_back(std::move(piece));
+            } else if (!PiecesOfCollider(col, /*dynamicBody*/ false, pieces, cache)) continue;
+            for (const EnginePiece& piece : pieces) {
+                Vec3 cp = point;
+                const float d = DistanceToPiece(piece, point, maxDistance, cp);
+                ConsiderSolid(best, any, maxDistance, col, col->gameObject, cp, d);
+            }
+        }
+        if (all || reach >= cap || (any && best.distance <= reach)) break;
+    }
+    if (anyGround && (!any || ground.distance < best.distance)) return ground;
     if (!any) return NearestSolid3D{};
     return best;
 }

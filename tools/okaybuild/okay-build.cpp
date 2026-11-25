@@ -37,6 +37,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <process.h>
+#include <cwchar>
+#include <cwctype>
 #else
 #include <condition_variable>
 #include <mutex>
@@ -96,6 +99,14 @@ struct Toolchain {
     // Windows (MinGW): rc compiles .rc files (GNU windres: -O coff, -D, -I, file, .res); std_libs end every link (the system's
     // standard libraries); exe_import_lib = on adds -Wl,--out-implib,lib<name>.dll.a and the image version to a program's link
     string rc; vector<string> stdLibs; bool exeImportLib = false;
+    // compile_order = cmake: a GCC-style compile line in the order CMake's Ninja files use (the definitions sorted and without repeats,
+    // then the source's own definitions sorted, then the source's include folders, the target's -I folders, its -isystem folders, then
+    // the flags), so the line can be compared with CMake's word for word. The default (okay) keeps okay-build's own order.
+    bool cmakeOrder = false;
+    // MSVC: system folders (system_include) as `/external:I DIR` after one `/external:W0`, so cl gives no warnings from those headers
+    // (Microsoft's documentation of the /external options: no longer experimental from cl 19.29, Visual Studio 2019 16.10).
+    // external_includes = off passes them as plain /I for an older cl. Our own okay-cl always gets plain /I.
+    bool msvcExternal = true;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
     // Our own compilers (presets okay-cc and okay-ms): which one, and whether a program links a static library's archive
@@ -136,6 +147,7 @@ struct Target {
     string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
     string libKind; // "" static archive, "shared" (.so, linked with -shared, -fPIC, found through an rpath), "object" (an archive that is linked whole, like CMake's OBJECT libraries)
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
+    vector<string> systemIncludes; // system_include = DIR...: include folders passed with -isystem (CMake's SYSTEM and imported targets' folders)
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
     // per-file additions (CMake's set_source_files_properties): {source path, word}
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
@@ -147,7 +159,9 @@ struct Target {
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
-struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; };
+// pass_regex / fail_regex / skip_regex: CMake regular expressions matched against what the test printed (CTest's PASS_, FAIL_ and
+// SKIP_REGULAR_EXPRESSION); each is a list, any one matching counts.
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; vector<std::regex> passRx, failRx, skipRx; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -362,6 +376,8 @@ static Manifest parseManifest(const string& file) {
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
+            else if (k == "compile_order") { if (v.size() != 1 || (v[0] != "cmake" && v[0] != "okay")) throw err("compile_order wants cmake or okay"); c.cmakeOrder = v[0] == "cmake"; }
+            else if (k == "external_includes") c.msvcExternal = oneFlag(v, "external_includes");
             else if (k == "link_archives") c.linkArchives = oneFlag(v, "link_archives");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
@@ -437,6 +453,11 @@ static Manifest parseManifest(const string& file) {
             else if (k == "labels") { for (auto& w : v) c.labels.push_back(w); }
             else if (k == "depends") { for (auto& w : v) c.depends.push_back(w); }
             else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
+            else if (k == "pass_regex" || k == "fail_regex" || k == "skip_regex") {
+                if (v.empty()) throw err(k + " wants at least one regular expression");
+                auto& dst = k == "pass_regex" ? c.passRx : k == "fail_regex" ? c.failRx : c.skipRx;
+                for (auto& w : v) { try { dst.emplace_back(cmr::cmakeRegexToStd(w)); } catch (const std::regex_error&) { throw err(k + ": bad regular expression '" + w + "'"); } }
+            }
             else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
             DistDecl& d = m.dist;
@@ -453,6 +474,7 @@ static Manifest parseManifest(const string& file) {
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
+            else if (k == "system_include") add(x.systemIncludes);
             else if (k == "export_include") add(x.exportIncludes); else if (k == "define") add(x.defines);
             else if (k == "flags") add(x.flags); else if (k == "link_flags") add(x.linkFlags);
             else if (k == "libs") add(x.libs); else if (k == "deps") add(x.deps);
@@ -862,6 +884,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         r.cmd = fixBin(r.cmd); r.output = fixBin(r.output); r.dir = fixBin(r.dir);
         for (auto& o : r.outputs) o = fixBin(o); for (auto& i : r.inputs) i = fixBin(i);
     }
+    // A missing source is an error only when a step the build was asked for compiles it (Ninja's rule: a target nobody asked for
+    // may lack a file, for example a library whose sources come from a fetch that was not run). Checked after the wanted steps are picked.
+    std::map<string, string> missingSrc;
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
     for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
@@ -879,7 +904,8 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string srcKey = resolve("", s);
             if (!produced.count(srcKey) && !genAt.count(s) && !fs::exists(s)) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
-                throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
+                string why = "target '" + t.name + "': source '" + s + "' does not exist" + hint;
+                missingSrc.insert({s, why}); missingSrc.insert({srcKey, why});
             }
             bool isC = fs::path(s).extension() == ".c", isRc = fs::path(s).extension() == ".rc";
             string rel = sRaw.compare(0, 6, "{bin}/") == 0 ? "_bin/" + sRaw.substr(6) : fs::path(s).lexically_normal().generic_string();
@@ -888,19 +914,41 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + (isRc ? string(".res") : m.tc.obj)); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
             for (auto& pf : t.fileDepends) if (pf.first == sRaw) a.inputs.push_back(resolve("", fixBin(pf.second)));
+            // CMake's order of definitions and include folders (see Toolchain::cmakeOrder), for a compile and for windres: the target's
+            // definitions sorted without repeats (the toolchain's -D words, the account definitions, count as the target's), the source's own
+            // sorted, then the source's folders, the target's, its system folders; a repeat is dropped inside each list but not between them
+            auto cmakeOrderWords = [&](const std::function<void(const string&)>& def, const std::function<void(const string&, bool)>& inc) {
+                std::set<string> defs, fileDefs;
+                for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) defs.insert(f);
+                for (auto& d : t.defines) defs.insert("-D" + fixBin(d));
+                for (auto& pf : t.fileDefines) if (pf.first == sRaw) fileDefs.insert("-D" + fixBin(pf.second));
+                for (auto& d : defs) def(d);
+                for (auto& d : fileDefs) def(d);
+                vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                vector<string> seen, seenFile;
+                auto once = [&](vector<string>& in, const string& i) { if (std::find(in.begin(), in.end(), i) != in.end()) return false; in.push_back(i); return true; };
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw && once(seenFile, pf.second)) inc(pf.second, false);
+                for (auto& i : incs) if (once(seen, i)) inc(i, false);
+                for (auto& i : t.systemIncludes) if (once(seen, i)) inc(i, true);
+            };
             if (isRc) { // a Windows resource script: windres -O coff <definitions> -I <folder>... <file> <out>.res (no dependency file)
                 if (m.tc.rc.empty() || m.tc.msvc) throw Fail("target '" + t.name + "': " + s + " is a resource script, and the toolchain has no rc (GNU windres) set");
                 a.kind = "RC"; a.depfile.clear(); a.argv = {m.tc.rc, "-O", "coff"};
                 string root = fs::current_path().generic_string();
                 auto absOf = [&](const string& p) { return (!m.tc.pathMap || p.empty() || p[0] == '/' || (p.size() > 1 && p[1] == ':')) ? p : root + "/" + p; };
-                for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) a.argv.push_back(f); // the account definitions and other toolchain -D words
-                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
                 auto inc = [&](const string& i) { a.argv.push_back("-I"); a.argv.push_back(absOf(fixBin(i))); };
-                for (auto& i : t.includes) inc(i);
-                for (auto& i : t.exportIncludes) inc(i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
-                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
+                if (m.tc.cmakeOrder) cmakeOrderWords([&](const string& d) { a.argv.push_back(d); }, [&](const string& i, bool) { inc(i); }); // windres has no system folders: -I
+                else {
+                    for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) a.argv.push_back(f); // the account definitions and other toolchain -D words
+                    for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                    for (auto& i : t.includes) inc(i);
+                    for (auto& i : t.exportIncludes) inc(i);
+                    for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
+                    for (auto& i : t.systemIncludes) inc(i);
+                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
+                }
                 a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
                 objs.push_back(a.output); objActs.push_back(add(a)); continue;
             }
@@ -914,6 +962,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& pf : t.fileFlags) if (pf.first == sRaw) word(pf.second);
                 vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                for (auto& i : t.systemIncludes) incs.push_back(i); // our compilers have no system folders: plain -I / /I
                 for (auto& pf : t.fileIncludes) if (pf.first == sRaw) incs.push_back(pf.second);
                 for (auto& i : incs) a.argv.push_back((ms ? "/I" : "-I") + fixBin(i));
                 vector<string> defs = t.defines; for (auto& pf : t.fileDefines) if (pf.first == sRaw) defs.push_back(pf.second);
@@ -931,6 +980,10 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
+                if (m.tc.msvcExternal && !t.systemIncludes.empty()) { // see Toolchain::msvcExternal
+                    a.argv.push_back("/external:W0");
+                    for (auto& i : t.systemIncludes) { a.argv.push_back("/external:I"); a.argv.push_back(i); }
+                } else for (auto& i : t.systemIncludes) a.argv.push_back("/I" + i);
                 for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
                 for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("/I" + pf.second);
                 for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("/D" + fixBin(pf.second));
@@ -939,16 +992,32 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
-                for (auto& f : m.tc.flags) a.argv.push_back(f);
-                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
-                if (t.libKind == "shared") a.argv.push_back("-fPIC");
-                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
-                for (auto& i : t.includes) a.argv.push_back("-I" + i);
-                for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("-I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                auto flagWords = [&](bool cmakeOrder) {
+                    for (auto& f : m.tc.flags) if (!cmakeOrder || f.rfind("-D", 0) != 0) a.argv.push_back(f);
+                    for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
+                    // CMake puts -fPIC after the language standard and before the target's options; okay-build's own order before both
+                    size_t lead = cmakeOrder && !t.flags.empty() && t.flags[0].rfind("-std=", 0) == 0 ? 1 : 0;
+                    if (t.libKind == "shared" && !lead) a.argv.push_back("-fPIC");
+                    for (size_t k = 0; k < t.flags.size(); ++k) {
+                        const string& f = t.flags[k];
+                        if (!(isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0))) a.argv.push_back(fixBin(f)); // a C++ standard does not apply to a C file
+                        if (t.libKind == "shared" && lead && k + 1 == lead) a.argv.push_back("-fPIC");
+                    }
+                };
+                vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                if (m.tc.cmakeOrder) { // CMake's order (see cmakeOrderWords above)
+                    cmakeOrderWords([&](const string& d) { a.argv.push_back(d); },
+                                    [&](const string& i, bool sys) { if (sys) { a.argv.push_back("-isystem"); a.argv.push_back(i); } else a.argv.push_back("-I" + i); });
+                    flagWords(true);
+                } else {
+                    flagWords(false);
+                    for (auto& i : incs) a.argv.push_back("-I" + i);
+                    for (auto& i : t.systemIncludes) { a.argv.push_back("-isystem"); a.argv.push_back(i); }
+                    for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw) a.argv.push_back("-I" + pf.second);
+                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                }
                 for (auto& pf : t.fileFlags) if (pf.first == sRaw) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
                 if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
@@ -957,7 +1026,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                     for (size_t i = 1; i < a.argv.size(); ++i) {
                         string& w = a.argv[i];
                         if (w.rfind("-I", 0) == 0 && w.size() > 2) w = "-I" + absOf(w.substr(2));
-                        else if (w == "-c" && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
+                        else if ((w == "-c" || w == "-isystem") && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
                     }
                     a.argv.insert(a.argv.begin() + 1, "-ffile-prefix-map=" + root + "=/okay-src");
                 }
@@ -1112,6 +1181,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
     }
+    for (auto& a : g.acts) if (a.kind == "CC" || a.kind == "RC") for (auto& i : a.inputs) { auto it = missingSrc.find(i); if (it != missingSrc.end()) throw Fail(it->second); }
     { // the generate files the remaining steps need: the sources they compile, and headers (any planned compile may include one)
         std::set<string> compiled; bool anyCompile = false;
         for (auto& a : g.acts) if (a.kind == "CC" || a.kind == "RC") { anyCompile = true; for (auto& i : a.inputs) compiled.insert(i); }
@@ -1377,6 +1447,10 @@ static bool dirty(const Action& a, string& why) {
 // ---------------------------------------------------------------- running commands
 static long long nowNs();
 static thread_local long gLastPeakKb = 0; // peak memory of the last command this thread ran, in KiB (0 = not measured)
+// How the last runCmd child of this thread ended, beyond its exit code (ctest needs it: CTest fails a test that timed out, crashed or
+// could not start whatever WILL_FAIL or the output rules say). kind: 0 exited, 1 timed out, 2 killed by a signal, 3 could not start.
+struct ChildOutcome { int kind = 0; string why; };
+static thread_local ChildOutcome gLastEnd;
 #ifdef _WIN32
 struct Live {
     HANDLE proc = nullptr;
@@ -1386,6 +1460,8 @@ struct Live {
     bool stream = false;
     long long started = 0, began = 0;
     int jobKind = 0;
+    HANDLE job = nullptr; // ctest: the Job Object the process (and every process it starts) belongs to
+    DWORD startError = 0; // the Windows error code when CreateProcessW failed
 };
 static string winQuote(const string& s) {
     bool need = s.empty();
@@ -1415,7 +1491,39 @@ static void drainLive(Live& L) {
         L.out.append(buf, n);
     }
 }
-static bool spawnLive(const string& cmdline, const string& dir, bool stream, Live& L, string& err) {
+// A folder for CreateProcessW: backslashes, and a POSIX path (a Linux build folder seen through wine) on wine's Z: drive when that exists.
+static std::wstring winDir(const string& dir) {
+    string dirNative = dir;
+    for (char& c : dirNative) if (c == '/') c = '\\';
+    if (!dirNative.empty() && dirNative[0] == '\\' && !(dirNative.size() >= 2 && dirNative[1] == ':')) {
+        string z = "Z:" + dirNative;
+        if (GetFileAttributesW(widen(z).c_str()) != INVALID_FILE_ATTRIBUTES) dirNative = z;
+    }
+    return widen(dirNative);
+}
+// A Unicode environment block for CreateProcessW: ours with NAME=VALUE `sets` put over it. Windows names do not care about case, and
+// Microsoft's documentation of environment blocks asks for the strings sorted by name without regard to case.
+static vector<wchar_t> winEnvBlock(const vector<string>& sets) {
+    vector<std::wstring> vars;
+    if (wchar_t* cur = GetEnvironmentStringsW()) {
+        for (const wchar_t* p = cur; *p; p += wcslen(p) + 1) vars.push_back(p);
+        FreeEnvironmentStringsW(cur);
+    }
+    auto nameOf = [](const std::wstring& v) { size_t eq = v.find(L'=', 1); std::wstring n = v.substr(0, eq); for (auto& c : n) c = (wchar_t)towupper(c); return n; }; // "=C:=C:\x" keeps its leading '='
+    for (auto& e : sets) {
+        std::wstring w = widen(e); std::wstring n = nameOf(w);
+        vars.erase(std::remove_if(vars.begin(), vars.end(), [&](const std::wstring& v) { return nameOf(v) == n; }), vars.end());
+        vars.push_back(w);
+    }
+    std::stable_sort(vars.begin(), vars.end(), [&](const std::wstring& a, const std::wstring& b) { return nameOf(a) < nameOf(b); });
+    vector<wchar_t> block;
+    for (auto& v : vars) { block.insert(block.end(), v.begin(), v.end()); block.push_back(0); }
+    block.push_back(0); if (vars.empty()) block.push_back(0);
+    return block;
+}
+// env (when not null): the environment changes; job: a Job Object the new process joins before it runs a single instruction (it is
+// started suspended, assigned, then resumed), so every process it starts belongs to the job as well (Microsoft's Job Object documentation).
+static bool spawnLive(const string& cmdline, const string& dir, bool stream, Live& L, string& err, const vector<string>* env = nullptr, HANDLE job = nullptr) {
     SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE;
     HANDLE rd = nullptr, wr = nullptr;
     if (!stream) {
@@ -1428,21 +1536,23 @@ static bool spawnLive(const string& cmdline, const string& dir, bool stream, Liv
     si.hStdError = stream ? GetStdHandle(STD_ERROR_HANDLE) : wr;
     std::wstring wcmd = widen(cmdline);
     std::vector<wchar_t> buf(wcmd.begin(), wcmd.end()); buf.push_back(0);
-    string dirNative = dir;
-    for (char& c : dirNative) if (c == '/') c = '\\';
-    if (!dirNative.empty() && dirNative[0] == '\\' && !(dirNative.size() >= 2 && dirNative[1] == ':')) {
-        string z = "Z:" + dirNative;
-        if (GetFileAttributesW(widen(z).c_str()) != INVALID_FILE_ATTRIBUTES) dirNative = z;
-    }
-    std::wstring wdir = widen(dirNative);
+    std::wstring wdir = winDir(dir);
     PROCESS_INFORMATION pi{};
     DWORD flags = stream ? 0 : CREATE_NO_WINDOW;
-    BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, flags, nullptr, wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+    vector<wchar_t> envBlock; if (env) { envBlock = winEnvBlock(*env); flags |= CREATE_UNICODE_ENVIRONMENT; }
+    if (job) flags |= CREATE_SUSPENDED;
+    BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, flags, env ? envBlock.data() : nullptr, wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+    DWORD why = ok ? 0 : GetLastError();
     if (wr) CloseHandle(wr);
     if (!ok) {
         if (rd) CloseHandle(rd);
-        err = "okay-build: CreateProcessW failed (" + std::to_string(GetLastError()) + ")\n";
+        L.startError = why;
+        err = "okay-build: CreateProcessW failed (" + std::to_string(why) + ")\n";
         return false;
+    }
+    if (job) { // a process that cannot join (an old Windows that does not nest jobs) still runs, only without the job
+        if (AssignProcessToJobObject(job, pi.hProcess)) L.job = job;
+        ResumeThread(pi.hThread);
     }
     CloseHandle(pi.hThread);
     L.proc = pi.hProcess; L.pipe = rd; L.stream = stream; L.started = nowNs();
@@ -1450,7 +1560,8 @@ static bool spawnLive(const string& cmdline, const string& dir, bool stream, Liv
 }
 static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
     Live L; string err;
-    if (!spawnLive(winJoin(argv), "", stream, L, err)) { out += err; return 127; }
+    gLastEnd = ChildOutcome{};
+    if (!spawnLive(winJoin(argv), "", stream, L, err)) { out += err; gLastEnd.kind = 3; gLastEnd.why = err; return 127; }
     for (;;) {
         drainLive(L);
         if (gCancel.load()) { TerminateProcess(L.proc, 130); WaitForSingleObject(L.proc, 1000); break; }
@@ -1496,7 +1607,125 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
     CloseHandle(pi.hProcess); CloseHandle(orr); CloseHandle(errr);
     return (int)code;
 }
+// The system's words for a Windows error code (FormatMessage), for a command that cannot start.
+static string winErrorText(DWORD code) {
+    char* text = nullptr;
+    DWORD n = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, (LPSTR)&text, 0, nullptr);
+    string r = n && text ? string(text, n) : "Windows error " + std::to_string(code);
+    if (text) LocalFree(text);
+    while (!r.empty() && (r.back() == '\n' || r.back() == '\r' || r.back() == ' ' || r.back() == '.')) r.pop_back();
+    return r;
+}
+// A Windows exit code that is an exception (NTSTATUS with the error severity bits, 0xC0000000 and up) rather than a number the program
+// returned: the test crashed. The names are from Microsoft's documentation of the exception codes (GetExceptionCode). Empty: not one.
+static string winExceptionText(DWORD code) {
+    if ((code & 0xC0000000u) != 0xC0000000u) return "";
+    struct Name { DWORD code; const char* text; };
+    static const Name names[] = {
+        {0xC0000005u, "access violation"}, {0xC000001Du, "illegal instruction"}, {0xC0000094u, "integer divide by zero"},
+        {0xC0000095u, "integer overflow"}, {0xC000008Eu, "floating-point divide by zero"}, {0xC0000090u, "floating-point invalid operation"},
+        {0xC00000FDu, "stack overflow"}, {0xC0000409u, "stack buffer overrun"}, {0xC0000374u, "heap corruption"},
+        {0xC000013Au, "ended by Ctrl+C"}, {0xC0000135u, "a DLL was not found"}, {0xC0000139u, "an entry point was not found in a DLL"},
+        {0xC0000142u, "a DLL could not start"}, {0xC0000096u, "privileged instruction"}, {0xC0000006u, "in-page error"}};
+    char hex[16]; snprintf(hex, sizeof hex, "0x%08lX", (unsigned long)code);
+    for (auto& nm : names) if (nm.code == code) return string("Exception ") + hex + " (" + nm.text + ")";
+    return string("Exception ") + hex;
+}
+// execute_process() in `okay-build script` (see cmr::ProcRequest), written from Microsoft's documentation of CreateProcessW, CreatePipe,
+// SetHandleInformation and STARTF_USESTDHANDLES. Every pipe is made not inheritable; just before each CreateProcessW the three handles
+// that child gets are made inheritable and afterwards made private again, so a child never holds another pipe's write end (which
+// would keep the next command from ever seeing the end of its input). Script mode runs one command at a time, so no other thread
+// starts a process in between.
+static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
+    size_t n = rq.cmds.size(); rs.codes.assign(n, 0); rs.texts.assign(n, string());
+    SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof sa; sa.bInheritHandle = FALSE;
+    HANDLE outR = nullptr, outW = nullptr, errR = nullptr, errW = nullptr;
+    if (!CreatePipe(&outR, &outW, &sa, 1 << 16) || !CreatePipe(&errR, &errW, &sa, 1 << 16)) { rs.startFailed = true; rs.whole = winErrorText(GetLastError()); return; }
+    auto inherit = [](HANDLE h, bool on) { if (h) SetHandleInformation(h, HANDLE_FLAG_INHERIT, on ? HANDLE_FLAG_INHERIT : 0); };
+    HANDLE prev = GetStdHandle(STD_INPUT_HANDLE); bool prevOwned = false;
+    if (!rq.inFile.empty()) {
+        prev = CreateFileW(widen(rq.inFile).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (prev == INVALID_HANDLE_VALUE) { rs.startFailed = true; rs.whole = winErrorText(GetLastError()); CloseHandle(outR); CloseHandle(outW); CloseHandle(errR); CloseHandle(errW); return; }
+        prevOwned = true;
+    }
+    std::wstring wdir = winDir(rq.cwd);
+    vector<HANDLE> procs;
+    for (size_t k = 0; k < n && !rs.startFailed; ++k) {
+        HANDLE linkR = nullptr, linkW = nullptr;
+        if (k + 1 < n && !CreatePipe(&linkR, &linkW, &sa, 1 << 16)) { rs.startFailed = true; rs.whole = winErrorText(GetLastError()); break; }
+        HANDLE so = k + 1 < n ? linkW : outW, se = rq.merge ? outW : errW;
+        inherit(prev, true); inherit(so, true); inherit(se, true);
+        STARTUPINFOW si{}; si.cb = sizeof si; si.dwFlags = STARTF_USESTDHANDLES; si.hStdInput = prev; si.hStdOutput = so; si.hStdError = se;
+        std::wstring wcmd = widen(winJoin(rq.cmds[k])); std::vector<wchar_t> buf(wcmd.begin(), wcmd.end()); buf.push_back(0);
+        PROCESS_INFORMATION pi{};
+        BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, 0, nullptr, wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+        DWORD why = ok ? 0 : GetLastError();
+        inherit(so, false); inherit(se, false); if (prevOwned) inherit(prev, false);
+        if (prevOwned) CloseHandle(prev);
+        if (linkW) CloseHandle(linkW);
+        prev = linkR; prevOwned = linkR != nullptr;
+        if (!ok) { rs.startFailed = true; rs.whole = winErrorText(why); break; }
+        CloseHandle(pi.hThread); procs.push_back(pi.hProcess);
+    }
+    if (prevOwned) CloseHandle(prev);
+    CloseHandle(outW); CloseHandle(errW);
+    auto drain = [&](HANDLE h, string& dest, bool echo, FILE* to) {
+        for (;;) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
+            char b[4096]; DWORD got = 0; DWORD chunk = avail > sizeof b ? (DWORD)sizeof b : avail;
+            if (!ReadFile(h, b, chunk, &got, nullptr) || got == 0) break;
+            dest.append(b, got); if (echo) { fwrite(b, 1, got, to); fflush(to); }
+        }
+    };
+    long long started = nowNs(), limit = rq.timeoutSec > 0 ? (long long)(rq.timeoutSec * 1e9) : 0;
+    if (rs.startFailed) { for (HANDLE p : procs) { TerminateProcess(p, 1); WaitForSingleObject(p, 1000); } }
+    else for (;;) {
+        drain(outR, rs.out, rq.echoOut, stdout); drain(errR, rs.err, rq.echoErr, stderr);
+        if (procs.empty() || WaitForMultipleObjects((DWORD)procs.size(), procs.data(), TRUE, 20) != WAIT_TIMEOUT) break; // all ended (or the wait failed)
+        if (limit && nowNs() - started > limit) {
+            for (HANDLE p : procs) { TerminateProcess(p, 1); WaitForSingleObject(p, 1000); }
+            rs.whole = "Process terminated due to timeout"; break;
+        }
+    }
+    drain(outR, rs.out, rq.echoOut, stdout); drain(errR, rs.err, rq.echoErr, stderr);
+    for (size_t k = 0; k < procs.size(); ++k) { DWORD code = 1; GetExitCodeProcess(procs[k], &code); rs.codes[k] = (int)code; CloseHandle(procs[k]); }
+    CloseHandle(outR); CloseHandle(errR);
+    if (rs.startFailed) { rs.out.clear(); rs.err.clear(); }
+}
 #else
+// CMake's words for a command that a signal ended (execute_process's result, and the reason ctest gives). Taken by running
+// execute_process on `sh -c "kill -N $$"` under `cmake -P` for every signal on this machine (CMake 3.28, Linux): eight have words,
+// the rest are their SIG names, and a signal with no name is "Signal N".
+static string signalText(int sig) {
+    static const std::pair<int, const char*> named[] = {
+        {SIGINT, "User interrupt"}, {SIGILL, "Illegal instruction"}, {SIGABRT, "Subprocess aborted"}, {SIGBUS, "Bus error"},
+        {SIGFPE, "Floating-point exception"}, {SIGKILL, "Subprocess killed"}, {SIGSEGV, "Segmentation fault"}, {SIGTERM, "Subprocess terminated"},
+        {SIGHUP, "SIGHUP"}, {SIGQUIT, "SIGQUIT"}, {SIGTRAP, "SIGTRAP"}, {SIGUSR1, "SIGUSR1"}, {SIGUSR2, "SIGUSR2"}, {SIGPIPE, "SIGPIPE"},
+        {SIGALRM, "SIGALRM"}, {SIGXCPU, "SIGXCPU"}, {SIGXFSZ, "SIGXFSZ"}, {SIGVTALRM, "SIGVTALRM"}, {SIGPROF, "SIGPROF"}, {SIGSYS, "SIGSYS"},
+#ifdef SIGSTKFLT
+        {SIGSTKFLT, "SIGSTKFLT"},
+#endif
+#ifdef SIGPOLL
+        {SIGPOLL, "SIGPOLL"},
+#endif
+#ifdef SIGPWR
+        {SIGPWR, "SIGPWR"},
+#endif
+    };
+    for (auto& p : named) if (p.first == sig) return p.second;
+    return "Signal " + std::to_string(sig);
+}
+// A pipe whose two ends are closed in a child at exec (pipe2 on Linux; elsewhere pipe and FD_CLOEXEC, which leaves a short window in
+// which another thread's fork can inherit them).
+static int cloexecPipe(int fd[2]) {
+#ifdef __linux__
+    return pipe2(fd, O_CLOEXEC);
+#else
+    if (pipe(fd)) return -1;
+    fcntl(fd[0], F_SETFD, FD_CLOEXEC); fcntl(fd[1], F_SETFD, FD_CLOEXEC); return 0;
+#endif
+}
 static int waitChild(pid_t pid) {
     for (;;) {
         int st = 0; pid_t r = waitpid(pid, &st, WNOHANG);
@@ -1509,12 +1738,20 @@ static int waitChild(pid_t pid) {
 static thread_local vector<string> gChildEnv; // ctest: NAME=VALUE words the next runCmd child gets
 static thread_local string gChildCwd; // ctest: the folder the next runCmd child starts in (empty = keep ours)
 static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
-    gLastPeakKb = 0;
+    gLastPeakKb = 0; gLastEnd = ChildOutcome{};
+    int startPipe[2] = {-1, -1}; // the child writes errno here when it cannot start; a successful exec closes it (close-on-exec)
     auto child = [&]() {
+        auto cannot = [&](int e) { if (startPipe[1] >= 0) { ssize_t w = write(startPipe[1], &e, sizeof e); (void)w; } };
         for (auto& e : gChildEnv) { auto eq = e.find('='); setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1); }
-        if (!gChildCwd.empty() && chdir(gChildCwd.c_str()) != 0) { dprintf(2, "okay-build: cannot enter '%s': %s\n", gChildCwd.c_str(), strerror(errno)); _exit(127); }
+        if (!gChildCwd.empty() && chdir(gChildCwd.c_str()) != 0) { int e = errno; cannot(e); dprintf(2, "okay-build: cannot enter '%s': %s\n", gChildCwd.c_str(), strerror(e)); _exit(127); }
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
-        execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
+        execvp(av[0], av.data()); int e = errno; cannot(e); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(e)); _exit(127);
+    };
+    // ended(): the exit code, with gLastEnd set for a signal or a start failure
+    auto ended = [&](int st) {
+        if (startPipe[0] >= 0) { int e = 0; if (read(startPipe[0], &e, sizeof e) == (ssize_t)sizeof e) { gLastEnd.kind = 3; gLastEnd.why = strerror(e); } close(startPipe[0]); startPipe[0] = -1; }
+        if (gLastEnd.kind == 0 && WIFSIGNALED(st)) { gLastEnd.kind = 2; gLastEnd.why = signalText(WTERMSIG(st)); }
+        return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
     };
     if (stream) { // console pool: the command owns the terminal, one at a time
         pid_t pid = fork(); if (pid < 0) return 127;
@@ -1522,23 +1759,25 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false, 
         setpgid(pid, pid); return waitChild(pid);
     }
     int fd[2]; if (pipe(fd)) return 127;
+    if (cloexecPipe(startPipe)) { startPipe[0] = startPipe[1] = -1; }
     pid_t pid = fork();
-    if (pid < 0) { close(fd[0]); close(fd[1]); return 127; }
+    if (pid < 0) { close(fd[0]); close(fd[1]); if (startPipe[0] >= 0) { close(startPipe[0]); close(startPipe[1]); } return 127; }
     if (pid == 0) { setpgid(0, 0); dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
     setpgid(pid, pid);
+    if (startPipe[1] >= 0) close(startPipe[1]);
     close(fd[1]); fcntl(fd[0], F_SETFL, O_NONBLOCK);
     long long startedAt = timeoutNs ? nowNs() : 0;
     for (;;) {
         pollfd pf{}; pf.fd = fd[0]; pf.events = POLLIN; poll(&pf, 1, 20);
         for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
         int st = 0; struct rusage ru{}; pid_t r = wait4(pid, &st, WNOHANG, &ru);
-        if (r == pid) { gLastPeakKb = ru.ru_maxrss; close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; } // Linux reports ru_maxrss in KiB
-        if (r < 0 && errno != EINTR) { close(fd[0]); return 128; }
-        if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); return 130; }
+        if (r == pid) { gLastPeakKb = ru.ru_maxrss; close(fd[0]); return ended(st); } // Linux reports ru_maxrss in KiB
+        if (r < 0 && errno != EINTR) { close(fd[0]); ended(0); return 128; }
+        if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); ended(0); return 130; }
         if (timeoutNs && nowNs() - startedAt > timeoutNs) {
             kill(-pid, SIGKILL); kill(pid, SIGKILL); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
             for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
-            close(fd[0]); return 124;
+            close(fd[0]); ended(0); gLastEnd.kind = 1; gLastEnd.why = "timeout"; return 124;
         }
     }
 }
@@ -1570,6 +1809,70 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
         }
     }
     return waitChild(pid);
+}
+// execute_process() in `okay-build script` (see cmr::ProcRequest), written from the POSIX descriptions of fork, execvp, pipe, dup2,
+// poll and waitpid. Every pipe is close-on-exec, so a child keeps only the three ends it was given on 0, 1 and 2. Each child also gets
+// a close-on-exec "start" pipe: if execvp (or entering the folder) fails, the child writes errno there; a successful exec closes it,
+// so the parent reads nothing. That tells "could not start" apart from a program that exits 127.
+static void runPipeline(const cmr::ProcRequest& rq, cmr::ProcResult& rs) {
+    size_t n = rq.cmds.size(); rs.codes.assign(n, 0); rs.texts.assign(n, string());
+    int op[2], ep[2];
+    if (cloexecPipe(op)) { rs.startFailed = true; rs.whole = strerror(errno); return; }
+    if (cloexecPipe(ep)) { rs.startFailed = true; rs.whole = strerror(errno); close(op[0]); close(op[1]); return; }
+    int prev = -1;
+    if (!rq.inFile.empty() && (prev = open(rq.inFile.c_str(), O_RDONLY | O_CLOEXEC)) < 0) { rs.startFailed = true; rs.whole = strerror(errno); close(op[0]); close(op[1]); close(ep[0]); close(ep[1]); return; }
+    vector<pid_t> pids;
+    // With a TIMEOUT the commands get a process group of their own (as okay-build's test runner does), so a time-out also ends the
+    // programs they started (a shell's children). Without one they stay in ours: a command may then read the terminal.
+    const bool group = rq.timeoutSec > 0; pid_t pgid = 0;
+    for (size_t k = 0; k < n; ++k) {
+        int link[2] = {-1, -1}, st[2] = {-1, -1};
+        if ((k + 1 < n && cloexecPipe(link)) || cloexecPipe(st)) { rs.startFailed = true; rs.whole = strerror(errno); break; }
+        fflush(stdout); fflush(stderr);
+        pid_t pid = fork();
+        if (pid < 0) { rs.startFailed = true; rs.whole = strerror(errno); close(st[0]); close(st[1]); if (link[0] >= 0) { close(link[0]); close(link[1]); } break; }
+        if (pid == 0) {
+            if (group) setpgid(0, pgid);
+            if (prev >= 0) dup2(prev, 0);
+            dup2(k + 1 < n ? link[1] : op[1], 1); dup2(rq.merge ? op[1] : ep[1], 2);
+            int e = 0;
+            if (!rq.cwd.empty() && chdir(rq.cwd.c_str()) != 0) e = errno;
+            else { vector<char*> av; for (auto& w : rq.cmds[k]) av.push_back(const_cast<char*>(w.c_str())); av.push_back(nullptr); execvp(av[0], av.data()); e = errno; }
+            ssize_t w = write(st[1], &e, sizeof e); (void)w; _exit(127);
+        }
+        if (group) { if (!pgid) pgid = pid; setpgid(pid, pgid); } // in both processes, so it holds whichever runs first
+        close(st[1]); int e = 0; ssize_t got; while ((got = read(st[0], &e, sizeof e)) < 0 && errno == EINTR) {}
+        close(st[0]);
+        if (prev >= 0) close(prev);
+        if (link[1] >= 0) close(link[1]);
+        prev = link[0]; pids.push_back(pid);
+        if (got == (ssize_t)sizeof e) { rs.startFailed = true; rs.whole = strerror(e); break; }
+    }
+    if (prev >= 0) close(prev);
+    close(op[1]); close(ep[1]);
+    long long started = nowNs(), limit = rq.timeoutSec > 0 ? (long long)(rq.timeoutSec * 1e9) : 0;
+    int fds[2] = {op[0], ep[0]};
+    auto killAll = [&]() { if (pgid) kill(-pgid, SIGKILL); for (pid_t p : pids) kill(p, SIGKILL); };
+    if (rs.startFailed) killAll();
+    else while (fds[0] >= 0 || fds[1] >= 0) {
+        pollfd pf[2]; int nfd = 0, which[2];
+        for (int i = 0; i < 2; ++i) if (fds[i] >= 0) { pf[nfd].fd = fds[i]; pf[nfd].events = POLLIN; pf[nfd].revents = 0; which[nfd++] = i; }
+        int wait = -1;
+        if (limit) { long long left = limit - (nowNs() - started); if (left <= 0) { killAll(); rs.whole = "Process terminated due to timeout"; break; } wait = (int)(left / 1000000) + 1; }
+        if (poll(pf, (nfds_t)nfd, wait) < 0) { if (errno == EINTR) continue; break; }
+        for (int i = 0; i < nfd; ++i) {
+            if (!(pf[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            bool isOut = which[i] == 0; char b[4096]; ssize_t got = read(pf[i].fd, b, sizeof b);
+            if (got > 0) { (isOut ? rs.out : rs.err).append(b, (size_t)got); if (isOut ? rq.echoOut : rq.echoErr) { FILE* to = isOut ? stdout : stderr; fwrite(b, 1, (size_t)got, to); fflush(to); } }
+            else if (got == 0 || errno != EINTR) { close(pf[i].fd); fds[which[i]] = -1; }
+        }
+    }
+    for (int i = 0; i < 2; ++i) if (fds[i] >= 0) close(fds[i]);
+    for (size_t k = 0; k < pids.size(); ++k) {
+        int st = 0; while (waitpid(pids[k], &st, 0) < 0 && errno == EINTR) {}
+        if (WIFSIGNALED(st)) rs.texts[k] = signalText(WTERMSIG(st)); else rs.codes[k] = WEXITSTATUS(st);
+    }
+    if (rs.startFailed) { rs.out.clear(); rs.err.clear(); }
 }
 #endif
 
@@ -2988,13 +3291,32 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
 }
 
 
+// The result of one ctest run, from CTest's documented test properties: SKIP_RETURN_CODE or a matching SKIP_REGULAR_EXPRESSION skips;
+// with PASS_REGULAR_EXPRESSION the output decides (the exit code is not looked at), else exit 0 passes; a matching
+// FAIL_REGULAR_EXPRESSION fails; WILL_FAIL turns pass and fail round. Returns 0 pass, 1 fail, 2 skip, with the reason in `why`.
+// A test that timed out, was ended by a signal or could not start fails whatever those properties say (checked with real CTest 3.28:
+// WILL_FAIL does not turn a timeout or a crash into a pass, and the output rules are not looked at; a program that is not there is
+// "Not Run", counted among the failed tests).
+static int judgeTest(const CTestDecl& c, int code, const string& out, string& why, const ChildOutcome& end = ChildOutcome{}) {
+    if (end.kind == 1) { why = "timeout"; return 1; }
+    if (end.kind == 2) { why = "crashed: " + end.why; return 1; }
+    if (end.kind == 3) { why = "not run: cannot start (" + end.why + ")"; return 1; }
+    auto any = [&](const vector<std::regex>& rs) { for (auto& r : rs) if (std::regex_search(out, r)) return true; return false; };
+    if (c.skipCode >= 0 && code == c.skipCode) { why = "exit " + std::to_string(code); return 2; }
+    if (any(c.skipRx)) { why = "skip regular expression found"; return 2; }
+    bool pass; why = "exit " + std::to_string(code);
+    if (!c.passRx.empty()) { pass = any(c.passRx); if (!pass) why = "required regular expression not found"; }
+    else pass = code == 0;
+    if (pass && any(c.failRx)) { pass = false; why = "fail regular expression found"; }
+    if (c.willFail) { if (pass) why = c.passRx.empty() ? "exit " + std::to_string(code) + ", expected to fail" : "required regular expression found, expected to fail"; pass = !pass; }
+    return pass ? 0 : 1;
+}
+static string gSelfExe; // this program, for {okaybuild} in a ctest command (a CMake script test runs as `okay-build script`)
+
 // ---- ctest: run the manifest's `ctest` blocks (from CMake's add_test) the way CTest would: name, command, folder, time limit,
 // "will fail", "skip code". Words may hold {src} (the manifest folder), {bin} (<build dir>/ctest) and {target:NAME} (a built program).
 // Several run at once (-j); tests marked serial run alone afterwards. Filters are regular expressions on the test name.
 static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filters) {
-#ifdef _WIN32
-    (void)m; (void)o; (void)filters; throw Fail("ctest: not done on Windows yet");
-#else
     if (m.ctests.empty()) throw Fail("no ctest blocks in the manifest (okay-build cmake writes them from add_test lines)");
     vector<const CTestDecl*> pick;
     auto matches = [&](const string& text, const string& re) { try { return std::regex_search(text, std::regex(re)); } catch (const std::regex_error&) { throw Fail("bad test filter '" + re + "'"); } };
@@ -3017,9 +3339,18 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
     for (auto* c : pick) { for (auto& w : c->cmd) scan(w, need); for (auto& w : c->needs) need.push_back(w); }
     std::sort(need.begin(), need.end()); need.erase(std::unique(need.begin(), need.end()), need.end());
     if (!need.empty()) { int rc = build(m, need, o); if (rc != 0) return rc; }
+    { // a generate file a chosen test names (a file the CMake code wrote at configure time, read by a script test) is written first
+        Graph used; auto gens = genFilePaths(m);
+        for (auto& gf : m.gens) {
+            bool named = false;
+            for (auto* c : pick) { for (auto& w : c->cmd) if (w.find(gf.path) != string::npos) named = true; for (auto& w : c->env) if (w.find(gf.path) != string::npos) named = true; }
+            if (named) for (auto& kv : gens) if (kv.second == &gf) used.gens.push_back({kv.first, &gf.text});
+        }
+        writeGenerated(used);
+    }
     auto subst = [&](string w) {
         auto all = [&](const string& what, const string& with) { for (size_t at = 0; (at = w.find(what, at)) != string::npos; at += with.size()) w.replace(at, what.size(), with); };
-        all("{src}", srcDir); all("{bin}", binDir);
+        all("{src}", srcDir); all("{bin}", binDir); all("{okaybuild}", gSelfExe);
         for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) {
             size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + 8, e - at - 8);
             string fileName = nm; for (auto& t : m.targets) if (t.name == nm && !t.outName.empty()) fileName = t.outName;
@@ -3027,50 +3358,109 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         }
         return w;
     };
-    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; }; // state: 0 waiting, 1 running, 2 done
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; ChildOutcome end; }; // state: 0 waiting, 1 running, 2 done
     vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
+    // DEPENDS: a test starts only after the picked tests it names have finished (their result does not matter); serial tests run alone, last.
+    // a dependency cycle would wait forever: report it
+    for (auto& r : runs) { std::set<string> seen; std::function<void(const string&)> go = [&](const string& n) { if (n == r.c->name) throw Fail("ctest: tests depend on each other in a loop at '" + n + "'"); if (!seen.insert(n).second) return; for (auto& o2 : runs) if (o2.c->name == n) for (auto& d : o2.c->depends) go(d); }; for (auto& d : r.c->depends) go(d); }
+    size_t doneCount = 0, running = 0; bool serialRunning = false;
+    auto depsDone = [&](const Run& r) { for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
+    // the next test that may start now (null: none yet); it is marked running
+    auto startNext = [&]() -> Run* {
+        bool otherParallel = false; for (auto& r : runs) if (r.state == 0 && !r.c->serial) otherParallel = true;
+        for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && (!r.c->serial || (!otherParallel && running == 0))) {
+            r.state = 1; ++running; if (r.c->serial) serialRunning = true; return &r;
+        }
+        return nullptr;
+    };
+    auto finished = [&](Run& r) { r.state = 2; --running; ++doneCount; if (r.c->serial) serialRunning = false; };
+    auto commandOf = [&](const Run& r, string& cwd, vector<string>& env, long long& to) {
+        vector<string> argv; for (auto& w : r.c->cmd) argv.push_back(subst(w));
+        cwd = subst(r.c->cwd.empty() ? "{bin}" : r.c->cwd); std::error_code ec; fs::create_directories(cwd, ec);
+        env.clear(); for (auto& e : r.c->env) env.push_back(subst(e));
+        to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
+        return argv;
+    };
+#ifdef _WIN32
+    // Windows: one thread starts the tests with CreateProcessW and waits on their handles (no <thread> here, docs rule 21a). Each test runs
+    // in a Job Object of its own (CreateJobObjectW, AssignProcessToJobObject), so a time-out ends the test and every program it started
+    // (TerminateJobObject), as a process group does on POSIX.
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    int jobs = o.jobs > 0 ? o.jobs : (int)std::max<DWORD>(1, si.dwNumberOfProcessors);
+    if (jobs > 64) jobs = 64; // WaitForMultipleObjects takes at most 64 handles
+    struct Slot { Run* r; Live L; long long t0, limit; };
+    vector<Slot> live;
+    bool stopped = false;
+    while (doneCount < runs.size()) {
+        while (!stopped && (int)live.size() < jobs) {
+            Run* r = startNext(); if (!r) break;
+            string cwd; vector<string> env; long long to = 0; vector<string> argv = commandOf(*r, cwd, env, to);
+            if (!argv.empty()) for (char& c : argv[0]) if (c == '/') c = '\\';
+            HANDLE job = CreateJobObjectW(nullptr, nullptr);
+            Live L; string err; long long t0 = nowNs();
+            if (!spawnLive(winJoin(argv), cwd, false, L, err, &env, job)) {
+                if (job) CloseHandle(job);
+                r->code = 127; r->end.kind = 3; r->end.why = winErrorText(L.startError); r->out = err; finished(*r); continue;
+            }
+            if (!L.job && job) CloseHandle(job); // it could not join: the process runs without one
+            live.push_back(Slot{r, L, t0, to * 1000000000ll});
+        }
+        if (live.empty()) { if (stopped || doneCount == runs.size()) break; continue; }
+        HANDLE hs[64]; int n = (int)live.size();
+        for (int i = 0; i < n; ++i) { drainLive(live[i].L); hs[i] = live[i].L.proc; }
+        if (gCancel.load() && !stopped) { stopped = true; for (auto& sl : live) { if (sl.L.job) TerminateJobObject(sl.L.job, 130); else TerminateProcess(sl.L.proc, 130); } }
+        for (auto& sl : live) if (sl.r->end.kind == 0 && nowNs() - sl.t0 > sl.limit) {
+            sl.r->end.kind = 1; sl.r->end.why = "timeout";
+            if (sl.L.job) TerminateJobObject(sl.L.job, 124); else TerminateProcess(sl.L.proc, 124);
+        }
+        DWORD w = WaitForMultipleObjects((DWORD)n, hs, FALSE, 20);
+        if (w < WAIT_OBJECT_0 || w >= WAIT_OBJECT_0 + (DWORD)n) continue;
+        Slot sl = live[w - WAIT_OBJECT_0]; live.erase(live.begin() + (w - WAIT_OBJECT_0));
+        drainLive(sl.L);
+        DWORD code = 1; GetExitCodeProcess(sl.L.proc, &code);
+        CloseHandle(sl.L.proc); if (sl.L.pipe) CloseHandle(sl.L.pipe); if (sl.L.job) CloseHandle(sl.L.job); // closing the job leaves programs the test left running alone, as on POSIX
+        Run& r = *sl.r; r.out = sl.L.out; r.code = (int)code; r.secs = (double)(nowNs() - sl.t0) / 1e9;
+        if (r.end.kind == 1) { r.code = 124; r.out += "\n(timed out after " + std::to_string(sl.limit / 1000000000ll) + " s)\n"; }
+        else { string ex = winExceptionText(code); if (!ex.empty()) { r.end.kind = 2; r.end.why = ex; } }
+        finished(r);
+    }
+    if (stopped) { printf("okay-build: ctest interrupted\n"); return 130; }
+#else
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     auto runOne = [&](Run& r) {
-        vector<string> argv; for (auto& w : r.c->cmd) argv.push_back(subst(w));
-        string cwd = subst(r.c->cwd.empty() ? "{bin}" : r.c->cwd); std::error_code ec; fs::create_directories(cwd, ec);
-        gChildCwd = cwd; gChildEnv.clear(); for (auto& e : r.c->env) gChildEnv.push_back(subst(e));
-        long long to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
+        string cwd; long long to = 0; vector<string> argv = commandOf(r, cwd, gChildEnv, to);
+        gChildCwd = cwd;
         long long t0 = nowNs(); r.code = runCmd(argv, r.out, false, to * 1000000000ll); r.secs = (double)(nowNs() - t0) / 1e9; gChildCwd.clear(); gChildEnv.clear();
-        if (r.code == 124) r.out += "\n(timed out after " + std::to_string(to) + " s)\n";
+        r.end = gLastEnd;
+        if (r.end.kind == 1) r.out += "\n(timed out after " + std::to_string(to) + " s)\n";
     };
-    { // DEPENDS: a test starts only after the picked tests it names have finished (their result does not matter); serial tests run alone, last
-        std::mutex mu; std::condition_variable cv; size_t doneCount = 0, running = 0; bool serialRunning = false;
-        auto depsDone = [&](const Run& r) { for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
+    {
+        std::mutex mu; std::condition_variable cv;
         auto worker = [&] {
             for (;;) {
                 Run* mine = nullptr;
                 { std::unique_lock<std::mutex> lk(mu);
                   for (;;) {
                       if (doneCount == runs.size()) return;
-                      bool otherParallel = false; for (auto& r : runs) if (r.state == 0 && !r.c->serial) otherParallel = true;
-                      for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && (!r.c->serial || (!otherParallel && running == 0))) { mine = &r; break; }
-                      if (mine) break;
+                      if ((mine = startNext())) break;
                       cv.wait_for(lk, std::chrono::milliseconds(50));
-                  }
-                  mine->state = 1; ++running; if (mine->c->serial) serialRunning = true; }
+                  } }
                 runOne(*mine);
-                { std::lock_guard<std::mutex> lk(mu); mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; }
+                { std::lock_guard<std::mutex> lk(mu); finished(*mine); }
                 cv.notify_all();
             }
         };
-        // a dependency cycle would wait forever: report it
-        for (auto& r : runs) { std::set<string> seen; std::function<void(const string&)> go = [&](const string& n) { if (n == r.c->name) throw Fail("ctest: tests depend on each other in a loop at '" + n + "'"); if (!seen.insert(n).second) return; for (auto& o2 : runs) if (o2.c->name == n) for (auto& d : o2.c->depends) go(d); }; for (auto& d : r.c->depends) go(d); }
         vector<std::thread> th; for (int t = 0; t < std::min<int>(jobs, (int)runs.size()); ++t) th.emplace_back(worker);
         for (auto& t : th) t.join();
     }
+#endif
     int failed = 0, skipped = 0;
     std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
     for (auto& r : runs) {
-        bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode;
-        bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
-        if (skip) { printf("SKIP %s (exit %d)\n", r.c->name.c_str(), r.code); ++skipped; continue; }
-        if (pass) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
-        ++failed; printf("FAIL %s exit %d %.1fs\n", r.c->name.c_str(), r.code, r.secs);
+        string why; int verdict = judgeTest(*r.c, r.code, r.out, why, r.end);
+        if (verdict == 2) { printf("SKIP %s (%s)\n", r.c->name.c_str(), why.c_str()); ++skipped; continue; }
+        if (verdict == 0) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
+        ++failed; printf("FAIL %s exit %d %.1fs%s\n", r.c->name.c_str(), r.code, r.secs, why.compare(0, 5, "exit ") == 0 ? "" : (" (" + why + ")").c_str());
         vector<string> ls; size_t pos = 0;
         while (pos < r.out.size()) { size_t e = r.out.find('\n', pos); if (e == string::npos) e = r.out.size(); ls.push_back(r.out.substr(pos, e - pos)); pos = e + 1; }
         for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
@@ -3083,19 +3473,18 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
             x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             x << "<testsuite name=\"ctest\" tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             for (auto& r : runs) {
-                bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode; bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+                string why; int verdict = judgeTest(*r.c, r.code, r.out, why, r.end); bool skip = verdict == 2, pass = verdict == 0;
                 char tm[32]; snprintf(tm, sizeof tm, "%.3f", r.secs);
                 x << "<testcase name=\"" << xmlEsc(r.c->name) << "\" classname=\"ctest\" time=\"" << tm << "\"";
                 if (pass) { x << "/>\n"; continue; }
-                if (skip) { x << "><skipped message=\"exit " << r.code << "\"/></testcase>\n"; continue; }
+                if (skip) { x << "><skipped message=\"" << xmlEsc(why) << "\"/></testcase>\n"; continue; }
                 string out = r.out; if (out.size() > 4000) out = out.substr(out.size() - 4000);
-                x << ">\n<failure message=\"" << (r.code == 124 ? "timed out" : "exit " + std::to_string(r.code)) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+                x << ">\n<failure message=\"" << xmlEsc(r.end.kind == 1 ? "timed out" : why) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
             }
             x << "</testsuite>\n</testsuites>\n";
         }
     }
     return failed ? 1 : 0;
-#endif
 }
 
 // ---- cmake: read the project's CMakeLists.txt files ourselves (no CMake) and write a build.okay. See cmake_reader.hpp.
@@ -3131,7 +3520,7 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
     if (!audit) return 0;
     printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
     printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
-    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
+    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, CMake scripts run by okay-build %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsCmakeScript, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
     printf("generated files   %d (written by the CMake code while it is read; the build writes them)\n", rep.generated);
     if (rep.fetches) printf("downloads         %d fetch block(s) written (run okay-build fetch; nothing is downloaded by a build)\n", rep.fetches);
     printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
@@ -3169,14 +3558,16 @@ static bool importedCompile(const Action& a, string& file) {
     for (size_t i = 0; i < w.size(); ++i) if (w[i] == "-c" && i + 1 < w.size()) { file = w[i + 1]; return !file.empty(); }
     return false;
 }
-static void writeCompdb(const Manifest& m) {
-    Graph g = plan(m, {}); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
+// compdb [TARGET...]: every compile, or only the compiles those targets need (as a build of them would run; a target nobody asked for may
+// lack a source, as for a build)
+static void writeCompdb(const Manifest& m, const vector<string>& want) {
+    Graph g = plan(m, want); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
     int n = 0;
     for (auto& a : g.acts) {
-        if (a.kind == "CC") {
+        if (a.kind == "CC" || a.kind == "RC") { // a resource compile is listed too, as CMake lists it; "output" as CMake writes it
             f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
             for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(redact(a.argv[i])) << "\""; }
-            f << "]}"; first = false; ++n;
+            f << "], \"output\": \"" << jsonEsc(a.output) << "\"}"; first = false; ++n;
         } else {
             string file; if (!importedCompile(a, file)) continue;
             string where = a.dir.empty() ? dir : a.dir;
@@ -3894,9 +4285,63 @@ static int cmdFetch(const Manifest& m, const vector<string>& names) {
     return 0;
 }
 
+// okay-build script [-D NAME=VALUE | -DNAME[:TYPE]=VALUE]... -P FILE [ARG...]: the same words `cmake -P` takes. See cmr::runCmakeScript.
+static int cmdScript(const vector<string>& a) {
+    std::map<string, string> defs; string file; vector<string> argvWords{gSelfExe}; // CMAKE_ARGV1.. are the words after the program, as in cmake -P
+    for (size_t i = 0; i < a.size(); ++i) {
+        string w = a[i];
+        if (!file.empty()) { argvWords.push_back(w); continue; }
+        argvWords.push_back(w);
+        if (w == "-P") { if (i + 1 >= a.size()) throw Fail("script: -P wants a file"); file = a[++i]; argvWords.push_back(file); continue; }
+        if (w.compare(0, 2, "-D") == 0) {
+            string d = w.size() > 2 ? w.substr(2) : (i + 1 < a.size() ? a[++i] : string());
+            if (w.size() == 2) argvWords.push_back(d);
+            auto eq = d.find('='); if (eq == string::npos || eq == 0) throw Fail("script: -D wants NAME=VALUE, got '" + d + "'");
+            string name = d.substr(0, eq); auto colon = name.find(':'); if (colon != string::npos) name = name.substr(0, colon); // NAME:TYPE=VALUE
+            defs[name] = d.substr(eq + 1); continue;
+        }
+        throw Fail("script: unknown word '" + w + "' (usage: okay-build script [-D NAME=VALUE]... -P FILE [ARG...])");
+    }
+    if (file.empty()) throw Fail("usage: okay-build script [-D NAME=VALUE]... -P FILE [ARG...]");
+    return cmr::runCmakeScript(file, defs, argvWords, runPipeline);
+}
+
+// okay-build tool env [--unset=NAME]... [NAME=VALUE]... [--] COMMAND [ARG...]: runs COMMAND with those changes to the environment and
+// returns its exit code (CMake's `cmake -E env`, which tests use).
+static int toolEnv(const vector<string>& a) {
+    size_t i = 1;
+    for (; i < a.size(); ++i) {
+        const string& w = a[i];
+        if (w == "--") { ++i; break; }
+        if (w.compare(0, 8, "--unset=") == 0) {
+#ifdef _WIN32
+            _putenv_s(w.substr(8).c_str(), "");
+#else
+            unsetenv(w.substr(8).c_str());
+#endif
+            continue;
+        }
+        auto eq = w.find('='); if (eq == string::npos || eq == 0) break;
+#ifdef _WIN32
+        _putenv_s(w.substr(0, eq).c_str(), w.substr(eq + 1).c_str());
+#else
+        setenv(w.substr(0, eq).c_str(), w.substr(eq + 1).c_str(), 1);
+#endif
+    }
+    if (i >= a.size()) throw Fail("usage: okay-build tool env [--unset=NAME]... [NAME=VALUE]... [--] COMMAND [ARG...]");
+    vector<char*> av; for (size_t k = i; k < a.size(); ++k) av.push_back(const_cast<char*>(a[k].c_str())); av.push_back(nullptr);
+    fflush(stdout); fflush(stderr);
+#ifdef _WIN32
+    intptr_t rc = _spawnvp(_P_WAIT, av[0], av.data()); if (rc < 0) throw Fail("tool env: cannot run '" + a[i] + "'"); return (int)rc;
+#else
+    execvp(av[0], av.data()); throw Fail("tool env: cannot run '" + a[i] + "': " + strerror(errno));
+#endif
+}
+
 static int toolMain(const vector<string>& a) {
-    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK");
+    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK | env [NAME=VALUE]... COMMAND...");
     const string& c = a[0];
+    if (c == "env") return toolEnv(a);
     if (c == "copy") {
         if (a.size() != 3) throw Fail("usage: okay-build tool copy SRC DST");
         writeAtomic(a[2], readAllBytes(a[1])); return 0;
@@ -3968,6 +4413,11 @@ int main(int argc, char** argv) {
 #else
     signal(SIGINT, onInt);
 #endif
+    gSelfExe = selfExe(argv[0]);
+    if (argc >= 2 && string(argv[1]) == "script") { // CMake's `cmake [-D NAME=VALUE]... -P FILE [ARG...]`, done by our own reader
+        try { return cmdScript(vector<string>(argv + 2, argv + argc)); }
+        catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }
+    }
     if (argc >= 2 && string(argv[1]) == "tool") {
         try { return toolMain(vector<string>(argv + 2, argv + argc)); }
         catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }
@@ -4099,7 +4549,7 @@ int main(int argc, char** argv) {
             for (auto& gp : genFilePaths(m)) fs::remove(gp.first); // the generate files a build wrote
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;
         }
-        if (cmd == "compdb") { writeCompdb(m); return 0; }
+        if (cmd == "compdb") { writeCompdb(m, want); return 0; }
         if (cmd == "targets") { listTargets(plan(m, {})); return 0; }
         if (cmd == "graph") { listGraph(plan(m, want)); return 0; }
         return build(m, want, o);

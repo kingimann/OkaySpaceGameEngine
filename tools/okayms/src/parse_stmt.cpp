@@ -405,6 +405,72 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kids.push_back(std::move(chosen));
         return true;
     }
+    if (is(TIf) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+        // if (init; cond) ([stmt.if] 3): the init statement runs first, in a scope around the whole if; its objects
+        // are destroyed after the if (as for a for-loop's declaration).
+        size_t k = at + 2;
+        int depth = 0;
+        bool has_init = false;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            const Tok kk = tokens[k].kind;
+            if (kk == TLParen || kk == TLBrace || kk == TLBrack) ++depth;
+            else if (kk == TRParen || kk == TRBrace || kk == TRBrack) {
+                if (depth == 0) break;
+                --depth;
+            } else if (kk == TSemi && depth == 0) {
+                has_init = true;
+                break;
+            }
+        }
+        if (has_init) {
+            next();
+            next();
+            push_scope();
+            dscopes.emplace_back();
+            Node init_s;
+            if (is_decl_start() && !is(TStatic)) {
+                if (!parse_stmt(&init_s, locals)) return false;
+            } else {
+                Node e;
+                if (!parse_expr(0, &e)) return false;
+                if (!expect(TSemi, "';'")) return false;
+                init_s.kind = Node::ExprStmt;
+                init_s.kids.push_back(std::move(e));
+                if (!stmt_pre.empty() || !stmt_temps.empty()) {
+                    error = "an if init statement with temporaries is not supported";
+                    return false;
+                }
+            }
+            // The condition follows the ';' and is read like the one of a plain if, up to its ')'.
+            Node if_s;
+            Node cond;
+            Node cond_decl;
+            bool cond_scoped = false;
+            if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+            Node then_s;
+            if (!parse_stmt(&then_s, locals)) return false;
+            if_s.kind = Node::If;
+            if_s.kids.push_back(std::move(cond));
+            if_s.kids.push_back(std::move(then_s));
+            if (accept(TElse)) {
+                Node else_s;
+                if (!parse_stmt(&else_s, locals)) return false;
+                if_s.kids.push_back(std::move(else_s));
+            }
+            close_condition_scope(&if_s, std::move(cond_decl), cond_scoped);
+            *out = Node{};
+            out->kind = Node::Block;
+            out->text = "scope";
+            out->kids.push_back(std::move(init_s));
+            out->kids.push_back(std::move(if_s));
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+            return true;
+        }
+    }
     if (is(TIf)) {
         next();
         out->kind = Node::If;
@@ -437,18 +503,50 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
         if (!cond_scoped && !fold_loop_expr(wpre, wtemps, &cond)) return false;
         Node body;
-        brk_dbase.push_back(dscopes.size());
-        cont_dbase.push_back(dscopes.size());
+        // while (T x = e) body is { T x = e; if (!x) break; body } on every pass ([stmt.while] 2): x is made and destroyed
+        // each time, so a break or continue in the body destroys it too (their bases leave out its scope).
+        const size_t loop_base = cond_scoped ? dscopes.size() - 1 : dscopes.size();
+        brk_dbase.push_back(loop_base);
+        cont_dbase.push_back(loop_base);
         const bool body_ok = parse_stmt(&body, locals);
         brk_dbase.pop_back();
         cont_dbase.pop_back();
         if (!body_ok) return false;
+        if (cond_scoped) {
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            Node leave;
+            leave.kind = Node::Block;
+            for (const Node& n : dt) leave.kids.push_back(n);
+            Node brk;
+            brk.kind = Node::Break;
+            leave.kids.push_back(std::move(brk));
+            Node test;
+            test.kind = Node::If;
+            Node stay;
+            stay.kind = Node::Block;
+            test.kids.push_back(std::move(cond));
+            test.kids.push_back(std::move(stay));
+            test.kids.push_back(std::move(leave));
+            Node pass;
+            pass.kind = Node::Block;
+            pass.text = "scope";
+            pass.kids.push_back(std::move(cond_decl));
+            pass.kids.push_back(std::move(test));
+            pass.kids.push_back(std::move(body));
+            for (Node& n : dt) pass.kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+            Node always;
+            always.kind = Node::IntLit;
+            always.number = 1;
+            always.type.base = 1;
+            out->kids.push_back(std::move(always));
+            out->kids.push_back(std::move(pass));
+            return true;
+        }
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(body));
-        if (cond_scoped) {
-            error = "a declaration in a while condition is not supported";  // the variable would need to be made again each pass
-            return false;
-        }
         return true;
     }
     if (is(TFor)) {
@@ -685,13 +783,34 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             }
             if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
                 return false;
+            if (!braced_ret && !cur_ret_ref) class_ptr_convert(&value, cur_ret);  // return derived; as a Base* (Round 29)
+            Type value_type;
+            if (!braced_ret && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
+                !cur_ret.is_array() && cur_ret.struct_id >= 0 && obj_needs_ctor(cur_ret) && static_type(value, &value_type) &&
+                !(value_type.base == 3 && value_type.pointers == 0 && !value_type.is_array())) {
+                // return 0; or return nullptr; or return p; for a class result: copy-initialization of the result from a
+                // value that is not an object, by the converting constructor ([stmt.return] 2, [dcl.init] 17.6.3). The
+                // object is made in a hidden local that becomes the result (as for return {a, b}).
+                Local hidden;
+                hidden.name = "__br" + std::to_string(rv_count++);
+                hidden.type = cur_ret;
+                place_local(locals, hidden);
+                std::vector<Node> cargs;
+                cargs.push_back(std::move(value));
+                Node call;
+                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                    return false;
+                stmt_pre.push_back(std::move(call));
+                value = node_name(hidden.name);
+            }
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
             dtor_skip.clear();
             if (value.kind == Node::Name && !cur_ret_ref && obj_needs_dtor(cur_ret)) {
                 // return x; where x is a local object of the result class, or a temporary made for this
                 // statement: the object itself becomes the result, so its destructor does not run here.
-                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0) {
+                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0 ||
+                    value.text.compare(0, 4, "__tn") == 0) {  // __tn: the chosen value of c ? a : b
                     for (size_t ti = 0; ti < stmt_temps.size(); ++ti)
                         if (stmt_temps[ti].name == value.text) {
                             stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(ti));
@@ -772,6 +891,31 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             next();
             const size_t at_declarator = at;
             size_t k = at;
+            if (binding_ahead()) {
+                // auto [a, b] = e; ([dcl.struct.bind]): the initializer is read first, to learn the type.
+                while (k < tokens.size() && tokens[k].kind != TRBrack && tokens[k].kind != TEnd) ++k;
+                if (k + 1 >= tokens.size() || tokens[k + 1].kind != TAssign) {
+                    error = "a structured binding needs an initializer";
+                    return false;
+                }
+                at = k + 2;
+                Node init;
+                if (!parse_init(&init)) return false;
+                Type t;
+                if (!static_type(init, &t)) {
+                    error = "cannot work out the type of the structured binding";
+                    return false;
+                }
+                t.is_ref = false;
+                t.pconst = false;
+                has_preset = true;
+                preset_init = std::move(init);
+                preset_end = at;
+                at = at_declarator;
+                const bool ok = parse_binding_decl(t, is_const, out, locals, stmt_line);
+                has_preset = false;
+                return ok;
+            }
             while (k < tokens.size() && (tokens[k].kind == TAmp || tokens[k].kind == TStar || tokens[k].kind == TConst)) ++k;
             if (!(k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TAssign)) {
                 error = "auto needs a name and an initializer";
@@ -874,6 +1018,14 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             if (!init_list_temp(list_type, &list)) return false;
             ctor_args.push_back(std::move(list));
             have_ctor_args = true;
+        } else if (braced_args && tokens[at + 1].kind != TRBrace && has_nested_braces_ahead() &&
+                   aggregate_with_defaults(type.struct_id, std::vector<Node>(2))) {
+            // S x{{1, 2}, {3, 4}}; for an aggregate whose members have constructors (struct Set { Vec3 a, b; }): the
+            // object is made member by member as S{...} makes it ([dcl.init.aggr]), then x is made from it.
+            Node made;
+            if (!braced_temp(type.struct_id, &made)) return false;
+            ctor_args.push_back(std::move(made));
+            have_ctor_args = true;
         } else {
         next();
         if (braced_args) {
@@ -965,6 +1117,22 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         has_init = true;
         if (!decl.type.is_array() && decl.type.base != 3 && decl.type.base != 0 && !convert_class(&init, decl.type))
             return false;
+        if (has_init && !decl.type.is_array()) {
+            // Base* p = derived; and Base& r = derived; with several bases (Round 29): the base subobject.
+            Type from;
+            if (decl.type.is_ref && decl.type.base == 3 && decl.type.pointers == 0 && decl.type.struct_id >= 0 &&
+                static_type(init, &from) && from.base == 3 && from.pointers == 0 && !from.is_array() &&
+                base_offset(from.struct_id, decl.type.struct_id) > 0) {
+                Node sub;
+                sub.kind = Node::Unary;
+                sub.op = TStar;
+                sub.kids.push_back(offset_ptr(node_addr(std::move(init)), base_offset(from.struct_id, decl.type.struct_id),
+                                              decl.type.struct_id));
+                init = std::move(sub);
+            } else if (!decl.type.is_ref) {
+                class_ptr_convert(&init, decl.type);
+            }
+        }
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
         if (!fix_unsized(&decl.type, init)) return false;
         if (init.kind == Node::StringLit && decl.type.is_array() && decl.type.more.empty() && decl.type.pointers == 0 &&
@@ -1004,6 +1172,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                 has_init = false;
             }
         }
+    }
+    if (local.is_const && has_init && init.kind == Node::IntLit && init.type.base < 5 && decl.type.pointers == 0 &&
+        !decl.type.is_array() && !decl.type.is_ref && (decl.type.base == 1 || decl.type.base == 2 || decl.type.base == 4)) {
+        local.has_cval = true;
+        local.cval = init.number;
     }
     bool static_dyn = false;
     std::vector<DynLeaf> static_leaves;
@@ -1571,7 +1744,9 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     range_decl = true;
     Node decl_node;
     bool more = false;
-    const bool decl_ok = parse_local_decl_one(declared, false, false, is_const, &decl_node, locals, stmt_line, &more);
+    const bool decl_ok = binding_ahead() ? parse_binding_decl(declared, is_const, &decl_node, locals, stmt_line)
+                                         : parse_local_decl_one(declared, false, false, is_const, &decl_node, locals,
+                                                                stmt_line, &more);
     range_decl = false;
     has_preset = false;
     if (!decl_ok) return false;
@@ -1673,6 +1848,110 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     return true;
 }
 
+
+// `&`, `&&` or nothing, then '[': the declarator of a structured binding ([dcl.struct.bind] 1).
+bool Parser::binding_ahead() const {
+    size_t k = at;
+    while (k < tokens.size() && (tokens[k].kind == TAmp || tokens[k].kind == TAndAnd)) ++k;
+    return k + 1 < tokens.size() && tokens[k].kind == TLBrack && tokens[k + 1].kind == TIdent;
+}
+
+// A structured binding ([dcl.struct.bind]), Round 29: `auto [a, b] = e;`, `const auto& [k, v] = e;` and the same in a
+// range for. A hidden variable __sbN is declared as `auto __sbN = e` (with the & or && written), from the initializer
+// read before (has_preset); then each name is a reference to the next non-static data member of its class (or the next
+// element of an array) ([dcl.struct.bind] 3, 5). Own limits: no tuple-like types (get<i>), and a name is always a
+// reference to the member of the hidden variable (as the standard says for the class case).
+bool Parser::parse_binding_decl(const Type& declared, bool is_const, Node* out, std::vector<Local>* locals,
+                                int stmt_line) {
+    size_t amps = 0;
+    while (tokens[at + amps].kind == TAmp || tokens[at + amps].kind == TAndAnd) ++amps;
+    const size_t lb = at + amps;
+    std::vector<std::string> names;
+    size_t rb = lb + 1;
+    for (; rb < tokens.size() && tokens[rb].kind != TRBrack; ++rb) {
+        if (tokens[rb].kind == TIdent) names.push_back(tokens[rb].text);
+        else if (tokens[rb].kind != TComma) {
+            error = "expected a name in a structured binding";
+            return false;
+        }
+    }
+    if (rb >= tokens.size() || names.empty()) {
+        error = "expected ']'";
+        return false;
+    }
+    // The tokens `&... [a, b]` are read as `&... __sbN` for the declaration, then put back.
+    const std::string hidden = "__sb" + std::to_string(tmp_count++);
+    std::vector<Token> saved(tokens.begin() + static_cast<std::ptrdiff_t>(rb - amps),
+                             tokens.begin() + static_cast<std::ptrdiff_t>(rb + 1));
+    for (size_t i = 0; i < amps; ++i) tokens[rb - amps + i] = tokens[at + i];
+    tokens[rb].kind = TIdent;
+    tokens[rb].text = hidden;
+    at = rb - amps;
+    Node decl;
+    bool more = false;
+    const bool ok = parse_local_decl_one(declared, false, false, is_const, &decl, locals, stmt_line, &more);
+    const size_t after = at;
+    for (size_t i = 0; i < saved.size(); ++i) tokens[rb - amps + i] = saved[i];
+    at = after;
+    if (!ok) return false;
+    Type whole;
+    if (!static_type(node_name(hidden), &whole)) {
+        error = "cannot work out the type of the structured binding";
+        return false;
+    }
+    whole.is_ref = false;
+    out->kind = Node::Block;
+    out->kids.clear();
+    out->kids.push_back(std::move(decl));
+    std::vector<std::pair<Type, Node>> parts;
+    if (whole.is_array()) {
+        for (size_t i = 0; i < names.size(); ++i) {
+            Node elem;
+            elem.kind = Node::Index;
+            elem.kids.push_back(node_name(hidden));
+            elem.kids.push_back(int_node(static_cast<long long>(i)));
+            parts.push_back({peel_array(whole), std::move(elem)});
+        }
+    } else if (whole.base == 3 && whole.pointers == 0 && whole.struct_id >= 0) {
+        for (const Field& f : structs[static_cast<size_t>(whole.struct_id)].fields) {
+            if (f.name.compare(0, 6, "__vptr") == 0 || f.name.compare(0, 2, "__") == 0) continue;
+            Node member;
+            member.kind = Node::Field;
+            member.op = TDot;
+            member.text = f.name;
+            member.kids.push_back(node_name(hidden));
+            parts.push_back({f.type, std::move(member)});
+        }
+    }
+    if (parts.size() != names.size()) {
+        error = "a structured binding needs as many names as the class has members";
+        return false;
+    }
+    for (size_t i = 0; i < names.size(); ++i) {
+        Local name;
+        name.name = names[i];
+        name.type = parts[i].first;
+        if (name.type.is_ref) {
+            // a reference member: the name refers to what it refers to
+            name.type.is_ref = true;
+        } else {
+            name.type.is_ref = true;
+        }
+        name.type.rref = false;
+        place_local(locals, name);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.number = 1;
+        assign.kids.push_back(node_name(names[i]));
+        assign.kids.push_back(std::move(parts[i].second));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.line = stmt_line;
+        stmt.kids.push_back(std::move(assign));
+        out->kids.push_back(std::move(stmt));
+    }
+    return true;
+}
 
 }  // namespace compiler
 }  // namespace okayms

@@ -30,6 +30,9 @@ struct Host {
     std::function<void()> savePrefs;
     std::function<void()> startUpdate;           ///< the launcher's own update (the sidebar's "Install now")
     std::function<void()> channelChanged;        ///< the channel was switched: look for updates again
+    /// An editor download finished (ok) or failed (`message` says why). Set: it tells the person (a desktop notification
+    /// or the toast, launcher/DesktopNotify.hpp) instead of the plain toast.
+    std::function<void(const std::string& version, bool ok, const std::string& message)> downloadDone;
     okayversions::FetchTextFn fetchText;         ///< a small text file ("" url or unreachable: false)
 };
 

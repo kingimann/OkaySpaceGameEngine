@@ -80,8 +80,48 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 if (fn.defined) inline_node(&fn.body, funcs);
         }
     }
+    // The unwind record and the .pdata entry of the function placed last (a function with no prologue has an empty
+    // record: a leaf in the x64 unwind model).
+    auto add_unwind = [&](const UnwindPrologue& prolog) {
+        const auto unwind = encode_unwind(prolog);
+        if (!unwind.ok()) {
+            *error = unwind.error;
+            return false;
+        }
+        const uint32_t xat = static_cast<uint32_t>(gen.xdata.size());
+        unwind_offs.push_back(xat);
+        gen.xdata.insert(gen.xdata.end(), unwind.value.begin(), unwind.value.end());
+        const std::string unw = "unwind_" + placed.back().name;
+        // pdata: begin, end (addend = size), unwind info.
+        const uint32_t pat = static_cast<uint32_t>(gen.pdata.size());
+        for (int i = 0; i < 3; ++i) gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0);
+        gen.pdata[pat + 4] = static_cast<uint8_t>(placed.back().size);
+        gen.pdata[pat + 5] = static_cast<uint8_t>(placed.back().size >> 8);
+        gen.pdata[pat + 6] = static_cast<uint8_t>(placed.back().size >> 16);
+        gen.pdata[pat + 7] = static_cast<uint8_t>(placed.back().size >> 24);
+        gen.relocs.push_back({2, pat, placed.back().name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat + 4, placed.back().name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat + 8, unw, kRelAmd64Addr32Nb});
+        return true;
+    };
     for (FuncDecl& fn : funcs) {
-        if (!fn.defined) continue;
+        if (!fn.defined || fn.thunk_target.empty()) continue;
+        // An adjustor thunk (Round 29): sub rcx (or rdx), imm32; jmp target. The register holds the address of a base
+        // subobject; the target wants the address of the whole class.
+        const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        gen.b(0x48);
+        gen.b(0x81);
+        gen.b(fn.thunk_rdx ? 0xEA : 0xE9);
+        gen.u32(static_cast<uint32_t>(fn.thunk_adj));
+        gen.b(0xE9);
+        gen.relocs.push_back({0, static_cast<uint32_t>(gen.text.size()), fn.thunk_target, kRelAmd64Rel32});
+        gen.u32(0);
+        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start,
+                          false, fn.is_static, {}});
+        if (!add_unwind(UnwindPrologue{})) return false;
+    }
+    for (FuncDecl& fn : funcs) {
+        if (!fn.defined || !fn.thunk_target.empty()) continue;
         std::map<std::string, int> name_count;
         for (const Local& local : fn.locals) ++name_count[local.name];
         std::set<std::string> shadowed;
@@ -385,27 +425,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         prolog.alloc = static_cast<uint32_t>(frame);
         prolog.alloc_at = prolog.size;
         prolog.pushes = pushes;
-        const auto unwind = encode_unwind(prolog);
-        if (!unwind.ok()) {
-            *error = unwind.error;
-            return false;
-        }
-        const uint32_t xat = static_cast<uint32_t>(gen.xdata.size());
-        unwind_offs.push_back(xat);
-        gen.xdata.insert(gen.xdata.end(), unwind.value.begin(), unwind.value.end());
-        const std::string unw = "unwind_" + placed.back().name;
-        // pdata: begin, end (addend = size), unwind info.
-        const uint32_t pat = static_cast<uint32_t>(gen.pdata.size());
-        for (int i = 0; i < 3; ++i) gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0);
-        gen.pdata[pat + 4] = static_cast<uint8_t>(placed.back().size);
-        gen.pdata[pat + 5] = static_cast<uint8_t>(placed.back().size >> 8);
-        gen.pdata[pat + 6] = static_cast<uint8_t>(placed.back().size >> 16);
-        gen.pdata[pat + 7] = static_cast<uint8_t>(placed.back().size >> 24);
-        gen.relocs.push_back({2, pat, placed.back().name, kRelAmd64Addr32Nb});
-        gen.relocs.push_back({2, pat + 4, placed.back().name, kRelAmd64Addr32Nb});
-        gen.relocs.push_back({2, pat + 8, unw, kRelAmd64Addr32Nb});
-        (void)xat;
-        (void)unw;
+        if (!add_unwind(prolog)) return false;
     }
     if (!gen.error.empty()) {
         *error = gen.error;
@@ -420,6 +440,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
+        int lk_op = 0;
+        int lk_width = 0;
+        if (interlocked_intrinsic(fn.name, &lk_op, &lk_width)) continue;  // compiled inline, never called
         // A call names the decorated symbol when the function has one (a namespace function).
         const std::string extern_name = fn.symbol.empty() ? fn.name : fn.symbol;
         if (fn.imported) add_sym("__imp_" + extern_name, 0, 0, kClassExternal, 0);
@@ -435,12 +458,19 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     };
     int next_section = 2;
     for (const Global& global : globals) {
+        if (global.external) {
+            add_sym(global.name, 0, 0, kClassExternal, 0);  // defined in another object
+            continue;
+        }
         if (global.vtable) {
             // Read-only: one 8-byte slot per virtual function, filled by an
             // ADDR64 relocation. A pure virtual slot stays zero.
             while (gen.rdata.size() % 8 != 0) gen.rdata.push_back(0);
             if (!global.rtti.empty()) {
-                // The slot before the table: the address of the class's type information (typeid of an object).
+                // Two slots before the table (Round 29): the offset of the subobject that points at this table inside
+                // the whole object (dynamic_cast), then the address of the class's type information (typeid).
+                const uint64_t top = static_cast<uint64_t>(global.top_off);
+                for (int k = 0; k < 8; ++k) gen.rdata.push_back(static_cast<uint8_t>(top >> (8 * k)));
                 gen.relocs.push_back({1, static_cast<uint32_t>(gen.rdata.size()), global.rtti, kRelAmd64Addr64});
                 for (int k = 0; k < 8; ++k) gen.rdata.push_back(0);
             }
@@ -507,7 +537,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     if (!tls_bytes.empty()) tls_section = next_section++;
     for (Sym& sym : symbols) {
         for (const Global& global : globals) {
-            if (sym.name != global.name) continue;
+            if (sym.name != global.name || global.external) continue;
             sym.section = static_cast<int16_t>(global.vtable ? rdata_section
                                                : global.tls ? tls_section
                                                : global.bss ? bss_section

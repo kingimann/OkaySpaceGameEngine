@@ -1,3 +1,13 @@
 // okay-ms own standard header: <new>. Placement new (`new (p) T(args)`) and operator new/delete for a class are
 // built into the compiler (ISO/IEC 14882 [expr.new]); `new` calls the global `malloc` and `delete` calls `free`.
 #pragma once
+// A new-expression calls these, so they are declared here too (the same declarations as <cstdlib>): `new` works in a
+// file that includes only <new>.
+void *malloc(unsigned long long n);
+void free(void *p);
+namespace std {
+// The tag of the non-throwing new ([new.syn]): `new (std::nothrow) T` is read by the compiler itself.
+struct nothrow_t {
+    explicit nothrow_t() {}
+};
+}

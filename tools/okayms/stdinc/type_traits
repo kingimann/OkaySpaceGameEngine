@@ -1,8 +1,9 @@
 // okay-ms own standard header: <type_traits>, written from ISO/IEC 14882 [meta]. The relations that need the compiler's
 // knowledge of a class (is_base_of, is_enum, is_class, is_polymorphic, is_trivially_destructible, ...) use okay-ms's
-// intrinsics (__is_base_of and the others, parse_type_trait); the rest are partial specializations. Own version: no
-// variable templates (is_same_v and the other _v forms are not here: okay-ms does not read variable templates), no
-// is_invocable, invoke_result or common_type. is_final is always false (okay-ms drops `final`).
+// intrinsics (__is_base_of, __is_invocable and the others, parse_type_trait); the rest are partial specializations. The
+// _v forms are variable templates (okay-ms reads them as constants: their address cannot be taken). Own version: no
+// common_type or invoke_result; is_invocable checks a call operator by its number of parameters and loose argument conversions (see
+// __is_invocable). is_final is always false (okay-ms drops `final`).
 #pragma once
 #include <cstddef>
 namespace std {
@@ -101,4 +102,36 @@ template <typename T> struct is_scalar : bool_constant<(is_arithmetic<T>::value 
 
 // declval ([declval]): only for unevaluated operands (decltype); never defined.
 template <typename T> T&& declval();
+
+// is_invocable ([meta.rel]): whether f(args...) can be called. (invoke_result is not here: okay-ms cannot yet take
+// decltype of a call through declval.)
+template <typename F, typename... A> struct is_invocable : bool_constant<__is_invocable(F, A...)> {};
+
+// The _v variable templates ([meta.type.synop]).
+template <typename A, typename B> constexpr bool is_same_v = is_same<A, B>::value;
+template <typename T> constexpr bool is_void_v = is_void<T>::value;
+template <typename T> constexpr bool is_integral_v = is_integral<T>::value;
+template <typename T> constexpr bool is_floating_point_v = is_floating_point<T>::value;
+template <typename T> constexpr bool is_arithmetic_v = is_arithmetic<T>::value;
+template <typename T> constexpr bool is_array_v = is_array<T>::value;
+template <typename T> constexpr bool is_pointer_v = is_pointer<T>::value;
+template <typename T> constexpr bool is_reference_v = is_reference<T>::value;
+template <typename T> constexpr bool is_lvalue_reference_v = is_lvalue_reference<T>::value;
+template <typename T> constexpr bool is_const_v = is_const<T>::value;
+template <typename T> constexpr bool is_signed_v = is_signed<T>::value;
+template <typename T> constexpr bool is_unsigned_v = is_unsigned<T>::value;
+template <typename T> constexpr bool is_enum_v = is_enum<T>::value;
+template <typename T> constexpr bool is_class_v = is_class<T>::value;
+template <typename T> constexpr bool is_union_v = is_union<T>::value;
+template <typename T> constexpr bool is_polymorphic_v = is_polymorphic<T>::value;
+template <typename T> constexpr bool is_abstract_v = is_abstract<T>::value;
+template <typename T> constexpr bool is_empty_v = is_empty<T>::value;
+template <typename T> constexpr bool is_scalar_v = is_scalar<T>::value;
+template <typename T> constexpr bool is_trivially_destructible_v = is_trivially_destructible<T>::value;
+template <typename T> constexpr bool is_trivially_copyable_v = is_trivially_copyable<T>::value;
+template <typename T> constexpr bool is_default_constructible_v = is_default_constructible<T>::value;
+template <typename T> constexpr bool has_virtual_destructor_v = has_virtual_destructor<T>::value;
+template <typename B, typename D> constexpr bool is_base_of_v = is_base_of<B, D>::value;
+template <typename F, typename T> constexpr bool is_convertible_v = is_convertible<F, T>::value;
+template <typename F, typename... A> constexpr bool is_invocable_v = is_invocable<F, A...>::value;
 }

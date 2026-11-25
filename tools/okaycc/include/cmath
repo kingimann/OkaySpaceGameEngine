@@ -210,6 +210,32 @@ inline double nearbyint(double x) {
     return r;
 }
 inline float nearbyint(float x) { return (float)nearbyint((double)x); }
+// nextafter (C 7.12.11.3): the next representable value after x towards y, by one step of the
+// bit pattern (IEEE 754: adjacent values of one sign have adjacent patterns); from zero, the
+// smallest subnormal of y's sign.
+inline double nextafter(double x, double y) {
+    if (!(x == x) || !(y == y)) return x + y;
+    if (x == y) return y;
+    if (x == 0) return y > 0 ? __okay_from_bits(1UL) : __okay_from_bits(9223372036854775809UL);
+    unsigned long b = __okay_bits(x);
+    if ((x < y) == (x > 0)) ++b;
+    else --b;
+    return __okay_from_bits(b);
+}
+inline float nextafter(float x, float y) {
+    if (!(x == x) || !(y == y)) return x + y;
+    if (x == y) return y;
+    unsigned int b;
+    if (x == 0) {
+        b = y > 0 ? 1u : 2147483649u;
+    } else {
+        b = *(unsigned int *)&x;
+        if ((x < y) == (x > 0)) ++b;
+        else --b;
+    }
+    return *(float *)&b;
+}
+inline float nextafterf(float x, float y) { return nextafter(x, y); }
 inline double rint(double x) { return nearbyint(x); }
 inline float rint(float x) { return (float)nearbyint((double)x); }
 inline long lrint(double x) { return (long)nearbyint(x); }

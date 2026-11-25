@@ -701,9 +701,14 @@ std::string emitData(const Module& m) {
                 std::string sym;
                 for (const auto& r : g.relocs)
                     if (r.first == off) sym = r.second;
-                s += "  .quad ";
-                s += sym.empty() ? "0" : sym;
-                s += "\n";
+                if (!sym.empty()) {
+                    s += "  .quad " + sym + "\n";
+                    continue;
+                }
+                for (int k = off; k < off + 8 && k < total; ++k) {  // numbers between the addresses
+                    unsigned v = static_cast<std::size_t>(k) < g.bytes.size() ? g.bytes[static_cast<std::size_t>(k)] : 0;
+                    s += "  .byte " + std::to_string(v) + "\n";
+                }
             }
             return s;
         }

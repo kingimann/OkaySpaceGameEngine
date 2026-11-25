@@ -1,7 +1,6 @@
 // The launcher's Versions download (launcher/VersionsNet.cpp DownloadFile) through our own HTTP client, against a loopback
-// server: success, 404, a body over the cap, cancel while the server is silent, and the curl fallback when the answer is
-// not HTTP. Built only with -DOKAY_OWN_HTTP=ON (Linux); needs OKAY_OWN_HTTP=1 in the environment, which main sets.
-// No stub curl is installed for the cases that must NOT reach curl: PATH is emptied, so a fallback shows up as Failed.
+// server: success, 404, a body over the cap, cancel while the server is silent, and a failure when the answer is not
+// HTTP. Built only with -DOKAY_OWN_HTTP=ON (Linux). PATH is emptied, so nothing could be spawned.
 #include "VersionsNet.hpp"
 
 #include <arpa/inet.h>
@@ -25,9 +24,9 @@ static int g_fail = 0, g_checks = 0;
 static void SendAll(int fd, const std::string& s) { size_t o = 0; while (o < s.size()) { ssize_t n = ::send(fd, s.data() + o, s.size() - o, MSG_NOSIGNAL); if (n <= 0) return; o += size_t(n); } }
 
 int main() {
-    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("OKAY_HTTP_CURL");   // our own client needs no switch
     ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy");
-    ::setenv("PATH", "/nonexistent", 1);   // no curl: any fallback is a visible failure
+    ::setenv("PATH", "/nonexistent", 1);   // nothing to spawn
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (::bind(fd, (sockaddr*)&a, sizeof a) != 0 || ::listen(fd, 8) != 0) return 2;
@@ -70,7 +69,7 @@ int main() {
     CHECK(r.status == DownloadStatus::Failed && r.error.find("does not have") != std::string::npos && !fs::exists(dest));
     r = DownloadFile(base + "/big", dest, 1000, onBytes, never);   // 2000 bytes against a 1000 cap
     CHECK(r.status == DownloadStatus::Failed && r.error.find("more data") != std::string::npos && !fs::exists(dest));
-    r = DownloadFile(base + "/garbage", dest, 100000, onBytes, never);   // no usable answer: falls to curl, which is not there
+    r = DownloadFile(base + "/garbage", dest, 100000, onBytes, never);   // no usable answer: a failure
     CHECK(r.status == DownloadStatus::Failed && !fs::exists(dest));
     // A server that redirects forever: DownloadFile asks for 5 redirects at most, so 6 requests are made, then it fails.
     r = DownloadFile(base + "/loop", dest, 100000, onBytes, never);

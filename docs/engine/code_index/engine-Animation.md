@@ -2,7 +2,7 @@
 
 # Code index: engine-Animation
 
-Back to the [code index](../code_index.md). 13 headers, 119 names.
+Back to the [code index](../code_index.md). 13 headers, 118 names.
 
 ## `engine/include/okay/Animation/AnimationClip.hpp`
 
@@ -152,12 +152,11 @@ Back to the [code index](../code_index.md). 13 headers, 119 names.
 
 ## `engine/include/okay/Animation/RagdollPhysics.hpp`
 
-- `ContactWorld` class, line 35: The world the ragdoll touches. Cast returns the first surface along
-- `SimpleWorld` class, line 43: A flat ground at 'groundY' plus optional axis-aligned boxes (a ledge, a
-- `ContactSphere` struct, line 52
-- `BodyDesc` struct, line 54
-- `JointDesc` struct, line 63
-- `BodyState` struct, line 76
-- `JointDrive` struct, line 88: A powered joint, field for field the drive of the scene physics' Ball and
-- `RagdollPhysics` class, line 95: What the controller needs from a physics engine. Keep it this small.
-- `XpbdRagdoll` class, line 135: Our own solver (see the header comment for the method).
+- `ContactWorld` class, line 31: The world the ragdoll touches. Cast returns the first surface along
+- `ContactSphere` struct, line 37
+- `BodyDesc` struct, line 39
+- `JointDesc` struct, line 54
+- `BodyState` struct, line 67
+- `JointDrive` struct, line 79: A powered joint, field for field the drive of the scene physics' Ball and
+- `RagdollPhysics` class, line 86: What the controller needs from a physics engine. Keep it this small.
+- `CoreRagdoll` class, line 132: The ragdoll's bodies on the physics core (okay::phys::World): one core body and collider per bone, one core

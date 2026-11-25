@@ -15,5 +15,24 @@ unsigned long strtoul(const char *s, char **end, int base);
 float strtof(const char *s, char **end);
 double strtod(const char *s, char **end);
 double atof(const char *s);
+long atol(const char *s);
+long long atoll(const char *s);
+long long strtoll(const char *s, char **end, int base);
+unsigned long long strtoull(const char *s, char **end, int base);
+// Process and environment ([cstdlib.syn], ISO/IEC 9899 7.22.4): from the C runtime DLL (msvcrt.dll), like the
+// string-to-number functions above. getenv returns null when the variable is not set.
+char *getenv(const char *name);
+void abort(void);
+void exit(int status);
+void _Exit(int status);
+int atexit(void (*fn)(void));
+int system(const char *command);
+int rand(void);
+void srand(unsigned seed);
 }
+inline long labs(long v) { return v < 0 ? -v : v; }
+inline long long llabs(long long v) { return v < 0 ? -v : v; }
 }
+#define EXIT_SUCCESS 0
+#define EXIT_FAILURE 1
+#define RAND_MAX 0x7fff

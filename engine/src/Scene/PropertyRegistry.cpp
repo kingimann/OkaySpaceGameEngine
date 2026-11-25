@@ -299,7 +299,11 @@ std::shared_ptr<const ComponentTypeInfo> PropertyRegistry::FindByName(const std:
     it = t.byRecord.find(name);
     if (it != t.byRecord.end()) return t.infos[it->second];
     it = t.byLower.find(Lower(name));
-    return it == t.byLower.end() ? nullptr : t.infos[it->second];
+    if (it != t.byLower.end()) return t.infos[it->second];
+    // An old type name that is now another type's record name, in any case ("ActiveRagdoll" is the record
+    // `activeragdoll` of Ragdoll since the two ragdolls became one).
+    it = t.byRecord.find(Lower(name));
+    return it == t.byRecord.end() ? nullptr : t.infos[it->second];
 }
 
 std::shared_ptr<const ComponentTypeInfo> PropertyRegistry::FindByType(std::type_index type) {

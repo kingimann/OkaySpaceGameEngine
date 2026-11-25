@@ -221,12 +221,38 @@ public:
     NearestSolid3D ClosestPoint(Scene& scene, const Vec3& point, float maxDistance = 1e9f,
                                 GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers);
 
+    /// What the scene queries above did since the last ResetQueryStats (PhysicsQueryStats).
+    const PhysicsQueryStats& QueryStats() const { return m_queryStats; }
+    void ResetQueryStats() { m_queryStats = PhysicsQueryStats{}; }
+    /// Test switch: while true, a scene query hands every collider of the scene to its exact tests instead of asking
+    /// the broad phase which ones are near. The code after that is the same, so tests compare the two answers.
+    static bool& QueryFullScan();
+
     void Clear();   // forget the engine world (the scene is being cleared; Physics3DEngine.inl)
 
     // ---- the physics engine core underneath (okay::phys::World; docs/physics/physics_core.md) ----
     /// The engine world that runs the scene (made on the first step; nullptr before that). For advanced use, such as an
     /// active ragdoll that sets joint drive targets directly.
     phys::World* EngineWorld();
+    /// Engine code that keeps bodies of its own in the engine world (a ragdoll's limbs) is a guest of the scene's
+    /// physics: the world steps its bodies with everything else, and the guest says what they pass through.
+    class EngineGuest {
+    public:
+        virtual ~EngineGuest() = default;
+        /// May this guest's colliders meet that scene collider?
+        virtual bool GuestCollides(const Collider3D* other) const = 0;
+        /// The solver iterations the guest needs now (the world uses the larger of this and solverIterations; 0 = no
+        /// wish). A ragdoll's limbs are light against its chest: with too few iterations a body landing on a leg
+        /// pushes the leg into what is under it.
+        virtual int GuestSolverIterations() const { return 0; }
+    };
+    /// The engine world for a guest, made now if the scene has not stepped yet. The guest writes GuestUser(guest) into
+    /// ColliderDef::user of every collider it adds. `alive` expires when the world is destroyed (Clear): from then
+    /// on the guest's ids are dead and it must not touch the world or call LeaveEngineWorld.
+    phys::World* JoinEngineWorld(EngineGuest* guest, std::weak_ptr<void>& alive);
+    /// The guest is going away (it has removed its bodies).
+    void LeaveEngineWorld(EngineGuest* guest);
+    static std::uint64_t GuestUser(const EngineGuest* guest) { return (std::uint64_t)(std::uintptr_t)guest; }
     /// The engine body of a Rigidbody3D (0xFFFFFFFF when it has none yet).
     std::uint32_t EngineBody(const Rigidbody3D* rb) const;
     /// The engine joint of a Joint3D (0xFFFFFFFF when it has none).
@@ -256,6 +282,7 @@ public:
 
 private:
     PhysicsStepStats m_stats;
+    PhysicsQueryStats m_queryStats;
     bool m_sleepSet = false;
     float m_sleepLinear = 0.05f, m_sleepAngular = 0.05f, m_sleepTime = 0.5f;
     struct EngineBridge;                // the engine world and the scene <-> world maps (Physics3DEngine.inl)
@@ -267,15 +294,32 @@ private:
     std::vector<PhysicsDebugBody3D>    m_debugBodies;
     std::vector<PhysicsDebugJoint3D>   m_debugJoints;
     void StepTerrain(Scene& scene);   // grounded-on-terrain signals and voxel terrain collision (after the engine step)
-    /// The colliders and terrains ray queries test, gathered once and reused
-    /// until the scene's objects or components change (not per ray).
+    /// The colliders and terrains the scene queries test, gathered once and reused
+    /// until the scene's objects or components change (not per query).
     struct QueryCache {
-        std::uint64_t scene = 0, structure = 0, components = 0;
+        std::uint64_t scene = 0, structure = 0, components = 0, objects = 0;
+        std::uint64_t version = 0;      // goes up each time the lists are gathered again
         std::vector<Collider3D*> colliders;
         std::vector<Terrain*> terrains;
     };
     QueryCache m_query;
     const QueryCache& QueryLists(Scene& scene);
+    /// The broad phase of the scene queries: one box tree over `m_query.colliders` (Physics3D.cpp, "The broad phase of
+    /// the scene queries"). NearBox / NearPath fill `out` with the colliders whose box meets a box, or a box swept along
+    /// a path, in the order of the collider list; the exact tests then run on those only.
+    struct QueryIndex;
+    std::unique_ptr<QueryIndex> m_queryIndex;
+    QueryIndex& SyncQueryIndex(Scene& scene);   // call first: brings the tree up to date with the scene
+    bool NearBox(const Vec3& mn, const Vec3& mx, std::vector<Collider3D*>& out);
+    void NearPath(const Vec3& origin, const Vec3& dir, float maxDistance, const Vec3& halfSize,
+                  std::vector<Collider3D*>& out);
+    // The overlap and shape-cast calls above, for one query shape (a type of Physics3D.cpp).
+    template <class Shape> std::vector<Collider3D*> OverlapShape(Scene& scene, const Shape& q, std::uint32_t layerMask,
+                                                                 bool queryTriggers, GameObject* ignore);
+    template <class Shape> RaycastHit3D SweepShape(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance,
+                                                   GameObject* ignore, std::uint32_t layerMask, bool queryTriggers);
+    template <class Shape> std::vector<RaycastHit3D> SweepShapeAll(Scene& scene, const Shape& q, const Vec3& dir, float maxDistance,
+                                                                  GameObject* ignore, std::uint32_t layerMask, bool queryTriggers);
 };
 
 } // namespace okay

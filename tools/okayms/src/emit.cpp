@@ -420,6 +420,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
+        int lk_op = 0;
+        int lk_width = 0;
+        if (interlocked_intrinsic(fn.name, &lk_op, &lk_width)) continue;  // compiled inline, never called
         // A call names the decorated symbol when the function has one (a namespace function).
         const std::string extern_name = fn.symbol.empty() ? fn.name : fn.symbol;
         if (fn.imported) add_sym("__imp_" + extern_name, 0, 0, kClassExternal, 0);
@@ -435,6 +438,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     };
     int next_section = 2;
     for (const Global& global : globals) {
+        if (global.external) {
+            add_sym(global.name, 0, 0, kClassExternal, 0);  // defined in another object
+            continue;
+        }
         if (global.vtable) {
             // Read-only: one 8-byte slot per virtual function, filled by an
             // ADDR64 relocation. A pure virtual slot stays zero.
@@ -507,7 +514,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     if (!tls_bytes.empty()) tls_section = next_section++;
     for (Sym& sym : symbols) {
         for (const Global& global : globals) {
-            if (sym.name != global.name) continue;
+            if (sym.name != global.name || global.external) continue;
             sym.section = static_cast<int16_t>(global.vtable ? rdata_section
                                                : global.tls ? tls_section
                                                : global.bss ? bss_section

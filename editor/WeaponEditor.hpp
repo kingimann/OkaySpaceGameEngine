@@ -4,6 +4,7 @@
 // and the window list open it. A dropped .okayweapon file opens it too.
 #include "EditorState.hpp"
 #include <string>
+#include <vector>
 
 namespace oked {
 
@@ -20,5 +21,11 @@ bool WeaponReferenceField(const char* label, std::string& weaponId, std::string&
 
 // OKAY_UI_WEAPONS=1 opens the window. OKAY_UI_WEAPONS_FILE is a sample file to load.
 void WeaponEditorDevHooks(okay::editor::EditorState& ed);
+
+// Unsaved work for the editor's quit question ("Unsaved Changes", editor/main.cpp UnsavedDocWindows): WeaponUnsavedTitles
+// adds a line per unsaved document; WeaponSaveForQuit writes each one that has a file and returns false (with `why`) when
+// one could not be written or has no file yet (then the editor stays open).
+void WeaponUnsavedTitles(std::vector<std::string>& titles);
+bool WeaponSaveForQuit(okay::editor::EditorState& ed, std::string& why);
 
 } // namespace oked

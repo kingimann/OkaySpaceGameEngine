@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0f">
+<title>OkaySpace game</title>
+<!-- The OkaySpace web player page (our own code). Emscripten builds the player with this as its shell
+     (--shell-file platform/web/shell.html); scripts/web_package.py fills in the game's config below.
+     The loading screen matches the player's own boot splash (shared/Splash.hpp): the same cube, colours and bar. -->
+<style>
+  :root { --okay-accent: #3c79cc; --okay-bg-top: #18181b; --okay-bg-bottom: #0d0d0f; --okay-text: #e6e6ea; --okay-dim: #9a9aa3; --okay-track: #36363c; --okay-error: #ff8a7a; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--okay-bg-bottom); color: var(--okay-text);
+               font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; }
+  #okay-stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; }
+  #canvas { display: block; outline: none; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  #okay-stage.fill #canvas { width: 100%; height: 100%; }
+  #okay-stage.aspect #canvas { max-width: 100%; max-height: 100%; }
+  .okay-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                background: linear-gradient(var(--okay-bg-top), var(--okay-bg-bottom)); transition: opacity .35s ease; z-index: 2; }
+  .okay-cover.hidden { opacity: 0; pointer-events: none; }
+  #okay-cube { width: 120px; height: 120px; filter: drop-shadow(0 0 40px rgba(60,121,204,.35)); animation: okay-bob 2.8s ease-in-out infinite; }
+  @keyframes okay-bob { 50% { transform: translateY(-5px); } }
+  #okay-title { margin-top: 18px; font-size: 18px; font-weight: 600; letter-spacing: .02em; text-align: center; padding: 0 16px; }
+  #okay-bar { margin-top: 22px; width: 210px; height: 5px; border-radius: 3px; background: var(--okay-track); overflow: hidden; }
+  #okay-fill { height: 100%; width: 0; border-radius: 3px; background: var(--okay-accent); transition: width .15s linear; }
+  #okay-status { margin-top: 10px; min-height: 1.4em; color: var(--okay-dim); font-size: 13px; text-align: center; padding: 0 16px; }
+  #okay-error { display: none; max-width: 520px; margin: 18px 16px 0; padding: 12px 14px; border-radius: 6px;
+                background: rgba(255,138,122,.08); border: 1px solid rgba(255,138,122,.35); color: var(--okay-error); text-align: center; }
+  #okay-start { background: rgba(0,0,0,.45); pointer-events: none; }
+  #okay-start div { padding: 12px 22px; border-radius: 6px; background: rgba(24,24,27,.9); border: 1px solid var(--okay-accent); font-weight: 600; }
+  #okay-fs { position: absolute; right: 10px; bottom: 10px; z-index: 3; width: 36px; height: 36px; border: 0; border-radius: 6px;
+             background: rgba(24,24,27,.55); color: var(--okay-text); cursor: pointer; opacity: .55; display: none; padding: 8px; }
+  #okay-fs:hover, #okay-fs:focus-visible { opacity: 1; outline: 1px solid var(--okay-accent); }
+  #okay-fs svg { width: 20px; height: 20px; display: block; }
+</style>
+</head>
+<body>
+<div id="okay-stage" class="fill">
+  <canvas id="canvas" tabindex="0" aria-label="Game"></canvas>
+  <div id="okay-loader" class="okay-cover" role="status" aria-live="polite">
+    <svg id="okay-cube" viewBox="0 0 100 100" aria-hidden="true">
+      <polygon points="50,9 92,33 50,57 8,33" fill="#3c79cc"/>
+      <polygon points="8,33 50,57 50,91 8,67" fill="#1f3f6a"/>
+      <polygon points="50,57 92,33 92,67 50,91" fill="#2e5c9b"/>
+      <polyline points="8,33 50,9 92,33" fill="none" stroke="#b1c9eb" stroke-width="1.2"/>
+    </svg>
+    <div id="okay-title">Loading</div>
+    <div id="okay-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="okay-fill"></div></div>
+    <div id="okay-status">Getting ready</div>
+    <div id="okay-error" role="alert"></div>
+  </div>
+  <div id="okay-start" class="okay-cover hidden"><div>Click to play</div></div>
+  <button id="okay-fs" type="button" title="Full screen" aria-label="Full screen">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 7V2h5M13 2h5v5M18 13v5h-5M7 18H2v-5"/></svg>
+  </button>
+</div>
+<script>
+(function () {
+  // Set by scripts/web_package.py in a script it adds to <head> (Emscripten minifies this page, so no comment mark
+  // would survive): {"title", "gameId", "fit": "fill"|"aspect", "width", "height", "wasm", "wasmBytes", "packs": [{"file","bytes"}]}.
+  var config = window.OKAY_WEB_CONFIG || {};
+  var stage = document.getElementById('okay-stage'), canvas = document.getElementById('canvas');
+  var loader = document.getElementById('okay-loader'), fill = document.getElementById('okay-fill');
+  var bar = document.getElementById('okay-bar'), statusEl = document.getElementById('okay-status');
+  var errorEl = document.getElementById('okay-error'), start = document.getElementById('okay-start');
+  var fsButton = document.getElementById('okay-fs');
+  var failed = false, started = false;
+
+  if (config.title) { document.title = config.title; document.getElementById('okay-title').textContent = config.title; }
+  if (config.fit === 'aspect' && config.width > 0 && config.height > 0) {
+    stage.className = 'aspect';
+    var fit = function () {   // the largest box of the game's shape that fits the page
+      var w = stage.clientWidth, h = stage.clientHeight, ar = config.width / config.height;
+      if (w / h > ar) w = Math.round(h * ar); else h = Math.round(w / ar);
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    };
+    fit(); window.addEventListener('resize', fit);
+  }
+
+  function mb(n) { return (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB'; }
+  function showError(text) {
+    failed = true;
+    loader.classList.remove('hidden');
+    statusEl.textContent = 'The game could not start.';
+    errorEl.textContent = text; errorEl.style.display = 'block';
+    bar.style.display = 'none';
+  }
+
+  var Module = window.Module = {
+    canvas: canvas,
+    okayWebConfig: config,
+    print: function (t) { console.log(t); },
+    printErr: function (t) { console.warn(t); },
+    setStatus: function () {},   // Emscripten's own status text: the loading screen below says it in plain words
+    okayOnProgress: function (what, done, total) {
+      if (failed) return;
+      var pct = total > 0 ? Math.min(100, Math.floor(done * 100 / total)) : 0;
+      if (what === 'Downloading') {
+        fill.style.width = pct + '%'; bar.setAttribute('aria-valuenow', pct);
+        statusEl.textContent = total > 0 ? 'Downloading ' + mb(done) + ' of ' + mb(total) : 'Downloading';
+      } else {
+        fill.style.width = '100%';
+        statusEl.textContent = what === 'Unpacking' ? 'Unpacking the game' : 'Starting the game';
+      }
+    },
+    okayOnError: showError,
+    okayOnFirstFrame: function () {
+      if (failed) return;
+      started = true;
+      loader.classList.add('hidden');
+      fsButton.style.display = 'block';
+      if (!Module.okayWeb || !Module.okayWeb.gestured) start.classList.remove('hidden');
+      canvas.focus();
+    },
+    okayOnGesture: function () { start.classList.add('hidden'); }
+  };
+  window.addEventListener('error', function (e) { if (!started) showError('The game could not start: ' + (e.message || 'a script error') + '.'); });
+
+  // Fullscreen: the whole stage, so the canvas keeps its fit; Esc leaves it (the browser's own rule).
+  fsButton.addEventListener('click', function () {
+    var el = stage, doc = document;
+    if (doc.fullscreenElement || doc.webkitFullscreenElement) (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc);
+    else if (el.requestFullscreen) el.requestFullscreen().catch(function () {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    canvas.focus();
+  });
+
+  if (!document.createElement('canvas').getContext('webgl'))
+    showError('This browser or graphics card cannot show the game: WebGL is turned off or not supported. Try another browser, or turn on hardware acceleration in its settings.');
+})();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

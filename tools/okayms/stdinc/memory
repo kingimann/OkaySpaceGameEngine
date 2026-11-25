@@ -5,7 +5,7 @@
 // std::move, not copyable.
 // shared_ptr, own minimal version: a control block (__sp_count) counts the owners and the weak references; the last
 // owner deletes the object with `delete`, the last reference of either kind deletes the block. Differences from the
-// standard: the counts are plain integers, not atomic (like the rest of our <atomic>, single-thread only); no custom
+// standard: (the counts are atomic since round 27, see __sp_count); no custom
 // deleter or allocator, no array form; make_shared makes the object and the block separately; okay-ms reads nullptr as
 // the number 0, so the constructor and the comparisons for nullptr take an int; shared_from_this() on an object no
 // shared_ptr owns gives an empty pointer instead of throwing bad_weak_ptr; dynamic_pointer_cast is not here (the
@@ -13,6 +13,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdlib>
+#include <intrin.h>
 #include <type_traits>
 #include <utility>
 namespace std {
@@ -58,9 +59,8 @@ public:
     bool operator!() const { return p_ == 0; }
     explicit operator bool() const { return p_ != 0; }
 };
-template <typename T> unique_ptr<T> make_unique() { return unique_ptr<T>(new T()); }
-template <typename T, typename A> unique_ptr<T> make_unique(const A& a) { return unique_ptr<T>(new T(a)); }
-template <typename T, typename A, typename B> unique_ptr<T> make_unique(const A& a, const B& b) { return unique_ptr<T>(new T(a, b)); }
+// make_unique ([unique.ptr.create]): the arguments are forwarded to T's constructor, any number of them.
+template <typename T, typename... A> unique_ptr<T> make_unique(A&&... a) { return unique_ptr<T>(new T(std::forward<A>(a)...)); }
 
 // ---- shared ownership ----
 class __sp_count {
@@ -70,14 +70,29 @@ public:
     __sp_count() : __uses(1), __weaks(1) {}
     virtual ~__sp_count() {}
     virtual void __destroy() = 0;
+    // The counts change with the interlocked intrinsics (<intrin.h>, LOCK-prefixed instructions), so owners on several
+    // threads may copy and drop shared_ptrs of one object ([util.smartptr.shared] 4, no data race on the counts).
+    void __add_use() { _InterlockedIncrement(&__uses); }
+    void __add_weak() { _InterlockedIncrement(&__weaks); }
+    // A new owner only while there is one (weak_ptr::lock): the count goes up from what it was, never from 0.
+    bool __try_add_use() {
+        long seen = _InterlockedCompareExchange(&__uses, 0, 0);
+        while (seen > 0) {
+            const long was = _InterlockedCompareExchange(&__uses, seen + 1, seen);
+            if (was == seen) return true;
+            seen = was;
+        }
+        return false;
+    }
+    long __use_count() const { return _InterlockedCompareExchange((long*)&__uses, 0, 0); }
     void __release() {
-        if (--__uses == 0) {
+        if (_InterlockedDecrement(&__uses) == 0) {
             __destroy();
             __release_weak();
         }
     }
     void __release_weak() {
-        if (--__weaks == 0) delete this;
+        if (_InterlockedDecrement(&__weaks) == 0) delete this;
     }
 };
 template <typename Y>
@@ -115,7 +130,7 @@ public:
         __hook(p);
     }
     shared_ptr(const shared_ptr& o) : __p(o.__p), __c(o.__c) {
-        if (__c) ++__c->__uses;
+        if (__c) __c->__add_use();
     }
     shared_ptr(shared_ptr&& o) : __p(o.__p), __c(o.__c) {
         o.__p = 0;
@@ -123,7 +138,7 @@ public:
     }
     template <typename Y>
     shared_ptr(const shared_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
-        if (__c) ++__c->__uses;
+        if (__c) __c->__add_use();
     }
     template <typename Y>
     shared_ptr(shared_ptr<Y>&& o) : __p(o.__p), __c(o.__c) {
@@ -133,14 +148,13 @@ public:
     // The aliasing constructor: owns what o owns, points at p.
     template <typename Y>
     shared_ptr(const shared_ptr<Y>& o, T* p) : __p(p), __c(o.__c) {
-        if (__c) ++__c->__uses;
+        if (__c) __c->__add_use();
     }
     // Used by weak_ptr::lock and shared_from_this: a new owner when the object still lives.
     shared_ptr(T* p, __sp_count* c, int) : __p(0), __c(0) {
-        if (c && c->__uses > 0) {
+        if (c && c->__try_add_use()) {
             __p = p;
             __c = c;
-            ++c->__uses;
         }
     }
     ~shared_ptr() {
@@ -187,7 +201,7 @@ public:
     T* get() const { return __p; }
     T& operator*() const { return *__p; }
     T* operator->() const { return __p; }
-    long use_count() const { return __c ? __c->__uses : 0; }
+    long use_count() const { return __c ? __c->__use_count() : 0; }
     bool unique() const { return use_count() == 1; }
     explicit operator bool() const { return __p != 0; }
     bool operator!() const { return __p == 0; }
@@ -201,7 +215,7 @@ public:
             if (p && !e->__wc) {
                 e->__wobj = static_cast<void*>(p);
                 e->__wc = __c;
-                ++__c->__weaks;
+                __c->__add_weak();
             }
         }
     }
@@ -223,15 +237,15 @@ public:
     typedef T element_type;
     weak_ptr() : __p(0), __c(0) {}
     weak_ptr(const weak_ptr& o) : __p(o.__p), __c(o.__c) {
-        if (__c) ++__c->__weaks;
+        if (__c) __c->__add_weak();
     }
     template <typename Y>
     weak_ptr(const weak_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
-        if (__c) ++__c->__weaks;
+        if (__c) __c->__add_weak();
     }
     template <typename Y>
     weak_ptr(const shared_ptr<Y>& o) : __p(o.__p), __c(o.__c) {
-        if (__c) ++__c->__weaks;
+        if (__c) __c->__add_weak();
     }
     ~weak_ptr() {
         if (__c) __c->__release_weak();
@@ -259,7 +273,7 @@ public:
         weak_ptr t;
         swap(t);
     }
-    long use_count() const { return __c ? __c->__uses : 0; }
+    long use_count() const { return __c ? __c->__use_count() : 0; }
     bool expired() const { return use_count() == 0; }
     shared_ptr<T> lock() const { return shared_ptr<T>(__p, __c, 0); }
     template <typename Y>
@@ -276,7 +290,7 @@ public:
         if (__wc) {
             w.__p = static_cast<T*>(__wobj);
             w.__c = __wc;
-            ++__wc->__weaks;
+            __wc->__add_weak();
         }
         return w;
     }

@@ -46,6 +46,8 @@ public:
     /// name in `connectedBody` afterwards is a new choice: the link is dropped and the name is used (see Joint3DPartner).
     /// A rename of the linked object does not touch `connectedBody`, so it keeps the link. Not saved.
     std::string linkedName;
+    bool linkedNameKnown = false;     ///< `linkedName` was noted (it may be empty: the linked object had no name). Not saved.
+    void NoteLinkedName() { linkedName = connectedBody; linkedNameKnown = true; }
     Vec3  anchor{0, 0, 0};            ///< world anchor point when there's no connected body
     float distance = 1.0f;            ///< rest length (Distance / Spring)
     bool  autoConfigure = true;       ///< set `distance`/offset from the start separation
@@ -93,12 +95,13 @@ public:
             connectedId = other->InstanceId();
             connectedGuid = other->Guid();
             connectedBody = other->name;
-            linkedName = connectedBody;
+            NoteLinkedName();
             partner.object = other;
         } else {
             connectedId = 0;
             connectedGuid.clear();
             linkedName.clear();
+            linkedNameKnown = false;
             partner.object = nullptr;
         }
         partner.version = 0;

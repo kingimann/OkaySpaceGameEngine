@@ -2025,4 +2025,23 @@ void StoryStateInspector(EditorState& ed, StoryState& st) {
     }
 }
 
+void DialogueUnsavedTitles(std::vector<std::string>& titles) {
+    const Ui& u = U();
+    if (u.dirty) titles.push_back("Dialogue: " + (u.path.empty() ? std::string("Untitled") : u.path));
+    if (u.questDirty) titles.push_back("Quests: " + (u.questPath.empty() ? std::string("Untitled") : u.questPath));
+}
+bool DialogueSaveForQuit(EditorState& ed, std::string& why) {
+    Ui& u = U();
+    bool ok = true;
+    if (u.dirty) {
+        if (u.path.empty()) { why = "The dialogue graph has no file yet: save it from the Dialogue window first."; ok = false; }
+        else if (!WriteGraphFile(ed, u.path)) { why = "Couldn't save " + u.path; ok = false; }
+    }
+    if (u.questDirty) {
+        if (u.questPath.empty()) { why = "The quest file has no file yet: save it from the Dialogue window's Quests tab first."; ok = false; }
+        else if (!WriteQuestFile(ed, u.questPath)) { why = "Couldn't save " + u.questPath; ok = false; }
+    }
+    return ok;
+}
+
 } // namespace oked

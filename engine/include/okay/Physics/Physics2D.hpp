@@ -4,8 +4,6 @@
 #include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
 #include <memory>
-#include <set>
-#include <utility>
 #include <vector>
 
 namespace okay {
@@ -59,9 +57,10 @@ struct SurfaceQuery2D {
     explicit operator bool() const { return hit; }
 };
 
-/// A small but real 2D physics engine: semi-implicit Euler integration with
-/// gravity/drag, box & circle collision detection, impulse + positional
-/// resolution, and Enter/Stay/Exit collision and trigger callbacks. Also offers
+/// 2D physics. The step runs on our own physics core (okay::phys::World, the solver 3D uses; see
+/// docs/physics/physics_core.md): a 2D body is a core body that stays in the x/y plane and turns about z only.
+/// It gives gravity and drag, stacking, friction and bounce, sleeping, joints, one-way platforms, and
+/// Enter/Stay/Exit collision and trigger callbacks. Also offers
 /// scene queries (raycast / overlap / circle, box and capsule casts).
 ///
 /// Queries take an optional `ignore` object, a `layerMask` (bit n = collider
@@ -75,7 +74,7 @@ class Physics2D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 
-    Physics2D();          // (out of line: the solver memory is an incomplete type here)
+    Physics2D();          // (out of line: the physics world is an incomplete type here)
     ~Physics2D();
     Physics2D(const Physics2D&) = delete;
     Physics2D& operator=(const Physics2D&) = delete;
@@ -84,11 +83,11 @@ public:
 
     /// Kept only so scene files round-trip (`physicsquality`); 2D has one step and this value changes nothing.
     PhysicsQuality quality = PhysicsQuality::Classic;
-    /// Kept for scene files (the 2D step does not read it). 4 to 30.
+    /// How many passes the contact solver makes each step (4 to 30). More passes: steadier tall stacks, more time.
     int solverIterations = 10;
     /// What the last Step did.
     const PhysicsStepStats& Stats() const { return m_stats; }
-    struct Solver;                      // (the Improved step's memory; defined in Physics2DImproved.inl)
+    struct EngineBridge;                // (the physics world and what ties it to the scene; Physics2DEngine.inl)
 
     /// Advance the simulation for `scene` by `dt` seconds.
     void Step(Scene& scene, float dt);
@@ -175,7 +174,8 @@ public:
                                              GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                                              bool queryTriggers = false);
 
-    void Clear() { m_contacts.clear(); }
+    /// Forget the physics world (the scene is being emptied: its bodies are about to be freed).
+    void Clear();
 
     /// The trigger overlap being reported, valid only inside an OnTrigger*2D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
@@ -195,18 +195,13 @@ public:
     const std::vector<PhysicsDebugJoint2D>& DebugJoints() const { return m_debugJoints; }
 
 private:
-    using Pair = std::pair<Collider2D*, Collider2D*>;
-    std::set<Pair> m_contacts;          // contacts from the previous step
     PhysicsStepStats m_stats;
-    std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics2DImproved.inl)
+    std::unique_ptr<EngineBridge> m_engine;   // made by the first Step
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay2D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact2D> m_debugContacts;
     std::vector<PhysicsDebugBody2D>    m_debugBodies;
     std::vector<PhysicsDebugJoint2D>   m_debugJoints;
-    /// Continuous collision for one fast body: sweep it along this step's motion
-    /// and stop it at the first solid it would otherwise pass through.
-    void SweepBody(Scene& scene, Rigidbody2D* rb, float dt);
 };
 
 } // namespace okay

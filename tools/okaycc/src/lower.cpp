@@ -164,9 +164,11 @@ private:
         case Type::Kind::Pointer:
         case Type::Kind::Reference: return 8;
         case Type::Kind::Array: {
-            int n = 0;
-            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
-            return n * sizeOf(t->inner.get());
+            // The length is a constant expression ([dcl.array] p1): double s[sizeof(P) / 8 + 1] in a
+            // class was taken as no elements when it was not a literal.
+            std::int64_t n = 0;
+            if (t->bound && !constInt(*t->bound, n)) n = 0;
+            return static_cast<int>(n) * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
             auto fields = layoutOf(t);
@@ -464,7 +466,7 @@ private:
 
     // An integer constant expression of a global initializer (ISO C 6.6, C++ [expr.const]):
     // literals, unary and binary operators and casts to an integer type.
-    bool constInt(const Expr& e, std::int64_t& out) {
+    static bool constInt(const Expr& e, std::int64_t& out) {
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
@@ -582,7 +584,7 @@ private:
         init = std::move(lit);
     }
 
-    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+    static bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
         if (op == "+") {
             out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
             return true;
@@ -674,6 +676,7 @@ private:
         auto u = static_cast<std::uint64_t>(v);
         for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
     }
+    std::vector<std::pair<int, std::string>>* fillRelocs_ = nullptr;  // the relocations of the global being filled
     void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
         if (!t || !init) return;
         if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
@@ -714,6 +717,25 @@ private:
                 putAt(b, off, static_cast<std::int64_t>(b64), 8);
             }
             return;
+        }
+        if (t->kind == Type::Kind::Pointer && fillRelocs_) {
+            // An address constant inside constant data (ISO C 6.6 p9): a string literal, &global or
+            // a function's name; 8 bytes the linker fills in.
+            const Expr* x = init;
+            while (x->kind == Expr::Kind::Cast && !x->kids.empty() && x->kids[0]) x = x->kids[0].get();
+            std::string target;
+            if (x->kind == Expr::Kind::String) target = addString(x->text);
+            else if (x->kind == Expr::Kind::Unary && x->text == "&" && !x->kids.empty() && x->kids[0] &&
+                     x->kids[0]->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->kids[0]->text); g && g->global) target = g->gname.empty() ? x->kids[0]->text : g->gname;
+            } else if (x->kind == Expr::Kind::Name) {
+                if (Sym* g = find(x->text); g && g->global && g->func) target = g->gname.empty() ? x->text : g->gname;
+            }
+            if (!target.empty()) {
+                putAt(b, off, 0, 8);
+                fillRelocs_->emplace_back(off, target);
+                return;
+            }
         }
         std::int64_t val = 0;
         if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
@@ -785,7 +807,9 @@ private:
             g.size = sizeOf(d.type.get());
             if (g.size < 0) g.size = 0;
             g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            fillRelocs_ = &g.relocs;
             fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+            fillRelocs_ = nullptr;
             if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
         } else if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
@@ -844,8 +868,9 @@ private:
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
         }
-        if (s->ref && s->agg) {
-            // A reference to an object: its value is the object's address (as for a local object).
+        if (s->ref && (s->agg || s->array)) {
+            // A reference to an object or an array: its value is the object's address (as for a
+            // local object; an array then decays to a pointer to its first element).
             Val v;
             v.op = Operand::vreg(s->reg);
             v.step = s->step;
@@ -1600,6 +1625,12 @@ private:
             one->col = e.col;
             auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
             one->checked = std::make_unique<Type>();
+            // A pointer moves by the size of what it points to ([expr.pre.incr]): the += below is
+            // lowered as it is, without the checker's p = p + n scaling (++ on an int *& moved 1 byte).
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                int st = valueStep(lhsType.get());
+                if (st > 1) one->ival = static_cast<std::uint64_t>(st);
+            }
             auto asg = std::make_unique<Expr>();
             asg->kind = Expr::Kind::Assign;
             asg->text = e.text == "--" ? "-=" : "+=";
@@ -1610,6 +1641,16 @@ private:
             asg->kids.push_back(std::move(one));
             if (lhsType) asg->checked = cloneType(*lhsType);
             if (pre) return lowerExpr(*asg);
+            if (lhsType && lhsType->kind == Type::Kind::Pointer) {
+                // p++ on a pointer: the new value less one step (the value of the += is not scaled
+                // again by a pointer subtraction).
+                Val after = lowerExpr(*asg);
+                int st = valueStep(lhsType.get());
+                int dst = fresh();
+                emitBin(e.text == "--" ? Inst::Op::Add : Inst::Op::Sub, dst, after.op,
+                        Operand::number(st > 1 ? st : 1));
+                return Val{Operand::vreg(dst), after.step, after.inner};
+            }
             auto back = std::make_unique<Expr>();
             back->kind = Expr::Kind::Bin;
             back->text = e.text == "--" ? "+" : "-";
@@ -1869,7 +1910,8 @@ private:
                 }
                 if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
                 storeNamed(*s, result);
-                if (s->global) return Val{result, s->step, s->inner};
+                // (a reference's register holds the referent's address: the value is result)
+                if (s->global || s->ref) return Val{result, s->step, s->inner};
                 return Val{Operand::vreg(s->reg), s->step, s->inner};
             }
             storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);
@@ -2469,7 +2511,9 @@ private:
                 // once in the image like a global's ([basic.start.static]). A value that is not a
                 // constant is reported by fillInit (dynamic initialization of a static local is not
                 // supported); it was silently zero before.
+                fillRelocs_ = &g.relocs;
                 fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+                fillRelocs_ = nullptr;
                 g.bytes.resize(static_cast<std::size_t>(sz));
             } else if (d.init) {
                 // static const float k = 0.5f, static double s = -1.0: the constant's bits; any

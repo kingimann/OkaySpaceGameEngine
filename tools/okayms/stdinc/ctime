@@ -29,3 +29,14 @@ struct tm *localtime(const time_t *t);
 size_t strftime(char *out, size_t n, const char *format, const struct tm *t);
 }
 }
+// The Microsoft C runtime's thread-safe forms (Microsoft's documentation of localtime_s and gmtime_s): they fill the
+// caller's tm and return 0, or an error number. In the runtime DLL they are the 64-bit-time functions _localtime64_s and
+// _gmtime64_s, which these call.
+extern "C" {
+int _localtime64_s(struct tm *out, const time_t *t);
+int _gmtime64_s(struct tm *out, const time_t *t);
+}
+// Macros, not inline functions: okay-ms emits every inline function of a file, and the program would then always import
+// the two runtime functions.
+#define localtime_s(out, t) _localtime64_s((out), (t))
+#define gmtime_s(out, t) _gmtime64_s((out), (t))

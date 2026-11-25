@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -147,6 +148,8 @@ struct Tu {
 };
 
 std::unique_ptr<Type> cloneType(const Type& t);
+std::unique_ptr<Type> classByName(const Type& in);
+bool finishedClassCopy(const Type& t);
 std::unique_ptr<Expr> cloneExpr(const Expr& e);
 
 std::string exprStr(const Expr& e);
@@ -203,16 +206,34 @@ std::string mangleFunc(const std::string& qualified, const Type& fn);
 std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn);
 std::string mangleTypeNoCv(const Type& t);
 std::string mangleData(const std::string& qualified);
+std::string typeInfoSym(const Type& t);  // _ZTI<type>, the type's type_info object (RTTI)
+// Appends the weak _ZTS name and _ZTI object of t (and of its base classes) not yet in 'done'.
+void makeTypeInfo(const Type& t, std::vector<std::unique_ptr<Decl>>& out, std::set<std::string>& done,
+                  int line, int col, const std::string& file);
 
 // templates.cpp
 std::vector<TArg> cloneArgs(const std::vector<TArg>& in);
 std::map<std::string, TemplateSig>& funcTemplateSigs();
 std::vector<InstReq>& instRequests();
+// The namespace each template instance (a class's tag, a function's name) was declared in: its
+// tag or name is not qualified, but unqualified names in it are looked up there ([temp.res] p10).
+std::map<std::string, std::string>& instNamespaces();
 bool& ehActive();
 bool& forceExceptions();
 bool& instDirty();
 std::size_t mangledEnd(const std::string& s, std::size_t j);
+// A pack place of a primary class template made by packs.cpp (parameter "P__pk<j>") may not take
+// the filler type __okay_pack_end: that place is empty, so the copy for a longer pack must not match.
+bool packPlaceGetsEnd(const std::string& param, const Type& arg);
+// A prototype type with its template parameters replaced by the arguments.
+std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const std::vector<TArg>& args);
 std::unique_ptr<Type> typeFromMangle(const std::string& m);
+// Match the tag of a class template instance written with parameters (Node<T>: each parameter as
+// <length>\x02<name>) against an instance's tag Q piece by piece, calling bind(name, type) for each
+// parameter (false: a conflict, the match fails). strict: any other difference fails the match (a
+// partial specialization's pattern); otherwise it is ignored (deduction, which checks later).
+bool matchInstanceTag(const std::string& P, const std::string& Q, bool strict,
+                      const std::function<bool(const std::string&, std::unique_ptr<Type>)>& bind);
 std::string argMangle(const TArg& a);
 std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args);
 

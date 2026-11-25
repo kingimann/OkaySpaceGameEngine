@@ -12,6 +12,7 @@
 // interpreters.
 #include "LuaCode.hpp"
 #include "okay/Core/StringId.hpp"   // HashBytes: the engine's one string hash
+#include "../Render/NumParse.hpp"   // StrToD: strtod with '.' as the point, where from_chars cannot read a double
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -871,6 +872,7 @@ bool State::StrToNumber(const std::string& str, Value& out) {
         // too big for an integer: it is a float
     }
     double d = 0;
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     auto r = std::from_chars(start, e, d, std::chars_format::general);
     if (r.ec == std::errc::result_out_of_range) {
         // overflow gives infinity, underflow zero
@@ -881,6 +883,15 @@ bool State::StrToNumber(const std::string& str, Value& out) {
     } else if (r.ec != std::errc() || r.ptr != e) {
         return false;
     }
+#else
+    // A C++ library without floating-point from_chars (Emscripten's libc++ for the web player): the engine's strtod that
+    // reads '.' whatever the locale. The token was checked above (digits, '.', exponent), and strtod also gives infinity
+    // on overflow and zero on underflow.
+    const std::string tok(start, e);
+    char* end = nullptr;
+    d = ::okay::detail::StrToD(tok.c_str(), &end);
+    if (end != tok.c_str() + tok.size()) return false;
+#endif
     out = Value::Num(neg ? -d : d);
     return true;
 }

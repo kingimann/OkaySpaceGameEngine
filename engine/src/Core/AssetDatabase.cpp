@@ -15,7 +15,10 @@
 #include <set>
 #include <sstream>
 #if defined(_WIN32)
-#else
+#elif defined(__linux__)
+// Folder watching uses inotify, which only Linux has. Other systems (the WebAssembly player, macOS) build without it and
+// StartWatch says the watch is not available there.
+#define OKAY_ASSETDB_INOTIFY 1
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -1383,7 +1386,7 @@ bool AssetDatabase::StartWatch(std::string* error) {
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
     if (w.handle == INVALID_HANDLE_VALUE) { if (error) *error = "cannot watch the folder"; return false; }
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     w.fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (w.fd < 0) { if (error) *error = "cannot watch the folder"; return false; }
     auto add = [&](const fs::path& p, const std::string& rel) {
@@ -1400,6 +1403,9 @@ bool AssetDatabase::StartWatch(std::string* error) {
         if (rel.empty() || rel[0] == '.') { it.disable_recursion_pending(); continue; }
         add(it->path(), rel);
     }
+#else
+    if (error) *error = "watching a folder for changes is not available on this platform";
+    return false;
 #endif
     Watches().emplace(this, std::move(w));
 #if defined(_WIN32)
@@ -1460,7 +1466,7 @@ std::vector<std::string> AssetDatabase::PollWatch() {
     CloseHandle(w.ov.hEvent);
     w.ov.hEvent = nullptr;
     Arm(w);
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     pollfd pfd{};
     pfd.fd = w.fd;
     pfd.events = POLLIN;
@@ -1488,6 +1494,8 @@ std::vector<std::string> AssetDatabase::PollWatch() {
             i += sizeof(inotify_event) + ev->len;
         }
     }
+#else
+    (void)w; (void)add;   // StartWatch never starts a watch here
 #endif
     return out;
 }
@@ -1507,7 +1515,7 @@ void AssetDatabase::StopWatch() {
     }
     if (w.ov.hEvent) CloseHandle(w.ov.hEvent);
     if (it->second.handle != INVALID_HANDLE_VALUE) CloseHandle(it->second.handle);
-#else
+#elif defined(OKAY_ASSETDB_INOTIFY)
     if (it->second.fd >= 0) ::close(it->second.fd);
 #endif
     Watches().erase(it);

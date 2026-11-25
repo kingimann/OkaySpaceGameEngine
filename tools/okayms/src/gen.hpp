@@ -5,6 +5,9 @@
 
 namespace okayms {
 namespace compiler {
+// The interlocked intrinsics compiled inline (gen_expr.cpp): op and width of a name, or false.
+bool interlocked_intrinsic(const std::string& name, int* op, int* width);
+
 struct Gen {
     std::vector<FuncDecl>& funcs;
     std::string error;
@@ -143,6 +146,7 @@ struct Gen {
     }
 
     bool gen_expr(const Node& node);
+    bool gen_interlocked(const Node& node, int op, int width);
     bool store_init(const Type& type, int offset, const Node& node);
     bool gen_stmt(const Node& node);
     // A statement that is not generated (a branch with a constant condition) still takes the scope numbers its blocks
@@ -156,6 +160,7 @@ struct Gen {
     bool gen_addr(const Node& node);
     int size_of(const Type& type) const;
     bool fits_register(const Type& type) const;
+    bool bytes_copyable(int sid) const;
     Global* find_global(const std::string& name);
     // thread_local variables ([basic.stc.thread]), Microsoft x64 TLS: the address of `sym` in this thread's copy is
     // ThreadLocalStoragePointer[_tls_index] (the TEB's TLS array is at gs:[0x58]) plus sym's offset in the .tls section

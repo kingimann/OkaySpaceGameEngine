@@ -314,6 +314,13 @@ public:
     }
     string& append(const char* s) { return append(s, length_of(s)); }
     string& append(const string& other) { return append(other.data_, other.size_); }
+    // append(str, pos, n) ([string.append] 3): at most n characters of str from pos (pos past the end is clamped here,
+    // where the standard throws out_of_range).
+    string& append(const string& other, size_t pos, size_t n = npos) {
+        if (pos > other.size_) pos = other.size_;
+        if (n > other.size_ - pos) n = other.size_ - pos;
+        return append(other.data_ + pos, n);
+    }
     string& append(string_view v) { return append(v.data(), v.size()); }
     string& append(size_t n, char c) {
         reserve_exact(size_ + n);
@@ -383,8 +390,8 @@ public:
         return npos;
     }
     size_t find_first_not_of(const char* set) const { return find_first_not_of(set, 0); }
-    size_t find_last_not_of(const char* set) const {
-        size_t i = size_;
+    size_t find_last_not_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
         while (i > 0) {
             --i;
             bool in = false;
@@ -394,6 +401,45 @@ public:
         }
         return npos;
     }
+    size_t find_last_not_of(const char* set) const { return find_last_not_of(set, npos); }
+    size_t find_last_of(const char* set, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (data_[i] == set[k]) return i;
+        }
+        return npos;
+    }
+    size_t find_last_of(const char* set) const { return find_last_of(set, npos); }
+    // The one-character and string forms of the four searches ([string.find]): a char is a set of one.
+    size_t find_first_of(char c, size_t pos) const { return find(c, pos); }
+    size_t find_first_of(char c) const { return find(c, 0); }
+    size_t find_first_of(const string& set, size_t pos) const { return find_first_of(set.data_, pos); }
+    size_t find_first_of(const string& set) const { return find_first_of(set.data_, 0); }
+    size_t find_last_of(char c, size_t pos) const { return rfind(c, pos); }
+    size_t find_last_of(char c) const { return rfind(c, npos); }
+    size_t find_last_of(const string& set, size_t pos) const { return find_last_of(set.data_, pos); }
+    size_t find_last_of(const string& set) const { return find_last_of(set.data_, npos); }
+    size_t find_first_not_of(char c, size_t pos) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (data_[i] != c) return i;
+        return npos;
+    }
+    size_t find_first_not_of(char c) const { return find_first_not_of(c, (size_t)0); }
+    size_t find_first_not_of(const string& set, size_t pos) const { return find_first_not_of(set.data_, pos); }
+    size_t find_first_not_of(const string& set) const { return find_first_not_of(set.data_, 0); }
+    size_t find_last_not_of(char c, size_t pos) const {
+        size_t i = pos < size_ ? pos + 1 : size_;
+        while (i > 0) {
+            --i;
+            if (data_[i] != c) return i;
+        }
+        return npos;
+    }
+    size_t find_last_not_of(char c) const { return find_last_not_of(c, npos); }
+    size_t find_last_not_of(const string& set, size_t pos) const { return find_last_not_of(set.data_, pos); }
+    size_t find_last_not_of(const string& set) const { return find_last_not_of(set.data_, npos); }
 
     string& erase(size_t pos, size_t n) {
         if (pos >= size_) return *this;
@@ -414,6 +460,12 @@ public:
     }
     string& insert(size_t pos, const char* s) { return insert(pos, s, length_of(s)); }
     string& insert(size_t pos, const string& s) { return insert(pos, s.data_, s.size_); }
+    // insert(pos, n, c) ([string.insert] 5): n copies of c at pos.
+    string& insert(size_t pos, size_t n, char c) {
+        string run;
+        run.append(n, c);
+        return insert(pos, run.data_, run.size_);
+    }
 
     int compare(const char* s) const {
         size_t i = 0;

@@ -37,6 +37,7 @@ struct CSolver {
     int a = 0, b = 0;
     V3 n, t1, t2;
     float friction = 0, restitution = 0, rolling = 0, staticFriction = 0;
+    float positionCorrection = 0.2f;
     int count = 0;
     bool mixed = false;
     CPoint p[4];
@@ -216,6 +217,7 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
         c.n = cp.normal;
         Basis(c.n, c.t1, c.t2);
         c.friction = cp.friction;
+        c.positionCorrection = std::max(s.positionCorrection, std::max(ca.def.positionCorrection, cb.def.positionCorrection));
         c.restitution = cp.restitution;
         c.rolling = cp.rolling;
         c.staticFriction = cp.staticFriction;
@@ -385,7 +387,7 @@ void SolveIsland(World::Impl& w, const IslandWork& is, const SolveSettings& s) {
                 const CPoint& p = c.p[k];
                 const V3 rA = Rotate(A.q, p.cA), rB = Rotate(B.q, p.cB);
                 const float sep = Dot((B.com + rB) - (A.com + rA), p.n);
-                const float C = std::max(std::min(s.positionCorrection * (sep + s.linearSlop), 0.0f), -s.maxCorrection);
+                const float C = std::max(std::min(c.positionCorrection * (sep + s.linearSlop), 0.0f), -s.maxCorrection);
                 if (C >= 0.0f) continue;
                 const float m = EffMass(A, B, rA, rB, p.n);
                 const V3 P = p.n * (-C * m);

@@ -11,6 +11,13 @@ namespace std {
 template <typename T>
 class vector {
 public:
+    // the member types ([vector.overview]); the iterators are pointers
+    typedef T value_type;
+    typedef T *iterator;
+    typedef const T *const_iterator;
+    typedef unsigned long size_type;
+    typedef T &reference;
+    typedef const T &const_reference;
     vector() : data_(nullptr), size_(0), cap_(0) {}
     explicit vector(unsigned long n) : data_(nullptr), size_(0), cap_(0) { resize(n); }
     vector(const T *first, const T *last) : data_(nullptr), size_(0), cap_(0) {
@@ -174,8 +181,50 @@ public:
         data_[at] = std::move(keep);
         return data_ + at;
     }
+    // insert(pos, n, v) and insert(pos, first, last) ([vector.modifiers]): the new elements go at
+    // the end, then turn into place. Two integers are a count and a value ([sequence.reqmts] p14).
+    T *insert(T *pos, unsigned long n, const T &v) {
+        T keep = v;
+        unsigned long at = (unsigned long)(pos - data_);
+        for (unsigned long i = 0; i < n; ++i) push_back(keep);
+        turnEnd(at, n);
+        return data_ + at;
+    }
+    template <class It>
+    T *insert(T *pos, It first, It last) {
+        unsigned long at = (unsigned long)(pos - data_);
+        if constexpr (__okay_is_integral(It)) {
+            return insert(pos, (unsigned long)first, (T)last);
+        } else {
+            unsigned long n = 0;
+            vector<T> tmp;  // the range may be in this vector: copy it first
+            for (; first != last; ++first) tmp.push_back(*first);
+            for (unsigned long i = 0; i < tmp.size_; ++i) push_back(std::move(tmp.data_[i]));
+            n = tmp.size_;
+            turnEnd(at, n);
+            return data_ + at;
+        }
+    }
+    T *insert(T *pos, initializer_list<T> il) { return insert(pos, il.begin(), il.end()); }
 
 private:
+    // The last n elements move to place at, the ones from at on move up behind them: three
+    // reversals (a rotation).
+    void turnEnd(unsigned long at, unsigned long n) {
+        if (n == 0 || at + n >= size_ + 0 && at + n == size_) return;
+        flip(at, size_ - n);
+        flip(size_ - n, size_);
+        flip(at, size_);
+    }
+    void flip(unsigned long a, unsigned long b) {
+        while (b > a + 1) {
+            --b;
+            T t = std::move(data_[a]);
+            data_[a] = std::move(data_[b]);
+            data_[b] = std::move(t);
+            ++a;
+        }
+    }
     T *data_;
     unsigned long size_;
     unsigned long cap_;

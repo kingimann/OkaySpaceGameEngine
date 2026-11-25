@@ -268,8 +268,9 @@ void OkayScriptVM::Impl::RegisterAnimStateMachineBuiltins(BuiltinCtx& c) {
             }
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
-        // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz)
-        // shoves the chest (or the part nearest an optional px, py, pz).
+        // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz) gives the chest (or the part
+        // nearest an optional px, py, pz) a push of that speed in m/s on the upper body (0.3 of the body's mass, about the
+        // chest and arms: the old particle ragdoll pushed one part).
         b["ragdoll"] = [selfObj](std::vector<Value>& a) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             if (!rd) return Value{0.0f};
@@ -278,28 +279,27 @@ void OkayScriptVM::Impl::RegisterAnimStateMachineBuiltins(BuiltinCtx& c) {
         };
         b["ragdoll_push"] = [selfObj](std::vector<Value>& a) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
-            if (!rd || a.size() < 3) return Value{0.0f};
-            const Vec3 v{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
-            const Vec3 at = a.size() >= 6 ? Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}
-                                          : rd->ParticlePosition(rd->BoneParticle(humanoid::Torso));
-            rd->Hit(at, v);
+            if (!rd || !rd->Ready() || a.size() < 3) return Value{0.0f};
+            const Vec3 j = Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()} * (0.3f * rd->mass);
+            if (a.size() >= 6) rd->PushAt(Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, j);
+            else rd->Push(j);
             return Value{1.0f};
         };
         b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
         };
-        // ActiveRagdoll (our own dynamic character): active_ragdoll("knockdown" | "getup" | "die" | "revive" |
+        // The same Ragdoll, by its old ActiveRagdoll names: active_ragdoll("knockdown" | "getup" | "die" | "revive" |
         // "limp" | "powered" | "reactive" | "stumble"), active_ragdoll_push(ix, iy, iz[, px, py, pz]) in N s,
         // active_ragdoll_shoot(ox, oy, oz, dx, dy, dz[, power]) -> 1 on a hit, active_ragdoll_explode(cx, cy, cz,
         // force, radius), active_ragdoll_state() -> "Animated", "Balancing", "Falling", "Down", "GettingUp", ...
         b["active_ragdoll"] = [selfObj](std::vector<Value>& a) {
-            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            auto* ar = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             if (!ar || a.empty()) return Value{0.0f};
             return Value{ar->Trigger(a[0].AsString()) ? 1.0f : 0.0f};
         };
         b["active_ragdoll_push"] = [selfObj](std::vector<Value>& a) {
-            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            auto* ar = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             if (!ar || !ar->Ready() || a.size() < 3) return Value{0.0f};
             const Vec3 j{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
             if (a.size() >= 6) ar->PushAt(Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, j);
@@ -307,20 +307,20 @@ void OkayScriptVM::Impl::RegisterAnimStateMachineBuiltins(BuiltinCtx& c) {
             return Value{1.0f};
         };
         b["active_ragdoll_shoot"] = [selfObj](std::vector<Value>& a) {
-            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            auto* ar = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             if (!ar || a.size() < 6) return Value{0.0f};
             const float power = a.size() >= 7 ? a[6].AsFloat() : 25.0f;
             return Value{ar->Shoot(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()},
                                    Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}, power) ? 1.0f : 0.0f};
         };
         b["active_ragdoll_explode"] = [selfObj](std::vector<Value>& a) {
-            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            auto* ar = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             if (!ar || a.size() < 5) return Value{0.0f};
             ar->Explode(Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat(), a[4].AsFloat());
             return Value{1.0f};
         };
         b["active_ragdoll_state"] = [selfObj](std::vector<Value>&) {
-            auto* ar = selfObj() ? selfObj()->GetComponent<ActiveRagdoll>() : nullptr;
+            auto* ar = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             return Value{std::string(ar && ar->Ready() ? ar->StateName() : "")};
         };
         b["dive"] = [selfObj](std::vector<Value>&) {

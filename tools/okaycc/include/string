@@ -2,11 +2,18 @@
 // char that owns a zero-terminated buffer. No templates (basic_string) yet; iterators are pointers.
 #pragma once
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <__string_view>
 namespace std {
 class string {
 public:
+    typedef char value_type;
+    typedef char *iterator;
+    typedef const char *const_iterator;
+    typedef unsigned long size_type;
     string() : p_(nullptr), n_(0), cap_(0) { release(grow(0)); }
     string(const char *s) : p_(nullptr), n_(0), cap_(0) {
         unsigned long n = s ? strlen(s) : 0;
@@ -22,6 +29,8 @@ public:
         p_[n_] = 0;
     }
     string(const char *s, unsigned long n) : p_(nullptr), n_(0), cap_(0) { assignChars(s, n); }
+    // from a string_view ([string.cons] p8, explicit as there)
+    explicit string(string_view v) : p_(nullptr), n_(0), cap_(0) { assignChars(v.data(), v.size()); }
     string(unsigned long n, char c) : p_(nullptr), n_(0), cap_(0) {
         release(grow(n));
         for (unsigned long i = 0; i < n; ++i) p_[i] = c;
@@ -30,6 +39,12 @@ public:
     }
     string(const char *first, const char *last) : p_(nullptr), n_(0), cap_(0) {
         assignChars(first, (unsigned long)(last - first));
+    }
+    // From any input iterators ([string.cons] p16): istreambuf_iterator, vector<char>::iterator.
+    template <typename It>
+    string(It first, It last) : p_(nullptr), n_(0), cap_(0) {
+        release(grow(0));
+        for (; first != last; ++first) push_back((char)*first);
     }
     ~string() { delete[] p_; }
     string &operator=(const string &o) {
@@ -92,6 +107,8 @@ public:
         return r;
     }
     string &operator+=(const string &o) { return append(o); }
+    string &operator+=(string_view v) { return append(v.data(), v.size()); }
+    string &append(string_view v) { return append(v.data(), v.size()); }
     string &operator+=(char c) {
         push_back(c);
         return *this;
@@ -123,6 +140,23 @@ public:
         n_ += n;
         p_[n_] = 0;
         release(old);
+        return *this;
+    }
+    // [string.assign]: the contents replaced.
+    string &assign(const char *s, unsigned long n) {
+        string t(s, n);  // s may point into this string
+        swap(t);
+        return *this;
+    }
+    string &assign(const char *s) { return assign(s, strlen(s)); }
+    string &assign(const string &o) { return assign(o.p_, o.n_); }
+    string &assign(const string &o, unsigned long pos, unsigned long n = npos) {
+        if (pos > o.n_) pos = o.n_;
+        return assign(o.p_ + pos, o.n_ - pos < n ? o.n_ - pos : n);
+    }
+    string &assign(unsigned long n, char c) {
+        string t(n, c);
+        swap(t);
         return *this;
     }
     string &erase(unsigned long pos = 0, unsigned long n = npos) {
@@ -170,6 +204,30 @@ public:
             if (i == 0) return npos;
         }
     }
+    unsigned long rfind(const string &s, unsigned long pos = npos) const { return rfind(s.c_str(), pos); }
+    unsigned long find_first_of(const string &set, unsigned long pos = 0) const { return scan(set.c_str(), pos, true, true); }
+    unsigned long find_first_of(char c, unsigned long pos = 0) const { return find(c, pos); }
+    unsigned long find_last_of(const string &set, unsigned long pos = npos) const { return scan(set.c_str(), pos, false, true); }
+    unsigned long find_last_of(char c, unsigned long pos = npos) const { return rfind(c, pos); }
+    unsigned long find_first_not_of(const string &set, unsigned long pos = 0) const { return scan(set.c_str(), pos, true, false); }
+    unsigned long find_last_not_of(const string &set, unsigned long pos = npos) const { return scan(set.c_str(), pos, false, false); }
+    // [string.compare]: the part [pos, pos + len) against s; by bytes, then the shorter first.
+    int compareN(unsigned long pos, unsigned long len, const char *s, unsigned long m) const {
+        if (pos > n_) pos = n_;
+        unsigned long r = n_ - pos < len ? n_ - pos : len;
+        unsigned long k = r < m ? r : m;
+        for (unsigned long i = 0; i < k; ++i)
+            if (p_[pos + i] != s[i]) return (unsigned char)p_[pos + i] < (unsigned char)s[i] ? -1 : 1;
+        return r < m ? -1 : (r > m ? 1 : 0);
+    }
+    int compare(unsigned long pos, unsigned long len, const string &o) const { return compareN(pos, len, o.p_, o.n_); }
+    int compare(unsigned long pos, unsigned long len, const char *s) const { return compareN(pos, len, s, strlen(s)); }
+    int compare(unsigned long pos, unsigned long len, const string &o, unsigned long pos2, unsigned long len2 = npos) const {
+        if (pos2 > o.n_) pos2 = o.n_;
+        unsigned long m = o.n_ - pos2 < len2 ? o.n_ - pos2 : len2;
+        return compareN(pos, len, o.p_ + pos2, m);
+    }
+    int compare(unsigned long pos, unsigned long len, const char *s, unsigned long m) const { return compareN(pos, len, s, m); }
     unsigned long find_first_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, true); }
     unsigned long find_first_not_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, false); }
     unsigned long find_first_not_of(char c, unsigned long pos = 0) const {
@@ -188,9 +246,23 @@ public:
     bool operator==(const string &o) const { return strcmp(p_, o.p_) == 0; }
     bool operator!=(const string &o) const { return strcmp(p_, o.p_) != 0; }
     bool operator<(const string &o) const { return strcmp(p_, o.p_) < 0; }
+    bool operator>(const string &o) const { return strcmp(p_, o.p_) > 0; }
+    bool operator<=(const string &o) const { return strcmp(p_, o.p_) <= 0; }
+    bool operator>=(const string &o) const { return strcmp(p_, o.p_) >= 0; }
     const char *data() const { return p_; }
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
+    void swap(string &o) {  // [string.swap]: the buffers change hands
+        char *p = p_;
+        p_ = o.p_;
+        o.p_ = p;
+        unsigned long n = n_;
+        n_ = o.n_;
+        o.n_ = n;
+        unsigned long c = cap_;
+        cap_ = o.cap_;
+        o.cap_ = c;
+    }
 private:
     void assignChars(const char *s, unsigned long n) {
         release(grow(n));
@@ -237,6 +309,19 @@ private:
     unsigned long n_;
     unsigned long cap_;
 };
+// string and string_view ([string.view.cons], [string.view.comparison]).
+inline string_view::string_view(const string &s) : __p(s.data()), __n(s.size()) {}
+inline bool operator==(const string &a, string_view b) { return string_view(a) == b; }
+inline bool operator!=(const string &a, string_view b) { return string_view(a) != b; }
+inline bool operator==(string_view a, const string &b) { return a == string_view(b); }
+inline bool operator!=(string_view a, const string &b) { return a != string_view(b); }
+inline bool operator<(const string &a, string_view b) { return string_view(a) < b; }
+inline bool operator<(string_view a, const string &b) { return a < string_view(b); }
+inline string operator+(const string &a, string_view b) {
+    string r = a;
+    r += b;
+    return r;
+}
 // The non-member operators with a C string on the left ([string.op.plus], [string.cmp]).
 inline string operator+(const char *a, const string &b) {
     string r(a);
@@ -252,6 +337,18 @@ inline bool operator==(const char *a, const string &b) { return b == a; }
 inline bool operator!=(const char *a, const string &b) { return b != a; }
 // hash<string> ([basic.string.hash]): FNV-1a over the characters (Fowler, Noll and Vo; offset basis
 // 14695981039346656037, prime 1099511628211), our own choice of string hash.
+// hash<string_view>: the same FNV-1a as hash<string>, so equal text hashes alike.
+template <>
+struct hash<string_view> {
+    unsigned long operator()(string_view s) const {
+        unsigned long h = 14695981039346656037UL;
+        for (unsigned long i = 0; i < s.size(); ++i) {
+            h ^= (unsigned char)s[i];
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
+};
 template <>
 struct hash<string> {
     unsigned long operator()(const string &s) const {
@@ -263,4 +360,56 @@ struct hash<string> {
         return h;
     }
 };
+// Numbers to strings and back ([string.conversions]): to_string is printf with %d, %u, %ld, %lu and
+// %f; the sto* functions are strtol, strtoul and strtod (the out_of_range and invalid_argument
+// exceptions are not thrown: a bad string gives 0).
+inline string to_string(int v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%d", v);
+    return string(b);
+}
+inline string to_string(unsigned int v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%u", v);
+    return string(b);
+}
+inline string to_string(long v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%ld", v);
+    return string(b);
+}
+inline string to_string(unsigned long v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%lu", v);
+    return string(b);
+}
+inline string to_string(double v) {
+    char b[400];
+    snprintf(b, sizeof(b), "%f", v);
+    return string(b);
+}
+inline string to_string(float v) { return to_string((double)v); }
+inline long stol(const string &s, unsigned long *idx = nullptr, int base = 10) {
+    char *end = nullptr;
+    long v = strtol(s.c_str(), &end, base);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline int stoi(const string &s, unsigned long *idx = nullptr, int base = 10) { return (int)stol(s, idx, base); }
+inline long stoll(const string &s, unsigned long *idx = nullptr, int base = 10) { return stol(s, idx, base); }
+inline unsigned long stoul(const string &s, unsigned long *idx = nullptr, int base = 10) {
+    char *end = nullptr;
+    unsigned long v = strtoul(s.c_str(), &end, base);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline unsigned long stoull(const string &s, unsigned long *idx = nullptr, int base = 10) { return stoul(s, idx, base); }
+inline double stod(const string &s, unsigned long *idx = nullptr) {
+    char *end = nullptr;
+    double v = strtod(s.c_str(), &end);
+    if (idx) *idx = (unsigned long)(end - s.c_str());
+    return v;
+}
+inline float stof(const string &s, unsigned long *idx = nullptr) { return (float)stod(s, idx); }
 }  // namespace std
+#include <__wstring>

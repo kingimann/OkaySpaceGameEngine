@@ -1,0 +1,193 @@
+// <charconv> for okay-cc (ISO/IEC 14882 [charconv]). Our own header. from_chars reads integers in
+// bases 2 to 36 and floating values (by strtod, so its rounding is ours: see lib/extra.c); to_chars
+// writes integers in any base, and floating values with printf: the plain form has the fewest
+// digits that read back to the same value (correct as far as strtod is).
+#pragma once
+#include <cstdio>
+#include <cstdlib>
+#include <system_error>
+namespace std {
+enum class chars_format { scientific = 1, fixed = 2, hex = 4, general = 3 };
+struct from_chars_result {
+    const char *ptr;
+    errc ec;
+};
+struct to_chars_result {
+    char *ptr;
+    errc ec;
+};
+inline int __digit_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 99;
+}
+// The digits of an integer ([charconv.from.chars] p6): an optional '-' (signed types only), then
+// digits of the base; no white space, no '+', no "0x".
+inline from_chars_result __from_int(const char *first, const char *last, unsigned long &mag, bool &neg, bool signedType,
+                                    int base, unsigned long limitPos, unsigned long limitNeg) {
+    from_chars_result r;
+    r.ptr = first;
+    r.ec = errc::invalid_argument;
+    const char *p = first;
+    neg = false;
+    if (signedType && p < last && *p == '-') {
+        neg = true;
+        ++p;
+    }
+    unsigned long v = 0;
+    bool any = false, over = false;
+    unsigned long limit = neg ? limitNeg : limitPos;
+    for (; p < last; ++p) {
+        int d = __digit_value(*p);
+        if (d >= base) break;
+        any = true;
+        if (v > (limit - (unsigned long)d) / (unsigned long)base) over = true;
+        else v = v * (unsigned long)base + (unsigned long)d;
+    }
+    if (!any) return r;
+    r.ptr = p;
+    r.ec = over ? errc::result_out_of_range : errc();
+    mag = v;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, int &value, int base = 10) {
+    unsigned long m = 0;
+    bool neg = false;
+    from_chars_result r = __from_int(first, last, m, neg, true, base, 2147483647UL, 2147483648UL);
+    if (r.ec == errc()) value = neg ? (int)(0 - m) : (int)m;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, long &value, int base = 10) {
+    unsigned long m = 0;
+    bool neg = false;
+    from_chars_result r = __from_int(first, last, m, neg, true, base, 9223372036854775807UL, 9223372036854775808UL);
+    if (r.ec == errc()) value = neg ? (long)(0 - m) : (long)m;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, unsigned int &value, int base = 10) {
+    unsigned long m = 0;
+    bool neg = false;
+    from_chars_result r = __from_int(first, last, m, neg, false, base, 4294967295UL, 0);
+    if (r.ec == errc()) value = (unsigned int)m;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, unsigned long &value, int base = 10) {
+    unsigned long m = 0;
+    bool neg = false;
+    from_chars_result r = __from_int(first, last, m, neg, false, base, 18446744073709551615UL, 0);
+    if (r.ec == errc()) value = m;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, double &value,
+                                    chars_format fmt = chars_format::general) {
+    from_chars_result r;
+    r.ptr = first;
+    r.ec = errc::invalid_argument;
+    if (first >= last || *first == '+' || *first == ' ' || (*first >= 9 && *first <= 13)) return r;
+    (void)fmt;
+    char buf[400];
+    long n = last - first;
+    if (n > 399) n = 399;
+    for (long k = 0; k < n; ++k) buf[k] = first[k];
+    buf[n] = 0;
+    char *end = nullptr;
+    double v = strtod(buf, &end);
+    if (end == buf) return r;
+    r.ptr = first + (end - buf);
+    double big = 1.0e308;
+    if (v > big * 10.0 || v < -big * 10.0) {
+        r.ec = errc::result_out_of_range;
+        return r;
+    }
+    r.ec = errc();
+    value = v;
+    return r;
+}
+inline from_chars_result from_chars(const char *first, const char *last, float &value,
+                                    chars_format fmt = chars_format::general) {
+    double d = 0;
+    from_chars_result r = from_chars(first, last, d, fmt);
+    if (r.ec == errc()) value = (float)d;
+    return r;
+}
+inline to_chars_result __to_chars_text(char *first, char *last, const char *text, long n) {
+    to_chars_result r;
+    if (n > last - first) {
+        r.ptr = last;
+        r.ec = errc::value_too_large;
+        return r;
+    }
+    for (long k = 0; k < n; ++k) first[k] = text[k];
+    r.ptr = first + n;
+    r.ec = errc();
+    return r;
+}
+inline to_chars_result __to_chars_uint(char *first, char *last, unsigned long v, bool neg, int base) {
+    char tmp[72];
+    int n = 0;
+    do {
+        int d = (int)(v % (unsigned long)base);
+        tmp[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
+        v /= (unsigned long)base;
+    } while (v != 0);
+    if (neg) tmp[n++] = '-';
+    char out[72];
+    for (int k = 0; k < n; ++k) out[k] = tmp[n - 1 - k];
+    return __to_chars_text(first, last, out, n);
+}
+inline to_chars_result to_chars(char *first, char *last, int value, int base = 10) {
+    return __to_chars_uint(first, last, value < 0 ? 0UL - (unsigned long)(long)value : (unsigned long)value, value < 0, base);
+}
+inline to_chars_result to_chars(char *first, char *last, long value, int base = 10) {
+    return __to_chars_uint(first, last, value < 0 ? 0UL - (unsigned long)value : (unsigned long)value, value < 0, base);
+}
+inline to_chars_result to_chars(char *first, char *last, unsigned int value, int base = 10) {
+    return __to_chars_uint(first, last, value, false, base);
+}
+inline to_chars_result to_chars(char *first, char *last, unsigned long value, int base = 10) {
+    return __to_chars_uint(first, last, value, false, base);
+}
+// The plain form ([charconv.to.chars] p2): the fewest significant digits that read back to the same
+// value, written as %f or %e, whichever is shorter (%f on a tie).
+inline to_chars_result __to_chars_shortest(char *first, char *last, double value, int maxDigits, bool isFloat) {
+    char buf[400];
+    if (value != value || value - value != 0.0) {
+        int n = snprintf(buf, sizeof(buf), "%g", value);
+        return __to_chars_text(first, last, buf, n);
+    }
+    int p = 1;
+    for (; p < maxDigits; ++p) {
+        snprintf(buf, sizeof(buf), "%.*e", p - 1, value);
+        double back = strtod(buf, nullptr);
+        if (isFloat ? (float)back == (float)value : back == value) break;
+    }
+    char sci[64];
+    int ns = snprintf(sci, sizeof(sci), "%.*e", p - 1, value);
+    // the decimal exponent, read from the %e text
+    int ex = 0;
+    for (int k = 0; k < ns; ++k)
+        if (sci[k] == 'e') ex = (int)strtol(sci + k + 1, nullptr, 10);
+    int decimals = p - 1 - ex;
+    if (decimals < 0) decimals = 0;
+    int nf = snprintf(buf, sizeof(buf), "%.*f", decimals, value);
+    if (nf <= ns) return __to_chars_text(first, last, buf, nf);
+    return __to_chars_text(first, last, sci, ns);
+}
+inline to_chars_result to_chars(char *first, char *last, double value) {
+    return __to_chars_shortest(first, last, value, 17, false);
+}
+inline to_chars_result to_chars(char *first, char *last, float value) {
+    return __to_chars_shortest(first, last, (double)value, 9, true);
+}
+inline to_chars_result to_chars(char *first, char *last, double value, chars_format fmt, int precision) {
+    char buf[400];
+    const char *f = fmt == chars_format::fixed ? "%.*f" : fmt == chars_format::scientific ? "%.*e" : "%.*g";
+    int n = snprintf(buf, sizeof(buf), f, precision, value);
+    return __to_chars_text(first, last, buf, n);
+}
+inline to_chars_result to_chars(char *first, char *last, double value, chars_format fmt) {
+    if (fmt == chars_format::general) return to_chars(first, last, value);
+    return to_chars(first, last, value, fmt, 6);
+}
+}  // namespace std

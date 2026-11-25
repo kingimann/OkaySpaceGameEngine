@@ -1,0 +1,27 @@
+// <cwctype> for okay-cc (ISO/IEC 14882 [cwctype.syn], ISO C 7.30): the wide character classes of the
+// "C" locale, where only the ASCII range has classes and case mappings. Our own header, inline.
+#pragma once
+typedef unsigned int wint_t;
+typedef unsigned long wctype_t;
+#define WEOF ((wint_t)0xFFFFFFFFu)
+#define OKAYCC_WCTYPE_DEFS                                                                                     \
+    inline int iswdigit(wint_t c) { return c >= '0' && c <= '9'; }                                             \
+    inline int iswupper(wint_t c) { return c >= 'A' && c <= 'Z'; }                                             \
+    inline int iswlower(wint_t c) { return c >= 'a' && c <= 'z'; }                                             \
+    inline int iswalpha(wint_t c) { return iswupper(c) || iswlower(c); }                                       \
+    inline int iswalnum(wint_t c) { return iswalpha(c) || iswdigit(c); }                                      \
+    inline int iswxdigit(wint_t c) { return iswdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); } \
+    inline int iswspace(wint_t c) { return c == ' ' || (c >= 9 && c <= 13); }                                  \
+    inline int iswblank(wint_t c) { return c == ' ' || c == '\t'; }                                            \
+    inline int iswcntrl(wint_t c) { return c < 32 || c == 127; }                                               \
+    inline int iswprint(wint_t c) { return c >= 32 && c < 127; }                                              \
+    inline int iswgraph(wint_t c) { return c > 32 && c < 127; }                                               \
+    inline int iswpunct(wint_t c) { return iswgraph(c) && !iswalnum(c); }                                      \
+    inline wint_t towupper(wint_t c) { return iswlower(c) ? c - 32 : c; }                                      \
+    inline wint_t towlower(wint_t c) { return iswupper(c) ? c + 32 : c; }
+OKAYCC_WCTYPE_DEFS
+namespace std {
+typedef ::wint_t wint_t;
+OKAYCC_WCTYPE_DEFS
+}  // namespace std
+#undef OKAYCC_WCTYPE_DEFS

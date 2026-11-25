@@ -296,12 +296,11 @@ int main() {
         s.Start();
         for (int i = 0; i < 4; ++i) s.Update(1.0f / 60.0f);
         float x3 = bullet->transform->Position().x, x2 = b2->transform->Position().x;
-        // 3D stops it whether or not Continuous Collision is ticked (one physics path: fast bodies are always caught);
-        // 2D without it still jumps past the thin wall
+        // 3D and 2D stop it whether or not Continuous Collision is ticked (one physics path: fast bodies are always
+        // caught; the old 2D step let the unticked one jump past the thin wall)
         CHECK(x3 < 5.0f);
         CHECK(rb->velocity.x <= 1e-3f);
-        if (ccd == 0) CHECK(x2 > 6.0f);
-        else CHECK(x2 < 5.0f);
+        CHECK(x2 < 5.0f);
     }
 
     // ---- Debug recording is off by default and cheap ------------------------

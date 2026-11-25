@@ -4,11 +4,11 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (Round 26 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-25 (Round 27 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Status, 2026-11-25 (Round 26, newest):** 40 of the 468 `engine/src/**/*.cpp` files compile to an object (31 after Rounds 24 and 25, same command, measured by `tools/okayms/survey.sh`). okay-cl does not define `_WIN32`, so these are the engine's non-Windows code paths; with `/D_WIN32 /D_WIN64` 34 compile and 51 stop at `<windows.h>`. Next blockers: `<fcntl.h>` (34, a POSIX path), `std::min` deduction in `CameraMath.hpp` (30), `Mesh.hpp:971` (28), an array length from a constant in `ReaderCommon.hpp` (28), `Tween.hpp:124` (24). Still no PDB, no multiple inheritance, no virtual bases, no `.CRT$XCU` startup list, `<atomic>` is single-thread. Linux with Wine only; nothing was run on Windows. Details: Round 26 at the end.
+**Status, 2026-11-25 (Round 27, newest):** okay-ms is a Windows compiler, so the headline count is now the Windows one: with `SURVEY_FLAGS="/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64"` **60** of the 476 `engine/src/**/*.cpp` files compile to an object (34 before this round, same command and file list); without those flags (the non-Windows paths) **50** (40 before). No file stops at `<windows.h>` any more (51 before): okay-ms has its own `<windows.h>`, split by area under `tools/okayms/stdinc/okay_win32/`. `<atomic>` and the `shared_ptr` counts are now atomic between threads (LOCK-prefixed instructions). Next blockers (Windows): `Mesh.hpp:1563` (52), `std::is_invocable_v` in `Jobs.hpp` (25), `SaveData.hpp:357` (20), the okayscript include path (16), `NativeFetch.hpp:341` (12). Still no PDB, no multiple inheritance, no virtual bases, no `.CRT$XCU` startup list. okay-cl still does not define `_WIN32` by itself. Linux with Wine only; nothing was run on Windows. Details: Round 27 at the end.
 
 This tree stays off by default: not in CMake, CI, the engine, or a release. It is not a replacement for MSVC. This is years of work. The host tool is POSIX; a Windows run was not run on Windows. Wine is used when it is installed, and a Wine run is written down with the command. Where MinGW gcc is installed, sixteen small programs are compiled with okay-cl and with `x86_64-w64-mingw32-gcc`, run under Wine, and compared. If MinGW is absent that comparison is skipped.
 
@@ -747,3 +747,132 @@ Not done / unverified / differences (Round 26):
 - `dynamic_cast`: pointers only, single inheritance, no cross-cast, no reference form.
 - The range `for` over iterator objects and loop-condition temporaries: a temporary with a destructor in a loop condition whose value is a class or floating point type is refused with a message.
 - Found and not fixed: `c ? a : b` where `a` and `b` are class objects (one an lvalue) fails with "not an address" (our `<filesystem>` avoids it); a C cast of a class object to its own class fails the same way; a lambda that captures `this` is refused (4 files stop there); `std::min` deduction fails in `CameraMath.hpp` in the context of the engine headers (alone it works; not found yet); many smaller first errors listed by the survey.
+
+### Round 27: our own `<windows.h>`, the Windows survey as the headline, real atomics, lambdas that capture `this`
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-27`, 2026-11-25. Not run on Windows.
+
+Measurement: `tools/okayms/survey.sh` as in Round 26 (476 files now; the file list grew on main), two at a time, 300-second limit. okay-ms is a Windows compiler, so from this round the headline is the Windows survey, `SURVEY_FLAGS="/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64"`; the plain survey (no flags: the engine's non-Windows paths) is kept for comparison.
+
+| Survey | Before (round 26 compiler and headers) | After |
+|---|---|---|
+| Windows (`/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64`) | 34 of 476 | **60 of 476** |
+| Plain (no flags) | 40 of 476 | **50 of 476** |
+| Files that stop at `<windows.h>` (Windows survey) | 51 | 0 |
+
+No file that compiled before stops compiling, in either survey. New on the Windows survey (26): `AI/NavMesh`, `Animation/HumanoidMotion`, `Components/SteamManager`, `Core/FramePacing`, `Core/ImageWrite`, `Crypto/Aead`, `Crypto/Random` (the engine's own files compiled; no cryptography was written here), `Graphics/Image`, `Input/ControllerMapping`, `Input/InputRecorder`, `Modeling/Curve`, `Modeling/Measure`, `Modeling/MeshLibrary`, `Modeling/ScreenSelect`, `Optimize/BatchPlanner`, `Optimize/LodGroup`, `Optimize/OcclusionBuffer`, `Render/BvhReader`, `Render/ConsoleRenderer`, `Render/DxfReader`, `Render/MeshObj`, `Render/MeshShapes`, `Render/MeshUV`, `Render/NdoReader`, `Render/TerragenReader`, `Texture/Export`. Next blockers on the plain survey: `Mesh.hpp:1563` (52), `localtime_r` (41, the POSIX path of `Log::Stamp`), `<fcntl.h>` (34).
+
+Our own Win32 headers (in `tools/okayms/stdinc/`), declarations only, written in our own words from Microsoft's public Win32 API documentation, only what the engine uses, linked against the system DLLs; no text from the Windows SDK, MinGW or Wine headers:
+
+| Header | Area |
+|---|---|
+| `windows.h` | includes the areas below; no `min`/`max` macros, no A/W name macros (the engine calls the W or A function by name) |
+| `okay_win32/base.h` | data types (x64 sizes), handle types (distinct pointer types), `LARGE_INTEGER`, `GUID`, `SECURITY_ATTRIBUTES`, `ZeroMemory`, `CloseHandle` |
+| `okay_win32/errors.h` | `GetLastError`, error codes, `HRESULT` values and `SUCCEEDED`/`FAILED` |
+| `okay_win32/sync.h` | waits, events, kernel mutexes, critical sections, slim reader/writer locks, condition variables |
+| `okay_win32/process.h` | threads, processes (`CreateProcessW`, `STARTUPINFOW`, attribute lists), environment variables |
+| `okay_win32/files.h` | files, directories, attributes, `OVERLAPPED`, `ReadDirectoryChangesW`, standard handles |
+| `okay_win32/system.h` | `SYSTEM_INFO`, memory status, tick counts, performance counter, `SYSTEMTIME`, locale name, debugger checks, `OSVERSIONINFOW` |
+| `okay_win32/modules.h` | `LoadLibrary*`, `GetProcAddress`, `GetModuleHandle*`, `GetModuleFileName*` |
+| `okay_win32/strings.h` | `MultiByteToWideChar`, `WideCharToMultiByte` |
+| `okay_win32/memory.h` | global memory (clipboard), virtual memory, process heap |
+| `okay_win32/user.h` | message boxes and the clipboard (the window, message and input functions of `OwnWin32.cpp` are not declared yet) |
+| `winhttp.h`, `tlhelp32.h`, `bcrypt.h` (only `BCryptGenRandom`), `process.h` (`_beginthreadex`), `intrin.h` (interlocked intrinsics) | |
+
+The structure layouts are checked against the DLLs, not only against MinGW's numbers: the test programs call kernel32, winhttp and msvcrt for real under Wine (a file is written, read back and removed; `WinHttpCrackUrl` fills `URL_COMPONENTS`; Tool Help lists the program's own module; four threads count under a critical section; a static member function starts a thread by `&W::Main` and by its bare name).
+
+The blockers of this round, by files (first error in the Windows survey before the round, or the next one once the one before was fixed):
+
+| Files | Blocker | Done |
+|---|---|---|
+| 51 | `<windows.h>` | our own `<windows.h>` (above), `__stdcall`/`__cdecl`/`__forceinline` accepted, anonymous struct and union members, several typedef names in one declaration (`typedef struct _X {...} X, *PX;`), wide character literals (`L'\0'`), `new (std::nothrow)`, `new T{...}`, reference casts (`static_cast<const Base&>(d)`), pointers to static member functions (`&W::Main`, `W::Main`, bare `Main`), an imported extern "C" function declared twice with other parameter types links to its one name |
+| 30 | `CameraMath.hpp:412` `std::min` deduction only among engine headers | the cause was 19 nested classes named `Entry`: classes are kept under their plain names, so `Entry` meant the first one. A nested class now remembers its outer class, a name used inside a class finds the class nested there first, and members of a nested class are decorated `Inner@Outer` |
+| 28 | `Mesh.hpp:971` | a member function hides a type of the same name when called (`Bounds(lo, hi)` with a `struct Bounds` elsewhere); then `Mesh.hpp` (157 files after the other fixes) also needed: brace elision for `std::array` elements, a reference member in a braced initializer, `x = y = v` with objects, a range `for` over `{&a, &b}`, a class template derived from a class template (the base's instance cleared the derived one's symbol), a fold over `operator<<`, static members found from a lambda, `std::unique`/`replace`/`rotate`/heap operations/`transform`/`equal`/`nth_element`/`partial_sort`/`set_intersection` |
+| 28 | `ReaderCommon.hpp:203` "expected an array length" | a `const`/`constexpr` local integer with a constant initializer is a constant |
+| 24 | `Tween.hpp:124` | a data member hides a type or template of the same name (`duration` and `std::chrono::duration`, `thread` and `std::thread`) in statements, casts and template-ids |
+| 17 | `PathSafety.hpp:118` | `if (init; cond)` |
+| 12 | `c ? a : b` with class objects, "not an address" (`Log::Trim`) | also for classes with a destructor (the chosen value is a temporary destroyed after the statement, and a `return` of it is the result itself) |
+| 16 | `NetworkManager.hpp:1222`, `RelayServer.hpp:192` | `unordered_map<K, V, Hash>` and `unordered_set<T, Hash>`: with a hasher given they are hash tables (keys with `==` and no `<`) |
+| 10 | `NaturalGait.hpp:60` | adjacent string literals were never joined; now they are (also across lines, and a plain part next to a wide one) |
+| 9 | `Guided.hpp:271` | `extern` variable declarations (an undefined symbol; a later definition in the file takes its place) |
+| 4+ | lambdas capturing `this` | `[this]`, and `[&]`/`[=]` in a member function: the closure keeps the pointer; members (and `this`) in the body go through it, also from a lambda in a lambda |
+| — | `<atomic>` single-thread | the interlocked intrinsics (`_InterlockedExchange`, `_InterlockedExchangeAdd`, `_InterlockedCompareExchange`, `_InterlockedIncrement`, `_InterlockedDecrement`, 8/16/32/64-bit) are compiled inline as `XCHG`, `LOCK XADD`, `LOCK CMPXCHG`; `<atomic>` is built on them (all operations sequentially consistent), and the `shared_ptr`/`weak_ptr` counts use them |
+
+Also found and fixed on the way: a function-like macro call over several lines was not read; a plain struct as a default template argument (`template <class H = Tag>`) was not taken as a type; a pointer to a class in a braced list of a local array was refused; `std::string` had no `find_first_not_of(char)` and similar, and a char argument was silently taken as a `const char*` (a crash in `Log::Trim`); `getenv`, `abort`, `exit`, `atol`, `strtoll`, `rand` and friends in `<cstdlib>`; `localtime_s`/`gmtime_s` (as macros over the C runtime's `_localtime64_s`/`_gmtime64_s`); `memchr` in `<cstring>` and in okay-ms's runtime.
+
+Tests: new `tests/test_round27.cpp`, 12 programs, each built by okay-cl at `/O0`, `/O1` and `/O2`, linked, run under Wine, and built by MinGW g++ with its own headers (MinGW's `<windows.h>` on the g++ side) and run: `tests 12, checks passed 168, failed 0`. With the compiler of round 26 (and this round's headers): `tests 12, checks passed 27, failed 36` (every program fails: parse errors, or `_InterlockedExchange` undefined). The atomic program has four threads add 20000 each to shared counters and checks 80000; the shared_ptr program copies and locks one `shared_ptr` from four threads. `program_check.hpp` now links the g++ reference with the import library of any DLL a program names (`winhttp.dll:...` gives `-lwinhttp`). `test_runtime.cpp` checks `memchr`. The whole suite (`tools/okayms/build.sh`, 69 test programs) passes.
+
+Written from Microsoft's public Win32 API documentation (Windows Data Types, Synchronization, Processes and Threads, File Management, System Information, Dynamic-Link Libraries, Unicode and Character Sets, Memory Management, Message Boxes, Clipboard, WinHTTP, Tool Help, `BCryptGenRandom`, the interlocked intrinsics, `_beginthreadex`, `localtime_s`, the x64 calling convention), the Intel and AMD manuals (XCHG, XADD, CMPXCHG, the LOCK prefix), ISO/IEC 14882 ([class.union.anon], [class.nest], [basic.lookup.unqual], [basic.scope.hiding], [dcl.typedef], [dcl.stc], [basic.def], [basic.link], [lex.ccon], [lex.string], [cpp.replace], [expr.new], [expr.static.cast], [expr.ass], [expr.cond], [expr.prim.lambda.capture], [expr.prim.lambda.closure], [conv.func], [stmt.if], [dcl.init.aggr], [temp.param], [temp.variadic], [class.temporary], [atomics], [util.smartptr.shared], [unord.map], [unord.set], [string.find], [alg.*], [cstring.syn], [cstdlib.syn]) and ISO/IEC 9899 (7.22, 7.24). No code from MSVC's STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project.
+
+Not done / unverified / differences (Round 27):
+
+- Not run on Windows. The 60 objects were not linked or run. okay-cl still does not define `_WIN32` itself; whether it should by default (it is a Windows compiler) is left to the coordinator: the survey and the tests pass the flags.
+- Not declared yet: the window, message, input, raw input and HID functions (`OwnWin32.cpp`, `OwnWin32Hid.cpp`), COM and WASAPI (`OwnWin32Audio.cpp`: `<initguid.h>`, `<mmdeviceapi.h>`), `<shellapi.h>`, `<ntdef.h>`, `<winsock2.h>`, `<dbghelp.h>`, the crash-handler structures (`CONTEXT`, `EXCEPTION_POINTERS`), OpenGL (`GL/gl.h`), Direct3D.
+- `<windows.h>` differences on purpose: no `min`/`max` macros, no A/W name macros, no `TEXT()`/`_T()`; `WIN32_LEAN_AND_MEAN` changes nothing. `wchar_t` is still `unsigned short` in okay-ms, and a wide character literal is an `int`.
+- `<atomic>`: every operation is a full barrier (correct for every memory order, slower than needed for relaxed ones); a load is a locked compare-exchange (it writes the memory back); objects larger than 8 bytes are not supported; `fetch_add` of `float`/`double` is a compare-exchange loop. `compare_exchange_weak` never fails spuriously.
+- The interlocked intrinsics are recognised by name: a program that defines its own function named `_InterlockedExchange` gets the instruction instead. `_InterlockedOr`/`And`/`Xor` are not intrinsics yet.
+- `unordered_map`/`unordered_set` with a hasher: an erase moves the last entry into the hole and builds the table again (linear time, and a pointer to the moved entry changes); a key-equality argument is ignored (keys are compared with `==`). Without a hasher they are still the sorted forms (need `<`).
+- Lambdas: `[*this]` is refused; a lambda that captures `this` in a member function of a class nested in a template is not tested.
+- Nested classes: the lookup prefers the class nested in the class being read or compiled; outside any class, two classes of one name at namespace scope (in different namespaces) still mean the first one.
+- `new (std::nothrow) T`: the constructor still runs when `malloc` returns null.
+- `extern` variables have plain (not decorated) names, like all okay-ms variables, so they link only with other okay-ms objects.
+- Found and not fixed: overload resolution accepts an integer (a `char` literal) for a `const char*` parameter when no better overload exists (it crashed `Log::Trim` before the char overloads were added); `std::is_invocable_v` (`Jobs.hpp`, 25 files) is missing; `Mesh.hpp:1563` stops 52 files in the context of other headers (`Mesh.hpp` alone compiles; not found yet); `PhysicsMaterials` `C::Minimum` (11); `VsValue::AsArray` "not an address" (11); `thread_local` objects with a constructor at namespace scope (`Jobs.cpp`).
+
+### Round 28: Windows macros by default, the blockers behind `Mesh.hpp:1563` and `Jobs.hpp`, and our own import libraries (`okay-lib`)
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-28`, 2026-11-25. Not run on Windows.
+
+**Predefined macros (decision of the coordinator).** okay-cl now defines what the Microsoft x64 compiler documents for x64: `_WIN32` 1, `_WIN64` 1, `_M_X64` 100, `_M_AMD64` 100, `_MSC_VER` 1916, `_MSC_FULL_VER` 191627045, `_MSVC_LANG` 201703L, `_INTEGRAL_MAX_BITS` 64 and `__cplusplus` 201703L (as with `/Zc:__cplusplus`). `/U NAME` leaves one out; `/D` replaces a value. 1916 (the last Visual Studio 2017 compiler, the first with the C++17 language complete) was chosen because the engine only tests whether `_MSC_VER` is defined, never a value: then it uses `__forceinline`, `<intrin.h>` with `_umul128`/`_BitScanForward64`/`_BitScanReverse64` (added to our `<intrin.h>`, as plain inline functions), `#pragma comment(lib)` (ignored), and in `OwnWin32Hid.cpp` a `typedef LONG NTSTATUS` (no harm). `survey.sh` now runs the Windows survey by default; `SURVEY_PLAIN=1` leaves the macros out with `/U` for the plain survey. The survey also passes `/I okayscript/include`, the include folder CMake gives the engine through `okayscript_lang` (16 files stopped at `okayscript/Lexer.hpp` before).
+
+Measurement: `tools/okayms/survey.sh`, 476 files, one at a time, 300-second limit. "Before" is the round 27 compiler and headers (commit 23ebf4222) with the same include folders, so the only difference is the compiler and `tools/okayms/stdinc`.
+
+| Survey | Before (round 27) | After |
+|---|---|---|
+| Windows (default; before: `/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64`) | 60 of 476 | **139 of 476** |
+| Plain (`SURVEY_PLAIN=1`; before: no flags) | 50 of 476 | **98 of 476** |
+
+No file that compiled before stops compiling (checked file by file in both surveys). Next blockers on the Windows survey: multiple inheritance (`ModelAnimator.hpp:36`, 59; `SaveFramework.hpp:366`, 6), `UIWidgetsMore.hpp:544` (20), "unknown field swap" in `Inventory::NotifyChanged` (17), `XmlLite.hpp:438` (8), user-defined literals (`StringId.hpp:96` `operator""_sid`, 7), `std::char_traits` (`OfficialGame.hpp:204`, 7). On the plain survey: `localtime_r` (69, the POSIX path of `Log::Stamp`), multiple inheritance (59), `<fcntl.h>` (34).
+
+The blockers of this round, by files (first error in the Windows survey, or the next one once the one before was fixed):
+
+| Files | Blocker | Done |
+|---|---|---|
+| 52 | `Mesh.hpp:1563` only next to other headers | the cause: after `<variant>`, `std::get<0>(tuple)` read `0` against `get<T>(variant)` (the first `get` declared). Explicit template arguments are now read against each overload of a function template, and only the overloads they fit are considered. Then `VsValue::AsArray` (11): `return nullptr;` for a `shared_ptr` result was stored as a raw value; a scalar returned to a class result is now made by the converting constructor (`[stmt.return]`) |
+| 25 | `Jobs.hpp:257` `std::is_invocable_v` | variable templates (`template <class T> constexpr bool x_v = ...;`, read again with the arguments bound at each use), the `_v` traits in `<type_traits>`, `is_invocable` (an intrinsic `__is_invocable`: a call operator or function fits by its number of parameters and loose argument conversions), `decltype(x)*` casts, `decltype` of a local of the function around a lambda, parameters in scope in a trailing return type (`-> decltype(f())`) |
+| 20 | `SaveData.hpp:357` "no operator()" | `std::filesystem::path(path)` with a parameter named `path`: a namespace-qualified class name is the class even where a local of that name is visible; then `std::remove(path)` beside the algorithm `std::remove` (chosen by number of arguments; `remove`/`rename` now in `<cstdio>`) |
+| 16 | `okayscript/Lexer.hpp` | the survey passes `/I okayscript/include` |
+| 12 | `NativeFetch.hpp:341` | the same `std::filesystem::path(path)` fix |
+| 12 | `AccountService.hpp:110` | two classes of one name in different namespaces (`detail::Sha256` wrapping `crypto::Sha256`): the later one is decorated `Name@ns` and keeps its own members; a lookup prefers the namespace written in front of the name, then the namespace being read |
+| 11 | `C::Minimum` | gone with the fixes above |
+| 51 | `LoadingScreenLayout.hpp:107` | `using B = LoadingScreen::BarStyle;` then `B::Segmented` (a scoped enumeration through an alias; the latest alias before a use counts) |
+| 46 | `GameObject.hpp:379` | `Get<T>()` without `this->` in a member function (a member function template with explicit arguments) |
+| 36 | `UITabs.hpp:601` | unary `+` |
+| 43 | `UIInputField.hpp:288` | `string::insert(pos, n, c)` was missing (found by the new integer-to-pointer check below) |
+| 1 | `Jobs.cpp` | `struct JobSystem::Impl { ... }` outside its class, the class's typedefs in out-of-class parameter lists, `R& C::f()` outside the class, `while (T x = e)`, nested and local classes calling static members of the class around them, closures that copy and destroy a captured `shared_ptr` (implicit copy constructor and destructor), `thread_local` of a class whose default member initializers are constants (constant-initialized in the TLS image) |
+| — | many smaller ones | generic lambdas (`[](auto& a, auto& b)`: a call operator template; its tokens are kept after the end of the file), hidden friends (moved after the class), `m{}`/`m{a}` member initializers, `std::vector<std::string> v{"a"}` as a default member initializer, `std::array<V, 4> a = {c, c, c, c}` of a class with constructors, `S x{{..}, {..}}` of an aggregate of classes, `Outer::Inner::Enumerator`, enumerators named in later enumerators of a scoped enum, `std::function<S(int)>` with a plain struct, `using namespace detail;` inside a namespace, `c ? a : b` over references to class objects, an anonymous-union member in a member initializer, the in-class default arguments of a member template defined outside, variadic `make_unique`, `string::append(str, pos, n)`, `wstring::append(n, c)`, `INFINITY`/`NAN`/`HUGE_VAL` |
+
+**Overload resolution: an integer no longer reaches a pointer parameter** ([conv.ptr] 1: only a null pointer constant converts). Before, `f('x')` for `f(const char*)` compiled to a call with the character as an address (round 27's `Log::Trim` crash). It is now an error; it found two missing overloads in our own headers (`wstring::append(n, c)`, `string::insert(pos, n, c)`) whose calls had compiled to wrong code. Own exceptions: a `c ? 0 : p` argument and an argument written as a braced list are not checked (a braced list can still pick a wrong overload: `set.erase({a, b})` reaches `erase(iterator)`; recorded below).
+
+**Import libraries: `okay-lib`** (new, `cmd/okay-lib.cpp`, `src/implib.cpp`, `include/okayms/implib.hpp`), written from Microsoft's "PE Format" (Archive (Library) File Format, First and Second Linker Members, Import Library Format) and "Module-Definition (.Def) Files" documentation:
+
+- `okay-lib /DEF:kernel32.def /OUT:kernel32.lib [/NAME:kernel32.dll] [/MACHINE:X64]` makes an import library: one short import member per export (by name, or by ordinal for `NONAME`; `DATA` exports define only `__imp_name`; `PRIVATE` ones are left out). The .def reader takes `LIBRARY`, `EXPORTS` entries `name[=internal] [@ordinal [NONAME]] [DATA] [PRIVATE]` and comments.
+- `okay-lib /OUT:util.lib a.obj b.obj [x.lib]` makes a static library; `okay-lib /LIST x.lib` prints the members and their public symbols.
+- `write_archive` can now write the two linker members that index the symbols (`Archive::symbol_index`, on for both kinds): GNU `nm -s` reads that index (checked in the test). okay-link reads members without it, as before.
+- okay-link: a member that imports by ordinal is refused with a message (not supported yet); a data import no longer provides a call thunk name.
+
+Tests: new `tests/test_round28.cpp`, 10 tests (8 programs built by okay-cl at `/O0`, `/O1`, `/O2`, linked, run under Wine, and built by MinGW g++ with its own headers and run; a .def-reader unit test; the import-library test): `tests 10, checks passed 150, failed 0`. With the round 27 compiler and headers: `tests 10, checks passed 61, failed 26` (every program fails: `_MSC_VER` unknown, "expected a function template", "no matching constructor in vector<Vstring@@>", wrong results for the namespace classes, "no matching destructor in __lam3", "expected an enumerator value", the `thread_local` refusal, "no member or base class named i"; there is no okay-lib). The import-library test writes a `kernel32.def`, runs `build/okay-lib`, links an okay-cl program (calling `GetCurrentProcessId`, `GetTickCount64`, `SetLastError`, `GetLastError`, `GetStdHandle`, `MultiByteToWideChar`) with only that library and a static `util.lib` made by okay-lib (no import list given to the linker), and runs it under Wine at each level. The whole suite (`tools/okayms/build.sh`, 70 test programs) passes. One copy of the drivers' file helpers now (`include/okayms/file_io.hpp`, used by okay-cl, okay-link, okay-lib and `program_check.hpp`).
+
+Written from ISO/IEC 14882 ([temp.pre], [temp.over], [temp.names], [meta.rel], [meta.type.synop], [dcl.type.decltype], [basic.scope.param], [basic.scope.class], [stmt.return], [stmt.while], [dcl.init], [dcl.init.list], [dcl.init.aggr], [class.base.init], [class.nest], [class.local], [class.friend], [class.union.anon], [class.qual], [basic.lookup.qual], [basic.lookup.unqual], [namespace.qual], [namespace.udir], [dcl.typedef], [enum.enum], [over.match.viable], [conv.ptr], [expr.cond], [expr.unary.op], [expr.prim.lambda.closure], [expr.prim.lambda.capture], [basic.start.static], [dcl.fct.default], [unique.ptr.create], [string.append], [string.insert]), ISO/IEC 9899 7.12, Microsoft's documentation (Predefined Macros, `_BitScanForward`/`_BitScanReverse`, `_umul128`, PE Format, Module-Definition Files, LIB reference). No code from MSVC's STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine, lib.exe, dlltool or any other project. No cryptography was written.
+
+Not done / unverified / differences (Round 28):
+
+- Not run on Windows. The compiled objects were not linked or run (except the test programs, under Wine).
+- **Multiple inheritance** is the largest blocker left (`ModelAnimator.hpp:36`, `class ModelAnimator : public Behaviour, public AnimBackend`, and `SaveFramework.hpp`, the controllers with `IPlayerSim`): "only one base class is supported". Not started; it needs a second table pointer, `this` adjustment for casts and thunks.
+- GNU ld does not build an import directory from our short-import-only library (its import descriptors come from the extra objects lib.exe adds, `__IMPORT_DESCRIPTOR_*`, `__NULL_IMPORT_DESCRIPTOR`, `*_NULL_THUNK_DATA`, which are a convention, not in the PE Format document); tried with MinGW gcc: the program links but its import table is empty. okay-link is the only linker that uses these libraries so far; link.exe was not tried.
+- okay-link cannot import by ordinal yet; `invoke_result` is not in `<type_traits>` (decltype of a call through `declval` is not read).
+- Variable templates are constants read again at each use: their address cannot be taken, and partial specializations of them are not read. Generic lambdas: no `auto...` packs; the call operator's tokens are added after the end of the file (an explicit function-template specialization later in the file, which erases tokens, would move them).
+- `is_invocable` is approximate (number of parameters and loose conversions). Hidden friends in class templates are not moved (not supported). A class's own nested types are not names in a hidden friend's body unless qualified.
+- The duplicate-name class rule decorates the later class only; two files that include the two headers in different orders would decorate differently (no engine file does both today, unverified).
+- `INFINITY`, `NAN`, `HUGE_VAL` are computed at run time (not constant expressions). Bit scans and `_umul128` are inline functions, not single instructions.
+- A braced argument can still pick a wrong overload (`set.erase({a, b})` reaches `erase(iterator)` in `Mesh.hpp:385`; compiled, not run).
+- `__cplusplus` is 201703L while okay-ms implements only part of C++17.

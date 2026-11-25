@@ -111,17 +111,17 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ### 37.6 Native HTTP and the game-to-launcher link
 - **System:** Platform Layer
-- **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl is the fallback and the default elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
+- **What:** Two OS helpers: one HTTP seam for every download and request (`Platform/NativeFetch`, #1186): WinHTTP with kept-alive connections on Windows; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl only as the last fallback, started in one place (`Platform/CurlFallback`), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
-  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/platform/own_http.md`) so callers use the curl path; `RequestEx` (own client only) adds progress, cancel, resume and a size cap and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` holds the download, HEAD and prefix helpers the launcher, editor and PlayFab call first (readiness: `docs/platform/own_http.md`); thread safe
+  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false where there is no native client (Linux without `OKAY_OWN_HTTP=1`, macOS); `RequestEx` (WinHTTP and our own client, since #1186) adds progress, cancel, Range resume with an `If-Range` check, a size cap and a redirect limit, and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` is the one seam every runtime caller uses (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`; launcher downloads and size probes, link previews, the Versions page, the editor update download, `AccountService`, PlayFab); `Platform/CurlFallback` is the only place curl is started, and the `curl_seam_wiring` test fails if curl is started anywhere else (readiness: `docs/platform/own_http.md`); thread safe
   - 37.6.2 Game and launcher link - `Platform/GameIpc` - small files in the per-user config folder keyed by process id: presence, invite request, join link, `played-with.tsv`
-- **Code:** `Platform/NativeHttp`, `Platform/GameIpc`
+- **Code:** `Platform/NativeHttp`, `Platform/NativeFetch`, `Platform/CurlFallback`, `Platform/GameIpc`
 - **API:** `okay::http::Request`, `okay::http::NativeAvailable`, `GameIpc::WritePresence`, `GameIpc::TakeJoin`, `GameIpc::RequestInvite`, `GameIpc::RecordPlayedWith`
 - **Editor:** none
 - **Docs:** `docs/online/multiplayer.md`, `docs/online/accounts.md`, `docs/platform/own_http.md`, `docs/platform/own_http.md`
-- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`, `launcher_download_own`, `native_fetch`, `playfab_own`
+- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`, `launcher_download_own`, `native_fetch`, `curl_seam_wiring`, `playfab_own`, `winhttp_loopback` (Windows only)
 - **Status:** Works - both headers read; the player calls GameIpc (presence, join, invite) and the launcher and AccountService use NativeHttp (call sites read); `launcher_join` covers the link
-- **Open:** NativeHttp is Windows only by default (other systems use the curl process; the Linux own client is opt-in and macOS has none); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path has no tests (the own client has)
+- **Open:** on Linux the own client is still opt-in (`OKAY_OWN_HTTP=1`), so curl is the default path there, and macOS has no native client; file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path is tested only by `winhttp_loopback`, which runs only on Windows
 - **Related:** 17.1, 17.3, 17.2, 16.4, 18.1
 - **Words:** NativeHttp, WinHTTP, HTTPS client, curl, GameIpc, launcher link, presence, join link, invite friends, played with, ipc folder
 - **Seen as:** launcher is slow to fill in at start; invites do not reach the running game; friends do not see what I am playing; account calls fail behind a proxy
@@ -185,7 +185,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/multiplayer.md`, `docs/online/photon.md`
 - **Tests:** `account`, `account_script`, `friends_json`, `chat_json`
 - **Status:** Works for accounts, friends and chat JSON handling (headers read in outline; covered by `account`, `account_script`, `friends_json` and `chat_json`); the remote paths need a live Supabase and are not covered by tests
-- **Open:** no tests for forums, Workshop, profiles, admin, parties or PlayFab; PlayFab and the non-Windows account path need a system `curl` binary; ownership of these files should be settled with area 17, which lists them as 17.2-17.10
+- **Open:** no tests for forums, Workshop, profiles, admin, parties or PlayFab; PlayFab and accounts go through the HTTP seam (WinHTTP on Windows); on Linux they need a system `curl` binary unless `OKAY_OWN_HTTP=1`; ownership of these files should be settled with area 17, which lists them as 17.2-17.10
 - **Related:** 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.9, 17.10
 - **Words:** account, sign in, Supabase, friends, party, messages, chat, servers, channels, forums, Workshop, marketplace, profile, achievements, admin, PlayFab, leaderboard, offline mode
 - **Seen as:** cannot sign in; the friends list is empty; messages do not arrive; achievements are not shared with the launcher; an admin page is empty for a normal user

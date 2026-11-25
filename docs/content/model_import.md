@@ -12,7 +12,8 @@
 
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
-> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> OFF: a seam). Assimp stays compiled in as the fallback. **2026-11-23:** ufbx and `OKAY_OWN_FBX` were deleted; our FBX reader
+> is the only FBX reader, with no fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
 > `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
 > `docs/status/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
 
@@ -27,13 +28,13 @@ format at a time. The plan is in `docs/status/own_code_roadmap.md`.
 | Format | Reader | Scene import (nodes, skins, clips) | Notes |
 |---|---|---|---|
 | `.gltf` `.glb` | our own, `Render/Gltf` (glTF 2.0 only; triangle, strip and fan primitives, points and lines are left out, a triangle with an index past the vertices is dropped; a file from which no mesh can be read, or that needs Draco or meshopt compression, fails the import with a message) | yes | always built in |
-| `.fbx` | ufbx (vendored in `engine/third_party/ufbx`); Assimp only as a fallback for files ufbx rejects | yes | always built in |
+| `.fbx` | our own, `okay::fbx` (`docs/content/model_readers.md`; binary and ASCII 7.x, and 6.x / 7.0 since 2026-11-23). ufbx was deleted on 2026-11-23; a file ours refuses fails the import, nothing else is tried | yes | always built in |
 | `.obj` (+ `.mtl`) | our own: `ReadObjFile` for scene import (one MeshRenderer per `usemtl`), `Mesh::LoadOBJ` for the merged-mesh path | materials only (no nodes) | always built in |
-| `.stl` (ascii and binary) | our own, `ReadStlFile`. Assimp first when built with `OKAY_USE_ASSIMP` unless `OKAY_PREFER_OWN_READERS` | one mesh per `solid` | in every build since this change |
+| `.stl` (ascii and binary) | our own, `ReadStlFile`, first (`OKAY_PREFER_OWN_READERS` is ON by default since 2026-11-17); Assimp, when built, only for a file ours refuses | one mesh per `solid` | in every build since this change |
 | `.ply` (ascii, little and big endian) | our own, `ReadPlyFile`. Same Assimp rule as STL | one mesh | in every build since this change |
-| `.dae` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadColladaFile`, sits beside it and is **off by default** (see below) | yes (hierarchy, skins, matrix animation) | without Assimp and without switching ours on, `.dae` fails with a message saying how to switch it on |
-| `.3ds` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `Read3dsFile`, sits beside it and is **off by default** (`OKAY_OWN_3DS`, same rules as `.dae`; `docs/content/model_readers.md`) | yes (hierarchy, pivots, keyframes) | without Assimp and without switching ours on, `.3ds` fails with a message saying how to switch it on |
-| `.bvh` | Assimp (a stick-figure mesh) when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadBvhFile`, is **off by default** (`OKAY_OWN_BVH`; `docs/content/model_readers.md`) and reads the skeleton and the motion with no mesh | skeleton and one clip, no mesh | same as `.3ds` |
+| `.dae` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadColladaFile`, is the default since 2026-11-17 and Assimp the fallback (see below) | yes (hierarchy, skins, matrix animation) | without Assimp and without switching ours on, `.dae` fails with a message saying how to switch it on |
+| `.3ds` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `Read3dsFile`, is the default since 2026-11-17 (`OKAY_OWN_3DS`, same rules as `.dae`; `docs/content/model_readers.md`) | yes (hierarchy, pivots, keyframes) | without Assimp and without switching ours on, `.3ds` fails with a message saying how to switch it on |
+| `.bvh` | Assimp (a stick-figure mesh) when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadBvhFile`, is the default since 2026-11-17 (`OKAY_OWN_BVH`; `docs/content/model_readers.md`) and reads the skeleton and the motion with no mesh | skeleton and one clip, no mesh | same as `.3ds` |
 | `.off` `.smd` `.md5mesh` `.md5anim` `.ms3d` `.ase` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own readers, `ReadOffFile`, `ReadSmdFile`, `ReadMd5File`, `ReadMs3dFile` and `ReadAseFile`, sit beside it and are **off by default** (`OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`, `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`; one page each: `docs/content/model_readers.md`, `own_smd_reader.md`, `own_md5_reader.md`, `own_ms3d_reader.md`, `own_ase_reader.md`) | yes: skinned parts and clips for SMD, MD5, MS3D; node hierarchy and clips for ASE; one static mesh for OFF | same as `.3ds` |
 | `.md2` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadMd2File`, is **off by default** (`OKAY_OWN_MD2`, same rules as `.3ds`; `docs/content/model_readers.md`) | one static part (first frame; the engine has no vertex-animation clip) | same as `.3ds` |
 | `.md3` | Same: `ReadMd3File`, **off by default** (`OKAY_OWN_MD3`; `docs/content/model_readers.md`) | one part per surface, tags as empty child nodes (first frame) | same as `.3ds` |
@@ -72,7 +73,7 @@ format at a time. The plan is in `docs/status/own_code_roadmap.md`.
 panel) logs one Info line when it is done, shown in the editor's Console:
 `model import '<file>': read by the own LXO reader in 0.04 ms (whole import 0.11 ms)`. The reader is "the own <FMT> reader"
 (the name from the `OKAY_OWN_<FMT>` table, or OBJ / STL / PLY / glTF), "Assimp", "Assimp (the own <FMT> reader refused it:
-<why>)" when ours said no and Assimp read the file, "ufbx", or "the own FBX reader". The first time is the reading alone
+<why>)" when ours said no and Assimp read the file, or "the own FBX reader" (the "ufbx" name went with ufbx on 2026-11-23). The first time is the reading alone
 (`ImportModelData`), the second the whole import with the scene objects; FBX and glTF give only the whole time. A failed
 import logs `model import '<file>': no reader could read it (...)` with the same times. Set in `ModelImport.cpp` (`g_readBy`, `g_readMs`,
 thread-local); tested by `lwo_reader` (suite "lxo: the import seam").
@@ -148,17 +149,17 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh`, 
 
 ## FBX limits (hostile files)
 
-An FBX file is untrusted input, so both FBX paths (ufbx, the default, and our own `okay::fbx` reader) refuse a file that goes past the numbers in `okay::fbx::Limits` (table in `docs/content/model_readers.md`). The refusal is a clean failure: `ok = false`, an error string in the log, no partial scene, and no other reader is tried on the same file.
+An FBX file is untrusted input, so our `okay::fbx` reader (the only FBX path since ufbx was deleted on 2026-11-23; this section was written when ufbx was the default) refuses a file that goes past the numbers in `okay::fbx::Limits` (table in `docs/content/model_readers.md`). The refusal is a clean failure: `ok = false`, an error string in the log, no partial scene, and no other reader is tried on the same file.
 
-- **Node hierarchy.** At most 2048 levels deep and 1 Mi nodes. A flat file can declare an arbitrarily deep Model chain through its connections, so the ufbx path sets ufbx's `node_depth_limit` and builds the engine hierarchy with an explicit stack, not recursion.
+- **Node hierarchy.** At most 2048 levels deep and 1 Mi nodes. A flat file can declare an arbitrarily deep Model chain through its connections, so the engine hierarchy is built with an explicit stack, not recursion.
 - **Animation counts.** At most 128 stacks (takes), 1024 layers, 128 Ki curves and curve nodes, and 4 Mi keys over all curves, checked right after the file is read.
-- **Bake budget.** Stacks can share curves, so a small file can ask for many full clips. Baking is charged against one whole-file budget of 4 Mi baked keys/evaluations (a few hundred MB at most). On the ufbx path every bake is also given an allocation limit equal to what is left of that budget; our reader additionally caps each clip at 20000 samples.
+- **Bake budget.** Stacks can share curves, so a small file can ask for many full clips. Baking is charged against one whole-file budget of 4 Mi baked keys/evaluations (a few hundred MB at most). Our reader also caps each clip at 20000 samples.
 
-Cubic FBX keys store two slopes: the key's own outgoing (right) slope and the incoming (next-left) slope that the following key arrives with. Both paths interpolate between key k and k+1 with the Hermite spline using the outgoing slope of k and the incoming slope stored on k (test `fbx_reader`, "cubic Hermite"). glTF `CUBICSPLINE` is baked with the same basis, using the out-tangent of k and the in-tangent of k+1.
+Cubic FBX keys store two slopes: the key's own outgoing (right) slope and the incoming (next-left) slope that the following key arrives with. Our reader interpolates between key k and k+1 with the Hermite spline using the outgoing slope of k and the incoming slope stored on k (test `fbx_reader`, "cubic Hermite"). glTF `CUBICSPLINE` is baked with the same basis, using the out-tangent of k and the in-tangent of k+1.
 
 ## Not covered yet (still Assimp-only)
 
-Blender (`.blend`), MDL, LightWave scenes (`.lws`), AC3D and the rest of the Assimp list (3MF, AMF, X3D, DXF, LWO objects, OFF, SMD, MD5, MS3D, ASE, MD2, MD3, Irrlicht meshes, B3D and DirectX `.x` have readers of ours, off by default, above; the list of what is left is `docs/content/own_readers_remaining.md`). FBX stays on ufbx unless `OKAY_OWN_FBX` is switched on. PLY triangle strips, PLY/STL vertex colours, STL colour attributes, and OBJ free-form curves and surfaces are not read.
+Of the Assimp importers our Windows build switches on, only Nendo (`.ndo`) has no working reader of ours now (Blender, MDL, LightWave scenes, AC3D and the rest got readers, all on by default; per-extension list in `docs/status/own_code_roadmap.md`, "What still needs Assimp"). FBX is ours only. PLY triangle strips, PLY/STL vertex colours, STL colour attributes, and OBJ free-form curves and surfaces are not read.
 
 ## Collada: what is proven and what is not
 

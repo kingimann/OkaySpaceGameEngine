@@ -3136,6 +3136,16 @@ struct Parser {
                 if (!ok) return false;
                 arg = std::move(made);
             }
+            if (pt.pointers > 0 && !pt.is_ref && !pt.is_array() && !(arg.kind == Node::IntLit && arg.number == 0)) {
+                // An integer is not converted to a pointer parameter ([conv.ptr] 1: only a null pointer constant is);
+                // before, f('x') reached a const char* parameter as an address.
+                Type from;
+                if (static_type(arg, &from) && from.pointers == 0 && !from.is_array() && !from.is_ref && !from.is_func() &&
+                    (from.base == 1 || from.base == 2 || from.base == 4) && !from.is_enum()) {
+                    error = "an integer argument for a pointer parameter (no conversion)";
+                    return false;
+                }
+            }
             {
                 Type from;
                 if (cur_locals != nullptr && (pt.is_ref || !wants_copy(pt, arg)) && pt.base == 3 && pt.pointers == 0 &&

@@ -7,7 +7,11 @@
 // _BitScanReverse and _umul128. No code from other compilers or libraries.
 
 #include "program_check.hpp"
+#include "okayms/archive.hpp"
+#include "okayms/implib.hpp"
 
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace {
@@ -391,6 +395,127 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// The .def reader: names, @ordinals, NONAME, DATA, PRIVATE, `name=internal`, comments, and its errors.
+static void r28_def_files(Tally& tally) {
+    std::printf("r28_def_files\n");
+    const auto def = okayms::parse_def(
+        "; exports\nLIBRARY mylib\nEXPORTS\n  Plain\n  WithOrd @ 7\n  Hidden @9 NONAME\n  Counter DATA\n"
+        "  Secret PRIVATE\n  Alias=Inner @3 ; comment\n");
+    CHECK(tally, def.ok());
+    if (!def.ok()) {
+        std::fprintf(stderr, "  %s\n", def.error.c_str());
+        return;
+    }
+    CHECK(tally, def.value.library == "mylib.dll" && def.value.exports.size() == 6);
+    if (def.value.exports.size() != 6) return;
+    CHECK(tally, def.value.exports[0].name == "Plain" && def.value.exports[0].ordinal == 0);
+    CHECK(tally, def.value.exports[1].name == "WithOrd" && def.value.exports[1].ordinal == 7);
+    CHECK(tally, def.value.exports[2].noname && def.value.exports[2].ordinal == 9);
+    CHECK(tally, def.value.exports[3].data && def.value.exports[4].is_private);
+    CHECK(tally, def.value.exports[5].name == "Alias" && def.value.exports[5].ordinal == 3);
+    CHECK(tally, !okayms::parse_def("LIBRARY x\nEXPORTS\n  F @0\n").ok());
+    CHECK(tally, !okayms::parse_def("LIBRARY x\nEXPORTS\n  F NONAME\n").ok());
+    CHECK(tally, !okayms::parse_def("LIBRARY x\nEXPORTS\n  F WEIRD\n").ok());
+    const auto lib = okayms::make_import_library(def.value);
+    CHECK(tally, lib.ok() && lib.value.members.size() == 5 && lib.value.symbol_index);
+    if (!lib.ok() || lib.value.members.size() != 5) return;
+    CHECK(tally, lib.value.members[2].import.name_type == okayms::kImportByOrdinal);
+    CHECK(tally, lib.value.members[3].import.import_type == okayms::kImportData);
+    // A data import defines only __imp_Counter; a code import also the call thunk.
+    CHECK(tally, okayms::member_symbols(lib.value.members[3]).size() == 1 &&
+                     okayms::member_symbols(lib.value.members[3])[0] == "__imp_Counter");
+    CHECK(tally, okayms::member_symbols(lib.value.members[0]).size() == 2);
+    const auto bytes = okayms::write_archive(lib.value);
+    CHECK(tally, bytes.ok());
+    if (!bytes.ok()) return;
+    // The first linker member: "/" with 9 symbols (big-endian), then the second, then the members; reading skips them.
+    const std::vector<uint8_t>& b = bytes.value;
+    CHECK(tally, b.size() > 80 && b[8] == '/' && b[9] == ' ' && b[68] == 0 && b[69] == 0 && b[70] == 0 && b[71] == 9);
+    const auto back = okayms::read_archive(b.data(), b.size());
+    CHECK(tally, back.ok() && back.value.members.size() == 5 && back.value.members[1].import.symbol == "WithOrd" &&
+                     back.value.members[1].import.hint_or_ordinal == 7);
+}
+
+// An import library made by okay-lib from a .def file is the only thing the program's kernel32 calls are linked with
+// (no import list is given to the linker), and the program runs under Wine. okay-lib also makes a static library of an
+// okay-cl object. GNU nm, when installed, reads the symbol index of the import library (an independent reader).
+static void r28_import_library(Tally& tally) {
+    std::printf("r28_import_library\n");
+    const std::string dir = "/tmp/okayms-r28";
+    okayms_test::run_shell("mkdir -p " + dir);
+    {
+        std::ofstream def((dir + "/k32.def").c_str());
+        def << "; the kernel32 functions the test program calls\nLIBRARY kernel32\nEXPORTS\n"
+               "    GetCurrentProcessId\n    GetTickCount64\n    SetLastError\n    GetLastError\n    GetStdHandle\n"
+               "    MultiByteToWideChar\n";
+    }
+    CHECK(tally, okayms_test::run_shell("build/okay-lib /DEF:" + dir + "/k32.def /OUT:" + dir + "/k32.lib") == 0);
+    if (okayms_test::run_shell("command -v x86_64-w64-mingw32-nm >/dev/null") == 0) {
+        CHECK(tally, okayms_test::run_shell("x86_64-w64-mingw32-nm -s " + dir + "/k32.lib | grep -q '__imp_GetTickCount64 in kernel32.dll'") == 0);
+        CHECK(tally, okayms_test::run_shell("x86_64-w64-mingw32-nm -s " + dir + "/k32.lib | grep -q '^GetLastError in kernel32.dll'") == 0);
+    }
+    okayms::CompileInput util;
+    util.source = "extern \"C\" int triple(int x) { return x * 3; }\n";
+    const auto util_obj = okayms::compile_c(util);
+    CHECK(tally, util_obj.ok());
+    if (!util_obj.ok()) return;
+    const auto util_bytes = okayms::write_coff(util_obj.value.object);
+    CHECK(tally, util_bytes.ok() && okayms_test::write_bytes(dir + "/util.obj", util_bytes.value));
+    CHECK(tally, okayms_test::run_shell("build/okay-lib /OUT:" + dir + "/util.lib " + dir + "/util.obj") == 0);
+    auto load = [&](const std::string& path, okayms::Archive* out) {
+        std::ifstream in(path.c_str(), std::ios::binary);
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const auto a = okayms::read_archive(bytes.data(), bytes.size());
+        if (!a.ok()) return false;
+        *out = a.value;
+        return true;
+    };
+    okayms::Archive k32;
+    okayms::Archive utl;
+    CHECK(tally, load(dir + "/k32.lib", &k32) && k32.members.size() == 6);
+    CHECK(tally, load(dir + "/util.lib", &utl) && utl.members.size() == 1);
+    const std::string program = std::string(okayms_test::check_macro()) + R"OKMS(
+#include <windows.h>
+extern "C" int triple(int x);
+int entry(void) {
+  CK(1, GetCurrentProcessId() != 0);
+  CK(2, GetTickCount64() > 0);
+  SetLastError(1234);
+  CK(3, GetLastError() == 1234);
+  CK(4, GetStdHandle(STD_OUTPUT_HANDLE) != 0);
+  WCHAR wide[8];
+  CK(5, MultiByteToWideChar(CP_UTF8, 0, "abc", -1, wide, 8) == 4 && wide[2] == 'c');
+  CK(6, triple(14) == 42);
+  return 0;
+}
+)OKMS";
+    for (int level = 0; level <= 2; ++level) {
+        okayms::CompileInput in;
+        in.source = program;
+        in.opt_level = level;
+        in.optimize = level > 0;
+        in.include_paths.push_back("stdinc");
+        const auto compiled = okayms::compile_c(in);
+        CHECK(tally, compiled.ok());
+        if (!compiled.ok()) {
+            std::fprintf(stderr, "  /O%d: %s\n", level, compiled.error.c_str());
+            continue;
+        }
+        okayms::LinkOptions options;  // no imports: they come from k32.lib
+        const auto linked = okayms::link_with_libraries({compiled.value.object}, {k32, utl}, options);
+        CHECK(tally, linked.ok());
+        if (!linked.ok()) {
+            std::fprintf(stderr, "  %s\n", linked.error.c_str());
+            continue;
+        }
+        const std::string exe = dir + "/implib" + std::to_string(level) + ".exe";
+        CHECK(tally, okayms_test::write_bytes(exe, linked.value));
+        const int code = okayms_test::wine_exit(exe);
+        CHECK(tally, code == 0);
+        if (code != 0) std::fprintf(stderr, "  /O%d: exit %d\n", level, code);
+    }
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -402,5 +527,7 @@ int main(int argc, char** argv) {
     r28_lambdas(tally);
     r28_classes(tally);
     r28_thread_local_class(tally);
-    return tally.finish(7);
+    r28_def_files(tally);
+    r28_import_library(tally);
+    return tally.finish(9);
 }

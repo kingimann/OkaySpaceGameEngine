@@ -19,8 +19,8 @@ launcher off SDL2: `docs/platform/sdl_removal_plan.md`.
 
 | | |
 |---|---|
-| `-DOKAY_PLATFORM_BACKEND=sdl2` | default. `okay::platform::Default()` is the SDL2 backend (a thin wrapper, behaviour as before). |
-| `-DOKAY_PLATFORM_BACKEND=own` | `Default()` is our own backend. SDL2 is **not** removed: the editor, launcher and player still need it for windows and `SDL_Renderer` (see "Not behind the seam yet"). |
+| `-DOKAY_PLATFORM_BACKEND=own` | **default on Linux since 2026-11-25** (round 15). `okay::platform::Default()` is our own backend. SDL2 is still linked (the sdl2 backend stays as the way back). |
+| `-DOKAY_PLATFORM_BACKEND=sdl2` | default on Windows (the Win32 backend has never run on real Windows) and the web (no own backend). `Default()` is the SDL2 backend. |
 
 The environment variable `OKAY_PLATFORM_BACKEND=sdl2|own` set when a program starts overrides the build's choice for that
 process (a value that is neither is ignored), so one binary can be tried on either backend. It changes nothing unless set.
@@ -651,6 +651,51 @@ backend or other project code was read or followed.
   the painter's second context attempt cannot change it) and real drivers are unverified. A real GPU. The launcher's chat window on the own backend
   (not opened). The editor on the GL painter. `_NET_WM_PID` is not set on own X11 windows (a tool that looks windows up by process finds none).
   The Experimental switch stays Linux only.
+
+## Round 15 (branch `claude/no-sdl2-1`, 2026-11-25): own backend default on Linux, displays on the seam, the SDL ratchet
+
+Written from the X Resize and Rotate extension protocol and `Xrandr.h` (monitors, outputs, CRTCs, mode lines), the Win32
+documentation (`EnumDisplaySettingsW`, `GetSystemInfo`, `GlobalMemoryStatusEx`, window styles) and POSIX `sysconf`; no SDL or other project code.
+
+* **The SDL ratchet.** `python3 scripts/sdl_inventory.py --ratchet` counts SDL calls and SDL words per file (launcher, editor, player,
+  shared, engine, okayui; not tests, tools or the sdl2 backend) and fails, naming the words that rose, when any file goes above
+  `tests/data/sdl_ratchet.json`. It runs as ctest `sdl_ratchet` (working tree) and in `scripts/precheck.sh` (step 4b, the pushed
+  commit; a branch without the baseline passes). `--update-ratchet` writes the baseline and refuses a rise. Shown failing on purpose
+  with one `SDL_Delay(1);` added to `player/main.cpp`: `player/main.cpp: calls 0 -> 1, words 197 -> 198; more of: SDL_Delay 0 -> 1`.
+* **Default backend.** `OKAY_PLATFORM_BACKEND` now defaults to `own` on Linux (all three programs; the launcher and editor already
+  ran on own there through Settings > Experimental) and stays `sdl2` on Windows and the web. `OKAY_PLATFORM_BACKEND=sdl2` in the
+  environment goes back. The player on own uses the software painter (the OpenGL painter is not used there yet: the player's
+  OpenGL 3D path makes its own hidden window's context current, and the GL painter caches which context is current).
+* **Displays through the seam.** `Backend::DisplayModes(index)` (current mode first), `Window::SetBordered(on)` and
+  `Window::SetFullscreenMode(mode, display)` (exclusive fullscreen with a mode change; false = not supported, the caller uses desktop
+  fullscreen). sdl2: the SDL calls `shared/SdlDisplays.cpp` made. Own X11: monitors from RandR 1.5 (`libXrandr.so.2` through
+  `dlopen`; the X screen without it), each with its output's modes and refresh (dot clock over total pixels, double-scan and
+  interlace counted; `DisplayModeMath.hpp`), `SetBordered` through the Motif hints; no video mode change (desktop fullscreen).
+  Own Win32: modes from `EnumDisplaySettingsW`, `SetBordered` by window style; no mode change. `shared/PlatformDisplays.cpp`
+  (replaces `shared/SdlDisplays.cpp`) lists monitors and applies a display choice on either backend; the player and editor use it.
+  Test `platform_displays` (pure: refresh from mode lines, current-first lists, Apply's steps on a fake window) and
+  `platform_displays_xvfb` (own vs sdl2 on one Xvfb server: same display count, geometry and current mode). Before the change the
+  own backend listed no display (`own: 0 display(s)`, 5 checks failed); after: 39 checks, 0 failures.
+* **Player:** no `SDL.h`, no `SDL_MAIN_HANDLED` and no SDL type left in `player/main.cpp` (the plain `okay::ui2d` types of the same
+  layout; one `SDL_Renderer*` cast for OkayUI's SDL end-of-frame on the sdl2 painter remains). `shared/Splash.hpp` uses the plain types too.
+  The player ran 12 s on Xvfb on both backends with the obstacle-course scene: `2D painter: software` on own, `sdl2` with
+  `OKAY_PLATFORM_BACKEND=sdl2`; the two pictures differ in 3,724 of 1,024,000 pixels by more than 3% (animation timing).
+* **Launcher:** our own Dear ImGui feed and renderer are the default on every backend (`OKAY_PLATFORM_EVENTS=sdl2` /
+  `OKAY_IMGUI_RENDER=sdl2` go back to imgui_impl_sdl2 / sdlrenderer2 on the sdl2 backend). The editor keeps imgui_impl_sdl2 by
+  default: its multi-window panels need that backend's platform windows. Voice clips use `okay::platform::AudioSpec`
+  (`okay::wav::LoadWavClip`; the dead 8/32-bit and big-endian conversion is gone, our decoder only gives S16 or F32).
+* **Editor:** cores and RAM through `okay::platform::CpuCount()` / `SystemRamMB()`, the idle throttle through
+  `Backend::HasPendingEvents()` (it called `SDL_PumpEvents` even on the own backend), mouse masks through `MouseMask`, no
+  `SDL_SetMainReady` (the sdl2 backend's `Init` calls it) in the editor or launcher.
+* **Counts** (`--ratchet`, calls / words, file by file sums): launcher 25/325 -> 13/286 (only the imgui_impl_sdl2 / sdlrenderer2
+  fallback calls are left), editor 34/193 -> 23/177, player 0/197 -> 0/1, shared 26/194 -> 10/136, okayui unchanged 122/337. With everything each program reaches (`docs/sdl_inventory.md`, shared, engine and okayui code included): launcher
+  98/716 -> 86/649, editor 123/611 -> 96/543, player 69/503 -> 53/255 (what the player still reaches is OkayUI's SDL code and `PainterBridge.hpp`'s SDL handle types).
+* **Not verified:** nothing here ran on Windows (Win32 parts compiled with MinGW `-fsyntax-only` only); the editor was not linked
+  in this round (`editor/main.cpp` compiled with `-fsyntax-only` only, 0 errors; a full `-O3` build ran out of memory here before); a real GPU; X11 video mode changes are not written.
+* **How close SDL2 deletion is:** the apps' own direct SDL calls are now Dear ImGui's SDL backends (launcher fallback, editor
+  default for multi-window panels), the editor's Windows render-driver hints and Direct3D 11 device query, and OkayUI's
+  `SDL_Renderer` path (`okayui/src`, 122 calls, the OkayUI work). The `OKAY_NO_SDL` build of `claude/own-platform-6` (2026-11-19)
+  was not brought over: it needs OkayUI to compile with no SDL types (that branch did it with no-op macros) and was never merged.
 
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 

@@ -7,6 +7,7 @@
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scripting/ScriptApiRegistry.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -290,110 +291,7 @@ inline bool FpHandsCall(FirstPersonHands* h, const std::string& m) {
 // Friendly key name -> Input char code (shared with the visual-script nodes).
 inline char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); }
 
-// ===================== JSON (for to_json / from_json builtins) =====================
-// A compact, dependency-free JSON writer/reader over VsValue. Numbers, bools,
-// strings, arrays and maps round-trip; vec3 is written as a [x,y,z] array.
-// dup-allow: moved here unchanged from OkayScriptVM.cpp (S2); not a new copy
-inline void JsonEscape(const std::string& s, std::string& out) {
-    out += '"';
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\t': out += "\\t";  break;
-            case '\r': out += "\\r";  break;
-            default:   out += c;      break;
-        }
-    }
-    out += '"';
-}
-
-inline void ToJson(const Value& v, std::string& out) {
-    if (auto arr = v.AsArray()) {
-        out += '[';
-        for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += ','; ToJson((*arr)[i], out); }
-        out += ']';
-    } else if (auto m = v.AsMap()) {
-        out += '{';
-        bool first = true;
-        for (auto& kv : *m) { if (!first) out += ','; first = false; JsonEscape(kv.first, out); out += ':'; ToJson(kv.second, out); }
-        out += '}';
-    } else if (v.IsString()) {
-        JsonEscape(v.AsString(), out);
-    } else if (v.IsBool()) {
-        out += v.AsBool() ? "true" : "false";
-    } else if (v.IsVec3()) {
-        Vec3 p = v.AsVec3();
-        out += '['; out += vs::VsValue(p.x).AsString(); out += ',';
-        out += vs::VsValue(p.y).AsString(); out += ','; out += vs::VsValue(p.z).AsString(); out += ']';
-    } else {
-        out += v.AsString();   // number -> its formatted form
-    }
-}
-
-// A tiny recursive-descent JSON parser. On malformed input it returns whatever it
-// managed to parse (best-effort) — scripts should validate important data anyway.
-struct JsonReader {
-    const std::string& s; std::size_t i = 0;
-    int depth = 0;   // array/object nesting: too deep is an error, not a stack overflow
-    explicit JsonReader(const std::string& src) : s(src) {}
-    void Ws() { while (i < s.size() && (s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r')) ++i; }
-    Value Parse() { Ws(); if (i >= s.size()) return Value{}; char c = s[i];
-        if (c == '{' || c == '[') {
-            if (++depth > 256) throw std::runtime_error("from_json: nested too deeply (more than 256 levels)");
-            Value v = c == '{' ? Obj() : Arr();
-            --depth;
-            return v;
-        }
-        if (c == '"') return Value{Str()};
-        if (c == 't') { i += 4; return Value{true}; }
-        if (c == 'f') { i += 5; return Value{false}; }
-        if (c == 'n') { i += 4; return Value{}; }
-        return Num();
-    }
-    std::string Str() {
-        std::string out; ++i;  // opening quote
-        while (i < s.size() && s[i] != '"') {
-            if (s[i] == '\\' && i + 1 < s.size()) {
-                char e = s[++i];
-                out += (e=='n')?'\n':(e=='t')?'\t':(e=='r')?'\r':e;
-            } else out += s[i];
-            ++i;
-        }
-        if (i < s.size()) ++i;  // closing quote
-        return out;
-    }
-    Value Num() {
-        std::size_t start = i;
-        while (i < s.size() && (std::isdigit((unsigned char)s[i])||s[i]=='-'||s[i]=='+'||s[i]=='.'||s[i]=='e'||s[i]=='E')) ++i;
-        return Value{(float)std::atof(s.substr(start, i - start).c_str())};
-    }
-    Value Arr() {
-        Value v = Value::MakeArray(); auto a = v.AsArray(); ++i;  // '['
-        Ws(); if (i < s.size() && s[i] == ']') { ++i; return v; }
-        while (i < s.size()) { a->push_back(Parse()); Ws();
-            if (i < s.size() && s[i] == ',') { ++i; Ws(); continue; }
-            if (i < s.size() && s[i] == ']') { ++i; break; }
-            break;
-        }
-        return v;
-    }
-    Value Obj() {
-        Value v = Value::MakeMap(); auto m = v.AsMap(); ++i;  // '{'
-        Ws(); if (i < s.size() && s[i] == '}') { ++i; return v; }
-        while (i < s.size()) { Ws();
-            if (s[i] != '"') break;
-            std::string key = Str(); Ws();
-            if (i < s.size() && s[i] == ':') ++i;
-            (*m)[key] = Parse(); Ws();
-            if (i < s.size() && s[i] == ',') { ++i; continue; }
-            if (i < s.size() && s[i] == '}') { ++i; break; }
-            break;
-        }
-        return v;
-    }
-};
+// JSON for to_json / from_json is the language core's (okayscript/include/okayscript/CoreBuiltins.hpp).
 
 // ===================== Lexer =====================
 // Tok, Token, ScriptError and Lexer live in the engine-independent OkayScript core (okayscript/include/okayscript/,
@@ -690,7 +588,9 @@ struct OkayScriptVM::Impl {
     // Every shared function under its OkayScript name and aliases. Runs first in RegisterBuiltins, so the
     // aliases made further down find it; the check at the end refuses a later hand-written copy.
     void InstallSharedApis() {
+        ModuleRegistry::Get();   // modules add their functions before a script sees the table
         for (const ScriptApiEntry& e : ScriptApis()) {
+            if (!e.module.empty() && !ModuleRegistry::Get().IsEnabled(e.module)) continue;
             auto shared = std::make_shared<const ScriptApiEntry>(e);
             SharedApiCall call{shared, &rt};
             rt.builtins[e.name] = call;
@@ -699,6 +599,7 @@ struct OkayScriptVM::Impl {
     }
     void CheckSharedApis() {
         for (const ScriptApiEntry& e : ScriptApis()) {
+            if (!e.module.empty() && !ModuleRegistry::Get().IsEnabled(e.module)) continue;
             std::vector<std::string> names = e.aliases;
             names.push_back(e.name);
             for (const std::string& n : names) {

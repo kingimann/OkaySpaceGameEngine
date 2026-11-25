@@ -1,16 +1,18 @@
 # OkaySpace roadmap
 
 What is being worked on right now and what comes next. Kept current by the main
-(coordinating) Claude session; each item links its PR once one exists. Every PR
-merges once its five CI jobs are green, and a release follows.
+(coordinating) Claude session; each item links its PR once one exists. A PR is
+checked before the push (`scripts/precheck.sh`), merges once its GitHub checks
+(branch-lint, the PR-body check and the Windows cross-compile) are green, and a
+release follows; the full suite runs on every push to main (`CLAUDE.md` rule 6).
 
-_Last updated: 2026-11-13 17:55 UTC_
+_Last updated: 2026-11-24 (the Releases table and "Now"; the sections from "Camera and animation smoothing" to "Waiting on Iman" are kept as they were on 2026-11-13)_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
-| 2.903.9 | Multiplayer made easy: one-call host/join, a Networked tick, named events, player list, ownership, stats overlay, host migration on a LAN, rollback mode and faster big messages, in C++, Visual Script and OkayScript, with security fixes (#1232). OkayScript runs on a bytecode machine (several times faster) and scripts reach every engine component through generated bindings, with file and network access blocked for game scripts (#1234). |
+| 2.903.9 | Multiplayer made easy: one-call host/join, a Networked tick, named events, player list, ownership, stats overlay, host migration on a LAN, rollback mode and faster big messages, in C++, Visual Script and OkayScript, with security fixes (#1232). OkayScript runs on a bytecode machine (several times faster) and scripts reach every engine component through generated bindings, with file and network access blocked for game scripts (#1234). OkayScript language features and one shared system library (#1237). Assimp deleted: our own readers are the only model path, Nendo dropped (#1236). okay vc on Windows short paths (#1235). Input review fixes (#1225). Multiplayer stutter, Windows UDP and sample fixes (#1245). okay-cc round 19 (#1241, not shipped). |
 | 2.903.8 | okay, the engine's own command line, with Git underneath and scene-aware merge (#1201), plus project, scene, script, Visual Script and asset commands (#1230). OkayScript is a standalone language with its own library and command line, and the engine runs on it: one parser, one runtime, faster loops (#1217). Our own WAV decoder and FBX reader (now also FBX 6.x) are the only path; SDL_LoadWAV and ufbx deleted (#1187). Download fixes: no use of a closed WinHTTP handle, re-fetch after a resumed checksum mismatch (#1229). |
 | 2.903.7 | Downloads and updates go through one HTTP path, and WinHTTP is really used on Windows; curl is only a last fallback (#1186). More SDL2 calls moved into our own platform layer, with a first real Win32 backend self-test (#1198). Crash Log, Audio Mixer and History windows on OkayUI only (#1192); script editor on our own CodeEdit, the vendored text editor deleted (#1200). Our own readers for 3D GameStudio MDL3/4/5/7, HMP4/5 and Silo .sib (#1213), with a crash on damaged MDL7 files fixed (#1224). Faster, more reliable PR checks (#1219). Own build tool and compilers advanced (#1215, #1216, #1220; not shipped). |
 | 2.903.6 | Fixes for main's failing tests: double jump and slope drift (own physics core), project setting saved, streamed sound matches whole clip, picture import filter, Visual Script node coverage, Windows zip clean-up and import cache (#1209); 7 more model formats read by our own readers, MD5 camera paths, OGRE binary skeletons on (#1199); editor and OkayUI files split by job, no behaviour change (#1204, #1210); docs links fixed (#1206). Own build tool and compilers advanced (#1194, #1195, #1196; not shipped). |
@@ -114,17 +116,25 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 ## Now
 
-| Session | Plan | Current |
-|---|---|---|
-| Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| Textures | Our own texture library (`docs/rendering/own_texture_library.md`, branch `claude/texture-lib-1`) | Mips, atlas, convert, BC1/3/4/5, DDS, streaming planner and `okay-texture` written and tested; next: load DDS in the renderers |
-| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
-| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
-| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |
-| Robustness | Inventory, PRs 1–9 | PR 6a–6c (#359, #367, #378): pickups and drops, bag between scenes, equipment |
-| UI | In-game UI plan and component library | P1a UIFrame (#381), then P1c: modals, context menu, keybind field, 2-D navigation, touch |
-| Scripting | Script language to C# level | P1.6 lambdas (#379), then events and inheritance |
-| Holding | Procedural object holding | PR 3: body adjustment, then PR 4: multiplayer |
+Three Claude sessions work in lanes (`docs/lanes.json`, `docs/process/collaboration.md`, claims on issue #422). Grok writes
+no code since 2026-11-24 (rule 24d); it only reports bugs on #888.
+
+| Session | Lane |
+|---|---|
+| Coordinator (`claude/*`) | Unfinished features, our own replacements for third-party code, the Xbox UWP port, our own build tool and compilers, reviews, CI and releases |
+| Claude 2 (`claude2/*`) | Bug fixes, physics, duplicate code, the `editor/main.cpp` split |
+| Claude 3 (`claude3/*`) | Build window and export, streaming and LOD, Steam/Epic Store Kit, C# and Lua scripting (neither language is on main yet) |
+
+Merged 2026-11-22 to 2026-11-24: one HTTP seam with WinHTTP really on (#1186, #1229); ufbx and `SDL_LoadWAV` deleted (#1187);
+OkayUI-only editor windows and the script editor on CodeEdit (#1192, #1200); SDL2 calls into `okay::platform` (#1198); the
+`okay` command line (#1201, #1230); MDL, HMP and SIB readers (#1213, #1224); OkayScript as a standalone language on a
+bytecode machine with generated bindings (#1217, #1234); easy multiplayer, host migration and rollback (#1232); input review
+fixes (#1225); CI and release speed (#1219, #1222); large-file splits (#1178 to #1210); `okay-build`, `okay-cc` and
+`okay-ms` rounds (#1215, #1216, #1220).
+
+What is still open is in `docs/status/UNFINISHED.md`; the third-party removal plan is `docs/status/own_code_roadmap.md`.
+
+The rest of this section is the 2026-11-13 plan, kept for its history:
 
 ### Camera and animation smoothing (QA)
 1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
@@ -184,5 +194,5 @@ Follow-up on `claude/anticheat-1` (status table: `docs/online/anticheat.md`): a 
 
 ## Later
 
-- Split the largest source files (editor, launcher, OkayScript VM).
-- Own-stack rollout (`docs/status/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line shipped in 2.871.0. The release numbers that were proposed here (own readers FBX, COLLADA, 3DS and BVH to default on in 2.872.0, own HTTP opt-in in 2.874.0, the player on the own platform backend in 2.877.0) did not happen: those releases shipped other work. The current proposal, one group of flips per release with a checklist for each and what blocks deleting each library, is `docs/status/own_flip_proposal.md` (2026-11-15). Every flip needs the owner's written approval; crypto stays on libsodium (CLAUDE.md rule 18).
+- Split the largest source files: the OkayScript VM (#1185) and `launcher/main.cpp` (#1178) were split into topic files; `editor/main.cpp` (about 3.7 MB) is still being split (Claude 2's lane).
+- Own-stack rollout (`docs/status/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line shipped in 2.871.0. The release numbers that were proposed here (own readers FBX, COLLADA, 3DS and BVH to default on in 2.872.0, own HTTP opt-in in 2.874.0, the player on the own platform backend in 2.877.0) did not happen: those releases shipped other work. The current proposal, one group of flips per release with a checklist for each and what blocks deleting each library, is `docs/status/own_flip_proposal.md` (2026-11-15). Since then the model readers became the default (2026-11-17), ufbx and `SDL_LoadWAV` were deleted (2026-11-23) and the Settings > Experimental switches start ticked (rule 17: nothing off by default); crypto stays on libsodium (CLAUDE.md rule 18).

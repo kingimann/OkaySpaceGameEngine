@@ -1,10 +1,16 @@
 # Release note draft: model formats that stop importing when Assimp is removed
 
-> **What this is:** Status: DRAFT. Nothing in this note has happened yet: Assimp is still in the build (off by default, on in the Windows distribution) and no default has been changed.
+> **What this is:** Status: DRAFT, not released. Assimp is still in the build (off by default, on in the Windows distribution), so no format has been dropped. **Since this was written** (checked 2026-11-24): our readers became the default on 2026-11-17 and ufbx was deleted on 2026-11-23, so the "off by default" words in the table below are out of date; of the Assimp importers the Windows build switches on, only Nendo (`.ndo`) still has no working reader of ours.
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
+
+> **2026-11-24: this happened, with one format dropped, not the list below.** Assimp was deleted (branch `claude/no-assimp-1`).
+> By then every extension it read had a reader of ours, ON by default, except Nendo `.ndo`. The note for the release, in plain
+> words: "Model import no longer uses the Assimp library. Every format it read is now read by our own code, except Nendo
+> (.ndo), a format from a modeller that has not been sold for about twenty years: there is no description of it and no sample
+> file to write a reader from." The draft below is kept as history.
 
 Status: DRAFT. Nothing in this note has happened yet: Assimp is still in the build (off by default, on in the Windows
 distribution) and no default has been changed. The roadmap (`docs/status/own_code_roadmap.md`, Assimp row and order step 3)
@@ -80,7 +86,7 @@ Until `<REMOVAL RELEASE>`, nothing changes: every format above still imports in 
 | STL | Yes | Ours, always built. |
 | PLY | Yes | Ours, always built. |
 | COLLADA (`.dae`) | Yes, **off by default** (`OKAY_OWN_COLLADA`) | Checked on 26 real exporter files (24 read; the other two hold only cameras or lights) and on our own fixtures. Without Assimp this reader is the only way `.dae` loads. |
-| FBX | Yes, **off by default** (`OKAY_OWN_FBX`); ufbx is the default reader | Checked on 43 real exported files (42 agree with ufbx; the 43rd is damaged and every reader rejects it). Stays on ufbx until the flip release. |
+| FBX | Yes, the only FBX reader (ufbx and `OKAY_OWN_FBX` deleted 2026-11-23) | Checked on 43 real exported files (42 agreed with ufbx; the 43rd is damaged and every reader rejects it). |
 | 3DS | Yes, **off by default** (`OKAY_OWN_3DS`) | Checked on 16 real files (15 read; the 16th is empty); meshes, triangles, bounding boxes and area match Assimp. |
 | BVH | Yes, **off by default** (`OKAY_OWN_BVH`) | Checked on 3 real files; animation only (skeleton and one clip, no mesh). |
 | Blender (`.blend`) | Own reader in progress, **off by default** (`OKAY_OWN_BLEND`) | Checked on 28 real files (Blender 2.41 to 2.93, all read) and compared with Assimp; modifiers, constraints, shape keys, vertex colours and zstd compression are not read and are named at import. No real Blender 3.x / 4.x file was available to test. |

@@ -6,18 +6,23 @@
 >
 > **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
 
+> **2026-11-24: Assimp is deleted** (branch `claude/no-assimp-1`; ufbx was deleted on 2026-11-23). Our own readers are the only
+> model readers; a file one refuses fails the import (no fallback). Nendo `.ndo` is the one extension dropped
+> (`docs/content/model_readers.md`, section NDO). Text below that describes Assimp as a fallback or backend is history.
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
-> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> OFF: a seam). Assimp stays compiled in as the fallback. **2026-11-23:** ufbx and `OKAY_OWN_FBX` were deleted; our FBX reader
+> is the only FBX reader, with no fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
 > `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
 > `docs/status/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
 
 The owner's rule for switching a format from Assimp to our own reader: "we only switch when it's faster and up to par". That
 means, on the same real files: **at least as fast, no more peak memory, and at least as good**. This page measures the first
 two for every reader that sits behind the `ImportModelData` seam, and lists where ours and Assimp disagree. FBX has its own
-page (`docs/content/model_readers.md`, its other side is ufbx); glTF does not go through this seam.
+page (`docs/content/model_readers.md`; it was compared with ufbx before ufbx was deleted); glTF does not go through this seam.
 
-No default was changed. Every reader here is still off by default (`OKAY_OWN_*`), except OBJ, STL and PLY, which were ours
+No default was changed when this was measured (since 2026-11-17 they are the default, note above). Every reader here was off by default then (`OKAY_OWN_*`), except OBJ, STL and PLY, which were ours
 already.
 
 ## How it is measured

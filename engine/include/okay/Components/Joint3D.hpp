@@ -22,6 +22,7 @@
 // point (`anchor`); set it to another object's name to link two bodies.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include <cstdint>
@@ -35,6 +36,16 @@ public:
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
+    /// Instance id of the other body when the joint is linked to that object rather than by name.
+    /// 0 means "use connectedGuid, or else the name". ConnectTo sets it. It is not stable across a
+    /// load, so the saved link is `connectedGuid`. It wins over the name while the object is alive.
+    std::uint64_t connectedId = 0;
+    /// The other body's Guid(). Saved with the scene and restored on load. Empty means "use the name".
+    std::string connectedGuid;
+    /// The name `connectedBody` had when the link was made (ConnectTo, or the load of a saved link). Typing another
+    /// name in `connectedBody` afterwards is a new choice: the link is dropped and the name is used (see Joint3DPartner).
+    /// A rename of the linked object does not touch `connectedBody`, so it keeps the link. Not saved.
+    std::string linkedName;
     Vec3  anchor{0, 0, 0};            ///< world anchor point when there's no connected body
     float distance = 1.0f;            ///< rest length (Distance / Spring)
     bool  autoConfigure = true;       ///< set `distance`/offset from the start separation
@@ -72,6 +83,33 @@ public:
         PartnerCache(const PartnerCache&) {}
         PartnerCache& operator=(const PartnerCache&) { object = nullptr; version = 0; return *this; }
     } partner;
+
+    /// Link this joint to `other` by object, not by name. nullptr clears the link and the name is used again.
+    /// The id is remembered, so the link survives the other object being renamed and is not stolen by a clone
+    /// that happens to have the same name. The guid is what a saved scene and a cloned hierarchy keep.
+    /// A destroyed object resolves to no partner (a world anchor).
+    void ConnectTo(GameObject* other) {
+        if (other && !other->IsDestroyed()) {
+            connectedId = other->InstanceId();
+            connectedGuid = other->Guid();
+            connectedBody = other->name;
+            linkedName = connectedBody;
+            partner.object = other;
+        } else {
+            connectedId = 0;
+            connectedGuid.clear();
+            linkedName.clear();
+            partner.object = nullptr;
+        }
+        partner.version = 0;
+    }
+    /// The object ConnectTo remembered, or nullptr when the link is by name or that object is gone.
+    GameObject* Linked() const {
+        if (connectedId == 0) return nullptr;
+        GameObject* g = GameObject::FromInstanceId(connectedId);
+        if (!g || g->IsDestroyed()) return nullptr;
+        return g;
+    }
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;

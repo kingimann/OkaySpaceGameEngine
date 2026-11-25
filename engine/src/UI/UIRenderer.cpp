@@ -9,6 +9,7 @@
 #include "okay/UI/UIFrameTransform.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
+#include "okay/Core/LocPreview.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
@@ -1002,6 +1003,8 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
                  bool italic, float boldOffset) {
+    // Visual order and joining forms. Cached, and the text itself when it needs none, so drawing allocates nothing.
+    const std::string& shown = okay::ShapedForDisplay(text);
     // Bake at the on-screen pixel size (logical font size × canvas scale) so the
     // atlas is not a fixed 64px face scaled up or down.
     const float logicalH = px * (float)okay::Font8x8::Height;
@@ -1011,10 +1014,10 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     okay::TtfFont* sized = quality == UIQuality::Old ? f->ForPixelHeight(deviceH)
                                                      : f->ForDeviceSize(deviceH, quality != UIQuality::Fast);
     if (!sized || !sized->Valid()) sized = f;
-    sized->Prepare(text);   // bake new characters before the atlas is uploaded
+    sized->Prepare(shown);   // bake new characters before the atlas is uploaded
     if (quality == UIQuality::Best && !italic) {   // the quarter-pixel variants too: they are baked on first use, and must be in the atlas that is uploaded below
-        for (std::size_t i = 0; i < text.size();) {
-            const std::uint32_t cp = okay::utf8::Next(text, i);
+        for (std::size_t i = 0; i < shown.size();) {
+            const std::uint32_t cp = okay::utf8::Next(shown, i);
             if (cp > ' ') for (int ph = 1; ph < okay::TtfFont::kPhases; ++ph) sized->GlyphForPhase(cp, ph);
         }
     }
@@ -1037,8 +1040,8 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     const bool kerning = quality != UIQuality::Old;
     std::uint32_t prevCh = 0;
     float penX = ox, penY = oy;
-    for (std::size_t i = 0; i < text.size();) {
-        const std::uint32_t ch = okay::utf8::Next(text, i);
+    for (std::size_t i = 0; i < shown.size();) {
+        const std::uint32_t ch = okay::utf8::Next(shown, i);
         if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; prevCh = 0; continue; }
         if (kerning && prevCh) penX += sized->Kerning(prevCh, ch, sized->BakeHeight()) * s;
         prevCh = ch;
@@ -1095,6 +1098,14 @@ void SetUIDefaultFont(TtfFont* f) { g_uiDefaultFont = f; }
 TtfFont* UIDefaultFont() { return g_uiDefaultFont; }
 // Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 // use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
+// Width of already shaped TTF text (the bytes DrawTtfText draws), in the face baked at the on-screen size.
+static float MeasureShownTtf(TtfFont* f, const char* shown, float px) {
+    const float logicalH = px * (float)Font8x8::Height;
+    const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
+    TtfFont* sized = f->ForPixelHeight(deviceH);
+    if (!sized || !sized->Valid()) sized = f;
+    return sized->Measure(shown, sized->BakeHeight(), g_uiQuality != UIQuality::Old) * (logicalH / sized->BakeHeight());
+}
 float UIMeasureText(TtfFont* font, const std::string& text, float px) {
     TtfFont* f = FontForText(font ? font : g_uiDefaultFont, text);
     if (px < 0.15f) px = 0.15f;
@@ -1102,11 +1113,17 @@ float UIMeasureText(TtfFont* font, const std::string& text, float px) {
         if (px < 1.0f) px = 1.0f;
         return (float)okay::utf8::Length(text) * (Font8x8::Width + 1) * px;
     }
-    const float logicalH = px * (float)Font8x8::Height;
-    const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
-    TtfFont* sized = f->ForPixelHeight(deviceH);
-    if (!sized || !sized->Valid()) sized = f;
-    return sized->Measure(text.c_str(), sized->BakeHeight(), g_uiQuality != UIQuality::Old) * (logicalH / sized->BakeHeight());
+    // The shaped text, as DrawTtfText draws it: Arabic joining forms have their own widths.
+    return MeasureShownTtf(f, okay::ShapedForDisplay(text).c_str(), px);
+}
+float UICaretX(TtfFont* font, const std::string& line, std::size_t caretByte, float px) {
+    if (caretByte > line.size()) caretByte = line.size();
+    TtfFont* f = FontForText(font ? font : g_uiDefaultFont, line);
+    if (!(f && f->Valid())) return UIMeasureText(font, line.substr(0, caretByte), px);   // the 8x8 font draws in typed order
+    if (px < 0.15f) px = 0.15f;
+    const std::string& shown = okay::ShapedForDisplay(line);
+    const std::size_t at = okay::ShapedCaretByte(line, caretByte);
+    return MeasureShownTtf(f, shown.substr(0, at).c_str(), px);
 }
 float UITextW(const std::string& text, float px) {
     return UIMeasureText(g_uiDefaultFont, text, px);

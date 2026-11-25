@@ -222,7 +222,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_3DS");
         SetImportBackend(".3ds", ImportBackend::Default);
         ImportedModel m;
-        if (!AssimpAvailable()) {
+        {
             if (EffectiveImportBackend(".3ds") == ImportBackend::Default) {   // not built with -DOKAY_OWN_3DS=ON
                 CHECK(!ImportModelData(kDir + "cube.3ds", m, ImportBackend::Default, false, &err));
                 CHECK(err.find("OKAY_OWN_3DS") != std::string::npos);

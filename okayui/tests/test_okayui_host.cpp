@@ -155,6 +155,9 @@ int main() {
         CHECK(in.keyDown[UI::KeyId_Slash] && in.ctrl);
         using PK2 = okay::platform::Key;
         CHECK(InputCollector::KeyIdOf(PK2::Slash, 0) == UI::KeyId_Slash && InputCollector::KeyIdOf(PK2::Slash, '/') == UI::KeyId_Slash);
+        // the code editor's fold keys
+        CHECK(InputCollector::KeyIdOf(SDLK_LEFTBRACKET) == UI::KeyId_LeftBracket && InputCollector::KeyIdOf(SDLK_RIGHTBRACKET) == UI::KeyId_RightBracket);
+        CHECK(InputCollector::KeyIdOf(PK2::LeftBracket, 0) == UI::KeyId_LeftBracket && InputCollector::KeyIdOf(PK2::RightBracket, ']') == UI::KeyId_RightBracket);
         CHECK(InputCollector::KeyIdOf(PK2::LAlt, 0) == UI::KeyId_Alt);
     }
     {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)

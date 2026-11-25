@@ -59,6 +59,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     BuildGame.cpp                                                      # Build Game: export the game, Web / Android / Xbox data, the dedicated server (builder::)
     Updater.cpp                                                        # the self-updater and runtime fetcher (updater::): check, download with checksums, install
     ScriptAssist.cpp                                                   # Scripting Reference window; the Script Editor's completion, signatures, docs, C# members, palette
+    ScriptAssistBindings.cpp                                           # Script assist from the engine's binding table: component members, argument hints, docs
     FindInFiles.cpp                                                    # Find in Files: search every project script, open a hit in the Script Editor
     AssetManagerWindow.cpp                                             # the Asset Manager window: Marketplace downloads listed by type, imported into the project
     PluginsWindow.cpp                                                  # editor plugins (OkayScript): editor_* builtins, Plugins menu, Plugin Manager
@@ -75,7 +76,6 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     OkayUIHostRun.cpp                                                  # window mode: backend, window, painter, frame loop, the editor's game step
     OkayUIHostDialogs.cpp                                              # window mode: the error modal and the save question (OkayUI popups)
     OkayUIHostViews.cpp                                                # window mode: the Scene and Game views (SceneViewCore.hpp, the engine software renderer, no Dear ImGui)
-    EditorPanelViews.cpp                                               # the Dear ImGui bodies of Problems, Stats and History (models in shared/EditorPanelModels.hpp)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window

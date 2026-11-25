@@ -1,4 +1,6 @@
 // The Dear ImGui bodies of the Problems, Stats, Tags and Layers, Physics and Profiler panels (see EditorPanelViews.hpp; History has none: OkayUI only).
+// NOT part of the editor (not in editor/CMakeLists.txt since docs/ui/own_ui_toolkit.md section 25): the references the headless comparison
+// tests (tests/test_okayui_*_imgui.cpp) measure the OkayUI ports against. The editor draws these panels with OkayUI only.
 // The drawing is what the editor's DrawProblems, DrawStats, DrawHistory, DrawTagsAndLayersSettings, the Physics section of
 // DrawProjectSettings and DrawProfiler drew before they were split from the editor's state; the right-click menus of the first
 // three are new and the OkayUI ports have the same ones.
@@ -553,10 +555,11 @@ PlayerSettingsIntent DrawPlayerSettingsBodyImGui(PlayerSettingsModel& m, const P
         ImGui::SetNextItemWidth(160);
         if (ImGui::InputText("Version##ps", m.version, m.versionSize)) out.changed = true;
     }
-    if (m.width && m.height) {
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Width##ps", m.width)) out.changed = true;
+    if (m.width && m.height) {   // as editor/main.cpp had it: five digits wide, no -/+ buttons
+        const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Width##ps", m.width, 0)) out.changed = true;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Height##ps", m.height)) out.changed = true;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Height##ps", m.height, 0)) out.changed = true;
     }
     return out;
 }

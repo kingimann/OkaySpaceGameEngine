@@ -2,6 +2,9 @@
 //  1. editing against a flat-string reference (insert, delete, backspace, cut, paste, selections, undo and redo), with the
 //     invariants checked after every step;
 //  2. the widget driven by random mouse, wheel, keys, text, resizes and API calls, frame after frame, rasterised now and then.
+//  3. the script editor's newer edits: typing with auto-close and auto-dedent, many carets, column selections, Ctrl+D, drag
+//     and drop, folding, word wrap, find and replace across lines, with the invariants after every step and undo of everything
+//     giving the first text back.
 // OKAYUI_FUZZ_ITERS scales the work (default 1500 steps per scenario), OKAYUI_FUZZ_SEED changes the seed.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
@@ -106,6 +109,7 @@ void ModelFuzz(std::uint64_t seed) {
     Rng rng(seed);
     CodeEdit e;
     e.SetAutoIndent(false);
+    e.SetAutoClose(false);                 // (the flat-string reference knows nothing of pairs)
     std::string init = rng.Valid(60);
     e.SetText(init);
     std::string ref = e.GetText();
@@ -171,6 +175,92 @@ void ModelFuzz(std::uint64_t seed) {
     CHECK(e.GetText() == last);
 }
 
+// Every caret valid, in order and not overlapping.
+bool CaretsOk(CodeEdit& e) {
+    const std::vector<UI::CodeSelection> s = e.Selections();
+    if ((int)s.size() != e.CaretCount()) return false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (!PosOk(e, s[i].caret) || !PosOk(e, s[i].anchor)) return false;
+        if (i && s[i].Start() < s[i - 1].End()) return false;
+    }
+    return e.VisualRowCount() >= 1 && e.VisualRowCount() <= e.LineCount() * 1000;
+}
+
+void ExtraFuzz(std::uint64_t seed) {
+    Rng rng(seed);
+    CodeEdit e;
+    UI::CodeLanguage lua;
+    lua.blockOpenWords = {"function", "do", "then", "else"}; lua.blockCloseWords = {"end", "else"}; lua.dedentWords = {"end", "else"};
+    lua.foldByIndent = true; lua.lineComments = {"--"};
+    if (seed & 1) e.SetLanguage(UI::OkayScriptLanguage()); else e.SetLanguage(lua);
+    e.SetFolding(true);
+    static const char* bits[] = {"(", ")", "[", "]", "{", "}", "\"", "'", "a", "e", "n", "d", " ", "end", "then", "\t", "x", "\xc3\xa9", ";"};
+    const std::string init = rng.Valid(120) + "\nif (a) {\n    b\n}\nfunction f() then\n  x\nend\n";
+    e.SetText(init);
+    std::set<std::string> seen{e.GetText()};
+    UI::SetClipboardText("");
+    bool ok = true;
+    const int steps = Iters();
+    auto rpos = [&] { const int l = rng.Int(e.LineCount() + 2) - 1; return CodePos{l, rng.Int(30) - 2}; };
+    for (int step = 0; step < steps && ok; ++step) {
+        const int op = rng.Int(24);
+        if (rng.Chance(25)) { if (rng.Chance(50)) e.SetCaret(rpos()); else e.SetSelection(rpos(), rpos()); }
+        switch (op) {
+            case 0: case 1: case 2: {   // one character at a time (typing over a selection and then on are two undo steps)
+                const std::string w = bits[rng.Int((int)(sizeof bits / sizeof *bits))];
+                for (size_t i = 0; i < w.size();) {
+                    size_t j = i + 1;
+                    while (j < w.size() && ((unsigned char)w[j] & 0xC0) == 0x80) ++j;
+                    e.Type(w.substr(i, j - i).c_str());
+                    seen.insert(e.GetText());
+                    i = j;
+                }
+                break;
+            }
+            case 3: e.AddCaret(rpos(), rng.Chance(50) ? rpos() : e.Clamp(CodePos{0, 0})); break;
+            case 4: e.SetColumnSelection(rpos(), rpos()); break;
+            case 5: e.SelectNextOccurrence(); break;
+            case 6: e.Backspace(rng.Chance(20)); break;
+            case 7: e.DeleteForward(rng.Chance(20)); break;
+            case 8: e.NewLine(); break;
+            case 9: e.Tab(rng.Chance(40)); break;
+            case 10: e.InsertText(rng.Valid(5).c_str()); break;
+            case 11: if (rng.Chance(50)) e.Copy(); else e.Cut(); break;
+            case 12: e.Paste(); break;
+            case 13: switch (rng.Int(4)) { case 0: e.ToggleLineComment(); break; case 1: e.DuplicateLines(); break; case 2: e.DeleteLines(); break; default: e.MoveLines(rng.Chance(50)); } break;
+            case 14: e.MoveSelectionTo(rpos(), rng.Chance(30)); break;
+            case 15: switch (rng.Int(5)) { case 0: e.Fold(rng.Int(e.LineCount())); break; case 1: e.Unfold(rng.Int(e.LineCount())); break; case 2: e.FoldAll(); break; case 3: e.UnfoldAll(); break; default: e.ToggleFold(rng.Int(e.LineCount())); } break;
+            case 16: e.SetWordWrap(rng.Chance(50)); break;
+            case 17: e.SetFind(rng.Chance(40) ? std::string("a\n") + rng.Valid(2) : rng.Valid(2), rng.Chance(50)); if (rng.Chance(50)) e.FindNext(); else e.FindPrev(); break;
+            case 18: e.ReplaceAll(rng.Valid(3)); break;
+            case 19: e.ReplaceCurrent(rng.Valid(3)); break;
+            case 20: e.Move((UI::CodeMove)rng.Int(12), rng.Chance(40)); break;
+            case 21: e.Undo(); break;
+            case 22: e.Redo(); break;
+            default: if (rng.Chance(50)) e.ClearExtraCarets(); else e.SetAutoClose(rng.Chance(80)); break;
+        }
+        if (!Invariants(e) || !CaretsOk(e)) {
+            std::cerr << "  carets:";
+            for (const auto& c : e.Selections()) std::cerr << " (" << c.anchor.line << "," << c.anchor.col << ")-(" << c.caret.line << "," << c.caret.col << ")";
+            std::cerr << " invariants " << Invariants(e) << " text [" << e.GetText() << "]\n";
+        }
+        if (!Invariants(e) || !CaretsOk(e)) { std::cerr << "  extra: invariant broken at step " << step << " op " << op << "\n"; ok = false; break; }
+        if (std::getenv("OKAYUI_FUZZ_TRACE")) std::cerr << "step " << step << " op " << op << " carets " << e.CaretCount() << " text [" << e.GetText() << "]\n";
+        if ((op == 21 || op == 22) && !seen.count(e.GetText())) { std::cerr << "  extra: undo/redo produced a text never seen, step " << step << "\n"; ok = false; break; }
+        seen.insert(e.GetText());
+    }
+    CHECK(ok);
+    while (e.Redo()) { }
+    const std::string last = e.GetText();
+    int undone = 0;
+    while (e.Undo()) { ++undone; if (!Invariants(e) || !CaretsOk(e)) { ok = false; break; } }
+    CHECK(ok);
+    if (undone < 2000) CHECK(e.GetText() == init);
+    int redone = 0;
+    while (e.Redo()) ++redone;
+    CHECK(redone == undone && e.GetText() == last);
+}
+
 void WidgetFuzz(std::uint64_t seed) {
     Rng rng(seed);
     Reset();
@@ -181,7 +271,8 @@ void WidgetFuzz(std::uint64_t seed) {
     e.SetLanguage(UI::OkayScriptLanguage());
     e.SetText(rng.Valid(300));
     const int frames = Iters();
-    static const UI::KeyId named[] = {UI::KeyId_Tab, UI::KeyId_PageUp, UI::KeyId_PageDown, UI::KeyId_Z, UI::KeyId_Y, UI::KeyId_A, UI::KeyId_Left, UI::KeyId_Home};
+    static const UI::KeyId named[] = {UI::KeyId_Tab, UI::KeyId_PageUp, UI::KeyId_PageDown, UI::KeyId_Z, UI::KeyId_Y, UI::KeyId_A, UI::KeyId_Left, UI::KeyId_Home,
+                                      UI::KeyId_D, UI::KeyId_LeftBracket, UI::KeyId_RightBracket, UI::KeyId_Alt};
     bool ok = true;
     for (int f = 0; f < frames && ok; ++f) {
         if (rng.Chance(30)) { sim.Move(rng.Chance(80) ? rng.Uni(0, 480) : rng.Nasty(), rng.Chance(80) ? rng.Uni(0, 320) : rng.Nasty()); }
@@ -206,12 +297,25 @@ void WidgetFuzz(std::uint64_t seed) {
         if (rng.Chance(2)) e.SetScroll(rng.Nasty(), rng.Nasty());
         if (rng.Chance(2)) e.GoToLine(rng.Int(80) - 10);
         if (rng.Chance(1)) UI::SetClipboardText(rng.Junk(40).c_str());
+        if (rng.Chance(1)) e.SetWordWrap(rng.Chance(50));
+        if (rng.Chance(1)) e.SetFolding(rng.Chance(70));
+        if (rng.Chance(1)) e.SetShowWhitespace(rng.Chance(50));
+        if (rng.Chance(1)) e.SetAutoClose(rng.Chance(70));
+        if (rng.Chance(1)) { if (rng.Chance(50)) e.FoldAll(); else e.UnfoldAll(); }
+        if (rng.Chance(2)) e.AddCaret(CodePos{rng.Int(30) - 3, rng.Int(20) - 2});
+        if (rng.Chance(1)) e.SetColumnSelection(CodePos{rng.Int(30), rng.Int(20)}, CodePos{rng.Int(30), rng.Int(20)});
+        if (rng.Chance(1)) { UI::CodePalette p = e.Palette(); p.wordMatch = rng.Chance(50) ? UI::RGBA(255, 255, 0, 60) : 0; p.indentGuide = rng.Chance(50) ? UI::RGBA(200, 200, 200, 60) : 0; e.SetPalette(p); }
         sim.Frame([&] {
             if (UI::Begin("W", 10, 10, 460, 300, &open)) e.Draw("ed", w, h);
             UI::End();
         });
         if (f % 50 == 0) sim.Draw();
-        if (!Invariants(e)) { std::cerr << "  widget invariant broken at frame " << f << "\n"; ok = false; }
+        if (!Invariants(e) || !CaretsOk(e)) {
+            std::cerr << "  widget invariant broken at frame " << f << ": invariants " << Invariants(e) << " carets " << CaretsOk(e) << ":";
+            for (const auto& c : e.Selections()) std::cerr << " (" << c.anchor.line << "," << c.anchor.col << ")-(" << c.caret.line << "," << c.caret.col << ")";
+            std::cerr << " rows " << e.VisualRowCount() << " lines " << e.LineCount() << " scroll " << e.ScrollX() << "," << e.ScrollY() << "\n";
+            ok = false;
+        }
     }
     CHECK(ok);
 }
@@ -221,5 +325,6 @@ int main() {
     RUN_SUITE("okayui codeedit fuzz");
     for (int i = 0; i < 6; ++i) ModelFuzz(Seed() + (std::uint64_t)i);
     for (int i = 0; i < 6; ++i) WidgetFuzz(Seed() + 100 + (std::uint64_t)i);
+    for (int i = 0; i < 6; ++i) ExtraFuzz(Seed() + 200 + (std::uint64_t)i);
     TEST_MAIN_RESULT();
 }

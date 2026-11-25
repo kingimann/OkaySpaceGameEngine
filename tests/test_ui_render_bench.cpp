@@ -108,6 +108,21 @@ int main() {
             default: { auto* sl = g->AddComponent<UISlider>(); sl->position = Vec2{x, y}; sl->size = Vec2{90, 16}; break; }
         }
     }
+    // Right-to-left text (Hebrew, Arabic, and mixed with Latin) is shaped into visual order before it is drawn. It is shaped
+    // once and cached, so it must not allocate each frame either. DejaVu Sans has the Hebrew and Arabic letters.
+    const std::string rtlFont = std::string(OKAY_SOURCE_DIR) + "/assets/fonts/DejaVuSans.ttf";
+    static const std::string kRtl[] = {"\u05E9\u05DC\u05D5\u05DD \u05E2\u05D5\u05DC\u05DD",   // Hebrew: hello world
+                                       "\u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645",   // Arabic: hello world
+                                       "Score \u05E0\u05D9\u05E7\u05D5\u05D3 12345"};   // mixed
+    for (int i = 0; i < 12; ++i, ++made) {
+        GameObject* g = s.CreateGameObject("rtl");
+        g->transform->SetParent(cv->transform, false);
+        auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->screenPos = Vec2{10.0f + (i % 4) * 300.0f, 1000.0f + (i / 4) * 24.0f};
+        t->pixelSize = 1.5f; t->text = kRtl[i % 3]; t->fontPath = rtlFont;
+    }
+    TtfFont* rtlFace = GetFont(rtlFont);
+    CHECK(rtlFace != nullptr);
+    float rtlWidth = 0.0f;
     for (; made < 10000; ++made) s.CreateGameObject("prop");
     CHECK((int)s.Objects().size() == 10000);
 
@@ -117,6 +132,7 @@ int main() {
         backend.drawCalls = 0; backend.triangles = 0;
         RenderSceneUI(s, batch, 1920, 1080);
         batch.Flush();
+        rtlWidth = UIMeasureText(rtlFace, kRtl[1], 2.0f);   // measuring shaped text allocates nothing too
     };
     for (int i = 0; i < 5; ++i) frame();   // warm up: caches, atlas, vertex buffers
 
@@ -136,6 +152,7 @@ int main() {
     std::snprintf(d, sizeof(d), "%ld allocations over 50 frames", allocs);
     Report("0 allocations in steady state", allocs == 0, d);
     CHECK(allocs == 0);
+    CHECK(rtlWidth > 0.0f);
 
     // ---- CPU time ----
     std::vector<double> ms;

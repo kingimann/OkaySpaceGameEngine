@@ -110,6 +110,9 @@ struct ProfilerResult {
     std::vector<OkayUI::Rect> rows;                           // the table's rows drawn (in ProfilerRows order)
     float guide60 = 0.0f, guide30 = 0.0f, scrubX = 0.0f;     // the guide lines' y and the scrub marker's x (0 = not drawn)
     bool empty = false;
+    OkayUI::Rect texturesHeader;                              // the "Textures" fold-out (zero without model.textures)
+    std::vector<OkayUI::Rect> textureRows;                    // its rows drawn while open (the file name cell)
+    bool texturesOverBudget = false;                          // the budget warning is showing
 };
 
 ProfilerResult DrawProfiler(okaypanels::ProfilerModel& model, float x, float y, float w, float h);
@@ -144,8 +147,7 @@ PostProcessResult DrawPostProcess(okaypanels::PostProcessModel& model, float x, 
 
 struct PlayerSettingsResult {
     okaypanels::PlayerSettingsIntent intent;
-    OkayUI::Rect company, version, width, height;
-    OkayUI::Rect widthMinus, widthPlus, heightMinus, heightPlus;   // the step buttons
+    OkayUI::Rect company, version, width, height;                  // plain number fields (no step buttons, as the editor's)
     float contentHeight = 0.0f;
 };
 

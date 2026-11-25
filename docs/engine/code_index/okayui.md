@@ -2,7 +2,7 @@
 
 # Code index: okayui
 
-Back to the [code index](../code_index.md). 12 headers, 641 names.
+Back to the [code index](../code_index.md). 12 headers, 642 names.
 
 ## `okayui/include/okay/UI/OkayUI.hpp`
 
@@ -95,7 +95,7 @@ Back to the [code index](../code_index.md). 12 headers, 641 names.
 - `InputTextWithHint` function, line 519: InputText that shows 'hint' in a dim colour while the field is empty (a placeholder such as "Search...").
 - `SetKeyboardFocusHere` function, line 521: The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
 - `CenterNextOnLine` function, line 524: The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
-- `InputInt` function, line 527: An integer field with [-]/[+] stepper buttons that change *value by 'step'.
+- `InputInt` function, line 527: An integer field with [-]/[+] stepper buttons that change *value by 'step'; a 'step' of 0 or less draws no steppers (a plain
 - `CollapsingHeader` function, line 531: A collapsing section header. Returns true while expanded — put the section's
 - `Combo` function, line 538: A dropdown selecting one of items[0..count) into *current. The open list draws
 - `BeginCombo` function, line 543: A combo whose list is whatever you draw: the box shows 'preview'; while it is open, the widgets between
@@ -352,20 +352,21 @@ Back to the [code index](../code_index.md). 12 headers, 641 names.
 
 ## `okayui/include/okay/UI/OkayUICodeEdit.hpp`
 
-- `CodePos` struct, line 26: A position in the text: a line and a byte offset in it.
-- `CodeColor` enum, line 35: What a stretch of text is, for colouring. The palette maps each to a colour.
-- `CodeToken` struct, line 42: A coloured stretch [start, end) of one line (byte offsets). Stretches not covered by a token are drawn in the default colour.
-- `CodeLanguage` struct, line 50: The words and comment styles of a C-like language, for the built-in highlighter.
-- `CLikeLanguage` function, line 61: C and C++ words with "//" and block comments.
-- `OkayScriptLanguage` function, line 63: OkayScript: the keywords and built-in types the script editor knew, "//" and "#" line comments and block comments.
-- `MakeCLikeHighlighter` function, line 66: The built-in highlighter for a language: keywords, types, known words, function calls, members after '.', strings with
-- `CodePalette` struct, line 69: Colours for the editor. Packed 0xAABBGGRR like the rest of OkayUI (see RGBA).
-- `DefaultCodePalette` function, line 81: The Darcula-flavoured palette the script editor uses.
-- `CodeMarker` struct, line 85: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
-- `CodeMove` enum, line 93: Where the caret goes.
-- `CodeEdit` class, line 99
-- `TextBoxPalette` function, line 370: The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
-- `MakeTextBox` function, line 372: Make 'ed' a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
+- `CodePos` struct, line 28: A position in the text: a line and a byte offset in it.
+- `CodeSelection` struct, line 38: One caret and its selection (anchor == caret: no selection). The editor has a primary caret (Caret(), Anchor()) and any number
+- `CodeColor` enum, line 46: What a stretch of text is, for colouring. The palette maps each to a colour.
+- `CodeToken` struct, line 53: A coloured stretch [start, end) of one line (byte offsets). Stretches not covered by a token are drawn in the default colour.
+- `CodeLanguage` struct, line 61: The words and comment styles of a C-like language, for the built-in highlighter.
+- `CLikeLanguage` function, line 79: C and C++ words with "//" and block comments.
+- `OkayScriptLanguage` function, line 81: OkayScript: the keywords and built-in types the script editor knew, "//" and "#" line comments and block comments.
+- `MakeCLikeHighlighter` function, line 84: The built-in highlighter for a language: keywords, types, known words, function calls, members after '.', strings with
+- `CodePalette` struct, line 87: Colours for the editor. Packed 0xAABBGGRR like the rest of OkayUI (see RGBA).
+- `DefaultCodePalette` function, line 102: The Darcula-flavoured palette the script editor uses.
+- `CodeMarker` struct, line 106: An error (or warning) the caller wants shown: a mark in the gutter, a wash over the line and a wavy underline under the
+- `CodeMove` enum, line 114: Where the caret goes.
+- `CodeEdit` class, line 120
+- `TextBoxPalette` function, line 497: The palette of a plain text box (InputTextMultiline, the Crash Log's reports): the current theme's text on its field colour, no
+- `MakeTextBox` function, line 499: Make 'ed' a plain text box, as InputTextMultiline's: no line numbers, no breakpoint gutter, no highlighting or auto-indent, tabs kept.
 
 ## `okayui/include/okay/UI/OkayUICompat.hpp`
 
@@ -493,7 +494,7 @@ Back to the [code index](../code_index.md). 12 headers, 641 names.
 - `Axis` enum, line 469: Axis (ImGuiAxis_X / Y), sort direction and the popup / style names the probe found missing: names only.
 - `SortDirection` enum, line 470
 - `PopupExtraFlags` enum, line 471
-- `InputInt` function, line 475: InputInt with the step arguments of Dear ImGui ('stepFast' and 'flags' are accepted and not used; a 'step' of 0 still shows the +/- buttons).
+- `InputInt` function, line 475: InputInt with the step arguments of Dear ImGui ('stepFast' and 'flags' are accepted and not used; a 'step' of 0 shows no +/- buttons, as in Dear ImGui).
 - `TreeNodeExFormatted` function, line 476
 - `TreeNode` function, line 478: TreeNode with an id and a printf-style label: 'TreeNode("##id", "Incoming (%d)", n)'.
 - `DragFloat2` function, line 481: ---- Step 6.18: argument shapes found by probing editor/main.cpp (the Hierarchy panel and the rest of the editor) ----------------------

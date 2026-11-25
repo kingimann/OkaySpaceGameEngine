@@ -803,6 +803,40 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
         UI::PopStyleVar();
         UI::PopStyleColor(4);
         if (m.sections.empty()) { UI::TextDisabled(ProfilerEmptyText(m)); res.empty = true; }
+        // ---- the texture library: every picture it holds, its size and memory, and the budget (asked only while open) ----
+        if (m.textures) {
+            const bool open = UI::CollapsingHeader("Textures");
+            res.texturesHeader = UI::GetItemRect();
+            if (open) {
+                ProfilerTextures tx;
+                m.textures(tx);
+                UI::TextUnformatted(tx.line.c_str());
+                if (tx.overBudget) { UI::TextColored(255, 128, 115, kProfilerOverBudget); res.texturesOverBudget = true; }
+                UI::TextDisabled(ProfilerTexturesNote(tx).c_str());
+                UI::PushStyleVar(UI::StyleVar_CellPadding, UI::Vec2{10.0f, 6.0f});
+                if (UI::BeginTable("proftex", 5, UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_BordersOuter | UI::Table_ScrollY | UI::Table_NoResize,
+                                   UI::Vec2{0.0f, 180.0f})) {
+                    UI::TableSetupColumn(kProfilerTextureColumns[0], UI::Col_None, 3.0f);
+                    for (int c = 1; c < 5; ++c) UI::TableSetupColumn(kProfilerTextureColumns[c], UI::Col_None, 1.0f);
+                    UI::TableSetupScrollFreeze(0, 1);
+                    UI::TableHeadersRow();
+                    for (const ProfilerTexture& t : tx.rows) {
+                        char cell[48];
+                        UI::TableNextRow();
+                        UI::TableNextColumn();
+                        UI::TextUnformatted(ProfilerTextureName(t.path).c_str());
+                        res.textureRows.push_back(UI::GetItemRect());
+                        if (UI::IsItemHovered()) UI::SetTooltip("%s", t.path.c_str());
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%dx%d", t.width, t.height); UI::Text(cell);
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%d", t.mipLevels); UI::Text(cell);
+                        UI::TableNextColumn(); std::snprintf(cell, sizeof(cell), "%.2f", t.megabytes); UI::Text(cell);
+                        UI::TableNextColumn(); UI::TextUnformatted(t.kind.c_str());
+                    }
+                    UI::EndTable();
+                }
+                UI::PopStyleVar();
+            }
+        }
         UI::EndChild();
     }
     UI::End();
@@ -1056,21 +1090,16 @@ PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y
             res.version = UI::GetItemRect();
         }
         if (m.width && m.height) {
-            UI::SetNextItemWidth(WithLabel(110.0f, "Width"));
-            // the step buttons: two squares a frame tall before the label, 8 pixels apart (the framed InputInt)
-            auto steps = [](const UI::Rect& r, const char* label, UI::Rect& minus, UI::Rect& plus) {
-                const float right = r.x + r.w - (UI::CalcTextWidth(label) + 8.0f);
-                plus = UI::Rect{right - r.h, r.y, r.h, r.h};
-                minus = UI::Rect{plus.x - 8.0f - r.h, r.y, r.h, r.h};
-            };
-            if (UI::InputInt("Width##ps", m.width)) res.intent.changed = true;
+            // Plain number fields wide enough for five digits at any text size, with no -/+ buttons (editor/main.cpp: at 110 pixels the
+            // buttons took the room and 1280 x 720 showed as "12" and "72").
+            const float numW = UI::CalcTextWidth("000000") + 2.0f * g_metrics.framePadding.x;
+            UI::SetNextItemWidth(WithLabel(numW, "Width"));
+            if (UI::InputInt("Width##ps", m.width, 0)) res.intent.changed = true;
             res.width = UI::GetItemRect();
-            steps(res.width, "Width", res.widthMinus, res.widthPlus);
             UI::SameLine();
-            UI::SetNextItemWidth(WithLabel(110.0f, "Height"));
-            if (UI::InputInt("Height##ps", m.height)) res.intent.changed = true;
+            UI::SetNextItemWidth(WithLabel(numW, "Height"));
+            if (UI::InputInt("Height##ps", m.height, 0)) res.intent.changed = true;
             res.height = UI::GetItemRect();
-            steps(res.height, "Height", res.heightMinus, res.heightPlus);
         }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();

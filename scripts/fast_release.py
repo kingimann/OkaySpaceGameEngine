@@ -162,7 +162,7 @@ def ci_jobs_decision(jobs):
 
 
 # The smaller "release gate": the CI jobs that build and test what ships (the Windows programs, the player/editor, the scripting
-# sanitizers, the update-signing tests). The other jobs (Assimp comparison, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
+# sanitizers, the update-signing tests). The other jobs (model corpus, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
 # informational for a release: they do not build anything that is released. Display names of ci.yml jobs; a test keeps this list honest.
 RELEASE_GATE_JOBS = (
     "Build & test (Ubuntu)",
@@ -331,15 +331,17 @@ def roadmap_row(version, entries):
     return "| %s | %s |" % (version, "; ".join(parts))
 
 
-def notes_lines(entries, limit=8):
-    """The launcher's 'what's new' card (NOTES.txt): "- text" lines, one per entry first, then second bullets, at most `limit`."""
+def notes_lines(entries, limit=0):
+    """The launcher's 'what's new' card (NOTES.txt): "- text" lines, one per entry first, then second bullets.
+    limit 0 (the default) = the full release notes, every bullet, uncut (owner, 2026-11-25: "i want the whats new be full releases
+    notes"); a positive limit keeps at most that many lines and shortens a bullet to 200 characters."""
     firsts = [e["bullets"][0] for e in entries]
     rest = [b for e in entries for b in e["bullets"][1:]]
     out = []
     for b in firsts + rest:
         b = b.strip()
-        out.append("- " + (b if len(b) <= 200 else b[:197] + "..."))
-        if len(out) >= limit:
+        out.append("- " + (b if limit <= 0 or len(b) <= 200 else b[:197] + "..."))
+        if limit > 0 and len(out) >= limit:
             break
     return out
 
@@ -521,9 +523,10 @@ def main(argv):
     a.add_argument("--out-dir", required=True)
     a.add_argument("--allow-empty", action="store_true")
     a = sub.add_parser("changelog-notes", help="NOTES.txt lines for one version, from its block in dist/CHANGELOG.txt")
+    a.add_argument("--markdown", action="store_true", help="the GitHub release body: a heading and the same bullets")
     a.add_argument("--version", required=True)
     a.add_argument("--changelog", default=os.path.join(ROOT, "dist", "CHANGELOG.txt"))
-    a.add_argument("--limit", type=int, default=8)
+    a.add_argument("--limit", type=int, default=0, help="0 = every bullet (the full release notes)")
     a = sub.add_parser("check-entries")
     a.add_argument("--entries-dir", default=os.path.join(ROOT, "dist", "changelog.d"))
     a = sub.add_parser("stamp")
@@ -553,6 +556,8 @@ def main(argv):
             lines = notes_lines(changelog_entry(_read(args.changelog), args.version), args.limit)
             if not lines:
                 return 1   # no block for this version: the caller falls back
+            if args.markdown:
+                lines = ["## What's new in v%s" % args.version, ""] + lines
             print("\n".join(lines))
             return 0
         if args.cmd == "next-version":

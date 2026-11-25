@@ -392,30 +392,8 @@ void OkayScriptVM::Impl::RegisterAnimStateMachineBuiltins(BuiltinCtx& c) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);
             return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
         };
-        b["weapon_swing"] = [selfObj](std::vector<Value>&) {
-            GameObject* go = selfObj();
-            auto* m = go ? go->GetComponent<MeleeAttacker>() : nullptr;
-            if (!m) return Value{0.0f};
-            m->Swing();
-            return Value{1.0f};
-        };
-        b["weapon_fire"] = [selfObj](std::vector<Value>&) {
-            GameObject* go = selfObj();
-            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
-            return Value{g && g->Fire() ? 1.0f : 0.0f};
-        };
-        b["weapon_reload"] = [selfObj](std::vector<Value>&) {
-            GameObject* go = selfObj();
-            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
-            if (!g) return Value{0.0f};
-            g->Reload();
-            return Value{1.0f};
-        };
-        b["weapon_ammo"] = [selfObj](std::vector<Value>&) {
-            GameObject* go = selfObj();
-            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
-            return Value{(float)(g ? g->Rounds() : 0)};
-        };
+        // weapon_swing / weapon_fire / weapon_reload / weapon_ammo are registered by the weapons
+        // module on the shared script table (engine/modules/weapons/register.cpp).
         b["weapon_set"] = [selfObj](std::vector<Value>& a) {
             GameObject* go = selfObj();
             if (!go || a.empty()) return Value{0.0f};

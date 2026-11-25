@@ -117,6 +117,10 @@ std::vector<Scene*> ScenesOf(const std::vector<Peer*>& ps) {
 
 int main() {
     RUN_SUITE("net_session");
+    // The netsim and connreset sections open raw UdpSockets after every Network Manager
+    // has stopped; on Windows the last Stop's WSACleanup unloads Winsock, so the test
+    // holds its own reference (the Windows run failed every netsim check without it).
+    CHECK(net::Startup());
 
     // ---------------------------------------------------------------- bigmsg
     {
@@ -607,6 +611,33 @@ int main() {
         CHECK(firstAt > 0.15 && firstAt < 0.35);   // the latency once (it was added on the way out and again on the way in)
         sim.enabled = false;
         net::ResetSimulator(sa); net::ResetSimulator(sb);
+    }
+
+    // ---------------------------------------------------------------- connreset (a send to a closed port does not block reading)
+    {
+        // Windows turns the "port unreachable" a send to a closed port gets back into a
+        // WSAECONNRESET on the next recvfrom unless the socket asks it not to; a receive
+        // loop then stops for that frame, which is what a host sees when a player quits.
+        net::UdpSocket a, b, gone;
+        CHECK(a.Open() && a.Bind(0) && b.Open() && b.Bind(0) && gone.Open() && gone.Bind(0));
+        net::Endpoint toGone{0x7F000001u, gone.LocalPort()}, toA{0x7F000001u, a.LocalPort()};
+        gone.Close();
+        const std::uint8_t ping[4] = {1, 2, 3, 4};
+        for (int i = 0; i < 3; ++i) a.SendTo(toGone, ping, sizeof ping);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));   // let the unreachable replies come back
+        for (int i = 0; i < 3; ++i) b.SendTo(toA, ping, sizeof ping);
+        CHECK(a.WaitReadable(1000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));   // all three are in
+        std::uint8_t buf[16]; net::Endpoint from;
+        int got = 0, errors = 0;
+        for (int i = 0; i < 10; ++i) {
+            const int n = a.RecvFrom(buf, sizeof buf, from);
+            if (n > 0) ++got;
+            else if (n < 0) ++errors;
+            else break;
+        }
+        std::printf("  connreset: 3 datagrams after 3 sends to a closed port: %d read in one loop, %d errors\n", got, errors);
+        CHECK(got == 3 && errors == 0);
     }
 
     // ---------------------------------------------------------------- rbguard (review F4: settings agreed, future inputs capped)

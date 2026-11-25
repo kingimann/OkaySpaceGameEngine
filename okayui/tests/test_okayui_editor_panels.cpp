@@ -781,6 +781,35 @@ int main() {
         CHECK(res.empty && res.rows.empty() && res.pauseBox.w == 0 && UI::DroppedGeometry() == 0);
         CHECK(P::ProfilerDiagnosis(m) == "Waiting for frames..." && std::string(P::ProfilerEmptyText(m)).find("Press Play") == 0);
     }
+    {   // the Textures section (the editor's texture library): folded at first and not asked for; opened, its line, the budget
+        // warning, the hot-reload note and one row per texture, the file name with its path as the tooltip
+        panelfix::ProfilerData d;
+        int asked = 0;
+        d.model.textures = [&](P::ProfilerTextures& t) {
+            ++asked;
+            t.line = "Textures: 2, 5.25 MB of 256 MB";
+            t.overBudget = true; t.hotReload = true; t.reloads = 3; t.trimmed = 1;
+            P::ProfilerTexture a; a.path = "Assets/Art/crate.png"; a.width = 512; a.height = 512; a.mipLevels = 10; a.megabytes = 1.33; a.kind = "colour";
+            P::ProfilerTexture b; b.path = "Assets/Art/crate_n.png"; b.width = 1024; b.height = 1024; b.mipLevels = 11; b.megabytes = 5.33; b.kind = "normal";
+            t.rows = {a, b};
+        };
+        S::ProfilerResult res;
+        auto r = MakeRig(560, 1100, [&](float x, float y, float w, float h) { res = S::DrawProfiler(d.model, x, y, w, h); });
+        r.Frames(3);
+        CHECK(res.texturesHeader.w > 0 && asked == 0 && res.textureRows.empty());
+        r.Click(res.texturesHeader);
+        r.Frames(2);
+        CHECK(asked > 0 && res.textureRows.size() == 2 && res.texturesOverBudget);
+        CHECK(P::ProfilerTextureName(d.model.textures ? "Assets/Art/crate.png" : "") == "crate.png");
+        CHECK(P::ProfilerTexturesNote(P::ProfilerTextures{}) == "Hot reload off, 0 reloaded, 0 let go of for the budget");
+        P::ProfilerTextures tn; tn.hotReload = true; tn.reloads = 3; tn.trimmed = 1;
+        CHECK(P::ProfilerTexturesNote(tn) == "Hot reload on, 3 reloaded, 1 let go of for the budget");
+        CHECK(UI::DroppedGeometry() == 0);
+        r.Click(res.texturesHeader);   // folded again: not asked any more
+        const int before = asked;
+        r.Frames(2);
+        CHECK(asked == before && res.textureRows.empty());
+    }
 
     // ================= section 11: the toolkit pieces (framed check boxes and combos, scroll bar size, framed InputInt and SliderFloat3,
     // fields outside the clip) =================
@@ -1052,25 +1081,31 @@ int main() {
     }
 
     // ================= Player and Rendering (Project Settings) =================
-    {   // the sections, golden; typing in the fields, the steppers, Ambient, Skybox, Apply
+    {   // the sections, golden; typing in the fields (the size fields are plain numbers, no steppers), Ambient, Skybox, Apply
         panelfix::PlayerData d;
         panelfix::RenderingData rd;
         S::PlayerSettingsResult res;
         S::RenderingSettingsResult rres;
         bool changed = false, apply = false;
+        float widthW = 0.0f;   // what the Width row should take: "000000" and the frame padding, the 8-pixel gap, the label
         auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) {
+            widthW = UI::CalcTextWidth("000000") + 24.0f + 8.0f + UI::CalcTextWidth("Width");
             res = S::DrawPlayerSettings(d.model, x, y, w, 180.0f);
             rres = S::DrawRenderingSettings(rd.model, x, y + 200.0f, w, h - 200.0f);
             if (res.intent.changed || rres.intent.changed) changed = true;
             if (rres.intent.apply) apply = true;
         });
         r.Frames(3);
-        CHECK(res.company.w > 0 && res.widthPlus.w > 0 && res.heightPlus.x > res.widthPlus.x && rres.apply.w > 0);
+        CHECK(res.company.w > 0 && res.height.x > res.width.x + res.width.w && rres.apply.w > 0);
+        // five digits wide and no -/+ buttons: the field, the gap and the label only (editor/main.cpp)
+        CHECK(std::abs(res.width.w - widthW) < 1.0f);
         Check("editorpanels_player_rendering", r.Draw());
         r.Click(res.version); r.sim.Press(Key_End); r.Frame(); r.sim.Type("-beta"); r.Frame();
         CHECK(changed && std::strcmp(d.version, "1.4.2-beta") == 0);
-        r.Click(res.widthPlus);   CHECK(d.width == 1281);
-        r.Click(res.heightMinus); CHECK(d.height == 719);
+        r.Click(res.width); r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("1920"); r.Frame(); r.sim.Press(Key_Enter); r.Frame();
+        CHECK(d.width == 1920 && d.height == 720);
+        r.Click(res.height); r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("1080"); r.Frame(); r.sim.Press(Key_Enter); r.Frame();
+        CHECK(d.height == 1080);
         r.sim.Move(rres.ambient.x + 3.0f, CY(rres.ambient)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(rd.ambient == 0.0f);
         r.Click(rres.skybox); CHECK(!rd.skybox);

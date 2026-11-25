@@ -528,7 +528,7 @@ Built, in new files so `OkayUI.cpp` is untouched apart from three small hooks: `
 
 Tested: `test_okayui_codeedit.cpp` (407 checks: every editing operation, movement, UTF-8 selection edge cases, undo grouping, find, highlighting, brackets, the widget driven by synthetic mouse and keys, pixels, a golden image, a 100k-line performance check) and `test_okayui_codeedit_fuzz.cpp` (flat-string model fuzz and random mouse, wheel, keys and API calls; clean under ASan and UBSan).
 
-Not done: IME, ligatures, multiple cursors, folding, word wrap, a code font (the cell width assumes a monospaced font; family 23), wide-character cells, autocomplete popup (the editor draws its own on the widget's geometry), a real window or GPU check, the script editor reaches it only through `ScriptEditorWidget` with the developer-only OkayUI backend (step 27 in `docs/ui/own_ui_code_editor.md`; the default is still ImGuiColorTextEdit; the host now sends Up, Down, Ctrl+C, X, V, Ctrl and the named keys). The multi-line paste named as not done in 4.28 is now possible in this widget (the single-line text field is unchanged).
+Not done: IME, ligatures, multiple cursors, folding, word wrap, a code font (the cell width assumes a monospaced font; family 23), wide-character cells, autocomplete popup (the editor draws its own on the widget's geometry), a real window or GPU check. (When this step was written the script editor reached it only through `ScriptEditorWidget` with the developer-only OkayUI backend; since 2026-11-23, #1200, the script editor always uses it and ImGuiColorTextEdit is deleted) (step 27 in `docs/ui/own_ui_code_editor.md`; the host now sends Up, Down, Ctrl+C, X, V, Ctrl and the named keys). The multi-line paste named as not done in 4.28 is now possible in this widget (the single-line text field is unchanged).
 
 ### 4.30 Gap-closing step 26: docking (family 22)
 
@@ -3185,3 +3185,72 @@ backend only (24.1). The `OKAY_EDITOR_ON_OKAYUI` path was only compiled as far a
   the mouse, Refresh clicked there, the mouse mapped. `okayui_capture`: `overlayFrom`. `okayui_host`: `Region::Active`. `okayui_panels`:
   the Crash Log selection, Ctrl+C through the host, read only, a reload goes back to the end.
 - **Not verified.** Real OS windows (SDL's or the own backend's multi-window path), Windows, the editor program.
+
+## 25. Problems, Stats and the Profiler on OkayUI only; the Dear ImGui reference bodies leave the editor
+
+The same move as section 24 for three more windows: `DrawProblems` (`editor/ProblemsPanel.cpp`), `DrawStats` and `DrawProfiler`
+(`editor/main.cpp`) build their model (`shared/EditorPanelModels.hpp`) and call the OkayUI window (`editor/OkayPanels.cpp`,
+`okayuihost::HostPanelWindow`); their Dear ImGui bodies are deleted. Each model is filled only while the window shows, as the Dear
+ImGui bodies did (the Stats frame-rate history, the Profiler's `Stat3` feed of the scene's draw counts).
+
+**Checked against main's panels before wiring** (section 23 had left them unwired because main changed them after the port):
+
+- **Problems**: the model's rows, filters, grouping, repeats dropped once, Fix and a click to open match main's panel. New in the
+  editor: the row menu (Go to source, Fix, Copy message) the port always had. The scripted diagnostics demo (`OKAY_UI_DIAG`) takes the
+  row and Fix positions from the OkayUI result (`ProblemsRects`); it no longer scrolls the list to the row first.
+- **Stats**: the same counters, switches and footer. New: the census's "Copy stats" menu.
+- **Profiler**: main had added a **Textures** fold-out (the texture library: summary line, the over-budget warning, the hot-reload
+  note, a table of file, size, mips, MB and kind with the path as a tooltip). Added to the model (`ProfilerTextures`, filled through
+  `ProfilerModel::textures`, asked only while the fold-out is open, as main read the library only then) and to the OkayUI Profiler;
+  without the callback nothing changes, so the `editorpanels_profiler` goldens stay. Test: `okayui_editor_panels` (folded at first and
+  not asked, opened, two rows, the budget warning, folded again and not asked).
+
+**The reference bodies leave the editor.** `editor/EditorPanelViews.cpp` (the Dear ImGui bodies of the ported panels) is no longer in
+`editor/CMakeLists.txt`: the editor called none of them any more. Only the comparison tests compile it, as the reference the ports are
+measured against (`okayui_editor_panels_imgui`, `okayui_hierarchy_imgui`, `okayui_inspector_imgui`).
+
+**Other changes.** `HostWindow` lost its `fitBody` first frame (it drew a Dear ImGui body); the six OkayUI-only windows share one
+definition for both hosts (`PanelWindow`: `HostWindow` in the editor, a plain window in `OKAY_EDITOR_ON_OKAYUI`).
+
+**Tests.** `okayui_panels_imgui` now also hosts Problems, Stats and the Profiler (each picture against the old hosting; Fix and a row
+click, the Occlusion switch, Pause and the scrub position) and `okayui_editor_panels` covers the Textures fold-out.
+
+**Hierarchy: not done in this step.** Main's `DrawHierarchy` is about 590 lines (rename in place, drag and drop with the Scene view
+and the Project panel, prefab rows, diagnostic markers, the context menus); bringing the port's `HierarchyModel` and intents up to it
+is a step of its own.
+
+**Not verified.** Windows, the editor program (not linked or started here), the panels in a real window, the diagnostics demo.
+
+## 26. Project Settings' Player, Physics, Rendering and Tags and Layers on OkayUI only (sections inside a Dear ImGui window)
+
+Sections 24 and 25 moved whole windows. Project Settings is one Dear ImGui window with many collapsing headers, so four of its sections
+moved on their own: Player, Physics, Rendering and Tags and Layers. Modules, Loading screen and the headers below stay Dear ImGui.
+
+**The host: `okayuihost::HostPanelSection`** (`shared/OkayUIImGuiEmbed.hpp`). `HostPanelWindow`'s way for a part of a window: one
+placeholder item as tall as the body drew on the last frame (the window lays it out and scrolls it like any item), and the body's shapes
+go into the window's draw list there, clipped to what the window shows. ImGui popups, tooltips and windows in front are drawn over it,
+so the old `HostSection` rule ("a covered section draws its Dear ImGui copy instead") is not needed and there is no copy. Only the part
+the window shows takes the mouse; the body's own menus (the tag rename popup) stay on OkayUI's top layer and close when Dear ImGui takes
+over, exactly as in a hosted window (the two share `detail::EmbedBody`). The mouse wheel stays the window's. The first frame only
+measures (the body is drawn into an empty clip and its shapes are thrown away), so a new window fits the right height at once.
+`editor/OkayPanels.cpp` `PanelSection` calls it (and, in `okay-editor-okayui`, draws the body at the cursor with a placeholder after it).
+
+**Checked against main's sections before wiring.** The rules stay in `editor/main.cpp` (`DrawTagsAndLayersSettings`, `DrawProjectSettings`),
+fed from the intents; the drawing is the screens in `okayui/screens/OkayUIEditorPanels.cpp`:
+
+- **Player**: main had dropped the width and height steppers (at 110 pixels they took the room and 1280 x 720 showed as "12" and
+  "72") for plain fields five digits wide. The screen now does the same, and OkayUI's `InputInt` takes Dear ImGui's rule that a step of
+  0 or less draws no steppers (also in the compatibility layer, which used to turn 0 into 1). Test: `okayui_values`
+  (`InputIntStepZeroTests`).
+- **Physics**: the solver tooltip is main's text now (`kIterationsTip`); the host clamps the step rate with `ClampStepsPerSecond`
+  (main clamped only below 1 and above 500; a NaN now becomes 50).
+- **Rendering** and **Tags and Layers**: the same rows, buttons and errors as main's. The tag rename's rules are one function now,
+  `TryRenameTag`, used by the Hierarchy's tag menu, the Inspector header and this section (the Inspector header had its own copy).
+
+**Tests.** `okayui_panels_imgui` hosts the sections in a Project Settings window: the picture against the old hosting (0.5% limit),
+the placeholder as tall as the body, a window in front and a tooltip covering the sections (no switch to another version, no mouse
+under them), clicks (Apply, Skybox, typing a width, Remove, the rename popup over everything and closed by an ImGui modal), scrolling
+(the body moves with the window, nothing is drawn or offered outside it, sections scrolled out offer nothing), a folded header and a
+collapsed window draw nothing. `okayui_editor_panels`: the Player golden was made again (no steppers), with a check of the field width.
+
+**Not verified.** Windows, the editor program in a real window, the `okay-editor-okayui` build of `PanelSection`.

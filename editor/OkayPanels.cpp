@@ -41,7 +41,6 @@ void CopyHistoryRow(const okaypanels::HistoryModel& model, const okaypanels::His
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"
 #include "OkayUIImGuiEmbed.hpp"   // HostPanelWindow: a panel drawn by OkayUI only, in Dear ImGui's draw order
-#include "EditorPanelViews.hpp"
 #include "InspectorModel.hpp"   // AssetKindAccepts: which rows take a file dragged from the Project panel
 
 #include <algorithm>
@@ -77,16 +76,8 @@ struct MetricsFromImGui {
 // the close box, the body is drawn into the window's draw list, so Dear ImGui's popups and the windows in front cover it as they
 // cover any ImGui panel. There is no Dear ImGui version to fall back to. A new window with no saved place opens at 440 x 340 (times
 // the UI scale).
-//
-// `fitBody` (the Profiler only, not wired yet): the panel's Dear ImGui body for the hidden first frame of a window with no saved place,
-// so Dear ImGui fits the window to it; OkayUI draws from the next frame on.
 template <class Draw>
-bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, const std::function<void()>& fitBody = {}) {
-    if (fitBody && !ImGui::FindWindowByName(title) && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
-        if (ImGui::Begin(title, open)) fitBody();   // the hidden first frame: Dear ImGui measures it, nobody sees it
-        ImGui::End();
-        return true;
-    }
+bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
     static OkayUI::CapturedGeometry cap;            // scratch: the panels are drawn one after another
     return okayuihost::HostPanelWindow(title, open, itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap,
                                        ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), [&](ImVec2 p, ImVec2 a) {
@@ -164,74 +155,26 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
     return true;
 }
 
+// The host of the panels drawn by OkayUI only (below the two hosts).
+template <class Draw>
+bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw) { return HostWindow(title, open, itemId, draw); }
+
+// The host of the sections drawn by OkayUI only (Project Settings' Player, Physics, Rendering, Tags and Layers): the body goes into the
+// ImGui window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so there is no Dear ImGui version to switch to when a
+// popup or a window in front covers it. `draw(x, y, w, h)` returns the body's height.
+template <class Draw>
+bool PanelSection(const char* itemId, Draw draw) {
+    static OkayUI::CapturedGeometry cap;            // scratch: the sections are drawn one after another
+    return okayuihost::HostPanelSection(itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap, [&](float x, float y, float w, float h) {
+        OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
+        MetricsFromImGui metrics_;
+        const float drawn = draw(x, y, w, h);
+        OkayUI::PopTextScale();
+        return drawn;
+    });
+}
+
 } // namespace
-
-bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions) {
-    static okayuiscreens::CrashLogState state;
-    okayuiscreens::CrashLogModel model;
-    model.text = text; model.path = path; model.revision = revision;   // (a copy per frame: crash logs are small)
-    const okayuiscreens::CrashLogHost host = CrashLogHostOf(actions);
-    return HostWindow("Crash Log", open, "##okayui_crashlog", [&](ImVec2 p, ImVec2 a) {
-        okayuiscreens::DrawCrashLog(model, state, host, p.x, p.y, a.x, a.y);
-    });
-}
-
-bool DrawAudioMixerOkayUI(bool* open) {
-    okayuiscreens::AudioMixerModel m;
-    FillAudioMixerModel(m);
-    return HostWindow("Audio Mixer", open, "##okayui_audiomixer", [&](ImVec2 p, ImVec2 a) {
-        okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y);
-    });
-}
-
-// The Problems, Stats and History panels: the editor's 18-pixel text on top of the UI scale (the Dear ImGui versions draw at that size).
-bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
-                        okaypanels::ProblemsIntent& intent) {
-    return HostWindow(title, open, "##okayui_problems", [&](ImVec2 p, ImVec2 a) {
-        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
-        intent = okayuiscreens::DrawProblems(model, state, p.x, p.y, a.x, a.y).intent;
-        OkayUI::PopTextScale();
-    });
-}
-
-bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill) {
-    return HostWindow("Stats", open, "##okayui_stats", [&](ImVec2 p, ImVec2 a) {
-        okaypanels::StatsModel model;
-        fill(model);
-        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
-        const okaypanels::StatsIntent intent = okayuiscreens::DrawStats(model, p.x, p.y, a.x, a.y).intent;
-        OkayUI::PopTextScale();
-        if (intent.copy) ImGui::SetClipboardText(okaypanels::StatsCopyText(model).c_str());
-    });
-}
-
-bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent) {
-    intent = okaypanels::HistoryIntent();
-    return HostWindow("History", open, "##okayui_history", [&](ImVec2 p, ImVec2 a) {
-        okaypanels::HistoryModel model;
-        fill(model);
-        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
-        intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
-        OkayUI::PopTextScale();
-        CopyHistoryRow(model, intent);
-    });
-}
-
-bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
-    return HostSection("##okayui_tagslayers", [&](float x, float y, float w, float h) {
-        const okayuiscreens::TagsLayersResult r = okayuiscreens::DrawTagsLayers(model, state, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, r.popup};
-    });
-}
-
-bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent) {
-    return HostSection("##okayui_physics", [&](float x, float y, float w, float h) {
-        const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};   // no list in this section opens a popup
-    });
-}
 
 bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
                               okaypanels::ImportSettingsIntent& intent) {
@@ -248,33 +191,6 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::Post
         intent = r.intent;
         return SectionDrawn{r.contentHeight, r.popup};
     });
-}
-
-bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent) {
-    return HostSection("##okayui_player", [&](float x, float y, float w, float h) {
-        const okayuiscreens::PlayerSettingsResult r = okayuiscreens::DrawPlayerSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
-    });
-}
-
-bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent) {
-    return HostSection("##okayui_rendering", [&](float x, float y, float w, float h) {
-        const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
-        intent = r.intent;
-        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
-    });
-}
-
-bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent) {
-    return HostWindow("Profiler", open, "##okayui_profiler", [&](ImVec2 p, ImVec2 a) {
-        okaypanels::ProfilerModel model;
-        fill(model);
-        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
-        intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
-        OkayUI::PopTextScale();
-        if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
-    }, [&] { okaypanels::ProfilerModel model; fill(model); DrawProfilerBodyImGui(model, PanelViewHooks()); });
 }
 
 bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent) {
@@ -426,7 +342,7 @@ namespace oked {
 // OkayUI windows already, so the body is drawn straight into the window.
 namespace {
 template <class Draw>
-bool PlainWindow(const char* title, bool* open, Draw draw) {
+bool PanelWindow(const char* title, bool* open, const char*, Draw draw) {
     if (open && !*open) return false;
     ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
     const bool shown = ImGui::Begin(title, open);
@@ -437,45 +353,33 @@ bool PlainWindow(const char* title, bool* open, Draw draw) {
     ImGui::End();
     return shown;
 }
+// A section: the body drawn at the cursor, then a placeholder as tall as it drew.
+template <class Draw>
+bool PanelSection(const char*, Draw draw) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+    const float h = draw(p.x, p.y, w, 20000.0f);
+    OkayUI::PopTextScale();
+    ImGui::Dummy(ImVec2(w, (h > 1.0f && h < 20000.0f) ? h : 8.0f));
+    return true;
+}
 } // namespace
-bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions) {
-    static okayuiscreens::CrashLogState state;
-    okayuiscreens::CrashLogModel model;
-    model.text = text; model.path = path; model.revision = revision;
-    const okayuiscreens::CrashLogHost host = CrashLogHostOf(actions);
-    return PlainWindow("Crash Log", open, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawCrashLog(model, state, host, p.x, p.y, a.x, a.y); });
-}
-bool DrawAudioMixerOkayUI(bool* open) {
-    okayuiscreens::AudioMixerModel m;
-    FillAudioMixerModel(m);
-    return PlainWindow("Audio Mixer", open, [&](ImVec2 p, ImVec2 a) { okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y); });
-}
-bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent) {
-    intent = okaypanels::HistoryIntent();
-    return PlainWindow("History", open, [&](ImVec2 p, ImVec2 a) {
-        okaypanels::HistoryModel model;
-        fill(model);
-        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
-        intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
-        OkayUI::PopTextScale();
-        CopyHistoryRow(model, intent);
-    });
-}
 #else
 // A build without OkayUI (no okay_ui library): these windows do not exist there.
 bool DrawCrashLogOkayUI(bool*, const std::string&, const std::string&, std::uint64_t, const CrashLogActions&) { return false; }
 bool DrawAudioMixerOkayUI(bool*) { return false; }
 bool DrawHistoryOkayUI(bool*, const std::function<void(okaypanels::HistoryModel&)>&, okaypanels::HistoryIntent&) { return false; }
-#endif
-bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&) { return false; }
+bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&, ProblemsRects*) { return false; }
 bool DrawStatsOkayUI(bool*, const std::function<void(okaypanels::StatsModel&)>&) { return false; }
-bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
-bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
 bool DrawProfilerOkayUI(bool*, const std::function<void(okaypanels::ProfilerModel&)>&, okaypanels::ProfilerIntent&) { return false; }
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
+#endif
 bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
-bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
-bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
 bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okaypanels::CompHeaderIntent&, bool*) { return false; }
@@ -485,4 +389,121 @@ bool DrawAddComponentOkayUI(std::uint32_t, bool& clicked) { clicked = false; ret
 bool DrawFieldListOkayUI(const char*, okaypanels::InspFieldList&) { return false; }
 bool OkayUIHasKeyboard() { return false; }
 }
+#endif
+
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)
+// ---- The panels drawn by OkayUI only (docs/ui/own_ui_toolkit.md sections 24 and 25): no Dear ImGui version exists. -------------
+namespace oked {
+
+bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& path, std::uint64_t revision, const CrashLogActions& actions) {
+    static okayuiscreens::CrashLogState state;
+    okayuiscreens::CrashLogModel model;
+    model.text = text; model.path = path; model.revision = revision;   // (a copy per frame: crash logs are small)
+    const okayuiscreens::CrashLogHost host = CrashLogHostOf(actions);
+    return PanelWindow("Crash Log", open, "##okayui_crashlog", [&](ImVec2 p, ImVec2 a) {
+        okayuiscreens::DrawCrashLog(model, state, host, p.x, p.y, a.x, a.y);
+    });
+}
+
+bool DrawAudioMixerOkayUI(bool* open) {
+    okayuiscreens::AudioMixerModel m;
+    FillAudioMixerModel(m);
+    return PanelWindow("Audio Mixer", open, "##okayui_audiomixer", [&](ImVec2 p, ImVec2 a) {
+        okayuiscreens::DrawAudioMixer(m, p.x, p.y, a.x, a.y);
+    });
+}
+
+// The Problems, Stats, History and Profiler panels: the editor's 18-pixel text on top of the UI scale (the size their Dear ImGui
+// versions had).
+bool DrawHistoryOkayUI(bool* open, const std::function<void(okaypanels::HistoryModel&)>& fill, okaypanels::HistoryIntent& intent) {
+    intent = okaypanels::HistoryIntent();
+    return PanelWindow("History", open, "##okayui_history", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::HistoryModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        CopyHistoryRow(model, intent);
+    });
+}
+
+bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
+                        okaypanels::ProblemsIntent& intent, ProblemsRects* rects) {
+    intent = okaypanels::ProblemsIntent();
+    if (rects) *rects = ProblemsRects();
+    return PanelWindow(title, open, "##okayui_problems", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        const okayuiscreens::ProblemsResult r = okayuiscreens::DrawProblems(model, state, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+        intent = r.intent;
+        if (rects) {
+            rects->rowIndex = r.rowIndex;
+            for (const OkayUI::Rect& q : r.rows) rects->rows.push_back(PanelRect{q.x, q.y, q.w, q.h});
+            for (const OkayUI::Rect& q : r.fixButtons) rects->fixButtons.push_back(PanelRect{q.x, q.y, q.w, q.h});
+        }
+    });
+}
+
+bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill) {
+    return PanelWindow("Stats", open, "##okayui_stats", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::StatsModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        const okaypanels::StatsIntent intent = okayuiscreens::DrawStats(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        if (intent.copy) ImGui::SetClipboardText(okaypanels::StatsCopyText(model).c_str());
+    });
+}
+
+bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent) {
+    intent = okaypanels::ProfilerIntent();
+    return PanelWindow("Profiler", open, "##okayui_profiler", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::ProfilerModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
+    });
+}
+
+// Project Settings' Player, Physics, Rendering and Tags and Layers sections (docs/ui/own_ui_toolkit.md section 26): OkayUI only, each
+// in its place under its collapsing header inside the Dear ImGui window.
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
+    intent = okaypanels::TagsLayersIntent();
+    return PanelSection("##okayui_tagslayers", [&](float x, float y, float w, float h) {
+        const okayuiscreens::TagsLayersResult r = okayuiscreens::DrawTagsLayers(model, state, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent) {
+    intent = okaypanels::PhysicsSettingsIntent();
+    return PanelSection("##okayui_physics", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent) {
+    intent = okaypanels::PlayerSettingsIntent();
+    return PanelSection("##okayui_player", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PlayerSettingsResult r = okayuiscreens::DrawPlayerSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent) {
+    intent = okaypanels::RenderingSettingsIntent();
+    return PanelSection("##okayui_rendering", [&](float x, float y, float w, float h) {
+        const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
+        intent = r.intent;
+        return r.contentHeight;
+    });
+}
+
+} // namespace oked
 #endif

@@ -4,7 +4,6 @@
 
 #include <chrono>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -21,34 +20,43 @@ using namespace okay;
 namespace {
 void Nap() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
 
-// A UDP proxy that holds every datagram for a random delay (game time).
+// A UDP proxy that holds every datagram for a random delay (game time). Each
+// direction of each player's link draws its delays from its own random sequence,
+// in the order that player's packets come, so the k-th packet on a link always
+// gets the same delay: what the test sees does not depend on the port numbers the
+// system hands out (Windows hands them out in order, Linux at random), nor on the
+// order the host happens to serve its clients in.
 struct JitterProxy {
     struct Held { double at; std::vector<std::uint8_t> bytes; net::Endpoint to; net::UdpSocket* via; };
+    struct Link { net::Endpoint player; std::unique_ptr<net::UdpSocket> up; std::uint32_t rngIn, rngOut; };
     net::UdpSocket front;
     net::Endpoint host;
     double minDelay, maxDelay, now = 0.0;
-    std::uint32_t rng = 12345;
-    std::map<std::uint64_t, std::unique_ptr<net::UdpSocket>> up;
-    std::map<std::uint64_t, net::Endpoint> back;
+    std::vector<Link> links;   // in the order the players first spoke
     std::vector<Held> q;
     JitterProxy(std::uint16_t hostPort, double lo, double hi) : minDelay(lo), maxDelay(hi) {
         host = net::Endpoint{0x7F000001u, hostPort};
         front.Open(); front.Bind(0);
     }
-    double Delay() { rng = rng * 1664525u + 1013904223u; return minDelay + (maxDelay - minDelay) * ((rng >> 8) / 16777216.0); }
+    double Delay(std::uint32_t& rng) { rng = rng * 1664525u + 1013904223u; return minDelay + (maxDelay - minDelay) * ((rng >> 8) / 16777216.0); }
     std::uint16_t Port() const { return front.LocalPort(); }
+    Link& LinkOf(const net::Endpoint& player) {
+        for (Link& l : links) if (l.player == player) return l;
+        const std::uint32_t seed = 12345u + 7919u * (std::uint32_t)links.size();
+        links.push_back({player, std::make_unique<net::UdpSocket>(), seed, seed ^ 0x9E3779B9u});
+        links.back().up->Open(); links.back().up->Bind(0);
+        return links.back();
+    }
     void Pump(double dt) {
         now += dt;
         std::uint8_t buf[4096]; net::Endpoint from; int n;
         while ((n = front.RecvFrom(buf, sizeof buf, from)) > 0) {
-            const std::uint64_t key = (std::uint64_t(from.address) << 16) | from.port;
-            auto& u = up[key];
-            if (!u) { u = std::make_unique<net::UdpSocket>(); u->Open(); u->Bind(0); back[key] = from; }
-            q.push_back({now + Delay(), std::vector<std::uint8_t>(buf, buf + n), host, u.get()});
+            Link& l = LinkOf(from);
+            q.push_back({now + Delay(l.rngIn), std::vector<std::uint8_t>(buf, buf + n), host, l.up.get()});
         }
-        for (auto& [key, u] : up)
-            while ((n = u->RecvFrom(buf, sizeof buf, from)) > 0)
-                q.push_back({now + Delay(), std::vector<std::uint8_t>(buf, buf + n), back[key], &front});
+        for (Link& l : links)
+            while ((n = l.up->RecvFrom(buf, sizeof buf, from)) > 0)
+                q.push_back({now + Delay(l.rngOut), std::vector<std::uint8_t>(buf, buf + n), l.player, &front});
         for (std::size_t i = 0; i < q.size();)
             if (q[i].at <= now + 1e-9) { q[i].via->SendTo(q[i].to, q[i].bytes.data(), q[i].bytes.size()); q.erase(q.begin() + (std::ptrdiff_t)i); }
             else ++i;

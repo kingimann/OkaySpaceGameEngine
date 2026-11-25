@@ -2,7 +2,7 @@
 
 The OkayEngine editor (Dear ImGui on SDL): docked panels, Scene and Game views, Inspector, Project panel, many tool windows, Play mode and Build Game. About 65k lines in `editor/`, of which `editor/main.cpp` is still about 45k; the split-out panel files hold the rest.
 Only the headless logic (`EditorState`, tabs, game fiber, script text, graph model) has unit tests; the drawing code is checked by the CI `--selftest` run and by hand.
-Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. PR #577 (a Cursor session, merged for 2.851.0) redesigned the Visual Script and Script Editor layouts and gave the whole editor a roomier layout; it edited `editor/main.cpp`, `editor/VisualScriptEditor.hpp`, `editor/ConsolePanel.cpp` and `editor/vendor/TextEditor.*` and added `editor/VsCanvasTools.hpp` (14.1.9, 13.5, 15.9.7). Draft PR #584 (updater restart after install, from the same kind of session) touches `editor/main.cpp`, `launcher/main.cpp` and adds `shared/AppRestart.hpp`; it is not on main.
+Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. (The animation windows used to be reserved for Grok's sessions; Grok no longer writes code since 2026-11-24, rule 24d.) PR #577 (a Cursor session, merged for 2.851.0) redesigned the Visual Script and Script Editor layouts and gave the whole editor a roomier layout; it edited `editor/main.cpp`, `editor/VisualScriptEditor.hpp`, `editor/ConsolePanel.cpp` and `editor/vendor/TextEditor.*` and added `editor/VsCanvasTools.hpp` (14.1.9, 13.5, 15.9.7). Draft PR #584 (updater restart after install, from the same kind of session) touches `editor/main.cpp`, `launcher/main.cpp` and adds `shared/AppRestart.hpp`; it is not on main.
 
 ## 15. Editor
 
@@ -114,7 +114,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 
 ### 15.5 Animator, Animation tab, Timeline
 - **System:** Animation
-- **What:** The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the first-person hands preview. Owned by Grok's animation sessions; describe, do not edit.
+- **What:** The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the first-person hands preview.
 - **Parts:**
   - 15.5.1 Animator window - `editor/AnimatorWindow.*` - state graph canvas, transitions, parameters, layers with bone masks, problems list, live state in Play
   - 15.5.2 Animator preview - `editor/AnimatorPreview.hpp` - one live preview at a time in the Scene view, restores the pose on stop
@@ -128,7 +128,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Editor:** Animation tab, Animator window, Timeline window
 - **Docs:** `docs/gameplay/animation.md`, `docs/gameplay/cutscenes.md`, `docs/editor/editor.md`
 - **Tests:** `animator_edit`, `anim_edit` (clip editing tools on AnimClip, engine side), `sequence` (engine side); the windows themselves are untested
-- **Status:** Works - windows exist and run; the animation PRs are in Grok's lane (in flight, #554 and others)
+- **Status:** Works - windows exist and run; the animation integration PR #554 merged on 2026-11-10
 - **Open:** possible overlap: the Animation tab (~3.5k lines in `main.cpp`) and `AnimatorWindow` both edit state machines or clips; splitting the Animation tab out is part of 15.10; Grok's pending PRs may touch these files
 - **Related:** 5.1, 5.2, 10.1, 15.10, 4.7
 - **Words:** Animator window, state machine graph, Animation tab, dope sheet, curves, record, onion skin, Timeline, cutscene editor, sequence, keyframes, bone mask, FP hands preview
@@ -257,12 +257,12 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, a visible Collapse toggle (remembered in `okay_settings.txt`) that merges identical level + category + message into one row with an `x37` count and the newest time, details, Error Pause, Open Script, tab badge
   - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog`, crash handler ~549-788), `okayui/screens/OkayUIPanels.cpp` (the window, drawn by OkayUI only) - reads crash reports from earlier runs
-  - 15.11.3 Stats - `editor/main.cpp` (`DrawStats` ~10247-10358) - object, mesh and triangle counts, FPS
-  - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler` ~42668-42844) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
+  - 15.11.3 Stats - `editor/main.cpp` (`DrawStats`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only) - object, mesh and triangle counts, FPS
+  - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler`), `okayui/screens/OkayUIEditorPanels.cpp` (drawn by OkayUI only, with the Textures section) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
   - 15.11.5 Net panel - `editor/NetSimPanel.*` - network simulator toggles and bytes and messages per object
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
   - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
-  - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
+  - 15.11.8 Problems panel - `editor/ProblemsPanel.*` (drawn by OkayUI only: `okayui/screens/OkayUIEditorPanels.cpp`), `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
   - 15.11.10 Frame-time overlay and editor speed settings - `editor/EditorPerf.hpp`, `editor/main.cpp` (`DrawPerfOverlay`, `DrawRenderingMenuItems`, the frame limiter before the profiler's `EndFrame`) - View > Rendering: a small window with FPS, ms, 95th percentile, worst, a graph of the last 120 frames and where the frame goes (3D view render, upload, viewport gizmos, panels, ImGui, present, play mode, limiter sleep, not timed) with a Copy report button; frame rate limit, slow down when idle, viewport resolution, performance mode (cheaper Scene view only); all off by default and remembered in `okay_settings.txt`
   - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; a long name is cut with an ellipsis before the badge; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
@@ -324,7 +324,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** Windows that configure the scene and project, show services status, and explain the editor: Lighting (scene settings), Project Settings, Services, Keyboard Shortcuts, About, update and quit prompts.
 - **Parts:**
   - 15.14.1 Lighting window - `editor/main.cpp` (`DrawSceneSettings` ~10495-10800, look sections ~10359) - Environment (sky and light), Rendering (lighting and post FX), Debug View, Lightmap Baking and the scene UI font; the sky, fog, weather and post-processing sections
-  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings` ~16929) - project-wide defaults saved to `project.okayproj` (company, version, default size)
+  - 15.14.2 Project Settings - `editor/main.cpp` (`DrawProjectSettings`), `okayui/screens/OkayUIEditorPanels.cpp` (the Player, Physics, Rendering and Tags and Layers sections, drawn by OkayUI only; Modules, Loading screen and the rest still Dear ImGui) - project-wide defaults saved to `project.okayproj` (company, version, default size)
   - 15.14.3 Services window - `editor/main.cpp` (`DrawServices` ~9805) - status of the online services that ship in the engine: Steam and Multiplayer
   - 15.14.4 Keyboard Shortcuts - `editor/main.cpp` (`DrawShortcutsWindow` ~10837) - list of editor shortcuts
   - 15.14.5 About, update and quit prompts - `editor/main.cpp` (`DrawAboutPopup` ~16869, `DrawUpdatePopup` ~17000, `DrawQuitPrompt` ~10801)

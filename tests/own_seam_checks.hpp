@@ -75,9 +75,9 @@ inline void CheckFlattened(const std::string& path, std::size_t tris) {
 /// True when `ext` is in ImportableExtensions().
 inline bool Listed(const char* ext) { return (" " + okay::ImportableExtensions() + " ").find(std::string(" ") + ext + " ") != std::string::npos; }
 
-/// Our reader is off by default and the build has no Assimp: `ext` is not ours, not listed, and reading `path` fails with
+/// Our reader is switched off (there is no other reader): `ext` is not ours, not listed, and reading `path` fails with
 /// a message that names the switch `env`.
-inline void CheckOffWithoutAssimp(const std::string& path, const char* ext, const char* env) {
+inline void CheckSwitchedOff(const std::string& path, const char* ext, const char* env) {
     using namespace okay;
     CHECK(EffectiveImportBackend(ext) != ImportBackend::Own);
     CHECK(!Listed(ext));

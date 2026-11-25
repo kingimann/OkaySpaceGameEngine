@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 967 names.
+Back to the [code index](../code_index.md). 67 headers, 972 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -378,82 +378,86 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 
 ## `shared/EditorPanelModels.hpp`
 
-- `ProblemSeverity` enum, line 34
-- `ProblemRow` struct, line 36
-- `ProblemsModel` struct, line 45
-- `ProblemsState` struct, line 51: What the person set on the panel; the host keeps one for the panel's lifetime.
-- `ProblemsIntent` struct, line 57: What the person asked for this frame (indexes into ProblemsModel::rows, -1 = nothing).
-- `ProblemGroup` struct, line 63
-- `ProblemSeverityName` function, line 69
-- `ProblemSeverityColor` function, line 74: Text colour of a row, 0..1.
-- `ProblemLower` function, line 80
-- `GroupProblems` function, line 87: The rows that pass the filter, grouped. Rows are ordered by severity (errors first) and then by group, keeping the model's
-- `ProblemGroupHeader` function, line 124: The dim line above a group: its name, how many rows, and "error" or "warning" when it has one.
-- `ProblemRowText` function, line 130
-- `ProblemRowTooltip` function, line 133: The tooltip of a row: the message, the hint and the code, a blank line between each.
-- `ProblemCopyText` function, line 141: What "Copy message" puts on the clipboard.
-- `ProblemsEmptyText` function, line 149
-- `StatCounter` struct, line 157
-- `FpsHistory` struct, line 160: The frame-rate history: the last 120 frames, a ring.
-- `StatsModel` struct, line 167
-- `StatsIntent` struct, line 179: What the person asked for this frame.
-- `FpsSummary` struct, line 184
-- `SummarizeFps` function, line 187: min, max and average over the history slots that hold a frame (> 0), and the plot's top: 20% above the highest, at least 75.
-- `FpsColor` function, line 197: The colour of the big number: green from 55 FPS, amber from 30, red below.
-- `FormatStatNumber` function, line 204: A census number: 12, 12.3k from 10,000, 1.2M from a million.
-- `StatsCopyText` function, line 210
-- `HistoryModel` struct, line 226
-- `HistoryKind` enum, line 232
-- `HistoryRow` struct, line 234
-- `HistoryRows` function, line 241: The rows top to bottom: future states newest-forward first, then the current state, then the past, most recent first.
-- `HistoryIntent` struct, line 252: What the person asked for this frame. The host applies 'undo' undos then 'redo' redos (one of them is zero).
-- `HistoryStatusText` function, line 257
-- `TagRow` struct, line 273
-- `LayerRow` struct, line 274
-- `TagsLayersModel` struct, line 279
-- `TagsLayersState` struct, line 288: What the panel keeps between frames. The host writes the error lines after it carried out an intent.
-- `TagsLayersIntent` struct, line 299: What the person asked for this frame (-1 = nothing). The host validates, saves the project and sets the errors in the state.
-- `UnlistedTagsText` function, line 317: "2 tags in this scene are not on the list: Enemy, Boss" (the first four names, then "...").
-- `BuiltinTagsText` function, line 324
-- `TagUseText` function, line 329
-- `LayerHint` function, line 331: The hint a layer field shows while empty: its built-in name, or "Layer N".
-- `LayerCanReset` function, line 333: A layer has a Reset button when it is named and the name is not its built-in one.
-- `LayerErrorText` function, line 334
-- `CopyToBuf` function, line 336: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
-- `PhysicsSettingsModel` struct, line 348
-- `PhysicsSettingsIntent` struct, line 356
-- `ClampStepsPerSecond` function, line 370: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
-- `DefaultItemWidth` function, line 373: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
-- `ProfilerSection` struct, line 379
-- `ProfilerModel` struct, line 386
-- `ProfilerIntent` struct, line 399
-- `ProfilerGraphTop` function, line 415: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
-- `ProfilerFrameCount` function, line 416
-- `ProfilerFixSelection` function, line 418: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
-- `ProfilerOtherMs` function, line 424
-- `ProfilerOverlay` function, line 428
-- `ProfilerBarText` function, line 433: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
-- `ProfilerDiagnosis` function, line 440: The plain-language diagnosis under the bars.
-- `ProfilerRows` function, line 462: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
-- `ProfilerHot` function, line 469: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
-- `ProfilerCells` function, line 471: The seven cells of a row: name, self, total, %, calls, avg, max.
-- `ProfilerCsv` function, line 480
-- `ProfilerEmptyText` function, line 489
-- `ImportKind` enum, line 497
-- `ImportFields` struct, line 500: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
-- `ImportSettingsModel` struct, line 513
-- `ImportSettingsState` struct, line 521: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
-- `ImportSettingsIntent` struct, line 526
-- `ImportSizeIndex` function, line 543: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
-- `ImportSame` function, line 548: The same settings as far as the panel shows them (the fields of the asset's kind).
-- `PostValues` struct, line 563: The open scene's post-processing values (scene render settings), copied in and back by the host.
-- `PostProcessModel` struct, line 579
-- `PostProcessIntent` struct, line 586
-- `PostChainText` function, line 607
-- `PlayerSettingsModel` struct, line 615
-- `PlayerSettingsIntent` struct, line 624
-- `RenderingSettingsModel` struct, line 626
-- `RenderingSettingsIntent` struct, line 631
+- `ProblemSeverity` enum, line 35
+- `ProblemRow` struct, line 37
+- `ProblemsModel` struct, line 46
+- `ProblemsState` struct, line 52: What the person set on the panel; the host keeps one for the panel's lifetime.
+- `ProblemsIntent` struct, line 58: What the person asked for this frame (indexes into ProblemsModel::rows, -1 = nothing).
+- `ProblemGroup` struct, line 64
+- `ProblemSeverityName` function, line 70
+- `ProblemSeverityColor` function, line 75: Text colour of a row, 0..1.
+- `ProblemLower` function, line 81
+- `GroupProblems` function, line 88: The rows that pass the filter, grouped. Rows are ordered by severity (errors first) and then by group, keeping the model's
+- `ProblemGroupHeader` function, line 125: The dim line above a group: its name, how many rows, and "error" or "warning" when it has one.
+- `ProblemRowText` function, line 131
+- `ProblemRowTooltip` function, line 134: The tooltip of a row: the message, the hint and the code, a blank line between each.
+- `ProblemCopyText` function, line 142: What "Copy message" puts on the clipboard.
+- `ProblemsEmptyText` function, line 150
+- `StatCounter` struct, line 158
+- `FpsHistory` struct, line 161: The frame-rate history: the last 120 frames, a ring.
+- `StatsModel` struct, line 168
+- `StatsIntent` struct, line 180: What the person asked for this frame.
+- `FpsSummary` struct, line 185
+- `SummarizeFps` function, line 188: min, max and average over the history slots that hold a frame (> 0), and the plot's top: 20% above the highest, at least 75.
+- `FpsColor` function, line 198: The colour of the big number: green from 55 FPS, amber from 30, red below.
+- `FormatStatNumber` function, line 205: A census number: 12, 12.3k from 10,000, 1.2M from a million.
+- `StatsCopyText` function, line 211
+- `HistoryModel` struct, line 227
+- `HistoryKind` enum, line 233
+- `HistoryRow` struct, line 235
+- `HistoryRows` function, line 242: The rows top to bottom: future states newest-forward first, then the current state, then the past, most recent first.
+- `HistoryIntent` struct, line 253: What the person asked for this frame. The host applies 'undo' undos then 'redo' redos (one of them is zero).
+- `HistoryStatusText` function, line 258
+- `TagRow` struct, line 274
+- `LayerRow` struct, line 275
+- `TagsLayersModel` struct, line 280
+- `TagsLayersState` struct, line 289: What the panel keeps between frames. The host writes the error lines after it carried out an intent.
+- `TagsLayersIntent` struct, line 300: What the person asked for this frame (-1 = nothing). The host validates, saves the project and sets the errors in the state.
+- `UnlistedTagsText` function, line 318: "2 tags in this scene are not on the list: Enemy, Boss" (the first four names, then "...").
+- `BuiltinTagsText` function, line 325
+- `TagUseText` function, line 330
+- `LayerHint` function, line 332: The hint a layer field shows while empty: its built-in name, or "Layer N".
+- `LayerCanReset` function, line 334: A layer has a Reset button when it is named and the name is not its built-in one.
+- `LayerErrorText` function, line 335
+- `CopyToBuf` function, line 337: Copy 'src' into a fixed buffer, cut at a whole UTF-8 character.
+- `PhysicsSettingsModel` struct, line 349
+- `PhysicsSettingsIntent` struct, line 357
+- `ClampStepsPerSecond` function, line 371: The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
+- `DefaultItemWidth` function, line 374: Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
+- `ProfilerSection` struct, line 380
+- `ProfilerTexture` struct, line 388: One picture of the editor's texture library (Render/TextureAsset.hpp), a row of the Profiler's Textures section.
+- `ProfilerTextures` struct, line 395: The Textures section: what the host's library says now.
+- `ProfilerModel` struct, line 403
+- `ProfilerIntent` struct, line 418
+- `ProfilerGraphTop` function, line 434: The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
+- `ProfilerFrameCount` function, line 435
+- `ProfilerFixSelection` function, line 437: While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
+- `ProfilerOtherMs` function, line 443
+- `ProfilerOverlay` function, line 447
+- `ProfilerBarText` function, line 452: "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
+- `ProfilerDiagnosis` function, line 459: The plain-language diagnosis under the bars.
+- `ProfilerRows` function, line 481: The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
+- `ProfilerHot` function, line 488: A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
+- `ProfilerCells` function, line 490: The seven cells of a row: name, self, total, %, calls, avg, max.
+- `ProfilerTexturesNote` function, line 502: "Hot reload on, 3 reloaded, 1 let go of for the budget".
+- `ProfilerTextureName` function, line 508: The file name of a path (after the last / or \\).
+- `ProfilerCsv` function, line 513
+- `ProfilerEmptyText` function, line 522
+- `ImportKind` enum, line 530
+- `ImportFields` struct, line 533: The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
+- `ImportSettingsModel` struct, line 546
+- `ImportSettingsState` struct, line 554: What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
+- `ImportSettingsIntent` struct, line 559
+- `ImportSizeIndex` function, line 576: The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
+- `ImportSame` function, line 581: The same settings as far as the panel shows them (the fields of the asset's kind).
+- `PostValues` struct, line 596: The open scene's post-processing values (scene render settings), copied in and back by the host.
+- `PostProcessModel` struct, line 612
+- `PostProcessIntent` struct, line 619
+- `PostChainText` function, line 640
+- `PlayerSettingsModel` struct, line 648
+- `PlayerSettingsIntent` struct, line 657
+- `RenderingSettingsModel` struct, line 659
+- `RenderingSettingsIntent` struct, line 664
 
 ## `shared/FileDialog.hpp`
 
@@ -750,12 +754,12 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 ## `shared/OkayUIHost.hpp`
 
 - `InputCollector` class, line 31: Collects what OkayUI needs from SDL events between two frames.
-- `Region` class, line 287: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-- `HostedInputWanted` function, line 342: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
-- `WantsKeyboard` function, line 345: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
-- `KeyIdOf` function, line 369: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
-- `EventCollector` class, line 396: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
-- `Host` class, line 474: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
+- `Region` class, line 291: The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
+- `HostedInputWanted` function, line 346: Should the host hand OkayUI the mouse, keys and text for its own hosted pieces this frame (with the "OkayUI screens" backend off)?
+- `WantsKeyboard` function, line 349: Whether ImGui should be told to leave the keyboard to OkayUI (call after the hosted screens ran this frame).
+- `KeyIdOf` function, line 373: The OkayUI key a platform key stands for (KeyId_None for keys OkayUI does not name).
+- `EventCollector` class, line 400: Collects what OkayUI needs from okay::platform events between two frames (the platform twin of InputCollector).
+- `Host` class, line 478: One window driven by OkayUI alone. Per frame:   while (backend->PollEvent(e)) host.Feed(e);   host.BeginFrame();   ...OkayUI calls...   host.EndFrame();
 
 ## `shared/OkayUIHostImGui.hpp`
 
@@ -792,8 +796,9 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 
 ## `shared/OkayUIImGuiEmbed.hpp`
 
-- `ImGuiEmbed` class, line 30
-- `SharedImGuiEmbed` function, line 137: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `ImGuiEmbed` class, line 31
+- `SharedImGuiEmbed` function, line 138: The one embed the editor's hosted OkayUI widgets share (one set of textures).
+- `HostPanelSection` function, line 241: A part of a Dear ImGui window drawn by OkayUI only, with no Dear ImGui copy (the editor's Project Settings sections Player,
 
 ## `shared/OkayUIImGuiMap.hpp`
 
@@ -826,12 +831,12 @@ Back to the [code index](../code_index.md). 67 headers, 967 names.
 - `SetIfUnset` function, line 75
 - `ApplyEnvironment` function, line 86: With OKAY_OWN_STACK=1, set every run-time switch that is not set yet. Returns how many it set (0 when not requested).
 - `Info` struct, line 95
-- `FormatLine` function, line 106: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui'.
-- `CryptoLabel` function, line 125: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
-- `PrintAndExitRequested` function, line 132: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
-- `Gather` function, line 139: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
-- `Describe` function, line 177
-- `Startup` function, line 181: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+- `FormatLine` function, line 105: Pure text: '[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui'.
+- `CryptoLabel` function, line 123: The 'crypto=' word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+- `PrintAndExitRequested` function, line 130: OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+- `Gather` function, line 137: What this process would use right now. 'ui' is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
+- `Describe` function, line 172
+- `Startup` function, line 176: The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
 
 ## `shared/OwnSwitches.hpp`
 

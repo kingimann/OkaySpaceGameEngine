@@ -2,7 +2,7 @@
 
 # Code index: engine-Physics
 
-Back to the [code index](../code_index.md). 30 headers, 149 names.
+Back to the [code index](../code_index.md). 30 headers, 154 names.
 
 ## `engine/include/okay/Physics/BodyPose.hpp`
 
@@ -177,14 +177,16 @@ Back to the [code index](../code_index.md). 30 headers, 149 names.
 - `Collision2D` struct, line 20: Data passed to OnCollision2D callbacks describing a contact with another
 - `TriggerContact2D` struct, line 34: Where a trigger overlap happened, readable from inside OnTrigger*2D callbacks
 - `RaycastHit2D` struct, line 42: Result of a 2D raycast.
-- `Physics2D` class, line 64: A small but real 2D physics engine: semi-implicit Euler integration with
+- `SurfaceQuery2D` struct, line 53: Closest point on a solid 2D collider. Distance is 0 when the point is inside. Triggers are skipped.
+- `Physics2D` class, line 74: A small but real 2D physics engine: semi-implicit Euler integration with
 
 ## `engine/include/okay/Physics/Physics3D.hpp`
 
 - `Collision3D` struct, line 24: Data passed to OnCollision3D callbacks describing a contact with another
 - `TriggerContact3D` struct, line 43: Where a trigger overlap happened, readable from inside OnTrigger*3D callbacks
 - `RaycastHit3D` struct, line 51: Result of a 3D raycast.
-- `Physics3D` class, line 74: The scene's 3D physics. Step() hands every Rigidbody3D, collider and Joint3D to our own physics engine core
+- `NearestSolid3D` struct, line 63: The closest point on a solid collider to a world point. 'distance' is 0 when the point is inside the solid.
+- `Physics3D` class, line 85: The scene's 3D physics. Step() hands every Rigidbody3D, collider and Joint3D to our own physics engine core
 
 ## `engine/include/okay/Physics/PhysicsDebug.hpp`
 
@@ -218,7 +220,10 @@ Back to the [code index](../code_index.md). 30 headers, 149 names.
 
 ## `engine/include/okay/Physics/PlayerCollision.hpp`
 
-- `ResolvePlayerBody` function, line 14: Keep a transform-moved player (no Rigidbody3D) from clipping through walls/floors:
+- `SeatUpright` function, line 20: A sideways push from a walkable floor or a low riser is turned into a step up, so a body
+- `ResolvePlayerBody` function, line 68: Keep a transform-moved player (no Rigidbody3D) from clipping through walls, floors or ceilings.
+- `FeetOf` function, line 110: Where the body's feet are: the bottom of its collider under the pivot, or the pivot when it has no collider.
+- `GroundSlopeDegrees` function, line 121: Degrees between 'normal' and straight up. A flat floor is 0. A wall is 90.
 
 ## `engine/include/okay/Physics/PoseHistory.hpp`
 
@@ -238,7 +243,7 @@ Back to the [code index](../code_index.md). 30 headers, 149 names.
 
 ## `engine/include/okay/Physics/TriMesh.hpp`
 
-- `TriMesh` class, line 19: A static triangle soup with a bounding-volume hierarchy (BVH), the geometry
-- `ClosestPointOnTriangle` function, line 73: Closest point on triangle (a,b,c) to p (Ericson, Real-Time Collision Detection).
-- `Contact` struct, line 77: Result of a shape-vs-mesh contact: 'normal' points from the mesh surface toward
-- `WorldView` class, line 88: A TriMesh placed in the world by 'l2w' (local -> world). All queries are in
+- `TriMesh` class, line 20: A static triangle soup with a bounding-volume hierarchy (BVH), the geometry
+- `ClosestPointOnTriangle` function, line 114: Closest point on triangle (a,b,c) to p (Ericson, Real-Time Collision Detection).
+- `Contact` struct, line 118: Result of a shape-vs-mesh contact: 'normal' points from the mesh surface toward
+- `WorldView` class, line 129: A TriMesh placed in the world by 'l2w' (local -> world). All queries are in

@@ -524,6 +524,32 @@ void TestPriority() {
     CHECK(order == "hHnNl");
 }
 
+void TestPriorityAcrossQueues() {
+    RUN_SUITE("jobs: high on the shared queue before low on the worker's own queue");
+    JobSystem js(1);
+    Gate gate;
+    std::mutex mu;
+    std::string order;
+    JobHandle blocker = js.Submit([&] {
+        gate.Pass();
+        JobOptions lo;
+        lo.priority = JobPriority::Low;
+        for (int i = 0; i < 3; ++i)
+            js.Submit([&] { std::lock_guard<std::mutex> g(mu); order += 'l'; }, lo);
+    });
+    CHECK(gate.WaitForWaiters(1));
+    JobOptions hi;
+    hi.priority = JobPriority::High;
+    JobHandle high = js.Submit([&] { std::lock_guard<std::mutex> g(mu); order += 'H'; }, hi);
+    gate.Open();
+    for (int i = 0; i < 10000 && order.size() < 4; ++i) SleepMs(1);
+    CHECK(Finish(js, blocker));
+    CHECK(Finish(js, high));
+    std::lock_guard<std::mutex> g(mu);
+    CHECK(order.size() == 4);
+    CHECK(order.find('H') < order.find('l'));
+}
+
 // ---- shutdown ---------------------------------------------------------------------
 
 void TestShutdown() {
@@ -915,6 +941,7 @@ int main(int argc, char** argv) {
         }
         TestCancel();
         TestPriority();
+        TestPriorityAcrossQueues();
         TestShutdown();
         TestMainThread();
         TestStats();

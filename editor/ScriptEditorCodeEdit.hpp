@@ -29,7 +29,16 @@ struct LanguageWords {
     std::vector<std::string> keywords, types, known, lineComments;
     std::string blockStart, blockEnd;
     std::map<std::string, std::string> docs;
+    /// Block words for folding, the indent after Enter and auto-dedent (Lua: function do then repeat else / end until elseif else);
+    /// empty: braces only (OkayScript, C#). See OkayUI::CodeLanguage.
+    std::vector<std::string> blockOpenWords, blockCloseWords, dedentWords;
+    bool foldByIndent = false;
 };
+
+/// Lua's block words (from the Lua 5.4 manual's grammar: `function`, `do`, `then`, `repeat` and `else` open a block, `end`, `until`,
+/// `elseif` and `else` close one), its dedent words, and folding by indent too. SetLanguage uses them for any language with
+/// Lua's "--" comments that brings no block words of its own.
+LanguageWords LuaBlockWords();
 
 /// The script editor's 24 colours, each 0xAABBGGRR like OkayUI, in this order (the order of the palette the vendored editor took;
 /// OkayScriptPalette in ScriptAssist.cpp fills it).
@@ -108,6 +117,10 @@ public:
     void SetHandleKeyboardInputs(bool on) { ed_.SetHandleKeyboardInput(on); }
     void SetReadOnly(bool on) { ed_.SetReadOnly(on); }
     void SetTabSize(int n) { ed_.SetTabSize(n); }
+    /// The editing options of the Script Editor's View menu (each on the widget: OkayUI::CodeEdit).
+    void SetWordWrap(bool on) { ed_.SetWordWrap(on); }
+    void SetShowWhitespace(bool on) { ed_.SetShowWhitespace(on); }
+    void SetAutoClose(bool on) { ed_.SetAutoClose(on); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
 
     /// Draw the code in the embedded JetBrains Mono (shared/JetBrainsMonoFontOwn.h, OFL; the font the Dear ImGui script editor

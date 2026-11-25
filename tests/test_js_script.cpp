@@ -21,6 +21,19 @@ using namespace okay;
 static std::vector<std::string> g_errs, g_logs;
 static const float kDt = 1.0f / 60.0f;
 
+// A game script the okay.js test (tests/okayjs/test_okayjs_script.mjs) runs too: both runtimes read the same file,
+// so they are checked on the same text. The files are in tests/javascript/game_scripts/.
+#ifndef OKAY_SOURCE_DIR
+#define OKAY_SOURCE_DIR "."
+#endif
+struct ScriptFile {
+    std::string path;
+    explicit ScriptFile(const char* rel) : path(std::string(OKAY_SOURCE_DIR) + "/" + rel) {}
+};
+static ScriptFile GameScript(const char* name) {
+    return ScriptFile((std::string("tests/javascript/game_scripts/") + name).c_str());
+}
+
 // dup-allow-begin: the same log capture and one-object World as the Lua and OkayScript-next script tests; a
 // shared test header would edit those tests (other lanes' files), so it is left for a follow-up agreed on #422
 static bool ErrHas(const std::string& s) {
@@ -36,10 +49,12 @@ struct World {
     ScriptComponent* sc = nullptr;
     bool loaded = false;
     std::string error;
-    explicit World(const std::string& src, bool start = true) {
+    explicit World(const std::string& src, bool start = true) { Init(&src, nullptr, start); }
+    explicit World(const ScriptFile& file, bool start = true) { Init(nullptr, &file.path, start); }
+    void Init(const std::string* src, const std::string* path, bool start) {
         player = scene.CreateGameObject("Player");
         sc = player->AddComponent<ScriptComponent>("javascript");
-        loaded = sc->LoadSource(src, &error);
+        loaded = src ? sc->LoadSource(*src, &error) : sc->LoadFile(*path, &error);
         if (!loaded) std::cerr << "  load error: " << error << "\n";
         if (start) scene.Start();
     }
@@ -107,20 +122,7 @@ int main() {
 
     // 1. A class script: fields are settings, Start, Update moving the transform with dt.
     {
-        World w(R"JS(
-export default class Mover {
-    speed = 2;
-    label = "hi";
-    started = false;
-    Start() {
-        this.started = true;
-        console.log("start " + this.gameObject.name);
-    }
-    Update(dt) {
-        this.transform.position = this.transform.position.add(new Vector3(this.speed * dt, 0, 0));
-    }
-}
-)JS");
+        World w(GameScript("mover.js"));
         CHECK(w.loaded);
         w.Frames(60);
         Script(w.sc->VM()).Yes("started").Settings({"label", "speed", "started"});
@@ -134,28 +136,17 @@ export default class Mover {
         GameObject* g = scene.CreateGameObject("Box");
         auto* sc = g->AddComponent<ScriptComponent>("javascript");
         sc->fields["speed"] = "10";
-        CHECK(sc->LoadSource("export default { speed: 2, Update(dt) { this.transform.Translate(this.speed * dt, 0, 0); } };"));
+        CHECK(sc->LoadFile(GameScript("speed_object.js").path));
         scene.Start();
         for (int i = 0; i < 30; ++i) scene.Update(kDt);
         CHECK_NEAR(g->transform->Position().x, 5.0f, 0.02f);
         CHECK(sc->VM()->GetGlobal("speed").AsFloat() == 10.0f);
     }
 
-    // 3. Input and Time through the binding table; static types are global objects.
+    // 3. Input and Time through the binding table; static types are global objects. The script is okay.js's
+    //    example (web/okayjs/examples/scripts/key_mover.js), which the okay.js test runs too.
     {
-        World w(R"JS(
-export default class P {
-    moved = 0;
-    dtSeen = 0;
-    Update(dt) {
-        this.dtSeen = Time.deltaTime;
-        if (Input.GetKey("d")) {
-            this.moved++;
-            this.transform.Translate(Vector3.right.scale(dt));
-        }
-    }
-}
-)JS");
+        World w(ScriptFile("web/okayjs/examples/scripts/key_mover.js"));
         CHECK(w.loaded);
         w.Frames(10, {'d'});   // ten frames holding d, then five without
         w.Frames(5);
@@ -190,52 +181,25 @@ export default class T {
 
     // 5. GetComponent, GameObject.Find, engine object identity and printing.
     {
-        World w(R"JS(
-export default class S {
-    Start() {
-        const tr = this.gameObject.GetComponent("Transform");
-        this.sameTransform = tr === this.transform;
-        this.noBody = GetComponent("Rigidbody") === null;
-        const other = GameObject.Find("Other");
-        this.otherName = other ? other.name : "none";
-        this.text = String(this.gameObject);
-        Debug.Log("found " + this.otherName);
-    }
-}
-)JS", false);
+        World w(GameScript("find_other.js"), false);
+        CHECK(w.loaded);
         w.scene.CreateGameObject("Other");
         w.scene.Start();
-        Script(w.sc->VM()).Yes("sameTransform").Yes("noBody").Text("otherName", "Other").Text("text", "GameObject(Player)");
+        Script(w.sc->VM()).Yes("sameTransform").Yes("noBody").Text("otherName", "Other").Text("text", "GameObject(Player)").Yes("isObject");
         CHECK(LogHas("found Other"));
     }
 
     // 6. Errors carry the line and do not stop later frames; a destroyed object is an error, not a crash.
     {
         g_errs.clear();
-        World w(R"JS(
-export default class E {
-    n = 0;
-    Update(dt) {
-        this.n++;
-        if (this.n === 2) {
-            const missing = undefined;
-            missing.field = 1;
-        }
-    }
-}
-)JS");
+        World w(GameScript("error_line.js"));
         w.Frames(4);
         CHECK(w.Get("n").AsFloat() == 4.0f);
-        CHECK(ErrHas("script:8: TypeError: can not set 'field' of undefined"));
+        CHECK(ErrHas("script:7: TypeError: can not set 'field' of undefined"));
         auto* vm = static_cast<JavaScriptVM*>(w.sc->VM());
         CHECK(vm->ErrorCount() == 1);
         g_errs.clear();
-        World d(R"JS(
-export default {
-    Start() { this.keep = GameObject.Find("Victim"); },
-    Update(dt) { if (this.keep) { const n = this.keep.name; } },
-};
-)JS", false);
+        World d(GameScript("keep_destroyed.js"), false);
         GameObject* victim = d.scene.CreateGameObject("Victim");
         d.scene.Start();
         d.scene.Destroy(victim);

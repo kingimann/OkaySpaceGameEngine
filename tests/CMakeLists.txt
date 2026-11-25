@@ -767,6 +767,7 @@ set_tests_properties(js_core PROPERTIES TIMEOUT 600)
 # JavaScript game scripts (language "javascript") on okay::js driving GameObjects through the shared binding table.
 add_executable(test_js_script test_js_script.cpp)
 target_link_libraries(test_js_script PRIVATE okay::engine)
+target_compile_definitions(test_js_script PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")   # tests/javascript/game_scripts
 add_test(NAME js_script COMMAND test_js_script)
 
 add_executable(test_follow test_follow.cpp)

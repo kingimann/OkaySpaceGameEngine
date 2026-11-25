@@ -1,6 +1,7 @@
 // okay.js scene graph, game loop, input and game scripts in plain Node (node --test, no packages, no browser).
-// The game scripts are the ones the engine's JavaScript test (tests/test_js_script.cpp on claude/javascript-1, cases
-// 1, 2, 3, 5 and 6) runs on real GameObjects; web/okayjs/examples/scripts/key_mover.js is case 3's text, byte for byte.
+// The game scripts are the ones the engine's JavaScript test (tests/test_js_script.cpp, cases 1, 2, 3, 5 and 6) runs on
+// real GameObjects: both tests read the same files (tests/javascript/game_scripts/, and okay.js's example
+// web/okayjs/examples/scripts/key_mover.js for case 3), so the two runtimes are checked on the same text.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,6 +14,8 @@ const vnear = (a, b, eps = 1e-4) => { near(a.x, b.x, eps); near(a.y, b.y, eps); 
 // the scripts' Debug and console lines are checked through game.log, not printed
 for (const k of ['log', 'warn', 'error']) console[k] = () => {};
 const quiet = g => g;
+/** A game script shared with the engine's test (tests/javascript/game_scripts/<name>). */
+const gameScript = name => fs.readFileSync(new URL(`../javascript/game_scripts/${name}`, import.meta.url), 'utf8');
 
 /** One object with one script, as the engine test's World does. */
 function world(src, options) {
@@ -25,27 +28,14 @@ function world(src, options) {
 }
 
 test('case 1: a class script, fields, Start, Update moving the transform with dt', () => {
-    const w = world(`
-export default class Mover {
-    speed = 2;
-    label = "hi";
-    started = false;
-    Start() {
-        this.started = true;
-        console.log("start " + this.gameObject.name);
-    }
-    Update(dt) {
-        this.transform.position = this.transform.position.add(new Vector3(this.speed * dt, 0, 0));
-    }
-}
-`);
+    const w = world(gameScript('mover.js'));
     w.frames(60);
     assert.equal(w.sc.Get('started'), true);
     near(w.player.transform.position.x, 2, 0.01);
 });
 
 test('case 2: settings from outside replace the defaults; an exported object works too', () => {
-    const w = world('export default { speed: 2, Update(dt) { this.transform.Translate(this.speed * dt, 0, 0); } };', { fields: { speed: '10' } });
+    const w = world(gameScript('speed_object.js'), { fields: { speed: '10' } });
     w.frames(30);
     near(w.player.transform.position.x, 5, 0.02);
     assert.equal(w.sc.Get('speed'), 10);
@@ -66,20 +56,7 @@ test('case 3: Input and Time through the script globals (examples/scripts/key_mo
 test('case 5: GetComponent, GameObject.Find, identity and printing', () => {
     const g = quiet(new Game());
     const player = g.scene.CreateGameObject('Player');
-    const sc = g.AddScript(player, `
-export default class S {
-    Start() {
-        const tr = this.gameObject.GetComponent("Transform");
-        this.sameTransform = tr === this.transform;
-        this.noBody = GetComponent("Rigidbody") === null;
-        const other = GameObject.Find("Other");
-        this.otherName = other ? other.name : "none";
-        this.text = String(this.gameObject);
-        this.isObject = other instanceof GameObject;
-        Debug.Log("found " + this.otherName);
-    }
-}
-`);
+    const sc = g.AddScript(player, gameScript('find_other.js'));
     g.scene.CreateGameObject('Other');
     g.step(DT);
     assert.equal(sc.Get('sameTransform'), true);
@@ -91,30 +68,14 @@ export default class S {
 });
 
 test('case 6: errors carry the line and do not stop later frames; a destroyed object is an error', () => {
-    const w = world(`
-export default class E {
-    n = 0;
-    Update(dt) {
-        this.n++;
-        if (this.n === 2) {
-            const missing = undefined;
-            missing.field = 1;
-        }
-    }
-}
-`);
+    const w = world(gameScript('error_line.js'));
     w.frames(4);
     assert.equal(w.sc.Get('n'), 4);
     assert.equal(w.sc.errorCount, 1);
-    assert.match(w.g.log.find(l => l.level === 'error').text, /^script:8: TypeError: /);
+    assert.match(w.g.log.find(l => l.level === 'error').text, /^script:7: TypeError: /);
 
     const g = quiet(new Game());
-    const d = g.AddScript(g.scene.CreateGameObject('Keeper'), `
-export default {
-    Start() { this.keep = GameObject.Find("Victim"); },
-    Update(dt) { if (this.keep) { const n = this.keep.name; } },
-};
-`);
+    const d = g.AddScript(g.scene.CreateGameObject('Keeper'), gameScript('keep_destroyed.js'));
     const victim = g.scene.CreateGameObject('Victim');
     g.step(DT);
     g.scene.Destroy(victim);

@@ -669,6 +669,31 @@ private:
             const std::string& fname = e.kids[1]->text;
             for (const Param& f : st->params) {
                 if (f.name != fname || !f.type) continue;
+                if (f.type->kind == Type::Kind::Reference && f.type->inner) {
+                    // A reference member ([dcl.ref]) is stored as the address of its referent. Its
+                    // own slot (ival 11, written only by a constructor's member initializer) is a
+                    // pointer; a use of the member is that pointer, dereferenced: this node
+                    // becomes "*(obj.member)".
+                    auto ptrTy = prim(Type::Kind::Pointer);
+                    ptrTy->inner = cloneType(*f.type->inner);
+                    if (e.ival == 11) {
+                        r.type = std::move(ptrTy);
+                        r.lvalue = true;
+                        r.mod = true;
+                        return r;
+                    }
+                    auto inner = mkE(Expr::Kind::Member, e);
+                    inner->text = e.text;
+                    inner->ival = 11;
+                    inner->kids = std::move(e.kids);
+                    inner->checked = cloneType(*ptrTy);
+                    e.kids.clear();
+                    e.kind = Expr::Kind::Unary;
+                    e.text = "*";
+                    e.ival = 0;
+                    e.kids.push_back(std::move(inner));
+                    return checkExpr(e);
+                }
                 r.type = cloneType(*f.type);
                 r.lvalue = true;
                 r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;

@@ -1243,6 +1243,12 @@ private:
                 body->stmts.push_back(fieldLoop(f.first, f.second->bound->ival, false, p, [&](std::unique_ptr<Expr> at) {
                     return ctorCall(et, std::move(at), {}, p);
                 }));
+            } else if (mi && mi->args.size() == 1 && f.second && f.second->kind == Type::Kind::Reference) {
+                // A reference member is bound, not assigned ([class.base.init] p8, [dcl.init.ref]):
+                // it holds the address of its referent. ival 11 names the reference itself.
+                auto slot = eArrow(eName("this", p), f.first, p);
+                slot->ival = 11;
+                body->stmts.push_back(sExpr(eAssign(std::move(slot), eAddr(std::move(mi->args[0]), p), p), p));
             } else if (mi && mi->args.size() == 1) {
                 body->stmts.push_back(
                     sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(mi->args[0]), p), p));

@@ -3,7 +3,7 @@
  "totals": {
   "launcher": {
    "calls": 13,
-   "words": 286
+   "words": 283
   },
   "editor": {
    "calls": 23,
@@ -268,7 +268,7 @@
   },
   "launcher/main.cpp": {
    "calls": 13,
-   "words": 212,
+   "words": 209,
    "by_word": {
     "#include<SDL.h>": 1,
     "#include<imgui_impl_sdl2.h>": 1,
@@ -294,7 +294,7 @@
     "SDL_Window": 7,
     "Sint16": 18,
     "Uint16": 2,
-    "Uint32": 122,
+    "Uint32": 119,
     "Uint64": 1,
     "Uint8": 7
    }

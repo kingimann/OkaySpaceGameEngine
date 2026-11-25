@@ -11161,8 +11161,8 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         std::vector<Req> reqs;
         if (demo) reqs = {{"alexr", 0}, {"nova_builds", 0}};
         else if (account.IsLoggedIn()) {
-            static Uint32 s_next = 0;
-            const Uint32 now = okay::platform::TicksMs32();
+            static std::uint32_t s_next = 0;
+            const std::uint32_t now = okay::platform::TicksMs32();
             if (!g_frMutex) g_frMutex = okay::thr::CreateMutex();
             if (g_friendRequests > 0 && now >= s_next && !g_frFetching) {   // the same worker the Friends page uses
                 g_frFetching = true; s_next = now + 15000;
@@ -11211,7 +11211,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     }
 
     // ---- The feed, newest first, grouped Today / Yesterday / Earlier ----
-    const Uint32 nowT = okay::platform::TicksMs32();
+    const std::uint32_t nowT = okay::platform::TicksMs32();
     const long nowUnix = (long)std::time(nullptr);
     const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
     std::vector<int> order;
@@ -11222,7 +11222,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         order.push_back(i);
     }
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
-        return (Uint32)(nowT - g_notifs[(std::size_t)a].time) < (Uint32)(nowT - g_notifs[(std::size_t)b].time);
+        return (std::uint32_t)(nowT - g_notifs[(std::size_t)a].time) < (std::uint32_t)(nowT - g_notifs[(std::size_t)b].time);
     });
     const float timeW = ImGui::CalcTextSize("00m").x + UiPx(28.0f);
     int lastGroup = -1, dismissIdx = -1;
@@ -11230,7 +11230,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         Notif& n = g_notifs[(std::size_t)idx];
         const int kind = kindOf(n);
         const bool un = isUnread(n);
-        const Uint32 ageS = (Uint32)(nowT - n.time) / 1000u;
+        const std::uint32_t ageS = (std::uint32_t)(nowT - n.time) / 1000u;
         const long dk = DayKey(nowUnix - (long)ageS);
         const int grp = dk == today ? 0 : dk == yday ? 1 : 2;
         if (grp != lastGroup) {
@@ -12218,7 +12218,7 @@ int main(int argc, char** argv) {
                     {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
                 };
                 const Uint32 t0 = okay::platform::TicksMs32();
-                auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, Uint32 agoMin, bool unread, int go) {
+                auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, std::uint32_t agoMin, bool unread, int go) {
                     Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
                     n.time = t0 - agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
                     n.read = !unread; n.gotoTab = go;
@@ -12227,7 +12227,7 @@ int main(int argc, char** argv) {
                 for (const Seed& s : seed) add(s.key, s.title, s.body, s.kind, s.agoMin, s.unread, s.go);
                 if (ntDemo == "many")
                     for (int i = 0; i < 30; ++i)
-                        add("demo:many" + std::to_string(i), "Friend " + std::to_string(i) + " is now playing", "Orbit Hopper  \xC2\xB7  join from their profile", i % 4, 300u + (Uint32)i * 400u, i < 4, 6);
+                        add("demo:many" + std::to_string(i), "Friend " + std::to_string(i) + " is now playing", "Orbit Hopper  \xC2\xB7  join from their profile", i % 4, 300u + (std::uint32_t)i * 400u, i < 4, 6);
                 if (ntDemo == "long") {
                     add("demo:long1", "averyveryverylongusername_2026 sent you a message with a really long title that will not fit",
                         "This body text is long on purpose: it keeps going past the end of the first line, past the second line too, and should be cut "

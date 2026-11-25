@@ -111,6 +111,10 @@ struct Preprocessor {
                     *ok = false;
                     return 0;
                 }
+                // An integer suffix (201611L, 1u, 2ULL) does not change the value here ([cpp.cond] 12, [lex.icon]).
+                while (j < expanded.size() && (expanded[j] == 'u' || expanded[j] == 'U' || expanded[j] == 'l' ||
+                                               expanded[j] == 'L'))
+                    ++j;
                 Tok tok;
                 tok.kind = 1;
                 tok.num = value;
@@ -318,7 +322,7 @@ struct Preprocessor {
                 ++i;
                 continue;
             }
-            if (c == '"' || c == '\'') {
+            if ((c == '"' || c == '\'') && !is_digit_separator(line, i)) {
                 in_string = true;
                 quote = c;
                 out.push_back(c);
@@ -341,7 +345,16 @@ struct Preprocessor {
                     continue;
                 }
                 if (!it->second.function_like) {
-                    out += expand(it->second.body, nest + 1);
+                    std::string body = it->second.body;
+                    // a ## b in an object-like macro joins the two pieces ([cpp.concat])
+                    for (size_t h = body.find("##"); h != std::string::npos; h = body.find("##", h)) {
+                        size_t a = h, b = h + 2;
+                        while (a > 0 && std::isspace(static_cast<unsigned char>(body[a - 1]))) --a;
+                        while (b < body.size() && std::isspace(static_cast<unsigned char>(body[b]))) ++b;
+                        body.erase(a, b - a);
+                        h = a;
+                    }
+                    out += expand(body, nest + 1);
                     i = j;
                     continue;
                 }
@@ -366,7 +379,7 @@ struct Preprocessor {
                         else if (ch == arg_quote) in_arg_string = false;
                         continue;
                     }
-                    if (ch == '"' || ch == '\'') {
+                    if ((ch == '"' || ch == '\'') && !is_digit_separator(line, k)) {
                         in_arg_string = true;
                         arg_quote = ch;
                         cur_arg.push_back(ch);
@@ -408,25 +421,82 @@ struct Preprocessor {
                 }
                 // Every parameter is replaced in one pass over the body, so an argument that happens to contain another
                 // parameter's name (CHECK_NEAR(f(a, b), 1, 2) with parameters a and b) is not substituted a second time.
+                // An argument is macro-expanded before it goes in ([cpp.subst] 1), except next to # and ## where its
+                // spelling is used: #p makes a string literal of it ([cpp.stringize]) and a ## b joins the two pieces
+                // into one token ([cpp.concat]). The result is scanned again for macros.
                 std::string substituted;
                 {
                     const std::string& body = it->second.body;
+                    const std::vector<std::string>& ps = it->second.params;
+                    auto param_index = [&](const std::string& w) -> int {
+                        for (size_t p = 0; p < ps.size() && p < args.size(); ++p)
+                            if (ps[p] == w) return static_cast<int>(p);
+                        return -1;
+                    };
+                    auto trim = [](const std::string& t) {
+                        size_t a = 0, b = t.size();
+                        while (a < b && std::isspace(static_cast<unsigned char>(t[a]))) ++a;
+                        while (b > a && std::isspace(static_cast<unsigned char>(t[b - 1]))) --b;
+                        return t.substr(a, b - a);
+                    };
+                    bool paste_next = false;  // the word after a ## is used as written
                     for (size_t s = 0; s < body.size();) {
-                        if (std::isalpha(static_cast<unsigned char>(body[s])) || body[s] == '_') {
+                        const char bc = body[s];
+                        if ((bc == '"' || bc == '\'') && !is_digit_separator(body, s)) {
+                            // a literal in the body is copied as it is
+                            size_t e = s + 1;
+                            while (e < body.size() && body[e] != bc) e += body[e] == '\\' ? 2 : 1;
+                            substituted += body.substr(s, std::min(e + 1, body.size()) - s);
+                            s = e + 1;
+                            continue;
+                        }
+                        if (bc == '#' && s + 1 < body.size() && body[s + 1] == '#') {
+                            while (!substituted.empty() && std::isspace(static_cast<unsigned char>(substituted.back())))
+                                substituted.pop_back();
+                            s += 2;
+                            while (s < body.size() && std::isspace(static_cast<unsigned char>(body[s]))) ++s;
+                            paste_next = true;
+                            continue;
+                        }
+                        if (bc == '#') {
+                            size_t w = s + 1;
+                            while (w < body.size() && std::isspace(static_cast<unsigned char>(body[w]))) ++w;
+                            size_t e = w;
+                            while (e < body.size() && (std::isalnum(static_cast<unsigned char>(body[e])) || body[e] == '_')) ++e;
+                            const int p = param_index(body.substr(w, e - w));
+                            if (p >= 0) {
+                                const std::string text = trim(args[static_cast<size_t>(p)]);
+                                substituted.push_back('"');
+                                for (char ch : text) {
+                                    if (ch == '"' || ch == '\\') substituted.push_back('\\');
+                                    substituted.push_back(ch);
+                                }
+                                substituted.push_back('"');
+                                s = e;
+                                continue;
+                            }
+                        }
+                        if (std::isalpha(static_cast<unsigned char>(bc)) || bc == '_') {
                             size_t e = s + 1;
                             while (e < body.size() && (std::isalnum(static_cast<unsigned char>(body[e])) || body[e] == '_')) ++e;
                             const std::string word = body.substr(s, e - s);
-                            bool replaced = false;
-                            for (size_t p = 0; p < it->second.params.size() && p < args.size(); ++p) {
-                                if (it->second.params[p] == word) {
-                                    substituted += args[p];
-                                    replaced = true;
-                                    break;
-                                }
+                            const int p = param_index(word);
+                            if (p < 0) {
+                                substituted += word;
+                            } else {
+                                size_t after = e;
+                                while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after]))) ++after;
+                                const bool pasted = paste_next || (after + 1 < body.size() && body[after] == '#' &&
+                                                                   body[after + 1] == '#');
+                                substituted += pasted ? trim(args[static_cast<size_t>(p)])
+                                                      : expand(args[static_cast<size_t>(p)], nest + 1);
                             }
-                            if (!replaced) substituted += word;
+                            paste_next = false;
                             s = e;
-                        } else substituted.push_back(body[s++]);
+                            continue;
+                        }
+                        if (!std::isspace(static_cast<unsigned char>(bc))) paste_next = false;
+                        substituted.push_back(body[s++]);
                     }
                 }
                 out += expand(substituted, nest + 1);
@@ -497,7 +567,7 @@ struct Preprocessor {
 
     std::string run(const std::string& raw_text, const std::string& dir, int file = 0) {
         const std::string text = splice_lines(raw_text);
-        if (depth > 16) {
+        if (depth > 256) {  // [implimits] suggests 256 nested includes; engine include chains are deeper than 16
             error = "include nesting is too deep";
             return "";
         }
@@ -632,7 +702,7 @@ struct Preprocessor {
                     bool good = true;
                     const int64_t value = eval_pp(expr, &good);
                     if (!good) {
-                        error = error.empty() ? "bad preprocessor expression" : error;
+                        error = error.empty() ? "bad preprocessor expression: #if " + expr : error;
                         --depth;
                         return "";
                     }

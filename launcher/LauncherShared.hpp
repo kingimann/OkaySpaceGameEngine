@@ -110,6 +110,7 @@ void GetNews(std::string& ver, std::string& lines);   // the latest release note
 int CompareVersions(const std::string& a, const std::string& b);   // <0, 0, >0 like strcmp
 // Marketplace listing types (workshop_items.kind).
 struct MktKind { const char* key; const char* label; const char* plural; const char* desc; ImVec4 color; };
+// theme-allow-begin: the listing type colours (filled tiles and chips, with white text)
 static const MktKind kMktKinds[] = {
     {"game",     "Full game",   "Games",       "A finished, playable game (File > Build Game).",   ImVec4(0.26f, 0.55f, 0.85f, 1)},
     {"template", "Template",    "Templates",   "A starter project others build on.",               ImVec4(0.58f, 0.45f, 0.82f, 1)},
@@ -121,10 +122,12 @@ static const MktKind kMktKinds[] = {
     {"tool",     "Tool",        "Tools",       "Editor tools, plugins and utilities.",             ImVec4(0.60f, 0.65f, 0.72f, 1)},
     {"scene",    "Scene",       "Scenes",      "A single scene or level.",                         ImVec4(0.30f, 0.62f, 0.40f, 1)},
 };
+// theme-allow-end
 static const int kMktKindN = (int)(sizeof(kMktKinds) / sizeof(kMktKinds[0]));
 int MktKindIndex(const std::string& k);       // the kMktKinds row of a kind key (unknown -> game)
 // Selectable accent colors (name, main, dim) — mirror the editor's accent presets.
 struct AccentPreset { const char* name; ImVec4 col; ImVec4 dim; };
+// theme-allow-begin: the accent colours people pick
 const AccentPreset kAccentPresets[] = {
     {"Classic", ImVec4(0.235f, 0.475f, 0.800f, 1), ImVec4(0.172f, 0.360f, 0.600f, 1)},  // muted selection blue (default)
     {"Blue",   ImVec4(0.26f, 0.59f, 0.98f, 1), ImVec4(0.19f, 0.43f, 0.72f, 1)},
@@ -134,6 +137,7 @@ const AccentPreset kAccentPresets[] = {
     {"Amber",  ImVec4(0.95f, 0.66f, 0.26f, 1), ImVec4(0.70f, 0.48f, 0.19f, 1)},
     {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
 };
+// theme-allow-end
 // Multiplayer (main.cpp): joining and inviting, used by the chat and the profile page.
 void MpJoin(const std::string& link, const std::string& from);   // Multiplayer, below
 bool MpCanInvite();                                             // in a joinable match right now
@@ -231,7 +235,8 @@ ChatFwd ParseChatFwd(const std::string& b);    // a forwarded message: who from,
 extern std::map<long, long> g_pinsDm, g_pinsGroup;   // message id -> pinned at (unix)
 extern ImVec4 kAccentDim;                      // the darker accent
 extern const char* kChatThemeNames[];          // the chat colour themes (kChatThemeCount)
-extern const ImVec4 kChatWinBg;                // the chat window's background
+extern const ImVec4& kChatWinBg;
+bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine);   // a chat reaction pill (main.cpp)                // the chat window's background
 // Games, friends and presence (main.cpp): what the multiplayer code shares with the rest.
 struct PlayProc {
     std::string key, title; Uint32 lastCredit = 0;

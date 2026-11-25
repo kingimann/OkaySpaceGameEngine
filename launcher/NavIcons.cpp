@@ -186,7 +186,7 @@ bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 bgHover,
             const float ang = -1.5707963f + k * 0.6283185f, rad = (k % 2 == 0) ? 7.0f : 3.0f;
             pts[k] = ImVec2(c.x + std::cos(ang) * rad, c.y + 0.5f + std::sin(ang) * rad);
         }
-        if (icon == kRibStarOn) for (int k = 0; k < 10; ++k) dl->AddTriangleFilled(ImVec2(c.x, c.y + 0.5f), pts[k], pts[(k + 1) % 10], IM_COL32(240, 196, 92, 255));
+        if (icon == kRibStarOn) for (int k = 0; k < 10; ++k) dl->AddTriangleFilled(ImVec2(c.x, c.y + 0.5f), pts[k], pts[(k + 1) % 10], okaytheme::WarningFillU32());
         else dl->AddPolyline(pts, 10, fg, ImDrawFlags_Closed, 1.5f);
         break;
     }
@@ -288,7 +288,7 @@ int ChipRow(const char* id, const std::vector<Chip>& chips, int selected, float 
         const bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
         ImGui::PopID();
         dl->AddRectFilled(a, b, on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.26f))
-                                   : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10)), ch * 0.5f);
+                                   : (h ? okaytheme::Ink(22) : okaytheme::Ink(10)), ch * 0.5f);
         if (on) dl->AddRect(a, b, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f)), ch * 0.5f, 0, 1.0f);
         if (focus) dl->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2), ImGui::GetColorU32(kAccent), ch * 0.5f + 2, 0, 1.5f);
         float tx = a.x + padX;
@@ -319,12 +319,12 @@ void EmptyState(int icon, const char* title, const char* sub, float topPad, bool
     ImGui::Dummy(ImVec2(0, topPad));
     const ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + R);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddCircleFilled(c, R, IM_COL32(255, 255, 255, 12), 40);
+    dl->AddCircleFilled(c, R, okaytheme::Ink(12), 40);
     DrawNavIcon(dl, icon, c, ImGui::GetColorU32(ImGuiCol_TextDisabled));
     if (ok) {   // the small green tick: nothing is waiting
         const ImVec2 bc(c.x + R * 0.66f, c.y + R * 0.66f);
         dl->AddCircleFilled(bc, UiPx(10.0f), ImGui::GetColorU32(ImGuiCol_WindowBg), 20);
-        dl->AddCircleFilled(bc, UiPx(8.0f), IM_COL32(64, 186, 104, 255), 20);
+        dl->AddCircleFilled(bc, UiPx(8.0f), okaytheme::SuccessFillU32(), 20);
         dl->PathLineTo(ImVec2(bc.x - 3.6f, bc.y + 0.2f)); dl->PathLineTo(ImVec2(bc.x - 1.0f, bc.y + 2.8f));
         dl->PathLineTo(ImVec2(bc.x + 3.8f, bc.y - 2.8f)); dl->PathStroke(IM_COL32_WHITE, 0, 1.8f);
     }
@@ -362,14 +362,14 @@ void CardBackground(ImDrawList* dl, ImVec2 a, ImVec2 b, bool hover, ImU32 hoverB
     const float r = UiPx(12.0f);
     dl->AddRectFilled(a, b, ImGui::GetColorU32(okaytheme::kRaised), r);
     if (!hover) return;
-    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 7), r);
-    dl->AddRect(a, b, hoverBorder ? hoverBorder : IM_COL32(255, 255, 255, 36), r, 0, borderW);
+    dl->AddRectFilled(a, b, okaytheme::Ink(7), r);
+    dl->AddRect(a, b, hoverBorder ? hoverBorder : okaytheme::Ink(36), r, 0, borderW);
 }
 
 void SkeletonBlock(ImDrawList* dl, ImVec2 a, ImVec2 b, float rounding) {
     const float t = (float)ImGui::GetTime();
     const float pulse = 0.5f + 0.5f * std::sin(t * 3.2f);
-    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, (int)(10 + 10 * pulse)), rounding);
+    dl->AddRectFilled(a, b, okaytheme::Ink((int)(10 + 10 * pulse)), rounding);
 }
 
 void SectionLabel(const char* title, int n) {

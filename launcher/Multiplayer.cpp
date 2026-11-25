@@ -625,8 +625,8 @@ static void DrawInvitePopups() {
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - w - 18, y));
         ImGui::SetNextWindowSize(ImVec2(w, h));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.13f, 0.15f, 0.19f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.55f, 0.36f, 0.9f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::WithAlpha(okaytheme::kRaised, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Border, okaytheme::WithAlpha(okaytheme::SuccessFill(), 0.9f));
         char wid[32]; std::snprintf(wid, sizeof(wid), "##invpop%ld", pp.inv.id);
         bool close = false;
         if (ImGui::Begin(wid, nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
@@ -636,7 +636,7 @@ static void DrawInvitePopups() {
             ImDrawList* d = ImGui::GetWindowDrawList();
             const ImVec2 p = ImGui::GetCursorScreenPos();
             d->AddRectFilled(p, ImVec2(p.x + 44, p.y + 44), ImGui::GetColorU32(kAccent), 10.0f);
-            DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + 22), 27.0f, IM_COL32(255, 255, 255, 240));
+            DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + 22), 27.0f, okaytheme::OnColorU32(0.941f));
             ImGui::SetCursorScreenPos(ImVec2(p.x + 54, p.y));
             ImGui::BeginGroup();
             ImGui::TextUnformatted(FitText(pp.inv.fromName + (party ? " invited you to a party" : " invited you to play"), w - 80).c_str());
@@ -645,8 +645,8 @@ static void DrawInvitePopups() {
             ImGui::SetWindowFontScale(1.0f);
             ImGui::EndGroup();
             ImGui::SetCursorScreenPos(ImVec2(p.x + 54, p.y + 54));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
             if (ImGui::Button(party ? "Join party" : "Join game", ImVec2(130, 28))) {
                 if (party) MpPartyJoinFromInvite(pp.inv.body); else MpJoin(ci.link.Format(), pp.inv.fromName);
                 close = true;
@@ -672,7 +672,7 @@ void DrawMpDialogs() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 p = ImGui::GetCursorScreenPos();
         dl->AddRectFilled(p, ImVec2(p.x + 46, p.y + 46), ImGui::GetColorU32(kAccent), 10.0f);
-        DrawGamepadIcon(dl, ImVec2(p.x + 23, p.y + 23), 28.0f, IM_COL32(255, 255, 255, 240));
+        DrawGamepadIcon(dl, ImVec2(p.x + 23, p.y + 23), 28.0f, okaytheme::OnColorU32(0.941f));
         ImGui::SetCursorScreenPos(ImVec2(p.x + 58, p.y + 2));
         ImGui::BeginGroup();
         const bool toParty = g_inviteMode == 1;
@@ -715,10 +715,10 @@ void DrawMpDialogs() {
             const float w = ImGui::GetContentRegionAvail().x, rowH = 50.0f;
             ImDrawList* ld = ImGui::GetWindowDrawList();
             if (ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + w, rp.y + rowH)) && ImGui::IsWindowHovered())
-                ld->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 10), 8.0f);
+                ld->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(10), 8.0f);
             ImGui::SetCursorScreenPos(ImVec2(rp.x + 6, rp.y + 7));
             DrawAvatar(f.avatar, name, 36.0f);
-            ld->AddCircleFilled(ImVec2(rp.x + 6 + 31, rp.y + 7 + 31), 5.5f, f.online ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255), 12);
+            ld->AddCircleFilled(ImVec2(rp.x + 6 + 31, rp.y + 7 + 31), 5.5f, f.online ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 12);
             const float bw = 92.0f;
             ld->AddText(ImVec2(rp.x + 52, rp.y + 8), ImGui::GetColorU32(ImGuiCol_Text), FitText(name, w - 52 - bw - 12).c_str());
             const std::string sub = !f.online ? (f.lastSeen > 0 ? LastOnline(f.lastSeen) : std::string("Offline"))
@@ -843,7 +843,7 @@ static void DrawCrown(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     d->AddConvexPolyFilled(pts, 7, col);
 }
 static void DrawPartyCard() {
-    const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    const ImVec4 cardBg = okaytheme::kRaised;
     const ImU32 cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 12));
@@ -851,7 +851,7 @@ static void DrawPartyCard() {
     const float right = ImGui::GetContentRegionMax().x;
     if (!g_party.Valid()) {
         ImGui::SetWindowFontScale(0.82f);
-        ImGui::TextColored(ImVec4(0.62f, 0.72f, 1.0f, 1.0f), "PARTY");
+        ImGui::TextColored(okaytheme::Current().info, "PARTY");
         ImGui::SetWindowFontScale(1.0f);
         ImGui::TextUnformatted("Play together with friends");
         ImGui::TextDisabled("The party leader picks the game and server \xE2\x80\x94 everyone in the party joins with them.");
@@ -866,7 +866,7 @@ static void DrawPartyCard() {
     const okay::PartyMember* me = g_party.Find(g_partyMyUid);
     // Header row: PARTY · 3/8, what we're playing, actions.
     ImGui::SetWindowFontScale(0.82f);
-    ImGui::TextColored(ImVec4(0.62f, 0.72f, 1.0f, 1.0f), "PARTY  \xC2\xB7  %d/%d", (int)g_party.members.size(), g_party.maxSize);
+    ImGui::TextColored(okaytheme::Current().info, "PARTY  \xC2\xB7  %d/%d", (int)g_party.members.size(), g_party.maxSize);
     ImGui::SetWindowFontScale(1.0f);
     const okay::PartyMember* lead = g_party.Find(g_party.leader);
     std::string what = !g_party.game.empty() ? (leader ? "You're playing " : (lead ? lead->Name() : std::string("The leader")) + " is playing ") + g_party.game
@@ -879,13 +879,13 @@ static void DrawPartyCard() {
     if (ImGui::Button(ready ? "Ready" : "Not ready", ImVec2(110, 30))) PartyRun(kPartyReady, {}, {}, !ready);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(ready ? "You're ready. Click to un-ready." : "Let the party know you're ready.");
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
     if (ImGui::Button("Leave", ImVec2(110, 30))) PartyRun(kPartyLeave);
     ImGui::PopStyleColor();
     if (!leader && !g_party.joinLink.empty()) {   // jump in now (e.g. after turning Follow off)
         ImGui::SetCursorPos(ImVec2(right - 360, 52));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
         if (ImGui::Button("Join the leader", ImVec2(342, 26))) MpJoin(g_party.joinLink, lead ? lead->Name() : std::string());
         ImGui::PopStyleColor(2);
     }
@@ -903,7 +903,7 @@ static void DrawPartyCard() {
         ImGui::SetCursorScreenPos(cp);
         ImGui::InvisibleButton("##chip", ImVec2(chipW, chipH));
         const bool hov = ImGui::IsItemHovered();
-        d->AddRectFilled(cp, ImVec2(cp.x + chipW, cp.y + chipH), hov ? IM_COL32(255, 255, 255, 16) : IM_COL32(255, 255, 255, 8), 10.0f);
+        d->AddRectFilled(cp, ImVec2(cp.x + chipW, cp.y + chipH), hov ? okaytheme::Ink(16) : okaytheme::Ink(8), 10.0f);
         if (ImGui::BeginPopupContextItem("##chipctx")) {
             if (m.uid != g_partyMyUid) {
                 if (ImGui::MenuItem("Message")) OpenChatWith(m.uid, m.Name(), m.avatar);
@@ -911,7 +911,7 @@ static void DrawPartyCard() {
                 if (leader) {
                     ImGui::Separator();
                     if (ImGui::MenuItem("Make party leader")) PartyRun(kPartyPromote, m.uid, m.Name());
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                     if (ImGui::MenuItem("Remove from party")) PartyRun(kPartyKick, m.uid, m.Name());
                     ImGui::PopStyleColor();
                 }
@@ -920,12 +920,12 @@ static void DrawPartyCard() {
         }
         ImGui::SetCursorScreenPos(ImVec2(cp.x + 8, cp.y + 9));
         DrawAvatar(m.avatar, m.Name(), 36.0f);
-        d->AddCircleFilled(ImVec2(cp.x + 8 + 31, cp.y + 9 + 31), 5.5f, m.online ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255), 12);
-        if (m.uid == g_party.leader) DrawCrown(d, ImVec2(cp.x + 8 + 18, cp.y + 6), 6.0f, IM_COL32(250, 200, 70, 255));
+        d->AddCircleFilled(ImVec2(cp.x + 8 + 31, cp.y + 9 + 31), 5.5f, m.online ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 12);
+        if (m.uid == g_party.leader) DrawCrown(d, ImVec2(cp.x + 8 + 18, cp.y + 6), 6.0f, okaytheme::WarningFillU32());
         const std::string nm = m.uid == g_partyMyUid ? m.Name() + " (you)" : m.Name();
         d->AddText(ImVec2(cp.x + 52, cp.y + 9), ImGui::GetColorU32(ImGuiCol_Text), FitText(nm, chipW - 60).c_str());
         const std::string st = m.ready ? std::string("Ready") : !m.playing.empty() ? m.playing : m.online ? std::string("Online") : std::string("Offline");
-        d->AddText(ImVec2(cp.x + 52, cp.y + 28), m.ready ? IM_COL32(115, 209, 143, 255) : cDim, FitText(st, chipW - 60).c_str());
+        d->AddText(ImVec2(cp.x + 52, cp.y + 28), m.ready ? okaytheme::SuccessU32() : cDim, FitText(st, chipW - 60).c_str());
         ImGui::PopID();
     }
     ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + ((i + cols - 1) / cols) * (chipH + 8)));
@@ -1177,7 +1177,7 @@ static void DrawRecentPlayers(bool signedIn, bool reload) {
         ImGui::SetCursorPos(ImVec2((av.x - ts.x) * 0.5f, std::max(20.0f, av.y * 0.4f)));
         ImGui::TextDisabled("%s", msg);
     }
-    const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    const ImVec4 cardBg = okaytheme::kRaised;
     for (int i = 0; i < (int)rows.size(); ++i) {
         const Row& r = rows[i];
         ImGui::PushID(i);
@@ -1241,8 +1241,8 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
     for (int i = 0; i < nStats; ++i) {
         ImGui::SameLine(0, i ? 6 : 14);
         const bool on = statSel == i;
-        ImGui::PushStyleColor(ImGuiCol_Button, on ? kAccent : ImVec4(1, 1, 1, 0.05f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccent : ImVec4(1, 1, 1, 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_Button, on ? kAccent : okaytheme::InkV(0.05f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccent : okaytheme::InkV(0.1f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
         if (ImGui::Button(statNames[i], ImVec2(0, 26)) && !on) { statSel = i; reload = true; }
         ImGui::PopStyleVar();
@@ -1275,18 +1275,18 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
 
     if (haveMine) {   // my line
         ImGui::Dummy(ImVec2(0, 6));
-        const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+        const ImVec4 cardBg = okaytheme::kRaised;
         ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##lbmine", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
         ImGui::SetWindowFontScale(0.82f);
-        ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "YOUR STATS");
+        ImGui::TextColored(okaytheme::Current().success, "YOUR STATS");
         ImGui::SetWindowFontScale(1.0f);
         char line[256];
         std::snprintf(line, sizeof(line), "%d wins  \xC2\xB7  %d matches  \xC2\xB7  %ld total score  \xC2\xB7  best %d  \xC2\xB7  %s played",
                       mine.wins, mine.matches, mine.totalScore, mine.bestScore, MrDuration(mine.seconds).c_str());
         ImGui::TextUnformatted(line);
-        if (mine.rank > 0) { ImGui::SameLine(ImGui::GetContentRegionMax().x - 120); ImGui::TextColored(ImVec4(0.92f, 0.78f, 0.38f, 1), "Rank #%d", mine.rank); }
+        if (mine.rank > 0) { ImGui::SameLine(ImGui::GetContentRegionMax().x - 120); ImGui::TextColored(okaytheme::Current().warning, "Rank #%d", mine.rank); }
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
@@ -1312,8 +1312,8 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
             ImGui::TableNextRow(0, 34.0f);
             ImGui::PushID(i);
             ImGui::TableSetColumnIndex(0); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 7);
-            const ImVec4 medal = e.rank == 1 ? ImVec4(0.95f, 0.78f, 0.30f, 1) : e.rank == 2 ? ImVec4(0.78f, 0.80f, 0.86f, 1)
-                               : e.rank == 3 ? ImVec4(0.85f, 0.56f, 0.35f, 1) : ImVec4(0.60f, 0.63f, 0.70f, 1);
+            const ImVec4 medal = e.rank == 1 ? okaytheme::WarningFill() : e.rank == 2 ? okaytheme::kText
+                               : e.rank == 3 ? okaytheme::WarningFill() : okaytheme::kTextDim;
             ImGui::TextColored(medal, "%d", e.rank);
             ImGui::TableSetColumnIndex(1);
             const bool isMe = !me.empty() && SameTitle(e.username, me);
@@ -1325,7 +1325,7 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open %s's profile", e.Name().c_str());
             auto cell = [&](int col, const std::string& v, bool hi) {
                 ImGui::TableSetColumnIndex(col); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 7);
-                if (hi) ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1), "%s", v.c_str()); else ImGui::TextDisabled("%s", v.c_str());
+                if (hi) ImGui::TextColored(okaytheme::kText, "%s", v.c_str()); else ImGui::TextDisabled("%s", v.c_str());
             };
             cell(2, std::to_string(e.wins), stat == "wins");
             cell(3, std::to_string(e.matches), stat == "matches");
@@ -1355,14 +1355,14 @@ void DrawMultiplayerPage(bool signedIn) {
     static bool hideFull = false, hideEmpty = false, hidePw = false;
     if (const char* t = std::getenv("OKAY_MP_DEMO_TAB")) { static bool once = false; if (!once) { once = true; mpTab = std::atoi(t); } }   // dev screenshot hook
     const ImU32 cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    const ImVec4 cardBg = okaytheme::kRaised;
 
     // Title + actions.
     {
         ImGui::Dummy(ImVec2(0, 2));
         const ImVec2 tp = ImGui::GetCursorScreenPos();
         ImGui::SetWindowFontScale(1.34f);
-        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "Multiplayer");
+        ImGui::TextColored(okaytheme::kText, "Multiplayer");
         const ImVec2 tsz = ImGui::GetItemRectSize();
         ImGui::SetWindowFontScale(1.0f);
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(tp.x, tp.y + tsz.y + 5), ImVec2(tp.x + tsz.x, tp.y + tsz.y + 7.5f), ImGui::GetColorU32(kAccent), 1.5f);
@@ -1430,11 +1430,11 @@ void DrawMultiplayerPage(bool signedIn) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float tile = 62.0f;
         dl->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), ImGui::GetColorU32(kAccent), 12.0f);
-        DrawGamepadIcon(dl, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 240));
+        DrawGamepadIcon(dl, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, okaytheme::OnColorU32(0.941f));
         ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 14, p.y - 1));
         ImGui::BeginGroup();
         ImGui::SetWindowFontScale(0.82f);
-        ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "NOW PLAYING");
+        ImGui::TextColored(okaytheme::Current().success, "NOW PLAYING");
         ImGui::SetWindowFontScale(1.15f);
         ImGui::TextUnformatted(cur.title.c_str());
         ImGui::SetWindowFontScale(1.0f);
@@ -1474,8 +1474,8 @@ void DrawMultiplayerPage(bool signedIn) {
         if (tabCounts[i] > 0) std::snprintf(lbl, sizeof(lbl), "%s  %d##mpt%d", tabNames[i], tabCounts[i], i);
         else std::snprintf(lbl, sizeof(lbl), "%s##mpt%d", tabNames[i], i);
         const bool on = mpTab == i;
-        ImGui::PushStyleColor(ImGuiCol_Button, on ? kAccent : ImVec4(1, 1, 1, 0.05f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccent : ImVec4(1, 1, 1, 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_Button, on ? kAccent : okaytheme::InkV(0.05f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccent : okaytheme::InkV(0.1f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
         if (ImGui::Button(lbl, ImVec2(0, 28)) && !on) { mpTab = i; shownTab = -1; sel = -1; }
         ImGui::PopStyleVar();
@@ -1587,7 +1587,7 @@ void DrawMultiplayerPage(bool signedIn) {
             ImGui::TableSetColumnIndex(0);
             if (r.info.password) {   // padlock
                 ImDrawList* d = ImGui::GetWindowDrawList(); const ImVec2 c = ImGui::GetCursorScreenPos();
-                const ImU32 lc = IM_COL32(230, 190, 90, 255);
+                const ImU32 lc = okaytheme::WarningFillU32();
                 d->AddRectFilled(ImVec2(c.x + 5, c.y + 9), ImVec2(c.x + 15, c.y + 17), lc, 2.0f);
                 d->PathArcTo(ImVec2(c.x + 10, c.y + 9), 3.4f, 3.14159f, 6.28318f, 10); d->PathStroke(lc, 0, 1.6f);
             }
@@ -1616,7 +1616,7 @@ void DrawMultiplayerPage(bool signedIn) {
                 float tx = nameX + nameW + 10;
                 const float ty = ImGui::GetItemRectMin().y + (ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight()) * 0.5f;
                 ImDrawList* d = ImGui::GetWindowDrawList();
-                if (!r.friendName.empty()) { d->AddText(ImVec2(tx, ty), IM_COL32(115, 209, 143, 255), r.friendName.c_str()); tx += ImGui::CalcTextSize(r.friendName.c_str()).x + 10; }
+                if (!r.friendName.empty()) { d->AddText(ImVec2(tx, ty), okaytheme::SuccessU32(), r.friendName.c_str()); tx += ImGui::CalcTextSize(r.friendName.c_str()).x + 10; }
                 if (r.info.dedicated) d->AddText(ImVec2(tx, ty), cDim, "dedicated");
             }
             ImGui::TableSetColumnIndex(2); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
@@ -1624,7 +1624,7 @@ void DrawMultiplayerPage(bool signedIn) {
             ImGui::TableSetColumnIndex(3); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
             if (r.info.maxPlayers > 0) {
                 const bool full = r.info.players >= r.info.maxPlayers;
-                ImGui::TextColored(full ? ImVec4(0.94f, 0.55f, 0.50f, 1) : ImVec4(0.85f, 0.88f, 0.94f, 1), "%d / %d", r.info.players, r.info.maxPlayers);
+                ImGui::TextColored(full ? okaytheme::Current().danger : okaytheme::kText, "%d / %d", r.info.players, r.info.maxPlayers);
             } else ImGui::TextDisabled("\xE2\x80\x94");
             ImGui::TableSetColumnIndex(4); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
             ImGui::TextUnformatted(r.info.map.empty() ? "\xE2\x80\x94" : r.info.map.c_str());
@@ -1633,7 +1633,7 @@ void DrawMultiplayerPage(bool signedIn) {
             else if (r.info.pingMs < 0) ImGui::TextDisabled(g_mpBusy ? "\xE2\x80\xA6" : "\xE2\x80\x94");
             else {
                 const int pm = r.info.pingMs;
-                ImGui::TextColored(pm < 60 ? ImVec4(0.45f, 0.82f, 0.56f, 1) : pm < 130 ? ImVec4(0.92f, 0.78f, 0.38f, 1) : ImVec4(0.94f, 0.50f, 0.45f, 1), "%d", pm);
+                ImGui::TextColored(pm < 60 ? okaytheme::Current().success : pm < 130 ? okaytheme::Current().warning : okaytheme::Current().danger, "%d", pm);
             }
             ImGui::PopID();
         }

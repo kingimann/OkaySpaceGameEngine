@@ -148,9 +148,9 @@ void DrawVerifiedBadge(ImDrawList* d, ImVec2 c, float r) {
         const float a0 = 6.2831853f * i / n, a1 = 6.2831853f * (i + 1) / n;
         const float r0 = (i & 1) ? r * 0.86f : r, r1 = (i & 1) ? r : r * 0.86f;
         d->AddTriangleFilled(c, ImVec2(c.x + std::cos(a0) * r0, c.y + std::sin(a0) * r0),
-                             ImVec2(c.x + std::cos(a1) * r1, c.y + std::sin(a1) * r1), IM_COL32(56, 151, 240, 255));
+                             ImVec2(c.x + std::cos(a1) * r1, c.y + std::sin(a1) * r1), okaytheme::U32(kAccent));
     }
-    d->AddCircleFilled(c, r * 0.80f, IM_COL32(56, 151, 240, 255), 20);
+    d->AddCircleFilled(c, r * 0.80f, okaytheme::U32(kAccent), 20);
     d->AddLine(ImVec2(c.x - r * 0.38f, c.y + r * 0.02f), ImVec2(c.x - r * 0.10f, c.y + r * 0.32f), IM_COL32_WHITE, std::max(1.4f, r * 0.20f));
     d->AddLine(ImVec2(c.x - r * 0.10f, c.y + r * 0.32f), ImVec2(c.x + r * 0.42f, c.y - r * 0.30f), IM_COL32_WHITE, std::max(1.4f, r * 0.20f));
 }
@@ -160,24 +160,24 @@ struct ProfileBadge { std::string name, desc; ImU32 color; char glyph; };
 static std::vector<ProfileBadge> ProfileBadges(const okay::ProfileBundle& b, int achN, int points, int gameN, long playSecs, long editorSecs) {
     std::vector<ProfileBadge> out;
     for (const auto& s : b.badges) {   // staff-awarded first
-        if (s == "staff")     out.push_back({"Staff", "Works on OkaySpace.", IM_COL32(237, 66, 69, 255), 'S'});
-        if (s == "developer") out.push_back({"Developer", "Builds the engine.", IM_COL32(150, 110, 255, 255), 'D'});
-        if (s == "moderator") out.push_back({"Moderator", "Keeps the community friendly.", IM_COL32(67, 181, 129, 255), 'M'});
-        if (s == "beta")      out.push_back({"Beta Tester", "Tested OkaySpace before release.", IM_COL32(245, 150, 60, 255), 'B'});
-        if (s == "partner")   out.push_back({"Partner", "An official OkaySpace partner.", IM_COL32(250, 200, 70, 255), 'P'});
+        if (s == "staff")     out.push_back({"Staff", "Works on OkaySpace.", okaytheme::DangerFillU32(), 'S'});
+        if (s == "developer") out.push_back({"Developer", "Builds the engine.", okaytheme::U32(kAccent), 'D'});
+        if (s == "moderator") out.push_back({"Moderator", "Keeps the community friendly.", okaytheme::SuccessFillU32(), 'M'});
+        if (s == "beta")      out.push_back({"Beta Tester", "Tested OkaySpace before release.", okaytheme::WarningFillU32(), 'B'});
+        if (s == "partner")   out.push_back({"Partner", "An official OkaySpace partner.", okaytheme::WarningFillU32(), 'P'});
     }
     const long now = (long)std::time(nullptr);
     if (b.p.memberSince > 0 && b.p.memberSince < 1767225600L)   // joined before 2026
-        out.push_back({"Early Adopter", "Joined OkaySpace in its first year.", IM_COL32(90, 200, 230, 255), 'E'});
+        out.push_back({"Early Adopter", "Joined OkaySpace in its first year.", okaytheme::U32(kAccent), 'E'});
     if (b.p.memberSince > 0 && now - b.p.memberSince > 365L * 86400)
-        out.push_back({"Veteran", "Member for over a year.", IM_COL32(190, 160, 110, 255), 'V'});
-    if (gameN >= 5) out.push_back({"Prolific Creator", "Published 5+ games.", IM_COL32(255, 120, 90, 255), 'C'});
-    else if (gameN >= 1) out.push_back({"Creator", "Published a game.", IM_COL32(255, 150, 110, 255), 'C'});
-    if (achN >= 10) out.push_back({"Achievement Hunter", "Unlocked 10+ achievements.", IM_COL32(250, 200, 70, 255), 'A'});
-    if (points >= 500) out.push_back({"Point Collector", "Earned 500+ achievement points.", IM_COL32(255, 220, 120, 255), '*'});
-    if (b.friends >= 10) out.push_back({"Social Butterfly", "10+ friends.", IM_COL32(240, 110, 180, 255), 'F'});
-    if (playSecs >= 100L * 3600) out.push_back({"Dedicated Player", "100+ hours played.", IM_COL32(100, 170, 255, 255), 'H'});
-    if (editorSecs >= 50L * 3600) out.push_back({"Builder", "50+ hours in the editor.", IM_COL32(130, 210, 120, 255), 'E'});
+        out.push_back({"Veteran", "Member for over a year.", okaytheme::WarningFillU32(), 'V'});
+    if (gameN >= 5) out.push_back({"Prolific Creator", "Published 5+ games.", okaytheme::DangerFillU32(), 'C'});
+    else if (gameN >= 1) out.push_back({"Creator", "Published a game.", okaytheme::DangerFillU32(), 'C'});
+    if (achN >= 10) out.push_back({"Achievement Hunter", "Unlocked 10+ achievements.", okaytheme::WarningFillU32(), 'A'});
+    if (points >= 500) out.push_back({"Point Collector", "Earned 500+ achievement points.", okaytheme::WarningFillU32(), '*'});
+    if (b.friends >= 10) out.push_back({"Social Butterfly", "10+ friends.", okaytheme::U32(kAccent), 'F'});
+    if (playSecs >= 100L * 3600) out.push_back({"Dedicated Player", "100+ hours played.", okaytheme::U32(kAccent), 'H'});
+    if (editorSecs >= 50L * 3600) out.push_back({"Builder", "50+ hours in the editor.", okaytheme::SuccessFillU32(), 'E'});
     return out;
 }
 static std::string HoursText(long secs) {
@@ -401,9 +401,9 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
     const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const ImU32 cRaised = ImGui::GetColorU32(okaytheme::kRaised);
-    const ImU32 hair = IM_COL32(255, 255, 255, 16);
+    const ImU32 hair = okaytheme::Ink(16);
     const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
-    const ImU32 cGreen = IM_COL32(76, 200, 110, 255), cGrey = IM_COL32(120, 128, 140, 255);
+    const ImU32 cGreen = okaytheme::SuccessFillU32(), cGrey = okaytheme::TextDimU32();
     const float fs = ImGui::GetFontSize();
     ImFont* font = ImGui::GetFont();
 
@@ -424,7 +424,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         if (ImGui::InvisibleButton("##pfback", ImVec2(bw, ch))) goBack = true;
         bool h = ImGui::IsItemHovered();
         if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        dl->AddRectFilled(cp, ImVec2(cp.x + bw, cp.y + ch), h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9), ch * 0.5f);
+        dl->AddRectFilled(cp, ImVec2(cp.x + bw, cp.y + ch), h ? okaytheme::Ink(22) : okaytheme::Ink(9), ch * 0.5f);
         float cy = cp.y + ch * 0.5f;
         dl->AddLine(ImVec2(cp.x + 20.0f, cy - 4.5f), ImVec2(cp.x + 15.5f, cy), cText, 1.8f);
         dl->AddLine(ImVec2(cp.x + 15.5f, cy), ImVec2(cp.x + 20.0f, cy + 4.5f), cText, 1.8f);
@@ -563,8 +563,8 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             ImVec2 ts = ImGui::CalcTextSize(t);
             dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32_WHITE, t);
         } else {
-            dl->AddCircle(c, 9.0f, hov ? cText : IM_COL32(255, 255, 255, 60), 20, 1.5f);
-            ImU32 pc = hov ? cText : IM_COL32(255, 255, 255, 90);
+            dl->AddCircle(c, 9.0f, hov ? cText : okaytheme::Ink(60), 20, 1.5f);
+            ImU32 pc = hov ? cText : okaytheme::Ink(90);
             dl->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), pc, 1.5f);
             dl->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), pc, 1.5f);
         }
@@ -592,12 +592,12 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         PfGradient(dl, v0, hp, ImVec2(he.x, hp.y + bannerH),
                    okaytheme::Mix(okaytheme::kRaised, bc, 0.78f), okaytheme::Mix(okaytheme::kRaised, bc, 0.18f));
         dl->PushClipRect(hp, ImVec2(he.x, hp.y + bannerH), true);
-        dl->AddCircleFilled(ImVec2(he.x - W * 0.16f, hp.y - bannerH * 0.15f), bannerH * 1.05f, IM_COL32(255, 255, 255, 10), 64);
-        dl->AddCircleFilled(ImVec2(he.x - W * 0.05f, hp.y + bannerH * 1.05f), bannerH * 0.65f, IM_COL32(255, 255, 255, 8), 48);
-        dl->AddCircleFilled(ImVec2(hp.x + W * 0.42f, hp.y + bannerH * 1.3f), bannerH * 0.8f, IM_COL32(0, 0, 0, 22), 48);
+        dl->AddCircleFilled(ImVec2(he.x - W * 0.16f, hp.y - bannerH * 0.15f), bannerH * 1.05f, okaytheme::Ink(10), 64);
+        dl->AddCircleFilled(ImVec2(he.x - W * 0.05f, hp.y + bannerH * 1.05f), bannerH * 0.65f, okaytheme::Ink(8), 48);
+        dl->AddCircleFilled(ImVec2(hp.x + W * 0.42f, hp.y + bannerH * 1.3f), bannerH * 0.8f, okaytheme::Shade(22), 48);
         for (int k = 0; k < 7; ++k) {
             float x = hp.x + W * 0.55f + k * 26.0f;
-            dl->AddLine(ImVec2(x, hp.y + bannerH + 10), ImVec2(x + bannerH * 0.9f, hp.y - 10), IM_COL32(255, 255, 255, 6), 9.0f);
+            dl->AddLine(ImVec2(x, hp.y + bannerH + 10), ImVec2(x + bannerH * 0.9f, hp.y - 10), okaytheme::Ink(6), 9.0f);
         }
         dl->PopClipRect();
         v0 = dl->VtxBuffer.Size;
@@ -607,13 +607,13 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         // Level badge (top-right of the banner).
         {
             ImVec2 lc(he.x - 42.0f, hp.y + 38.0f);
-            dl->AddCircleFilled(lc, 24.0f, IM_COL32(0, 0, 0, 80), 40);
-            dl->AddCircle(lc, 21.0f, ImGui::GetColorU32(okaytheme::Mix(bc, ImVec4(1, 1, 1, 1), 0.35f)), 40, 2.5f);
+            dl->AddCircleFilled(lc, 24.0f, okaytheme::Shade(80), 40);
+            dl->AddCircle(lc, 21.0f, ImGui::GetColorU32(okaytheme::Mix(bc, okaytheme::Current().onColor, 0.35f)), 40, 2.5f);
             char lv[8]; std::snprintf(lv, sizeof(lv), "%d", level);
             ImVec2 ls = font->CalcTextSizeA(fs * 1.2f, FLT_MAX, 0.0f, lv);
             dl->AddText(font, fs * 1.2f, ImVec2(lc.x - ls.x * 0.5f, lc.y - ls.y * 0.5f), IM_COL32_WHITE, lv);
             ImVec2 ks = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, "LEVEL");
-            dl->AddText(font, fs * 0.72f, ImVec2(lc.x - ks.x * 0.5f, lc.y + 27.0f), IM_COL32(255, 255, 255, 190), "LEVEL");
+            dl->AddText(font, fs * 0.72f, ImVec2(lc.x - ks.x * 0.5f, lc.y + 27.0f), okaytheme::Ink(190), "LEVEL");
             if (ImGui::IsMouseHoveringRect(ImVec2(lc.x - 26, lc.y - 26), ImVec2(lc.x + 26, lc.y + 40)) && ImGui::IsWindowHovered())
                 ImGui::SetTooltip("Level %d  \xC2\xB7  %d achievement points\n%d%% to level %d. Every achievement earns points.", level, achPts,
                                   (int)(okay::Achievements::LevelProgress(achPts) * 100), level + 1);
@@ -674,9 +674,9 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             bool hit;
             if (b.kind == 1) hit = PrimaryButton(b.label.c_str(), ImVec2(w, bh));
             else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.07f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.14f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.20f));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::InkV(0.07f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::InkV(0.14f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, okaytheme::InkV(0.2f));
                 hit = ImGui::Button(b.label.c_str(), ImVec2(w, bh));
                 ImGui::PopStyleColor(3);
             }
@@ -721,10 +721,10 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         }
         ImGui::PopStyleVar(2);
         ImGui::SetCursorScreenPos(ImVec2(bx, by + (bh - rb) * 0.5f));
-        if (RoundIconButton("##pfmore", kRibMore, rb, IM_COL32(255, 255, 255, 18), IM_COL32(255, 255, 255, 36), cText, "More"))
+        if (RoundIconButton("##pfmore", kRibMore, rb, okaytheme::Ink(18), okaytheme::Ink(36), cText, "More"))
             ImGui::OpenPopup("##pfmorepop");
         if (ImGui::BeginPopup("##pffollow")) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             if (ImGui::MenuItem("Unfollow")) {
                 if (!kDemo) queueJob(6); else Toast("Unfollowed", 1);
                 s_b.iFollow = false; if (s_b.followers > 0) --s_b.followers;
@@ -733,7 +733,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             ImGui::EndPopup();
         }
         if (ImGui::BeginPopup("##pffriend")) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             if (ImGui::MenuItem(s_b.friendStatus == "accepted" ? "Remove friend" : "Cancel request")) {
                 if (!kDemo) { PfJob* j = queueJob(4); j->row = s_b.friendRow; }
                 else Toast(s_b.friendStatus == "accepted" ? "Removed from friends" : "Request cancelled", 1);
@@ -765,7 +765,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             std::string nm = dispName;
             while (nm.size() > 4 && font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x > textMaxW - (me ? 46.0f : 0.0f))
                 nm = nm.substr(0, nm.size() - 4) + "\xE2\x80\xA6";
-            dl->AddText(font, nsz, ImVec2(nameX, nameY), IM_COL32(242, 244, 250, 255), nm.c_str());
+            dl->AddText(font, nsz, ImVec2(nameX, nameY), okaytheme::TextU32(), nm.c_str());
             float afterName = nameX + font->CalcTextSizeA(nsz, FLT_MAX, 0.0f, nm.c_str()).x;
             if (p.verified) {   // blue check
                 const ImVec2 vc(afterName + 14.0f, nameY + nsz * 0.55f);
@@ -785,7 +785,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
                 ImVec2 ts = font->CalcTextSizeA(fs * 0.72f, FLT_MAX, 0.0f, fy);
                 float py = nameY + (nsz - ts.y - 6.0f) * 0.5f + 1.0f;
                 if (nx + ts.x + 12.0f < nameX + textMaxW + 40.0f) {
-                    dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), IM_COL32(255, 255, 255, 22), 8.0f);
+                    dl->AddRectFilled(ImVec2(nx, py), ImVec2(nx + ts.x + 12.0f, py + ts.y + 6.0f), okaytheme::Ink(22), 8.0f);
                     dl->AddText(font, fs * 0.72f, ImVec2(nx + 6.0f, py + 3.0f), cDim, fy);
                 }
             }
@@ -805,7 +805,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             }
             if (!p.customStatus.empty()) {
                 std::string cs = "\"" + p.customStatus + "\"";
-                dl->AddText(ImVec2(nameX, y2 + ImGui::GetTextLineHeight() + 6.0f), IM_COL32(184, 191, 209, 255),
+                dl->AddText(ImVec2(nameX, y2 + ImGui::GetTextLineHeight() + 6.0f), okaytheme::TextU32(),
                             FitText(cs, textMaxW).c_str());
             }
         }
@@ -828,7 +828,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             for (int i = 0; i < 4; ++i) {
                 float tx = hp.x + (i % statCols) * tw, ty = sy + 3.0f + (i / statCols) * statRowH;
                 if (i % statCols) dl->AddLine(ImVec2(tx, ty + 14.0f), ImVec2(tx, ty + statRowH - 14.0f), hair, 1.0f);
-                dl->AddText(font, fs * 1.3f, ImVec2(tx + 24.0f, ty + 11.0f), IM_COL32(242, 244, 250, 255), vals[i]);
+                dl->AddText(font, fs * 1.3f, ImVec2(tx + 24.0f, ty + 11.0f), okaytheme::TextU32(), vals[i]);
                 dl->AddText(font, fs * 0.74f, ImVec2(tx + 24.0f, ty + 13.0f + fs * 1.3f + 2.0f), cDim, labs[i]);
                 if (i == 1 && s_b.followSupported && s_b.following >= 0 &&
                     ImGui::IsMouseHoveringRect(ImVec2(tx, ty), ImVec2(tx + tw, ty + statRowH)))
@@ -854,7 +854,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         ImGui::TextDisabled("Click achievements and games below to pin them (up to 6 and 4). They show in the order you pick them.");
         ImGui::PopTextWrapPos();
         if (!kDemo && !s_b.showcaseSupported && s_loaded)
-            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.36f, 1), "This server hasn't enabled showcases yet, so picks stay on this device.");
+            ImGui::TextColored(okaytheme::Current().warning, "This server hasn't enabled showcases yet, so picks stay on this device.");
         ImGui::Dummy(ImVec2(0, 4));
         ImGui::TextUnformatted("Banner color");
         ImGui::Dummy(ImVec2(0, 2));
@@ -875,7 +875,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
                 d->PathArcTo(c, D * 0.5f - 4.0f, 3.14159f * 0.5f, 3.14159f * 1.5f, 16); d->PathFillConvex(ImGui::GetColorU32(col));
             } else d->AddCircleFilled(c, D * 0.5f - 1.0f, ImGui::GetColorU32(col), 24);
             if (e_banner == k) d->AddCircle(c, D * 0.5f + 3.0f, IM_COL32_WHITE, 24, 2.0f);
-            else if (h) d->AddCircle(c, D * 0.5f + 3.0f, IM_COL32(255, 255, 255, 90), 24, 1.5f);
+            else if (h) d->AddCircle(c, D * 0.5f + 3.0f, okaytheme::Ink(90), 24, 1.5f);
             if (h) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", k < 0 ? "Auto (profile color)" : kAccentPresets[k].name); }
         }
         ImGui::SetCursorScreenPos(ImVec2(sp.x, sp.y + D + 6.0f));
@@ -917,7 +917,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
                 int pick = 0;
                 if (s_edit) for (std::size_t k = 0; k < e_ach.size(); ++k) if (e_ach[k] == a.id) pick = (int)k + 1;
                 const bool faded = s_edit && pick == 0;
-                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? IM_COL32(255, 255, 255, 18) : IM_COL32(255, 255, 255, 8), 10.0f);
+                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? okaytheme::Ink(18) : okaytheme::Ink(8), 10.0f);
                 if (pick) d->AddRect(tp, ImVec2(tp.x + tw, tp.y + th), ImGui::GetColorU32(kAccent), 10.0f, 0, 2.0f);
                 DrawAchMedal(d, ImVec2(tp.x + 12.0f + 21.0f, tp.y + th * 0.5f), 21.0f, a.id, faded ? 0.45f : 1.0f);
                 const float tx = tp.x + 66.0f, maxW = tw - 66.0f - (s_edit ? 28.0f : 10.0f);
@@ -976,7 +976,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
                 if (s_edit) for (std::size_t k = 0; k < e_games.size(); ++k) if (e_games[k] == gm.id) pick = (int)k + 1;
                 const bool faded = s_edit && pick == 0;
                 const float fa = faded ? 0.45f : 1.0f;
-                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? IM_COL32(255, 255, 255, 18) : IM_COL32(255, 255, 255, 8), 10.0f);
+                d->AddRectFilled(tp, ImVec2(tp.x + tw, tp.y + th), h ? okaytheme::Ink(18) : okaytheme::Ink(8), 10.0f);
                 // Cover: a gradient in the game's own hue + a play disc + kind pill.
                 ImVec4 gc = NameColor(gm.title);
                 int v0 = d->VtxBuffer.Size;
@@ -984,20 +984,20 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
                 PfGradient(d, v0, tp, ImVec2(tp.x + tw, tp.y + coverH),
                            ImVec4(gc.x * 0.78f, gc.y * 0.78f, gc.z * 0.78f, fa), ImVec4(gc.x * 0.26f, gc.y * 0.26f, gc.z * 0.30f, fa));
                 d->PushClipRect(tp, ImVec2(tp.x + tw, tp.y + coverH), true);
-                d->AddCircleFilled(ImVec2(tp.x + tw * 0.85f, tp.y + coverH * 0.1f), coverH * 0.75f, IM_COL32(255, 255, 255, (int)(14 * fa)), 40);
+                d->AddCircleFilled(ImVec2(tp.x + tw * 0.85f, tp.y + coverH * 0.1f), coverH * 0.75f, okaytheme::Ink((int)(14 * fa)), 40);
                 std::string ini = gm.title.substr(0, 1);
                 float isz = coverH * 0.9f;
-                d->AddText(font, isz, ImVec2(tp.x + 12.0f, tp.y + coverH - isz * 0.86f), IM_COL32(255, 255, 255, (int)(34 * fa)), ini.c_str());
+                d->AddText(font, isz, ImVec2(tp.x + 12.0f, tp.y + coverH - isz * 0.86f), okaytheme::Ink((int)(34 * fa)), ini.c_str());
                 d->PopClipRect();
                 ImVec2 pc(tp.x + tw * 0.5f, tp.y + coverH * 0.5f);
-                d->AddCircleFilled(pc, h && !s_edit ? 20.0f : 18.0f, IM_COL32(0, 0, 0, (int)(90 * fa)), 32);
+                d->AddCircleFilled(pc, h && !s_edit ? 20.0f : 18.0f, okaytheme::Shade((int)(90 * fa)), 32);
                 d->AddTriangleFilled(ImVec2(pc.x - 4.5f, pc.y - 7.0f), ImVec2(pc.x - 4.5f, pc.y + 7.0f), ImVec2(pc.x + 7.5f, pc.y),
-                                     IM_COL32(255, 255, 255, (int)(235 * fa)));
+                                     okaytheme::Ink((int)(235 * fa)));
                 std::string kind = gm.kind.empty() ? std::string("GAME") : gm.kind;
                 for (auto& c : kind) c = (char)std::toupper((unsigned char)c);
                 ImVec2 ks = font->CalcTextSizeA(fs * 0.70f, FLT_MAX, 0.0f, kind.c_str());
-                d->AddRectFilled(ImVec2(tp.x + 8, tp.y + 8), ImVec2(tp.x + 8 + ks.x + 12, tp.y + 8 + ks.y + 6), IM_COL32(0, 0, 0, (int)(110 * fa)), 7.0f);
-                d->AddText(font, fs * 0.70f, ImVec2(tp.x + 14, tp.y + 11), IM_COL32(255, 255, 255, (int)(220 * fa)), kind.c_str());
+                d->AddRectFilled(ImVec2(tp.x + 8, tp.y + 8), ImVec2(tp.x + 8 + ks.x + 12, tp.y + 8 + ks.y + 6), okaytheme::Shade((int)(110 * fa)), 7.0f);
+                d->AddText(font, fs * 0.70f, ImVec2(tp.x + 14, tp.y + 11), okaytheme::Ink((int)(220 * fa)), kind.c_str());
                 if (pick) d->AddRect(tp, ImVec2(tp.x + tw, tp.y + th), ImGui::GetColorU32(kAccent), 10.0f, 0, 2.0f);
                 d->AddText(ImVec2(tp.x + 12.0f, tp.y + coverH + 9.0f), faded ? ImGui::GetColorU32(ImGuiCol_Text, 0.55f) : cText,
                            FitText(gm.title, tw - 24.0f).c_str());
@@ -1103,17 +1103,17 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             const float rh = 40.0f;
             // icon: a pad for games, a wrench-ish square for the editor
             const ImVec2 ic(rp.x + 16, rp.y + rh * 0.5f);
-            d->AddRectFilled(ImVec2(ic.x - 15, ic.y - 15), ImVec2(ic.x + 15, ic.y + 15), ed ? IM_COL32(130, 210, 120, 40) : IM_COL32(100, 170, 255, 40), 8.0f);
-            DrawNavIcon(d, ed ? 0 : 1, ic, ed ? IM_COL32(130, 210, 120, 255) : IM_COL32(120, 180, 255, 255));
+            d->AddRectFilled(ImVec2(ic.x - 15, ic.y - 15), ImVec2(ic.x + 15, ic.y + 15), ed ? okaytheme::SuccessFillU32(0.157f) : okaytheme::U32(kAccent, 0.157f), 8.0f);
+            DrawNavIcon(d, ed ? 0 : 1, ic, ed ? okaytheme::SuccessFillU32() : okaytheme::U32(kAccent));
             const float tx = rp.x + 42, tw2 = cw - 42;
             d->AddText(ImVec2(tx, rp.y + 2), cText, FitText(ed ? std::string("In the editor") : e.title, tw2 - 90).c_str());
             const std::string hrs = HoursText(e.seconds);
             const float hw = ImGui::CalcTextSize(hrs.c_str()).x;
             d->AddText(ImVec2(rp.x + cw - hw, rp.y + 2), cText, hrs.c_str());
             const float by = rp.y + 24, frac = (float)e.seconds / (float)top;
-            d->AddRectFilled(ImVec2(tx, by), ImVec2(tx + tw2 - 100, by + 5), IM_COL32(255, 255, 255, 18), 3.0f);
+            d->AddRectFilled(ImVec2(tx, by), ImVec2(tx + tw2 - 100, by + 5), okaytheme::Ink(18), 3.0f);
             d->AddRectFilled(ImVec2(tx, by), ImVec2(tx + std::max(4.0f, (tw2 - 100) * frac), by + 5),
-                             ed ? IM_COL32(130, 210, 120, 255) : ImGui::GetColorU32(kAccent), 3.0f);
+                             ed ? okaytheme::SuccessFillU32() : ImGui::GetColorU32(kAccent), 3.0f);
             if (e.lastPlayed > 0) {
                 const std::string lp = (PlaytimeRunning(e.key) && me ? std::string("now") : RelTime(e.lastPlayed));
                 const float lw = ImGui::CalcTextSize(lp.c_str()).x;
@@ -1134,7 +1134,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
         const int cols = std::max(1, (int)((cw + g) / (bs + g)));
         ImVec2 o = ImGui::GetCursorScreenPos();
         std::vector<ProfileBadge> all = badges;
-        if (p.verified) all.insert(all.begin(), ProfileBadge{"Verified", "A verified OkaySpace account.", IM_COL32(56, 151, 240, 255), 'v'});
+        if (p.verified) all.insert(all.begin(), ProfileBadge{"Verified", "A verified OkaySpace account.", okaytheme::U32(kAccent), 'v'});
         for (std::size_t i = 0; i < all.size(); ++i) {
             const ProfileBadge& bd = all[i];
             const ImVec2 bp(o.x + (i % cols) * (bs + g), o.y + (i / cols) * (bs + g));
@@ -1179,7 +1179,7 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             const bool hit = ImGui::InvisibleButton("##soc", ImVec2(pw, ph));
             const bool h = ImGui::IsItemHovered();
             ImGui::PopID();
-            d->AddRectFilled(ImVec2(x, y), ImVec2(x + pw, y + ph), h ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 12), ph * 0.5f);
+            d->AddRectFilled(ImVec2(x, y), ImVec2(x + pw, y + ph), h ? okaytheme::Ink(24) : okaytheme::Ink(12), ph * 0.5f);
             d->AddCircleFilled(ImVec2(x + 13, y + ph * 0.5f), 5.0f, sp->color, 12);
             d->AddText(ImVec2(x + 22, y + 6), cText, sp->label);
             d->AddText(ImVec2(x + 22 + ImGui::CalcTextSize(sp->label).x + 8, y + 6), cDim, shown.c_str());
@@ -1213,8 +1213,8 @@ PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, int from
             ImDrawList* d = ImGui::GetWindowDrawList();
             ImVec2 c(ip.x + 15.0f, ip.y + 15.0f);
             int icon = e.kind == "playing" ? 1 : e.kind == "achievement" ? 5 : e.kind == "publish" ? 7 : 3;
-            d->AddCircleFilled(c, 15.0f, e.kind == "achievement" ? IM_COL32(240, 196, 92, 40) : IM_COL32(255, 255, 255, 14), 28);
-            DrawNavIcon(d, icon, c, e.kind == "achievement" ? IM_COL32(240, 196, 92, 255) : cText);
+            d->AddCircleFilled(c, 15.0f, e.kind == "achievement" ? okaytheme::WarningFillU32(0.157f) : okaytheme::Ink(14), 28);
+            DrawNavIcon(d, icon, c, e.kind == "achievement" ? okaytheme::WarningFillU32() : cText);
             const char* verb = e.kind == "playing" ? "Played " : e.kind == "achievement" ? "Unlocked "
                              : e.kind == "publish" ? "Published " : e.kind == "online" ? "Came online" : "";
             ImGui::SetCursorScreenPos(ImVec2(ip.x + 40.0f, ip.y));

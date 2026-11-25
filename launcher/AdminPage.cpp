@@ -216,7 +216,7 @@ void DrawReportPopup() {
         if (std::strlen(note) > rep::kNoteMax) note[rep::kNoteMax] = '\0';
         if (!inlineMsg.empty()) {
             ImGui::Dummy(ImVec2(0, 2));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.5f, 0.45f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420);
             ImGui::TextUnformatted(inlineMsg.c_str());
             ImGui::PopTextWrapPos();
@@ -331,7 +331,7 @@ static void DrawReportsAdmin() {
         return it != D.names.end() && !it->second.empty() ? "@" + it->second : uid.substr(0, 8);
     };
     auto statusCol = [](const std::string& s) -> ImU32 {
-        return s == "open" ? IM_COL32(236, 150, 60, 255) : s == "resolved" ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255);
+        return s == "open" ? okaytheme::WarningFillU32() : s == "resolved" ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32();
     };
     ImGui::SetNextItemWidth(150);
     if (SlateCombo("##repfilter", &filter, "Open\0Resolved\0Dismissed\0All\0")) { selReport = 0; queue(new RepAdminJob); }
@@ -341,7 +341,7 @@ static void DrawReportsAdmin() {
     ImGui::TextDisabled("Reports from players about people, messages, posts, listings and servers. Cheating reports are under Anti-cheat.");
     ImGui::Dummy(ImVec2(0, 4));
     if (!D.loadError.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.45f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
         ImGui::TextWrapped("%s", D.loadError.c_str());
         ImGui::PopStyleColor();
     }
@@ -481,7 +481,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
         const char* rn = okay::Admin::RankName(myRank);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const ImVec2 ts = ImGui::CalcTextSize(rn);
-        const ImU32 rc = myRank >= 3 ? IM_COL32(232, 86, 86, 255) : myRank == 2 ? IM_COL32(88, 140, 240, 255) : IM_COL32(67, 181, 129, 255);
+        const ImU32 rc = myRank >= 3 ? okaytheme::DangerFillU32() : myRank == 2 ? okaytheme::U32(kAccent) : okaytheme::SuccessFillU32();
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 6), ImVec2(p.x + ts.x + 16, p.y + 6 + ts.y + 6), rc, 9.0f);
         ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + 8, p.y + 9), IM_COL32_WHITE, rn);
         ImGui::Dummy(ImVec2(ts.x + 16, ts.y + 12));
@@ -516,14 +516,14 @@ void DrawAdminPage(okay::account::AccountService& account) {
             const bool h = ImGui::IsItemHovered(), on = sub == i;
             ImGui::PopID();
             if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (on || h) d->AddRectFilled(ImVec2(x, base.y), ImVec2(x + ts.x + 24, base.y + 34), IM_COL32(255, 255, 255, on ? 14 : 7), 8.0f);
+            if (on || h) d->AddRectFilled(ImVec2(x, base.y), ImVec2(x + ts.x + 24, base.y + 34), okaytheme::Ink(on ? 14 : 7), 8.0f);
             d->AddText(ImVec2(x + 12, base.y + 17 - ts.y * 0.5f), on ? cText : cDim, lbl);
             if (on) d->AddRectFilled(ImVec2(x + 12, base.y + 31), ImVec2(x + 12 + ts.x, base.y + 34), ImGui::GetColorU32(kAccent), 2.0f);
             x += ts.x + 24 + 6;
         }
         ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + 34));
         ImVec2 lp = ImGui::GetCursorScreenPos();
-        d->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), IM_COL32(255, 255, 255, 18));
+        d->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), okaytheme::Ink(18));
         ImGui::Dummy(ImVec2(0, 12));
     }
     // Load each page's data the first time it's shown.
@@ -559,13 +559,13 @@ void DrawAdminPage(okay::account::AccountService& account) {
         return w;
     };
     auto badgeCol = [](const std::string& b) -> ImU32 {
-        return b == "admin" ? IM_COL32(232, 86, 86, 255) : b == "staff" ? IM_COL32(88, 140, 240, 255) : b == "moderator" ? IM_COL32(67, 181, 129, 255)
-             : b == "developer" ? IM_COL32(150, 110, 230, 255) : b == "partner" ? IM_COL32(236, 170, 60, 255) : IM_COL32(120, 128, 140, 255);
+        return b == "admin" ? okaytheme::DangerFillU32() : b == "staff" ? okaytheme::U32(kAccent) : b == "moderator" ? okaytheme::SuccessFillU32()
+             : b == "developer" ? okaytheme::U32(kAccent) : b == "partner" ? okaytheme::WarningFillU32() : okaytheme::TextDimU32();
     };
     auto actionCol = [](const std::string& a) -> ImU32 {
-        return a == "ban" || a == "reject" || a == "role_remove" || a == "unverify" ? IM_COL32(232, 110, 110, 255)
+        return a == "ban" || a == "reject" || a == "role_remove" || a == "unverify" ? okaytheme::DangerFillU32()
              : a == "unban" || a == "approve" || a == "role_add" || a == "verify" || a == "official_publish" || a == "official_make_live"
-                 ? IM_COL32(90, 200, 130, 255) : IM_COL32(170, 176, 190, 255);
+                 ? okaytheme::SuccessFillU32() : okaytheme::TextU32();
     };
     auto logRows = [&](const std::vector<okay::AdminLogEntry>& L, size_t max) {
         if (L.empty()) { ImGui::TextDisabled(g_adBusy ? "Loading\xE2\x80\xA6" : "Nothing logged yet."); return; }
@@ -607,9 +607,9 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             const bool alert = (i == 3 && s.pending > 0);
             d->AddRectFilled(p, ImVec2(p.x + tw, p.y + th), ImGui::GetColorU32(okaytheme::kRaised), 12.0f);
-            if (h) d->AddRect(p, ImVec2(p.x + tw, p.y + th), IM_COL32(255, 255, 255, 30), 12.0f);
+            if (h) d->AddRect(p, ImVec2(p.x + tw, p.y + th), okaytheme::Ink(30), 12.0f);
             char v[32]; if (s.ok || kDemo) std::snprintf(v, sizeof(v), "%ld", tiles[i].v); else std::snprintf(v, sizeof(v), "\xE2\x80\x94");
-            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.6f, ImVec2(p.x + 16, p.y + 12), alert ? IM_COL32(240, 190, 80, 255) : cText, v);
+            d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.6f, ImVec2(p.x + 16, p.y + 12), alert ? okaytheme::WarningU32() : cText, v);
             d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.78f, ImVec2(p.x + 16, p.y + 48), cDim, tiles[i].label);
         }
         ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + ((7 / cols) + 1) * (th + g)));
@@ -642,7 +642,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             const float w = ImGui::GetContentRegionAvail().x, rowH = 50.0f;
             if (ImGui::InvisibleButton("##urow", ImVec2(w, rowH))) { selUser = i; banReason[0] = '\0'; }
             const bool h = ImGui::IsItemHovered();
-            if (selUser == i || h) d->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, selUser == i ? 16 : 8), 8.0f);
+            if (selUser == i || h) d->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(selUser == i ? 16 : 8), 8.0f);
             ImGui::SetCursorScreenPos(ImVec2(rp.x + 6, rp.y + 7));
             DrawAvatar(u.avatar, u.display, 36.0f);
             const float tx = rp.x + 52;
@@ -651,7 +651,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             if (u.verified) { DrawVerifiedBadge(d, ImVec2(px + 6, rp.y + 7 + ImGui::GetTextLineHeight() * 0.5f), 6.0f); px += 16; }
             const int rk = okay::Admin::RankOf(u.badges);
             if (rk > 0) px += pill(d, ImVec2(px + 2, rp.y + 8), okay::Admin::RankName(rk), badgeCol(rk >= 3 ? "admin" : rk == 2 ? "staff" : "moderator"), IM_COL32_WHITE) + 4;
-            if (u.banned) pill(d, ImVec2(px + 2, rp.y + 8), "BANNED", IM_COL32(200, 60, 60, 255), IM_COL32_WHITE);
+            if (u.banned) pill(d, ImVec2(px + 2, rp.y + 8), "BANNED", okaytheme::DangerFillU32(), IM_COL32_WHITE);
             std::string sub2 = "@" + u.username + "  \xC2\xB7  " + (u.online ? std::string("online") : u.lastSeen > 0 ? "seen " + RelTime(u.lastSeen) : std::string("never online"));
             d->AddText(ImVec2(tx, rp.y + 27), cDim, sub2.c_str());
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + 2));
@@ -700,7 +700,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 ImGui::EndDisabled();
                 ImGui::SameLine(0, 10);
                 const ImVec2 bp = ImGui::GetCursorScreenPos();
-                const float pw = pill(d, ImVec2(bp.x, bp.y + 2), kRoleBadges[b], has ? badgeCol(bd) : IM_COL32(255, 255, 255, 20), IM_COL32_WHITE);
+                const float pw = pill(d, ImVec2(bp.x, bp.y + 2), kRoleBadges[b], has ? badgeCol(bd) : okaytheme::Ink(20), IM_COL32_WHITE);
                 ImGui::Dummy(ImVec2(pw + 4, 18));
                 ImGui::SameLine(0, 6);
                 ImGui::TextDisabled("%s", kRoleDesc[b]);
@@ -729,7 +729,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             ImGui::Dummy(ImVec2(0, 2));
             const bool canBan = !self && myRank > theirRank;
             if (u.banned) {
-                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Banned %s", u.banUntil > 0 ? ("until " + FormatDate(u.banUntil)).c_str() : "permanently");
+                ImGui::TextColored(okaytheme::Current().danger, "Banned %s", u.banUntil > 0 ? ("until " + FormatDate(u.banUntil)).c_str() : "permanently");
                 if (!u.banReason.empty()) ImGui::TextWrapped("Reason: %s", u.banReason.c_str());
                 if (ImGui::Button("Lift ban", ImVec2(120, 30))) {
                     AdminJob* j = job(6); j->s1 = u.id; j->s3 = userQ; queue(j);
@@ -744,8 +744,8 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 SlateCombo("##bandur", &banDur, "1 hour\0" "1 day\0" "7 days\0" "30 days\0" "Permanent\0");
                 ImGui::SameLine(0, 8);
                 static const long kHours[] = {1, 24, 24 * 7, 24 * 30, 0};
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.24f, 0.24f, 1));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.86f, 0.30f, 0.30f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
                 ImGui::BeginDisabled(!banReason[0]);
                 if (ImGui::Button("Ban player", ImVec2(120, 0))) {
                     AdminJob* j = job(5); j->s1 = u.id; j->s2 = banReason; j->n1 = kHours[std::clamp(banDur, 0, 4)]; j->s3 = userQ; queue(j);
@@ -797,11 +797,11 @@ void DrawAdminPage(okay::account::AccountService& account) {
             ImGui::TextDisabled("by @%s  \xC2\xB7  submitted %s%s%s", w.author.c_str(), RelTime(w.created).c_str(),
                                 w.featured ? "  \xC2\xB7  featured" : "", w.reviewsLocked ? "  \xC2\xB7  reviews off" : "");
             if (!w.description.empty()) { ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(w.description.c_str()); ImGui::PopTextWrapPos(); }
-            if (!w.reviewNote.empty()) ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.40f, 1), "Note: %s", w.reviewNote.c_str());
+            if (!w.reviewNote.empty()) ImGui::TextColored(okaytheme::Current().warning, "Note: %s", w.reviewNote.c_str());
             ImGui::Dummy(ImVec2(0, 4));
             const bool safe = ShellSafeUrl(w.url);
             const bool hosted = w.url.find("/storage/v1/object/public/workshop/") != std::string::npos;
-            if (!hosted) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Outside link \xE2\x80\x94 not hosted by OkaySpace, can't be approved.");
+            if (!hosted) ImGui::TextColored(okaytheme::Current().danger, "Outside link \xE2\x80\x94 not hosted by OkaySpace, can't be approved.");
             ImGui::BeginDisabled(!safe);
             if (ImGui::Button("Download to check", ImVec2(0, 30))) OpenExternal(w.url);
             ImGui::EndDisabled();
@@ -821,7 +821,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                 ImGui::SameLine(0, 8);
             }
             ImGui::BeginDisabled(myRank < 2);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             if (ImGui::Button("Delete", ImVec2(80, 30))) { doId = w.id; doAct = "delete"; }
             ImGui::PopStyleColor();
             ImGui::EndDisabled();
@@ -897,7 +897,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
                     if (kDemo) Toast("Role changed", 1);
                 }
                 ImGui::SameLine(0, 8);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                 if (ImGui::Button("Remove from section", ImVec2(0, 0))) {
                     AdminJob* j = job(11); j->n1 = sec->id; j->s1 = m.uid; j->s2 = "remove"; queue(j);
                     if (kDemo) Toast("Removed from the section", 1);
@@ -912,11 +912,11 @@ void DrawAdminPage(okay::account::AccountService& account) {
             static long confirmDel = 0;
             ImGui::BeginDisabled(myRank < 2);
             if (confirmDel != sec->id) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                 if (ImGui::Button("Delete section\xE2\x80\xA6", ImVec2(140, 30))) confirmDel = sec->id;
                 ImGui::PopStyleColor();
             } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1), "Delete o/%s and all its posts?", sec->slug.c_str());
+                ImGui::TextColored(okaytheme::Current().danger, "Delete o/%s and all its posts?", sec->slug.c_str());
                 ImGui::SameLine();
                 if (ImGui::Button("Yes, delete", ImVec2(110, 0))) { AdminJob* j = job(12); j->n1 = sec->id; queue(j); confirmDel = 0; selSection = 0; }
                 ImGui::SameLine();
@@ -938,8 +938,8 @@ void DrawAdminPage(okay::account::AccountService& account) {
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImDrawList* d = ImGui::GetWindowDrawList();
             float px = rp.x;
-            if (t.pinned) px += pill(d, ImVec2(px, rp.y + 2), "PINNED", IM_COL32(67, 181, 129, 200), IM_COL32_WHITE) + 6;
-            if (t.locked) px += pill(d, ImVec2(px, rp.y + 2), "COMMENTS OFF", IM_COL32(150, 156, 170, 200), IM_COL32_WHITE) + 6;
+            if (t.pinned) px += pill(d, ImVec2(px, rp.y + 2), "PINNED", okaytheme::SuccessFillU32(0.784f), IM_COL32_WHITE) + 6;
+            if (t.locked) px += pill(d, ImVec2(px, rp.y + 2), "COMMENTS OFF", okaytheme::TextDimU32(0.784f), IM_COL32_WHITE) + 6;
             const float bw = ImGui::GetContentRegionAvail().x;
             const ImVec4 clip(px, rp.y, rp.x + bw - 372, rp.y + 40);
             d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(px, rp.y), cText, t.title.c_str(), nullptr, 0.0f, &clip);
@@ -952,7 +952,7 @@ void DrawAdminPage(okay::account::AccountService& account) {
             ImGui::SameLine(0, 6);
             if (ImGui::Button(t.locked ? "Turn comments on" : "Turn comments off", ImVec2(160, 28))) { tId = t.id; tAct = t.locked ? "unlock" : "lock"; }
             ImGui::SameLine(0, 6);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             if (ImGui::Button("Remove", ImVec2(110, 28))) { tId = t.id; tAct = "delete"; }
             ImGui::PopStyleColor();
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 46));
@@ -1019,9 +1019,9 @@ void DrawBanBanner() {
     std::string why = g_myBan.reason.empty() ? std::string("You can still play your games, but you can't post, message or publish.")
                                              : "Reason: " + g_myBan.reason + ". You can still play your games, but you can't post, message or publish.";
     const float h = 54.0f;
-    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(150, 40, 40, 230), 10.0f);
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::DangerFillU32(0.902f), 10.0f);
     d->AddText(ImVec2(p.x + 14, p.y + 8), IM_COL32_WHITE, head.c_str());
-    d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, p.y + 28), IM_COL32(255, 220, 220, 255), why.c_str(), nullptr, w - 28);
+    d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, p.y + 28), okaytheme::TextU32(), why.c_str(), nullptr, w - 28);
     ImGui::Dummy(ImVec2(w, h + 8));
 }
 

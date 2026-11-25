@@ -12,8 +12,9 @@ struct PfLocalShowcase { std::vector<std::string> ach; std::vector<long> games; 
 // Social links a profile can show: key, label, URL prefix for a handle ("" =
 // the value is a full URL (website) or not a link at all (Discord tag)).
 struct SocialPlatform { const char* key; const char* label; const char* prefix; ImU32 color; };
+// theme-allow-begin: the sites' own brand colours (small dots)
 static const SocialPlatform kSocials[] = {
-    {"x",         "X",         "https://x.com/",          IM_COL32(230, 233, 240, 255)},
+    {"x",         "X",         "https://x.com/",          IM_COL32(128, 134, 148, 255)},
     {"youtube",   "YouTube",   "https://youtube.com/@",   IM_COL32(255, 72, 72, 255)},
     {"twitch",    "Twitch",    "https://twitch.tv/",      IM_COL32(160, 110, 255, 255)},
     {"tiktok",    "TikTok",    "https://tiktok.com/@",    IM_COL32(60, 220, 230, 255)},
@@ -21,6 +22,7 @@ static const SocialPlatform kSocials[] = {
     {"discord",   "Discord",   "",                        IM_COL32(110, 130, 245, 255)},
     {"website",   "Website",   "",                        IM_COL32(120, 200, 150, 255)},
 };
+// theme-allow-end
 struct PfPageOut { int gotoTab = -1; std::string marketSearch; };
 
 // What main.cpp uses from PublicProfilePage.cpp.

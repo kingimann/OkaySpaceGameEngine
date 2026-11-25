@@ -218,8 +218,8 @@ void DrawAntiCheatAdmin() {
         ImGui::Dummy(ImVec2(w, ts.y * s + 6));
     };
     auto statusCol = [](const std::string& s) -> ImU32 {
-        return s == "open" ? IM_COL32(236, 150, 60, 255) : s == "reviewing" ? IM_COL32(88, 140, 240, 255)
-             : s == "actioned" || s == "accepted" ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255);
+        return s == "open" ? okaytheme::WarningFillU32() : s == "reviewing" ? okaytheme::U32(kAccent)
+             : s == "actioned" || s == "accepted" ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32();
     };
     auto openBan = [&](const std::string& uid, const std::string& hw, long report, const std::string& reason) {
         banOpen = true; banUid = uid; banHw = hw; banReport = report; banWho = uid.empty() ? std::string() : name(uid);
@@ -252,7 +252,7 @@ void DrawAntiCheatAdmin() {
         ImGui::Dummy(ImVec2(0, 6));
     }
     if (!D.loadError.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.45f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
         ImGui::TextWrapped("%s", D.loadError.c_str());
         ImGui::PopStyleColor();
     }
@@ -622,9 +622,9 @@ void DrawAcBanBanner() {
         std::string sub = ban->appealStatus == "open" ? "Your appeal is waiting for a decision."
                         : ban->appealStatus == "rejected" ? "Your appeal was rejected" + (ban->appealNote.empty() ? std::string(".") : ": " + ban->appealNote)
                         : "Think this is a mistake? You can appeal.";
-        d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(120, 46, 30, 235), 10.0f);
+        d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::DangerFillU32(0.922f), 10.0f);
         d->AddText(ImVec2(p.x + 14, p.y + 8), IM_COL32_WHITE, head.c_str());
-        d->AddText(ImVec2(p.x + 14, p.y + 28), IM_COL32(255, 222, 205, 255), sub.c_str());
+        d->AddText(ImVec2(p.x + 14, p.y + 28), okaytheme::WarningU32(), sub.c_str());
         if (ban->CanAppeal()) {
             ImGui::SetCursorScreenPos(ImVec2(p.x + w - 130, p.y + 12));
             if (ImGui::Button("Appeal\xE2\x80\xA6", ImVec2(116, 30))) { appealOpen = true; appealBuf[0] = '\0'; }

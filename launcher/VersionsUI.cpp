@@ -17,6 +17,7 @@
 #include "VersionsNet.hpp"
 #include "TestBuild.hpp"   // V(): a test build says so
 #include "NavIcons.hpp"   // okl::SlateCombo: the launcher's one dropdown look
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okayversionsui {
 namespace {
@@ -105,7 +106,7 @@ State& S() {
 
 // ---- small drawing helpers ------------------------------------------------------------------------------------------------------
 
-const ImU32 kGreen = IM_COL32(110, 205, 140, 255), kRed = IM_COL32(240, 125, 120, 255), kAmber = IM_COL32(240, 200, 100, 255);
+const ImU32 kGreen = okaytheme::SuccessFillU32(), kRed = okaytheme::DangerFillU32(), kAmber = okaytheme::WarningFillU32();
 
 void CardBegin(const Host& h, const char* id, const char* title) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, h.cardBg);
@@ -159,14 +160,14 @@ bool AccentButton(const Host& h, const char* label, const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(h.accent.x, h.accent.y, h.accent.z, 0.92f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(lift(h.accent.x), lift(h.accent.y), lift(h.accent.z), 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, h.accentDim);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor);
     const bool hit = ImGui::Button(label, size);
     ImGui::PopStyleColor(4);
     return hit;
 }
 bool DangerButton(const char* label, const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.55f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.26f, 0.26f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::WithAlpha(okaytheme::DangerFill(), 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
     const bool hit = ImGui::Button(label, size);
     ImGui::PopStyleColor(2);
     return hit;
@@ -262,7 +263,7 @@ void DrawRequestBanner(const Host& h) {
     else if (!st.highlight.empty()) text = "The editor needs " + line + " to open that project with its own version. Install " + V(st.highlight) + " below.";
     else if (!st.index.ok) text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
     else text = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
-    const ImVec4 base = col == kGreen ? ImVec4(0.43f, 0.80f, 0.55f, 1.0f) : ImVec4(0.94f, 0.78f, 0.39f, 1.0f);
+    const ImVec4 base = col == kGreen ? okaytheme::SuccessFill() : okaytheme::WarningFill();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(base.x, base.y, base.z, 0.14f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 12));
@@ -293,7 +294,7 @@ void DrawThisVersion(const Host& h) {
     float x = p0.x + TextWidth(title.c_str(), 1.18f) + 12.0f;
     if (st.haveIndex && st.index.ok && !cur.empty()) {
         if (cur == st.index.latest) x += DrawPill(dl, ImVec2(x, p0.y + 5), "Latest", Tint(h.accent, 0.32f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
-        if (okayver::SameLine(cur, st.index.lts)) x += DrawPill(dl, ImVec2(x, p0.y + 5), "LTS", IM_COL32(70, 170, 120, 90), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
+        if (okayver::SameLine(cur, st.index.lts)) x += DrawPill(dl, ImVec2(x, p0.y + 5), "LTS", okaytheme::SuccessFillU32(0.353f), ImGui::GetColorU32(ImGuiCol_Text)) + 6.0f;
     }
     std::string sub;
     const std::string launcher = okayver::NormalizeVersion(h.launcherVersion);
@@ -411,7 +412,7 @@ void DrawChannel(const Host& h) {
     // The default editor, for any installed version.
     if (!st.installed.empty() || !set.defaultEditor.empty()) {
         ImGui::Dummy(ImVec2(0, 8));
-        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.06f));
+        ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.06f));
         ImGui::Separator();
         ImGui::PopStyleColor();
         ImGui::Dummy(ImVec2(0, 6));
@@ -445,7 +446,7 @@ void RowEnd(const Row& r, bool divider = true) {
     ImGui::Dummy(ImVec2(r.width, 0));
     if (divider) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        r.dl->AddLine(ImVec2(p.x, p.y - 1), ImVec2(p.x + r.width, p.y - 1), IM_COL32(255, 255, 255, 14), 1.0f);
+        r.dl->AddLine(ImVec2(p.x, p.y - 1), ImVec2(p.x + r.width, p.y - 1), okaytheme::Ink(14), 1.0f);
     }
 }
 void RowHighlight(const Host& h, const Row& r) {
@@ -463,8 +464,8 @@ float RowTitle(const Host& h, const Row& r, const std::string& version, bool lat
     float x = r.p0.x + TextWidth(title.c_str(), 1.14f) + 10.0f;
     const ImU32 fg = ImGui::GetColorU32(ImGuiCol_Text);
     if (latest) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Latest", Tint(h.accent, 0.32f), fg) + 6.0f;
-    if (lts) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "LTS", IM_COL32(70, 170, 120, 90), fg) + 6.0f;
-    if (isDefault) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Default editor", IM_COL32(255, 255, 255, 30), fg) + 6.0f;
+    if (lts) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "LTS", okaytheme::SuccessFillU32(0.353f), fg) + 6.0f;
+    if (isDefault) x += DrawPill(r.dl, ImVec2(x, r.p0.y + 9), "Default editor", okaytheme::Ink(30), fg) + 6.0f;
     return x;
 }
 
@@ -506,7 +507,7 @@ void DrawInstalled(const Host& h) {
 
     // Keep previous versions: N.
     ImGui::Dummy(ImVec2(0, 6));
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.06f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.06f));
     ImGui::Separator();
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 6));

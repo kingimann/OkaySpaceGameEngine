@@ -5440,6 +5440,16 @@ struct Parser {
         std::vector<Node> pre;
         std::vector<Node> post;
         int eh_held = 0;  // sub-objects recorded for unwinding while the constructor runs
+        // What a base or member constructor's call put before its statement (adjust_args materializes an argument:
+        // the temporary that `m(w + "!")` passes to std::string's constructor, the copy of a class argument passed by
+        // value) goes right before that call (Round 31). Before, it stayed in stmt_pre and ran after the constructor
+        // calls, so the member was made from a temporary that did not exist yet: `m(w + "!")` gave an empty string.
+        const size_t ctor_pre_base = stmt_pre.size();
+        auto push_ctor_call = [&](Node call) {
+            for (size_t h = ctor_pre_base; h < stmt_pre.size(); ++h) pre.push_back(std::move(stmt_pre[h]));
+            stmt_pre.resize(ctor_pre_base);
+            pre.push_back(std::move(call));
+        };
         struct Init {
             std::string name;
             std::vector<Node> args;
@@ -5535,7 +5545,7 @@ struct Parser {
                     if (!special_call(bi.sid, "<ctor>", bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid),
                                       std::move(args), &call))
                         return false;
-                    pre.push_back(std::move(call));
+                    push_ctor_call(std::move(call));
                 } else {
                     for (size_t fi = bi.f0; fi < bi.f1; ++fi)
                         if (def.fields[fi].name.compare(0, 6, "__vptr") != 0) pre.push_back(assign_field(def.fields[fi].name));
@@ -5554,7 +5564,7 @@ struct Parser {
                     if (!special_call(ft.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
                                       std::move(args), &call))
                         return false;
-                    pre.push_back(std::move(call));
+                    push_ctor_call(std::move(call));
                 } else if (obj_needs_ctor(ft) && !class_has_copy(ft.struct_id)) {
                     // A member with only a non-copy constructor is copied bytewise.
                     pre.push_back(assign_field(field.name));
@@ -5567,7 +5577,7 @@ struct Parser {
             // object (base, table pointer, members), then this body runs.
             Node call;
             if (!special_call(cls, "<ctor>", node_name("this"), std::move(inits[0].args), &call)) return false;
-            pre.push_back(std::move(call));
+            push_ctor_call(std::move(call));
         } else if (special == 1) {
             // The bases in declaration order ([class.base.init] 13), each with the arguments of its initializer.
             for (const StructDef::BaseInfo& bi : def.bases) {
@@ -5581,7 +5591,7 @@ struct Parser {
                 const Node sub = bi.off == 0 ? node_name("this") : offset_ptr(node_name("this"), bi.off, bi.sid);
                 Node call;
                 if (!special_call(bi.sid, "<ctor>", sub, std::move(args), &call)) return false;
-                pre.push_back(std::move(call));
+                push_ctor_call(std::move(call));
                 if (eh_ && class_needs_dtor(structs[static_cast<size_t>(bi.sid)])) {
                     eh_push_object(&pre, sub, bi.sid, 0, locals);
                     ++eh_held;
@@ -5694,7 +5704,7 @@ struct Parser {
                     if (!special_call(field.type.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
                                       std::move(args), &call))
                         return false;
-                    pre.push_back(std::move(call));
+                    push_ctor_call(std::move(call));
                     for (Node& n : after) pre.push_back(std::move(n));
                     if (eh_ && obj_needs_dtor(field.type)) {
                         eh_push_object(&pre, node_addr(node_this_field(field.name)), field.type.struct_id, 0, locals);

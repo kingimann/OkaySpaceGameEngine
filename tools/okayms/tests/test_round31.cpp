@@ -340,8 +340,7 @@ static void r31_class_operand_error(Tally& tally) {
 }
 
 // std::filesystem::filesystem_error ([fs.class.filesystem.error]) and std::system_error exist and can be thrown
-// (FileCopy.hpp:46, 4 files: "a thrown value of unknown type"). Compiled only: running a throw of one under okay-ms
-// hangs (see the plan's Round 31 "not done": a base constructor given a by-value class argument).
+// (FileCopy.hpp:46, 4 files: "a thrown value of unknown type"); the decorated-name level, without running.
 static void r31_filesystem_error(Tally& tally) {
     std::printf("r31_filesystem_error\n");
     okayms::CompileInput in;
@@ -529,12 +528,16 @@ int entry(void) {
 }
 
 // std::stoi and its siblings throw invalid_argument for text that is not a number and out_of_range for a value outside
-// int ([string.conversions]), in a file that uses exceptions (Round 30's had no exceptions and gave 0).
+// int ([string.conversions]), in a file that uses exceptions (Round 30's had no exceptions and gave 0). And
+// std::filesystem::filesystem_error, a std::system_error with paths ([fs.class.filesystem.error]; FileCopy.hpp:46
+// throws one), caught as itself and as its base.
 static void r31_stoi_throws(Tally& tally) {
     std::printf("r31_stoi_throws\n");
     okayms_test::run_both(kRunEh, tally, "stoi_throws", R"OKMS(
 #include <string>
 #include <stdexcept>
+#include <filesystem>
+#include <system_error>
 int parse(const std::string& s, int fallback) {
   try {
     return std::stoi(s);
@@ -555,6 +558,23 @@ int entry(void) {
     caught = std::string(e.what()) == "stod";
   }
   CK(4, caught && std::stod(std::string("1.5")) == 1.5);
+  int code = 0;
+  std::string first, second;
+  try {
+    throw std::filesystem::filesystem_error("copy", std::filesystem::path("a/b.txt"), std::filesystem::path("c"),
+                                            std::error_code(5, std::generic_category()));
+  } catch (const std::filesystem::filesystem_error& e) {
+    code = e.code().value();
+    first = e.path1().string();
+    second = e.path2().string();
+  }
+  CK(5, code == 5 && first == "a/b.txt" && second == "c");
+  try {
+    throw std::filesystem::filesystem_error("x", std::error_code(7, std::generic_category()));
+  } catch (const std::system_error& e) {
+    code = e.code().value();
+  }
+  CK(6, code == 7);
   return 0;
 }
 )OKMS", 0);
@@ -638,6 +658,39 @@ int entry(void) {
 )OKMS", 0);
 }
 
+// A base or member constructor whose argument needs a temporary ([class.base.init] 7): `m(w + "!")` and a class
+// argument passed by value to a base constructor. Before Round 31 the temporary was made after the constructor calls,
+// so the member was made from storage not yet written (an empty string, or a wrong error code in a derived exception).
+static void r31_ctor_init_temps(Tally& tally) {
+    std::printf("r31_ctor_init_temps\n");
+    okayms_test::run_both(kRunEh, tally, "ctor_init_temps", R"OKMS(
+#include <string>
+struct EC { int v; const char* c; };
+struct Base {
+  std::string m;
+  EC code;
+  Base(EC ec, const std::string& w) : m(w + "!"), code(ec) {}
+  virtual ~Base() {}
+};
+struct Derived : Base {
+  std::string a, b;
+  Derived(const std::string& w, EC ec) : Base(ec, w), a(w + w), b(std::string("x") + w) {}
+};
+struct Plain { std::string m; explicit Plain(const std::string& w) : m(std::string(w) + "?") {} };
+int entry(void) {
+  std::string w("copy");
+  Plain p(w);
+  CK(1, p.m == "copy?");
+  EC ec{5, "g"};
+  Base b(ec, w);
+  CK(2, b.m == "copy!" && b.code.v == 5);
+  Derived d("ab", ec);
+  CK(3, d.m == "ab!" && d.code.v == 5 && d.a == "abab" && d.b == "xab");
+  return 0;
+}
+)OKMS", 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -659,5 +712,6 @@ int main(int argc, char** argv) {
     r31_filesystem_error(tally);
     r31_return_copy(tally);
     r31_pair_friend(tally);
-    return tally.finish(17);
+    r31_ctor_init_temps(tally);
+    return tally.finish(18);
 }

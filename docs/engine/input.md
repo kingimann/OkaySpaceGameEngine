@@ -9,6 +9,7 @@
 ## Contents
 
 - [One input system](#one-input-system) (2026-11-23)
+- [Input wiring](#input-wiring) (2026-11-24)
 - [Input (internal record)](#input-internal-record) (was `docs/input.md`)
 - [Input audit](#input-audit) (was `docs/input_audit.md`)
 
@@ -76,6 +77,45 @@ actions of the one table). It should become Vehicle actions in the table before 
 `ControlKey` call exists (unchanged). Not run on Windows, in a real editor window or with a real controller.
 
 Written for this engine from its own code (no other project's code or text).
+
+## Input wiring
+
+2026-11-24, branch `claude/input-wiring-1`, test `input_wiring` (`tests/test_input_wiring.cpp`, one section per item). Seven
+pieces existed but were not connected. Nothing here was run on Windows, in a real window or with a real device.
+
+1. **A built game loads the project's input asset.** `player/main.cpp` calls `InputRuntime::UseProjectAsset(baseDir)` (the
+   game's data folder) before `InputActions::Load()`, the call the editor's Play makes with the project folder. The export
+   (`editor/BuildGame.cpp`) adds `Assets/input.okayinput` (`InputRuntime::kProjectAssetRef`) to the files it ships, so asset
+   stripping does not drop it. Before this an exported game always ran on the default asset. Not checked: a real export
+   run end to end; the web build's preloaded files.
+2. **Gestures drive actions.** `InputActions::Tick` calls `Gestures::ApplyBound()`, which presses the actions bound with
+   `Gestures::Bind` in the action table and in every local player's set, once per `Gestures::Tick` (a second action tick
+   with no new gesture tick does nothing). `Bind` adds (several actions per gesture; the same pair twice is one binding;
+   it used to replace), `Unbind` removes. Code binds are not saved. For a saved one there is a binding path,
+   `gesture:<name>` (`gesture:tap`, `gesture:swipeup` ...; `InputBinding::Kind::Gesture`), written in the `.okayinput`
+   asset like any binding. The Input Actions window has no gesture picker; the path is typed.
+3. **Mouse.** `Input` has five buttons (`kMouseButtons`: 3 and 4 are the side buttons) and a sideways wheel
+   (`MouseWheelX`, `FeedMouseWheelX`). Bindings: `mouse:x1`, `mouse:x2` ("Mouse 4", "Mouse 5"), `wheel:left`,
+   `wheel:right`. The player feeds them (`InputMouseMask`, `InputMouseButton` in `PlatformKeys.hpp`); the Keybind Field
+   captures a side button. The editor's Play builds its own mask and still feeds three buttons and no sideways wheel
+   (the editor is Claude 2's lane). The input recorder keeps the side buttons (they are in the mask) but not the
+   sideways wheel.
+4. **Guide button.** `Input::PadGuide` (16, after RT; the old ids did not move), `pad:guide` (also `pad:home`), fed by
+   `FeedPadAt` from `platform::GamepadButton::Guide` or a mapping's `LBtGuide`. Names: "PS", "Home", "Steam", "Guide".
+   Steam, the Xbox bar and PlayStation's own menu can take the button before a game sees it. Share / Misc, paddles and
+   the touchpad click are not in the platform layer, so they were not added.
+5. **Keys.** Punctuation has names (`minus`, `equals`, `leftbracket`, `rightbracket`, `backslash`, `semicolon`,
+   `apostrophe`, `grave`, `comma`, `period`, `slash`) and is fed as the US character of the key's place. New codes
+   154..175: numpad 0-9, divide, multiply, minus, plus, Enter, period, Caps Lock, Print Screen, Scroll Lock, Pause, Num
+   Lock, Menu. No existing code moved, so saved bindings load as before. Numpad Enter is fed as itself and as Enter:
+   `key:kpenter` is the numpad key alone, `key:enter` is still either, and a "press a key" field gets the numpad key.
+   While a text field has focus the numpad's digits and signs are typing keys. **Arrows.** The feeds (`AppendHeldMainKeys`, `TapCharsForKey`) give an arrow as itself only; `Input::FeedKeys` then adds its W, A, S or D letter for the raw reads (`GetKey('w')`, `AxisWASD`, script `key("w")`), so old games and the 14 raw reads in the engine keep walking on the arrows. A letter held only because of its arrow is marked, and the bindings read `Input::GetKeyGameExact`: `key:w` no longer fires on Up, so the arrows and W A S D can be bound to different actions. The default assets already bind the arrows on their own. An older asset that binds only W A S D no longer moves on the arrows through that binding (it is not migrated); the input recorder records the arrow alone and adds the letter on replay.
+6. **Eight controllers.** `Input::kMaxGamepads` is 8, the same as `PlayerInputManager::kMaxPlayers`. The literal fours
+   tied to it follow: `pad0`..`pad7` (`ia_join`), `pad:a@7`, the Player Input component's `controller` (0..7), the
+   per-controller Smooth memory of a processor. Saved files do not change. More than four real pads was never tried.
+7. **Controller toasts.** With no `PadProfiles::SetToastHandler`, a connect or disconnect notice goes to
+   `GetScriptUI()->Toast` (OkayUI's toasts in the player and the editor's Play; the path quest notices use). Pads
+   already plugged in when the player starts are opened before the UI is installed, so they are not announced.
 
 ## Input (internal record)
 

@@ -41,10 +41,10 @@ struct Processor {
     int mask = 7;                   ///< Invert: bit 0 x, 1 y, 2 z. Swizzle: the order, 3 bits per output (0 x, 1 y, 2 z). Scale: how many numbers were given (1..3)
     float state[3] = {0, 0, 0};     ///< Smooth keeps the previous output here (slot 0: the combined read)
     bool primed = false;
-    float slotState[4][3] = {};     ///< Smooth for controller 0..3, so one player's stick does not drag another's
-    bool slotPrimed[4] = {};
+    float slotState[Input::kMaxGamepads][3] = {};   ///< Smooth for each controller, so one player's stick does not drag another's
+    bool slotPrimed[Input::kMaxGamepads] = {};
     /// Apply to `v` (a vector's deadzone and curve work on its length; axial works per component). `dt` is the frame
-    /// time (Smooth). `slot` 0 is the combined read; 1..4 are controllers 0..3, each with its own Smooth memory.
+    /// time (Smooth). `slot` 0 is the combined read; 1..Input::kMaxGamepads are the controllers, each with its own Smooth memory.
     InputValue Apply(const InputValue& v, float dt, int slot = 0);
     std::string ToString() const;
     static bool Parse(const std::string& text, Processor& out);
@@ -118,7 +118,7 @@ struct ActionDef {
     float pressPoint = 0.5f;                   ///< magnitude at which a button action counts as pressed
     bool sum = false;                          ///< add every binding's value (length kept to 1) instead of taking the strongest one
     InputActions::Response response;           ///< the player's shaping (dead zone, curve, sensitivity, invert), after `processors`
-    bool perPlayer = false;                    ///< also read once per controller 0..3 (see `pads`)
+    bool perPlayer = false;                    ///< also read once per controller (see `pads`)
     /// The authored bindings when the player's rebinding changed the list's shape (a binding added, or a four-key
     /// direction turned into a stick): `reshaped` is set. Otherwise the list is as authored (per-binding overrides live in
     /// BindingSpec::original).
@@ -143,7 +143,7 @@ struct ActionDef {
     int activeBinding = -1;                    ///< index of the binding that drove the value now, -1 none
     bool live = false;                         ///< its map ran enabled and unblocked this frame
     struct PadState { float value = 0, previous = 0; Vec2 vector; };
-    PadState pads[Input::kMaxGamepads];        ///< perPlayer: the same bindings read for controller 0..3 (keyboard and mouse: pad 0)
+    PadState pads[Input::kMaxGamepads];        ///< perPlayer: the same bindings read for each controller (keyboard and mouse: pad 0)
     // ---- press timing (seconds of ActionSet::Time)
     double pressedAt = -1.0e9, prevPressedAt = -1.0e9, heldSince = -1.0;
     bool pressConsumed = false;
@@ -221,7 +221,7 @@ public:
     /// Follow the device the player used last (with schemes defined). Off by default.
     void SetAutoSwitch(bool on) { m_auto = on; }
     bool AutoSwitch() const { return m_auto; }
-    /// Pair with controller `pad` (0..3): its pad bindings read that controller and only its activity switches the scheme. -1 = no pairing (as written).
+    /// Pair with controller `pad` (0..Input::kMaxGamepads-1): its pad bindings read that controller and only its activity switches the scheme. -1 = no pairing (as written).
     void SetPad(int pad) { m_pad = pad; }
     int Pad() const { return m_pad; }
 

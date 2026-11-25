@@ -104,7 +104,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 
 #if defined(_WIN32)
 #  include <windows.h>
-#  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
+#  include <shellapi.h>   // the shell API
 #  include <tlhelp32.h>   // process snapshot: is the editor still open?
 #else
 #  include <unistd.h>
@@ -121,6 +121,8 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "CommandLineUI.hpp"   // Create > Command line: run okay inside the launcher, and "Open command line"
+#include "ChatPlacement.hpp"    // chat inside the launcher or popped out: the decisions (tested by launcher_tray)
+#include "TrayWin32.hpp"       // the system tray: TrayLogic.hpp decisions + the Win32 shell (Settings > Behavior)
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
 #ifdef OKAY_ENABLE_TEST_HOOKS
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
@@ -189,6 +191,18 @@ SDL_Renderer* g_renderer = nullptr;      // set in main(); used to upload cover-
 int  g_rslot = 0;
 bool g_chatSeparate = true;              // chat in its own window (persisted; off = floating inside the launcher)
 bool g_chatInOwnWindow = false;          // true while drawing the chat window's own frame
+void SavePrefs();
+// Where the chat is (launcher/ChatPlacement.hpp): write a new placement back to the open flag and the saved setting.
+extern bool g_chatWinOpen;
+static void ChatApplyPlace(okaychat::Place p) {
+    const bool changed = p.ownWindow != g_chatSeparate;
+    g_chatWinOpen = p.open; g_chatSeparate = p.ownWindow;
+    if (changed) SavePrefs();
+}
+static void ChatTogglePop() { ChatApplyPlace(okaychat::TogglePop({true, g_chatInOwnWindow})); }
+extern bool g_chatOnTop;
+// The pin in the popped-out chat's header: keep it above other windows (sdl2 2.0.16+ / own Windows backend).
+static void ChatToggleOnTop();
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
@@ -1655,6 +1669,11 @@ std::string g_projectJustMade;              // name to highlight in the list
 std::string g_projectsDir;                  // the Create page's projects folder ("" = <launcher>/Projects)
 std::vector<std::string> g_extraProjects;   // projects opened from other folders (scene paths), remembered
 std::vector<std::string> g_hiddenProjects;  // project folders removed from the list (files kept), remembered
+std::string g_trayOpenScene;                // the tray menu asked to open this project (the Create page opens it)
+// The Create page's projects folder (g_projectsDir, else <launcher>/Projects).
+static std::string ProjectsLocation() {
+    return g_projectsDir.empty() ? (fs::path(g_exeDir) / "Projects").string() : g_projectsDir;
+}
 
 // Make a real project on disk, in the LAUNCHER, so clicking a template actually
 // creates something (the folder + Assets exist the instant you click) instead of
@@ -1915,6 +1934,9 @@ ImVec4 kAccent(0.26f, 0.59f, 0.98f, 1.0f);     // matches the editor's default a
 ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
 
 int g_accentIndex = 0;            // current accent preset (persisted)
+bool g_minimizeToTray = false;    // Settings > Behavior: minimizing hides the launcher to the tray (Windows; persisted as tray_minimize, default OFF)
+bool g_closeToTray = true;        // Settings > Behavior: the X button hides the launcher to the tray (Windows; persisted, default ON)
+bool g_trayHintShown = false;     // the "still running in the tray" note was shown once (persisted)
 bool g_updateOnLaunch = true;     // check for updates at startup, like Steam (persisted; default ON, a saved update_on_launch=0 is kept)
 bool g_officialAutoUpdate = true; // keep the installed official game up to date in the background (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
@@ -1938,6 +1960,7 @@ bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
 int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
+bool g_chatOnTop = false;   // the popped-out chat window stays above other windows (the pin in its header; persisted)
 bool g_raiseMainReq = false;             // something in the chat window wants the launcher in front
 #ifndef OKAY_DEFAULT_VOICE_RELAY
 #define OKAY_DEFAULT_VOICE_RELAY ""
@@ -3276,6 +3299,12 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        // "minimize_to_tray" (2026-11-25, default ON) is ignored on purpose: every launcher saved it as 1, and minimizing to the
+        // tray trapped the window for the owner ("when i minimize it i cant open it back up"). The option is OFF unless the
+        // person turns it on again, which is saved under the new key.
+        else if (k == "tray_minimize") g_minimizeToTray = (v == "1");
+        else if (k == "close_to_tray") g_closeToTray = (v != "0");
+        else if (k == "tray_hint_shown") g_trayHintShown = (v == "1");
         else if (k == "last_startup_check") { try { g_suLastCheckEpoch = std::stoll(v); } catch (...) {} }
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
@@ -3371,8 +3400,9 @@ void LoadPrefs() {
         else if (k == "voice_gate") { try { g_voiceGate = std::clamp(std::stof(v), -70.0f, -10.0f); } catch (...) {} }
         else if (k == "chat_win_x") { try { g_chatWinX = std::stoi(v); } catch (...) {} }
         else if (k == "chat_win_y") { try { g_chatWinY = std::stoi(v); } catch (...) {} }
-        else if (k == "chat_win_w") { try { g_chatWinW = std::max(520, std::stoi(v)); } catch (...) {} }
-        else if (k == "chat_win_h") { try { g_chatWinH = std::max(380, std::stoi(v)); } catch (...) {} }
+        else if (k == "chat_win_w") { try { g_chatWinW = okaychat::Sanitize({0, 0, std::stoi(v), okaychat::kMinH}).w; } catch (...) {} }
+        else if (k == "chat_win_h") { try { g_chatWinH = okaychat::Sanitize({0, 0, okaychat::kMinW, std::stoi(v)}).h; } catch (...) {} }
+        else if (k == "chat_on_top") g_chatOnTop = (v == "1");
         else if (k == "win_h") { try { g_winH = std::stoi(v); } catch (...) {} }
         else if (k == "splash_logo") g_splashLogo = v;
         else if (k == "splash_bar") g_splashShowBar = (v != "0");
@@ -3395,6 +3425,8 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    f << "tray_minimize=" << (g_minimizeToTray ? 1 : 0) << "\nclose_to_tray=" << (g_closeToTray ? 1 : 0)
+      << "\ntray_hint_shown=" << (g_trayHintShown ? 1 : 0) << "\n";
     if (g_suLastCheckEpoch > 0) f << "last_startup_check=" << g_suLastCheckEpoch << "\n";
     okayversions::WriteSettings(okayversions::GlobalSettings(), f);
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
@@ -3435,6 +3467,7 @@ void SavePrefs() {
     f << "share_playtime=" << (g_sharePlaytime ? 1 : 0) << "\n";
     f << "followers_activity=" << (g_followersSeeActivity ? 1 : 0) << "\n";
     for (const auto& kv : g_blockedNames) if (g_blockedUsers.count(kv.first)) f << "block_name=" << kv.first << "|" << kv.second << "\n";
+    f << "chat_on_top=" << (g_chatOnTop ? 1 : 0) << "\n";
     f << "chat_win_x=" << g_chatWinX << "\nchat_win_y=" << g_chatWinY << "\nchat_win_w=" << g_chatWinW << "\nchat_win_h=" << g_chatWinH << "\n";
     f << "win_h=" << g_winH << "\n";
     f << "splash_logo=" << g_splashLogo << "\n";
@@ -6544,7 +6577,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
         // the unsent draft), and unread / muted / pinned markers.
         static int  convTab = 0;          // 0 All, 1 Unread, 2 Groups
         static bool showArchived = false;
-        const bool folded = g_chatListFolded;   // avatar-only strip
+        const bool wideChat = !okaychat::ListFolded(false, ImGui::GetContentRegionAvail().x);   // wide enough for the list
+        const bool folded = okaychat::ListFolded(g_chatListFolded, ImGui::GetContentRegionAvail().x);   // avatar-only strip (folded, or too narrow)
         float listW = folded ? 76.0f : (ImGui::GetContentRegionAvail().x < 640 ? 214.0f : 280.0f);
         const ImU32 cText   = IM_COL32(232, 236, 244, 255);
         const ImU32 cDim    = IM_COL32(150, 158, 175, 255);
@@ -6588,6 +6622,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     dl->AddLine(a0, a1, ic, 1.6f);
                     dl->AddLine(a1, ImVec2(a1.x + (out ? -4.5f : 4.5f), a1.y), ic, 1.6f);
                     dl->AddLine(a1, ImVec2(a1.x, a1.y + (out ? 4.5f : -4.5f)), ic, 1.6f);
+                } else if (kind == 4) {   // always on top: a pin (filled while on)
+                    const ImVec2 head(cc.x + 1.5f, cc.y - 3.0f);
+                    if (g_chatOnTop) dl->AddCircleFilled(head, 4.2f, ic, 16); else dl->AddCircle(head, 4.2f, ic, 16, 1.5f);
+                    dl->AddLine(ImVec2(head.x - 2.5f, head.y + 3.5f), ImVec2(cc.x - 6.0f, cc.y + 7.0f), ic, 1.6f);
                 } else if (kind == 0) {   // compose: open square + pencil
                     dl->PathLineTo(ImVec2(cc.x + 0.5f, cc.y - 6.0f)); dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y - 6.0f));
                     dl->PathLineTo(ImVec2(cc.x - 6.5f, cc.y + 6.5f)); dl->PathLineTo(ImVec2(cc.x + 6.0f, cc.y + 6.5f));
@@ -6604,12 +6642,17 @@ void DrawChatWindow(okay::account::AccountService& account) {
             };
             if (folded) {   // stacked: unfold, then compose
                 float cx = hp.x + (hw - B) * 0.5f;
-                if (iconBtn("##foldlist", ImVec2(cx, hp.y), 2, "Show chat list")) { g_chatListFolded = false; SavePrefs(); }
+                if (iconBtn("##foldlist", ImVec2(cx, hp.y), 2, wideChat ? "Show chat list" : "Make the window wider to show the chat list"))
+                    { g_chatListFolded = false; SavePrefs(); }
                 if (iconBtn("##newmsg", ImVec2(cx, hp.y + B + 8), 0, "New message")) ImGui::OpenPopup("##newchat");
                 if (iconBtn("##popout", ImVec2(cx, hp.y + (B + 8) * 2), 3,
                             g_chatInOwnWindow ? "Put chat back inside the launcher" : "Pop out into its own window"))
-                    { g_chatSeparate = !g_chatInOwnWindow; SavePrefs(); }
-                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * 3 + 16 + 10));
+                    ChatTogglePop();
+                int stacked = 3;
+                if (g_chatInOwnWindow && iconBtn("##ontop", ImVec2(cx, hp.y + (B + 8) * stacked++), 4,
+                                                 g_chatOnTop ? "Stop keeping chat on top" : "Keep chat on top of other windows"))
+                    ChatToggleOnTop();
+                ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * stacked + 8 * (stacked - 1) + 10));
                 ImVec2 lp = ImGui::GetCursorScreenPos();
                 dl->AddLine(ImVec2(lp.x + 10, lp.y), ImVec2(lp.x + hw - 10, lp.y), IM_COL32(255, 255, 255, 18), 1.0f);
                 ImGui::Dummy(ImVec2(0, 8));
@@ -6624,7 +6667,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     { g_chatListFolded = true; SavePrefs(); }
                 if (iconBtn("##popout", ImVec2(hp.x + hw - B * 4 - 18, by), 3,
                             g_chatInOwnWindow ? "Put chat back inside the launcher" : "Pop out into its own window"))
-                    { g_chatSeparate = !g_chatInOwnWindow; SavePrefs(); }
+                    ChatTogglePop();
+                if (g_chatInOwnWindow && iconBtn("##ontop", ImVec2(hp.x + hw - B * 5 - 24, by), 4,
+                                                 g_chatOnTop ? "Stop keeping chat on top" : "Keep chat on top of other windows"))
+                    ChatToggleOnTop();
                 ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + std::max(th, B) + 10));
             }
         }
@@ -8330,82 +8376,85 @@ void DrawChatWindow(okay::account::AccountService& account) {
     }
 }
 
-// ---- Steam-style minimize to the system tray (Windows) ---------------------
-// When minimized (and the option is on), the launcher hides from the taskbar and
-// shows a tray icon; clicking it brings the launcher back. Keeps it running in
-// the background for presence/notifications, like Steam. No-op off Windows.
+// ---- The system tray (Settings > Behavior "Minimize to tray" / "Close to tray") ------------------------------
+// The decisions are in launcher/TrayLogic.hpp (tested by launcher_tray); the Win32 calls in launcher/TrayWin32.cpp.
+// The X button (and minimize, when the person turned "Minimize to tray" on) hides the launcher to the tray (it keeps
+// running: updates, downloads, friends, chat); a click on the icon brings it back; its right-click menu is
+// okaytray::BuildMenu. Every way back goes through RestoreLauncher (below). Off Windows the controller has no shell,
+// so it reports "not supported" and nothing changes.
+static std::unique_ptr<okaytray::TrayShell> g_trayShell;   // the Win32 shell (null off Windows)
+static std::unique_ptr<okaytray::TrayController> g_tray;   // made in main() once the window exists
+static volatile bool     g_trayRestoreReq = false;          // bring the window back (a second launch)
+static volatile int      g_trayIconEv = 0;                  // a tray-icon event (okaytray::IconEvent) waiting for the main loop
+static volatile bool     g_trayTaskbarReq = false;          // Explorer restarted: add the icon again
+static std::vector<okaytray::ProjectEntry> g_trayRecent;    // the projects the last tray menu listed (Recent projects)
+// Settings > Behavior changed (or were loaded): hand them to the tray and add / remove the icon to match.
+static void TrayApplySettings() {
+    if (!g_tray) return;
+    g_tray->settings.minimizeToTray = g_minimizeToTray;
+    g_tray->settings.closeToTray = g_closeToTray;
+    g_tray->hintShown = g_trayHintShown;
+    g_tray->Sync();
+}
+// THE way back to the launcher window, for every trigger: a click on the tray icon, the tray menu, a second launch, a
+// game asking us to come forward, the --versions hand-off and the watchdog. okaytray::TrayController::Restore clears the
+// hidden state (so the loop draws at full speed again) and shows the window on Windows; the lw:: calls then bring it
+// back on every platform and keep the backend's own idea of the window (shown, not minimized) in step.
+static void RestoreLauncher(SDL_Window* window) {
+    if (g_tray) g_tray->Restore();
+    if (!lw::IsVisible(window)) lw::Show(window);
+    if (lw::IsMinimized(window)) lw::Restore(window);
+    lw::Raise(window);
+}
+// What the tray menu shows right now (okaytray::BuildMenu).
+static okaytray::MenuState TrayMenuState(bool chatPoppedOut, bool editorFound, bool signedIn) {
+    okaytray::MenuState st;
+    st.chatPoppedOut = chatPoppedOut;
+    st.editorAvailable = editorFound;
+    std::vector<okaytray::ProjectEntry> all;
+    for (const auto& lp : okayproj::ScanProjects(fs::path(ProjectsLocation()), g_hiddenProjects, g_extraProjects)) {
+        okaytray::ProjectEntry pe; pe.name = lp.name; pe.scene = lp.scene;
+        std::error_code e;
+        if (fs::exists(fs::path(lp.scene), e)) pe.mtime = (long long)fs::last_write_time(fs::path(lp.scene), e).time_since_epoch().count();
+        all.push_back(pe);
+    }
+    g_trayRecent = okaytray::MostRecentProjects(all);
+    for (const auto& pe : g_trayRecent) st.recentProjects.push_back(pe.name);
+    st.signedIn = signedIn;
+    st.onlineStatus = g_onlineStatus;
+    st.unreadNotifications = NotifUnread();
+    st.activeDownloads = ActiveDownloads();
+    return st;
+}
+static bool TrayShiftHeld() {
 #if defined(_WIN32)
-static HWND          g_trayHwnd = nullptr;
-static bool          g_trayActive = false;
-static volatile bool g_trayRestoreReq = false;   // bring the window back (tray click / 2nd launch)
-static volatile bool g_trayMenuReq   = false;    // show the tray right-click menu
-static volatile bool g_trayQuitReq   = false;    // quit chosen from the tray menu
-static const UINT    WM_OKAYTRAY = WM_USER + 0x51;
-static const UINT    OKAY_TRAY_UID = 1;
+    return okaytray::ShiftHeld();
+#else
+    return false;
+#endif
+}
+#if defined(_WIN32)
 // A system-wide message a second launcher broadcasts so the first one surfaces
 // itself (single-instance). Registered in main() before the hook can fire.
 static UINT          g_showMsg = 0;
 
-static HWND OkayWindowHWND(SDL_Window* w) {
-    return (HWND)lw::Win32Handle(w);
-}
-// Returns true only if the tray icon was actually registered. Retained for
-// possible future use; the launcher no longer hides itself to the tray.
-[[maybe_unused]] static bool OkayTrayAdd(SDL_Window* w) {
-    if (g_trayActive) return true;
-    g_trayHwnd = OkayWindowHWND(w);
-    if (!g_trayHwnd) return false;
-    NOTIFYICONDATAA nid; ZeroMemory(&nid, sizeof(nid));
-    nid.cbSize = sizeof(nid);
-    nid.hWnd = g_trayHwnd;
-    nid.uID = OKAY_TRAY_UID;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid.uCallbackMessage = WM_OKAYTRAY;
-    nid.hIcon = (HICON)LoadImageA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(1), IMAGE_ICON,
-                                  GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
-    if (!nid.hIcon) nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    lstrcpynA(nid.szTip, "OkaySpace \xE2\x80\x94 click to open (right-click for menu)", (int)sizeof(nid.szTip));
-    if (!Shell_NotifyIconA(NIM_ADD, &nid)) return false;
-    g_trayActive = true;
-    return true;
-}
-static void OkayTrayRemove() {
-    if (!g_trayActive || !g_trayHwnd) { g_trayActive = false; return; }
-    NOTIFYICONDATAA nid; ZeroMemory(&nid, sizeof(nid));
-    nid.cbSize = sizeof(nid); nid.hWnd = g_trayHwnd; nid.uID = OKAY_TRAY_UID;
-    Shell_NotifyIconA(NIM_DELETE, &nid);
-    g_trayActive = false;
-}
-// Right-click tray menu: a guaranteed way to reopen or quit even if a left-click
-// is finicky. Called from the main loop (not the hook) since it blocks.
-static void OkayTrayShowMenu() {
-    if (!g_trayHwnd) return;
-    HMENU m = CreatePopupMenu();
-    if (!m) { g_trayRestoreReq = true; return; }
-    AppendMenuA(m, MF_STRING, 1, "Open OkaySpace");
-    AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuA(m, MF_STRING, 2, "Quit");
-    POINT pt; GetCursorPos(&pt);
-    SetForegroundWindow(g_trayHwnd);   // required so the menu dismisses correctly
-    int cmd = (int)TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-                                  pt.x, pt.y, 0, g_trayHwnd, nullptr);
-    PostMessageA(g_trayHwnd, WM_NULL, 0, 0);
-    DestroyMenu(m);
-    if (cmd == 1)      g_trayRestoreReq = true;
-    else if (cmd == 2) g_trayQuitReq = true;
-}
-// SDL pumps Win32 messages on the main thread, so this hook runs there too; it
-// just flags work the main loop performs (any left-click opens the app; a
-// right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
-static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
-    (void)userdata; (void)hWnd; (void)wParam;
-    if (msg == WM_OKAYTRAY) {
-        UINT ev = (UINT)(lParam & 0xFFFF);
-        if (ev == WM_LBUTTONUP || ev == WM_LBUTTONDBLCLK) g_trayRestoreReq = true;
-        else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU) g_trayMenuReq = true;
+// The tray's own window (launcher/TrayWin32.cpp) and the backend's message hook both hand messages here, on the main
+// thread (the pump runs there). It only flags work for the main loop (the tray menu blocks, so it must not run inside a
+// window procedure). The icon's clicks only ever come through the tray window: SDL's hook never sees sent messages.
+static void TrayOnMessage(unsigned msg, uint64_t wParam, int64_t lParam) {   // okaytray::MessageSink
+    if (msg == okaytray::CallbackMessage()) {
+        const unsigned ver = okaytray::IconVersion();
+        const okaytray::IconEvent ev = okaytray::ClassifyIconMessage(okaytray::DecodeIconMessage(ver, wParam, lParam).event, ver);
+        if (ev != okaytray::IconEvent::None) g_trayIconEv = (int)ev;
+    } else if (msg == okaytray::TaskbarCreatedMessage()) {
+        g_trayTaskbarReq = true;
     } else if (g_showMsg && msg == g_showMsg) {
         g_trayRestoreReq = true;   // a second launcher asked us to come forward
     }
+}
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
+    (void)userdata; (void)hWnd;
+    if (msg != okaytray::CallbackMessage()) TrayOnMessage(msg, wParam, lParam);   // (the second-launch message, when the tray window is missing)
 }
 #endif
 
@@ -8669,6 +8718,12 @@ std::string PresenceText() {
     if (g_presMutex) { okay::thr::LockMutex(g_presMutex); t = g_presText; okay::thr::UnlockMutex(g_presMutex); }
     return !t.empty() ? t : g_onlineStatus == 1 ? "Away" : "In OkaySpace";
 }
+static std::string PresenceJoin();
+// Tell friends my chosen online status (g_onlineStatus: 2 = Invisible looks offline). Used by the Account page, Settings,
+// the friends worker and the tray menu.
+static void BroadcastOnlineStatus(okay::Friends& fr) {
+    if (g_onlineStatus == 2) fr.GoOffline(); else fr.MarkPresence(PresenceText(), PresenceJoin());
+}
 static std::string PresenceJoin() {
     std::string j;
     if (g_presMutex) { okay::thr::LockMutex(g_presMutex); j = g_presJoin; okay::thr::UnlockMutex(g_presMutex); }
@@ -8691,8 +8746,7 @@ int FriendsListWorker(void*) {
         // make sure my profile exists, broadcast presence per my chosen status,
         // and fetch my code + the list/feed.
         fr.EnsureProfile();
-        if (g_onlineStatus == 2) fr.GoOffline();
-        else fr.MarkPresence(PresenceText(), PresenceJoin());
+        BroadcastOnlineStatus(fr);
         auto code = fr.MyCode();
         auto l = fr.List();
         auto fd = fr.Feed(14);
@@ -9651,10 +9705,12 @@ static void KeepWindowOnScreen(SDL_Window* w) {
     lw::SetPos(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
-    if (!g_chatHost.win || !g_chatHost.shown) return;
-    if (lw::IsMinimized(g_chatHost.win)) return;   // (its position is meaningless then)
-    lw::GetPos(g_chatHost.win, &g_chatWinX, &g_chatWinY);
-    lw::GetSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+    if (!g_chatHost.win) return;
+    int x = 0, y = 0, w = 0, h = 0;
+    lw::GetPos(g_chatHost.win, &x, &y); lw::GetSize(g_chatHost.win, &w, &h);
+    const okaychat::Geometry g = okaychat::Remember({g_chatWinX, g_chatWinY, g_chatWinW, g_chatWinH}, g_chatHost.shown,
+                                                    lw::IsMinimized(g_chatHost.win), x, y, w, h);   // (a minimized position is meaningless)
+    g_chatWinX = g.x; g_chatWinY = g.y; g_chatWinW = g.w; g_chatWinH = g.h;
 }
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
@@ -9699,11 +9755,12 @@ static bool ChatHostCreate() {
 }
 // Show/hide the window to match g_chatWinOpen (and the setting).
 static void ChatHostSync() {
-    const bool want = g_chatSeparate && g_chatWinOpen;
+    const bool want = okaychat::WantOwnWindow({g_chatWinOpen, g_chatSeparate});
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
         lw::Show(g_chatHost.win);
         KeepWindowOnScreen(g_chatHost.win);
+        lw::SetAlwaysOnTop(g_chatHost.win, g_chatOnTop);
         lw::Raise(g_chatHost.win);
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
@@ -9714,6 +9771,11 @@ static void ChatHostSync() {
 }
 static bool ChatHostFocused() {
     return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
+}
+static void ChatToggleOnTop() {
+    g_chatOnTop = !g_chatOnTop;
+    SavePrefs();
+    if (g_chatHost.win && !lw::SetAlwaysOnTop(g_chatHost.win, g_chatOnTop) && g_chatOnTop) Toast("Keeping chat on top is not supported here", 2);
 }
 static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); lw::Raise(g_chatHost.win); } }
 // Route a platform event to the chat window; true when it belonged to it.
@@ -9740,7 +9802,10 @@ static bool ChatHostEvent(const okay::platform::Event& e) {
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
-    if (e.type == EvT::WindowClose) { g_chatWinOpen = false; return true; }
+    if (e.type == EvT::WindowClose) {   // closing the popped-out window puts the chat back in the launcher
+        ChatApplyPlace(okaychat::CloseOwnWindow({g_chatWinOpen, g_chatSeparate}));
+        return true;
+    }
     if (e.type == EvT::DropFile) {   // dropped onto the chat: send it to the open conversation
         if (e.text.empty()) return true;
         std::string dropped = e.text;
@@ -11450,8 +11515,12 @@ int main(int argc, char** argv) {
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(*mainWinOwner);   // placeholder OkaySpace logo
 #if defined(_WIN32)
-    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // the second-launch broadcast also reaches the main window
+    g_trayShell = okaytray::MakeWin32Shell(lw::Win32Handle(window), TrayOnMessage);   // the icon's own window gets its clicks
+    if (g_trayShell) okaytray::InstallCrashCleanup();   // no ghost icon after a crash
 #endif
+    g_tray.reset(new okaytray::TrayController(g_trayShell.get(), g_trayShell != nullptr));
+    TrayApplySettings();   // Settings > Behavior: the icon is there while either tray option is on
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*mainWinOwner, true);   // accelerated with vsync, else any; its painter owns it
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
@@ -11674,6 +11743,32 @@ int main(int argc, char** argv) {
     int testExitCode = 0;
 #endif
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
+    // The X (or Alt+F4): to the tray, the Exit / Minimize dialog, or a real quit (TrayLogic.hpp DecideClose).
+    auto quitLauncher = [&]() { if (EditorRunning()) g_afterEditor = 1; else running = false; };   // the editor closes (saved) first
+    auto requestClose = [&]() {
+        switch (g_tray->OnClose(TrayShiftHeld() ? okaytray::CloseSource::WindowXShift : okaytray::CloseSource::WindowX)) {
+            case okaytray::CloseAction::HideToTray: break;
+            case okaytray::CloseAction::AskConfirm: closeConfirm = true; break;
+            case okaytray::CloseAction::Quit:       quitLauncher(); break;
+        }
+    };
+    // What the tray menu (or a click on the icon) asked for, carried out with the launcher's existing actions.
+    auto applyTray = [&](const okaytray::Effect& fx) {
+        if (fx.show) RestoreLauncher(window);
+        if (fx.checkUpdates) StartUpdateCheck(true);              // the same check as the sidebar's button, with its dialog
+        if (fx.openSettings) { tab = 4; g_lastTab = 4; g_setCatJump = 3; ClosePublicProfile(); }   // Settings > Behavior
+        if (fx.openNotifications) { tab = 16; ClosePublicProfile(); }   // the sidebar's Notifications row
+        if (fx.openDownloads) { tab = 10; ClosePublicProfile(); }       // the sidebar's Downloads row
+        if (fx.openProject >= 0 && fx.openProject < (int)g_trayRecent.size()) {   // the Create page opens it (its openProject)
+            g_trayOpenScene = g_trayRecent[(size_t)fx.openProject].scene; tab = 0; ClosePublicProfile();
+        }
+        if (fx.setStatus >= 0 && fx.setStatus != g_onlineStatus) {   // the Account page's Online status
+            g_onlineStatus = fx.setStatus; SavePrefs();
+            if (accountPtr->IsLoggedIn()) { okay::Friends pf(*accountPtr); BroadcastOnlineStatus(pf); }
+        }
+        if (fx.chatIn) ChatApplyPlace(okaychat::PopIn({g_chatWinOpen, g_chatSeparate}));   // the chat back inside the launcher
+        if (fx.quit) quitLauncher();
+    };
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
@@ -11697,15 +11792,12 @@ int main(int argc, char** argv) {
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
-            if (e.type == EvT::Quit) closeConfirm = true;
+            // With "Close to tray" on (Windows), the X hides the launcher to the tray instead; Shift + X really quits.
+            if (e.type == EvT::Quit || (e.type == EvT::WindowClose && e.windowId == lw::Id(window))) requestClose();
             else if (e.type == EvT::WindowFocusGained &&
                      e.windowId == lw::Id(window)) g_launcherRefocused = true;   // check for updates
-            else if (e.type == EvT::WindowClose &&
-                     e.windowId == lw::Id(window)) closeConfirm = true;
-            // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
-            // is always restored by clicking the taskbar button. The launcher does
-            // NOT hide itself to the system tray — that could trap the window with
-            // no way to reopen or close it, so the behavior was removed.
+            // Minimizing goes to the tray when "Minimize to tray" is on (checked after the poll, below). The launcher
+            // only hides when its tray icon is really there, so it can never be trapped with no way back.
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
@@ -11763,20 +11855,37 @@ int main(int argc, char** argv) {
                 }
             }
         }
-#if defined(_WIN32)
-        // A right-click on the tray icon raises the Open/Quit menu (runs here, not
-        // in the message hook, because TrackPopupMenu blocks).
-        if (g_trayMenuReq) { g_trayMenuReq = false; OkayTrayShowMenu(); }
-        if (g_trayQuitReq) { g_trayQuitReq = false; if (EditorRunning()) g_afterEditor = 1; else { OkayTrayRemove(); running = false; } }
-        // A tray-icon click (or a second launch) restores the launcher.
-        if (g_trayRestoreReq) {
-            g_trayRestoreReq = false;
-            OkayTrayRemove();
-            lw::Show(window);
-            lw::Restore(window);
-            lw::Raise(window);
+        // The tray: Explorer restarted, a click on the icon (left click restores, right-click the menu), a minimize,
+        // a second launch asking us to come forward, and the watchdog while hidden.
+        if (g_trayTaskbarReq) { g_trayTaskbarReq = false; g_tray->OnTaskbarCreated(); }
+        if (const int ev = g_trayIconEv) {
+            g_trayIconEv = 0;
+            const okaytray::IconEvent iev = (okaytray::IconEvent)ev;
+            applyTray(g_tray->OnIconEvent(iev, iev == okaytray::IconEvent::ShowMenu
+                                                   ? TrayMenuState(g_chatSeparate && g_chatHost.shown, !editor.empty(),
+                                                                   accountPtr->IsLoggedIn())
+                                                   : okaytray::MenuState()));
+            if (iev == okaytray::IconEvent::ShowMenu) g_trayIconEv = 0;   // clicks made while the menu was open
         }
-#endif
+        {
+            static Uint32 nextWatch = 0;
+            if (!g_tray->Hidden()) nextWatch = 0;
+            else if (okay::platform::TicksMs32() >= nextWatch) {
+                nextWatch = okay::platform::TicksMs32() + okaytray::kWatchdogMs;
+                if (g_tray->Watchdog()) RestoreLauncher(window);   // the icon is gone: never stay hidden with no way back
+            }
+        }
+        {
+            static bool wasMinimized = false;
+            const bool minNow = lw::IsMinimized(window);
+            if (minNow && !wasMinimized && !g_tray->Hidden()) g_tray->OnMinimized();
+            wasMinimized = minNow;
+        }
+        if (g_tray->TakeHintJustShown()) { g_trayHintShown = true; SavePrefs(); }
+        if (g_trayRestoreReq) {   // a second launch
+            g_trayRestoreReq = false;
+            RestoreLauncher(window);
+        }
         // A finished git job (clone/pull/push) reports its result as a toast.
         if (g_gitMutex) {
             okay::thr::LockMutex(g_gitMutex);
@@ -11860,8 +11969,7 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    lw::Restore(window);
-                    lw::Raise(window);
+                    RestoreLauncher(window);
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -11942,12 +12050,13 @@ int main(int argc, char** argv) {
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; lw::Restore(window); lw::Raise(window); }
-        if (okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
-            if (g_chatHost.shown && !lw::IsMinimized(g_chatHost.win)) {
-                ChatHostFrame(account);   // the chat window keeps going on its own
-                okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
-            } else okay::platform::DelayMs(120);
+        if (g_raiseMainReq) { g_raiseMainReq = false; RestoreLauncher(window); }   // (a game asked us to come forward: out of the tray too)
+        // Hidden in the tray, hidden or minimized: nothing to draw, so idle slowly (TrayLogic.hpp IdleDelayMs). The
+        // pumps above (updates, downloads, friends, chat, voice, notifications) still run every pass.
+        if (g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
+            const bool chatShown = g_chatHost.shown && !lw::IsMinimized(g_chatHost.win);
+            if (chatShown) ChatHostFrame(account);   // the chat window keeps going on its own
+            okay::platform::DelayMs((Uint32)okaytray::IdleDelayMs(g_tray->Hidden(), chatShown, ChatHostFocused(), g_voice.Active()));
             continue;
         }
 
@@ -12806,8 +12915,7 @@ int main(int argc, char** argv) {
             static char npName[96] = "MyGame";
             static char npLoc[400] = {0};
             if (!npLoc[0])
-                std::snprintf(npLoc, sizeof(npLoc), "%s", g_projectsDir.empty()
-                              ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
+                std::snprintf(npLoc, sizeof(npLoc), "%s", ProjectsLocation().c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
             struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
@@ -12864,6 +12972,12 @@ int main(int argc, char** argv) {
                     okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
                 openProjectWith(pr, t.version);
             };
+            if (!g_trayOpenScene.empty()) {   // Tray menu > Open Editor / Recent projects
+                const std::string want = g_trayOpenScene; g_trayOpenScene.clear();
+                auto it = std::find_if(s_projects.begin(), s_projects.end(), [&](const CrProj& pr) { return pr.scene == want; });
+                if (it != s_projects.end() && it->ready && !editor.empty()) openProject(*it);
+                else Toast("That project can't be opened from here", 2);
+            }
             auto playProject = [&](const CrProj& pr) {
                 if (player.empty() || !pr.ready) return;
                 Launch(player, pr.scene); RecordPlayed(pr.scene); SavePrefs();
@@ -15351,7 +15465,7 @@ int main(int argc, char** argv) {
                         if (SlateCombo("##ost", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                             if (!acDemo) {
                                 okay::Friends pf(account);
-                                if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
+                                BroadcastOnlineStatus(pf);
                             }
                             SavePrefs();
                         }
@@ -15665,7 +15779,7 @@ int main(int argc, char** argv) {
                 {"Appearance",           kIcoPanel,   "Theme, accent color and interface size."},
                 {"Chat & Notifications", kIcoBell,    "Message sounds and what friends can see."},
                 {"Loading screen",       kIcoRefresh, "Customize the splash shown while OkaySpace starts."},
-                {"Behavior",             4,           "Startup, updates and maintenance."},
+                {"Behavior",             4,           "The tray, startup, updates and maintenance."},
                 {"Game libraries",       2,           "Extra folders the launcher scans for games."},
                 {"Account",              3,           "Your OkaySpace account on this device."},
                 {"About",                9,           "Version, updates and links."},
@@ -15895,7 +16009,7 @@ int main(int argc, char** argv) {
                             if (SlateCombo("##ostatus", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                                 if (!kUiDemoUser) {
                                     okay::Friends pf(account);
-                                    if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
+                                    BroadcastOnlineStatus(pf);
                                 }
                                 SavePrefs();
                             }
@@ -16165,6 +16279,23 @@ int main(int argc, char** argv) {
                     });
                     cardEnd();
                 } else if (setCat == 3) {   // ---- Behavior ----
+                    cardBegin("##sc_tray", "SYSTEM TRAY");
+                    {   // TrayLogic.hpp: Windows only for now (tray support differs between Linux desktops), so greyed out there.
+                        const bool trayOk = g_tray && g_tray->Supported();
+                        const char* offNote = " (Windows only for now.)";
+                        ImGui::BeginDisabled(!trayOk);
+                        settingRow("Minimize to tray", trayOk ? "Minimizing hides OkaySpace from the taskbar and keeps it running in the tray. Click the tray icon to open it again."
+                                                              : (std::string("Minimizing hides OkaySpace in the system tray.") + offNote).c_str(), 40.0f, 22.0f, [&](float) {
+                            if (ToggleSwitch("##mintray", &g_minimizeToTray)) { SavePrefs(); TrayApplySettings(); }
+                        });
+                        rowDivider();
+                        settingRow("Close to tray", trayOk ? "The X button hides OkaySpace in the tray instead of closing it. Exit from the tray icon's menu (or Shift + X) really quits."
+                                                           : (std::string("The X button hides OkaySpace in the system tray.") + offNote).c_str(), 40.0f, 22.0f, [&](float) {
+                            if (ToggleSwitch("##closetray", &g_closeToTray)) { SavePrefs(); TrayApplySettings(); }
+                        });
+                        ImGui::EndDisabled();
+                    }
+                    cardEnd();
                     cardBegin("##sc_start", "STARTUP & UPDATES");
                     settingRow("Check for updates when the launcher starts", "Looks for a new version each time you open OkaySpace and installs it before you start (on by default).", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
@@ -16627,7 +16758,8 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
+                    g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
+    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
@@ -20474,7 +20606,7 @@ int main(int argc, char** argv) {
         focusSearch = false;   // Ctrl+F is consumed the frame it's pressed
 
         // ---- Floating Chat window (DMs), unless it has its own OS window ----
-        if (!g_chatSeparate) DrawChatWindow(account);
+        if (!g_chatSeparate) DrawChatWindow(account);   // (the same view ChatHostFrame draws in the chat's own window)
 
         if (!g_chatHost.shown) DrawIncomingCall();   // (shown in the chat window when that's open)
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
@@ -20542,9 +20674,7 @@ int main(int argc, char** argv) {
         g_dls.clear();
         okay::thr::DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
     }
-#if defined(_WIN32)
-    OkayTrayRemove();   // make sure no stray tray icon lingers after exit
-#endif
+    if (g_tray) g_tray->Shutdown();   // no stray tray icon after exit
     if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
     if (g_imguiOwnFeed) { g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset(); } else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

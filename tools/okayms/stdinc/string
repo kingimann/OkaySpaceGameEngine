@@ -167,6 +167,9 @@ public:
         data_[n] = 0;
     }
     string(const string& other) : data_(0), size_(0), cap_(0) { assign(other.data_, other.size_); }
+    // A part of another string: from pos, at most n characters ([string.cons] 3; pos past the end gives an empty string
+    // here instead of throwing out_of_range).
+    string(const string& other, size_t pos, size_t n = npos) : data_(0), size_(0), cap_(0) { assign(other, pos, n); }
     explicit string(string_view v) : data_(0), size_(0), cap_(0) { assign(v.data(), v.size()); }
     // The characters of [first, last) for any input iterator ([string.cons] 12), e.g. istreambuf_iterator.
     template <typename It>
@@ -232,6 +235,15 @@ public:
     }
     string& assign(const char* s) { return assign(s, length_of(s)); }
     string& assign(const string& other) { return assign(other.data_, other.size_); }
+    string& assign(const string& other, size_t pos, size_t n = npos) {
+        if (pos > other.size_) pos = other.size_;
+        if (n > other.size_ - pos) n = other.size_ - pos;
+        if (this == &other) {
+            string part(other.data_ + pos, n);
+            return assign(part.data_, part.size_);
+        }
+        return assign(other.data_ + pos, n);
+    }
     template <typename It>
     string& assign(It first, It last) {
         string t(first, last);

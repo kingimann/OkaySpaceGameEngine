@@ -16,7 +16,7 @@ public:
     enum class Device { Any = 0, Keyboard = 1, Controller = 2 };
     std::string actions;                 ///< path of a .okayinput asset; empty = the default asset (or whatever the project already loaded)
     Device device = Device::Any;         ///< Any: the keyboard and every controller, switching with the last used
-    int controller = 0;                  ///< Controller: which one, 0..3
+    int controller = 0;                  ///< Controller: which one, 0..7 (Input::kMaxGamepads)
     std::string scheme;                  ///< control scheme to start in; empty = the one that fits the device
     bool autoSwitch = true;              ///< Any: follow the device used last
     std::string startMaps;               ///< comma list of action maps switched on at start (the rest off); empty = as the asset says
@@ -29,7 +29,7 @@ public:
         if (m_player >= 0) return;
         if (!actions.empty() && InputRuntime::AssetPath() != actions) InputRuntime::LoadAsset(actions);
         const JoinDevice jd = device == Device::Keyboard ? JoinDevice::Keyboard : device == Device::Controller ? JoinDevice::Pad : JoinDevice::Any;
-        m_player = InputRuntime::JoinNamed(jd == JoinDevice::Keyboard ? "keyboard" : jd == JoinDevice::Any ? "any" : "pad" + std::to_string(controller < 0 ? 0 : controller > 3 ? 3 : controller));
+        m_player = InputRuntime::JoinNamed(jd == JoinDevice::Keyboard ? "keyboard" : jd == JoinDevice::Any ? "any" : "pad" + std::to_string(controller < 0 ? 0 : controller >= Input::kMaxGamepads ? Input::kMaxGamepads - 1 : controller));
         ActionSet* s = Set();
         if (!s) return;
         if (!scheme.empty()) s->SetScheme(scheme);

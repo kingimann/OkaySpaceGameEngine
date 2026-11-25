@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 67 headers, 981 names.
+Back to the [code index](../code_index.md). 68 headers, 982 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -565,6 +565,10 @@ Back to the [code index](../code_index.md). 67 headers, 981 names.
 - `HierDrawEye` function, line 486: The eye (open when active, struck through when off) at the right edge of the row (x1 = its right end).
 - `HierDrawLock` function, line 496: The padlock left of the eye: amber when locked, a faint hint while the row is hovered, nothing otherwise.
 - `HierDrawDiag` function, line 507: The problems marker (editor/ProblemsPanel.cpp DrawMarker): an amber or red dot with a dark rim and a "!" centred at (cx, cy).
+
+## `shared/ImGuiDropdown.hpp`
+
+- `BeginChevronCombo` function, line 15: Same arguments as ImGui::BeginCombo (the width comes from SetNextItemWidth / the item width), plus the smallest corner
 
 ## `shared/ImGuiPainterRenderer.hpp`
 

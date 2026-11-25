@@ -68,7 +68,7 @@ bool RemapOverlap(const InputBinding& a, const InputBinding& b) {
     if (a.kind == K::None || b.kind == K::None) return false;
     if (a.kind == b.kind) {
         switch (a.kind) {
-            case K::Key: case K::Mouse: case K::PadButton: case K::Wheel: return a.code == b.code;
+            case K::Key: case K::Mouse: case K::PadButton: case K::Wheel: case K::Gesture: return a.code == b.code;
             case K::Chord: return std::equal(a.keys, a.keys + 4, b.keys);   // the same keys (a chord keeps its keys from single bindings, so a chord and a lone key do not conflict)
             case K::Keys4:
                 for (int i = 0; i < 4; ++i) if (KeyIndex(b, (unsigned char)a.keys[i]) >= 0) return true;

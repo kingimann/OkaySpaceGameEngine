@@ -259,7 +259,7 @@ int main() {
         const std::uint64_t nonce = 0x0807060504030201ull;
         auto w4 = Handshake(relay, RelayHost, "R4", 4, &nonce);
         CHECK(w4.size() == 26 && w4[0] == RelayWelcome);
-        CHECK(w4.size() == 26 && w4[9] == 4);                          // relay version
+        CHECK(w4.size() == 26 && w4[9] == kRelayProtocolVersion);     // relay version
         const std::uint8_t expectNonce[8] = {1, 2, 3, 4, 5, 6, 7, 8};  // little-endian
         CHECK(w4.size() == 26 && std::memcmp(w4.data() + 18, expectNonce, 8) == 0);
         auto w3 = Handshake(relay, RelayHost, "R3", 3, nullptr);

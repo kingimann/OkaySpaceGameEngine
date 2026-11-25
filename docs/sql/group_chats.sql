@@ -35,7 +35,8 @@ create table if not exists public.group_members (
 );
 
 -- ---------------------------------------------------------------------------
--- group_messages: the messages themselves. sender_name is denormalized so the
+-- group_messages: the messages themselves. sender_name is denormalized (filled by
+-- the server once docs/sql/public_names.sql has run) so the
 -- UI can show a name without a profiles join per row. reply_to quotes an
 -- earlier message (same as 1:1 DMs); edited marks an edited body.
 -- ---------------------------------------------------------------------------

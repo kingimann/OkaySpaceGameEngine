@@ -618,12 +618,13 @@ CMake, Ninja, Meson, make or any other project was read or used (rule 19a). No c
   allowed" is answered); then a `package` takes importer outputs as assets; then a converter that writes a depfile for the files it
   reads (a model and its textures). Not built: those three; okay-texture was not run through okay-build (it links the whole engine
   library, too large a build for this shared machine).
-- **Tests:** `testOwnCompilerOkayCc` (12 checks), `testOwnCompilerEngineFiles` (4), `testOwnCompilerOkayMs` (13, one skipped
+- **Tests:** `testToolchainOkayCc` (12 checks), `testOkayCcEngineFiles` (4), `testToolchainOkayMs` (13, one skipped
   here: running `app.exe` needs wine), `testImporterTool` (6). Before: 16 own-compiler checks failed ("unknown toolchain
   preset 'okay-cc'") and the run then stopped at a folder that was never made (the test now checks the folder exists) and all 6 importer checks failed ("unknown importer key 'tool'"). After: all pass.
-  `tools/okaybuild/build.sh` builds the four compiler programs into `<out>/own` (only again when their sources change);
-  `OKAYBUILD_OWN_TOOLS=DIR` uses others, `OKAYBUILD_OWN_TOOLS=none` skips those checks. One older check ("build type None adds no
-  flags") looked for `-O` anywhere in the line and failed when the temp folder's path held `-O`; it now looks for ` -O`.
+  `tools/okaybuild/build.sh` builds the four compiler programs into `<out>/compilers` (only again when their sources change);
+  `OKAYBUILD_OKAY_COMPILERS=DIR` uses others, `OKAYBUILD_OKAY_COMPILERS=none` skips those checks. One older check ("build type None adds no
+  flags") looked for `-O` anywhere in the line and failed when the temp folder's path held `-O`; it now looks for ` -O`. Whole suite (`tools/okaybuild/build.sh`): **531 checks passed, 0 failed, 8 skipped**
+  (was 497 passed, 7 failed; the 8 skips are the 7 old failures and running `app.exe`, all for wine or libsodium).
 - **Not done / unverified:** nothing ran on Windows; no okay-ms program was run (wine here cannot start anything); okay-build's own
   Windows host was not tried with these toolchains (there it always uses a response file over 30,000 characters, which okay-cl
   does not read). The include scan does not follow `#include MACRO` or a header found only in the compiler's built-in folders.

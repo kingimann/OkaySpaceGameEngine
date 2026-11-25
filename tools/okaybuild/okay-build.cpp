@@ -100,7 +100,7 @@ struct Toolchain {
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
     // Our own compilers (presets okay-cc and okay-ms): which one, and whether a program links a static library's archive
     // (link_archives = on) or that library's objects (off: okay-ld reads no archives)
-    string own; bool linkArchives = true;
+    string compilerKind; bool linkArchives = true;
 };
 static bool applyPreset(Toolchain& c, const string& name) {
     Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.cFlags = c.cFlags; d.cxxFlags = c.cxxFlags; d.linkLead = c.linkLead; d.exeLinkFlags = c.exeLinkFlags; d.sharedLinkFlags = c.sharedLinkFlags; d.stdLibs = c.stdLibs; d.exeImportLib = c.exeImportLib; d.rc = c.rc; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
@@ -109,8 +109,8 @@ static bool applyPreset(Toolchain& c, const string& name) {
     else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
     else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
     // our own compilers: tools/okaycc (Linux ELF; okay-ld takes objects only) and tools/okayms (Windows PE; MSVC-style words)
-    else if (name == "okay-cc") { d.cc = "okay-cc"; d.cxx = "okay-cc"; d.ld = "okay-ld"; d.own = name; d.linkArchives = false; }
-    else if (name == "okay-ms") { d.cc = "okay-cl"; d.cxx = "okay-cl"; d.ld = "okay-link"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.own = name; }
+    else if (name == "okay-cc") { d.cc = "okay-cc"; d.cxx = "okay-cc"; d.ld = "okay-ld"; d.compilerKind = name; d.linkArchives = false; }
+    else if (name == "okay-ms") { d.cc = "okay-cl"; d.cxx = "okay-cl"; d.ld = "okay-link"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.compilerKind = name; }
     else return false;
     d.name = name; c = d; return true;
 }
@@ -639,14 +639,14 @@ static bool msvcLinkerIsCl(const string& ld) {
 // tunes the result (optimisation level, warnings, debug information, language level, runtime-library choice) is left out when the
 // compiler has no such switch; a word that would change what is built (a define for okay-cc, a sanitizer, an unknown word) is an
 // error that names the missing feature, so the build is never silently different. Returns false to leave the word out.
-static bool ownWord(const Toolchain& tc, const string& w0, bool link, string& out) {
+static bool okayCompilerWord(const Toolchain& tc, const string& w0, bool link, string& out) {
     auto starts = [&](const string& w, const char* p) { return w.rfind(p, 0) == 0; };
     auto one = [&](const string& w, std::initializer_list<const char*> l) { for (auto* x : l) if (w == x) return true; return false; };
     auto any = [&](const string& w, std::initializer_list<const char*> l) { for (auto* x : l) if (starts(w, x)) return true; return false; };
     // GNU words that only tune the result (both compilers): -O -g -W (not -Wl,) -w -std= -pipe -pthread -m64; -f except sanitizers
     bool gnuTune = (starts(w0, "-O") || starts(w0, "-g") || (starts(w0, "-W") && !starts(w0, "-Wl,")) || w0 == "-w" || starts(w0, "-std=") ||
                     one(w0, {"-pipe", "-pthread", "-m64", "-s"}) || (starts(w0, "-f") && !starts(w0, "-fsanitize") && !starts(w0, "-fprofile")));
-    if (tc.own == "okay-cc") {
+    if (tc.compilerKind == "okay-cc") {
         if (!link && starts(w0, "-I") && w0.size() > 2) { out = w0; return true; }
         if (!link && w0 == "--eh") { out = w0; return true; }
         if (!link && starts(w0, "-D")) throw Fail("okay-cc has no -D (the word '" + w0 + "'): a define changes the program, so it cannot be left out");
@@ -904,10 +904,10 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
                 objs.push_back(a.output); objActs.push_back(add(a)); continue;
             }
-            if (!m.tc.own.empty()) { // our own compilers: okay-cc --obj OUT -I... SRC, or okay-cl /c /O2 /I... /D... /FoOUT SRC
-                bool ms = m.tc.own == "okay-ms"; string w;
+            if (!m.tc.compilerKind.empty()) { // our own compilers: okay-cc --obj OUT -I... SRC, or okay-cl /c /O2 /I... /D... /FoOUT SRC
+                bool ms = m.tc.compilerKind == "okay-ms"; string w;
                 a.argv = {isC ? m.tc.cc : m.tc.cxx}; if (ms) a.argv.push_back("/c"); else { a.argv.push_back("--obj"); a.argv.push_back(a.output); }
-                auto word = [&](const string& f) { if (ownWord(m.tc, fixBin(f), false, w)) a.argv.push_back(w); };
+                auto word = [&](const string& f) { if (okayCompilerWord(m.tc, fixBin(f), false, w)) a.argv.push_back(w); };
                 for (auto& f : m.tc.flags) word(f);
                 for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) word(f);
                 for (auto& f : t.flags) word(f);
@@ -966,12 +966,12 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         }
         Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
         libObjs[n] = objs;
-        if (!m.tc.own.empty() && t.libKind == "shared") throw Fail("target '" + t.name + "': " + m.tc.own + " makes no shared libraries");
-        if (!m.tc.own.empty() && !(t.isLib && t.libKind != "shared")) { // a program linked by okay-ld (-o OUT objects) or okay-link (words, objects, libs, /OUT:)
-            bool ms = m.tc.own == "okay-ms"; string w;
+        if (!m.tc.compilerKind.empty() && t.libKind == "shared") throw Fail("target '" + t.name + "': " + m.tc.compilerKind + " makes no shared libraries");
+        if (!m.tc.compilerKind.empty() && !(t.isLib && t.libKind != "shared")) { // a program linked by okay-ld (-o OUT objects) or okay-link (words, objects, libs, /OUT:)
+            bool ms = m.tc.compilerKind == "okay-ms"; string w;
             a.kind = "LD"; a.argv = {m.tc.ld}; a.makeExec = !ms;
             if (!ms) { a.argv.push_back("-o"); a.argv.push_back(a.output); }
-            auto word = [&](const string& f) { if (ownWord(m.tc, fixBin(f), true, w)) a.argv.push_back(w); };
+            auto word = [&](const string& f) { if (okayCompilerWord(m.tc, fixBin(f), true, w)) a.argv.push_back(w); };
             for (auto& f : m.tc.linkLead) word(f);
             for (auto& f : m.tc.exeLinkFlags) word(f);
             for (auto& f : m.tc.linkFlags) word(f);
@@ -994,7 +994,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             if (ms) a.argv.push_back("/OUT:" + a.output);
         } else if (t.isLib && t.libKind != "shared") {
             a.kind = "AR";
-            if (m.tc.msvc && m.tc.own.empty()) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
+            if (m.tc.msvc && m.tc.compilerKind.empty()) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
             else { a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; }
             for (auto& o : objs) a.argv.push_back(o);
         } else {

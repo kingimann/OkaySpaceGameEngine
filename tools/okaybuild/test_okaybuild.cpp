@@ -2779,29 +2779,32 @@ static void testCmakeCompileOrder() {
         "target_include_directories(core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}//sub/../extra/)\ntarget_compile_definitions(core PRIVATE BETA ALPHA=2 BETA)\n"
         "target_compile_options(core PUBLIC -Wshadow)\ntarget_compile_options(core PRIVATE -Wall)\ntarget_link_libraries(core PUBLIC ext)\n"
         "set_source_files_properties(core.cpp PROPERTIES COMPILE_DEFINITIONS \"YY;XX\" INCLUDE_DIRECTORIES \"${CMAKE_SOURCE_DIR}/extra/\" COMPILE_OPTIONS \"-Wextra\")\n"
-        "add_executable(app main.cpp)\ntarget_link_libraries(app core)\n");
-    const string want[3][2] = {
+        "add_executable(app main.cpp)\ntarget_link_libraries(app core)\n"
+        "add_library(sh SHARED f.cpp)\ntarget_compile_options(sh PRIVATE -Wall)\ntarget_compile_definitions(sh PRIVATE A)\n");
+    write("f.cpp", "int f(){ return 1; }\n");
+    const string want[4][2] = {
         {"main.cpp", "-DMID -DZED=1 -IP/dinc -IP/. -IP/inc -isystem P/dsys -isystem P/both -isystem P/ext -O3 -DNDEBUG -std=gnu++17 -Wshadow"},
         {"core.cpp", "-DALPHA=2 -DBETA -DMID -DZED=1 -DXX -DYY -IP/extra -IP/dinc -IP/. -IP/inc -IP/sub/../extra -isystem P/dsys -isystem P/both -isystem P/sys -isystem P/ext -O3 -DNDEBUG -std=gnu++17 -Wshadow -Wall -Wextra"},
-        {"part.c", "-DALPHA=2 -DBETA -DMID -DZED=1 -IP/dinc -IP/. -IP/inc -IP/sub/../extra -isystem P/dsys -isystem P/both -isystem P/sys -isystem P/ext -O3 -DNDEBUG -Wshadow -Wall"}};
+        {"part.c", "-DALPHA=2 -DBETA -DMID -DZED=1 -IP/dinc -IP/. -IP/inc -IP/sub/../extra -isystem P/dsys -isystem P/both -isystem P/sys -isystem P/ext -O3 -DNDEBUG -Wshadow -Wall"},
+        {"f.cpp", "-DA -DMID -DZED=1 -Dsh_EXPORTS -IP/dinc -IP/. -isystem P/dsys -O3 -DNDEBUG -std=gnu++17 -fPIC -Wall"}}; // a shared library: <target>_EXPORTS, -fPIC after the standard
     int rc; string o = sh("cmake . -o build.okay --build-type Release", &rc);
     string man = readFile(gRoot / "build.okay");
     check(rc == 0 && man.find("  compile_order = cmake\n") != string::npos && man.find("  system_include = dsys both sys ext\n") != string::npos,
           "the manifest asks for CMake's order and lists the system folders of core (SYSTEM, the folder's SYSTEM, the imported target's)", man);
-    o = sh("-f build.okay --dry-run -v app", &rc);
+    o = sh("-f build.okay --dry-run -v app sh", &rc);
     const string root = gRoot.string();
     int same = 0; string got;
     for (auto& w : want) { string l = cmakeWords(lineWith(o, "-c " + root + "/" + w[0]), root); got += w[0] + ": " + l + "\n"; same += l == w[1]; }
-    check(same == 3, "all 3 compile lines are word for word CMake's (taken from CMake 3.28 with Ninja)", got);
+    check(same == 4, "all 4 compile lines are word for word CMake's (taken from CMake 3.28 with Ninja)", got);
     o = sh("-f build.okay app", &rc);
     check(rc == 0 && system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program builds with -isystem folders and runs", o);
     if (system("cmake --version >/dev/null 2>&1 && ninja --version >/dev/null 2>&1") != 0) skip(1, "cmake or ninja is not installed, so the lines are not compared with a live CMake");
     else {
-        string cmd = "cd '" + root + "' && cmake -S . -B nb -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 && ninja -C nb -t commands app 2>&1";
+        string cmd = "cd '" + root + "' && cmake -S . -B nb -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 && ninja -C nb -t commands app sh 2>&1";
         string c; char b[4096]; FILE* p = popen(cmd.c_str(), "r"); size_t n; while ((n = fread(b, 1, sizeof b, p)) > 0) c.append(b, n); pclose(p);
         int live = 0; string both;
         for (auto& w : want) { string l = cmakeWords(lineWith(c, "-c " + root + "/" + w[0]), root); both += w[0] + ": " + l + "\n"; live += l == w[1]; }
-        check(live == 3, "the CMake on this machine writes the same 3 lines", both + c);
+        check(live == 4, "the CMake on this machine writes the same 4 lines", both + c);
     }
     // the default order (a hand-written manifest) is unchanged; system_include adds -isystem after the -I folders; a bad order is an error
     write("h/build.okay", "target lib1 lib\n sources = ../core.cpp\n include = ../inc ../extra\n system_include = ../sys ../ext\n define = ALPHA=2\nend\n");

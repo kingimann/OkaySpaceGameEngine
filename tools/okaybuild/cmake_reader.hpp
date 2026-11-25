@@ -1788,6 +1788,11 @@ static string emitManifest(Interp& in, Report& rep) {
         for (auto& x : all) { bool sys = t.sysIncs.count(x) || r.sysIncs.count(x); addUnique(sys ? sysList : incs, rootRel(x, root)); }
         for (auto& x : t.dirDefs) if (!isAccount(x)) addUnique(defs, x); for (auto& x : t.defs) addUnique(defs, x); for (auto& x : t.pubDefs) addUnique(defs, x);
         for (auto& x : r.defs) addUnique(defs, x);
+        if (t.kind == "lib" && t.libKind == "shared") { // CMake's DEFINE_SYMBOL: <target>_EXPORTS on a shared library's own compiles
+            auto ds = t.props.find("DEFINE_SYMBOL"); string sym;
+            if (ds != t.props.end()) sym = ds->second; else { for (char ch : n) sym += isalnum((unsigned char)ch) ? ch : '_'; sym += "_EXPORTS"; }
+            addUnique(defs, sym);
+        }
         bool cxx = t.cxx17; for (auto& s : t.sources) { string e = fs::path(s).extension().string(); if (e == ".cpp" || e == ".cc" || e == ".cxx") cxx = true; }
         if (cxx) addUnique(opts, stdFlag);
         for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.ownOpts) addUnique(opts, x);

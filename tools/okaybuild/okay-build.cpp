@@ -961,11 +961,17 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
-                auto flagWords = [&](bool skipDefines) {
-                    for (auto& f : m.tc.flags) if (!skipDefines || f.rfind("-D", 0) != 0) a.argv.push_back(f);
+                auto flagWords = [&](bool cmakeOrder) {
+                    for (auto& f : m.tc.flags) if (!cmakeOrder || f.rfind("-D", 0) != 0) a.argv.push_back(f);
                     for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) a.argv.push_back(fixBin(f));
-                    if (t.libKind == "shared") a.argv.push_back("-fPIC");
-                    for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(fixBin(f)); } // a C++ standard does not apply to a C file
+                    // CMake puts -fPIC after the language standard and before the target's options; okay-build's own order before both
+                    size_t lead = cmakeOrder && !t.flags.empty() && t.flags[0].rfind("-std=", 0) == 0 ? 1 : 0;
+                    if (t.libKind == "shared" && !lead) a.argv.push_back("-fPIC");
+                    for (size_t k = 0; k < t.flags.size(); ++k) {
+                        const string& f = t.flags[k];
+                        if (!(isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0))) a.argv.push_back(fixBin(f)); // a C++ standard does not apply to a C file
+                        if (t.libKind == "shared" && lead && k + 1 == lead) a.argv.push_back("-fPIC");
+                    }
                 };
                 vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);

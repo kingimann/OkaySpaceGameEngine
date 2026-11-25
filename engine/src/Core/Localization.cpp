@@ -1,8 +1,10 @@
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/LocPreview.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/LocTable.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/StringId.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -1236,6 +1238,287 @@ std::string Localization::Pseudo(const std::string& text) {
     out += std::string((len * 3 + 9) / 10, '~');   // about 30% longer
     out += "]";
     return out;
+}
+
+namespace {
+
+enum class Dir { L, R, EN, N };
+
+// Strong left-to-right letters above ASCII (Unicode bidi class L), as sorted, non-overlapping
+// ranges. Worked out from the Unicode Character Database (UCD 14.0 bidi classes): each range is a
+// run of class-L code points; combining marks (NSM), format characters (BN) and unassigned code
+// points inside a run are folded into it, since a mark between two left-to-right letters resolves
+// to left-to-right anyway. Nothing of another strong or weak class (R, AL, EN, AN, ON, WS...) is
+// inside a range; test_text_shape checks Cyrillic, Greek and CJK.
+struct CpRange { std::uint32_t lo, hi; };
+const CpRange kStrongL[] = {
+        {0x00AA, 0x00AA}, {0x00B5, 0x00B5}, {0x00BA, 0x00BA}, {0x00C0, 0x00D6}, {0x00D8, 0x00F6}, {0x00F8, 0x02B8},
+        {0x02BB, 0x02C1}, {0x02D0, 0x02D1}, {0x02E0, 0x02E4}, {0x02EE, 0x02EE}, {0x0370, 0x0373}, {0x0376, 0x037D},
+        {0x037F, 0x037F}, {0x0386, 0x0386}, {0x0388, 0x03F5}, {0x03F7, 0x0589}, {0x0903, 0x09F1}, {0x09F4, 0x09FA},
+        {0x09FC, 0x0AF0}, {0x0AF9, 0x0BF2}, {0x0C01, 0x0C77}, {0x0C7F, 0x0E33}, {0x0E40, 0x0F38}, {0x0F3E, 0x138F},
+        {0x13A0, 0x13FD}, {0x1401, 0x167F}, {0x1681, 0x169A}, {0x16A0, 0x17DA}, {0x17DC, 0x17E9}, {0x1810, 0x1938},
+        {0x1946, 0x19DA}, {0x1A00, 0x1FBC}, {0x1FBE, 0x1FBE}, {0x1FC2, 0x1FCC}, {0x1FD0, 0x1FDB}, {0x1FE0, 0x1FEC},
+        {0x1FF2, 0x1FFC}, {0x200E, 0x200E}, {0x2071, 0x2071}, {0x207F, 0x207F}, {0x2090, 0x209C}, {0x2102, 0x2102},
+        {0x2107, 0x2107}, {0x210A, 0x2113}, {0x2115, 0x2115}, {0x2119, 0x211D}, {0x2124, 0x2124}, {0x2126, 0x2126},
+        {0x2128, 0x2128}, {0x212A, 0x212D}, {0x212F, 0x2139}, {0x213C, 0x213F}, {0x2145, 0x2149}, {0x214E, 0x214F},
+        {0x2160, 0x2188}, {0x2336, 0x237A}, {0x2395, 0x2395}, {0x249C, 0x24E9}, {0x26AC, 0x26AC}, {0x2800, 0x28FF},
+        {0x2C00, 0x2CE4}, {0x2CEB, 0x2CF3}, {0x2D00, 0x2DDE}, {0x3005, 0x3007}, {0x3021, 0x302F}, {0x3031, 0x3035},
+        {0x3038, 0x303C}, {0x3041, 0x3096}, {0x309D, 0x309F}, {0x30A1, 0x30FA}, {0x30FC, 0x31BF}, {0x31F0, 0x321C},
+        {0x3220, 0x324F}, {0x3260, 0x327B}, {0x327F, 0x32B0}, {0x32C0, 0x32CB}, {0x32D0, 0x3376}, {0x337B, 0x33DD},
+        {0x33E0, 0x33FE}, {0x3400, 0x4DBF}, {0x4E00, 0xA48C}, {0xA4D0, 0xA60C}, {0xA610, 0xA66E}, {0xA680, 0xA6F7},
+        {0xA722, 0xA787}, {0xA789, 0xA827}, {0xA830, 0xA837}, {0xA840, 0xA873}, {0xA880, 0xAB69}, {0xAB70, 0xFB17},
+        {0xFF21, 0xFF3A}, {0xFF41, 0xFF5A}, {0xFF66, 0xFFDC}, {0x10000, 0x10100}, {0x10102, 0x1013F},
+        {0x1018D, 0x1018E}, {0x101D0, 0x102D0}, {0x10300, 0x107BA}, {0x11000, 0x1104D}, {0x11066, 0x11659},
+        {0x11680, 0x11FD4}, {0x11FFF, 0x16FE1}, {0x16FE3, 0x1D1E8}, {0x1D2E0, 0x1D2F3}, {0x1D360, 0x1D6DA},
+        {0x1D6DC, 0x1D714}, {0x1D716, 0x1D74E}, {0x1D750, 0x1D788}, {0x1D78A, 0x1D7C2}, {0x1D7C4, 0x1D7CB},
+        {0x1D800, 0x1E2F9}, {0x1E7E0, 0x1E7FE}, {0x1F110, 0x1F12E}, {0x1F130, 0x1F169}, {0x1F170, 0x1F1AC},
+        {0x1F1E6, 0x1F251}, {0x20000, 0x10FFFD},
+};
+
+bool StrongL(std::uint32_t cp) {
+    if (cp < 0x80) return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z');
+    std::size_t lo = 0, hi = sizeof(kStrongL) / sizeof(kStrongL[0]);
+    while (lo < hi) {
+        const std::size_t mid = (lo + hi) / 2;
+        if (cp < kStrongL[mid].lo) hi = mid;
+        else if (cp > kStrongL[mid].hi) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
+
+Dir KindOf(std::uint32_t cp) {
+    if (cp >= '0' && cp <= '9') return Dir::EN;
+    if ((cp >= 0x0590 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF)) return Dir::R;
+    if (StrongL(cp)) return Dir::L;
+    return Dir::N;
+}
+
+// 0 none, 1 dual, 2 right-only. Forms are isolated, final, initial, medial.
+struct Arab {
+    std::uint32_t base;
+    int join;
+    std::uint32_t iso, fin, ini, med;
+};
+
+const Arab* ArabOf(std::uint32_t cp) {
+    static const Arab k[] = {
+        {0x0626, 1, 0xFE89, 0xFE8A, 0xFE8B, 0xFE8C},   // yeh with hamza above
+        {0x0627, 2, 0xFE8D, 0xFE8E, 0xFE8D, 0xFE8E},
+        {0x0628, 1, 0xFE8F, 0xFE90, 0xFE91, 0xFE92},
+        {0x0629, 2, 0xFE93, 0xFE94, 0xFE93, 0xFE94},
+        {0x062A, 1, 0xFE95, 0xFE96, 0xFE97, 0xFE98},
+        {0x062B, 1, 0xFE99, 0xFE9A, 0xFE9B, 0xFE9C},
+        {0x062C, 1, 0xFE9D, 0xFE9E, 0xFE9F, 0xFEA0},
+        {0x062D, 1, 0xFEA1, 0xFEA2, 0xFEA3, 0xFEA4},
+        {0x062E, 1, 0xFEA5, 0xFEA6, 0xFEA7, 0xFEA8},
+        {0x062F, 2, 0xFEA9, 0xFEAA, 0xFEA9, 0xFEAA},
+        {0x0630, 2, 0xFEAB, 0xFEAC, 0xFEAB, 0xFEAC},
+        {0x0631, 2, 0xFEAD, 0xFEAE, 0xFEAD, 0xFEAE},
+        {0x0632, 2, 0xFEAF, 0xFEB0, 0xFEAF, 0xFEB0},
+        {0x0633, 1, 0xFEB1, 0xFEB2, 0xFEB3, 0xFEB4},
+        {0x0634, 1, 0xFEB5, 0xFEB6, 0xFEB7, 0xFEB8},
+        {0x0635, 1, 0xFEB9, 0xFEBA, 0xFEBB, 0xFEBC},
+        {0x0636, 1, 0xFEBD, 0xFEBE, 0xFEBF, 0xFEC0},
+        {0x0637, 1, 0xFEC1, 0xFEC2, 0xFEC3, 0xFEC4},
+        {0x0638, 1, 0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8},
+        {0x0639, 1, 0xFEC9, 0xFECA, 0xFECB, 0xFECC},
+        {0x063A, 1, 0xFECD, 0xFECE, 0xFECF, 0xFED0},
+        {0x0641, 1, 0xFED1, 0xFED2, 0xFED3, 0xFED4},
+        {0x0642, 1, 0xFED5, 0xFED6, 0xFED7, 0xFED8},
+        {0x0643, 1, 0xFED9, 0xFEDA, 0xFEDB, 0xFEDC},
+        {0x0644, 1, 0xFEDD, 0xFEDE, 0xFEDF, 0xFEE0},
+        {0x0645, 1, 0xFEE1, 0xFEE2, 0xFEE3, 0xFEE4},
+        {0x0646, 1, 0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8},
+        {0x0647, 1, 0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC},
+        {0x0648, 2, 0xFEEE, 0xFEEF, 0xFEEE, 0xFEEF},
+        {0x0649, 2, 0xFEEF, 0xFEF0, 0xFEEF, 0xFEF0},   // alef maksura (joins on its right side only)
+        {0x064A, 1, 0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4},
+        // Persian letters: peh, tcheh, jeh, keheh, gaf, farsi yeh.
+        {0x067E, 1, 0xFB56, 0xFB57, 0xFB58, 0xFB59},
+        {0x0686, 1, 0xFB7A, 0xFB7B, 0xFB7C, 0xFB7D},
+        {0x0698, 2, 0xFB8A, 0xFB8B, 0xFB8A, 0xFB8B},
+        {0x06A9, 1, 0xFB8E, 0xFB8F, 0xFB90, 0xFB91},
+        {0x06AF, 1, 0xFB92, 0xFB93, 0xFB94, 0xFB95},
+        {0x06CC, 1, 0xFBFC, 0xFBFD, 0xFBFE, 0xFBFF},
+    };
+    for (const Arab& a : k) if (a.base == cp) return &a;
+    return nullptr;
+}
+
+bool JoinsNext(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join == 1; }
+bool JoinsPrev(std::uint32_t cp) { const Arab* a = ArabOf(cp); return a && a->join != 0; }
+
+// Arabic marks that sit on the letter before them (Unicode joining type T, "transparent"):
+// they neither join nor break a join, and they stay with their letter when a run is reversed.
+bool Transparent(std::uint32_t cp) {
+    return (cp >= 0x0610 && cp <= 0x061A) || (cp >= 0x064B && cp <= 0x065F) || cp == 0x0670 ||
+           (cp >= 0x06D6 && cp <= 0x06DC) || (cp >= 0x06DF && cp <= 0x06E4) || (cp >= 0x06E7 && cp <= 0x06E8) ||
+           (cp >= 0x06EA && cp <= 0x06ED) || (cp >= 0x0591 && cp <= 0x05BD) || cp == 0x05BF ||
+           (cp >= 0x05C1 && cp <= 0x05C2) || (cp >= 0x05C4 && cp <= 0x05C5) || cp == 0x05C7;
+}
+
+template <class T>
+void ReverseRun(std::vector<T>& s, std::vector<int>& level, int least) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        if (level[i] < least) { ++i; continue; }
+        std::size_t j = i;
+        while (j < s.size() && level[j] >= least) ++j;
+        std::reverse(s.begin() + (long)i, s.begin() + (long)j);
+        std::reverse(level.begin() + (long)i, level.begin() + (long)j);
+        i = j;
+    }
+}
+
+// Where one drawn cluster came from: bytes [srcBegin, srcEnd) of the line, drawn as bytes [outBegin, outEnd)
+// of the shaped line, at bidi level `level` (odd = right to left).
+struct VisCluster { std::size_t srcBegin, srcEnd, outBegin, outEnd; int level; };
+
+// A base character and the transparent marks after it, with the bytes it came from.
+struct Cluster { std::vector<std::uint32_t> cps; std::size_t srcBegin, srcEnd; };
+
+// One line: joining forms first (in reading order), then the right-to-left runs are reversed.
+// A letter and the marks on it move as one cluster, so a mark is still drawn after its letter.
+// `map`, when given, receives one entry per drawn cluster in drawing order (for the caret).
+std::string ShapeLine(const std::string& text, std::vector<VisCluster>* map = nullptr) {
+    std::vector<std::uint32_t> cps;
+    std::vector<std::size_t> at;   // byte where each code point starts; at.back() is the end
+    for (std::size_t i = 0; i < text.size();) { at.push_back(i); cps.push_back(utf8::Next(text, i)); }
+    at.push_back(text.size());
+    if (cps.empty()) return {};
+    std::vector<std::uint32_t> shaped = cps;
+    for (std::size_t i = 0; i < cps.size(); ++i) {
+        const Arab* a = ArabOf(cps[i]);
+        if (!a) continue;
+        // Only transparent marks are skipped. A space or any other letter ends the join.
+        bool prev = false, next = false;
+        for (std::size_t p = i; p-- > 0;) {
+            if (Transparent(cps[p])) continue;
+            prev = JoinsNext(cps[p]);
+            break;
+        }
+        for (std::size_t n = i + 1; n < cps.size(); ++n) {
+            if (Transparent(cps[n])) continue;
+            next = JoinsPrev(cps[n]) && JoinsNext(cps[i]);
+            break;
+        }
+        std::uint32_t form = a->iso;
+        if (prev && next) form = a->med;
+        else if (prev) form = a->fin;
+        else if (next) form = a->ini;
+        shaped[i] = form;
+    }
+    std::vector<Cluster> clusters;
+    for (std::size_t k = 0; k < shaped.size(); ++k) {
+        const std::uint32_t cp = shaped[k];
+        if (Transparent(cp) && !clusters.empty()) { clusters.back().cps.push_back(cp); clusters.back().srcEnd = at[k + 1]; }
+        else clusters.push_back(Cluster{{cp}, at[k], at[k + 1]});
+    }
+    int base = 0;
+    for (const auto& c : clusters) {
+        const Dir d = KindOf(c.cps[0]);
+        if (d == Dir::R) { base = 1; break; }
+        if (d == Dir::L) break;
+    }
+    std::vector<Dir> dir(clusters.size(), Dir::N);
+    for (std::size_t i = 0; i < clusters.size(); ++i) dir[i] = KindOf(clusters[i].cps[0]);
+    for (std::size_t i = 0; i < dir.size(); ++i) {
+        if (dir[i] != Dir::N) continue;
+        Dir left = Dir::N, right = Dir::N;
+        for (std::size_t p = i; p-- > 0;) if (dir[p] == Dir::L || dir[p] == Dir::R) { left = dir[p]; break; }
+        for (std::size_t n = i + 1; n < dir.size(); ++n) if (dir[n] == Dir::L || dir[n] == Dir::R) { right = dir[n]; break; }
+        dir[i] = (left == right && left != Dir::N) ? left : (base ? Dir::R : Dir::L);
+    }
+    std::vector<int> level(clusters.size(), base);
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
+        if (base == 0) level[i] = dir[i] == Dir::R ? 1 : 0;
+        else level[i] = (dir[i] == Dir::L || dir[i] == Dir::EN) ? 2 : 1;
+    }
+    int top = 0;
+    for (int lv : level) if (lv > top) top = lv;
+    for (int lv = top; lv >= 1; --lv) ReverseRun(clusters, level, lv);
+    std::string out;
+    if (map) map->clear();
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
+        const std::size_t from = out.size();
+        for (std::uint32_t cp : clusters[i].cps) utf8::Append(out, cp);
+        if (map) map->push_back(VisCluster{clusters[i].srcBegin, clusters[i].srcEnd, from, out.size(), level[i]});
+    }
+    return out;
+}
+
+// True when ShapeForDisplay would change the text: a right-to-left or Arabic character (every joining
+// letter and every mark that clusters is in the right-to-left blocks), or a carriage return, which it drops
+// before a newline. Without one, every level is 0 and nothing moves, so the bytes come back unchanged.
+// ASCII bytes are skipped without decoding, so a plain label costs one pass over its bytes.
+bool NeedsShaping(const std::string& text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char b = (unsigned char)text[i];
+        if (b < 0x80) {
+            if (b == '\r') return true;
+            ++i;
+            continue;
+        }
+        if (KindOf(utf8::Next(text, i)) == Dir::R) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+std::string ShapeForDisplay(const std::string& text) {
+    if (!NeedsShaping(text)) return text;
+    // One line at a time. A newline inside one reverse run swapped the lines.
+    std::string out;
+    std::size_t i = 0;
+    while (i <= text.size()) {
+        std::size_t n = text.find('\n', i);
+        if (n == std::string::npos) n = text.size();
+        std::size_t e = n;
+        if (e > i && text[e - 1] == '\r') --e;
+        out += ShapeLine(text.substr(i, e - i));
+        if (n >= text.size()) break;
+        out.push_back('\n');
+        i = n + 1;
+    }
+    return out;
+}
+
+const std::string& ShapedForDisplay(const std::string& text) {
+    if (!NeedsShaping(text)) return text;   // most text: no copy, no allocation
+    // A small table of recent results, so a right-to-left label is shaped once, not every frame. The least
+    // recently used entry is replaced; its strings keep their capacity, so a refill rarely allocates.
+    struct Entry { StringId::Value hash = 0; std::uint64_t used = 0; std::string in, out; };
+    static Entry cache[kShapeCacheSize];
+    static std::uint64_t tick = 0;
+    const StringId::Value h = StringId::HashOf(text);
+    Entry* victim = &cache[0];
+    for (Entry& e : cache) {
+        if (e.used && e.hash == h && e.in == text) { e.used = ++tick; return e.out; }
+        if (e.used < victim->used) victim = &e;
+    }
+    victim->hash = h;
+    victim->in = text;
+    victim->out = ShapeForDisplay(text);
+    victim->used = ++tick;
+    return victim->out;
+}
+
+std::size_t ShapedCaretByte(const std::string& line, std::size_t logicalByte) {
+    if (logicalByte > line.size()) logicalByte = line.size();
+    if (!NeedsShaping(line)) return logicalByte;
+    std::vector<VisCluster> map;
+    ShapeLine(line, &map);
+    if (map.empty()) return 0;
+    // The caret sits before the character that starts at logicalByte: on its left edge in a left-to-right
+    // run, on its right edge in a right-to-left run (where the drawn string runs backwards).
+    for (const VisCluster& c : map)
+        if (logicalByte >= c.srcBegin && logicalByte < c.srcEnd) return (c.level & 1) ? c.outEnd : c.outBegin;
+    // At the end of the line: after the last character typed, on its far side.
+    for (const VisCluster& c : map)
+        if (c.srcEnd == line.size()) return (c.level & 1) ? c.outBegin : c.outEnd;
+    return map.back().outEnd;
 }
 
 } // namespace okay

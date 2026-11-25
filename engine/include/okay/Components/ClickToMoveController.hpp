@@ -46,6 +46,7 @@ public:
     float stopDistance = 0.15f;     // how close counts as "arrived"
     float arriveRadius = 1.2f;      // ease to a stop over the last this-many metres
     float turnSpeed   = 12.0f;      // how fast the body turns toward travel
+    float stepOffset  = 0.35f;      // tallest ledge (metres) climbed when moving with no Rigidbody3D; 0 = none
     int   mouseButton = 0;          // which button sets the destination (0=left)
     bool  holdToMove  = false;      // hold the button to keep retargeting (else single clicks)
     bool  driveAnimation = true;    // animate a sibling Character from movement
@@ -179,7 +180,7 @@ public:
             else { rb->velocity.x = dir.x * speed; rb->velocity.z = dir.z * speed; }
         } else {
             transform->Translate(lastStep ? Vec3{to.x, 0.0f, to.z} : dir * step);
-            ResolvePlayerBody(scene, gameObject);   // no clipping through walls/floors
+            ResolvePlayerBody(scene, gameObject, Mathf::Max(0.0f, stepOffset));   // no clipping through walls/floors; stepOffset is the tallest ledge climbed
             if (lastStep) m_hasDest = false;
         }
 

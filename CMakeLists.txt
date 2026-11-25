@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
     VERSION 2.903.9
     DESCRIPTION "A modern C++ game engine"
-    LANGUAGES C CXX)   # C enabled for C dependencies built from source (Assimp's bundled zlib and similar)
+    LANGUAGES C CXX)   # C enabled for any C sources in the build
 
 # Stamp the version into binaries (used by the editor's self-updater).
 # The version string is only compiled into the editor and launcher (their targets
@@ -32,8 +32,6 @@ if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
     message(FATAL_ERROR "OKAY_ENABLE_TEST_HOOKS (scripted input) must never be on in a release build (OKAY_REQUIRE_SODIUM marks one)")
 endif()
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
-option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
-option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" ON)
 # The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
 # OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
 set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
@@ -42,59 +40,59 @@ if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND 
     message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
 endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
-# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out"). Assimp (when
-# built) stays the fallback: a file our reader refuses goes to it (not for FBX: ufbx was deleted on 2026-11-23 and FBX has no fallback), OKAY_OWN_<FMT>=0 switches one format back and
-# OKAY_THIRD_PARTY=1 (okay/Core/ThirdParty.hpp) switches every format back at run time. NDO stays OFF: that reader is a seam that
-# refuses every file. An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
+# Our own model readers are the DEFAULT since 2026-11-17 (owner: "start switching them so i can test them out") and the ONLY
+# model readers since 2026-11-24: Assimp was removed (branch claude/no-assimp-1; ufbx on 2026-11-23). A file our reader refuses
+# fails the import with the reader's reason. OKAY_OWN_<FMT>=0 switches one format off (it is then not read). NDO stays OFF:
+# that reader is a seam that refuses every file (.ndo is not supported: docs/content/model_readers.md, section Nendo). An existing build folder keeps the old OFF values in its CMakeCache.txt: configure a fresh one.
 # Since 2026-11-23 (owner: "i want our stuff to be on by default, all of them") the last four readers (glTF 1.0, OpenGEX, MDL,
 # Q3BSP), our own WAV decoder (since then the only WAV reader, no switch) and our own HTTP client (Linux; Windows uses WinHTTP) are ON by default too. Still OFF: NDO (a seam
 # that refuses every file), OKAY_OWN_CRYPTO (owner rule 18), OKAY_OWN_STACK (a dogfood switch releases refuse) and the two extra
 # OkayUI programs (OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI: not built by CI yet; docs/status/own_code_roadmap.md).
-option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (switched off, .dae is not read; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (switched off, .3ds is not read; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (switched off, .blend is not read; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http.md)" ON)
-option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_LWO       "Read .lwo with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWO=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_MD2       "Read .md2 (Quake II models) with our own MD2 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD2=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_MD3       "Read .md3 (Quake III Arena models) with our own MD3 reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MD3=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_IRRMESH   "Read .irrmesh (Irrlicht meshes) with our own IRRMESH reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRRMESH=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_B3D       "Read .b3d (Blitz3D models) with our own B3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_B3D=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_AC3D     "Read .ac / .acc / .ac3d (AC3D models) with our own AC3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AC3D=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGRE=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)
-option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_SIB      "Read .sib (Nevercenter Silo; worked out from one sample file) with our own SIB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_SIB=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP4, HMP5 and HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_PMX      "Read .pmx (MikuMikuDance models) with our own PMX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_PMX=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_OGREBIN  "Read .mesh (OGRE binary meshes) with our own OGRE binary reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGREBIN=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_ZAE      "Read .zae (COLLADA in a ZIP archive) with our own ZAE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_ZAE=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_XML      "Read .xml (an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element) with our own readers by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XML=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_LXO      "Read .lxo (Modo objects) with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LXO=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_OPENGEX  "Read .ogex (Open Game Engine Exchange) with our own OpenGEX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OPENGEX=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_MDL      "Read .mdl (Quake 1, Half-Life 1 and 3D GameStudio MDL3 / MDL4 / MDL5 / MDL7 models) with our own MDL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDL=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_Q3BSP    "Read .bsp / .pk3 (Quake III Arena maps) with our own Q3BSP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3BSP=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused: .gltf / .glb never go to Assimp; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" ON)
-option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_LWO       "Read .lwo with our own LWO reader by default (run-time env OKAY_OWN_LWO=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MD2       "Read .md2 (Quake II models) with our own MD2 reader by default (run-time env OKAY_OWN_MD2=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MD3       "Read .md3 (Quake III Arena models) with our own MD3 reader by default (run-time env OKAY_OWN_MD3=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IRRMESH   "Read .irrmesh (Irrlicht meshes) with our own IRRMESH reader by default (run-time env OKAY_OWN_IRRMESH=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_B3D       "Read .b3d (Blitz3D models) with our own B3D reader by default (run-time env OKAY_OWN_B3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by default (run-time env OKAY_OWN_X=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_AC3D     "Read .ac / .acc / .ac3d (AC3D models) with our own AC3D reader by default (run-time env OKAY_OWN_AC3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE reader by default (run-time env OKAY_OWN_OGRE=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_SIB      "Read .sib (Nevercenter Silo; worked out from one sample file) with our own SIB reader by default (run-time env OKAY_OWN_SIB=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP4, HMP5 and HMP7 terrain) with our own HMP reader by default (run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_PMX      "Read .pmx (MikuMikuDance models) with our own PMX reader by default (run-time env OKAY_OWN_PMX=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_OGREBIN  "Read .mesh (OGRE binary meshes) with our own OGRE binary reader by default (run-time env OKAY_OWN_OGREBIN=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_ZAE      "Read .zae (COLLADA in a ZIP archive) with our own ZAE reader by default (run-time env OKAY_OWN_ZAE=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_XML      "Read .xml (an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element) with our own readers by default (run-time env OKAY_OWN_XML=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_LXO      "Read .lxo (Modo objects) with our own LWO reader by default (run-time env OKAY_OWN_LXO=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_OPENGEX  "Read .ogex (Open Game Engine Exchange) with our own OpenGEX reader by default (run-time env OKAY_OWN_OPENGEX=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_MDL      "Read .mdl (Quake 1, Half-Life 1 and 3D GameStudio MDL3 / MDL4 / MDL5 / MDL7 models) with our own MDL reader by default (run-time env OKAY_OWN_MDL=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_Q3BSP    "Read .bsp / .pk3 (Quake III Arena maps) with our own Q3BSP reader by default (run-time env OKAY_OWN_Q3BSP=0/1 and SetImportBackend override)" ON)
+option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" ON)
+option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
 option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/platform/xbox_uwp.md" OFF)
@@ -269,6 +267,8 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 # files and labels tests (ctest -L module:<name>); the build itself is unchanged.
 # ---- OkayScript: the engine-independent scripting language (library, CLI, tests) ----
 # Before the engine: the engine's OkayScriptVM links okayscript_lang (its lexer lives there).
+# Test shards (-DOKAY_TEST_SHARD=K/N, CI only): included before the first folder that adds tests. Empty (default): does nothing.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayTestShard.cmake)
 add_subdirectory(okayscript)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)

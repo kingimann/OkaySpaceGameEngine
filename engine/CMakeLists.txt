@@ -159,6 +159,7 @@ add_library(okay_engine
     src/Net/NetTransport.cpp
     src/Net/PhotonTransport.cpp
     src/VisualScript/NodeGraph.cpp
+    src/VisualScript/VsNodeRegistry.cpp
     src/VisualScript/VsTypes.cpp
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp
@@ -666,64 +667,6 @@ if(DEFINED OKAY_STEAM_APP_ID)
     message(STATUS "OkaySpace: default Steam App ID = ${OKAY_STEAM_APP_ID}")
 endif()
 
-# ---- Optional model import via Assimp (FBX / DAE / STL / PLY / 3DS / ...) ----
-# The built-in loaders already cover OBJ + glTF with no dependency; Assimp adds the
-# long tail of formats. FetchContent DOWNLOADS Assimp at configure time, so this is
-# OFF by default to keep the default build self-contained (no network needed). Turn it
-# on with -DOKAY_USE_ASSIMP=ON; ModelImport.cpp then routes those formats through it.
-if(OKAY_USE_ASSIMP)
-    include(FetchContent)
-    # Build only what we need — keep it lean and quiet. Static, so shipped builds
-    # don't need an extra assimp DLL beside the exes; assimp builds its own zlib.
-    set(BUILD_SHARED_LIBS                        OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ZLIB                        ON  CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_TESTS                       OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_INSTALL                           OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ASSIMP_TOOLS                OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT    OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_NO_EXPORT                         ON  CACHE BOOL "" FORCE)
-    set(ASSIMP_WARNINGS_AS_ERRORS                OFF CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_FBX_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_OBJ_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_GLTF_IMPORTER      ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_COLLADA_IMPORTER   ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_STL_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_PLY_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_3DS_IMPORTER       ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_BLEND_IMPORTER     ON CACHE BOOL "" FORCE)
-    set(ASSIMP_BUILD_X_IMPORTER         ON CACHE BOOL "" FORCE)   # DirectX .x
-    set(ASSIMP_BUILD_MD5_IMPORTER       ON CACHE BOOL "" FORCE)   # Doom 3
-    set(ASSIMP_BUILD_SMD_IMPORTER       ON CACHE BOOL "" FORCE)   # Source engine
-    set(ASSIMP_BUILD_MS3D_IMPORTER      ON CACHE BOOL "" FORCE)   # MilkShape 3D
-    set(ASSIMP_BUILD_LWO_IMPORTER       ON CACHE BOOL "" FORCE)   # LightWave
-    set(ASSIMP_BUILD_DXF_IMPORTER       ON CACHE BOOL "" FORCE)   # AutoCAD DXF
-    set(ASSIMP_BUILD_OFF_IMPORTER       ON CACHE BOOL "" FORCE)   # Object File Format
-    set(ASSIMP_BUILD_AC_IMPORTER        ON CACHE BOOL "" FORCE)   # AC3D
-    set(ASSIMP_BUILD_B3D_IMPORTER       ON CACHE BOOL "" FORCE)   # Blitz3D
-    # ...and the rest of the long tail, so "any model file" just imports.
-    foreach(_fmt 3MF AMF ASE X3D OGRE OPENGEX Q3D Q3BSP IRR IRRMESH MD2 MD3 MDL HMP MDC NFF RAW COB CSM
-                 LWS BVH TERRAGEN SIB MMD IQM NDO XGL HMP)
-        set(ASSIMP_BUILD_${_fmt}_IMPORTER ON CACHE BOOL "" FORCE)
-    endforeach()
-    FetchContent_Declare(assimp
-        GIT_REPOSITORY https://github.com/assimp/assimp.git
-        GIT_TAG        v5.4.3
-        GIT_SHALLOW    TRUE)
-    FetchContent_MakeAvailable(assimp)
-    # MinGW-w64 13 (the Ubuntu 26.04 runner) defaults __MSVCRT_VERSION__ to 0x600. Assimp's
-    # DefaultIOStream.cpp then takes its old-CRT branch and calls _fstat32, which the 64-bit msvcrt
-    # import library does not export (link error "undefined reference to __imp__fstat32"). Older
-    # MinGW headers defaulted to 0x700, which picks _fstat64. Say 0x700 for Assimp only.
-    if(MINGW AND TARGET assimp)
-        target_compile_definitions(assimp PRIVATE __MSVCRT_VERSION__=0x700)
-    endif()
-    target_link_libraries(okay_engine PUBLIC assimp)
-    target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
-    target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
-    message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
-endif()
-
 # The platform seam (windows / events / GL context / timers / clipboard / audio device /
 # gamepad): see cmake/OkayPlatform.cmake. Everything that used SDL for those goes through it.
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
@@ -739,24 +682,16 @@ if(OKAY_PLATFORM_SDL_OPTIONS)
     set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
 endif()
 
-# The model reader defaults below (OKAY_PREFER_OWN_READERS_DEFAULT, OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they
-# are put on that one file: switching a reader's default rebuilds one file, not the whole engine.
-# Our own STL / PLY readers are always built. With Assimp also on, this picks which one
-# a format uses by default (docs/content/model_import.md); SetImportBackend() changes it at run time.
-if(OKAY_PREFER_OWN_READERS)
-    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_PREFER_OWN_READERS_DEFAULT)
-    message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
-endif()
-
-# Our own Collada (.dae) reader sits next to Assimp's. Default OFF: Assimp stays the .dae reader when the build
-# has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
-# -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
+# The model reader defaults below (OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they are put on that one
+# file: switching a reader's default rebuilds one file, not the whole engine. Every model reader is our own (Assimp was
+# removed on 2026-11-24); OBJ, STL, PLY, glTF and FBX have no switch. The rest are ON by default; a format switched off
+# (-DOKAY_OWN_<FMT>=OFF, OKAY_OWN_<FMT>=0 at run time) is not read at all.
 if(OKAY_OWN_COLLADA)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
 endif()
-# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
-# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+# Our own 3DS (.3ds) and BVH (.bvh) readers (run-time env OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend
+# override the build default).
 if(OKAY_OWN_3DS)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_3DS_DEFAULT)
     message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
@@ -765,37 +700,37 @@ if(OKAY_OWN_BVH)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
-# Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
+# Our own OFF (.off) reader (env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_OFF_DEFAULT)
     message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
 endif()
-# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+# Our own SMD reader (env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_SMD)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_SMD_DEFAULT)
     message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
 endif()
-# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+# Our own MD5 reader (env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MD5)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MD5_DEFAULT)
     message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
 endif()
-# Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
+# Our own MS3D reader (env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MS3D)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MS3D_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
 endif()
-# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+# Our own ASE reader (env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_ASE)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
-# Our own Blender (.blend) reader (docs/content/model_readers.md): same opt-in rules, default OFF.
+# Our own Blender (.blend) reader (docs/content/model_readers.md).
 if(OKAY_OWN_BLEND)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
-# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
+# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B).
 foreach(_fmt 3MF AMF X3D DXF LWO)
     if(OKAY_OWN_${_fmt})
         set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
@@ -803,7 +738,7 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
     endif()
 endforeach()
 
-# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5), same opt-in rules as 3DS: default OFF.
+# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5).
 # Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in a
 # foreach(_fmt ...) list of this file (or have a literal OKAY_OWN_<FMT>_DEFAULT definition), or its default is silently never
 # defined (a merge once dropped Terragen from this loop that way). Add a new reader's name to the literal list below.
@@ -893,6 +828,8 @@ get_property(_okay_mod_register GLOBAL PROPERTY OKAY_MODULE_REGISTER_SOURCES)
 target_sources(okay_engine PRIVATE
     src/Modules/ModuleManifest.cpp
     src/Modules/ModuleRegistry.cpp
+    src/Modules/ModuleMenus.cpp
+    src/Render/RenderContributions.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
     ${_okay_mod_register})
 

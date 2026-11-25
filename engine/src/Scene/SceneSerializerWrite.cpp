@@ -1,11 +1,14 @@
 // Writes one object's Transform and every component record (WriteComponentRecords). Moved unchanged from
 // SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
+#include "okay/Core/AssetDatabase.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -41,8 +44,6 @@
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/SequencePlayer.hpp"
-#include "okay/Components/VehicleController.hpp"
-#include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/Buoyancy.hpp"
 #include "okay/Components/BoatController.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -62,7 +63,6 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/Equipment.hpp"
-#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
@@ -208,7 +208,6 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
-#include "okay/Components/Crosshair.hpp"
 #include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
@@ -257,7 +256,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
             << " " << sr->sortingLayer
-            << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
+            << " " << (int)sr->texFilter;
+        {
+            // A named field at the end. Putting "guid <id>" in the middle shifted the
+            // positional fields PrefabTools compares (uv, sort, flips).
+            const std::string gid = SceneAssetGuid(sr->texture);
+            if (!gid.empty()) out << " guid=" << gid;
+        }
+        out << "\n";
     }
     for (auto* cam : go->GetComponents<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
@@ -1535,23 +1541,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << cc->acceleration << " " << cc->deceleration << " " << cc->airControl
             << " " << (cc->driveAnimation ? 1 : 0) << " " << (cc->footIK ? 1 : 0) << "\n";
     }
-    for (auto* v : go->GetComponents<VehicleController>()) {
-        out << "  vehicle " << v->acceleration << " " << v->maxSpeed << " " << v->reverseSpeed
-            << " " << v->brakeForce << " " << v->drag << " " << v->turnSpeed << " " << v->grip
-            << " " << v->handbrakeGrip << " " << v->groundCheckDistance
-            << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
-            << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
-        {   // the open-world settings that differ from the defaults, plus the wheel spacing (the model steers by it; it used to be saved only with suspension)
-            std::ostringstream tl; tl << v->ToLine();
-            if (std::fabs(v->wheelBase - 2.4f) > 1e-4f) tl << "wheelBase=" << v->wheelBase << " ";
-            if (std::fabs(v->trackWidth - 1.6f) > 1e-4f) tl << "trackWidth=" << v->trackWidth << " ";
-            if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
-        }   // the open-world settings that differ from the defaults
-        if (v->suspension)
-            out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
-                << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
-                << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
-    }
+    // vehicle, vehicletune and vehiclesusp are written by the vehicles module, here.
+    ModuleRegistry::Get();
+    if (ModuleRegistry::Get().IsEnabled("vehicles"))
+        if (auto entry = ComponentSerializerRegistry::Find("vehicle")) entry->write(*go, out);
     for (auto* bb : go->GetComponents<BlockBuilder>()) {
         out << "  blockbuilder " << bb->blockSize << " " << bb->reach << " "
             << bb->blockColor.r << " " << bb->blockColor.g << " " << bb->blockColor.b << " " << bb->blockColor.a
@@ -1795,24 +1788,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
         out << "  netinventory " << ni->range << " " << ni->maxPerSecond << " " << ni->cheatThreshold
             << " " << ni->maxRequestBytes << " " << (ni->hideUntilOpen ? 1 : 0) << " " << Quote(ni->saveDir) << "\n";
     }
-    for (auto* v2 : go->GetComponents<VehicleController2D>()) {
-        out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
-            << " " << v2->brakeForce << " " << v2->drag << " " << v2->turnSpeed << " " << v2->grip
-            << " " << v2->handbrakeGrip << " " << (v2->sideView ? 1 : 0)
-            << " " << (int)(unsigned char)v2->handbrakeKey << "\n";
-    }
-    for (auto* sv : go->GetComponents<SurvivalStats>()) {
-        out << "  survival " << sv->maxHealth << " " << sv->armor << " " << sv->regenWhenFed
-            << " " << sv->regenDelay << " " << sv->maxHunger << " " << sv->hungerDrain << " "
-            << sv->starveDamage << " " << sv->maxThirst << " " << sv->thirstDrain << " "
-            << sv->dehydrateDamage << " " << sv->maxStamina << " " << sv->staminaRegen << " "
-            << sv->sprintCost << " " << sv->sprintDrainMult << " " << sv->maxOxygen << " "
-            << sv->oxygenDrain << " " << sv->oxygenRefill << " " << sv->drownDamage << " "
-            << sv->maxWarmth << " " << sv->coldDrain << " " << sv->warmRegen << " "
-            << sv->freezeDamage << " " << (sv->publishPrefs ? 1 : 0) << " "
-            << (sv->publishBars ? 1 : 0) << " " << (sv->sendMessages ? 1 : 0)
-            << " " << sv->resistance << " " << (sv->godMode ? 1 : 0) << " " << sv->invincibleTime << "\n";
-    }
+    if (ModuleRegistry::Get().IsEnabled("vehicles"))
+        if (auto entry = ComponentSerializerRegistry::Find("vehicle2d")) entry->write(*go, out);
+    if (ModuleRegistry::Get().IsEnabled("survival"))
+        if (auto entry = ComponentSerializerRegistry::Find("survival")) entry->write(*go, out);
     auto statTail = [](std::ostream& o, StatComponent* c) {
         o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
           << " " << (c->sendMessages ? 1 : 0) << "\n";
@@ -2179,7 +2158,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
             << td->lookHeight << " " << td->cameraDamping
-            << " " << (td->footIK ? 1 : 0) << "\n";
+            << " " << (td->footIK ? 1 : 0);
+        if (td->stepOffset != 0.35f) out << " " << td->stepOffset;   // added later: written only when not the default
+        out << "\n";
     }
     for (auto* ts : go->GetComponents<TopDownShooterController>()) {
         out << "  tdsctrl";
@@ -2198,6 +2179,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        if (ts->stepOffset != 0.35f) k("step", ts->stepOffset);   // added later: written only when not the default
         if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
@@ -2306,8 +2288,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval;
         // extended (back-compatible trailing fields): click on colliders, give up when stuck. Written only when one differs
         // from its default, so a scene saved before they existed saves byte for byte the same (registry_serializer).
-        if (!cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
+        // The step limit comes after them (added later still), so it needs them written first.
+        const bool stepSet = cm->stepOffset != 0.35f;
+        if (stepSet || !cm->pickColliders || !cm->giveUpWhenStuck || cm->stuckTime != 1.0f)
             out << " " << (cm->pickColliders ? 1 : 0) << " " << (cm->giveUpWhenStuck ? 1 : 0) << " " << cm->stuckTime;
+        if (stepSet) out << " " << cm->stepOffset;
         out << "\n";
     }
     for (auto* ft : go->GetComponents<FollowTarget2D>()) {
@@ -2991,24 +2976,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             // --- appended (v3): icon texture, (v4): label ---
             << " " << Quote(bl->icon) << " " << Quote(bl->label) << "\n";
     }
-    for (auto* cr : go->GetComponents<Crosshair>()) {
-        out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
-            << cr->size.x << " " << cr->size.y << " "
-            << cr->color.r << " " << cr->color.g << " " << cr->color.b << " " << cr->color.a << " "
-            << cr->thickness << " " << cr->gap << " " << cr->length << " "
-            << (cr->showLines ? 1 : 0) << " " << (cr->dot ? 1 : 0) << " " << cr->dotSize << " "
-            << cr->dotColor.r << " " << cr->dotColor.g << " " << cr->dotColor.b << " " << cr->dotColor.a << " "
-            << (cr->outline ? 1 : 0) << " "
-            << cr->outlineColor.r << " " << cr->outlineColor.g << " " << cr->outlineColor.b << " " << cr->outlineColor.a
-            << " " << (int)cr->anchor;
-        // Style block (appended; numeric-peek guarded on read).
-        out << " " << (cr->lineUp ? 1 : 0) << " " << (cr->lineDown ? 1 : 0)
-            << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
-            << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
-            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a
-            << " " << cr->spreadRecover << " " << cr->spreadMax;   // grok/ui-hud
-        out << "\n";
-    }
+    // The crosshair record is written by the weapons module, at this same point in the
+    // object, so a save with every module on stays byte-identical.
+    ModuleRegistry::Get();
+    if (ModuleRegistry::Get().IsEnabled("weapons"))
+        if (auto entry = ComponentSerializerRegistry::Find("crosshair")) entry->write(*go, out);
     for (auto* sg : go->GetComponents<UISlotGrid>()) {
         out << "  uislotgrid " << sg->position.x << " " << sg->position.y << " " << (int)sg->anchor << " "
             << sg->columns << " " << sg->rows << " " << sg->cell.x << " " << sg->cell.y << " " << sg->gap << " "

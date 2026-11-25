@@ -6,6 +6,94 @@ using namespace okay;
 int main() {
     RUN_SUITE("spriteanim");
 
+    // Adding an animator also adds the sprite it drives, when the object has none.
+    {
+        Scene scene("Need");
+        GameObject* go = scene.CreateGameObject("Hero");
+        go->AddComponent<SpriteAnimator>();
+        CHECK(go->GetComponent<SpriteRenderer>() != nullptr);
+    }
+
+    // A saved scene that lists the animator before the sprite keeps the one sprite from the file.
+    {
+        const char* text =
+            "okayscene 3\n"
+            "gameobject 0 \"Hero\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "  sprite 64 1 1 1 1 32 32 \"b.png\"\n"
+            "end\n";
+        Scene loaded("File");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        GameObject* go = loaded.Find("Hero");
+        CHECK(go != nullptr);
+        int sprites = 0;
+        if (go) for (auto* s : go->GetComponents<SpriteRenderer>()) { (void)s; ++sprites; }
+        CHECK(sprites == 1);
+        CHECK(go && go->GetComponent<SpriteRenderer>() && go->GetComponent<SpriteRenderer>()->texture == "b.png");
+        CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+    }
+
+    // An older scene with an animator and no sprite loads as it was saved: no default sprite appears.
+    {
+        const char* text =
+            "okayscene 3\n"
+            "gameobject 0 \"Lone\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "end\n";
+        Scene loaded("Old");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        GameObject* go = loaded.Find("Lone");
+        CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+        CHECK(go && go->GetComponent<SpriteRenderer>() == nullptr);
+        // A copy of it (Instantiate goes through the same reader) does not gain one either.
+        GameObject* copy = go ? loaded.Instantiate(*go) : nullptr;
+        CHECK(copy && copy->GetComponent<SpriteRenderer>() == nullptr);
+    }
+
+    // The async loader (SceneLoadJob, a few objects per frame) follows the same rule as Deserialize.
+    {
+        auto countSprites = [](GameObject* go) {
+            int n = 0;
+            if (go) for (auto* s : go->GetComponents<SpriteRenderer>()) { (void)s; ++n; }
+            return n;
+        };
+        const char* both =
+            "okayscene 3\n"
+            "gameobject 0 \"Hero\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "  sprite 64 1 1 1 1 32 32 \"b.png\"\n"
+            "end\n";
+        for (int additive = 0; additive < 2; ++additive) {
+            Scene scene("Job");
+            auto job = SceneLoadJob::OpenText(both, additive != 0);
+            std::string err;
+            for (int i = 0; i < 100 && job && !job->Finished(); ++i) CHECK(job->Step(scene, 1, &err));
+            GameObject* go = scene.Find("Hero");
+            CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+            CHECK(countSprites(go) == 1);
+        }
+        const char* lone =
+            "okayscene 3\n"
+            "gameobject 0 \"Lone\"\n"
+            "  transform 0 0 0 0 0 0 1 1 1 1\n"
+            "  spriteanim 8 1 0 1 \"a.png\"\n"
+            "end\n";
+        for (int additive = 0; additive < 2; ++additive) {
+            Scene scene("JobLone");
+            auto job = SceneLoadJob::OpenText(lone, additive != 0);
+            std::string err;
+            for (int i = 0; i < 100 && job && !job->Finished(); ++i) CHECK(job->Step(scene, 1, &err));
+            GameObject* go = scene.Find("Lone");
+            CHECK(go && go->GetComponent<SpriteAnimator>() != nullptr);
+            CHECK(countSprites(go) == 0);
+        }
+    }
+
     // --- Animator drives the SpriteRenderer's texture over time ---
     {
         Scene scene("Anim");

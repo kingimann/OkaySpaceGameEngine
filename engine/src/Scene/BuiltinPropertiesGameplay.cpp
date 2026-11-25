@@ -18,8 +18,8 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
-#include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
@@ -378,6 +378,7 @@ void RegisterTopDownController() {
      .AddFloat("turnSpeed", &TopDownController::turnSpeed).Range(0, 36000, 1).Tooltip("How fast the body turns, degrees per second (0 = snap)")
      .AddFloat("acceleration", &TopDownController::acceleration).Range(0, kBig, 1).Tooltip("Momentum: ramp horizontal velocity toward the target (units/s^2)")
      .AddFloat("deceleration", &TopDownController::deceleration).Range(0, kBig, 1).Tooltip("How fast the speed drops with no input (units/s^2, 0 = instant)")
+     .AddFloat("stepOffset", &TopDownController::stepOffset).Range(0, 2, 0.01).Tooltip("Highest ledge (metres) climbed when moving with no Rigidbody3D. 0 = off")
      .AddBool("cameraRelative", &TopDownController::cameraRelative).Tooltip("Movement axes: world-aligned (W = +world Z forward) or relative to the camera yaw")
      .Section("Camera")
      .AddFloat("cameraDistance", &TopDownController::cameraDistance).Range(0, kBig, 0.05).Tooltip("How far the camera sits from the player")
@@ -454,6 +455,7 @@ void RegisterClickToMoveController() {
      .AddFloat("stopDistance", &ClickToMoveController::stopDistance).Range(0, kBig, 0.05).Tooltip("How close counts as \"arrived\"")
      .AddFloat("arriveRadius", &ClickToMoveController::arriveRadius).Range(0, kBig, 0.05).Tooltip("Ease to a stop over the last this-many metres")
      .AddFloat("turnSpeed", &ClickToMoveController::turnSpeed).Range(0, 36000, 1).Tooltip("How fast the body turns toward travel")
+     .AddFloat("stepOffset", &ClickToMoveController::stepOffset).Range(0, 2, 0.01).Tooltip("Highest ledge (metres) climbed when moving with no Rigidbody3D. 0 = off")
      .AddInt("mouseButton", &ClickToMoveController::mouseButton).Range(0, 4, 1).Tooltip("Which button sets the destination (0=left)")
      .AddBool("holdToMove", &ClickToMoveController::holdToMove).Tooltip("Hold the button to keep retargeting (else single clicks)")
      .AddBool("driveAnimation", &ClickToMoveController::driveAnimation).Tooltip("Animate a sibling Character from movement")
@@ -553,6 +555,7 @@ void RegisterTopDownShooterController() {
      .AddFloat("deceleration", &TopDownShooterController::deceleration).Range(0, kBig, 1).Tooltip("How fast the speed drops with no input (units/s^2, 0 = instant)")
      .AddFloat("backpedalMultiplier", &TopDownShooterController::backpedalMultiplier).Range(0, 1000, 0.01).Tooltip("Speed when moving away from the aim")
      .AddBool("cameraRelative", &TopDownShooterController::cameraRelative).Tooltip("WASD follows the camera yaw instead of world axes")
+     .AddFloat("stepOffset", &TopDownShooterController::stepOffset).Range(0, 2, 0.01).Tooltip("Highest ledge (metres) climbed when moving with no Rigidbody3D. 0 = off")
      .AddBool("driveAnimation", &TopDownShooterController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
      .Section("Aim")
      .AddEnum("aimMode", &TopDownShooterController::aimMode, {"Mouse", "MoveDirection", "Auto"}).Tooltip("Where the player aims: mouse, movement direction, or automatic")
@@ -1126,27 +1129,6 @@ void RegisterJoint3D() {
     b.Commit();
 }
 
-// DayNightCycle
-void RegisterDayNightCycle() {
-    PropertyBuilder<DayNightCycle> b("DayNightCycle", "daynight", "Environment");
-    b.AddFloat("dayLengthSeconds", &DayNightCycle::dayLengthSeconds).Range(0, kBig, 1).Tooltip("Real seconds for a full 24h day")
-     .AddFloat("time", &DayNightCycle::time).Range(0, 24, 0.1).Tooltip("Current time of day, hours [0,24)")
-     .AddBool("paused", &DayNightCycle::paused)
-     .AddBool("controlSun", &DayNightCycle::controlSun).Tooltip("Drive the sun Light (intensity/color/ambient)")
-     .AddBool("rotateSun", &DayNightCycle::rotateSun).Tooltip("Rotate the sun Light's transform across the sky")
-     .AddBool("controlSky", &DayNightCycle::controlSky).Tooltip("Drive the main camera's background color")
-     .AddFloat("dayIntensity", &DayNightCycle::dayIntensity).Range(0, 1000, 0.05)
-     .AddFloat("nightIntensity", &DayNightCycle::nightIntensity).Range(0, 1000, 0.05)
-     .AddFloat("dayAmbient", &DayNightCycle::dayAmbient).Range(0, 1, 0.01)
-     .AddFloat("nightAmbient", &DayNightCycle::nightAmbient).Range(0, 1, 0.01)
-     .AddColor("dayLight", &DayNightCycle::dayLight).Range(0, 1, 0.01).Tooltip("Midday white")
-     .AddColor("nightLight", &DayNightCycle::nightLight).Range(0, 1, 0.01).Tooltip("Cool moonlight")
-     .AddColor("skyDay", &DayNightCycle::skyDay).Range(0, 1, 0.01).Tooltip("Clear blue")
-     .AddColor("skyHorizon", &DayNightCycle::skyHorizon).Range(0, 1, 0.01).Tooltip("Sunrise/sunset orange")
-     .AddColor("skyNight", &DayNightCycle::skyNight).Range(0, 1, 0.01).Tooltip("Deep night");
-    b.Commit();
-}
-
 // Water
 void RegisterWater() {
     PropertyBuilder<Water> b("Water", "water", "Environment");
@@ -1585,7 +1567,9 @@ void RegisterGameplayProperties() {
     RegisterFlashlight();
     RegisterJoint2D();
     RegisterJoint3D();
-    RegisterDayNightCycle();
+    // DayNightCycle's fields are registered by the sky_weather module (its register.cpp).
+    // Asking for the module list runs that hook, and every other module hook.
+    ModuleRegistry::Get();
     RegisterWater();
     RegisterBuoyancy();
     RegisterBoatController();

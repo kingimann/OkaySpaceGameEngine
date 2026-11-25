@@ -197,6 +197,21 @@ class Collisions(unittest.TestCase):
         r.write("scripts/x.py", "print(2)\n"); r.commit("more"); sh(r.d, "update-ref", "refs/remotes/origin/claude2/b", "HEAD"); sh(r.d, "checkout", "-q", "main")
         self.assertEqual(self.rep()["overlaps"], [])
 
+    def test_archived_branch_is_not_live(self):
+        r = self.r
+        body = "\n".join(f"int v{i} = compute_something_long({i}, alpha, beta, gamma, delta);" for i in range(30)) + "\n"
+        r.branch("claude2/old", {"engine/src/Components/A.cpp": body})
+        r.branch("claude/new", {"engine/src/Components/B.cpp": body})
+        self.assertTrue(CC.fails_for_branch(self.rep(only_branch="claude/new"), "claude/new"))
+        tip = subprocess.run(["git", "-C", r.d, "rev-parse", "origin/claude2/old"], stdout=subprocess.PIPE, text=True).stdout.strip()
+        tree = subprocess.run(["git", "-C", r.d, "rev-parse", "origin/main^{tree}"], stdout=subprocess.PIPE, text=True).stdout.strip()
+        arch = subprocess.run(["git", "-C", r.d, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", tree, "-p", "origin/main", "-p", tip, "-m", "archive"],
+                              stdout=subprocess.PIPE, text=True).stdout.strip()
+        sh(r.d, "update-ref", "refs/remotes/origin/claude2/archive", arch)
+        rep = self.rep(only_branch="claude/new")
+        self.assertEqual(CC.fails_for_branch(rep, "claude/new"), [])
+        self.assertNotIn("claude2/old", [o["a"] for o in rep["overlaps"]] + [o["b"] for o in rep["overlaps"]])
+
     def test_stacked_after_the_lower_branch_moved_on(self):
         """Bug found by CI on 2026-11-22 (#1131/#1134): b was built on an earlier commit of a; then a got more commits
         (main merged in). Neither tip is an ancestor of the other any more, but they still share unmerged commits:

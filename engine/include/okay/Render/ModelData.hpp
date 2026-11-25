@@ -1,16 +1,16 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// ModelData — the seam between the engine and any third-party model importer.
+// ModelData — the seam between the engine and its model readers.
 //
 //   * ImportedModel is OUR result type (nodes, mesh parts, materials, skeleton
-//     weights, animation clips). No Assimp (or other library) type appears here.
-//   * ImportModelData() is the single entry point that picks a backend for a
-//     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
+//     weights, animation clips). No library type appears here.
+//   * ImportModelData() is the single entry point that picks the reader for a
+//     format. Every reader is our own (Assimp was removed on 2026-11-24).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
 //     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, OpenGEX, Quake 1 / Half-Life 1 MDL, Quake III BSP, glTF 1.0, PMX, LWS / MOT) are
-//     always compiled in. Which backend a format uses is a per-format switch
-//     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
+//     always compiled in. Each format after PLY has a switch (OKAY_OWN_<FMT>, CMake and environment, ON by
+//     default; SetImportBackend in code); a format switched off is not read.
 //
 // See docs/content/model_import.md.
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ struct ImportedModel {
     std::vector<ImportedPart>     parts;
     std::vector<ImportedMaterial> materials;
     std::vector<ImportedClip>     clips;
-    std::string backend;            ///< "own" or "assimp" — who produced this
+    std::string backend;            ///< "own" — who produced this (every reader is ours)
     /// Parts of the file the reader did not read (or read only partly), one line each.
     /// Our own readers fill this instead of dropping content silently; ImportModelData
     /// also logs each line as a warning. Empty = everything in the file was read.
@@ -126,9 +126,8 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// smooth normals are generated.
 bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// True when `path` is a PLY whose header declares `element vertex` more than once.
-/// Our reader rejects that file. Assimp still loads it, and the two blocks' normals
-/// and UVs no longer line up with positions, so the import seam refuses it before
-/// either backend runs. A missing file, or a PLY with one vertex element, is false.
+/// Our reader rejects that file (the two blocks' normals and UVs would not line up
+/// with positions), and the import seam refuses it before any reader runs. A missing file, or a PLY with one vertex element, is false.
 bool PlyFileDeclaresDuplicateVertex(const std::string& path);
 
 /// COLLADA (.dae) 1.4 / 1.5. Reads geometry (triangles, polylist, polygons; fan-triangulated,
@@ -216,7 +215,7 @@ bool ReadMd3Buffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per `<buffer>` (vertices of type
 /// standard, 2tcoords or tangents; triangle indices), with the buffer's material: diffuse and emissive colour,
 /// shininess, the first texture, and the second texture as the normal map for normalmap / parallaxmap types. Texture
-/// coordinates, coordinates and winding as written (Irrlicht is left-handed; Assimp keeps them too); no root rotation.
+/// coordinates, coordinates and winding as written (Irrlicht is left-handed); no root rotation.
 /// Second texture coordinates, tangents, vertex colours, lightmaps and material flags are not read (reported in
 /// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths). The Irrlicht scene
 /// format (.irr) is not read.
@@ -404,10 +403,6 @@ bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
 bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
-/// True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
-/// crashed the import), or the file is one the check does not model (UTF-16, very long lines). The import seam then reads the
-/// file with our RAW reader instead of handing it to Assimp. Errs on the side of true.
-bool RawFileUnsafeForAssimp(const std::string& path);
 bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is a .lws scene or a .mot motion file.
 bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
@@ -454,8 +449,7 @@ bool ReadQ3bspBuffer(const std::string& bytes, ImportedModel& out, std::string* 
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/content/model_import.md)
-    Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
-    Assimp     ///< Assimp; only when AssimpAvailable()
+    Own        ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
@@ -469,7 +463,7 @@ bool HasOwnReader(const std::string& ext);
 /// reader (nothing to switch). Not meant to be flipped while another thread imports.
 bool SetImportBackend(const std::string& ext, ImportBackend which);
 /// The backend a read of `ext` will actually use right now, after defaults and
-/// fallbacks: Own, Assimp, or Default when no backend reads that format.
+/// switches: Own, or Default when no reader reads that format (none, or switched off).
 ImportBackend EffectiveImportBackend(const std::string& ext);
 
 /// Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
@@ -477,7 +471,7 @@ ImportBackend EffectiveImportBackend(const std::string& ext);
 /// own reader in it; it is public so a test can check it with a reader that throws.
 bool RunReaderGuarded(const std::function<bool()>& read, std::string& err);
 
-/// The single entry point for every Assimp / own-reader read. Reads `path` with
+/// The single entry point for every model reader read. Reads `path` with
 /// the chosen backend (`which` = Default: per-format switch). `flatten` is
 /// the legacy "one static mesh" mode: node transforms are baked into the
 /// vertices and no skins or clips are returned. Returns false with `err` set when

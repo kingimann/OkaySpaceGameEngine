@@ -11254,6 +11254,12 @@ static void MarketDemoListings(const std::string& mode, std::vector<okay::Worksh
                     }
     it(43, "Orbit Hopper", "maya", "game", "Hop between tiny planets, collect stardust and dodge comets. Made for Game Jam #12.", 3480, 45, 10);
     it(44, "Crystal Caverns (level)", "jonas", "scene", "A cave level with glowing crystals and a hidden room.", 760, 17, 4);
+    if (mode == "one") {   // a nearly empty marketplace: one listing by a long name, and one of mine still in review
+        out.erase(out.begin() + 1, out.end());
+        out[0].author = "imanfakhargomi";
+        okay::WorkshopItem mine = out[0]; mine.id = 90; mine.title = "My first game"; mine.author = "starpilot"; mine.status = "rejected";
+        out.push_back(mine);
+    }
 }
 
 // Loading placeholders for a grid of cards (the Marketplace tiles, the Community showcase): two rows of grey cards, each with
@@ -18563,7 +18569,7 @@ int main(int argc, char** argv) {
                     if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
                     const bool besidePill = mp.railShown;   // the fold button (beside the grid only; the popup closes on a click outside)
                     const float fd = UiPx(28.0f);
-                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
+                    SearchPill("##mktsearch", besidePill ? "Search" : "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
                     if (besidePill) {
                         ImGui::SameLine(0, UiPx(8.0f));
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (mktBtnH - fd) * 0.5f);

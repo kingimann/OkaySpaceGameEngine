@@ -36,6 +36,17 @@ struct atomic {
     bool compare_exchange_weak(T& expected, T desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
     }
+    // The forms with a separate order for success and for failure ([atomics.types.operations] 21).
+    bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
+    bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     T fetch_add(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ + arg; return old; }
     T fetch_sub(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ - arg; return old; }
     T fetch_and(T arg, memory_order = memory_order_seq_cst) { T old = v_; v_ = v_ & arg; return old; }
@@ -75,6 +86,16 @@ struct atomic<float> {
     bool compare_exchange_weak(float& expected, float desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
     }
+    bool compare_exchange_strong(float& expected, float desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
+    bool compare_exchange_weak(float& expected, float desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     float fetch_add(float arg, memory_order = memory_order_seq_cst) { float old = v_; v_ = v_ + arg; return old; }
     float fetch_sub(float arg, memory_order = memory_order_seq_cst) { float old = v_; v_ = v_ - arg; return old; }
     bool is_lock_free() const { return true; }
@@ -104,6 +125,16 @@ struct atomic<double> {
     bool compare_exchange_weak(double& expected, double desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
     }
+    bool compare_exchange_strong(double& expected, double desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
+    bool compare_exchange_weak(double& expected, double desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     double fetch_add(double arg, memory_order = memory_order_seq_cst) { double old = v_; v_ = v_ + arg; return old; }
     double fetch_sub(double arg, memory_order = memory_order_seq_cst) { double old = v_; v_ = v_ - arg; return old; }
     bool is_lock_free() const { return true; }
@@ -131,6 +162,16 @@ struct atomic<T*> {
         return false;
     }
     bool compare_exchange_weak(T*& expected, T* desired, memory_order = memory_order_seq_cst) {
+        return compare_exchange_strong(expected, desired);
+    }
+    bool compare_exchange_strong(T*& expected, T* desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
+    bool compare_exchange_weak(T*& expected, T* desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
         return compare_exchange_strong(expected, desired);
     }
     T* fetch_add(long long arg, memory_order = memory_order_seq_cst) { T* old = v_; v_ = v_ + arg; return old; }

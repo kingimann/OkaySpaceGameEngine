@@ -4,6 +4,9 @@
 -- Friends and Workshop/Marketplace tabs use. Nothing in the app requires this
 -- until you run it; achievements work locally without any of it.
 --
+-- The *_name columns (actor_name, author_name, ...) are filled by the server
+-- from profiles once docs/sql/public_names.sql has run; never trust the client's.
+--
 -- Columns that identify "me" (profiles.id, friendships.requester,
 -- workshop_items.author) DEFAULT to auth.uid(), so the client never sends its
 -- own user id — Postgres fills it from the signed-in JWT, and RLS enforces it.
@@ -47,13 +50,15 @@ create policy "insert own profile"    on public.profiles for insert with check (
 create policy "update own profile"    on public.profiles for update using (auth.uid() = id);
 
 -- Auto-create a profile row on signup, taking the username from the signup
--- metadata (the launcher/editor send it), else the email local-part.
+-- metadata (the launcher/editor send it), else the email local-part. Never an
+-- email: anything from an '@' on is cut off (public_names.sql relies on this).
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, username)
-  values (new.id, coalesce(nullif(new.raw_user_meta_data->>'username',''),
-                           split_part(new.email, '@', 1)))
+  values (new.id, coalesce(nullif(btrim(split_part(coalesce(nullif(new.raw_user_meta_data->>'username',''),
+                                                             new.email, ''), '@', 1)), ''),
+                           'player_' || left(new.id::text, 8)))
   on conflict (id) do nothing;
   return new;
 end; $$;
@@ -105,6 +110,8 @@ drop policy if exists "see friends activity" on public.activity;
 drop policy if exists "post own activity"    on public.activity;
 drop policy if exists "prune own activity"   on public.activity;
 -- Readable when the actor is me or an accepted friend of mine.
+-- actor = auth.uid() stays on purpose: the profile page, the data export and pruning
+-- read your own rows; the Friends feed filters actor=neq.<me> (tests/sql/test_public_names.sql).
 create policy "see friends activity" on public.activity for select using (
   actor = auth.uid() or actor in (
     select case when requester = auth.uid() then addressee else requester end

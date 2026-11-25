@@ -2,7 +2,7 @@
 
 # Code index: engine-Input
 
-Back to the [code index](../code_index.md). 22 headers, 113 names.
+Back to the [code index](../code_index.md). 22 headers, 115 names.
 
 ## `engine/include/okay/Input/ActionEditor.hpp`
 
@@ -106,8 +106,8 @@ Back to the [code index](../code_index.md). 22 headers, 113 names.
 
 ## `engine/include/okay/Input/InputActions.hpp`
 
-- `InputBinding` struct, line 24: One input a game action listens to, written as text so it saves and shows
-- `InputActions` class, line 59: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
+- `InputBinding` struct, line 27: One input a game action listens to, written as text so it saves and shows
+- `InputActions` class, line 62: Named game actions ("Jump", "Move", "Fire") that games read instead of raw
 
 ## `engine/include/okay/Input/InputAsset.hpp`
 
@@ -154,15 +154,17 @@ Back to the [code index](../code_index.md). 22 headers, 113 names.
 - `ReadPadRaw` function, line 32: The pad's numbered axes, buttons and hats as they are now (empty for a backend that has no raw access).
 - `LooksLikeGamepad` function, line 42: A raw joystick worth offering as a controller: sticks and some buttons, or plenty of buttons.
 - `FeedPadAt` function, line 50: Feed one controller's state as player 'player' (pad may be null: empty slot).
-- `FeedPad` function, line 103: Feed this frame's first controller (pad may be null: nothing connected).
-- `PadSet` class, line 113: Up to Input::kMaxGamepads controllers, one per player slot. A pad takes the slot it had
+- `FeedPad` function, line 105: Feed this frame's first controller (pad may be null: nothing connected).
+- `PadSet` class, line 115: Up to Input::kMaxGamepads (8) controllers, one per player slot. A pad takes the slot it had
 
 ## `engine/include/okay/Input/PlatformKeys.hpp`
 
-- `KeyForLetter` function, line 18: The key a letter or digit is on. 'found' is what the layout reported for that character
-- `TapCharsForKey` function, line 33: The characters Input.FeedKeys uses for platform key 'k', for Input::FeedKeyTap: the letter
-- `AppendHeldMainKeys` function, line 58: Add the characters Input::FeedKeys takes for the main keys held right now: letters and digits by the layout
-- `AppendExtendedKeys` function, line 84: Add every held extended key to 'down' (the vector given to Input::FeedKeys).
+- `KeyForLetter` function, line 19: The key a letter or digit is on. 'found' is what the layout reported for that character
+- `TapCharsForKey` function, line 34: The characters Input.FeedKeys uses for platform key 'k', for Input::FeedKeyTap: the letter
+- `AppendHeldMainKeys` function, line 59: Add the characters Input::FeedKeys takes for the main keys held right now: letters and digits by the layout
+- `AppendExtendedKeys` function, line 88: Add every held extended key to 'down' (the vector given to Input::FeedKeys): F1-F12, Tab, the navigation block,
+- `InputMouseMask` function, line 120: The Input::FeedMouse button mask (bit 0 left, 1 right, 2 middle, 3 and 4 the side buttons) for a platform mouse
+- `InputMouseButton` function, line 130: The Input mouse button (0..4) of a platform MouseButton (an event's 'button'), or -1.
 
 ## `engine/include/okay/Input/PlayerInput.hpp`
 

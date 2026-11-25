@@ -347,7 +347,8 @@ int main() {
         CHECK(InputBinding::Parse("stick:left@2").ToString() == "stick:left@2");
         CHECK(InputBinding::Parse("dpad@1").ToString() == "dpad@1");
         CHECK(InputBinding::Parse("pad:rt@3").player == 3);
-        CHECK(InputBinding::Parse("pad:a@4").kind == InputBinding::Kind::None);
+        CHECK(InputBinding::Parse("pad:a@7").player == 7);                       // eight controllers (Input::kMaxGamepads)
+        CHECK(InputBinding::Parse("pad:a@8").kind == InputBinding::Kind::None);
         CHECK(InputBinding::Parse("pad:a@x").kind == InputBinding::Kind::None);
         CHECK(InputBinding::Parse("key:@").kind == InputBinding::Kind::Key);   // '@' as a key is still a key
         CHECK(InputBinding::Parse("key:space@1").kind == InputBinding::Kind::None);

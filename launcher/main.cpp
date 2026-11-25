@@ -36,7 +36,7 @@
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client first, curl only as its last fallback (downloads, size probes)
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client (downloads, size probes)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
 #include "okay/Platform/Achievements.hpp"
@@ -372,7 +372,7 @@ void NoteReleaseDates(const okayversions::Index& idx) {
     if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 
-// URLs reach curl / wget / powershell / the browser through a shell command
+// URLs reach the browser through a shell command
 // line wrapped in quotes, and many come from other people (chat links, GIFs,
 // stickers, marketplace items). Only let through an http(s) URL made of plain
 // URL characters: nothing that can close the quotes or expand inside them
@@ -415,7 +415,7 @@ std::string BustCache(const std::string& url) {
 // Run a shell command. On Windows, run it WITHOUT flashing a console window
 // (CREATE_NO_WINDOW), which is why we don't use std::system there — every
 // std::system call would otherwise pop a cmd window. wait=true blocks and
-// returns the exit code (curl/powershell); wait=false fires and forgets
+// returns the exit code; wait=false fires and forgets
 // (launching apps, opening URLs).
 int RunCmd(const std::string& cmd, bool wait) {
 #if defined(_WIN32)
@@ -437,37 +437,17 @@ int RunCmd(const std::string& cmd, bool wait) {
 #endif
 }
 
-// Download a URL to a file: the HTTP seam (WinHTTP on Windows, our own client on Linux when on, curl only as its last
-// fallback), then PowerShell / wget when nothing else could fetch it. `onBytes` (optional) gets the bytes so far.
+// Download a URL to a file through the HTTP seam (NativeFetch.hpp: WinHTTP on Windows, our own client on Linux; no
+// outside program). `onBytes` (optional) gets the bytes so far. A temporary file is renamed when complete, a drop resumes
+// with Range, retries back off; any failure (404, full disk, too big, no answer) is final, like curl -f.
 bool Download(const std::string& url, const fs::path& out, const std::function<void(uint64_t)>& onBytes,
               const std::function<bool()>& cancelled) {
     std::error_code ec; fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
-    std::string u = BustCache(url);
-    const std::string outUtf = okay::restart::Utf8(out);
-    // Temporary file renamed when complete, resume after a drop, retries with backoff. A clear answer (404, full disk,
-    // too big) ends it like curl -f; only "nothing could fetch it" goes on to the last resort below.
     okay::http::OwnDownloadSpec sp;
     sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
     sp.connectMs = 30000; sp.onBytes = onBytes; sp.cancelled = cancelled;
-    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(u, out, sp);
-    if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-    if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
-    if (cancelled && cancelled()) return false;   // given up on: no last resort that would write `out` later
-#if defined(_WIN32)
-    auto psQuote = [](const std::string& s) {
-        std::string o; o.reserve(s.size());
-        for (char c : s) { if (c == '\'') o += "''"; else o += c; }
-        return o;
-    };
-    const std::string script =
-        "try { Invoke-WebRequest -Headers @{'Cache-Control'='no-cache'} "
-        "-UseBasicParsing -Uri '" + psQuote(u) + "' -OutFile '" + psQuote(outUtf) +
-        "' } catch { exit 1 }";
-    return okay::restart::RunAndWait({"powershell", "-NoProfile", "-Command", script}) == 0 && fs::exists(out);
-#else
-    return okay::restart::RunAndWait({"wget", "-q", "--no-cache", "-O", outUtf, u}) == 0 && fs::exists(out);
-#endif
+    return okay::http::FetchToFile(BustCache(url), out, sp).outcome == okay::http::OwnOutcome::Ok;
 }
 
 // ---- Download manager ------------------------------------------------------
@@ -484,7 +464,7 @@ bool Download(const std::string& url, const fs::path& out, const std::function<v
 // redirect chain reports the final resource's size).
 long long HeadSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
-    std::string dump;   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
+    std::string dump;   // the HTTP seam: WinHTTP / our own client
     if (!okay::http::HeadDump(url, "OkaySpace-Launcher", dump)) return 0;
     return okay::netguard::ParseLastContentLength(dump);
 }
@@ -519,9 +499,9 @@ int DlWorker(void* data) {
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    // The HTTP seam: WinHTTP / our own client first (a drop resumes with Range), curl only as the last fallback.
+    // The HTTP seam: WinHTTP / our own client (a drop resumes with Range).
     okay::http::OwnDownloadSpec sp;
-    sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2; sp.stallSeconds = 0;
+    sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2;
     sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
     sp.cancelled = [&] { bool c; okay::thr::LockMutex(g_dlMutex); c = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex); return c; };
     const okay::http::OwnDownloadResult r = okay::http::FetchToFile(d->url, fs::path(d->part), sp);
@@ -698,7 +678,7 @@ static fs::path LauncherDirPath() {
 // progress bar can show a percentage. Returns 0 when unknown (indeterminate).
 long long RemoteSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
-    std::string dump;   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
+    std::string dump;   // the HTTP seam: WinHTTP / our own client
     if (!okay::http::HeadDump(BustCache(url), "", dump)) return 0;
     return okay::netguard::ParseLastContentLength(dump);
 }
@@ -10675,23 +10655,22 @@ static std::string OfficialFetchCover(const og::Manifest& m) {
 }
 
 // Download one file to `out`, cancelable, through the HTTP seam (WinHTTP / our own
-// client first, curl only as its last fallback) so Cancel can stop it mid-file, with
-// the launcher's usual Download() as the fallback when nothing could fetch it or the
-// server refused. `before` = bytes already done, for the progress bar. Only the URL
+// client) so Cancel can stop it mid-file, with one more try through the launcher's
+// usual Download() (no-cache headers, a cache-busting query) when it failed. `before` = bytes already done, for the progress bar. Only the URL
 // (checked, percent-encoded) and our own path are used, never a name from the manifest.
 static bool OfficialFetchFile(const std::string& url, const fs::path& out, long long before) {
     std::error_code ec;
     fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
     okay::http::OwnDownloadSpec sp;
-    sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2; sp.stallSeconds = 0;
+    sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2;
     sp.onBytes = [&](uint64_t n) { OffLocked([&] { g_off.bytesNow = before + (long long)n; }); };
     sp.cancelled = [] { return OfficialCancelled(); };
     const okay::http::OwnDownloadResult r = okay::http::FetchToFile(url, out, sp);
     if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(out, ec); return false; }
     if (r.outcome == okay::http::OwnOutcome::Ok) return true;
     if (OfficialCancelled()) return false;
-    // A clear refusal or no answer: the launcher's Download() gets its turn, as after a failed transfer before.
+    // A refusal or no answer: one more try past the CDN cache.
     if (!Download(url, out)) { fs::remove(out, ec); return false; }
     return fs::exists(out, ec);
 }

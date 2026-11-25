@@ -96,7 +96,7 @@ public:
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
             if (gameObject && gameObject->scene())
-                ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
+                ResolvePlayerBody(*gameObject->scene(), gameObject, Mathf::Max(0.0f, stepOffset));   // no clipping; stepOffset is the tallest ledge climbed
         }
 
         if (rotateToFace && moving) {

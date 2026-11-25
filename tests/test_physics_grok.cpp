@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1078,6 +1079,41 @@ int main() {
             CHECK(run(which, 0.2f, 0.3f, "stepOffset 0.2") < 0.05f);
             CHECK(run(which, -1.0f, 0.25f, "default stepOffset") > 0.2f);
             CHECK(run(which, 0.3f, 0.25f, "stepOffset 0.3") > 0.2f);
+        }
+    }
+
+    // The top-down, top-down shooter and click-to-move step settings are saved and loaded; the default is not written.
+    RUN_SUITE("controller step settings save and load");
+    {
+        Scene s("steps");
+        auto* a = s.CreateGameObject("TopDown");    a->AddComponent<TopDownController>()->stepOffset = 0.1f;
+        auto* b = s.CreateGameObject("Shooter");    b->AddComponent<TopDownShooterController>()->stepOffset = 0.2f;
+        auto* c = s.CreateGameObject("Click");      c->AddComponent<ClickToMoveController>()->stepOffset = 0.05f;
+        auto* d = s.CreateGameObject("ClickDefault"); d->AddComponent<ClickToMoveController>();
+        auto* e = s.CreateGameObject("TopDownDefault"); e->AddComponent<TopDownController>();
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("steps");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        auto step = [&](const char* name, auto* tag) -> float {
+            using T = std::remove_pointer_t<decltype(tag)>;
+            GameObject* go = loaded.Find(name);
+            T* comp = go ? go->GetComponent<T>() : nullptr;
+            return comp ? comp->stepOffset : -1.0f;
+        };
+        CHECK_NEAR(step("TopDown", (TopDownController*)nullptr), 0.1f, 1e-6f);
+        CHECK_NEAR(step("Shooter", (TopDownShooterController*)nullptr), 0.2f, 1e-6f);
+        CHECK_NEAR(step("Click", (ClickToMoveController*)nullptr), 0.05f, 1e-6f);
+        CHECK_NEAR(step("ClickDefault", (ClickToMoveController*)nullptr), 0.35f, 1e-6f);
+        CHECK_NEAR(step("TopDownDefault", (TopDownController*)nullptr), 0.35f, 1e-6f);
+        // The click-to-move line of the default object still ends where it did before the step setting existed.
+        Scene plain("plain");
+        plain.CreateGameObject("C")->AddComponent<ClickToMoveController>();
+        const std::string pt = SceneSerializer::Serialize(plain);
+        const auto at = pt.find("ctmctrl");
+        CHECK(at != std::string::npos);
+        if (at != std::string::npos) {
+            const std::string line = pt.substr(at, pt.find('\n', at) - at);
+            CHECK(line.find("0.35") == std::string::npos);
         }
     }
 

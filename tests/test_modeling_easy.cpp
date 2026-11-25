@@ -1,6 +1,7 @@
 // The beginner layer of the Modeling window (editor/ModelingEasy.hpp): plain names, no jargon, hints, quick actions,
 // recent tools and the click-count table. Pure logic, no ImGui.
 #include "ModelingEasy.hpp"
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -140,6 +141,26 @@ int main() {
             CHECK(!ss.str().empty());
             CHECK(ss.str().find("showAdvanced") == std::string::npos && ss.str().find("Show advanced") == std::string::npos);
         }
+    }
+    {   // Tiles: one width for every grid, the columns fill the row, no tile is narrower than its longest name needs.
+        for (float avail : {200.0f, 480.0f, 700.0f, 920.0f, 1400.0f}) {
+            const TileLayout t = TilesFor(avail, 10.0f, 134.0f, 134.0f * 1.3f);
+            CHECK(t.cols >= 1 && t.w >= 134.0f && t.w <= 134.0f * 1.3f + 1e-3f);
+            if (avail >= 134.0f) CHECK(t.cols * t.w + (t.cols - 1) * 10.0f <= avail + 1e-3f);   // the row fits
+            // A second grid asked with that width gets the same columns and width (starters and shape buttons line up).
+            const TileLayout again = TilesFor(avail, 10.0f, t.w, t.w);
+            CHECK(again.cols == t.cols && std::fabs(again.w - t.w) < 1e-3f);
+        }
+        CHECK(TilesFor(920.0f, 10.0f, 134.0f, 200.0f).cols == 6);   // the owner's window: six tiles a row, so six shapes on one row
+        CHECK(TilesFor(50.0f, 10.0f, 134.0f, 134.0f).cols == 1);    // too narrow: one column, never zero
+    }
+    {   // The Easy page's buttons show their state: Undo / Redo / Do again use StateButton, the step tabs the clear colours and
+        // the step number, and the empty area under the buttons has the "About" card.
+        std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/ModelingEasyUi.cpp"); std::stringstream ss; ss << in.rdbuf();
+        const std::string src = ss.str();
+        CHECK(src.find("StateButton(\"Undo##easy\"") != std::string::npos && src.find("StateButton(\"Redo##easy\"") != std::string::npos);
+        CHECK(src.find("PushClearTabColors") != std::string::npos && src.find("AboutCard(") != std::string::npos);
+        CHECK(src.find("ImVec2(110, 96)") == std::string::npos);   // the old fixed tile size is gone
     }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("modeling_easy: all passed\n");

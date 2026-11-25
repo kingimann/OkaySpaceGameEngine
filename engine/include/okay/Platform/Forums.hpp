@@ -55,7 +55,7 @@ public:
             ForumThread t;
             t.id = std::atol(Field(o, "id").c_str());
             t.title = Field(o, "title");
-            t.author = Field(o, "author_name");
+            t.author = okay::account::PublicName(Field(o, "author_name"));
             t.when = ParseIso(Field(o, "created_at"));
             t.body = Field(o, "body");
             t.category = Field(o, "category");
@@ -143,7 +143,7 @@ public:
         for (const auto& o : SplitObjects(r.body)) {
             ForumPost p;
             p.id = std::atol(Field(o, "id").c_str());
-            p.author = Field(o, "author_name");
+            p.author = okay::account::PublicName(Field(o, "author_name"));
             p.body = Field(o, "body");
             p.when = ParseIso(Field(o, "created_at"));
             out.push_back(p);
@@ -227,7 +227,7 @@ public:
         auto r = acct_.Api("/rest/v1/forum_section_members?select=user_id,user_name,role,joined_at&section_id=eq." +
                            std::to_string(sectionId) + "&order=joined_at.asc", "GET");
         if (r.ok) for (const auto& o : SplitObjects(r.body)) {
-            ForumMember m; m.uid = Field(o, "user_id"); m.name = Field(o, "user_name"); m.role = Field(o, "role");
+            ForumMember m; m.uid = Field(o, "user_id"); m.name = okay::account::PublicName(Field(o, "user_name"), m.uid); m.role = Field(o, "role");
             m.since = ParseIso(Field(o, "joined_at")); out.push_back(m);
         }
         return out;
@@ -250,7 +250,7 @@ public:
         auto r = acct_.Api("/rest/v1/forum_section_bans?select=user_id,user_name,reason,created_at&section_id=eq." +
                            std::to_string(sectionId) + "&order=created_at.desc", "GET");
         if (r.ok) for (const auto& o : SplitObjects(r.body)) {
-            ForumBan b; b.uid = Field(o, "user_id"); b.name = Field(o, "user_name"); b.reason = Field(o, "reason");
+            ForumBan b; b.uid = Field(o, "user_id"); b.name = okay::account::PublicName(Field(o, "user_name"), b.uid); b.reason = Field(o, "reason");
             b.when = ParseIso(Field(o, "created_at")); out.push_back(b);
         }
         return out;

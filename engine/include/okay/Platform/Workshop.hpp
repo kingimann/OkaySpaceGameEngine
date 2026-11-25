@@ -107,7 +107,7 @@ private:
                 w.featured      = Field(obj, "featured") == "true";
             }
             w.id          = std::atol(Field(obj, "id").c_str());
-            w.author      = Field(obj, "author_name");
+            w.author      = okay::account::PublicName(Field(obj, "author_name"));
             w.title       = Field(obj, "title");
             w.description = Field(obj, "description");
             w.kind        = Field(obj, "kind");

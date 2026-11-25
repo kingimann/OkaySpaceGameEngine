@@ -13,6 +13,7 @@
 #include "ModulesModel.hpp"          // okaymod::Selection / UsedButOff / UsageInScene: Build warns about modules in use but off
 #include "okay/Core/BuildPipeline.hpp"
 #include "WebRun.hpp"                // the web game folder's sizes (Build Settings > Web)
+#include "okay/Input/InputRuntime.hpp"   // kProjectAssetRef: the project's input asset ships with the game
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "okay/Core/FileCopy.hpp"   // CopyFileOver: copy_file with overwrite_existing fails over an existing file on Windows (MinGW)
@@ -294,6 +295,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
     // 2) The dependency walk: the assets those scenes use, and what those assets use in turn.
     bp::WalkSettings ws;
     ws.projectDir = ed.projectDir();
+    // The project's input asset ships even when no scene names it: the game loads it at start-up (InputRuntime::UseProjectAsset).
+    if (!ed.projectDir().empty() && !bp::ResolveAssetFile(okay::InputRuntime::kProjectAssetRef, "", ws).empty()) roots.push_back({okay::InputRuntime::kProjectAssetRef, ""});
     for (const SceneEntry& se : built) if (!se.src.empty()) ws.searchDirs.push_back(se.src.parent_path().string());
     bp::WalkResult walk = bp::WalkAssets(roots, ws);
     std::vector<std::string> shippedSources;

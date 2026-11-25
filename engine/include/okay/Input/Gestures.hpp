@@ -30,6 +30,13 @@ public:
 
     /// True when that gesture was reported this frame.
     static bool Happened(const std::string& name);
+    /// The same by index (no text work: what a "gesture:" binding of an action reads every frame).
+    static bool Happened(int index);
+    /// A gesture name's index (any spelling the names above allow), or -1 for a name that is not a gesture.
+    static int NameIndex(const std::string& name);
+    /// The saved spelling ("swipeup") and the shown one ("Swipe Up") of an index; "" and "None" when out of range.
+    static const char* NameKey(int index);
+    static const char* NameLabel(int index);
     /// "up", "down", "left" or "right" when a swipe happened this frame, else "".
     static std::string SwipeDirection();
     /// Unit swipe direction, y up. Zero when this frame had no swipe.
@@ -44,11 +51,21 @@ public:
     /// How many degrees the twist changed this frame.
     static float TwistDeltaDegrees();
 
-    /// When `gesture` happens ("tap", "swipe up", "pinch", ...), Apply adds 1 to that action.
-    static void Bind(const std::string& gesture, const std::string& action);
+    /// When `gesture` happens ("tap", "swipe up", "pinch", ...) that action is pressed for the frame. One gesture can
+    /// drive several actions (each Bind adds one; the same pair twice is one binding). False for an unknown gesture
+    /// name or an empty action. Not saved: for a binding saved with the input asset write "gesture:swipeup" as one
+    /// of the action's bindings instead.
+    static bool Bind(const std::string& gesture, const std::string& action);
+    /// Remove one binding, or with action "" every action of that gesture.
+    static void Unbind(const std::string& gesture, const std::string& action = "");
     static void ClearBinds();
-    /// Push this frame's gestures into `set` (call after Tick, before the set's Update).
+    /// Push this frame's gestures into `set` (call after Tick, before the set's Update). Only for a set of your own:
+    /// the engine's action table and the local players get them from ApplyBound.
     static void Apply(ActionSet& set);
+    /// Push this frame's bound gestures into the engine's action table and every local player's set, once per Tick.
+    /// InputActions::Tick calls it, so a host that ticks gestures and then actions (the player, the editor's Play)
+    /// needs nothing else.
+    static void ApplyBound();
 };
 
 } // namespace okay

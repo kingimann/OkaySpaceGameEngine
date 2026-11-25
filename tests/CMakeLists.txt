@@ -2826,6 +2826,9 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/public_names.sql (server-filled public names, never an email) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME public_names_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_public_names_sql.sh)
+    set_tests_properties(public_names_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME reactions_sql_static COMMAND ${OKAY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql_static.py)
     # docs/sql/reactions_privacy.sql (SEC1 item 4) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME reactions_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql.sh)
@@ -4258,6 +4261,31 @@ if(TARGET launcher_imgui)
     target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
 endif()
 add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
+# The launcher's themes (shared/OkayTheme.hpp): text contrast in every theme, the themes differ, and no hard-coded colour in
+# launcher/ (it reads the sources). Needs only imgui.h (launcher_imgui brings it when the launcher is built).
+if(TARGET launcher_imgui)
+    add_executable(test_launcher_theme test_launcher_theme.cpp)
+    target_include_directories(test_launcher_theme PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_launcher_theme PRIVATE launcher_imgui)
+    target_compile_definitions(test_launcher_theme PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_compile_features(test_launcher_theme PRIVATE cxx_std_17)
+    add_test(NAME launcher_theme COMMAND test_launcher_theme)
+endif()
+# The launcher's sign-in gate and welcome screen rules (launcher/SignInGate.hpp, launcher/AuthForm.hpp). Std only.
+add_executable(test_signin_gate test_signin_gate.cpp)
+target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_signin_gate PRIVATE cxx_std_17)
+add_test(NAME signin_gate COMMAND test_signin_gate)
+# The name shown to other people is never an email address (okay::account::PublicName, used by every platform client).
+add_executable(test_public_name test_public_name.cpp)
+target_include_directories(test_public_name PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_public_name PRIVATE cxx_std_17)
+add_test(NAME public_name COMMAND test_public_name)
+# The launcher's Software Update dialog as a view of the updater's state (launcher/UpdateView.hpp). Std only.
+add_executable(test_update_view test_update_view.cpp)
+target_include_directories(test_update_view PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_update_view PRIVATE cxx_std_17)
+add_test(NAME update_view COMMAND test_update_view)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
 add_executable(test_editor_perf test_editor_perf.cpp)
@@ -5032,6 +5060,13 @@ target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
 
+# Input pieces that were not connected: the built game's input asset, gesture bindings, mouse side buttons and sideways
+# wheel, the Guide button, punctuation / numpad / lock keys, eight controllers, controller toasts.
+add_executable(test_input_wiring test_input_wiring.cpp)
+target_link_libraries(test_input_wiring PRIVATE okay::engine)
+target_compile_definitions(test_input_wiring PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_wiring COMMAND test_input_wiring)
+
 # The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
 add_executable(test_vs_search_nav test_vs_search_nav.cpp)
 target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -5442,3 +5477,13 @@ target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launche
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME launcher_cli COMMAND test_launcher_cli)
 set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
+
+# The launcher's system tray (launcher/TrayLogic.hpp: X / minimize / tray menu / double-click / Explorer restart / the
+# slower loop while hidden, through a fake shell) and where its chat is drawn (launcher/ChatPlacement.hpp: in, out,
+# closed means in, remembered geometry, one chat view drawn in both places). Headless; no SDL or ImGui.
+add_executable(test_launcher_tray test_launcher_tray.cpp)
+target_compile_features(test_launcher_tray PRIVATE cxx_std_17)
+target_include_directories(test_launcher_tray PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
+target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAKE_SOURCE_DIR}/launcher/main.cpp")
+add_test(NAME launcher_tray COMMAND test_launcher_tray)
+set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)

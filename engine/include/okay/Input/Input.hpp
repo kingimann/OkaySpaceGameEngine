@@ -11,7 +11,7 @@ namespace okay {
 /// reports no input, so games still run headlessly.
 class Input {
 public:
-    static constexpr int kMaxGamepads = 4;   ///< players / controllers read at once
+    static constexpr int kMaxGamepads = 8;   ///< players / controllers read at once (as many as PlayerInputManager::kMaxPlayers)
 
     // Synthetic key codes for modifier keys that have no printable character.
     // The windowed runtimes feed these so controllers can bind sprint/crouch to
@@ -22,8 +22,9 @@ public:
     /// Command on macOS, the Windows / Super key elsewhere. Either side. Text
     /// fields treat it like Ctrl for copy, cut and paste.
     static constexpr char KeyCmd   = static_cast<char>(153);
-    // Arrow keys, distinct from WASD. AxisWASD counts either. The player and
-    // the editor feed both, so a script that asks for "up" or for W agrees.
+    // Arrow keys, distinct from WASD. AxisWASD counts either. FeedKeys also
+    // reports an arrow as its W A S D letter to the raw reads, so a script that asks
+    // for "up" or for W agrees; bindings read the arrow alone (GetKeyGameExact).
     static constexpr char KeyUp    = 1;
     static constexpr char KeyDown  = 2;
     static constexpr char KeyLeft  = 3;
@@ -49,13 +50,31 @@ public:
     static constexpr char KeyAlt      = static_cast<char>(150);
     static constexpr char KeyLAlt     = static_cast<char>(151);
     static constexpr char KeyRAlt     = static_cast<char>(152);
+    // More physical keys (154..175; 153 is KeyCmd). Punctuation needs no code of its own: '-', '=', '[', ']', '\\', ';',
+    // '\'', '`', ',', '.' and '/' are fed as those characters, by the key's place on a US keyboard.
+    static constexpr char KeyKp0        = static_cast<char>(154);   // numpad 0..9 are 154..163
+    static constexpr char KeyKp9        = static_cast<char>(163);
+    static constexpr char KeyKpDivide   = static_cast<char>(164);
+    static constexpr char KeyKpMultiply = static_cast<char>(165);
+    static constexpr char KeyKpMinus    = static_cast<char>(166);
+    static constexpr char KeyKpPlus     = static_cast<char>(167);
+    static constexpr char KeyKpEnter    = static_cast<char>(168);   ///< its own key; it also still reads as Enter ('\r'), as before
+    static constexpr char KeyKpPeriod   = static_cast<char>(169);
+    static constexpr char KeyCapsLock   = static_cast<char>(170);
+    static constexpr char KeyPrintScreen = static_cast<char>(171);
+    static constexpr char KeyScrollLock = static_cast<char>(172);
+    static constexpr char KeyPause      = static_cast<char>(173);
+    static constexpr char KeyNumLock    = static_cast<char>(174);
+    static constexpr char KeyMenu       = static_cast<char>(175);   ///< the Menu / Application key
+    /// The code of numpad digit `n` (0..9), or 0.
+    static constexpr char KeyKp(int n) { return n >= 0 && n <= 9 ? static_cast<char>(154 + n) : static_cast<char>(0); }
     /// The code of function key `n` (1..12), or 0.
     static constexpr char KeyF(int n) { return n >= 1 && n <= 12 ? static_cast<char>(128 + n - 1) : static_cast<char>(0); }
 
     /// Map a friendly key NAME to the char code this layer uses ("space",
     /// "enter", "shift", "up", "f5", "lshift", "pageup", "a", "7"...). A single
     /// character is taken as-is (lowercased). Arrows are KeyUp / KeyDown / KeyLeft /
-    /// KeyRight; the player and editor also report them as WASD, and AxisWASD counts
+    /// KeyRight; FeedKeys also reports them as WASD to raw reads, and AxisWASD counts
     /// both. Names are case-insensitive and ignore spaces, '_' and '-' ("Left Shift",
     /// "page_up"). An unknown multi-char name falls back to its first letter (kept so
     /// old scripts behave the same; check IsKnownKeyName first). Shared by
@@ -70,7 +89,10 @@ public:
     /// of space / up / down / left / right / enter / return / escape / esc /
     /// backspace / tab / shift / ctrl / control / cmd / command / alt / f1..f12 / insert / delete /
     /// home / end / pageup / pagedown / lshift / rshift / lctrl / rctrl / lalt /
-    /// ralt (any case). Any other name would silently become its first letter.
+    /// ralt, the punctuation names (minus, equals, leftbracket, rightbracket, backslash, semicolon,
+    /// apostrophe, grave, comma, period, slash), the numpad (kp0..kp9, kpdivide, kpmultiply, kpminus,
+    /// kpplus, kpenter, kpperiod; "numpad 7" works too) and capslock / printscreen / scrolllock /
+    /// pause / numlock / menu (any case). Any other name would silently become its first letter.
     static bool IsKnownKeyName(const std::string& s) { return s.size() == 1 || FindKeyName(s) != nullptr; }
 
     /// True while the key is held down.
@@ -81,7 +103,7 @@ public:
     /// sees it and the release shows one frame later. A key that is held anyway is
     /// unaffected. (Before this a tap shorter than the gap between two polls was lost.)
     static void FeedKeyTap(char key);
-    /// The same for a mouse button (0 left, 1 right, 2 middle): call from MouseButtonDown.
+    /// The same for a mouse button (0 left, 1 right, 2 middle, 3 and 4 the side buttons): call from MouseButtonDown.
     static void FeedMouseTap(int button);
     /// Forget taps nobody consumed (the game was not being fed that frame).
     static void DropKeyTaps();
@@ -99,6 +121,11 @@ public:
     /// TextFocused(). Escape, Enter, F-keys, modifiers and Tab still come through.
     static bool GetKeyGame(char key);
     static bool GetKeyDownGame(char key);
+    /// The same as a binding reads it: W, A, S or D held only because its arrow is down does not count (the raw
+    /// reads above still see the arrows as W A S D, so old games and scripts keep walking on them). Action bindings
+    /// (key:w, four-key directions, chords) read this, so the arrows can be bound apart from W A S D.
+    static bool GetKeyGameExact(char key);
+    static bool GetKeyDownGameExact(char key);
     /// True only on the frame the key was first pressed.
     static bool GetKeyDown(char key);
     /// True only on the frame the key was released.
@@ -124,7 +151,9 @@ public:
     /// How far the cursor moved since the last frame, in pixels — for mouse-look /
     /// drag without tracking the previous position yourself.
     static Vec2 MouseDelta();
-    /// True while a mouse button is held (0 = left, 1 = right, 2 = middle).
+    /// Mouse buttons Input knows: 0 left, 1 right, 2 middle, 3 the first side button (X1, "back"), 4 the second (X2, "forward").
+    static constexpr int kMouseButtons = 5;
+    /// True while a mouse button is held (0 = left, 1 = right, 2 = middle, 3 / 4 = the side buttons).
     static bool GetMouseButton(int button);
     /// True only on the frame the button was first pressed.
     static bool GetMouseButtonDown(int button);
@@ -137,6 +166,7 @@ public:
     enum PadButton {
         PadA = 0, PadB, PadX, PadY, PadBack, PadStart, PadLB, PadRB,
         PadUp, PadDown, PadLeft, PadRight, PadLeftStick, PadRightStick, PadLT, PadRT,
+        PadGuide,   ///< the middle button: Xbox / PS / Home. The system may keep it for itself (Steam, the Xbox bar)
         PadButtonCount
     };
     // Every pad reader takes a `player` index (0..kMaxGamepads-1, default 0 = the
@@ -177,7 +207,7 @@ public:
     static float ProcessTrigger(float raw, const TriggerSettings& s);
 
     /// "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left",
-    /// "right", "ls", "rs", "lt", "rt" (any case) -> PadButton, or -1.
+    /// "right", "ls", "rs", "lt", "rt", "guide" (also "home") (any case) -> PadButton, or -1.
     static int GamepadButtonFromName(const std::string& name);
     /// Short display name ("A", "LB", "RT", "D-pad Up", ...).
     static std::string GamepadButtonName(int button);
@@ -196,7 +226,7 @@ public:
     /// currently held this frame. Advances the down/up edge state.
     static void FeedKeys(const std::vector<char>& downKeys);
     /// Drive mouse state from a windowed runtime. `buttonMask` bit 0/1/2 =
-    /// left/right/middle held. Advances the mouse down/up edge state.
+    /// left/right/middle held, bit 3/4 = the side buttons. Advances the mouse down/up edge state.
     static void FeedMouse(const Vec2& position, unsigned buttonMask);
     /// Drive gamepad state: left-stick axis and a held-button bitmask (bit n =
     /// button id n). Advances the gamepad down-edge state.
@@ -244,6 +274,9 @@ public:
     static float MouseWheel();
     /// Add to this frame's wheel delta (from the OS scroll event).
     static void FeedMouseWheel(float delta);
+    /// This frame's sideways wheel delta (a tilting wheel or a touchpad; +right / -left). 0 when idle.
+    static float MouseWheelX();
+    static void FeedMouseWheelX(float delta);
 
     // ---- Touch (driven by FeedTouch from the windowed runtime's finger events) ----
     /// One finger on the screen. `position` and `start` are in the same pixels as
@@ -282,7 +315,7 @@ public:
     enum class Device { Keyboard, Mouse, Gamepad, Touch };
     /// The device that produced input most recently. Drives "Press [E]" versus "Press [X]".
     static Device LastDevice();
-    /// Which controller (0..3) was used last; meaningful when LastDevice() is Gamepad.
+    /// Which controller (0..kMaxGamepads-1) was used last; meaningful when LastDevice() is Gamepad.
     static int LastGamepad();
     /// What kind of controller a slot is, for button pictures. The runtime sets it from the
     /// device name; the default is Xbox.
@@ -305,10 +338,12 @@ private:
     static void BeginSession();   // put terminal into raw, non-blocking mode
     static void EndSession();     // restore terminal
     static void Poll();           // sample input once per frame
+    static void ApplyArrowAliases();   // arrows also read as W A S D (raw reads only; see GetKeyGameExact)
 
     static std::array<bool, 256> s_current;
     static std::array<bool, 256> s_previous;
     static std::array<bool, 256> s_tapKeys;   // taps seen since the last FeedKeys
+    static std::array<bool, 256> s_aliasOnly; // W A S D held only because their arrow is (FeedKeys)
     static unsigned s_tapMouse;
     static bool s_interactive;
     static bool s_textFocused;
@@ -352,6 +387,18 @@ private:
             {"lctrl", KeyLCtrl}, {"leftctrl", KeyLCtrl}, {"leftcontrol", KeyLCtrl},
             {"rctrl", KeyRCtrl}, {"rightctrl", KeyRCtrl}, {"rightcontrol", KeyRCtrl},
             {"lalt", KeyLAlt}, {"leftalt", KeyLAlt}, {"ralt", KeyRAlt}, {"rightalt", KeyRAlt},
+            {"minus", '-'}, {"equals", '='}, {"leftbracket", '['}, {"rightbracket", ']'}, {"backslash", '\\'},
+            {"semicolon", ';'}, {"apostrophe", '\''}, {"quote", '\''}, {"grave", '`'}, {"backquote", '`'},
+            {"comma", ','}, {"period", '.'}, {"slash", '/'},
+            {"kp0", KeyKp(0)}, {"kp1", KeyKp(1)}, {"kp2", KeyKp(2)}, {"kp3", KeyKp(3)}, {"kp4", KeyKp(4)},
+            {"kp5", KeyKp(5)}, {"kp6", KeyKp(6)}, {"kp7", KeyKp(7)}, {"kp8", KeyKp(8)}, {"kp9", KeyKp(9)},
+            {"numpad0", KeyKp(0)}, {"numpad1", KeyKp(1)}, {"numpad2", KeyKp(2)}, {"numpad3", KeyKp(3)}, {"numpad4", KeyKp(4)},
+            {"numpad5", KeyKp(5)}, {"numpad6", KeyKp(6)}, {"numpad7", KeyKp(7)}, {"numpad8", KeyKp(8)}, {"numpad9", KeyKp(9)},
+            {"kpdivide", KeyKpDivide}, {"numpaddivide", KeyKpDivide}, {"kpmultiply", KeyKpMultiply}, {"numpadmultiply", KeyKpMultiply},
+            {"kpminus", KeyKpMinus}, {"numpadminus", KeyKpMinus}, {"kpplus", KeyKpPlus}, {"numpadplus", KeyKpPlus},
+            {"kpenter", KeyKpEnter}, {"numpadenter", KeyKpEnter}, {"kpperiod", KeyKpPeriod}, {"numpadperiod", KeyKpPeriod},
+            {"capslock", KeyCapsLock}, {"printscreen", KeyPrintScreen}, {"scrolllock", KeyScrollLock},
+            {"pause", KeyPause}, {"numlock", KeyNumLock}, {"menu", KeyMenu}, {"application", KeyMenu},
         };
         std::string k;
         for (char c : s) if (c != ' ' && c != '_' && c != '-') k += LowerKey(c);
@@ -361,6 +408,7 @@ private:
 
     static std::string s_typedText;
     static float       s_mouseWheel;
+    static float       s_mouseWheelX;
     static std::vector<Touch> s_touches;
     static bool        s_uiCaptured;
     static bool        s_touchScreen;

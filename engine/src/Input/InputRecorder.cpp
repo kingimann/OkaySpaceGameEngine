@@ -28,7 +28,9 @@ std::string g_note;
 // The recorder reads and writes Input's own state; Input names it a friend.
 struct InputRecorderAccess {
     static void Capture(Frame& f) {
-        for (int i = 0; i < 256; ++i) if (Input::s_current[(std::size_t)i]) f.keys.push_back((unsigned char)i);
+        // (a letter held only because its arrow is is not recorded: Apply adds it again, as FeedKeys does)
+        for (int i = 0; i < 256; ++i)
+            if (Input::s_current[(std::size_t)i] && !Input::s_aliasOnly[(std::size_t)i]) f.keys.push_back((unsigned char)i);
         f.mouse = Input::s_mousePos; f.mouseMask = Input::s_mouseCurrent; f.wheel = Input::s_mouseWheel;
         for (int p = 0; p < Input::kMaxGamepads; ++p) {
             const Input::PadState& s = Input::s_pads[p];
@@ -38,8 +40,14 @@ struct InputRecorderAccess {
     static void Apply(const Frame& f, const Frame* before) {
         Input::s_previous.fill(false);
         if (before) for (unsigned char k : before->keys) Input::s_previous[k] = true;
+        {   // the arrows' W A S D letters, as Apply adds them below
+            const unsigned char arrowLetter[4][2] = {{(unsigned char)Input::KeyUp, 'w'}, {(unsigned char)Input::KeyLeft, 'a'},
+                                                     {(unsigned char)Input::KeyDown, 's'}, {(unsigned char)Input::KeyRight, 'd'}};
+            for (const auto& al : arrowLetter) if (Input::s_previous[al[0]]) Input::s_previous[al[1]] = true;
+        }
         Input::s_current.fill(false);
         for (unsigned char k : f.keys) Input::s_current[k] = true;
+        Input::ApplyArrowAliases();
         Input::s_mousePrevPos = before ? before->mouse : f.mouse;
         Input::s_mousePos = f.mouse; Input::s_mouseFed = true;
         Input::s_mousePrevious = before ? before->mouseMask : 0u;

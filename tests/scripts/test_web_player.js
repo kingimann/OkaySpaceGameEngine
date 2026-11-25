@@ -48,7 +48,7 @@ const srv = http.createServer((req, res) => {
 });
 
 // ---- a small PNG reader for the screenshots (Node's zlib inflates the pixel data) ----
-function readPng(buf) {
+function decodeShotPng(buf) {
   let off = 8, w = 0, h = 0, ct = 0; const idat = [];
   while (off < buf.length) {
     const len = buf.readUInt32BE(off), type = buf.toString('ascii', off + 4, off + 8), body = buf.subarray(off + 8, off + 8 + len);
@@ -69,7 +69,7 @@ function readPng(buf) {
   }
   return { w, h, bpp, px };
 }
-function frameInfo(png) {
+function shotStats(png) {
   const colours = new Set(); let orange = 0;
   for (let i = 0; i < png.px.length; i += png.bpp) {
     const r = png.px[i], g = png.px[i + 1], b = png.px[i + 2];
@@ -104,7 +104,7 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
     while (Date.now() < end) { const hit = logs.slice(from).find(l => re.test(l)); if (hit) return hit; await page.waitForTimeout(50); }
     return null;
   };
-  const shot = async () => frameInfo(readPng(await page.locator('#canvas').screenshot()));
+  const shot = async () => shotStats(decodeShotPng(await page.locator('#canvas').screenshot()));
   if (throttle > 0) {
     const cdp = await ctx.newCDPSession(page);
     await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 40, downloadThroughput: throttle * 125000, uploadThroughput: throttle * 125000 });

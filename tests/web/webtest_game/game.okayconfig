@@ -1,0 +1,6 @@
+title=Web Test
+company=OkaySpace Tests
+version=1.0
+width=640
+height=360
+startup=game.okayscene

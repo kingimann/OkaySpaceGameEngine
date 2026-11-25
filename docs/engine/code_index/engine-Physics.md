@@ -2,7 +2,7 @@
 
 # Code index: engine-Physics
 
-Back to the [code index](../code_index.md). 30 headers, 154 names.
+Back to the [code index](../code_index.md). 30 headers, 156 names.
 
 ## `engine/include/okay/Physics/BodyPose.hpp`
 
@@ -149,15 +149,16 @@ Back to the [code index](../code_index.md). 30 headers, 154 names.
 - `IdIndex` function, line 53
 - `BodyType` enum, line 55
 - `BodyDef` struct, line 57
-- `ColliderDef` struct, line 73
-- `JointType` enum, line 87
-- `AxisMode` enum, line 88
-- `JointAxis` struct, line 91: One degree of freedom of a joint, measured in the joint frame of body A (axis 0 = X = hinge / twist / slider axis).
-- `JointDef` struct, line 102
-- `SetupJoint` function, line 136: Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
-- `ContactEvent` struct, line 138
-- `WorldStats` struct, line 146
-- `World` class, line 155
+- `BodySettings` struct, line 74: What a scene hands a body every step, in one call (World::Configure): its kind, damping, gravity, locks and flags.
+- `ColliderDef` struct, line 83
+- `JointType` enum, line 102
+- `AxisMode` enum, line 103
+- `JointAxis` struct, line 106: One degree of freedom of a joint, measured in the joint frame of body A (axis 0 = X = hinge / twist / slider axis).
+- `JointDef` struct, line 117
+- `SetupJoint` function, line 155: Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
+- `ContactEvent` struct, line 157
+- `WorldStats` struct, line 165
+- `World` class, line 174
 
 ## `engine/include/okay/Physics/DebrisPool.hpp`
 
@@ -174,11 +175,11 @@ Back to the [code index](../code_index.md). 30 headers, 154 names.
 
 ## `engine/include/okay/Physics/Physics2D.hpp`
 
-- `Collision2D` struct, line 20: Data passed to OnCollision2D callbacks describing a contact with another
-- `TriggerContact2D` struct, line 34: Where a trigger overlap happened, readable from inside OnTrigger*2D callbacks
-- `RaycastHit2D` struct, line 42: Result of a 2D raycast.
-- `SurfaceQuery2D` struct, line 53: Closest point on a solid 2D collider. Distance is 0 when the point is inside. Triggers are skipped.
-- `Physics2D` class, line 74: A small but real 2D physics engine: semi-implicit Euler integration with
+- `Collision2D` struct, line 18: Data passed to OnCollision2D callbacks describing a contact with another
+- `TriggerContact2D` struct, line 32: Where a trigger overlap happened, readable from inside OnTrigger*2D callbacks
+- `RaycastHit2D` struct, line 40: Result of a 2D raycast.
+- `SurfaceQuery2D` struct, line 51: Closest point on a solid 2D collider. Distance is 0 when the point is inside. Triggers are skipped.
+- `Physics2D` class, line 73: 2D physics. The step runs on our own physics core (okay::phys::World, the solver 3D uses; see
 
 ## `engine/include/okay/Physics/Physics3D.hpp`
 
@@ -217,13 +218,14 @@ Back to the [code index](../code_index.md). 30 headers, 154 names.
 
 - `PhysicsQuality` enum, line 11: The physics quality setting old scene files carry ('physicsquality'). There is ONE physics path now (3D: our own
 - `PhysicsStepStats` struct, line 15: What the last Step did (Improved quality fills all of it; Classic fills the counts it knows). For tests, the debug view
+- `PhysicsQueryStats` struct, line 28: What the 3D scene queries (rays, overlaps, casts, closest point) did since Physics3D::ResetQueryStats. For tests and
 
 ## `engine/include/okay/Physics/PlayerCollision.hpp`
 
 - `SeatUpright` function, line 20: A sideways push from a walkable floor or a low riser is turned into a step up, so a body
-- `ResolvePlayerBody` function, line 68: Keep a transform-moved player (no Rigidbody3D) from clipping through walls, floors or ceilings.
-- `FeetOf` function, line 110: Where the body's feet are: the bottom of its collider under the pivot, or the pivot when it has no collider.
-- `GroundSlopeDegrees` function, line 121: Degrees between 'normal' and straight up. A flat floor is 0. A wall is 90.
+- `ResolvePlayerBody` function, line 83: Keep a transform-moved player (no Rigidbody3D) from clipping through walls, floors or ceilings.
+- `FeetOf` function, line 125: Where the body's feet are: the bottom of its collider under the pivot, or the pivot when it has no collider.
+- `GroundSlopeDegrees` function, line 136: Degrees between 'normal' and straight up. A flat floor is 0. A wall is 90.
 
 ## `engine/include/okay/Physics/PoseHistory.hpp`
 
@@ -231,7 +233,7 @@ Back to the [code index](../code_index.md). 30 headers, 154 names.
 
 ## `engine/include/okay/Physics/Rigidbody2D.hpp`
 
-- `Rigidbody2D` class, line 17: 2D physics body, modeled after Rigidbody2D. Dynamic bodies are moved
+- `Rigidbody2D` class, line 16: 2D physics body. Dynamic bodies are moved by Physics2D (gravity, forces, velocity, contacts and joints);
 
 ## `engine/include/okay/Physics/Rigidbody3D.hpp`
 

@@ -10,11 +10,11 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | Folder | Files | Names | Page |
 |---|---|---|---|
 | engine-AI | 8 | 41 | [code_index/engine-AI.md](code_index/engine-AI.md) |
-| engine-Animation | 13 | 119 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
+| engine-Animation | 13 | 118 | [code_index/engine-Animation.md](code_index/engine-Animation.md) |
 | engine-Audio | 11 | 32 | [code_index/engine-Audio.md](code_index/engine-Audio.md) |
 | engine-Combat | 1 | 6 | [code_index/engine-Combat.md](code_index/engine-Combat.md) |
-| engine-Components | 262 | 741 | [code_index/engine-Components.md](code_index/engine-Components.md) |
-| engine-Core | 80 | 503 | [code_index/engine-Core.md](code_index/engine-Core.md) |
+| engine-Components | 261 | 740 | [code_index/engine-Components.md](code_index/engine-Components.md) |
+| engine-Core | 80 | 504 | [code_index/engine-Core.md](code_index/engine-Core.md) |
 | engine-Crypto | 2 | 21 | [code_index/engine-Crypto.md](code_index/engine-Crypto.md) |
 | engine-Debug | 11 | 80 | [code_index/engine-Debug.md](code_index/engine-Debug.md) |
 | engine-Environment | 5 | 51 | [code_index/engine-Environment.md](code_index/engine-Environment.md) |
@@ -27,8 +27,8 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Modules | 3 | 11 | [code_index/engine-Modules.md](code_index/engine-Modules.md) |
 | engine-Net | 33 | 166 | [code_index/engine-Net.md](code_index/engine-Net.md) |
 | engine-Optimize | 8 | 69 | [code_index/engine-Optimize.md](code_index/engine-Optimize.md) |
-| engine-Physics | 30 | 154 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
-| engine-Platform | 29 | 234 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
+| engine-Physics | 30 | 156 | [code_index/engine-Physics.md](code_index/engine-Physics.md) |
+| engine-Platform | 29 | 235 | [code_index/engine-Platform.md](code_index/engine-Platform.md) |
 | engine-Render | 49 | 467 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 131 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |

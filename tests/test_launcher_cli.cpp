@@ -8,6 +8,7 @@
 #include "CommandTable.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -160,28 +161,50 @@ int main() {
     // ---- the page's layout: nothing overlaps, everything is inside ----
     {
         const float sizes[][2] = {{960, 600}, {690, 430}, {740, 460}, {520, 380}, {1600, 900}, {360, 300}};
-        for (const auto& sz : sizes) {
-            const float w = sz[0], h = sz[1];
-            const PageLayout L = LayoutPage(w, h, 26.0f, 16.0f);
-            const std::vector<Rect> all = L.All();
-            bool inside = true, apart = true, sized = true;
-            for (std::size_t i = 0; i < all.size(); ++i) {
-                const Rect& r = all[i];
-                if (r.x < 0 || r.y < 0 || r.R() > w + 0.01f || r.B() > h + 0.01f) inside = false;
-                if (r.w <= 0 || r.h <= 0) sized = false;
-                for (std::size_t j = i + 1; j < all.size(); ++j) if (Overlaps(r, all[j])) apart = false;
-            }
-            CHECK(inside);
-            CHECK(apart);
-            CHECK(sized);
-            CHECK(L.output.h >= 100.0f);            // the output gets the room
-            CHECK(L.input.w >= 160.0f);
-            CHECK(L.input.y > L.output.B());   // the line is under the output
-        }
+        PageButtons wide;   // the launcher's real labels at UI scale 1 are about this wide
+        wide.terminal = 186;
+        wide.shell = 160;
+        for (const PageButtons& bw : {PageButtons(), wide})
+            for (bool okayMode : {true, false})
+                for (const auto& sz : sizes) {
+                    const float w = sz[0], h = sz[1];
+                    const PageLayout L = LayoutPage(w, h, 26.0f, 16.0f, bw, okayMode);
+                    const std::vector<Rect> all = L.All();
+                    bool inside = true, apart = true, sized = true;
+                    for (std::size_t i = 0; i < all.size(); ++i) {
+                        const Rect& r = all[i];
+                        if (r.x < 0 || r.y < 0 || r.R() > w + 0.01f || r.B() > h + 0.01f) inside = false;
+                        if (r.w <= 0 || r.h <= 0) sized = false;
+                        for (std::size_t j = i + 1; j < all.size(); ++j) if (Overlaps(r, all[j])) apart = false;
+                    }
+                    CHECK(inside);
+                    CHECK(apart);
+                    CHECK(sized);
+                    CHECK(L.output.h >= 100.0f);            // the output gets the room
+                    CHECK(L.tabs.w == w && L.tabs.y == 0);   // the tabs on top, the whole width
+                    CHECK(L.shell.w > 0 && L.project.w >= 120.0f);
+                    if (okayMode) {
+                        CHECK(L.input.w >= 160.0f);
+                        CHECK(L.input.y > L.output.B());   // the line is under the output
+                    } else {
+                        CHECK(L.input.w == 0 && L.run.w == 0 && L.stop.w == 0);   // a shell tab types into the terminal
+                        CHECK(std::fabs(L.output.B() - h) < 0.01f);               // the terminal takes the rest
+                    }
+                    if (w >= 960) CHECK(L.smaller.w > 0 && L.bigger.w > 0 && L.shell.y == L.terminal.y);   // one row when wide
+                }
         // The page inside a 960 x 600 launcher window: the sidebar, header and footer take some; it still fits.
-        const PageLayout L = LayoutPage(960 - 232 - 40, 600 - 150 - 44, 26.0f, 16.0f);
-        CHECK(L.output.h > 200.0f);
-        CHECK(!Overlaps(L.project, L.terminal));
+        for (bool okayMode : {true, false}) {
+            const PageLayout L = LayoutPage(960 - 232 - 40, 600 - 150 - 44, 26.0f, 16.0f, wide, okayMode);
+            CHECK(L.output.h > 200.0f);
+            CHECK(!Overlaps(L.project, L.terminal));
+            CHECK(L.smaller.w > 0);   // the font buttons still fit
+            int cols = 0, rows = 0;   // a usable terminal in JetBrains Mono at 15 px (about 9 x 18 px cells)
+            CellsFor(L.output.w - 12 - 8, L.output.h - 12, 9.0f, 18.0f, cols, rows);
+            CHECK(cols >= 70 && rows >= 12);
+        }
+        int c = 0, r = 0;
+        CellsFor(5, 5, 9, 18, c, r);
+        CHECK(c == 2 && r == 1);   // never smaller than 2 x 1
     }
 
 #if !defined(_WIN32)

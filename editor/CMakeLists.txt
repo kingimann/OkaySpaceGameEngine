@@ -98,6 +98,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
     ProjectMenuDraw.cpp                                                # drawing of the Project panel's right-click menus and the Properties rows (ImGui only; drawn headless for the screenshots)
     LaunchFile.cpp                                                     # open a file with the system's program, in a text editor, or show it in the file manager (no shell; never a program or script)
+    WebRun.cpp                                                         # Build Settings > Web: web build sizes and the local Run in browser server (127.0.0.1 only)
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs

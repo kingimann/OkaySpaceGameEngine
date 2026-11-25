@@ -21,9 +21,16 @@ constexpr int kParent[kBones] = {-1, Hips, Torso, Torso, LUpperArm, LForeArm, To
 constexpr int kChild[kBones] = {Torso, Head, -1, LForeArm, LHand, -1, RForeArm, RHand, -1,
                                 LShin, LFoot, -1, RShin, RFoot, -1};
 // Segment mass as a fraction of the body (Winter 2009, table 4.1: trunk split
-// into pelvis and thorax-abdomen; the neck goes with the head).
-constexpr float kMassFrac[kBones] = {0.142f, 0.355f, 0.081f, 0.028f, 0.016f, 0.006f, 0.028f, 0.016f, 0.006f,
-                                     0.100f, 0.0465f, 0.0145f, 0.100f, 0.0465f, 0.0145f};
+// into pelvis and thorax-abdomen; the neck goes with the head), with two changes
+// of ours, both taken from the chest: each foot is three times its table weight
+// (4.35 % instead of 1.45 %) and each hand twice (1.2 % instead of 0.6 %). A 1 kg
+// foot or a 0.4 kg hand on a chain that ends in a 20 kg chest is a mass ratio the
+// physics core's solver does not settle in one step per frame: the feet sank into
+// the ground and the stance bounced, and a hand caught between the floor and a
+// table was held 9 cm into the floor by its wrist (test_ragdoll, table drops).
+// The body's total is unchanged.
+constexpr float kMassFrac[kBones] = {0.142f, 0.285f, 0.081f, 0.028f, 0.016f, 0.012f, 0.028f, 0.016f, 0.012f,
+                                     0.100f, 0.0465f, 0.0435f, 0.100f, 0.0465f, 0.0435f};
 // Capsule radius as a fraction of standing height (our own estimate).
 constexpr float kRadiusFrac[kBones] = {0.062f, 0.072f, 0.058f, 0.030f, 0.027f, 0.025f, 0.030f, 0.027f, 0.025f,
                                        0.045f, 0.035f, 0.022f, 0.045f, 0.035f, 0.022f};
@@ -149,8 +156,29 @@ public:
     int   swing = 0;
     float t = 0.0f;
     Vec3  from, land;
+    // Where each standing foot was put down. Its leg reaches for that spot, so a foot that starts to
+    // slide is pulled back instead of followed (following it let the feet creep apart until it sat down).
+    Vec3  plant[2];
+    bool  planted[2] = {false, false};
 
-    void Reset() { stepping = false; t = 0.0f; }
+    void Reset() { stepping = false; t = 0.0f; planted[0] = planted[1] = false; }
+
+    // The ankle point a standing leg reaches for: the planted spot, with the sole on the ground there. A foot
+    // that comes off the ground a little is put back down by its leg (it used to be followed up).
+    Vec3 Planted(DynamicCharacter& c, int side) {
+        const Vec3 ank = c.Anchor(side == 0 ? LFoot : RFoot);
+        const float slack = 0.08f * c.Height() / 1.8f;      // further off than this, it stands where it is now
+        Vec3 sc;
+        if (c.FootSupport(side, sc)) {
+            const float y = sc.y + c.AnkleHeight();          // (sc.y is the ground it touches, not the foot's own height)
+            if (!planted[side] || Flat(ank - plant[side]).Magnitude() > slack) { plant[side] = ank; planted[side] = true; }
+            plant[side].y = y;
+        } else if (!planted[side] || Vec3::Distance(ank, plant[side]) > slack) {
+            planted[side] = false;
+            return ank;
+        }
+        return plant[side];
+    }
 
     // Where the swing foot should land so the capture point is inside the new
     // support when it lands: the capture point moves away from the stance
@@ -193,7 +221,7 @@ public:
         if (n > 0) {
             float lo = 1e9f;
             for (int i = 0; i < n; ++i) lo = Mathf::Min(lo, pts[i].y);
-            ground = lo - c.FootSphereRadius();
+            ground = lo;                                     // (support points are on the ground they touch)
         }
         const float z = Mathf::Max(0.2f, com.y - ground);
         const float w0 = std::sqrt(9.81f / z);
@@ -229,7 +257,19 @@ public:
             F = Vec3::ClampMagnitude(F, c.tuning.balanceHelp * M * 9.81f);
             c.Physics()->AddForce(Hips, F);
         }
-        const Vec3 lift = Vec3::Up * Mathf::Clamp(c.StandingHeight() - c.PelvisHeight(), -sagGain, sagGain);
+        // Not higher than its planted legs reach: with the feet apart after a step the pelvis cannot be at
+        // its standing height, and legs told to stretch for it lift their own feet off the ground.
+        float wantHeight = c.StandingHeight();
+        for (int side = 0; side < 2; ++side) {
+            Vec3 sc;
+            if (!c.FootSupport(side, sc)) continue;
+            const Vec3 hip = c.Anchor(side == 0 ? LThigh : RThigh), ank = c.Anchor(side == 0 ? LFoot : RFoot);
+            const float leg = 0.999f * (c.SegmentLength(side == 0 ? LThigh : RThigh) + c.SegmentLength(side == 0 ? LShin : RShin));
+            const float across = Flat(hip - ank).Magnitude();
+            const float reach = std::sqrt(Mathf::Max(0.0f, leg * leg - across * across));
+            wantHeight = Mathf::Min(wantHeight, c.PelvisHeight() + (ank.y + reach - hip.y));
+        }
+        const Vec3 lift = Vec3::Up * Mathf::Clamp(wantHeight - c.PelvisHeight(), -sagGain, sagGain);
 
         if (stepping) {
             t += h;
@@ -261,7 +301,8 @@ public:
                 c.Physics()->AddForce(ft, F);
                 c.Physics()->AddForce(Hips, F * -1.0f);
             }
-            c.LegIK(f, stance, c.Anchor(stance == 0 ? LThigh : RThigh) + lift, c.Anchor(stance == 0 ? LFoot : RFoot), fwd);
+            planted[swing] = false;
+            c.LegIK(f, stance, c.Anchor(stance == 0 ? LThigh : RThigh) + lift, Planted(c, stance), fwd);
             c.FlatFoot(f, stance);
             f.str[swing == 0 ? LThigh : RThigh] *= 1.3f;
             f.str[swing == 0 ? LShin : RShin] *= 1.3f;
@@ -289,9 +330,20 @@ public:
                 }
             }
             const float cost = swing == 0 ? c0 : c1;
-            // Too far to catch even with steps to come: give up (Pratt's N-step capturability, roughly).
-            const int left = Mathf::Max(1, c.tuning.maxSteps - c.m_steps);
-            if (cost > 0.6f * c.tuning.maxStep * scale * (float)left) { c.ChangeState(CharState::Falling); return; }
+            // Too far to catch even with the steps it has left: give up and fall. Each step takes T, in which the
+            // capture point's distance d from the standing foot grows by e^(w T), and then covers at most one step
+            // length L: d -> d e^(w T) - L (the linear inverted pendulum again). It is caught when d comes inside the
+            // foot; beyond L / (e^(w T) - 1) it only ever gets worse.
+            {
+                const int left = Mathf::Max(1, c.tuning.maxSteps - c.m_steps);
+                const float L = c.tuning.maxStep * scale, grow = std::exp(w0 * T);
+                Vec3 p;
+                const int st = 1 - swing;
+                if (!c.FootSupport(st, p)) p = c.Anchor(st == 0 ? LFoot : RFoot);
+                float d = Flat(c.m_capture - p).Magnitude();
+                for (int k = 0; k < left && d > 0.0f; ++k) d = d * grow - L;
+                if (d > 0.1f * scale || cost > 0.6f * L * (float)left) { c.ChangeState(CharState::Falling); return; }
+            }
             land = swing == 0 ? l0 : l1;
             from = c.Anchor(swing == 0 ? LFoot : RFoot);
             stepping = true;
@@ -302,7 +354,7 @@ public:
         // the centre of mass back over the middle of the feet and the feet push
         // the other way (virtual model control).
         for (int side = 0; side < 2; ++side) {
-            c.LegIK(f, side, c.Anchor(side == 0 ? LThigh : RThigh) + lift, c.Anchor(side == 0 ? LFoot : RFoot), fwd);
+            c.LegIK(f, side, c.Anchor(side == 0 ? LThigh : RThigh) + lift, Planted(c, side), fwd);
             c.FlatFoot(f, side);
         }
         if (n > 0) {
@@ -390,12 +442,22 @@ public:
         }
     }
 
+    // The hand goes to p with the elbow bent as far as the gap asks (the shared two-bone solve): a wall
+    // nearer than the arm is long is still reached at the height aimed for, not with a straight arm
+    // jammed against it lower down. The elbow goes back (down when the wall is straight ahead), which
+    // is the way its hinge bends.
     static void Aim(DynamicCharacter& c, Frame& f, int ua, int fa, int hand, const Vec3& p) {
         const Vec3 fwd = c.AnimForward();
-        const Vec3 d = SafeNorm(p - c.Anchor(ua), fwd);
-        f.want[ua] = c.Aim(ua, d, fwd); f.has[ua] = true;
-        f.want[fa] = c.Aim(fa, d, fwd); f.has[fa] = true;
-        f.want[hand] = c.Aim(hand, d, fwd); f.has[hand] = true;
+        const Vec3 sh = c.Anchor(ua);
+        const Vec3 d = SafeNorm(p - sh, fwd);
+        const float L1 = c.SegmentLength(ua), L2 = c.SegmentLength(fa) + c.SegmentLength(hand);
+        const Vec3 back = fwd * -1.0f - d * Vec3::Dot(fwd * -1.0f, d);
+        const Vec3 pole = SafeNorm(back.Magnitude() > 0.2f ? back : Vec3::Down - d * Vec3::Dot(Vec3::Down, d), Vec3::Down);
+        Vec3 elbow, wrist;
+        SolveTwoBoneIK(sh, L1, L2, p, pole, elbow, wrist, 60.0f, 179.0f);
+        f.want[ua] = c.Aim(ua, elbow - sh, fwd); f.has[ua] = true;
+        f.want[fa] = c.Aim(fa, wrist - elbow, fwd); f.has[fa] = true;
+        f.want[hand] = c.Aim(hand, wrist - elbow, fwd); f.has[hand] = true;
         f.str[ua] *= 1.5f; f.str[fa] *= 1.5f;
     }
 };
@@ -574,16 +636,17 @@ public:
         c.Physics()->SetHelper(Torso, Vec3::Zero, 0.0f, torsoWant, help * M * 15.0f, 4.0f * Mathf::Min(1.0f, help));
         c.Physics()->AddForce(Hips, Vec3::Up * (0.5f * M * 9.81f * help));
         if (u >= 1.0f) {
-            c.Physics()->ClearHelpers();
             // Up only counts on its feet: the helper can lift a body hung over an edge to standing
             // height with nothing under it (seen in the example: it then stood in the air).
+            // The last pose is held for up to a quarter of the get-up time more, so a body that
+            // arrives with some speed left (its feet a moment off the ground) settles first.
             Vec3 fl, fr;
             const bool feet = c.FootSupport(0, fl) || c.FootSupport(1, fr);
             const bool up = feet && c.PelvisHeight() > 0.82f * H && c.TorsoLean() < 25.0f;
             if (up) {
                 tries = 0;
                 c.ChangeState(c.mode == RagdollMode::Powered ? CharState::Balancing : CharState::Blending);
-            } else {
+            } else if (u >= 1.25f) {
                 ++tries;
                 c.ChangeState(CharState::Down);
             }
@@ -596,7 +659,8 @@ public:
 // =============================================================================
 // DynamicCharacter
 // =============================================================================
-DynamicCharacter::DynamicCharacter() : m_phys(new XpbdRagdoll()) {
+DynamicCharacter::DynamicCharacter() : m_core(new CoreRagdoll()) {
+    m_phys.reset(m_core);
     m_mod[0].reset(new HitReaction());
     m_mod[1].reset(new Balance());
     m_mod[2].reset(new Grab());
@@ -621,9 +685,17 @@ DynBehaviour* DynamicCharacter::FindBehaviour(const char* name) {
     return nullptr;
 }
 
+void DynamicCharacter::UseWorld(phys::World* world, std::weak_ptr<void> alive, std::uint64_t user) {
+    m_built = false;
+    m_state = CharState::Animated;
+    m_core->colliderUser = user;
+    m_core->UseWorld(world, std::move(alive));
+}
+
 bool DynamicCharacter::Build(const RigInput& rig) {
     m_built = false;
     m_phys->Clear();
+    m_phys->SetActive(false);   // it starts in the animation: the bodies are placed, not simulated
     for (int b = 0; b < kBones; ++b)
         if (!Fin(rig.pos[b]) || !Fin(rig.rot[b]) || rig.rot[b].Magnitude() < 1e-4f) return false;
     m_mass = Fin(rig.mass) ? Mathf::Clamp(rig.mass, 1.0f, 1000.0f) : 70.0f;
@@ -692,10 +764,34 @@ bool DynamicCharacter::Build(const RigInput& rig) {
                 p.y = m_groundY + m_footR;
                 d.spheres.push_back({inv * (p - centre[b]), m_footR});
             }
+            // The foot is a block: from the sole (the four points above) up around the ankle.
+            Vec3 lo{-r, -m_half[b], -r}, hi{r, m_half[b], r};
+            for (const ContactSphere& sp : d.spheres) {
+                lo = Vec3::Min(lo, sp.local - Vec3::One * m_footR);
+                hi = Vec3::Max(hi, sp.local + Vec3::One * m_footR);
+            }
+            d.hasBox = true;
+            d.boxCentre = (lo + hi) * 0.5f;
+            d.boxHalf = (hi - lo) * 0.5f;
         } else {
+            d.capsuleRadius = r;
+            d.capsuleHalf = m_half[b];
             d.spheres.push_back({Vec3::Up * m_half[b], r});
             d.spheres.push_back({Vec3::Up * -m_half[b], r});
-            if (b == Torso || b == Hips) d.spheres.push_back({Vec3::Zero, r});
+            if (b == Torso || b == Hips) {
+                d.spheres.push_back({Vec3::Zero, r});
+                // The chest and the pelvis are as wide as the shoulders and hips they carry (a block, not a
+                // capsule): lying on its side, a narrow chest would put the shoulder joint under the floor.
+                const int l = b == Torso ? LUpperArm : LThigh, rt = b == Torso ? RUpperArm : RThigh;
+                const float across = 0.5f * std::fabs(Vec3::Dot(rig.pos[l] - rig.pos[rt], lat));
+                const float wide = Mathf::Max(r, across + (b == Hips ? 0.5f * m_radius[LThigh] : 0.0f));
+                const Vec3 side = inv * lat;                 // the body's own axis that runs across the body
+                const Vec3 along = Vec3::Up, front = Vec3::Cross(side, along).Normalized();
+                const Vec3 h = side * wide + along * m_half[b] + front * (0.85f * r);
+                d.hasBox = true;
+                d.boxCentre = Vec3::Zero;
+                d.boxHalf = Vec3{std::fabs(h.x), std::fabs(h.y), std::fabs(h.z)};
+            }
         }
         m_phys->AddBody(d);
     }
@@ -714,7 +810,7 @@ bool DynamicCharacter::Build(const RigInput& rig) {
                 const Vec3 armDir = SafeNorm(rig.pos[b] - rig.pos[kParent[b]], Vec3::Down);
                 j.hinge = true;
                 j.hingeAxis = SafeNorm(Vec3::Cross(armDir, fwd), lat);
-                j.hingeMin = -0.05f; j.hingeMax = 2.6f;
+                j.hingeMin = -0.2f; j.hingeMax = 2.6f;    // (an elbow straightens a little past straight: lying on the floor the arm needs it)
                 break;
             }
             case LShin: case RShin: {
@@ -784,6 +880,18 @@ void DynamicCharacter::SetAnimationPose(const Vec3 pos[kBones], const Quat rot[k
 
 void DynamicCharacter::Tick(float dt, const ContactWorld* world) {
     if (!m_built || !Fin(dt) || dt <= 0.0f) return;
+    BeginFrame(dt, world);
+    m_accum = Mathf::Min(m_accum + Mathf::Min(dt, 0.25f), kStep * kMaxSteps);
+    while (m_accum >= kStep) { FixedStep(kStep); m_accum -= kStep; }
+}
+
+void DynamicCharacter::ControlStep(float h) {
+    if (!m_built || !Fin(h) || h <= 0.0f) return;
+    FixedStep(Mathf::Min(h, 0.05f));
+}
+
+void DynamicCharacter::BeginFrame(float dt, const ContactWorld* world) {
+    if (!m_built || !Fin(dt) || dt <= 0.0f) return;
     m_world = world;
     dt = Mathf::Min(dt, 0.25f);
     // Velocity of the animated bodies (to hand over motion when physics starts).
@@ -794,8 +902,6 @@ void DynamicCharacter::Tick(float dt, const ContactWorld* world) {
             m_animPrevX[b] = m_animX[b]; m_animPrevQ[b] = m_animQ[b];
         }
     }
-    m_accum = Mathf::Min(m_accum + dt, kStep * kMaxSteps);
-    while (m_accum >= kStep) { FixedStep(kStep); m_accum -= kStep; }
 }
 
 void DynamicCharacter::TrackAnimation(float) {
@@ -804,6 +910,7 @@ void DynamicCharacter::TrackAnimation(float) {
 
 void DynamicCharacter::StartPhysics() {
     if (m_state != CharState::Animated && m_state != CharState::Blending) return;
+    m_phys->SetActive(true);
     if (m_state == CharState::Blending) {
         for (int b = 0; b < kBones; ++b) {
             const float w = PhysicsWeight();
@@ -853,6 +960,7 @@ void DynamicCharacter::ChangeState(CharState s) {
     m_state = s;
     m_stateTime = 0.0f;
     m_stableTime = 0.0f;
+    m_phys->SetActive(s != CharState::Animated && s != CharState::Blending);
 }
 
 bool DynamicCharacter::RootMoveWanted(Vec3& delta, Vec3& forward, float* groundY) const {
@@ -875,8 +983,16 @@ float DynamicCharacter::RegionStrength(int b) const {
 }
 
 void DynamicCharacter::FixedStep(float h) {
+    m_stepH = h;
     m_clock += h;
     m_stateTime += h;
+    // In a world someone else steps, that step ran since the last control step: read what touches now.
+    const bool shared = m_core->SharesWorld();
+    if (shared && m_state != CharState::Animated && m_state != CharState::Blending) {
+        m_core->ContactsChanged();
+        TrackGround();
+        TrackSupport();
+    }
     const float relaxRate = h / Mathf::Max(0.05f, tuning.hitRelaxTime);
     for (int b = 0; b < kBones; ++b) m_relax[b] = Mathf::Max(0.0f, m_relax[b] - relaxRate);
 
@@ -922,8 +1038,10 @@ void DynamicCharacter::FixedStep(float h) {
     ApplyDrives(f);
     m_phys->SetJointFriction(friction);
     m_phys->Step(h, m_world);
-    TrackGround();
-    TrackSupport();
+    if (!shared) {
+        TrackGround();
+        TrackSupport();
+    }
 }
 
 void DynamicCharacter::TrackGround() {
@@ -933,8 +1051,9 @@ void DynamicCharacter::TrackGround() {
     for (int b = 0; b < kBones; ++b) {
         const float r = (b == LFoot || b == RFoot) ? m_footR : m_radius[b];
         for (int i = 0; i < m_phys->SphereCount(b); ++i) {
-            Vec3 c, n;
-            if (m_phys->SphereTouching(b, i, &c, &n) && n.y > 0.7f) lo = Mathf::Min(lo, c.y - r);
+            Vec3 c, n, at;
+            (void)r;
+            if (m_phys->SphereTouching(b, i, &c, &n, &at) && n.y > 0.7f) lo = Mathf::Min(lo, at.y);
         }
     }
     if (lo < 1e29f && Fin(lo)) m_groundNow = lo;
@@ -951,7 +1070,7 @@ void DynamicCharacter::ApplyDrives(const Frame& f) {
         if (f.has[b] && Fin(f.want[b])) { rel = (dq[p].Inverse() * f.want[b]).Normalized(); dq[b] = f.want[b]; }
         else { rel = m_relAnim[b]; dq[b] = (dq[p] * rel).Normalized(); }
         if (m_haveDrive) {
-            const float maxDeg = Mathf::Max(1.0f, tuning.targetSpeed) * kStep;
+            const float maxDeg = Mathf::Max(1.0f, tuning.targetSpeed) * m_stepH;
             rel = Quat::RotateTowards(m_relDrive[b], rel, maxDeg).Normalized();
         }
         m_relDrive[b] = rel;
@@ -1113,7 +1232,7 @@ void DynamicCharacter::FlatFoot(Frame& f, int side) const {
 // by a millimetre (heel and toe flickering) must not look like a lifted foot, or the capture
 // point "leaves" the feet for one frame and a needless step starts (seen with other compiler
 // rounding: a 35 N s push stepped six times and fell).
-constexpr int kSupportHold = 4;
+constexpr float kSupportHold = 4.0f / 60.0f;   // seconds (4 control steps at 60 Hz)
 
 bool DynamicCharacter::FootSupport(int side, Vec3& centre) const {
     Vec3 sum; int n = 0;
@@ -1136,10 +1255,12 @@ void DynamicCharacter::TrackSupport() {
     for (int side = 0; side < 2; ++side) {
         const int ft = side == 0 ? LFoot : RFoot;
         for (int i = 0; i < 4; ++i) {
-            Vec3 c;
-            if (i < m_phys->SphereCount(ft) && m_phys->SphereTouching(ft, i, &c)) {
-                m_footHold[side][i] = kSupportHold;
-                m_footPt[side][i] = c;
+            Vec3 c, n, at;
+            if (i < m_phys->SphereCount(ft) && m_phys->SphereTouching(ft, i, &c, &n, &at)) {
+                m_footHold[side][i] = Mathf::Max(2, (int)(kSupportHold / m_stepH + 0.5f));
+                // Under the sole point, at the height of the ground it touches (a foot pressed a little
+                // into the ground must not make the ground look lower).
+                m_footPt[side][i] = Vec3{c.x, at.y, c.z};
             } else if (m_footHold[side][i] > 0) {
                 --m_footHold[side][i];
             }

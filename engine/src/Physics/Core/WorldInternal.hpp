@@ -33,6 +33,8 @@ struct BodyData {
     bool bullet = false;
     bool massSet = false;            // SetMass was called (keep that mass when colliders change)
     float setMass = 0.0f;
+    bool inertiaSet = false;         // SetInertia was called (keep that inertia when colliders or the mass change)
+    M33 setInertia;
     float sleepTime = 0.0f;
     Xf xf, prevXf;                    // origin pose now and at the previous step
     V3 localCom, com;                 // centre of mass: body frame and world
@@ -75,6 +77,7 @@ struct ContactPair {
     bool sensor = false;
     bool touching = false, wasTouching = false;
     bool active = false;              // looked at this step (one side awake)
+    bool recheck = true;              // a still pair (World::reportStillPairs): look at it this step (new, or a side moved)
     V3 normal;                        // A to B
     bool mixed = false;               // points have their own normals (a mesh pair)
     int count = 0;
@@ -128,6 +131,19 @@ struct World::Impl {
     std::vector<JointId> freeJoints;
     std::vector<ContactPair> contacts;             // sorted by key
     std::unordered_map<std::uint64_t, int> contactIndex;
+    std::vector<std::uint64_t> noCollide;          // body pairs that never collide (sorted keys, see BodyPairKey)
+    static std::uint64_t BodyPairKey(BodyId a, BodyId b) { return a < b ? ((std::uint64_t)a << 32) | b : ((std::uint64_t)b << 32) | a; }
+    /// Drop every contact between two bodies now (they stopped colliding: a joint or a no-collide pair).
+    void DropContactsBetween(BodyId a, BodyId b) {
+        for (ContactPair& cp : contacts) {
+            if (!cp.alive) continue;
+            const BodyId ba = colliders[cp.a].body, bb = colliders[cp.b].body;
+            if ((ba == a && bb == b) || (ba == b && bb == a)) {
+                cp.alive = false;
+                contactIndex.erase(cp.key);
+            }
+        }
+    }
     std::vector<ColliderId> movedProxies;          // colliders whose fat box changed (look for new pairs)
     std::vector<char> movedFlag;                   // by slot
     void MarkMoved(ColliderId c) {

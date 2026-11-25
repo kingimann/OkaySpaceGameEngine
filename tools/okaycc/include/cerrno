@@ -1,0 +1,52 @@
+// <cerrno> for okay-cc (ISO/IEC 14882 [errno], ISO C 7.5, POSIX <errno.h>). Our own header. errno is
+// one int for the whole program (okay-cc programs have one thread), reached through
+// __okay_errno() in lib/extra.c. The numbers are the Linux system-call error numbers. Our own C
+// library sets errno only where it says so (lib/extra.c); most functions leave it as it is.
+#pragma once
+extern "C" int *__okay_errno(void);
+#define errno (*__okay_errno())
+#define EPERM 1
+#define ENOENT 2
+#define ESRCH 3
+#define EINTR 4
+#define EIO 5
+#define ENXIO 6
+#define E2BIG 7
+#define EBADF 9
+#define ECHILD 10
+#define EAGAIN 11
+#define EWOULDBLOCK EAGAIN
+#define ENOMEM 12
+#define EACCES 13
+#define EFAULT 14
+#define EBUSY 16
+#define EEXIST 17
+#define EXDEV 18
+#define ENODEV 19
+#define ENOTDIR 20
+#define EISDIR 21
+#define EINVAL 22
+#define ENFILE 23
+#define EMFILE 24
+#define ENOTTY 25
+#define EFBIG 27
+#define ENOSPC 28
+#define ESPIPE 29
+#define EROFS 30
+#define EMLINK 31
+#define EPIPE 32
+#define EDOM 33
+#define ERANGE 34
+#define EDEADLK 35
+#define ENAMETOOLONG 36
+#define ENOSYS 38
+#define ENOTEMPTY 39
+#define ELOOP 40
+#define ENOTSUP 95
+#define EOPNOTSUPP 95
+#define EADDRINUSE 98
+#define ECONNRESET 104
+#define ENOTCONN 107
+#define ETIMEDOUT 110
+#define ECONNREFUSED 111
+#define EINPROGRESS 115

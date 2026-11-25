@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include "okay/Animation/DynamicCharacter.hpp"
 #include "okay/Animation/RagdollPhysics.hpp"
+#include "okay/Physics/Core/World.hpp"
+#include "okay/Physics/ShapeKernel3D.hpp"
 #include <Okay.hpp>
 #include <cmath>
 #include <cstdlib>
@@ -12,12 +14,44 @@
 using namespace okay;
 using namespace okay::dyn;
 
-// DynamicCharacter (the ActiveRagdoll's brain) on its own, with a hand-made
+// DynamicCharacter (the Ragdoll's brain) on its own, with a hand-made
 // 1.8 m rig on flat ground: standing, balance under pushes (stays up below a
 // threshold, falls above), recovery time, get-up from face up and face down,
 // hostile inputs, a broken skeleton, and a scripted sequence that must give
 // the same numbers twice.
 namespace {
+// What the controller's rays see in these tests (grab, get-up floor): a flat ground at `groundY` plus optional
+// axis-aligned boxes (a ledge, a wall). Sim::Sync puts the same ground and boxes into the bodies' world. (Moved here
+// from RagdollPhysics, where it fed the deleted XpbdRagdoll; the component asks the scene.)
+class SimpleWorld : public ContactWorld {
+public:
+    struct Box { Vec3 min, max; };
+    float groundY = 0.0f;
+    bool  hasGround = true;
+    std::vector<Box> boxes;
+    bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const override {
+        float best = 2.0f;
+        const Vec3 d = to - from;
+        if (hasGround && from.y >= groundY && to.y <= groundY && d.y < 0.0f) {
+            const float t = (groundY - from.y) / d.y;
+            if (t >= 0.0f && t <= 1.0f) { best = t; normal = Vec3::Up; }
+        }
+        for (const Box& b : boxes) {
+            // The shared ray-box test (Physics/ShapeKernel3D); a segment that starts inside never hits.
+            LocalShape3D box;
+            box.kind = LocalShape3D::Kind::Box;
+            box.half = (b.max - b.min) * 0.5f;
+            float t; Vec3 n;
+            if (!box.Ray(from - (b.min + b.max) * 0.5f, d, 1.0f, t, n) || t >= best) continue;
+            best = t;
+            normal = n;
+        }
+        if (best > 1.0f) return false;
+        point = from + d * best;
+        return true;
+    }
+};
+
 enum { Hips = 0, Torso, Head, LUpperArm, LForeArm, LHand, RUpperArm, RForeArm, RHand,
        LThigh, LShin, LFoot, RThigh, RShin, RFoot };
 
@@ -37,16 +71,37 @@ RigInput MakeRig() {
     return r;
 }
 
+// A box that never moves, in a ragdoll's own world (min and max corners).
+void StaticBox(phys::World& w, const Vec3& lo, const Vec3& hi, float friction = 0.5f) {   // (0.5: a scene collider's default)
+    phys::BodyDef bd;
+    bd.type = phys::BodyType::Static;
+    bd.position = phys::V3{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+    phys::ColliderDef cd;
+    cd.shape = phys::Shape::Box(phys::V3{(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f});
+    cd.friction = friction;
+    w.AddCollider(w.CreateBody(bd), cd);
+}
+
 struct Sim {
     RigInput rig = MakeRig();
-    SimpleWorld world;
+    SimpleWorld world;                 // what the rays see (grab, get-up); Sync() builds the same as bodies
     DynamicCharacter c;
     float t = 0.0f;
+    bool synced = false;
     explicit Sim(RagdollMode m = RagdollMode::Reactive) {
         c.mode = m;
         CHECK(c.Build(rig));
     }
+    // The ground and boxes of `world` as static bodies in the character's own physics world (once, at the first Run).
+    void Sync() {
+        if (synced) return;
+        synced = true;
+        phys::World& w = *c.Bodies()->World();
+        if (world.hasGround) StaticBox(w, Vec3{-60.0f, world.groundY - 4.0f, -60.0f}, Vec3{60.0f, world.groundY, 60.0f});
+        for (const SimpleWorld::Box& b : world.boxes) StaticBox(w, b.min, b.max);
+    }
     void Run(float seconds) {
+        Sync();
         for (float e = 0.0f; e < seconds - 1e-5f; e += 1.0f / 60.0f) {
             c.SetAnimationPose(rig.pos, rig.rot);
             c.Tick(1.0f / 60.0f, &world);
@@ -63,9 +118,8 @@ struct Sim {
         return true;
     }
     float MaxGap() {
-        auto* x = static_cast<XpbdRagdoll*>(c.Physics());
         float g = 0.0f;
-        for (int j = 0; j < x->JointCount(); ++j) g = std::fmax(g, x->JointGap(j));
+        for (int j = 0; j < c.Bodies()->JointCount(); ++j) g = std::fmax(g, c.Bodies()->JointGap(j));
         return g;
     }
     // Lay the body on its back (faceUp) or front, head toward +Z / -Z.
@@ -192,11 +246,10 @@ int main() {
     // ---- The drive seam (the Joint3D drive fields): identity target holds the build pose ----
     {
         auto arm = [](const JointDrive& d) {
-            XpbdRagdoll x;
-            x.gravity = Vec3{0, -9.81f, 0};
-            BodyDesc base; base.position = {0, 2, 0}; base.mass = 1000.0f; base.inertia = {1000, 1000, 1000};
+            CoreRagdoll x;
+            BodyDesc base; base.position = {0, 2, 0}; base.mass = 1000.0f;
             BodyDesc limb; limb.position = {0.25f, 2, 0}; limb.rotation = Quat::FromToRotation(Vec3::Up, Vec3::Right);
-            limb.mass = 2.0f; limb.inertia = {0.05f, 0.005f, 0.05f};
+            limb.mass = 2.0f; limb.capsuleRadius = 0.04f; limb.capsuleHalf = 0.21f;
             const int b0 = x.AddBody(base), b1 = x.AddBody(limb);
             JointDesc j; j.parent = b0; j.child = b1; j.anchor = {0, 2, 0}; j.swing = 3.0f; j.twist = 3.0f;
             const int jj = x.AddJoint(j);
@@ -222,21 +275,43 @@ int main() {
         CHECK(yWeak < yStiff - 0.05f);          // the torque cap lets it sag
     }
 
+    // ---- Powered, the body follows its animation pose: the animation lifts the left arm 70 degrees out to the side,
+    //      the physical arm (core joint drives) follows it while the body keeps standing ----
+    {
+        Sim s(RagdollMode::Powered);
+        s.Run(1.0f);
+        auto armDir = [&] { return (s.c.Body(LForeArm).position - s.c.Body(LUpperArm).position).Normalized(); };
+        const Vec3 shoulder = s.rig.pos[LUpperArm];
+        const Quat lift = Quat::AngleAxis(70.0f, Vec3{0, 0, 1});
+        const Vec3 want = (lift * Vec3::Down).Normalized();
+        const float before = std::acos(std::fmax(-1.0f, std::fmin(1.0f, Vec3::Dot(armDir(), want)))) * 57.2958f;
+        for (int b : {LUpperArm, LForeArm, LHand}) {
+            s.rig.pos[b] = shoulder + lift * (s.rig.pos[b] - shoulder);
+            s.rig.rot[b] = lift;
+        }
+        s.Run(2.0f);
+        const float after = std::acos(std::fmax(-1.0f, std::fmin(1.0f, Vec3::Dot(armDir(), want)))) * 57.2958f;
+        const float handErr = Vec3::Distance(s.c.Body(LHand).position, s.rig.pos[LHand]);
+        std::cout << "  follows pose: arm " << before << " deg from the lifted pose before, " << after
+                  << " deg after 2 s; hand " << handErr << " m from the animated hand; state " << S(s.c.State()) << "\n";
+        CHECK(before > 50.0f);
+        CHECK(after < 15.0f);
+        CHECK(s.c.State() == CharState::Balancing);           // still standing
+    }
+
     // ---- No invisible floor past an edge (review of #1138): a sphere sliding off a box falls at once.
     //      Before: the last contact plane was kept while the casts missed, up to 1 m past the edge. ----
     {
-        XpbdRagdoll x;
-        SimpleWorld w;
-        w.hasGround = false;
-        w.boxes.push_back({Vec3{-2.0f, -1.0f, -1.0f}, Vec3{0.0f, 0.0f, 1.0f}});
-        BodyDesc b; b.position = {-0.3f, 0.05f, 0}; b.mass = 1.0f; b.inertia = {0.001f, 0.001f, 0.001f};
+        CoreRagdoll x;
+        StaticBox(*x.World(), Vec3{-2.0f, -1.0f, -1.0f}, Vec3{0.0f, 0.0f, 1.0f});
+        BodyDesc b; b.position = {-0.3f, 0.05f, 0}; b.mass = 1.0f;
         b.friction = 0.0f;                                // slides off at its speed
         b.spheres.push_back({Vec3::Zero, 0.05f});
         const int i = x.AddBody(b);
         x.SetState(i, {b.position, Quat::Identity, Vec3{1.0f, 0, 0}, Vec3::Zero});
         float yAtHalfMetre = 9.0f;
         for (int k = 0; k < 90; ++k) {
-            x.Step(1.0f / 60.0f, &w);
+            x.Step(1.0f / 60.0f, nullptr);
             const BodyState st = x.State(i);
             if (st.position.x > 0.5f && yAtHalfMetre > 8.0f) yAtHalfMetre = st.position.y;
         }
@@ -331,7 +406,7 @@ int main() {
         float lowestPelvis = 9.0f;
         for (int i = 0; i < 150; ++i) { s.Run(1.0f / 60.0f); lowestPelvis = std::fmin(lowestPelvis, s.c.Body(Hips).position.y); }
         std::cout << "  big push: state " << S(s.c.State()) << " falls " << s.c.Falls() << " lowest pelvis "
-                  << lowestPelvis << "\n";
+                  << lowestPelvis << " widest joint gap " << s.MaxGap() << " m\n";
         CHECK(s.c.Falls() == 1);
         CHECK(s.c.State() == CharState::Down || s.c.State() == CharState::GettingUp);
         CHECK(lowestPelvis < 0.4f);
@@ -647,34 +722,7 @@ int main() {
         CHECK(!ar->Shoot(chest + Vec3{5, 0, -5}, Vec3{0, 0, 1}, 20.0f));
     }
 
-    // ---- A Ragdoll and an ActiveRagdoll on one object: the ActiveRagdoll takes over, only one reacts ----
-    {
-        Scene sc{"ar3"};
-        auto* g = sc.CreateGameObject("Ground");
-        g->transform->localPosition = {0, -0.5f, 0};
-        g->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
-        GameObject* body = sc.CreateGameObject("Body");
-        body->AddComponent<Character>()->Apply();
-        auto* hp = body->AddComponent<HealthStat>();
-        auto* old = body->AddComponent<Ragdoll>();
-        auto* ar = body->AddComponent<ActiveRagdoll>();
-        sc.Start();
-        for (int i = 0; i < 30; ++i) sc.Update(1.0f / 60.0f);
-        CHECK(ar->Ready());
-        CHECK(!old->enabled);                                     // switched off, with a log line
-        CHECK(ar->TookOverRagdoll());
-        hp->Damage(10.0f, body->transform->Position() + Vec3{-3, 1.2f, 0});
-        sc.Update(1.0f / 60.0f);
-        CHECK(!old->IsReacting());                                // only the ActiveRagdoll flinches
-        CHECK(ar->IsPhysical());
-        hp->Damage(1000.0f, body->transform->Position() + Vec3{-3, 1.2f, 0});
-        for (int i = 0; i < 60; ++i) sc.Update(1.0f / 60.0f);
-        CHECK(!old->IsActive());                                  // the old ragdoll did not go limp too
-        CHECK(ar->State() == CharState::Dead);
-        CHECK(body->GetComponent<Character>()->enabled);          // nothing switched the animation off under it
-    }
-
-    // ---- Review of #1138: respawn, powered hand-over, remote copies, giving a Ragdoll back ----
+    // ---- Review of #1138: respawn, powered hand-over, remote copies ----
     {
         auto makeBody = [](Scene& sc, const char* name, const Vec3& at) {
             GameObject* b = sc.CreateGameObject(name);
@@ -756,20 +804,6 @@ int main() {
                       << " controller on " << npc->enabled << "\n";
             CHECK(Vec3::Distance(root0, root1) < 1e-4f);
             CHECK(npc->enabled);
-        }
-        // Switching the ActiveRagdoll off gives the Ragdoll it took over back.
-        {
-            Scene sc{"giveback"};
-            makeGround(sc);
-            GameObject* body = makeBody(sc, "Body", Vec3{0, 0, 0});
-            auto* old = body->AddComponent<Ragdoll>();
-            auto* ar = body->AddComponent<ActiveRagdoll>();
-            sc.Start();
-            run(sc, 0.2f);
-            CHECK(!old->enabled);
-            ar->enabled = false;
-            ar->OnDisable();
-            CHECK(old->enabled);
         }
     }
 

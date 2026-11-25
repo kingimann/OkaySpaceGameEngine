@@ -666,7 +666,7 @@ documentation (`EnumDisplaySettingsW`, `GetSystemInfo`, `GlobalMemoryStatusEx`, 
   ran on own there through Settings > Experimental) and stays `sdl2` on Windows and the web. `OKAY_PLATFORM_BACKEND=sdl2` in the
   environment goes back. The player on own uses the software painter (the OpenGL painter is not used there yet: the player's
   OpenGL 3D path makes its own hidden window's context current, and the GL painter caches which context is current).
-* **Displays through the seam.** `Backend::DisplayModes(index)` (current mode first), `Window::SetBordered(on)` and
+* **Displays through the seam.** `Backend::DisplayModes(index)` (current mode first; `okay::platform::DisplayMode` is the engine's `okay::DisplayMode`, one type), `Window::SetBordered(on)` and
   `Window::SetFullscreenMode(mode, display)` (exclusive fullscreen with a mode change; false = not supported, the caller uses desktop
   fullscreen). sdl2: the SDL calls `shared/SdlDisplays.cpp` made. Own X11: monitors from RandR 1.5 (`libXrandr.so.2` through
   `dlopen`; the X screen without it), each with its output's modes and refresh (dot clock over total pixels, double-scan and

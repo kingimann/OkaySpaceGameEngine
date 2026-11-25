@@ -20,7 +20,7 @@ std::vector<DisplayMonitor> ListMonitors(okay::platform::Backend* b) {
         m.name = di.name.empty() ? "Display " + std::to_string(i + 1) : di.name;
         m.x = di.x; m.y = di.y; m.width = di.w; m.height = di.h;
         for (const okay::platform::DisplayMode& dm : b->DisplayModes(i))
-            if (dm.w > 0 && dm.h > 0) m.modes.push_back({dm.w, dm.h, dm.refreshHz > 0 ? dm.refreshHz : 0});
+            if (dm.Valid()) m.modes.push_back({dm.width, dm.height, dm.refreshHz > 0 ? dm.refreshHz : 0});
         m.modes = FilterDisplayModes(std::move(m.modes));
         out.push_back(std::move(m));
     }
@@ -51,7 +51,7 @@ bool Apply(okay::platform::Window* window, const DisplayApply& want) {
         return true;
     }
     okay::platform::DisplayMode mode;
-    if (want.hasSize) { mode.w = want.width; mode.h = want.height; mode.refreshHz = want.refreshHz > 0 ? want.refreshHz : 0; }
+    if (want.hasSize) { mode.width = want.width; mode.height = want.height; mode.refreshHz = want.refreshHz > 0 ? want.refreshHz : 0; }
     const int display = want.hasMonitor && want.monitorIndex >= 0 ? want.monitorIndex : 0;
     if (!window->SetFullscreenMode(mode, display)) window->SetFullscreen(true);   // no video mode change on this backend
     return true;

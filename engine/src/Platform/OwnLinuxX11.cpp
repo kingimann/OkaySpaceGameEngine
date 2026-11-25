@@ -892,7 +892,7 @@ public:
         for (int i = 0; res && i < res->nmode; ++i) {
             const XRRModeInfo& mi = res->modes[i];
             if (mi.id != id) continue;
-            m.w = (int)mi.width; m.h = (int)mi.height;
+            m.width = (int)mi.width; m.height = (int)mi.height;
             m.refreshHz = modemath::RefreshFromModeLine(mi.dotClock, mi.hTotal, mi.vTotal,
                                                         (mi.modeFlags & RR_DoubleScan) != 0, (mi.modeFlags & RR_Interlace) != 0);
         }

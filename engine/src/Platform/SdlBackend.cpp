@@ -69,11 +69,11 @@ public:
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool SetBordered(bool on) override { SDL_SetWindowBordered(m_win, on ? SDL_TRUE : SDL_FALSE); return true; }
     bool SetFullscreenMode(const DisplayMode& m, int displayIndex) override {
-        if (m.w <= 0 || m.h <= 0) return SDL_SetWindowFullscreen(m_win, SDL_WINDOW_FULLSCREEN) == 0;   // the window's own mode
+        if (m.width <= 0 || m.height <= 0) return SDL_SetWindowFullscreen(m_win, SDL_WINDOW_FULLSCREEN) == 0;   // the window's own mode
         SDL_DisplayMode request;
         SDL_zero(request);
-        request.w = m.w;
-        request.h = m.h;
+        request.w = m.width;
+        request.h = m.height;
         request.refresh_rate = m.refreshHz > 0 ? m.refreshHz : 0;
         SDL_DisplayMode closest;
         if (SDL_GetClosestDisplayMode(displayIndex >= 0 ? displayIndex : 0, &request, &closest)) SDL_SetWindowDisplayMode(m_win, &closest);

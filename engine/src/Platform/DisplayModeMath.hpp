@@ -1,7 +1,7 @@
 #pragma once
 // Pure helpers for the own backends' display lists (no X11 or Win32 header needed, so tests run anywhere).
 // Written from the X Resize and Rotate extension protocol (randrproto.txt: a mode line's dot clock, total width and
-// total height, and the DoubleScan / Interlace flags) and our own DisplayMode type.
+// total height, and the DoubleScan / Interlace flags) and the engine's DisplayMode type.
 #include "okay/Platform/Platform.hpp"
 #include <cstdint>
 #include <vector>
@@ -24,9 +24,9 @@ inline int RefreshFromModeLine(uint64_t dotClockHz, uint32_t hTotal, uint32_t vT
 inline std::vector<DisplayMode> CurrentFirst(const DisplayMode& current, const std::vector<DisplayMode>& modes) {
     std::vector<DisplayMode> out;
     auto add = [&](const DisplayMode& m) {
-        if (m.w <= 0 || m.h <= 0) return;
+        if (m.width <= 0 || m.height <= 0) return;
         for (const DisplayMode& o : out)
-            if (o.w == m.w && o.h == m.h && o.refreshHz == m.refreshHz) return;
+            if (o.width == m.width && o.height == m.height && o.refreshHz == m.refreshHz) return;
         out.push_back(m);
     };
     add(current);

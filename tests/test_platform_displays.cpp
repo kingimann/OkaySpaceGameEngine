@@ -37,7 +37,7 @@ public:
     void SetFullscreen(bool on) override { calls.push_back(on ? "fullscreen on" : "fullscreen off"); }
     bool SetBordered(bool on) override { calls.push_back(on ? "bordered" : "borderless"); return true; }
     bool SetFullscreenMode(const DisplayMode& m, int display) override {
-        calls.push_back("mode " + std::to_string(m.w) + "x" + std::to_string(m.h) + "@" + std::to_string(m.refreshHz) + " on " + std::to_string(display));
+        calls.push_back("mode " + std::to_string(m.width) + "x" + std::to_string(m.height) + "@" + std::to_string(m.refreshHz) + " on " + std::to_string(display));
         return canChangeMode;
     }
     bool IsFocused() const override { return false; }
@@ -67,7 +67,7 @@ void PureChecks() {
     const std::vector<DisplayMode> listed = {{800, 600, 60}, {1024, 768, 60}, {1024, 768, 60}, {0, 0, 0}, {640, 480, 75}};
     const std::vector<DisplayMode> cf = modemath::CurrentFirst({1024, 768, 60}, listed);
     CHECK(cf.size() == 3);
-    CHECK(cf.size() == 3 && cf[0].w == 1024 && cf[0].h == 768 && cf[1].w == 800 && cf[2].refreshHz == 75);
+    CHECK(cf.size() == 3 && cf[0].width == 1024 && cf[0].height == 768 && cf[1].width == 800 && cf[2].refreshHz == 75);
     CHECK(modemath::CurrentFirst({0, 0, 0}, {}).empty());
 
     // Apply: the same order of steps the SDL version took.
@@ -122,9 +122,9 @@ void XvfbChecks() {
     CHECK(d.primary);
     CHECK(!own->DisplayAt(n, d));
     const std::vector<DisplayMode> modes = own->DisplayModes(0);
-    std::cout << "  own modes of display 0: " << modes.size() << " (first " << (modes.empty() ? 0 : modes[0].w) << "x"
-              << (modes.empty() ? 0 : modes[0].h) << ")\n";
-    CHECK(!modes.empty() && modes[0].w == 1024 && modes[0].h == 768);
+    std::cout << "  own modes of display 0: " << modes.size() << " (first " << (modes.empty() ? 0 : modes[0].width) << "x"
+              << (modes.empty() ? 0 : modes[0].height) << ")\n";
+    CHECK(!modes.empty() && modes[0].width == 1024 && modes[0].height == 768);
     CHECK(own->DisplayModes(n).empty());
     const std::vector<okay::DisplayMonitor> ownMons = okay::platformdisplay::ListMonitors(own);
     CHECK(ownMons.size() == (size_t)n);
@@ -142,7 +142,7 @@ void XvfbChecks() {
             CHECK(a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h);
             CHECK(a.refreshHz == b.refreshHz || a.refreshHz == 0 || b.refreshHz == 0);
             const std::vector<DisplayMode> ma = own->DisplayModes(i), mb = sdl->DisplayModes(i);
-            CHECK(!ma.empty() && !mb.empty() && ma[0].w == mb[0].w && ma[0].h == mb[0].h);
+            CHECK(!ma.empty() && !mb.empty() && ma[0].width == mb[0].width && ma[0].height == mb[0].height);
         }
         const std::vector<okay::DisplayMonitor> sdlMons = okay::platformdisplay::ListMonitors(sdl);
         CHECK(sdlMons.size() == ownMons.size());

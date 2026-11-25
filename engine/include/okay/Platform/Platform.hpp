@@ -16,6 +16,7 @@
 //
 // Header rules (MinGW): no <mutex>/<thread> here, and no names that clash with
 // Windows or X11 macros (CreateWindow, None, Status, Bool, ...).
+#include "okay/Core/DisplayModes.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -169,11 +170,9 @@ struct GLCurrent {
     void* context = nullptr;
 };
 
-/// One video mode of a display.
-struct DisplayMode {
-    int w = 0, h = 0;
-    int refreshHz = 0;                       // 0 = unknown
-};
+/// One video mode of a display: the engine's plain DisplayMode (width, height, refreshHz; okay/Core/DisplayModes.hpp),
+/// so the seam and the display settings share one type.
+using DisplayMode = okay::DisplayMode;
 
 class Window {
 public:

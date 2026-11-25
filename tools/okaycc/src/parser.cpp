@@ -1276,6 +1276,19 @@ private:
                 if (m.name == n || (!alt.empty() && m.name == alt)) return &m;
             return nullptr;
         };
+        {
+            // A delegating constructor, C() : C(args) {} ([class.base.init] p6): the target
+            // constructor builds the whole object, then this body runs.
+            std::string own = shortName(tag);
+            std::size_t lt = own.find('<');
+            std::string ownBare = lt == std::string::npos ? own : own.substr(0, lt);
+            if (d.inits.size() == 1 && (d.inits[0].name == own || d.inits[0].name == ownBare || d.inits[0].name == tag)) {
+                body->stmts.push_back(sExpr(ctorCall(tag, eName("this", p), std::move(d.inits[0].args), p), p));
+                if (d.body) body->stmts.push_back(std::move(d.body));
+                decl->body = std::move(body);
+                return decl;
+            }
+        }
         Type* B = T->base.empty() ? nullptr : classOf(T->base);
         int ehHeld = 0;  // sub-objects recorded for unwinding while the constructor runs
         if (B && B->needCtor) {
@@ -4249,6 +4262,13 @@ private:
                     while (eatP(",")) mi.args.push_back(parseAssign());
                     expectP(")", ")");
                 }
+            } else if (isP("{")) {
+                // m{a, b} ([class.base.init] p3, [dcl.init.list]): the values as for m(a, b)
+                auto list = parseInitializer();
+                if (list && list->kind == Expr::Kind::Brace)
+                    for (auto& k : list->kids) mi.args.push_back(std::move(k));
+                else if (list)
+                    mi.args.push_back(std::move(list));
             } else {
                 err("expected '(' after a member initializer");
                 break;
@@ -7004,12 +7024,110 @@ static std::vector<Token> threadLocalsAsStatic(const std::vector<Token>& in) {
     return out;
 }
 
+// friend declarations ([class.friend]) on the token stream. okay-cc does not enforce access, so a
+// friend that only declares (friend class Scene; friend void f(int);) is dropped. A friend function
+// defined in a class at namespace scope (friend bool operator==(A a, A b) { .. }, a "hidden
+// friend") is a namespace-scope function ([class.friend] p6-p7): it is moved, as an inline
+// function, to just after the class's closing "};". (Name lookup differs from the standard's: the
+// moved function is found by ordinary lookup too, not only through its arguments' classes.)
+static std::vector<Token> hoistFriends(const std::vector<Token>& in) {
+    auto punct = [](const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; };
+    auto word = [](const Token& t, const char* s) { return t.isName() && t.text == s; };
+    // kinds of open braces: 'n' namespace or extern "C", 'c' class at namespace scope, 'C' a class
+    // in a template or another class, 'o' other
+    std::vector<char> kinds;
+    std::vector<std::vector<Token>> pending;  // per open class: the friend definitions to emit
+    std::vector<Token> out;
+    out.reserve(in.size());
+    bool afterTemplate = false;  // "template <...>" seen before a class head
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        const Token& t = in[i];
+        if (word(t, "template")) afterTemplate = true;
+        if (punct(t, ";")) afterTemplate = false;
+        if (punct(t, "{")) {
+            char k = 'o';
+            bool nsScope = true;
+            for (char c : kinds) nsScope = nsScope && c == 'n';
+            for (std::size_t b = i; b-- > 0 && i - b <= 64;) {
+                if (punct(in[b], ";") || punct(in[b], "}") || punct(in[b], "{")) break;
+                if (word(in[b], "namespace") || (in[b].kind == Tok::StringLit && b > 0 && word(in[b - 1], "extern"))) {
+                    k = 'n';
+                    break;
+                }
+                if ((word(in[b], "class") || word(in[b], "struct")) && !(b > 0 && word(in[b - 1], "enum"))) {
+                    k = nsScope && !afterTemplate ? 'c' : 'C';
+                    break;
+                }
+                if (punct(in[b], ")") || punct(in[b], "=")) break;  // a function body or an initializer
+            }
+            kinds.push_back(k);
+            pending.emplace_back();
+            afterTemplate = false;
+            out.push_back(t);
+            continue;
+        }
+        if (punct(t, "}") && !kinds.empty()) {
+            char k = kinds.back();
+            std::vector<Token> moved = std::move(pending.back());
+            kinds.pop_back();
+            pending.pop_back();
+            out.push_back(t);
+            if (k == 'c' && !moved.empty()) {
+                if (i + 1 < in.size() && punct(in[i + 1], ";")) out.push_back(in[++i]);
+                for (const Token& m : moved) out.push_back(m);
+            }
+            continue;
+        }
+        if (word(t, "friend") && !kinds.empty() && (kinds.back() == 'c' || kinds.back() == 'C')) {
+            // the declaration: up to ';' at depth 0, or a body's closing '}'
+            std::size_t j = i + 1;
+            int paren = 0;
+            bool body = false;
+            for (; j < in.size() && in[j].kind != Tok::End; ++j) {
+                if (punct(in[j], "(")) ++paren;
+                else if (punct(in[j], ")")) --paren;
+                else if (paren == 0 && punct(in[j], ";")) break;
+                else if (paren == 0 && punct(in[j], "{")) {
+                    body = true;
+                    int depth = 0;
+                    for (; j < in.size(); ++j) {
+                        if (punct(in[j], "{")) ++depth;
+                        else if (punct(in[j], "}") && --depth == 0) break;
+                    }
+                    break;
+                }
+            }
+            if (j >= in.size()) {
+                out.push_back(t);
+                continue;
+            }
+            if (!body) {
+                i = j;  // dropped with its ';'
+                continue;
+            }
+            if (kinds.back() != 'c') {
+                out.push_back(t);  // (in a template or a nested class: left as it is)
+                continue;
+            }
+            Token inl = t;
+            inl.text = "inline";
+            inl.kind = isKeywordSpelling("inline") ? Tok::Keyword : Tok::Ident;
+            pending.back().push_back(inl);
+            for (std::size_t k = i + 1; k <= j; ++k) pending.back().push_back(in[k]);
+            i = j;
+            continue;
+        }
+        out.push_back(t);
+    }
+    return out;
+}
+
 // Parse and check. A function template called without explicit arguments is only known after the
 // checker has deduced them, so the file is parsed again with the new instance requests until none
 // are new (at most eight rounds).
 Tu frontEnd(const std::vector<Token>& raw, Diagnostics& diags) {
     instRequests().clear();
-    const std::vector<Token> toks = expandPacks(threadLocalsAsStatic(expandNamespaceAliases(raw)));
+    const std::vector<Token> toks = expandPacks(hoistFriends(threadLocalsAsStatic(expandNamespaceAliases(raw))));
     Tu result;
     for (int round = 0; round < 8; ++round) {
         Diagnostics local;

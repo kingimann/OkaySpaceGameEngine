@@ -307,6 +307,18 @@ struct ProfilerPanelData {
     }
 };
 
+// The hosted picture `e` drew against the old way's: saved, printed, and nothing of the body left in OkayUI's frame (it is in ImGui's
+// draw list).
+Diff HostedDiff(const char* name, const Bitmap& oldWay, Editor& e) {
+    const Diff diff = Compare(oldWay, e.ras.bmp);
+    Save(name, "oldway", oldWay);
+    Save(name, "hosted", e.ras.bmp);
+    std::printf("  %s: hosted against the old way: average difference %.3f, clearly different %.3f%%\n", name, diff.avg, diff.clearly);
+    CHECK(OkayUI::GetDrawData().indexCount == 0);
+    CHECK(e.embed.Skipped() == 0);
+    return diff;
+}
+
 // The hosted picture against the old way's, for one screen.
 template <class Data>
 Diff HostedAgainstOldWay(const char* name, const char* title) {
@@ -322,14 +334,7 @@ Diff HostedAgainstOldWay(const char* name, const char* title) {
     Editor e;
     e.title = title; e.body = d.Body();
     e.Frames(6);
-    const Diff diff = Compare(oldWay, e.ras.bmp);
-    Save(name, "oldway", oldWay);
-    Save(name, "hosted", e.ras.bmp);
-    std::printf("  %s: hosted against the old way: average difference %.3f, clearly different %.3f%%\n", name, diff.avg, diff.clearly);
-    // and nothing of the body is left in OkayUI's frame (it is in ImGui's draw list)
-    CHECK(OkayUI::GetDrawData().indexCount == 0);
-    CHECK(e.embed.Skipped() == 0);
-    return diff;
+    return HostedDiff(name, oldWay, e);
 }
 
 void SamePictureAsBefore() {
@@ -604,14 +609,8 @@ Diff SectionsAgainstOldWay(const char* name, bool tags, bool others) {
     Editor e;
     e.winH = (float)kH - 40.0f; d.Add(e, tags, others);
     e.Frames(6);
-    const Diff diff = Compare(oldWay, e.ras.bmp);
-    Save(name, "oldway", oldWay);
-    Save(name, "hosted", e.ras.bmp);
-    std::printf("  %s: hosted against the old way: average difference %.3f, clearly different %.3f%%\n", name, diff.avg, diff.clearly);
-    CHECK(OkayUI::GetDrawData().indexCount == 0);   // nothing of the sections is left in OkayUI's frame
-    CHECK(e.embed.Skipped() == 0);
     for (const Editor::Section& sec : e.sections) CHECK(sec.shown);
-    return diff;
+    return HostedDiff(name, oldWay, e);
 }
 
 void SectionsSamePictureAsBefore() {

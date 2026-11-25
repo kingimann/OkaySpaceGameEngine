@@ -138,12 +138,11 @@ export class Quaternion {
 
     /** `a.multiply(b)` turns by b first and then by a (the engine's a * b). */
     multiply(b) {
-        const a = this;
-        return new Quaternion(
-            a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
+        // vector form of the Hamilton product: w = wa wb - va.vb, v = wa vb + wb va + va x vb
+        const { x: ax, y: ay, z: az, w: aw } = this, { x: bx, y: by, z: bz, w: bw } = b;
+        const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+        return new Quaternion(aw * bx + bw * ax + cx, aw * by + bw * ay + cy, aw * bz + bw * az + cz,
+                              aw * bw - (ax * bx + ay * by + az * bz));
     }
     /** Rotate a vector: v' = v + 2w (u x v) + 2 u x (u x v), u the vector part. */
     multiplyVector(v) {
@@ -394,9 +393,9 @@ export class Color {
             return new Color(parts[0], parts[1], parts[2], parts.length === 4 ? parts[3] : 1);
         return fallback.clone();
     }
-    static Lerp(x, y, t) {
-        t = Mathf.Clamp01(t);
-        return new Color(x.r + (y.r - x.r) * t, x.g + (y.g - x.g) * t, x.b + (y.b - x.b) * t, x.a + (y.a - x.a) * t);
+    static Lerp(from, to, t) {
+        const k = Mathf.Clamp01(t), mix = ch => from[ch] + (to[ch] - from[ch]) * k;
+        return new Color(mix('r'), mix('g'), mix('b'), mix('a'));
     }
     get luminance() { return 0.299 * this.r + 0.587 * this.g + 0.114 * this.b; }
     clone() { return new Color(this.r, this.g, this.b, this.a); }

@@ -810,6 +810,10 @@ add_executable(test_net_session test_net_session.cpp)
 target_link_libraries(test_net_session PRIVATE okay::engine)
 add_test(NAME net_session COMMAND test_net_session)
 
+add_executable(test_net_online test_net_online.cpp)
+target_link_libraries(test_net_online PRIVATE okay::engine)
+add_test(NAME net_online COMMAND test_net_online)
+
 add_executable(test_net_sync test_net_sync.cpp)
 target_link_libraries(test_net_sync PRIVATE okay::engine)
 add_test(NAME net_sync COMMAND test_net_sync)

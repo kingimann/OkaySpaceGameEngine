@@ -140,6 +140,7 @@ add_library(okay_engine
     src/Net/NetworkManagerEvents.cpp
     src/Net/Net.cpp
     src/Net/NetworkManagerMigration.cpp
+    src/Net/NetworkManagerOnline.cpp
     src/Net/Rollback.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp

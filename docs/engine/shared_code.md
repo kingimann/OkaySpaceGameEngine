@@ -42,6 +42,7 @@ file does not exist yet: other agents are merging the copies into it. Until it l
 | Zip reading (inside the engine) | `engine/src/Render/ZipLite.hpp` | `Archive::Open`, `Archive::Extract` | `Archive a; a.Open(bytes); a.Extract(0, text);` |
 | PNG writing | `Core/ImageWrite.hpp` | `ImageWrite::WritePNG`, `ImageWrite::EncodePNG` | `ImageWrite::WritePNG("shot.png", w, h, 4, rgba);` |
 | BMP writing | `Platform/BmpWriter.hpp` | `okay::platform::WriteBmp32`, `WriteBmp32Bgra` | `platform::WriteBmp32("shot.bmp", rgba, w, h);` |
+| Network tests: a script's or graph's variable, an overlay line | `tests/net_test_util.hpp` | `nettest::ScriptVar`, `nettest::GraphVar`, `nettest::HasLine` | `CHECK(nettest::ScriptVar(go, "code") == "K7Q29X");` |
 | Random numbers | `Core/Random.hpp` | `okay::Random` (`Seed`, `Value`, `Range`) | `Random r(seed); float x = r.Range(-1.0f, 1.0f);` |
 | Noise (Perlin, simplex, value, Worley, fBm) | `Math/Noise.hpp` | `okay::NoiseField` (`Perlin2`, `Perlin3`, `Simplex2`, `Fbm2`) | `NoiseField n(7); float h = n.Fbm2(NoiseType::Perlin, x, z);` |
 | Easing curves | `Math/Easing.hpp` | `okay::Ease`, `Easing::Evaluate`, `Easing::QuadIn` ... | `float k = Easing::Evaluate(Ease::CubicOut, t);` |

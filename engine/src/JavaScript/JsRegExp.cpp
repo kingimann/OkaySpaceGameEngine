@@ -719,10 +719,17 @@ bool RegexSyntaxOk(const std::u16string& pattern, const std::u16string& flags, s
 namespace {
 
 std::shared_ptr<RegexProg> Compiled(Runtime& rt, const std::u16string& pattern, const std::u16string& flags) {
+    // a literal evaluated every frame compiles once (programs are never changed after compiling)
+    auto& cache = rt.vm->regexCache;
+    std::u16string key = flags + u"/" + pattern;
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
     std::string err;
     auto p = CompilePattern(pattern, flags, err);
     if (!p) rt.ThrowError(ErrorType::SyntaxError, "bad regular expression /" + Utf16To8(pattern) + "/: " + err);
     rt.Charge(p->code.size() / 8 + 1);
+    if (cache.size() >= 256) cache.clear();
+    if (pattern.size() < 4096) cache.emplace(std::move(key), p);
     return p;
 }
 

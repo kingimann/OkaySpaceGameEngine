@@ -10,6 +10,8 @@
 
 namespace okay::js {
 
+struct RegexProg;
+
 // ============================================================ tokens (ECMA-262 ch. 12)
 enum class TT : std::uint8_t { End, Name, Num, Str, Template, Punct, PrivateName, Regex };
 
@@ -377,6 +379,7 @@ struct Runtime::Impl {
     NativeFunc* stringIterNext = nullptr;
     std::vector<Proto*> scripts;   ///< compiled scripts (kept while the runtime lives)
     std::vector<Object*> joinStack;   ///< arrays being joined (a cycle joins as "")
+    std::unordered_map<std::u16string, std::shared_ptr<RegexProg>> regexCache;   ///< "flags/pattern" -> compiled
 };
 
 // the machine (JsInterpreter.cpp)

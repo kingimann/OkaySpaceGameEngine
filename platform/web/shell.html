@@ -57,8 +57,9 @@
 </div>
 <script>
 (function () {
-  // Filled in by scripts/web_package.py: {"title", "gameId", "fit": "fill"|"aspect", "width", "height", "wasm", "wasmBytes", "packs": [{"file","bytes"}]}.
-  var config = /*OKAY_WEB_CONFIG*/null || {};
+  // Set by scripts/web_package.py in a script it adds to <head> (Emscripten minifies this page, so no comment mark
+  // would survive): {"title", "gameId", "fit": "fill"|"aspect", "width", "height", "wasm", "wasmBytes", "packs": [{"file","bytes"}]}.
+  var config = window.OKAY_WEB_CONFIG || {};
   var stage = document.getElementById('okay-stage'), canvas = document.getElementById('canvas');
   var loader = document.getElementById('okay-loader'), fill = document.getElementById('okay-fill');
   var bar = document.getElementById('okay-bar'), statusEl = document.getElementById('okay-status');

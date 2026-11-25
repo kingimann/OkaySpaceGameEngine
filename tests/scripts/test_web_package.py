@@ -41,7 +41,7 @@ def run(*args):
 with tempfile.TemporaryDirectory() as tmp:
     build, game, out = os.path.join(tmp, "build"), os.path.join(tmp, "game"), os.path.join(tmp, "site")
     wasm = bytes(range(256)) * 400
-    write(os.path.join(build, "okay-player.html"), "<html><script>var config = " + wp.CONFIG_MARK + " || {};</script></html>")
+    write(os.path.join(build, "okay-player.html"), "<!doctype html><html><HEAD><title>t</title></HEAD><body><script>var config = window.OKAY_WEB_CONFIG || {};</script></body></html>")
     write(os.path.join(build, "okay-player.js"), "var Module;")
     write(os.path.join(build, "okay-player.wasm"), wasm)
     write(os.path.join(game, "game.okayscene"), "okayscene 3\nname \"t\"\n")
@@ -63,9 +63,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check(pack["/Assets/a b.png"] == read(os.path.join(game, "Assets", "a b.png")), "a binary file's bytes in the pack")
 
     html = read(os.path.join(out, "index.html")).decode("utf-8")
-    check(wp.CONFIG_MARK not in html, "the config mark is replaced")
+    check(html.startswith("<!doctype html><html><HEAD><script>window.OKAY_WEB_CONFIG={"), "the config script is first in <head>")
     check("</script> Game" not in html, "a title cannot end the script early")
-    cfg = json.loads(html.split("var config = ", 1)[1].split(" || {}", 1)[0])
+    cfg = json.loads(html.split("window.OKAY_WEB_CONFIG=", 1)[1].split(";</script>", 1)[0])
     check(cfg["title"] == "My </script> Game", "title from game.okayconfig")
     check(cfg["gameId"] == "acme_my_script_game", "game id from company and title: " + cfg["gameId"])
     check(cfg["width"] == 800 and cfg["height"] == 450 and cfg["fit"] == "fill", "size and fit")
@@ -100,7 +100,7 @@ with tempfile.TemporaryDirectory() as tmp:
     write(os.path.join(build, "okay-player.html"), "<html>emcc's own shell</html>")
     r = run("--build", build, "--game", game, "--out", out)
     check(r.returncode == 1 and "platform/web/shell.html" in r.stderr, "wrong shell: " + r.stderr)
-    write(os.path.join(build, "okay-player.html"), wp.CONFIG_MARK)
+    write(os.path.join(build, "okay-player.html"), "<head></head>" + wp.CONFIG_MARK)
     os.makedirs(os.path.join(tmp, "empty"))
     r = run("--build", build, "--game", os.path.join(tmp, "empty"), "--out", out)
     check(r.returncode == 1 and "has no files" in r.stderr, "empty game: " + r.stderr)

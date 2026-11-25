@@ -19,12 +19,13 @@ import argparse
 import gzip
 import json
 import os
+import re
 import struct
 import sys
 import zipfile
 
 MAGIC = b"OKWPACK1"
-CONFIG_MARK = "/*OKAY_WEB_CONFIG*/null"
+CONFIG_MARK = "OKAY_WEB_CONFIG"   # the shell reads window.OKAY_WEB_CONFIG; the config script goes in <head>
 
 
 def read_config(game_dir):
@@ -98,8 +99,9 @@ def package(build_dir, game_dir, out_dir, title="", company="", fit="fill", comp
             raise FileNotFoundError("the web build is missing " + p + " (run scripts/build-web.sh first)")
     with open(html_in, encoding="utf-8") as f:
         html = f.read()
-    if CONFIG_MARK not in html:
-        raise ValueError(html_in + " was not built with platform/web/shell.html (no config mark in it)")
+    head = re.search(r"<head[^>]*>", html, re.I)
+    if CONFIG_MARK not in html or not head:
+        raise ValueError(html_in + " was not built with platform/web/shell.html (it does not read OKAY_WEB_CONFIG)")
     os.makedirs(out_dir, exist_ok=True)
 
     cfg = read_config(game_dir)
@@ -141,7 +143,8 @@ def package(build_dir, game_dir, out_dir, title="", company="", fit="fill", comp
         p = os.path.join(out_dir, stale)
         if os.path.isfile(p):
             os.remove(p)
-    put("index.html", html.replace(CONFIG_MARK, cfg_json, 1).encode("utf-8"))
+    page = html[:head.end()] + "<script>window." + CONFIG_MARK + "=" + cfg_json + ";</script>" + html[head.end():]
+    put("index.html", page.encode("utf-8"))
     with open(js_in, "rb") as f:
         put("okay-player.js", f.read())
     put(wasm_name, wasm_out)

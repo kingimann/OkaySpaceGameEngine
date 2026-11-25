@@ -2816,6 +2816,9 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/public_names.sql (server-filled public names, never an email) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME public_names_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_public_names_sql.sh)
+    set_tests_properties(public_names_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME reactions_sql_static COMMAND ${OKAY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql_static.py)
     # docs/sql/reactions_privacy.sql (SEC1 item 4) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME reactions_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql.sh)

@@ -1,0 +1,778 @@
+{
+ "about": "SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). --ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).",
+ "totals": {
+  "launcher": {
+   "calls": 25,
+   "words": 325
+  },
+  "editor": {
+   "calls": 34,
+   "words": 193
+  },
+  "player": {
+   "calls": 0,
+   "words": 197
+  },
+  "shared": {
+   "calls": 26,
+   "words": 194
+  },
+  "engine": {
+   "calls": 0,
+   "words": 0
+  },
+  "okayui": {
+   "calls": 122,
+   "words": 337
+  }
+ },
+ "files": {
+  "editor/AssetManagerWindow.cpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Texture": 1,
+    "Uint32": 1
+   }
+  },
+  "editor/ContentEditors.cpp": {
+   "calls": 0,
+   "words": 4,
+   "by_word": {
+    "SDL_Texture": 4
+   }
+  },
+  "editor/EditorCommon.hpp": {
+   "calls": 0,
+   "words": 3,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_MAIN_HANDLED": 2
+   }
+  },
+  "editor/FpHandsWindow.cpp": {
+   "calls": 0,
+   "words": 5,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Renderer": 1,
+    "SDL_Texture": 3
+   }
+  },
+  "editor/MainShared.hpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Texture": 2
+   }
+  },
+  "editor/OkayUIHostViews.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "editor/PluginsWindow.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "Uint32": 1
+   }
+  },
+  "editor/SceneManagerPanel.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "editor/SceneManagerPanel.hpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Texture": 2
+   }
+  },
+  "editor/SplineTools.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "editor/UIPreviewPainter.cpp": {
+   "calls": 0,
+   "words": 6,
+   "by_word": {
+    "SDL_Renderer": 2,
+    "SDL_Texture": 4
+   }
+  },
+  "editor/UIPreviewPainter.hpp": {
+   "calls": 0,
+   "words": 6,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Renderer": 3,
+    "SDL_Texture": 2
+   }
+  },
+  "editor/VsGraphShot.cpp": {
+   "calls": 9,
+   "words": 17,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "#include<backends/imgui_impl_sdl2.h>": 1,
+    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
+    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
+    "ImGui_ImplSDL2_NewFrame": 1,
+    "ImGui_ImplSDL2_ProcessEvent": 1,
+    "ImGui_ImplSDL2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_Init": 1,
+    "ImGui_ImplSDLRenderer2_NewFrame": 1,
+    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
+    "ImGui_ImplSDLRenderer2_Shutdown": 1,
+    "SDL_Event": 1,
+    "SDL_HINT_RENDER_DRIVER": 1,
+    "SDL_Renderer": 1,
+    "SDL_SetHint": 1,
+    "SDL_Window": 2
+   }
+  },
+  "editor/main.cpp": {
+   "calls": 25,
+   "words": 142,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "#include<backends/imgui_impl_sdl2.h>": 1,
+    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
+    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
+    "ImGui_ImplSDL2_NewFrame": 1,
+    "ImGui_ImplSDL2_ProcessEvent": 1,
+    "ImGui_ImplSDL2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_Init": 1,
+    "ImGui_ImplSDLRenderer2_NewFrame": 1,
+    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
+    "ImGui_ImplSDLRenderer2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
+    "SDL_BUTTON": 4,
+    "SDL_BUTTON_LEFT": 1,
+    "SDL_BUTTON_MIDDLE": 1,
+    "SDL_BUTTON_RIGHT": 2,
+    "SDL_Color": 2,
+    "SDL_Event": 1,
+    "SDL_FIRSTEVENT": 1,
+    "SDL_GetCPUCount": 1,
+    "SDL_GetCurrentVideoDriver": 1,
+    "SDL_GetError": 1,
+    "SDL_GetSystemRAM": 1,
+    "SDL_HINT_RENDER_DRIVER": 3,
+    "SDL_HasEvents": 1,
+    "SDL_LASTEVENT": 1,
+    "SDL_MAIN_HANDLED": 1,
+    "SDL_MAJOR_VERSION": 2,
+    "SDL_MINOR_VERSION": 2,
+    "SDL_PATCHLEVEL": 2,
+    "SDL_PumpEvents": 1,
+    "SDL_QueryTexture": 1,
+    "SDL_RenderGetD3D11Device": 1,
+    "SDL_Renderer": 4,
+    "SDL_SetHint": 3,
+    "SDL_SetMainReady": 1,
+    "SDL_Texture": 65,
+    "SDL_Window": 6,
+    "Uint32": 9,
+    "Uint64": 9,
+    "Uint8": 2
+   }
+  },
+  "launcher/AntiCheatPages.cpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "Uint32": 2
+   }
+  },
+  "launcher/ChatText.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "launcher/CoverArtAvatars.cpp": {
+   "calls": 0,
+   "words": 8,
+   "by_word": {
+    "SDL_Texture": 8
+   }
+  },
+  "launcher/CoverArtAvatars.hpp": {
+   "calls": 0,
+   "words": 4,
+   "by_word": {
+    "SDL_Texture": 4
+   }
+  },
+  "launcher/GroupConversation.cpp": {
+   "calls": 0,
+   "words": 6,
+   "by_word": {
+    "SDL_Texture": 4,
+    "Uint32": 2
+   }
+  },
+  "launcher/LauncherShared.hpp": {
+   "calls": 0,
+   "words": 24,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Renderer": 2,
+    "SDL_Texture": 2,
+    "SDL_Window": 18,
+    "Uint32": 1
+   }
+  },
+  "launcher/MemberModerationUI.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "Uint32": 1
+   }
+  },
+  "launcher/Multiplayer.cpp": {
+   "calls": 0,
+   "words": 10,
+   "by_word": {
+    "SDL_Window": 1,
+    "Uint32": 9
+   }
+  },
+  "launcher/Multiplayer.hpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Window": 1
+   }
+  },
+  "launcher/PublicProfilePage.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "launcher/VersionsUI.cpp": {
+   "calls": 0,
+   "words": 3,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "Uint32": 2
+   }
+  },
+  "launcher/VoiceChat.hpp": {
+   "calls": 0,
+   "words": 13,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "Uint32": 9,
+    "Uint8": 3
+   }
+  },
+  "launcher/main.cpp": {
+   "calls": 25,
+   "words": 251,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "#include<imgui_impl_sdl2.h>": 1,
+    "#include<imgui_impl_sdlrenderer2.h>": 1,
+    "AUDIO_F32SYS": 2,
+    "AUDIO_S16LSB": 1,
+    "AUDIO_S16MSB": 2,
+    "AUDIO_S16SYS": 3,
+    "ImGui_ImplSDL2_InitForSDLRenderer": 2,
+    "ImGui_ImplSDL2_NewFrame": 2,
+    "ImGui_ImplSDL2_ProcessEvent": 1,
+    "ImGui_ImplSDL2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_Init": 2,
+    "ImGui_ImplSDLRenderer2_NewFrame": 2,
+    "ImGui_ImplSDLRenderer2_RenderDrawData": 2,
+    "ImGui_ImplSDLRenderer2_Shutdown": 1,
+    "SDL_AUDIO_BITSIZE": 3,
+    "SDL_AUDIO_ISBIGENDIAN": 2,
+    "SDL_AUDIO_ISFLOAT": 1,
+    "SDL_AUDIO_ISSIGNED": 2,
+    "SDL_AudioFormat": 1,
+    "SDL_AudioSpec": 2,
+    "SDL_BUTTON": 2,
+    "SDL_BUTTON_LEFT": 1,
+    "SDL_BUTTON_RIGHT": 1,
+    "SDL_Color": 2,
+    "SDL_DROPBEGIN": 1,
+    "SDL_DROPCOMPLETE": 1,
+    "SDL_Event": 3,
+    "SDL_MAIN_HANDLED": 1,
+    "SDL_Rect": 3,
+    "SDL_Renderer": 5,
+    "SDL_SetMainReady": 1,
+    "SDL_Swap16": 1,
+    "SDL_TEXTEDITING": 1,
+    "SDL_Texture": 21,
+    "SDL_WINDOWEVENT": 1,
+    "SDL_WINDOWPOS_CENTERED": 2,
+    "SDL_Window": 7,
+    "Sint16": 21,
+    "Sint32": 1,
+    "Sint8": 1,
+    "Uint16": 3,
+    "Uint32": 126,
+    "Uint64": 1,
+    "Uint8": 9
+   }
+  },
+  "okayui/include/okay/UI/OkayUI.hpp": {
+   "calls": 0,
+   "words": 11,
+   "by_word": {
+    "SDL_Renderer": 3,
+    "SDL_Texture": 8
+   }
+  },
+  "okayui/include/okay/UI/OkayUICompat.hpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Texture": 1
+   }
+  },
+  "okayui/include/okay/UI/OkayUIRenderSDL.hpp": {
+   "calls": 0,
+   "words": 4,
+   "by_word": {
+    "SDL_Renderer": 4
+   }
+  },
+  "okayui/probe/backends/imgui_impl_sdl2.h": {
+   "calls": 5,
+   "words": 10,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "ImGui_ImplSDL2_InitForOpenGL": 1,
+    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
+    "ImGui_ImplSDL2_NewFrame": 1,
+    "ImGui_ImplSDL2_ProcessEvent": 1,
+    "ImGui_ImplSDL2_Shutdown": 1,
+    "SDL_Event": 1,
+    "SDL_Renderer": 1,
+    "SDL_Window": 2
+   }
+  },
+  "okayui/probe/backends/imgui_impl_sdlrenderer2.h": {
+   "calls": 5,
+   "words": 8,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "ImGui_ImplSDLRenderer2_Init": 1,
+    "ImGui_ImplSDLRenderer2_NewFrame": 1,
+    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
+    "ImGui_ImplSDLRenderer2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
+    "SDL_Renderer": 2
+   }
+  },
+  "okayui/render/OkayUIRender_SDL.cpp": {
+   "calls": 59,
+   "words": 105,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "#include<SDL_system.h>": 1,
+    "SDL_BLENDMODE_BLEND": 1,
+    "SDL_BLENDMODE_NONE": 4,
+    "SDL_BlendMode": 2,
+    "SDL_CreateTexture": 2,
+    "SDL_DestroyTexture": 4,
+    "SDL_FALSE": 1,
+    "SDL_GL_BindTexture": 1,
+    "SDL_GL_GetCurrentContext": 2,
+    "SDL_GL_GetProcAddress": 3,
+    "SDL_GL_UnbindTexture": 1,
+    "SDL_GetRenderDrawBlendMode": 1,
+    "SDL_GetRenderDrawColor": 1,
+    "SDL_GetRenderTarget": 1,
+    "SDL_GetRendererInfo": 1,
+    "SDL_GetRendererOutputSize": 1,
+    "SDL_GetTextureAlphaMod": 1,
+    "SDL_GetTextureBlendMode": 1,
+    "SDL_GetTextureColorMod": 1,
+    "SDL_GetTextureScaleMode": 1,
+    "SDL_ISPIXELFORMAT_FOURCC": 1,
+    "SDL_PIXELFORMAT_ABGR8888": 2,
+    "SDL_PIXELFORMAT_ARGB8888": 1,
+    "SDL_PIXELFORMAT_BGR888": 1,
+    "SDL_QueryTexture": 2,
+    "SDL_Rect": 2,
+    "SDL_RenderCopy": 1,
+    "SDL_RenderDrawPoint": 1,
+    "SDL_RenderFlush": 3,
+    "SDL_RenderGetClipRect": 1,
+    "SDL_RenderGetD3D11Device": 2,
+    "SDL_RenderGetLogicalSize": 1,
+    "SDL_RenderGetScale": 4,
+    "SDL_RenderGetViewport": 1,
+    "SDL_RenderIsClipEnabled": 1,
+    "SDL_RenderSetClipRect": 3,
+    "SDL_RenderSetScale": 2,
+    "SDL_Renderer": 12,
+    "SDL_RendererInfo": 1,
+    "SDL_ScaleMode": 1,
+    "SDL_ScaleModeNearest": 2,
+    "SDL_SetRenderDrawBlendMode": 2,
+    "SDL_SetRenderDrawColor": 2,
+    "SDL_SetRenderTarget": 2,
+    "SDL_SetTextureAlphaMod": 2,
+    "SDL_SetTextureBlendMode": 3,
+    "SDL_SetTextureColorMod": 2,
+    "SDL_TEXTUREACCESS_STATIC": 1,
+    "SDL_TEXTUREACCESS_TARGET": 1,
+    "SDL_Texture": 7,
+    "SDL_VERSION_ATLEAST": 1,
+    "SDL_bool": 1,
+    "Uint32": 2,
+    "Uint8": 2
+   }
+  },
+  "okayui/screens/OkayUIEditorPanels.cpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Texture": 2
+   }
+  },
+  "okayui/src/OkayUI.cpp": {
+   "calls": 30,
+   "words": 122,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_BLENDMODE_BLEND": 2,
+    "SDL_BLENDMODE_NONE": 1,
+    "SDL_BlendMode": 1,
+    "SDL_Color": 6,
+    "SDL_CreateTexture": 1,
+    "SDL_FPoint": 4,
+    "SDL_GetClipboardText": 1,
+    "SDL_GetRenderDrawBlendMode": 1,
+    "SDL_GetRendererOutputSize": 1,
+    "SDL_PIXELFORMAT_ABGR8888": 1,
+    "SDL_Rect": 18,
+    "SDL_RenderGeometry": 3,
+    "SDL_RenderGetClipRect": 1,
+    "SDL_RenderIsClipEnabled": 1,
+    "SDL_RenderSetClipRect": 4,
+    "SDL_Renderer": 4,
+    "SDL_ScaleModeLinear": 1,
+    "SDL_SetClipboardText": 1,
+    "SDL_SetRenderDrawBlendMode": 2,
+    "SDL_SetTextureBlendMode": 1,
+    "SDL_SetTextureScaleMode": 1,
+    "SDL_TEXTUREACCESS_STATIC": 1,
+    "SDL_Texture": 24,
+    "SDL_UpdateTexture": 1,
+    "SDL_VERSION_ATLEAST": 1,
+    "SDL_Vertex": 23,
+    "SDL_bool": 1,
+    "SDL_cosf": 3,
+    "SDL_floorf": 2,
+    "SDL_free": 1,
+    "SDL_sinf": 3,
+    "SDL_sqrtf": 1,
+    "Uint32": 4
+   }
+  },
+  "okayui/src/OkayUIInternal.hpp": {
+   "calls": 0,
+   "words": 19,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Color": 2,
+    "SDL_Rect": 5,
+    "SDL_Texture": 9,
+    "SDL_Vertex": 2
+   }
+  },
+  "okayui/src/OkayUI_Basic.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "#include<SDL.h>": 1
+   }
+  },
+  "okayui/src/OkayUI_Capture.cpp": {
+   "calls": 0,
+   "words": 9,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Rect": 4,
+    "SDL_Texture": 4
+   }
+  },
+  "okayui/src/OkayUI_DragDrop.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "#include<SDL.h>": 1
+   }
+  },
+  "okayui/src/OkayUI_DrawList.cpp": {
+   "calls": 19,
+   "words": 28,
+   "by_word": {
+    "SDL_Color": 1,
+    "SDL_Texture": 5,
+    "SDL_Vertex": 3,
+    "SDL_cosf": 9,
+    "SDL_sinf": 8,
+    "SDL_sqrtf": 2
+   }
+  },
+  "okayui/src/OkayUI_FontAtlas.cpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Renderer": 1,
+    "SDL_Texture": 1
+   }
+  },
+  "okayui/src/OkayUI_FontAtlas.hpp": {
+   "calls": 0,
+   "words": 4,
+   "by_word": {
+    "SDL_Renderer": 2,
+    "SDL_Texture": 2
+   }
+  },
+  "okayui/src/OkayUI_Style.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "#include<SDL.h>": 1
+   }
+  },
+  "okayui/src/OkayUI_Tables.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "SDL_Rect": 1
+   }
+  },
+  "okayui/src/OkayUI_Tabs.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "#include<SDL.h>": 1
+   }
+  },
+  "okayui/src/OkayUI_Toolkit.cpp": {
+   "calls": 4,
+   "words": 5,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_cosf": 2,
+    "SDL_sinf": 2
+   }
+  },
+  "okayui/src/OkayUI_Trees.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "#include<SDL.h>": 1
+   }
+  },
+  "okayui/src/OkayUI_Windows.cpp": {
+   "calls": 0,
+   "words": 1,
+   "by_word": {
+    "Uint8": 1
+   }
+  },
+  "player/main.cpp": {
+   "calls": 0,
+   "words": 197,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Color": 38,
+    "SDL_FPoint": 3,
+    "SDL_FRect": 1,
+    "SDL_MAIN_HANDLED": 1,
+    "SDL_Point": 5,
+    "SDL_Rect": 45,
+    "SDL_Renderer": 1,
+    "SDL_Vertex": 4,
+    "SDL_Window": 1,
+    "Uint32": 10,
+    "Uint64": 4,
+    "Uint8": 83
+   }
+  },
+  "shared/OkayScriptUIBridge.hpp": {
+   "calls": 0,
+   "words": 3,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Renderer": 1,
+    "SDL_Texture": 1
+   }
+  },
+  "shared/OkayUIFrame.hpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Renderer": 2
+   }
+  },
+  "shared/OkayUIHost.hpp": {
+   "calls": 0,
+   "words": 69,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "KMOD_CTRL": 1,
+    "KMOD_GUI": 1,
+    "KMOD_SHIFT": 1,
+    "SDLK_0": 2,
+    "SDLK_9": 1,
+    "SDLK_BACKSPACE": 2,
+    "SDLK_DELETE": 2,
+    "SDLK_DOWN": 2,
+    "SDLK_END": 2,
+    "SDLK_ESCAPE": 2,
+    "SDLK_F1": 2,
+    "SDLK_F12": 1,
+    "SDLK_HOME": 2,
+    "SDLK_INSERT": 1,
+    "SDLK_KP_ENTER": 2,
+    "SDLK_LALT": 1,
+    "SDLK_LCTRL": 1,
+    "SDLK_LEFT": 2,
+    "SDLK_LEFTBRACKET": 1,
+    "SDLK_LSHIFT": 1,
+    "SDLK_PAGEDOWN": 1,
+    "SDLK_PAGEUP": 1,
+    "SDLK_RALT": 1,
+    "SDLK_RCTRL": 1,
+    "SDLK_RETURN": 2,
+    "SDLK_RIGHT": 2,
+    "SDLK_RIGHTBRACKET": 1,
+    "SDLK_RSHIFT": 1,
+    "SDLK_SLASH": 1,
+    "SDLK_SPACE": 1,
+    "SDLK_TAB": 1,
+    "SDLK_UP": 2,
+    "SDLK_a": 3,
+    "SDLK_c": 1,
+    "SDLK_v": 1,
+    "SDLK_x": 1,
+    "SDLK_z": 1,
+    "SDL_BUTTON_LEFT": 1,
+    "SDL_BUTTON_RIGHT": 1,
+    "SDL_Event": 1,
+    "SDL_KEYDOWN": 4,
+    "SDL_KEYUP": 1,
+    "SDL_Keycode": 1,
+    "SDL_MAIN_HANDLED": 2,
+    "SDL_MOUSEBUTTONDOWN": 1,
+    "SDL_MOUSEWHEEL": 1,
+    "SDL_MOUSEWHEEL_FLIPPED": 1,
+    "SDL_TEXTEDITING": 1,
+    "SDL_TEXTINPUT": 1
+   }
+  },
+  "shared/OkayUIImGuiBackendShim.cpp": {
+   "calls": 10,
+   "words": 19,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "#include<backends/imgui_impl_sdl2.h>": 1,
+    "#include<backends/imgui_impl_sdlrenderer2.h>": 1,
+    "ImGui_ImplSDL2_InitForOpenGL": 1,
+    "ImGui_ImplSDL2_InitForSDLRenderer": 1,
+    "ImGui_ImplSDL2_NewFrame": 1,
+    "ImGui_ImplSDL2_ProcessEvent": 1,
+    "ImGui_ImplSDL2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_Init": 1,
+    "ImGui_ImplSDLRenderer2_NewFrame": 1,
+    "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
+    "ImGui_ImplSDLRenderer2_Shutdown": 1,
+    "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
+    "SDL_Event": 1,
+    "SDL_Renderer": 3,
+    "SDL_Window": 2
+   }
+  },
+  "shared/PainterBridge.hpp": {
+   "calls": 0,
+   "words": 41,
+   "by_word": {
+    "SDL_Renderer": 30,
+    "SDL_Texture": 11
+   }
+  },
+  "shared/SdlDisplays.cpp": {
+   "calls": 16,
+   "words": 28,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_DisplayMode": 4,
+    "SDL_GetClosestDisplayMode": 1,
+    "SDL_GetCurrentDisplayMode": 1,
+    "SDL_GetDisplayBounds": 1,
+    "SDL_GetDisplayMode": 1,
+    "SDL_GetDisplayName": 1,
+    "SDL_GetNumDisplayModes": 1,
+    "SDL_GetNumVideoDisplays": 1,
+    "SDL_MAIN_HANDLED": 2,
+    "SDL_Rect": 1,
+    "SDL_SetWindowBordered": 1,
+    "SDL_SetWindowDisplayMode": 2,
+    "SDL_SetWindowFullscreen": 3,
+    "SDL_SetWindowPosition": 1,
+    "SDL_SetWindowSize": 1,
+    "SDL_TRUE": 1,
+    "SDL_WINDOW_FULLSCREEN": 1,
+    "SDL_WINDOW_FULLSCREEN_DESKTOP": 1,
+    "SDL_Window": 1,
+    "SDL_zero": 1
+   }
+  },
+  "shared/SdlDisplays.hpp": {
+   "calls": 0,
+   "words": 2,
+   "by_word": {
+    "SDL_Window": 2
+   }
+  },
+  "shared/Splash.hpp": {
+   "calls": 0,
+   "words": 24,
+   "by_word": {
+    "#include<SDL.h>": 1,
+    "SDL_Color": 6,
+    "SDL_FPoint": 6,
+    "SDL_FRect": 2,
+    "SDL_MAIN_HANDLED": 2,
+    "SDL_Renderer": 2,
+    "SDL_Vertex": 4,
+    "Uint8": 1
+   }
+  },
+  "shared/WavPlayback.hpp": {
+   "calls": 0,
+   "words": 6,
+   "by_word": {
+    "AUDIO_F32SYS": 1,
+    "AUDIO_S16SYS": 1,
+    "SDL_AudioSpec": 2,
+    "Uint8": 2
+   }
+  }
+ }
+}

@@ -4,11 +4,13 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-25 (Round 27 added at the end; the older rounds were not re-checked against the code).
+> **Last checked:** 2026-11-25 (Round 29 added at the end; the older rounds were not re-checked against the code).
 
 Internal note for issue #992. Not a user guide.
 
-**Status, 2026-11-25 (Round 27, newest):** okay-ms is a Windows compiler, so the headline count is now the Windows one: with `SURVEY_FLAGS="/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64"` **60** of the 476 `engine/src/**/*.cpp` files compile to an object (34 before this round, same command and file list); without those flags (the non-Windows paths) **50** (40 before). No file stops at `<windows.h>` any more (51 before): okay-ms has its own `<windows.h>`, split by area under `tools/okayms/stdinc/okay_win32/`. `<atomic>` and the `shared_ptr` counts are now atomic between threads (LOCK-prefixed instructions). Next blockers (Windows): `Mesh.hpp:1563` (52), `std::is_invocable_v` in `Jobs.hpp` (25), `SaveData.hpp:357` (20), the okayscript include path (16), `NativeFetch.hpp:341` (12). Still no PDB, no multiple inheritance, no virtual bases, no `.CRT$XCU` startup list. okay-cl still does not define `_WIN32` by itself. Linux with Wine only; nothing was run on Windows. Details: Round 27 at the end.
+**Round 29 (newest, 2026-11-25):** 205 of 475 engine files compile on the Windows survey (138 before the round), 207 on the plain one (97 before); multiple inheritance (several bases, adjustor thunks, `dynamic_cast` across bases) and structured bindings are in; no virtual bases yet. Details: Round 29 at the end.
+
+**Status, 2026-11-25 (Round 27):** okay-ms is a Windows compiler, so the headline count is now the Windows one: with `SURVEY_FLAGS="/D_WIN32 /D_WIN64 /D_M_X64 /D_M_AMD64"` **60** of the 476 `engine/src/**/*.cpp` files compile to an object (34 before this round, same command and file list); without those flags (the non-Windows paths) **50** (40 before). No file stops at `<windows.h>` any more (51 before): okay-ms has its own `<windows.h>`, split by area under `tools/okayms/stdinc/okay_win32/`. `<atomic>` and the `shared_ptr` counts are now atomic between threads (LOCK-prefixed instructions). Next blockers (Windows): `Mesh.hpp:1563` (52), `std::is_invocable_v` in `Jobs.hpp` (25), `SaveData.hpp:357` (20), the okayscript include path (16), `NativeFetch.hpp:341` (12). Still no PDB, no multiple inheritance, no virtual bases, no `.CRT$XCU` startup list. okay-cl still does not define `_WIN32` by itself. Linux with Wine only; nothing was run on Windows. Details: Round 27 at the end.
 
 This tree stays off by default: not in CMake, CI, the engine, or a release. It is not a replacement for MSVC. This is years of work. The host tool is POSIX; a Windows run was not run on Windows. Wine is used when it is installed, and a Wine run is written down with the command. Where MinGW gcc is installed, sixteen small programs are compiled with okay-cl and with `x86_64-w64-mingw32-gcc`, run under Wine, and compared. If MinGW is absent that comparison is skipped.
 
@@ -876,3 +878,58 @@ Not done / unverified / differences (Round 28):
 - `INFINITY`, `NAN`, `HUGE_VAL` are computed at run time (not constant expressions). Bit scans and `_umul128` are inline functions, not single instructions.
 - A braced argument can still pick a wrong overload (`set.erase({a, b})` reaches `erase(iterator)` in `Mesh.hpp:385`; compiled, not run).
 - `__cplusplus` is 201703L while okay-ms implements only part of C++17.
+
+### Round 29: multiple inheritance, structured bindings, and the next blockers of the survey
+
+Tried on Linux with Wine 9.0 and MinGW g++ 13 (thread model win32) on branch `claude/okayms-29`, 2026-11-25. Not run on Windows.
+
+**Multiple inheritance** ([class.derived], [class.mi], [class.virtual]; layout after Microsoft's description of the x64 C++ object layout as far as the public documents go). Done:
+
+- A class may have several bases (`class ModelAnimator : public Behaviour, public AnimBackend`). Each base is its own subobject. The first base with virtual functions goes first, at offset 0 (the Microsoft rule; with none, the first base written). Its table is the class's own table. The other bases follow in declaration order, each at the next offset its alignment allows. Then the class's own members.
+- Each base after the first that has virtual functions keeps its own table pointer. The class has one more table for each such subobject (`??_7D@@6BB@@`). An override of a function of that base fills its slot with an **adjustor thunk**: `sub rcx, off` (or `rdx` when the function returns a class through memory) then `jmp` to the function of the whole class. The thunk is named like Microsoft's (`W`/`O`/`G` and the adjustment in place of the access letter), internal to the file. A destructor overrides the destructor slot of every base that has a virtual one.
+- Converting a pointer to a derived class into a pointer to such a base moves the address by the base's offset, and a null pointer stays null: in initializations, assignments, `return`, arguments (also `const B&` parameters), `==` and `!=`, C casts and `static_cast` (also back down). `reinterpret_cast` moves nothing.
+- A call of a member function of such a base passes the base subobject as `this`; a virtual call reads the subobject's table pointer.
+- Constructors run the bases in declaration order with their initializers, then store every table pointer; destructors run the bases in reverse order. The implicit copy constructor copies each base.
+- `dynamic_cast` across bases and down: every virtual table now has one more slot before the type information, the offset of the subobject that points at it in the whole object, and each type information object points to a list of its direct bases with their offsets. `__okay_dynamic_cast` (in `<typeinfo>`) finds the whole object and its dynamic type from the table, then the wanted class among the bases.
+- Not done: virtual bases (`virtual` with several bases is refused with a message); the same class twice as a base (refused); a pointer to member; when a class's only virtual destructor comes from a base that is not at offset 0, the class's own table gets an extra destructor slot that Microsoft's layout would not have; the Microsoft `vbtable`, the complete object locator and RTTI records are not made (own type information, as before); two bases with members of the same name are not reported as ambiguous.
+
+**Structured bindings** ([dcl.struct.bind]; 32 engine files): `auto [a, b] = e;`, `const auto& [k, v] = e;` and the same in a range `for`. A hidden variable is declared as `auto`/`auto&` of the initializer, and each name refers to the next member of its class (or the next element of an array). Not done: tuple-like types (`get<i>`).
+
+**Library** (our own headers): `std::reverse_iterator` and `rbegin`/`rend` for `vector`, `string`, `array`, `map`, `set`; `swap` for `map`, `set`, `unordered_map`, `unordered_set`; `string_view::compare(pos, n, s)`; `std::char_traits`; `string::replace` and `string::rfind` of a string; `std::stoi`, `stol`, `stoll`, `stoul`, `stoull`, `stof`, `stod` (no exceptions: text that is not a number gives 0); `std::to_wstring`; `wstring::find_first_of`; `lower_bound` and `upper_bound` with a comparison; `localtime_r` and `gmtime_r` on the Microsoft runtime's `_localtime64_s`/`_gmtime64_s`; our own `<fcntl.h>` with the `_O_` flags of the Microsoft runtime (flags only, as there). `invoke_result` is still not there: no engine file uses it.
+
+**Compiler fixes found on the way** (each has a check in `tests/test_round29.cpp`):
+
+- A braced argument chooses the overload that can take it ([over.ics.list]): `set.erase({a, b})` picked `erase(const T*)` and passed the first element as an address (wrong code before). A class parameter takes a list by a constructor or as an aggregate; a pointer or a number takes `{}` or `{x}` only.
+- `static_cast<T*>(p)->m` was `(T*)(p->m)`: the rewritten cast is now in parentheses.
+- A local of an enclosing block declared after an inner block that has its own local of that name: the code generator took the outer one inside the block (wrong code, or "assignment to const"). It now takes the innermost block's.
+- A member of a derived class hides a base member of the same name for the parser too (the code generator already did).
+- An aggregate with a `std::string` member made from a list (`G g{"text"}`) lost the text: the member is now set by its `operator=`.
+- User-defined string literals (`"text"_sid`, `operator""_sid`, [lex.ext]), named `__okay_udl_sid` (Microsoft writes `??__K_sid`); members of an inline namespace are found as after `using namespace`.
+- A function of a namespace, or a function template instance, that calls itself; a bare call in a template instance looks in the template's namespace.
+- `Outer::Inner` and `Outer::Inner{...}` find the class nested in `Outer` also when another type of that name exists (an enumeration `Bone` in another namespace, `enum class State` in another class); a name in a class finds its own nested class before such a type; `X::Y` is merged into one scoped-enumerator token only when `Y` is an enumerator of `X`.
+- `(UIBind::Mode)x` with an enumeration declared in the class; `-x` has a type for deduction (`std::max(-limit, x)`).
+- `template <class T> struct tm *f(...)` is a function template, not a class template.
+- `std::string(s, 5)`: a constructor with a default argument beats a constructor template.
+- `C::~C() = default;` outside the class; an alias template declared in a class (put before the class); explicit template arguments with a lambda for a `std::function<...T...>` parameter; a conversion function to a class for a `const C&` parameter (`ifstream(path)`).
+
+Measurement: `tools/okayms/survey.sh`, one file at a time per job, two jobs, 300-second limit. "Before" is the round 28 compiler and headers (commit 656b5dfab) with the same command and file list (475 files; the list changed on main since round 28's 476).
+
+| Survey | Before (round 28) | After |
+|---|---|---|
+| Windows (default) | 138 of 475 | **205 of 475** |
+| Plain (`SURVEY_PLAIN=1`) | 97 of 475 | **207 of 475** |
+
+No file that compiled before stops compiling (checked file by file in both surveys). Next blockers on the Windows survey: `UIStyleLib.hpp:409` (16), `Platformer25DController.hpp:288` (11), `UINavigation.hpp:292` (10), "too many relocations in one section" (9: a section with more than 65535 relocations needs the COFF overflow record, not written yet), `DynamicTree.hpp:83` (8), pointers to members in `VehicleTuning.hpp:118` (7), `Raster::Triangle` "operator is not supported" (5), `SaveDocument::Writer` "not an address" (5), default arguments of function templates (`FindInTree<T>(go)`, 4). On the plain survey: `<spawn.h>` (33, the POSIX path; okay-ms has no POSIX headers beyond `<fcntl.h>`), then the same ones. Multiple inheritance, `localtime_r`, `<fcntl.h>`, `map::swap`, `XmlLite.hpp:438`, `operator""_sid` and `std::char_traits` are no longer first errors in any file.
+
+Tests: new `tests/test_round29.cpp`, 8 tests (programs built by okay-cl at `/O0`, `/O1`, `/O2`, linked, run under Wine, and built by MinGW g++ and run; the cross-cast program with run-time type information): `tests 8, checks passed 112, failed 0`. With the round 28 compiler and headers: `tests 8, checks passed 25, failed 24` (every program fails: "only one base class is supported", "expected a type", "cannot open include fcntl.h", "expected '('", "expected a name", "expected a constructor body", and the braced-overload program compiled to wrong code, exit 1). The multiple-inheritance programs were written and seen failing before the code; the others were written while fixing and then run against the round 28 compiler. The whole suite (`tools/okayms/build.sh`, 71 test programs) passes.
+
+Written from ISO/IEC 14882 ([class.derived], [class.mi], [class.virtual], [class.base.init], [class.dtor], [class.copy.ctor], [conv.ptr], [expr.static.cast], [expr.reinterpret.cast], [expr.dynamic.cast], [expr.eq], [dcl.init.ref], [dcl.struct.bind], [stmt.ranged], [over.ics.list], [over.ics.user], [class.conv.fct], [lex.ext], [namespace.def], [basic.scope.pdecl], [basic.lookup.unqual], [class.member.lookup], [temp.deduct.call], [temp.arg.explicit], [temp.alias], [dcl.fct.def.default], [dcl.type.elab], [expr.unary.op], [reverse.iterators], [char.traits], [string.view.ops], [string.replace], [string.rfind], [string.conversions], [lower.bound], [upper.bound], [container.reqmts]), POSIX.1-2017 (`localtime_r`, `gmtime_r`), and Microsoft's documentation (the x64 C++ object layout as far as it is public, name decoration, `_open` flags, `localtime_s`/`gmtime_s`). No code from MSVC's STL, the Windows SDK, MinGW, GCC, Clang/LLVM, libstdc++, libc++, Wine or any other project. No cryptography was written.
+
+Not done / unverified / differences (Round 29):
+
+- Not run on Windows. The objects of the survey were not linked or run; the test programs were run under Wine only.
+- No virtual bases; the MSVC RTTI records and `vbtable` are not made; the thunk names follow Microsoft's spelling but were not compared with MSVC output; link.exe was not tried.
+- Structured bindings of tuple-like types (`std::tuple`, `get<i>`) are not read; a class with bases is bound member by member over all its fields.
+- The local lookup rule (innermost block first) is still wrong for `int d; { use(d); int d; }` (a use before an inner declaration of the same name in the same block); no engine file was seen doing that.
+- `std::filesystem::file_time_type` is still a `long long` (no clock): `t.time_since_epoch()` stops `UIDataGlue.cpp` and `FileStamp.hpp`.
+- `std::stoi` and the others do not throw.

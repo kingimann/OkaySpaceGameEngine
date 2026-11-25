@@ -1166,6 +1166,18 @@ private:
     // constructor of its own takes the arguments as T(args). An aggregate runs its implicit
     // constructor (default member initializers) if it has one, then gets each argument in field
     // order; without one, the fields that get no argument are zero.
+    // Whether the class has a constructor taking one std::initializer_list ([dcl.init.list] p3).
+    static bool hasListCtor(const Type& T) {
+        for (const Param& q : T.params)
+            if (q.name == "<ctor>" && q.type && q.type->params.size() == 1 && q.type->params[0].type) {
+                const Type* pt = q.type->params[0].type.get();
+                if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                if (pt->kind == Type::Kind::Struct && (pt->tag.compare(0, 22, "std::initializer_list<") == 0 ||
+                                                       pt->tag.compare(0, 17, "initializer_list<") == 0))
+                    return true;
+            }
+        return false;
+    }
     std::set<std::string> userCtors_;
     std::set<std::string> deletedFns_;  // symbols of special members declared "= delete"
     std::vector<Type*> classStack_;  // classes whose body is being parsed, innermost last
@@ -1188,15 +1200,7 @@ private:
         comma->ival = 7;
         comma->text = tmp;
         comma->ty = cloneType(td);
-        bool listCtor = false;
-        if (T)
-            for (const Param& q : T->params)
-                if (q.name == "<ctor>" && q.type && q.type->params.size() == 1 && q.type->params[0].type) {
-                    const Type* pt = q.type->params[0].type.get();
-                    if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
-                    if (pt->kind == Type::Kind::Struct && (pt->tag.compare(0, 22, "std::initializer_list<") == 0 || pt->tag.compare(0, 17, "initializer_list<") == 0))
-                        listCtor = true;
-                }
+        bool listCtor = T && hasListCtor(*T);
         if (T && userCtors_.count(tag) && listCtor) {
             // An initializer-list constructor takes the whole list (the checker builds it).
             auto br = mk(Expr::Kind::Brace);
@@ -4918,15 +4922,7 @@ private:
             if (isP("{") || (isP("=") && i_ + 1 < toks_.size() && isP(toks_[i_ + 1], "{"))) {
                 eatP("=");
                 auto list = parseInitializer();
-                bool listCtor = false;
-                for (const Param& q : classOf(base->tag)->params)
-                    if (q.name == "<ctor>" && q.type && q.type->params.size() == 1 && q.type->params[0].type) {
-                        const Type* pt = q.type->params[0].type.get();
-                        if (pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
-                        if (pt->kind == Type::Kind::Struct && (pt->tag.compare(0, 22, "std::initializer_list<") == 0 ||
-                                                               pt->tag.compare(0, 17, "initializer_list<") == 0))
-                            listCtor = true;
-                    }
+                bool listCtor = hasListCtor(*classOf(base->tag));
                 if (list && list->kind == Expr::Kind::Brace && listCtor && !list->kids.empty()) {
                     list->ival = 5;  // the whole list to the initializer-list constructor
                     args.push_back(std::move(list));

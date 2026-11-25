@@ -1289,6 +1289,18 @@ private:
     // chooses among the overloads of the name as any call does. Operators on two numbers, and
     // &&, || and the comma, are never rewritten.
     std::set<std::string> freeOps_;  // short names ("operator*") of every non-member operator seen
+    // e (an operator expression) becomes the call callee(operands).
+    bool toOperatorCall(Expr& e, const std::string& callee, std::size_t arity) {
+        std::vector<std::unique_ptr<Expr>> kids;
+        kids.push_back(mkName(callee, e));
+        for (std::size_t i = 0; i < arity; ++i) kids.push_back(std::move(e.kids[i]));
+        e.kind = Expr::Kind::Call;
+        e.text.clear();
+        e.ival = 0;
+        e.kids = std::move(kids);
+        e.checked.reset();
+        return true;
+    }
     bool rewriteFreeOperator(Expr& e) {
         std::size_t arity = 0;
         if (e.kind == Expr::Kind::Bin && e.kids.size() == 2) arity = 2;
@@ -1376,15 +1388,7 @@ private:
                 ok = f != scopes_.front().end() && f->second.func && viable(f->second.type.get());
             }
             if (!ok) continue;
-            auto call = mkE(Expr::Kind::Call, e);
-            call->kids.push_back(mkName(name, e));
-            for (std::size_t i = 0; i < arity; ++i) call->kids.push_back(std::move(e.kids[i]));
-            e.kind = Expr::Kind::Call;
-            e.text.clear();
-            e.ival = 0;
-            e.kids = std::move(call->kids);
-            e.checked.reset();
-            return true;
+            return toOperatorCall(e, name, arity);
         }
         if (tmplOp) {
             // Non-member operator templates ([over.match.oper] p3, [temp.deduct.call]): a candidate
@@ -1409,15 +1413,7 @@ private:
                 any = ok;
             }
             if (!any) return false;
-            auto call = mkE(Expr::Kind::Call, e);
-            call->kids.push_back(mkName("\x01" "tmpl:" + op, e));
-            for (std::size_t i = 0; i < arity; ++i) call->kids.push_back(std::move(e.kids[i]));
-            e.kind = Expr::Kind::Call;
-            e.text.clear();
-            e.ival = 0;
-            e.kids = std::move(call->kids);
-            e.checked.reset();
-            return true;
+            return toOperatorCall(e, "\x01" "tmpl:" + op, arity);
         }
         return false;
     }

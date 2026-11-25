@@ -106,7 +106,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Editor:** IK gizmos and the Animator window (5.6, 5.7, editor/AnimatorWindow.*)
 - **Docs:** `docs/gameplay/ik.md`
 - **Tests:** `ik_core`, `anim_ik`
-- **Status:** Works - read the headers (each guards non-finite input); belongs to the animation and IK work: IK pull requests (#535-#539, #548-#551, #554, #484) are Grok's sessions, do not edit these files without asking
+- **Status:** Works - read the headers (each guards non-finite input); belongs to the animation and IK work (IK pull requests #535-#539, #554 and #484 came from Grok's sessions; Grok no longer writes code, rule 24d)
 - **Open:** IK rewrite plan (5.7); in-flight IK PRs may change these headers
 - **Related:** 5.6, 5.7, 36.1, 36.2
 - **Words:** IK, two-bone, FABRIK, CCD, pole, joint limit, hinge, ball joint, soft IK, IKFade, AimBone

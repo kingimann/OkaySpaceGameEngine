@@ -1088,7 +1088,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the match won't start | [16.12](16-networking.md#1612-rooms-lobby-and-match-flow) Rooms, lobby and match flow |
 | the mesh is missing near a doorway | [9.1](09-ai-navigation.md#91-nav-mesh-bake-and-queries) Nav mesh bake and queries |
 | the mesh stretches | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
-| the Mixamo menu item logs "could not download | [4.12](04-characters-cameras.md#412-premade-players) Premade players |
 | the mixer window does not match the game | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
 | the mobile build has no project to open | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | the model pops at the screen edge | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |

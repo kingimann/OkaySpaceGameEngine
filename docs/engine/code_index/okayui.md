@@ -95,7 +95,7 @@ Back to the [code index](../code_index.md). 12 headers, 642 names.
 - `InputTextWithHint` function, line 519: InputText that shows 'hint' in a dim colour while the field is empty (a placeholder such as "Search...").
 - `SetKeyboardFocusHere` function, line 521: The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
 - `CenterNextOnLine` function, line 524: The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
-- `InputInt` function, line 527: An integer field with [-]/[+] stepper buttons that change *value by 'step'.
+- `InputInt` function, line 527: An integer field with [-]/[+] stepper buttons that change *value by 'step'; a 'step' of 0 or less draws no steppers (a plain
 - `CollapsingHeader` function, line 531: A collapsing section header. Returns true while expanded — put the section's
 - `Combo` function, line 538: A dropdown selecting one of items[0..count) into *current. The open list draws
 - `BeginCombo` function, line 543: A combo whose list is whatever you draw: the box shows 'preview'; while it is open, the widgets between
@@ -494,7 +494,7 @@ Back to the [code index](../code_index.md). 12 headers, 642 names.
 - `Axis` enum, line 469: Axis (ImGuiAxis_X / Y), sort direction and the popup / style names the probe found missing: names only.
 - `SortDirection` enum, line 470
 - `PopupExtraFlags` enum, line 471
-- `InputInt` function, line 475: InputInt with the step arguments of Dear ImGui ('stepFast' and 'flags' are accepted and not used; a 'step' of 0 still shows the +/- buttons).
+- `InputInt` function, line 475: InputInt with the step arguments of Dear ImGui ('stepFast' and 'flags' are accepted and not used; a 'step' of 0 shows no +/- buttons, as in Dear ImGui).
 - `TreeNodeExFormatted` function, line 476
 - `TreeNode` function, line 478: TreeNode with an id and a printf-style label: 'TreeNode("##id", "Incoming (%d)", n)'.
 - `DragFloat2` function, line 481: ---- Step 6.18: argument shapes found by probing editor/main.cpp (the Hierarchy panel and the rest of the editor) ----------------------

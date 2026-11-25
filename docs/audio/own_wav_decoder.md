@@ -16,7 +16,7 @@ It is small, it has a public specification, it is fully testable on Linux, and i
 
 | File | What |
 |---|---|
-| `engine/include/okay/Audio/WavDecoder.hpp`, `engine/src/Audio/WavDecoder.cpp` | `okay::wav::DecodeWav` (bytes in, interleaved float out, plus warnings), `ToS16`, `Limits`, `OwnWavEnabled` |
+| `engine/include/okay/Audio/WavDecoder.hpp`, `engine/src/Audio/WavDecoder.cpp` | `okay::wav::DecodeWav` (bytes in, interleaved float out, plus warnings), `ToS16`, `Limits` |
 | `engine/src/Audio/AudioClip.cpp` | `AudioClip::LoadWAV` always calls the own decoder (the older path and `OwnWavEnabled()` were deleted) |
 | `tests/test_own_wav.cpp` | Test `own_wav` |
 

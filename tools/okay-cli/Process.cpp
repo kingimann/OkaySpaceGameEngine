@@ -335,6 +335,24 @@ void CloseFd(int& fd) { if (fd >= 0) { ::close(fd); fd = -1; } }
 void ClosePipes(int (&a)[2], int (&b)[2], int (&c)[2]) {
     CloseFd(a[0]); CloseFd(a[1]); CloseFd(b[0]); CloseFd(b[1]); CloseFd(c[0]); CloseFd(c[1]);
 }
+/// In the child after fork: go to `cwd` and become `exe`; on failure, send errno through the close-on-exec pipe.
+[[noreturn]] void ExecOrReport(const std::string& exe, std::vector<char*>& av, const std::string& cwd, int reportFd) {
+    int e = 0;
+    if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
+    else { ::execv(exe.c_str(), av.data()); e = errno; }
+    ssize_t w = ::write(reportFd, &e, sizeof(e));
+    (void)w;
+    ::_exit(127);
+}
+/// In the parent: wait for the exec report. True when exec worked (EOF); else `childErr` holds its errno.
+bool ExecWorked(int (&execP)[2], int& childErr) {
+    ::close(execP[1]);
+    childErr = 0;
+    ssize_t got;
+    do { got = ::read(execP[0], &childErr, sizeof(childErr)); } while (got < 0 && errno == EINTR);
+    ::close(execP[0]);
+    return got != (ssize_t)sizeof(childErr);
+}
 /// In the child after fork: stdout and stderr go to the two pipes' write ends, stdin is empty.
 void PipesToStd(int (&outP)[2], int (&errP)[2]) {
     ::dup2(outP[1], 1);
@@ -364,19 +382,10 @@ RunResult Run(const std::vector<std::string>& argv, const std::string& cwd, bool
     if (pid == 0) {
         ::close(execP[0]);
         if (capture) PipesToStd(outP, errP);
-        int e = 0;
-        if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
-        else { ::execv(exe.c_str(), av.data()); e = errno; }
-        ssize_t w = ::write(execP[1], &e, sizeof(e));
-        (void)w;
-        ::_exit(127);
+        ExecOrReport(exe, av, cwd, execP[1]);
     }
-    ::close(execP[1]);
     int childErr = 0;
-    ssize_t got;
-    do { got = ::read(execP[0], &childErr, sizeof(childErr)); } while (got < 0 && errno == EINTR);
-    ::close(execP[0]);
-    const bool execFailed = got == (ssize_t)sizeof(childErr);
+    const bool execFailed = !ExecWorked(execP, childErr);
     if (capture) {
         CloseFd(outP[1]);
         CloseFd(errP[1]);
@@ -487,22 +496,13 @@ bool Child::Start(const std::vector<std::string>& argv, const std::string& cwd, 
         ::setpgid(0, 0);   // its own process group: Stop ends it and what it started
         ::close(execP[0]);
         PipesToStd(outP, errP);
-        int e = 0;
-        if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) e = errno;
-        else { ::execv(exe.c_str(), av.data()); e = errno; }
-        ssize_t w = ::write(execP[1], &e, sizeof(e));
-        (void)w;
-        ::_exit(127);
+        ExecOrReport(exe, av, cwd, execP[1]);
     }
     ::setpgid(pid, pid);   // also from here, so Stop works even if it runs before the child got that far
     CloseFd(outP[1]);
     CloseFd(errP[1]);
-    ::close(execP[1]);
     int childErr = 0;
-    ssize_t got;
-    do { got = ::read(execP[0], &childErr, sizeof(childErr)); } while (got < 0 && errno == EINTR);   // EOF once exec worked
-    ::close(execP[0]);
-    if (got == (ssize_t)sizeof(childErr)) {
+    if (!ExecWorked(execP, childErr)) {
         int st = 0;
         while (::waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
         CloseFd(outP[0]); CloseFd(errP[0]);

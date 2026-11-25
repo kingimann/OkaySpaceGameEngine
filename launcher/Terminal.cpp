@@ -833,7 +833,7 @@ std::string Terminal::AllText() const {
     return out;
 }
 
-// ---- keys to bytes ------------------------------------------------------------------------------------------------
+// ---- input: the bytes sent to the shell -------------------------------------------------------------------------
 
 std::string KeySequence(Key k, Mods m, bool appCursor) {
     const int mod = 1 + (m.shift ? 1 : 0) + (m.alt ? 2 : 0) + (m.ctrl ? 4 : 0);

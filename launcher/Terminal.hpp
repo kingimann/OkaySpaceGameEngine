@@ -211,7 +211,7 @@ private:
     unsigned revision_ = 0;
 };
 
-// ---- keys to bytes ------------------------------------------------------------------------------------------------
+// ---- input: the bytes sent to the shell -------------------------------------------------------------------------
 
 enum class Key {
     None, Up, Down, Left, Right, Home, End, PageUp, PageDown, Insert, Delete,

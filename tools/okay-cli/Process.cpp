@@ -103,6 +103,20 @@ std::wstring CommandLine(const std::vector<std::string>& argv) {
     }
     return line;
 }
+/// Our environment with `first` put first on PATH, as a CreateProcessW block (shared/AppRestart.hpp EnvironmentBlock);
+/// "" when `first` is empty (the child then gets our environment as it is).
+std::wstring EnvironmentWithPathFirst(const std::string& first) {
+    if (first.empty()) return std::wstring();
+    std::wstring path = okay::restart::Utf8ToWide(first);
+    const DWORD need = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    if (need > 0) {
+        std::wstring old(need, L'\0');
+        const DWORD got = GetEnvironmentVariableW(L"PATH", &old[0], need);
+        old.resize(got);
+        if (!old.empty()) path += L";" + old;
+    }
+    return okay::restart::EnvironmentBlock(L"", L"PATH", path);
+}
 void ReadAll(HANDLE h, std::string& out) {
     char buf[4096];
     for (;;) {
@@ -185,18 +199,7 @@ bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd,
     if (options.newConsole && !title.empty()) si.lpTitle = &title[0];
     PROCESS_INFORMATION pi = {};
     // PATH for the new program only: our environment with the folder put first (shared/AppRestart.hpp EnvironmentBlock).
-    std::wstring env;
-    if (!options.pathFirst.empty()) {
-        std::wstring path = okay::restart::Utf8ToWide(options.pathFirst);
-        const DWORD need = GetEnvironmentVariableW(L"PATH", nullptr, 0);
-        if (need > 0) {
-            std::wstring old(need, L'\0');
-            const DWORD got = GetEnvironmentVariableW(L"PATH", &old[0], need);
-            old.resize(got);
-            if (!old.empty()) path += L";" + old;
-        }
-        env = okay::restart::EnvironmentBlock(L"", L"PATH", path);
-    }
+    const std::wstring env = EnvironmentWithPathFirst(options.pathFirst);
     const DWORD flags = (options.newConsole ? CREATE_NEW_CONSOLE : (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)) |
                         (env.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT);
     if (!CreateProcessW(app.c_str(), &cmd[0], nullptr, nullptr, FALSE, flags, env.empty() ? nullptr : (LPVOID)env.data(),
@@ -434,18 +437,7 @@ bool Pty::Start(const Options& o, std::string& error) {
     std::wstring app = okay::restart::Utf8ToWide(o.argv[0]);
     std::wstring cmd = CommandLine(o.argv);
     const std::wstring wd = okay::restart::Utf8ToWide(o.cwd);
-    std::wstring env;
-    if (!o.pathFirst.empty()) {
-        std::wstring path = okay::restart::Utf8ToWide(o.pathFirst);
-        const DWORD need = GetEnvironmentVariableW(L"PATH", nullptr, 0);
-        if (need > 0) {
-            std::wstring old(need, L'\0');
-            const DWORD got = GetEnvironmentVariableW(L"PATH", &old[0], need);
-            old.resize(got);
-            if (!old.empty()) path += L";" + old;
-        }
-        env = okay::restart::EnvironmentBlock(L"", L"PATH", path);
-    }
+    const std::wstring env = EnvironmentWithPathFirst(o.pathFirst);
     // Suspended until it is in the job, so nothing it starts can slip out. The job ends the whole tree when its last
     // handle closes (Stop, or the launcher closing).
     impl_->job = CreateJobObjectW(nullptr, nullptr);
@@ -653,6 +645,21 @@ bool StartDetached(const std::vector<std::string>& argv, const std::string& cwd,
     return w == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+namespace {
+/// Has `pid` ended? Without waiting. True once it has (or cannot be waited for), with its exit code in `exitCode`
+/// (128 + the signal for one ended by a signal, -1 when unknown).
+bool Reaped(pid_t pid, int& exitCode) {
+    int st = 0;
+    pid_t w;
+    do { w = ::waitpid(pid, &st, WNOHANG); } while (w < 0 && errno == EINTR);
+    if (w != pid && w >= 0) return false;
+    if (w < 0) exitCode = -1;
+    else if (WIFEXITED(st)) exitCode = WEXITSTATUS(st);
+    else if (WIFSIGNALED(st)) exitCode = 128 + WTERMSIG(st);
+    return true;
+}
+} // namespace
+
 // ---- Child (POSIX) -----------------------------------------------------------------------------------------------
 struct Child::Impl {
     pid_t pid = -1;
@@ -736,17 +743,7 @@ bool Child::Poll(std::string& out, std::string& err) {
     if (!m.running) return false;
     ReadReady(m.outFd, out);
     ReadReady(m.errFd, err);
-    if (!m.exited) {
-        int st = 0;
-        pid_t w;
-        do { w = ::waitpid(m.pid, &st, WNOHANG); } while (w < 0 && errno == EINTR);
-        if (w == m.pid || w < 0) {
-            m.exited = true;
-            if (w < 0) m.exitCode = -1;
-            else if (WIFEXITED(st)) m.exitCode = WEXITSTATUS(st);
-            else if (WIFSIGNALED(st)) m.exitCode = 128 + WTERMSIG(st);
-        }
-    }
+    if (!m.exited) m.exited = Reaped(m.pid, m.exitCode);
     if (m.exited) {
         // Our program ended: take what is left, and do not wait on a program it left running with the pipes open.
         ReadReady(m.outFd, out);
@@ -895,25 +892,10 @@ bool Pty::Read(std::string& out) {
         eof = true;   // EIO: every program on the terminal has closed it
         break;
     }
-    if (!m.exited) {
-        int st = 0;
-        pid_t w;
-        do { w = ::waitpid(m.pid, &st, WNOHANG); } while (w < 0 && errno == EINTR);
-        if (w == m.pid || w < 0) {
-            m.exited = true;
-            if (w < 0) m.exitCode = -1;
-            else if (WIFEXITED(st)) m.exitCode = WEXITSTATUS(st);
-            else if (WIFSIGNALED(st)) m.exitCode = 128 + WTERMSIG(st);
-        }
-    }
+    if (!m.exited) m.exited = Reaped(m.pid, m.exitCode);
     if (m.exited || eof) {
         if (!m.exited) {   // the terminal closed but the shell has not been reaped yet: give it a moment
-            int st = 0;
-            for (int i = 0; i < 100 && !m.exited; ++i) {
-                const pid_t w = ::waitpid(m.pid, &st, WNOHANG);
-                if (w == m.pid) { m.exited = true; m.exitCode = WIFEXITED(st) ? WEXITSTATUS(st) : WIFSIGNALED(st) ? 128 + WTERMSIG(st) : -1; }
-                else ::usleep(2000);
-            }
+            for (int i = 0; i < 100 && !(m.exited = Reaped(m.pid, m.exitCode)); ++i) ::usleep(2000);
             if (!m.exited) return true;
         }
         for (;;) {   // what is left; a program the shell left running does not keep it "running"

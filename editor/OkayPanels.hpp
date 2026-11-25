@@ -1,5 +1,5 @@
 #pragma once
-// Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11 and 24; the Crash Log, the Audio Mixer and History are
+// Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24 and 25; the Crash Log, the Audio Mixer, History, Problems, Stats and the Profiler are
 // drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet): the Crash
 // Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, Project Settings' Tags and Layers, Physics, Player and Rendering
 // sections, the Project panel's import settings and the Lighting window's Post-processing section. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
@@ -26,11 +26,17 @@ bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& 
 /// Draw the Audio Mixer window with OkayUI, editing okay::AudioMixer in place. Same return value as the Crash Log.
 bool DrawAudioMixerOkayUI(bool* open);
 
-/// The Problems, Stats and History panels with OkayUI (okayui/screens/OkayUIEditorPanels): the same models the Dear ImGui bodies in
-/// EditorPanelViews draw (Problems and Stats; not wired into the editor yet), the same intents back. Same return value as the Crash
-/// Log. `title` is the ImGui window name (Problems carries its error count in it).
+/// The Problems, Stats, History and Profiler panels, drawn by OkayUI only (okayui/screens/OkayUIEditorPanels; no Dear ImGui version):
+/// the models in shared/EditorPanelModels.hpp in, the intents back. Same return value as the Crash Log. `title` is the ImGui window
+/// name (Problems carries its error count in it).
+/// Where Problems drew its rows this frame (OkayUI's pixels), for the editor's scripted diagnostics demo (OKAY_UI_DIAG).
+struct PanelRect { float x = 0, y = 0, w = 0, h = 0; };
+struct ProblemsRects {
+    std::vector<int> rowIndex;              // the model row of each entry of `rows`
+    std::vector<PanelRect> rows, fixButtons;   // the row text; its Fix button (zero size: none)
+};
 bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
-                        okaypanels::ProblemsIntent& intent);
+                        okaypanels::ProblemsIntent& intent, ProblemsRects* rects = nullptr);
 /// Stats fills its model only while the window is visible, through `fill`; "Copy stats" goes to the clipboard here.
 bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill);
 /// History (the editor's only History panel): `fill` builds the model only while the window shows (the editor commits its pending

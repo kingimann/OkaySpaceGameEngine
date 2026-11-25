@@ -7,6 +7,7 @@
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scripting/ScriptApiRegistry.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scripting/ScriptBindings.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -587,7 +588,9 @@ struct OkayScriptVM::Impl {
     // Every shared function under its OkayScript name and aliases. Runs first in RegisterBuiltins, so the
     // aliases made further down find it; the check at the end refuses a later hand-written copy.
     void InstallSharedApis() {
+        ModuleRegistry::Get();   // modules add their functions before a script sees the table
         for (const ScriptApiEntry& e : ScriptApis()) {
+            if (!e.module.empty() && !ModuleRegistry::Get().IsEnabled(e.module)) continue;
             auto shared = std::make_shared<const ScriptApiEntry>(e);
             SharedApiCall call{shared, &rt};
             rt.builtins[e.name] = call;
@@ -596,6 +599,7 @@ struct OkayScriptVM::Impl {
     }
     void CheckSharedApis() {
         for (const ScriptApiEntry& e : ScriptApis()) {
+            if (!e.module.empty() && !ModuleRegistry::Get().IsEnabled(e.module)) continue;
             std::vector<std::string> names = e.aliases;
             names.push_back(e.name);
             for (const std::string& n : names) {

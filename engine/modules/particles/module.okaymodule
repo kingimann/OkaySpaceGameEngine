@@ -12,4 +12,4 @@ serializers=
 vs_group=
 editor=
 sources=include/okay/Components/ParticleSystem.hpp
-tests=particles_* grok_154_particles_on
+tests=particles_* grok_154_particles_on particles_module_overlay

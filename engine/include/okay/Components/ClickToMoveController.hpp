@@ -180,7 +180,7 @@ public:
             else { rb->velocity.x = dir.x * speed; rb->velocity.z = dir.z * speed; }
         } else {
             transform->Translate(lastStep ? Vec3{to.x, 0.0f, to.z} : dir * step);
-            ResolvePlayerBody(scene, gameObject);   // no clipping through walls/floors
+            ResolvePlayerBody(scene, gameObject, Mathf::Max(0.0f, stepOffset));   // no clipping through walls/floors; stepOffset is the tallest ledge climbed
             if (lastStep) m_hasDest = false;
         }
 

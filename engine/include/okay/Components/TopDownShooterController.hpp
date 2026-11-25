@@ -276,7 +276,7 @@ public:
             rb->WakeUp();
         } else if (want.x != 0.0f || want.z != 0.0f) {
             transform->Translate(want * dt);
-            if (Scene* sc = gameObject->scene()) ResolvePlayerBody(*sc, gameObject);
+            if (Scene* sc = gameObject->scene()) ResolvePlayerBody(*sc, gameObject, Mathf::Max(0.0f, stepOffset));   // stepOffset: tallest ledge climbed
         }
 
         // ---- Reload / fire ----

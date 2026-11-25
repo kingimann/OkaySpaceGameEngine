@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,33 @@ void Floor(Scene& s) {
     g->AddComponent<BoxCollider3D>()->size = {40, 1, 40};
 }
 } // namespace
+
+// A closed UV sphere (single-point poles) wound outward, or inward when `inward`. Replaces the mesh's contents.
+static void UvSphere(Mesh& m, int rings, int around, float radius, bool inward) {
+    const float pi = 3.14159265f;
+    m.vertices.clear();   // (a new MeshRenderer starts with a cube)
+    m.triangles.clear();
+    for (int i = 0; i <= rings; ++i)
+        for (int j = 0; j < around; ++j) {
+            const float th = pi * (float)i / (float)rings, ph = 2.0f * pi * (float)j / (float)around;
+            const bool pole = i == 0 || i == rings;   // the poles are single points, exactly
+            const float ring = pole ? 0.0f : std::sin(th);
+            m.vertices.push_back({radius * ring * std::cos(ph), i == rings ? -radius : radius * std::cos(th), radius * ring * std::sin(ph)});
+        }
+    for (int i = 0; i < rings; ++i)
+        for (int j = 0; j < around; ++j) {
+            const int j2 = (j + 1) % around;
+            const int a = i * around + j, b = (i + 1) * around + j, c = i * around + j2, d = (i + 1) * around + j2;
+            const int t[6] = {a, b, c, c, b, d};
+            for (int k = 0; k < 6; k += 3) {
+                const Vec3 p0 = m.vertices[t[k]], p1 = m.vertices[t[k + 1]], p2 = m.vertices[t[k + 2]];
+                const Vec3 n = Vec3::Cross(p1 - p0, p2 - p0);
+                const bool outwardNow = Vec3::Dot(n, p0 + p1 + p2) > 0.0f;
+                if (outwardNow != inward) { m.triangles.push_back(t[k]); m.triangles.push_back(t[k + 1]); m.triangles.push_back(t[k + 2]); }
+                else { m.triangles.push_back(t[k]); m.triangles.push_back(t[k + 2]); m.triangles.push_back(t[k + 1]); }
+            }
+        }
+}
 
 int main() {
     // A tall character (a box 0.6 x 1.8 x 0.6) under a low ceiling. One sphere around the waist
@@ -435,35 +463,10 @@ int main() {
     // Findings 2 and 6a: closest point on a big mesh reuses the triangle tree, and a point inside a closed mesh is 0 away.
     RUN_SUITE("closest point on a large mesh");
     {
-        auto sphere = [](Mesh& m, int rings, int around, float radius, bool inward) {
-            const float pi = 3.14159265f;
-            m.vertices.clear();   // (a new MeshRenderer starts with a cube)
-            m.triangles.clear();
-            for (int i = 0; i <= rings; ++i)
-                for (int j = 0; j < around; ++j) {
-                    const float th = pi * (float)i / (float)rings, ph = 2.0f * pi * (float)j / (float)around;
-                    const bool pole = i == 0 || i == rings;   // the poles are single points, exactly
-                    const float ring = pole ? 0.0f : std::sin(th);
-                    m.vertices.push_back({radius * ring * std::cos(ph), i == rings ? -radius : radius * std::cos(th), radius * ring * std::sin(ph)});
-                }
-            for (int i = 0; i < rings; ++i)
-                for (int j = 0; j < around; ++j) {
-                    const int j2 = (j + 1) % around;
-                    const int a = i * around + j, b = (i + 1) * around + j, c = i * around + j2, d = (i + 1) * around + j2;
-                    const int t[6] = {a, b, c, c, b, d};
-                    for (int k = 0; k < 6; k += 3) {
-                        const Vec3 p0 = m.vertices[t[k]], p1 = m.vertices[t[k + 1]], p2 = m.vertices[t[k + 2]];
-                        const Vec3 n = Vec3::Cross(p1 - p0, p2 - p0);
-                        const bool outwardNow = Vec3::Dot(n, p0 + p1 + p2) > 0.0f;
-                        if (outwardNow != inward) { m.triangles.push_back(t[k]); m.triangles.push_back(t[k + 1]); m.triangles.push_back(t[k + 2]); }
-                        else { m.triangles.push_back(t[k]); m.triangles.push_back(t[k + 2]); m.triangles.push_back(t[k + 1]); }
-                    }
-                }
-        };
         Scene s("bigmesh");
         auto* ball = s.CreateGameObject("Ball");
         auto* mr = ball->AddComponent<MeshRenderer>();
-        sphere(mr->mesh, 200, 200, 5.0f, false);
+        UvSphere(mr->mesh, 200, 200, 5.0f, false);
         CHECK(mr->mesh.triangles.size() / 3 >= 79000);
         ball->AddComponent<MeshCollider3D>();
         auto* crate = s.CreateGameObject("Crate");
@@ -498,7 +501,7 @@ int main() {
 
         Scene flipped("flipped");
         auto* inner = flipped.CreateGameObject("Inside out");
-        sphere(inner->AddComponent<MeshRenderer>()->mesh, 24, 24, 5.0f, true);
+        UvSphere(inner->AddComponent<MeshRenderer>()->mesh, 24, 24, 5.0f, true);
         inner->AddComponent<MeshCollider3D>();
         CHECK(flipped.physics3D().ClosestPoint(flipped, {0.3f, 0.2f, 0.1f}).distance < 0.001f);
         CHECK_NEAR(flipped.physics3D().ClosestPoint(flipped, {0, 8, 0}).distance, 3.0f, 0.1f);
@@ -829,21 +832,7 @@ int main() {
         Scene s("deep");
         auto* ball = s.CreateGameObject("Ball");
         Mesh& m = ball->AddComponent<MeshRenderer>()->mesh;
-        m.vertices.clear(); m.triangles.clear();
-        const int rings = 200, around = 200;
-        const float pi = 3.14159265f, radius = 5.0f;
-        for (int i = 0; i <= rings; ++i)
-            for (int j = 0; j < around; ++j) {
-                const float th = pi * (float)i / (float)rings, ph = 2.0f * pi * (float)j / (float)around;
-                const float ring = (i == 0 || i == rings) ? 0.0f : std::sin(th);
-                m.vertices.push_back({radius * ring * std::cos(ph), i == rings ? -radius : radius * std::cos(th), radius * ring * std::sin(ph)});
-            }
-        for (int i = 0; i < rings; ++i)
-            for (int j = 0; j < around; ++j) {
-                const int j2 = (j + 1) % around;
-                const int q[6] = {i * around + j, i * around + j2, (i + 1) * around + j, i * around + j2, (i + 1) * around + j2, (i + 1) * around + j};
-                m.triangles.insert(m.triangles.end(), q, q + 6);
-            }
+        UvSphere(m, 200, 200, 5.0f, false);
         auto* mc = ball->AddComponent<MeshCollider3D>();
         CHECK(mc->HasTriangles() && mc->Tris().TriangleCount() >= 79000);
         CHECK(mc->Tris().ClosedWinding() != 0);
@@ -1078,6 +1067,41 @@ int main() {
             CHECK(run(which, 0.2f, 0.3f, "stepOffset 0.2") < 0.05f);
             CHECK(run(which, -1.0f, 0.25f, "default stepOffset") > 0.2f);
             CHECK(run(which, 0.3f, 0.25f, "stepOffset 0.3") > 0.2f);
+        }
+    }
+
+    // The top-down, top-down shooter and click-to-move step settings are saved and loaded; the default is not written.
+    RUN_SUITE("controller step settings save and load");
+    {
+        Scene s("steps");
+        auto* a = s.CreateGameObject("TopDown");    a->AddComponent<TopDownController>()->stepOffset = 0.1f;
+        auto* b = s.CreateGameObject("Shooter");    b->AddComponent<TopDownShooterController>()->stepOffset = 0.2f;
+        auto* c = s.CreateGameObject("Click");      c->AddComponent<ClickToMoveController>()->stepOffset = 0.05f;
+        auto* d = s.CreateGameObject("ClickDefault"); d->AddComponent<ClickToMoveController>();
+        auto* e = s.CreateGameObject("TopDownDefault"); e->AddComponent<TopDownController>();
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene loaded("steps");
+        CHECK(SceneSerializer::Deserialize(loaded, text));
+        auto step = [&](const char* name, auto* tag) -> float {
+            using T = std::remove_pointer_t<decltype(tag)>;
+            GameObject* go = loaded.Find(name);
+            T* comp = go ? go->GetComponent<T>() : nullptr;
+            return comp ? comp->stepOffset : -1.0f;
+        };
+        CHECK_NEAR(step("TopDown", (TopDownController*)nullptr), 0.1f, 1e-6f);
+        CHECK_NEAR(step("Shooter", (TopDownShooterController*)nullptr), 0.2f, 1e-6f);
+        CHECK_NEAR(step("Click", (ClickToMoveController*)nullptr), 0.05f, 1e-6f);
+        CHECK_NEAR(step("ClickDefault", (ClickToMoveController*)nullptr), 0.35f, 1e-6f);
+        CHECK_NEAR(step("TopDownDefault", (TopDownController*)nullptr), 0.35f, 1e-6f);
+        // The click-to-move line of the default object still ends where it did before the step setting existed.
+        Scene plain("plain");
+        plain.CreateGameObject("C")->AddComponent<ClickToMoveController>();
+        const std::string pt = SceneSerializer::Serialize(plain);
+        const auto at = pt.find("ctmctrl");
+        CHECK(at != std::string::npos);
+        if (at != std::string::npos) {
+            const std::string line = pt.substr(at, pt.find('\n', at) - at);
+            CHECK(line.find("0.35") == std::string::npos);
         }
     }
 

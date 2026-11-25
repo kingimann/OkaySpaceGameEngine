@@ -1,4 +1,6 @@
 // The Dear ImGui bodies of the Problems, Stats, Tags and Layers, Physics and Profiler panels (see EditorPanelViews.hpp; History has none: OkayUI only).
+// NOT part of the editor (not in editor/CMakeLists.txt since docs/ui/own_ui_toolkit.md section 25): the references the headless comparison
+// tests (tests/test_okayui_*_imgui.cpp) measure the OkayUI ports against. The editor draws these panels with OkayUI only.
 // The drawing is what the editor's DrawProblems, DrawStats, DrawHistory, DrawTagsAndLayersSettings, the Physics section of
 // DrawProjectSettings and DrawProfiler drew before they were split from the editor's state; the right-click menus of the first
 // three are new and the OkayUI ports have the same ones.

@@ -1,4 +1,6 @@
 #include "okay/Core/Game.hpp"
+#include "okay/Core/EventBus.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -34,6 +36,12 @@ void Game::Refresh() {
     if (p == s_paused) return;
     s_paused = p;
     Time::SetFrozen(p);
+    static int depth = 0;
+    if (depth >= 4) return;
+    ++depth;
+    try { EngineBus().Publish(GamePaused{p}); }
+    catch (...) { --depth; throw; }
+    --depth;
 }
 
 void Game::SetPaused(bool paused) {
@@ -104,6 +112,20 @@ void Game::NotifyFocus(bool focused) {
 
 // ---- quit ----------------------------------------------------------------------
 
+namespace {
+void PublishQuitEvent(const GameQuit& ev) {
+    auto send = [ev]() {
+        try { EngineBus().Publish(ev); }
+        catch (const std::exception& e) { Log::Warning("Game quit event threw: ", e.what()); }
+        catch (...) { Log::Warning("Game quit event threw"); }
+    };
+    if (JobSystem* js = RunningEngineJobs()) {
+        if (!js->IsMainThread()) { js->RunOnMainThread(send); return; }
+    }
+    send();
+}
+} // namespace
+
 void Game::ForceQuit(const std::string& reason, int exitCode) {
     std::lock_guard<std::mutex> lock(g_quitMutex);
     if (!s_quit.load(std::memory_order_relaxed)) {
@@ -126,9 +148,15 @@ bool Game::RequestQuit(const std::string& reason, int exitCode) {
         catch (const std::exception& e) { Log::Warning("Game quit guard threw: ", e.what(), " (quit allowed)"); }
         catch (...) { Log::Warning("Game quit guard threw (quit allowed)"); }
         g_inGuard = false;
-        if (!allow) { ++g_vetoes; return false; }
+        if (!allow) {
+            ++g_vetoes;
+            PublishQuitEvent(GameQuit{reason, exitCode, false});
+            return false;
+        }
     }
+    const bool already = QuitRequested();
     ForceQuit(reason, exitCode);
+    if (!already) PublishQuitEvent(GameQuit{reason, exitCode, true});
     return true;
 }
 

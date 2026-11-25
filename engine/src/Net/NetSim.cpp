@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <random>
 #include <unordered_map>
 #include <utility>
@@ -75,7 +76,50 @@ bool SimulatedOnArrival(const Endpoint& to) {
     return false;
 }
 
+// ---- the NAT model (see NetSim.hpp) ----
+struct NatMap {
+    Endpoint dest;                          // the destination this mapping is for (Symmetric only)
+    std::unique_ptr<UdpSocket> outside;     // the public side: its port is what others see
+    std::vector<Endpoint> sentTo;           // where it sent (the PortRestricted / Symmetric filter)
+};
+struct Nat {
+    const UdpSocket* inside = nullptr;
+    NatType type = NatType::None;
+    std::vector<NatMap> maps;
+};
+std::vector<Nat> g_nats;
+std::size_t g_natDrops = 0;
+constexpr std::size_t kNatMapsMax = 256, kNatPeersMax = 256;
+
+Nat* NatOf(const UdpSocket& s) {
+    for (Nat& n : g_nats) if (n.inside == &s) return &n;
+    return nullptr;
+}
+
+NatMap* NatMapFor(Nat& n, const Endpoint& to) {
+    const bool perDest = n.type == NatType::Symmetric;
+    for (NatMap& m : n.maps) if (!perDest || m.dest == to) return &m;
+    if (n.maps.size() >= kNatMapsMax) return nullptr;
+    NatMap m;
+    m.dest = to;
+    m.outside = std::make_unique<UdpSocket>();
+    if (!m.outside->Open() || !m.outside->Bind(0)) return nullptr;
+    n.maps.push_back(std::move(m));
+    return &n.maps.back();
+}
+
+bool NatSend(Nat& n, const Endpoint& to, const std::uint8_t* data, std::size_t size) {
+    NatMap* m = NatMapFor(n, to);
+    if (!m) return false;
+    if (std::find(m->sentTo.begin(), m->sentTo.end(), to) == m->sentTo.end()) {
+        if (m->sentTo.size() >= kNatPeersMax) m->sentTo.erase(m->sentTo.begin());
+        m->sentTo.push_back(to);
+    }
+    return m->outside->SendTo(to, data, size);
+}
+
 void SendNow(UdpSocket& socket, const Endpoint& to, const std::uint8_t* data, std::size_t size) {
+    if (Nat* n = NatOf(socket)) { if (NatSend(*n, to, data, size)) NoteWire(size, false); return; }
     if (socket.SendTo(to, data, size)) NoteWire(size, false);
 }
 
@@ -90,6 +134,43 @@ TrafficSample g_sample;
 
 SimSettings& Simulator() { return g_sim; }
 
+void SetSimulatedNat(const UdpSocket& inside, NatType type) {
+    g_nats.erase(std::remove_if(g_nats.begin(), g_nats.end(), [&](const Nat& n) { return n.inside == &inside; }), g_nats.end());
+    if (type == NatType::None) return;
+    Nat n;
+    n.inside = &inside;
+    n.type = type;
+    g_nats.push_back(std::move(n));
+}
+
+NatType SimulatedNat(const UdpSocket& inside) {
+    const Nat* n = NatOf(inside);
+    return n ? n->type : NatType::None;
+}
+
+void RebindSimulatedNat(const UdpSocket& inside) {
+    if (Nat* n = NatOf(inside)) n->maps.clear();
+}
+
+std::uint16_t SimulatedNatPort(const UdpSocket& inside, const Endpoint& to) {
+    Nat* n = NatOf(inside);
+    if (!n) return 0;
+    for (const NatMap& m : n->maps)
+        if (n->type != NatType::Symmetric || m.dest == to) return m.outside->LocalPort();
+    return 0;
+}
+
+std::size_t SimulatedNatDrops() { return g_natDrops; }
+
+void ClearSimulatedNats() { g_nats.clear(); }
+
+bool SendThroughNat(const UdpSocket& socket, const Endpoint& to, const void* data, std::size_t size) {
+    Nat* n = NatOf(socket);
+    if (!n || !data || size == 0) return false;
+    if (NatSend(*n, to, static_cast<const std::uint8_t*>(data), size)) NoteWire(size, false);
+    return true;
+}
+
 std::size_t SimulatorOverflows() { return g_overflow; }
 
 bool SimulatorActive() {
@@ -103,6 +184,7 @@ void ResetSimulator() {
 }
 
 void ResetSimulator(const UdpSocket& socket) {
+    g_nats.erase(std::remove_if(g_nats.begin(), g_nats.end(), [&](const Nat& n) { return n.inside == &socket; }), g_nats.end());
     g_readers.erase(std::remove_if(g_readers.begin(), g_readers.end(), [&](const auto& r) { return r.first == &socket; }),
                     g_readers.end());
     auto mine = [&](const Held& h) { return h.sock == &socket; };
@@ -124,8 +206,9 @@ void PumpSimulator(UdpSocket& socket) {
 }
 
 bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::size_t size) {
-    if (!SimulatorActive() || !data || size == 0) return false;
-    if (SimulatedOnArrival(to)) return false;   // its reader applies the delay and loss: send it as is
+    if (!data || size == 0) return false;
+    // Not simulating, or its reader applies the delay and loss: send it as is (through the router, if any).
+    if (!SimulatorActive() || SimulatedOnArrival(to)) return SendThroughNat(socket, to, data, size);
     if (Dropped()) return true;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     const double release = Now() + (double)DelaySeconds();
@@ -155,6 +238,37 @@ bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::
 
 int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint& from) {
     if (socket.IsOpen()) NoteReader(socket);
+    if (Nat* nat = NatOf(socket)) {
+        // Behind a router: only what reaches a mapping, and passes its filter, comes in (at once: the
+        // sender's side applied any simulated delay); the private port itself is unreachable.
+        std::vector<std::uint8_t> tmp(kMaxDatagram);
+        Endpoint ep;
+        int n;
+        while ((n = socket.RecvFrom(tmp.data(), tmp.size(), ep)) > 0) ++g_natDrops;
+        for (NatMap& m : nat->maps)
+            while ((n = m.outside->RecvFrom(tmp.data(), tmp.size(), ep)) > 0) {
+                const bool allowed = nat->type == NatType::FullCone ||
+                                     std::find(m.sentTo.begin(), m.sentTo.end(), ep) != m.sentTo.end();
+                if (!allowed) { ++g_natDrops; continue; }
+                NoteWire(static_cast<std::size_t>(n), true);
+                Held h;
+                h.sock = &socket;
+                h.to = ep;
+                h.bytes.assign(tmp.begin(), tmp.begin() + n);
+                h.release = 0.0;
+                g_in.push_back(std::move(h));
+            }
+        Trim(g_in, &socket);
+        for (auto it = g_in.begin(); it != g_in.end(); ++it) {
+            if (it->sock != &socket || (SimulatorActive() && it->release > Now())) continue;
+            const std::size_t len = std::min(capacity, it->bytes.size());
+            if (buffer && len) std::memcpy(buffer, it->bytes.data(), len);
+            from = it->to;
+            g_in.erase(it);
+            return (int)len;
+        }
+        return 0;
+    }
     if (SimulatorActive()) {
         std::vector<std::uint8_t> tmp(kMaxDatagram);
         Endpoint ep;

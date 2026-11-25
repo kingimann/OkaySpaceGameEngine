@@ -2649,6 +2649,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
         if (tunedPrediction) out << " " << nm->reconcileRate << " " << nm->reconcileSnap;
         out << "\n";
         for (const auto& pf : nm->spawnablePrefabs) out << "  netprefab " << Quote(pf) << "\n";
+        if (!nm->relayServer.empty()) out << "  netrelay " << Quote(nm->relayServer) << "\n";   // online play (HostOnline)
     }
     for (auto* wu : go->GetComponents<WorldUI>()) {
         out << "  worldui " << Quote(wu->text) << " "

@@ -123,6 +123,7 @@ bool NetworkManager::StartServer(std::uint16_t port) {
         Stop();
         return false;
     }
+    net::SetSimulatedNat(m_socket, simulateNat);
     InitServerState();
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
@@ -266,6 +267,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
         }
         m_bindPort = 0;
     }
+    net::SetSimulatedNat(m_socket, simulateNat);
     if (!net::UdpSocket::Resolve(host, port, m_serverEp)) {
         SetError("Could not find host \"" + host + "\": the name or address does not resolve (check the spelling, or use its IP address).");
         Stop();
@@ -301,16 +303,26 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
         }
     }
     Stop();
-    if (asHost && !EncryptionBuiltIn(encryption)) return false;
-    if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
+    m_lastError.clear(); m_errorNoted = false;
+    if (asHost && !EncryptionBuiltIn(encryption)) {
+        SetError("Could not host: this build has no network encryption, and the Network Manager asks for it.");
+        return false;
+    }
+    if (!net::Startup()) { SetError("Could not go online: the computer's network could not be started."); return false; }
     m_netStarted = true;
-    if (!m_socket.Open()) { OKAY_ERROR("net: failed to open relay socket"); Stop(); return false; }
+    if (!m_socket.Open()) { SetError("Could not go online: no network socket could be opened."); Stop(); return false; }
+    net::SetSimulatedNat(m_socket, simulateNat);
     if (!net::UdpSocket::Resolve(relayHost, relayPort, m_relayEp)) {
-        OKAY_ERROR("net: cannot resolve relay ", relayHost);
+        SetError("Could not find the relay server \"" + relayHost + "\": the name does not resolve (check the Network "
+                 "Manager's Relay Server, or OKAY_RELAY).");
         Stop();
         return false;
     }
     m_relay = true;
+    m_relayHeard = false;
+    m_relaySuccessorKey = 0;
+    m_relayNewHost = 0;
+    m_relayPromoting = false;
     m_relayWelcomed = false;
     m_relayCode = code;
     m_relayHostKey = 0;
@@ -365,26 +377,42 @@ void NetworkManager::RelayKeepAlive(float dt) {
     if (!m_relayWelcomed && relayTimeoutSeconds > 0.0f && (m_relayWait += dt) >= relayTimeoutSeconds) {
         m_relayError = m_relayBadWelcomes > 0
             ? "the relay's welcome could not be verified (an older relay? see allowUnverifiedRelay)"
-            : "the relay never answered (it is unreachable, or no host is registered for session code '" +
-              m_relayCode + "')";
+            : m_relayHeard && m_mode == Mode::Client
+                ? "no game is hosted with code '" + m_relayCode + "' on the relay"
+                : "the relay never answered (it is unreachable, or no host is registered for session code '" +
+                  m_relayCode + "')";
         OKAY_WARN("net: ", m_relayError);
         m_relayLost = true;
         return;
     }
+    DirectTick(dt);
+    SendDirectAllow(/*always=*/false);   // a host: at once when its accepted players change
     m_relayHelloTimer -= dt;
     if (m_relayHelloTimer > 0.0f) return;
-    m_relayHelloTimer = 1.0f;
+    // Once a second keeps the NAT open. A host that holds a successor key says hello more often, so the relay
+    // (which lets a player take over only after several missed hellos) never takes a hitch for a gone host;
+    // a player taking the host's place asks four times a second.
+    m_relayHelloTimer = m_relayPromoting ? 0.25f
+                      : (m_mode == Mode::Server && m_relaySuccessorKey != 0) ? net::kRelayHostHelloSeconds : 1.0f;
     net::RelayHelloParams hp;
     hp.role = m_mode == Mode::Server ? net::RelayHost : net::RelayClient;
     hp.code = m_relayCode;
-    hp.hostKey = m_relayHostKey;                 // 0 until the relay gives one
+    hp.hostKey = m_relayHostKey;                 // 0 until the relay gives one (a successor: the successor key)
     std::memcpy(hp.cookie.data(), m_relayCookie, hp.cookie.size());   // zero until the relay sends one
     hp.nonce = m_relayNonce;                     // version 4: the welcome echoes it
+    if (WantDirectNow()) hp.flags |= net::RelayHelloDirect;   // version 5: may the relay pass our address on?
     const std::vector<std::uint8_t> hello = net::BuildRelayHello(hp);
-    m_socket.SendTo(m_relayEp, hello.data(), hello.size());
+    SendRaw(m_relayEp, hello.data(), hello.size());
+    SendDirectAllow(/*always=*/true);   // and again with each hello, so a lost one is repaired
 }
 
 void NetworkManager::Stop() {
+    m_direct.clear();
+    m_directAllowSent.clear();
+    if (m_keepRelay) {
+        // Host migration through the relay: this peer changes role in place. The socket and the relay
+        // registration (slot, cookie, nonce) stay, so the relay and the other players keep knowing it.
+    } else {
     if (m_mode == Mode::Client && m_joined && m_socket.IsOpen()) {
         net::Packet p(Leave);
         p.Write(m_localId);
@@ -394,11 +422,14 @@ void NetworkManager::Stop() {
     if (m_mode == Mode::Server && m_socket.IsOpen()) SendHostBye();   // clients move to a new host at once (host migration)
     if (m_relay && m_socket.IsOpen()) {            // free our slot on the relay
         net::Packet bye(net::RelayBye);
-        m_socket.SendTo(m_relayEp, bye.Data(), bye.Size());
+        SendRaw(m_relayEp, bye.Data(), bye.Size());
     }
     m_relay = false;
     m_relayWelcomed = false;
     m_relayHostKey = 0;
+    m_relaySuccessorKey = 0;
+    m_relayNewHost = 0;
+    m_relayPromoting = false;
     m_relayNonce = 0;
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
@@ -406,6 +437,7 @@ void NetworkManager::Stop() {
     net::ResetSimulator(m_socket);
     m_socket.Close();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
+    }
     m_clients.clear();
     m_remotes.clear();
     m_remoteTarget.clear();
@@ -413,6 +445,7 @@ void NetworkManager::Stop() {
     m_fragDone.clear();
     m_varVer.clear(); m_varSeen.clear(); m_varOut.clear(); m_varAcks.clear();
     m_migPeers.clear();
+    m_migRelayKey = 0;
     m_migSent.clear();
     m_migResend = 0.0f;
     m_migrateNow = false;

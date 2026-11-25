@@ -76,11 +76,12 @@ struct MetricsFromImGui {
 // the close box, the body is drawn into the window's draw list, so Dear ImGui's popups and the windows in front cover it as they
 // cover any ImGui panel. There is no Dear ImGui version to fall back to. A new window with no saved place opens at 440 x 340 (times
 // the UI scale).
+// `firstW` x `firstH`: the size a window with no saved place opens at (before the UI scale).
 template <class Draw>
-bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
+bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, float firstW = 440.0f, float firstH = 340.0f) {
     static OkayUI::CapturedGeometry cap;            // scratch: the panels are drawn one after another
     return okayuihost::HostPanelWindow(title, open, itemId, OkayUIRegion(), okayuihost::SharedImGuiEmbed(), cap,
-                                       ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), [&](ImVec2 p, ImVec2 a) {
+                                       ImVec2(firstW * g_uiScale, firstH * g_uiScale), [&](ImVec2 p, ImVec2 a) {
         OkayUI::PushTextScale(g_uiScale);
         MetricsFromImGui metrics_;
         draw(p, a);
@@ -157,7 +158,9 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedR
 
 // The host of the panels drawn by OkayUI only (below the two hosts).
 template <class Draw>
-bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw) { return HostWindow(title, open, itemId, draw); }
+bool PanelWindow(const char* title, bool* open, const char* itemId, Draw draw, float firstW = 440.0f, float firstH = 340.0f) {
+    return HostWindow(title, open, itemId, draw, firstW, firstH);
+}
 
 // The host of the sections drawn by OkayUI only (Project Settings' Player, Physics, Rendering, Tags and Layers): the body goes into the
 // ImGui window's draw list in Dear ImGui's order (okayuihost::HostPanelSection), so there is no Dear ImGui version to switch to when a
@@ -325,9 +328,9 @@ namespace oked {
 // OkayUI windows already, so the body is drawn straight into the window.
 namespace {
 template <class Draw>
-bool PanelWindow(const char* title, bool* open, const char*, Draw draw) {
+bool PanelWindow(const char* title, bool* open, const char*, Draw draw, float firstW = 440.0f, float firstH = 340.0f) {
     if (open && !*open) return false;
-    ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(firstW * g_uiScale, firstH * g_uiScale), ImGuiCond_FirstUseEver);
     const bool shown = ImGui::Begin(title, open);
     if (shown) {
         const ImVec2 p = ImGui::GetCursorScreenPos(), a = ImGui::GetContentRegionAvail();
@@ -363,6 +366,15 @@ bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLa
 bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel&, okaypanels::LoadingScreenIntent&) { return false; }
 bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
+bool DrawShortcutsOkayUI(bool*) { return false; }
+bool DrawNetSimOkayUI(bool*, okaypanels::NetSimModel&, okaypanels::NetSimIntent& intent) { intent = okaypanels::NetSimIntent(); return false; }
+bool DrawFindInFilesOkayUI(bool*, const okaypanels::FindInFilesModel&, okaypanels::FindInFilesState&, okaypanels::FindInFilesIntent& intent) {
+    intent = okaypanels::FindInFilesIntent(); return false;
+}
+bool DrawDataAssetOkayUI(bool*, okaypanels::DataAssetModel&, okaypanels::DataAssetIntent& intent) { intent = okaypanels::DataAssetIntent(); return false; }
+bool DrawPluginManagerOkayUI(bool*, const okaypanels::PluginManagerModel&, okaypanels::PluginManagerIntent& intent) {
+    intent = okaypanels::PluginManagerIntent(); return false;
+}
 #endif
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
@@ -517,6 +529,54 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::Post
         intent = r.intent;
         return r.contentHeight;
     });
+}
+
+// The small tool windows (docs/ui/own_ui_toolkit.md section 28): OkayUI only, each a whole window like Stats. The titles are the
+// ones the Dear ImGui windows had, so saved layouts keep their place.
+bool DrawShortcutsOkayUI(bool* open) {
+    static okaypanels::ShortcutsState state;
+    return PanelWindow("Keyboard Shortcuts", open, "##okayui_shortcuts", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        okayuiscreens::DrawShortcuts(okaypanels::KeyboardShortcuts(), state, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+    }, 520.0f, 560.0f);
+}
+
+bool DrawNetSimOkayUI(bool* open, okaypanels::NetSimModel& model, okaypanels::NetSimIntent& intent) {
+    intent = okaypanels::NetSimIntent();
+    return PanelWindow("Net###Net", open, "##okayui_net", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawNetSim(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
+bool DrawFindInFilesOkayUI(bool* open, const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state,
+                           okaypanels::FindInFilesIntent& intent) {
+    intent = okaypanels::FindInFilesIntent();
+    return PanelWindow("Find in Files", open, "##okayui_findinfiles", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawFindInFiles(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 600.0f, 420.0f);
+}
+
+bool DrawDataAssetOkayUI(bool* open, okaypanels::DataAssetModel& model, okaypanels::DataAssetIntent& intent) {
+    intent = okaypanels::DataAssetIntent();
+    return PanelWindow("Data Asset", open, "##okayui_dataasset", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawDataAsset(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
+bool DrawPluginManagerOkayUI(bool* open, const okaypanels::PluginManagerModel& model, okaypanels::PluginManagerIntent& intent) {
+    intent = okaypanels::PluginManagerIntent();
+    return PanelWindow("Plugin Manager", open, "##okayui_plugins", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawPluginManager(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    }, 560.0f, 360.0f);
 }
 
 } // namespace oked

@@ -10452,39 +10452,25 @@ void DrawServices(EditorState& ed) {
     ImGui::End();
 }
 
-// Scriptable Object editor: edit a .okaydata file's key/value fields.
+// Scriptable Object editor: edit a .okaydata file's key/value fields. OkayUI draws the window (no Dear ImGui version); X, Add Field
+// and Save come back as the intent.
 void DrawDataAssetEditor() {
     if (!g_dataAssetOpen) return;
     static std::string loaded;
     static DataAsset asset;
     if (loaded != g_dataAssetPath) { asset = DataAsset{}; asset.Load(g_dataAssetPath); loaded = g_dataAssetPath; }
-    if (!ImGui::Begin("Data Asset", &g_dataAssetOpen)) { ImGui::End(); return; }
-    ImGui::TextDisabled("%s", g_dataAssetPath.c_str());
-    ImGui::TextDisabled("Read from script: data_num(\"file.okaydata\", \"key\") / data_str(...)");
-    ImGui::Separator();
+    okaypanels::DataAssetModel model;
+    model.path = g_dataAssetPath;
+    model.fields = &asset.Fields();
+    okaypanels::DataAssetIntent intent;
+    oked::DrawDataAssetOkayUI(&g_dataAssetOpen, model, intent);
     auto& fields = asset.Fields();
-    int remove = -1;
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-        ImGui::PushID((int)i);
-        char k[64]; std::strncpy(k, fields[i].first.c_str(), sizeof(k) - 1); k[sizeof(k)-1] = '\0';
-        ImGui::SetNextItemWidth(140);
-        if (ImGui::InputText("##k", k, sizeof(k))) fields[i].first = k;
-        ImGui::SameLine();
-        char v[192]; std::strncpy(v, fields[i].second.c_str(), sizeof(v) - 1); v[sizeof(v)-1] = '\0';
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::InputText("##v", v, sizeof(v))) fields[i].second = v;
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X")) remove = (int)i;
-        ImGui::PopID();
-    }
-    if (remove >= 0) fields.erase(fields.begin() + remove);
-    if (ImGui::Button("Add Field")) fields.emplace_back("key", "value");
-    ImGui::SameLine();
-    if (ImGui::Button("Save")) {
+    if (intent.remove >= 0 && (std::size_t)intent.remove < fields.size()) fields.erase(fields.begin() + intent.remove);
+    if (intent.add) fields.emplace_back("key", "value");
+    if (intent.save) {
         if (asset.Save(g_dataAssetPath)) ConsoleLog("Saved " + g_dataAssetPath);
         else ConsoleLog("Save failed: " + g_dataAssetPath);
     }
-    ImGui::End();
 }
 
 // Save Manager: browse the .okaysave files in a project and view/edit their
@@ -11308,109 +11294,11 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     }
 }
 
-// Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in
-// one searchable place, grouped by the panel it applies to.
+// Keyboard shortcut cheatsheet (Help > Keyboard Shortcuts): every binding in one searchable place, grouped by the panel it applies
+// to. The list and the filter are okaypanels::KeyboardShortcuts / FilterShortcuts; OkayUI draws the window (no Dear ImGui version).
 void DrawShortcutsWindow() {
     if (!g_showShortcuts) return;
-    ImGui::SetNextWindowSize(ImVec2(520, 560), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Keyboard Shortcuts", &g_showShortcuts)) { ImGui::End(); return; }
-    static char filter[48] = "";
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##scfilter", "filter...", filter, sizeof(filter));
-    ImGui::Separator();
-    auto lc = [](std::string s) { for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-    std::string q = lc(filter);
-    struct Row { const char* keys; const char* what; };
-    auto section = [&](const char* title, std::initializer_list<Row> rows) {
-        // Show a section only if any row matches the filter.
-        bool any = q.empty();
-        for (const Row& r : rows)
-            if (!any && (lc(r.keys).find(q) != std::string::npos ||
-                         lc(r.what).find(q) != std::string::npos)) any = true;
-        if (!any) return;
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
-        ImGui::SeparatorText(title);
-        ImGui::PopStyleColor();
-        for (const Row& r : rows) {
-            if (!q.empty() && lc(r.keys).find(q) == std::string::npos &&
-                lc(r.what).find(q) == std::string::npos) continue;
-            ImGui::TextColored(ImVec4(0.85f, 0.90f, 0.72f, 1.0f), "%-18s", r.keys);
-            ImGui::SameLine(150);
-            ImGui::TextDisabled("%s", r.what);
-        }
-    };
-    section("General", {
-        {"Ctrl+P",        "Play / Stop"},
-        {"Ctrl+S",        "Save scene"},
-        {"Ctrl+Alt+S",    "Save project (everything)"},
-        {"Ctrl+Shift+S",  "Save scene as..."},
-        {"Ctrl+O",        "Open scene"},
-        {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
-        {"Ctrl+B",        "Build Settings (in mesh edit mode: bevel)"},
-        {"Ctrl+C / Ctrl+V","Copy / paste object"},
-        {"Ctrl+D",        "Duplicate selection"},
-        {"Ctrl+Shift+G",  "Group selection"},
-        {"Delete",        "Delete selection"},
-    });
-    section("Scene view", {
-        {"W / E / R",     "Move / Rotate / Scale tool"},
-        {"X",             "Local / world gizmo space"},
-        {"F",             "Frame (focus) the selection"},
-        {"Shift+I",       "Isolate selection (Esc exits)"},
-        {"Shift+Space",   "Maximize the Scene view / bring the panels back"},
-        {"Ctrl+Alt+1..3", "Save camera bookmark"},
-        {"Ctrl+1..3",     "Recall camera bookmark"},
-        {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
-        {"Ctrl+Wheel",    "Zoom UI authoring view"},
-    });
-    section("Mesh edit mode", {
-        {"Tab",           "Object / Edit mode"},
-        {"1 / 2 / 3",     "Vertex / Edge / Face select"},
-        {"G / R / S",     "Move / Rotate / Scale the selection"},
-        {"G G",           "Edge slide"},
-        {"Ctrl+R",        "Loop cut (scroll for more cuts)"},
-        {"Ctrl+B",        "Bevel the selected edges"},
-        {"K",             "Knife (Enter cuts)"},
-        {"Alt+Click",     "Select an edge loop"},
-        {"Ctrl+Alt+Click","Select an edge ring"},
-    });
-    section("Panels & tabs", {
-        {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
-        {"Ctrl+Shift+Tab","Switch panels, going backwards"},
-        {"Middle-click",  "Close a panel tab"},
-        {"Drag a tab",    "Reorder it, dock it elsewhere, or drag it out to float"},
-        {"Right-click tab","Tab menu: add a tab, close, float, layouts, side tabs"},
-    });
-    section("Hierarchy", {
-        {"F2",            "Rename object"},
-        {"Ctrl+Click",    "Add/remove from selection"},
-        {"Shift+Click",   "Range select"},
-        {"Ctrl+Up/Down",  "Reorder among siblings"},
-        {"Double-click",  "Frame object (in search results)"},
-    });
-    section("Script Editor", {
-        {"Ctrl+F",        "Find in this file"},
-        {"Ctrl+Shift+F",  "Find in Files (project-wide)"},
-        {"Ctrl+Click",    "Go to definition"},
-        {"Ctrl+E",        "Command palette"},
-        {"Ctrl+G",        "Go to line"},
-        {"Ctrl+Alt+L",    "Format document"},
-        {"F2",            "Next warning"},
-    });
-    section("Visual Script graph", {
-        {"Right-click / Space", "Add a node or an action step"},
-        {"Right- / middle-drag", "Pan"},
-        {"Scroll",        "Zoom"},
-        {"Home / F",      "Show all / frame selection"},
-        {"Ctrl+C / Ctrl+V / Ctrl+D","Copy / paste / duplicate"},
-        {"Delete",        "Delete selection"},
-        {"C",             "Comment around selection"},
-    });
-    section("Sprite Editor", {
-        {"P / E / F / I", "Pencil / Eraser / Fill / Pick tool"},
-        {"Ctrl+Z",        "Undo stroke"},
-    });
-    ImGui::End();
+    oked::DrawShortcutsOkayUI(&g_showShortcuts);
 }
 
 // One script code widget (ScriptEditorWidget) per open script, lazily created and configured.

@@ -1,7 +1,7 @@
 #pragma once
 // Editor windows hosted by OkayUI (docs/ui/own_ui_toolkit.md sections 6, 9, 10, 11, 24, 25, 26 and 27; the Crash Log, the Audio Mixer, History, Problems, Stats,
 // the Profiler, Project Settings' Player, Physics, Rendering, Tags and Layers and Loading screen sections, the Project panel's import settings and
-// Lighting's Post-processing section are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
+// Lighting's Post-processing section, Keyboard Shortcuts, Net, Find in Files, Data Asset and the Plugin Manager are drawn by OkayUI only, the others with the "OkayUI screens" backend or not wired yet). Each keeps its Dear
 // ImGui window (the dock tab, title and close box) and hands the free area, or its part of it, to the OkayUI screen in okayui/screens/OkayUIPanels
 // and OkayUIEditorPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI); without it the functions draw nothing.
 #include "EditorPanelModels.hpp"
@@ -61,6 +61,17 @@ bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels
 bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent);
 /// Project Settings > Loading screen: OkayUI only, like the sections above.
 bool DrawLoadingScreenOkayUI(okaypanels::LoadingScreenModel& model, okaypanels::LoadingScreenIntent& intent);
+
+/// The small tool windows, OkayUI only (no Dear ImGui version; docs/ui/own_ui_toolkit.md section 28). Same return value as the Crash
+/// Log. Keyboard Shortcuts keeps its own filter. Net edits okay::net::Simulator() through the model's pointers (`intent.changed`).
+/// Find in Files, Data Asset and the Plugin Manager answer with what the person asked for; the editor runs the search, opens the
+/// hit, erases, adds or saves the field, and creates, reloads, switches or opens the plugin.
+bool DrawShortcutsOkayUI(bool* open);
+bool DrawNetSimOkayUI(bool* open, okaypanels::NetSimModel& model, okaypanels::NetSimIntent& intent);
+bool DrawFindInFilesOkayUI(bool* open, const okaypanels::FindInFilesModel& model, okaypanels::FindInFilesState& state,
+                           okaypanels::FindInFilesIntent& intent);
+bool DrawDataAssetOkayUI(bool* open, okaypanels::DataAssetModel& model, okaypanels::DataAssetIntent& intent);
+bool DrawPluginManagerOkayUI(bool* open, const okaypanels::PluginManagerModel& model, okaypanels::PluginManagerIntent& intent);
 
 /// The Hierarchy panel with OkayUI (docs/own_ui_toolkit.md section 12). The window keeps the keyboard focus flag (`model.focused` is
 /// set here from the ImGui window). A file dragged in from a Dear ImGui panel arrives through model.externalDrag*, which the caller

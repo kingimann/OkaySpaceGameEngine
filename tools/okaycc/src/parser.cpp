@@ -1783,6 +1783,7 @@ private:
             const Expr* dm = mi ? nullptr : memberDefault(tag, f.first);
             if (ft && ft->needCtor) {
                 std::vector<std::unique_ptr<Expr>> args;
+                bool listArg = false;  // the one argument is the whole braced list
                 if (mi) args = std::move(mi->args);
                 else if (dm && dm->kind == Expr::Kind::Brace && !dm->kids.empty() && hasListCtor(*ft)) {
                     // std::vector<std::string> items{"a", "b"}; an initializer-list constructor
@@ -1795,13 +1796,7 @@ private:
                     br->file = dm->file;
                     for (const auto& k : dm->kids) br->kids.push_back(cloneExpr(*k));
                     args.push_back(std::move(br));
-                    body->stmts.push_back(sExpr(
-                        ctorCall(f.second->tag, eAddr(eArrow(eName("this", p), f.first, p), p), std::move(args), p), p));
-                    if (eh_ && ft->needDtor) {
-                        ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
-                        ++ehHeld;
-                    }
-                    continue;
+                    listArg = true;
                 } else if (dm && dm->kind == Expr::Kind::Brace)
                     for (const auto& k : dm->kids) args.push_back(cloneExpr(*k));
                 else if (dm) args.push_back(cloneExpr(*dm));
@@ -1811,7 +1806,7 @@ private:
                     // (struct R { std::type_index t; ..} r{typeid(X), ..}), which assigns the member.
                     continue;
                 }
-                if (args.size() == 1) {
+                if (args.size() == 1 && !listArg) {
                     // One argument: an object of the class is copied, anything else goes to a constructor.
                     std::vector<std::unique_ptr<Expr>> a;
                     a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
@@ -6009,17 +6004,6 @@ private:
         return s;
     }
 
-    static bool hasCopyCtor(const Type* cls) {
-        if (!cls) return false;
-        for (const Param& p : cls->params) {
-            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
-            const Type* a = p.type->params[0].type.get();
-            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
-                a->inner->tag == cls->tag)
-                return true;
-        }
-        return false;
-    }
 
     // A local of class type: run its constructor right after the declaration and remember it so
     // that its destructor runs when the scope ends.

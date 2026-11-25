@@ -1357,15 +1357,7 @@ private:
         if (!t || t->kind != Type::Kind::Struct || t->tag.empty()) return false;
         const Type* c = canonOf(t);
         if (!c) return false;
-        if (c->needDtor) return true;
-        for (const Param& p : c->params) {
-            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
-            const Type* a = p.type->params[0].type.get();
-            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
-                a->inner->tag == c->tag)
-                return true;
-        }
-        return false;
+        return c->needDtor || hasCopyCtor(c);
     }
     static int structPieces(const Type* t, int& sz, bool& memClass) {
         sz = t ? sizeOf(t) : 8;

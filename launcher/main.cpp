@@ -124,6 +124,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "ChatPlacement.hpp"    // chat inside the launcher or popped out: the decisions (tested by launcher_tray)
 #include "FriendsList.hpp"      // the chat window's Friends list and your own status: the decisions (tested by launcher_friends)
 #include "TrayWin32.hpp"       // the system tray: TrayLogic.hpp decisions + the Win32 shell (Settings > Behavior)
+#include "DesktopNotify.hpp"   // desktop notifications: the decisions and the queue (Settings > Chat & Notifications)
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
 #ifdef OKAY_ENABLE_TEST_HOOKS
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
@@ -1988,6 +1989,8 @@ bool g_trayHintShown = false;     // the "still running in the tray" note was sh
 bool g_updateOnLaunch = true;     // check for updates at startup, like Steam (persisted; default ON, a saved update_on_launch=0 is kept)
 bool g_officialAutoUpdate = true; // keep the installed official game up to date in the background (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
+okl::notify::Centre g_notifyCentre;   // desktop notifications (DesktopNotify.hpp); its settings are persisted as notify_*
+std::string g_notifyUpdateSeen;   // the newest version an "Update available" pop-up was shown for (persisted: once per version)
 bool g_linkPreviews = true;       // fetch title/image cards for links in chat (persisted)
 int  g_voiceSpeed = 0;            // voice-note playback speed: 0 = 1x, 1 = 1.5x, 2 = 2x (persisted)
 bool g_chatListFolded = false;    // chat conversation list folded to an avatar strip (persisted)
@@ -2123,6 +2126,9 @@ int g_onlineStatus = 0;     // 0 Online, 1 Away, 2 Invisible, 3 Do not disturb (
 // Your own status, for code outside this file (desktop notifications: Invisible and Do not disturb keep them quiet).
 // One of okayfriends::kOnline / kAway / kInvisible / kDoNotDisturb (launcher/FriendsList.hpp).
 int MyOnlineStatus() { return okayfriends::ClampStatus(g_onlineStatus); }
+static_assert(okl::notify::kPresenceInvisible == okayfriends::kInvisible && okl::notify::kPresenceDoNotDisturb == okayfriends::kDoNotDisturb &&
+              okl::notify::kPresenceOnline == okayfriends::kOnline && okl::notify::kPresenceAway == okayfriends::kAway,
+              "desktop notifications read the same status numbers as the friends list");
 // The presence dot's colour for a status (yours or a friend's): green online, amber away, red busy, grey offline.
 static ImU32 StatusDotU32(int status) {
     switch (okayfriends::ClampStatus(status)) {
@@ -3313,6 +3319,28 @@ static void OkayUIClaimKeyboard() {
 }
 #endif
 
+// Desktop notification settings in launcher.cfg (Settings > Chat & Notifications). All on by default except Do not disturb.
+static void LoadNotifyPref(const std::string& k, const std::string& v) {
+    okl::notify::Settings& n = g_notifyCentre.settings;
+    const bool on = v != "0";
+    if (k == "notify_on") n.enabled = on;
+    else if (k == "notify_messages") n.messages = on;
+    else if (k == "notify_friend_requests") n.friendRequests = on;
+    else if (k == "notify_invites") n.invites = on;
+    else if (k == "notify_updates") n.updates = on;
+    else if (k == "notify_downloads") n.downloads = on;
+    else if (k == "notify_dnd") n.doNotDisturb = (v == "1");
+    else if (k == "notify_sound") n.sound = on;
+    else if (k == "notify_update_seen") { g_notifyUpdateSeen = v; g_notifyCentre.MarkSeenOnce("update:" + v); }
+}
+static void SaveNotifyPrefs(std::ofstream& f) {
+    const okl::notify::Settings& n = g_notifyCentre.settings;
+    f << "notify_on=" << (n.enabled ? 1 : 0) << "\nnotify_messages=" << (n.messages ? 1 : 0)
+      << "\nnotify_friend_requests=" << (n.friendRequests ? 1 : 0) << "\nnotify_invites=" << (n.invites ? 1 : 0)
+      << "\nnotify_updates=" << (n.updates ? 1 : 0) << "\nnotify_downloads=" << (n.downloads ? 1 : 0)
+      << "\nnotify_dnd=" << (n.doNotDisturb ? 1 : 0) << "\nnotify_sound=" << (n.sound ? 1 : 0) << "\n";
+    if (!g_notifyUpdateSeen.empty()) f << "notify_update_seen=" << g_notifyUpdateSeen << "\n";
+}
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
     std::string line;
@@ -3336,6 +3364,7 @@ void LoadPrefs() {
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k.rfind("notify_", 0) == 0) LoadNotifyPref(k, v);   // Settings > Chat & Notifications > Desktop notifications
         else if (k == "crash_upload") g_crashUpload = (v != "0");
         else if (k == "crash_notice") g_crashNoticeSeen = (v == "1");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
@@ -3463,6 +3492,7 @@ void SavePrefs() {
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    SaveNotifyPrefs(f);
     f << "crash_upload=" << (g_crashUpload ? 1 : 0) << "\n";
     f << "crash_notice=" << (g_crashNoticeSeen ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
@@ -8859,6 +8889,7 @@ static std::unique_ptr<okaytray::TrayShell> g_trayShell;   // the Win32 shell (n
 static std::unique_ptr<okaytray::TrayController> g_tray;   // made in main() once the window exists
 static volatile bool     g_trayRestoreReq = false;          // bring the window back (a second launch)
 static volatile int      g_trayIconEv = 0;                  // a tray-icon event (okaytray::IconEvent) waiting for the main loop
+static volatile int      g_notifyBalloonEv = 0;             // a balloon event (okaytray::BalloonEvent): desktop notifications (NotifyPump)
 static volatile bool     g_trayTaskbarReq = false;          // Explorer restarted: add the icon again
 static std::vector<okaytray::ProjectEntry> g_trayRecent;    // the projects the last tray menu listed (Recent projects)
 // Settings > Behavior changed (or were loaded): hand them to the tray and add / remove the icon to match.
@@ -8922,6 +8953,10 @@ static void TrayOnMessage(unsigned msg, uint64_t wParam, int64_t lParam) {   // 
         const unsigned ver = okaytray::IconVersion();
         const okaytray::IconEvent ev = okaytray::ClassifyIconMessage(okaytray::DecodeIconMessage(ver, wParam, lParam).event, ver);
         if (ev != okaytray::IconEvent::None) g_trayIconEv = (int)ev;
+        const okaytray::BalloonEvent bev = okaytray::ClassifyBalloonMessage(okaytray::DecodeIconMessage(ver, wParam, lParam).event);
+        if ((bev == okaytray::BalloonEvent::Clicked || bev == okaytray::BalloonEvent::Closed)   // a desktop notification (NotifyPump);
+            && g_notifyBalloonEv != (int)okaytray::BalloonEvent::Clicked)                      // a click is never overwritten by the hide after it
+            g_notifyBalloonEv = (int)bev;
     } else if (msg == okaytray::TaskbarCreatedMessage()) {
         g_trayTaskbarReq = true;
     } else if (g_showMsg && msg == g_showMsg) {
@@ -8980,6 +9015,9 @@ static int  g_pollUnread = 0;           // (guarded)
 static long g_pollNewestDm = 0;         // (guarded)
 // Game / party invites waiting for the "X invited you" pop-up.
 std::vector<PendingInvite> g_pollInvites;   // (guarded) fresh ones not yet shown
+// New incoming direct messages since the last poll, for desktop notifications (okl::notify::Post).
+struct PolledDm { okay::Messages::IncomingMessage msg; std::string fromName; };
+static std::vector<PolledDm> g_pollNewDms;  // (guarded) not yet posted
 // (g_inviteSeenId — the newest invite already shown — is with the prefs; the main thread writes it.)
 // (g_pollCfgDir / g_pollUrl / g_pollKey are defined with the chat poll state.)
 static int PollWorker(void*) {
@@ -9004,9 +9042,30 @@ static int PollWorker(void*) {
                 }
                 const bool counts = cycle % 3 == 0;
                 int fr = 0, unread = 0; long newest = since;
-                if (counts) { fr = okay::Friends(poller).PendingRequests(); unread = msgs.UnreadSince(since, newest); }
+                std::vector<PolledDm> newDms;
+                if (counts) {
+                    fr = okay::Friends(poller).PendingRequests();
+                    std::vector<okay::Messages::IncomingMessage> incoming;
+                    unread = msgs.UnreadSince(since, newest, &incoming);
+                    // Only messages that arrived since the last poll (the first poll of an account only sets the mark:
+                    // what was already unread is in the badge and the Notifications tab, not a burst of pop-ups).
+                    static long notifiedUpTo = -1;
+                    static std::string notifiedFor;
+                    const std::string who = poller.CurrentSession().username;
+                    if (who != notifiedFor) { notifiedFor = who; notifiedUpTo = -1; }
+                    if (notifiedUpTo >= 0) {
+                        for (const auto& m : incoming) if (m.id > notifiedUpTo) newDms.push_back({m, std::string()});
+                        if (!newDms.empty()) {
+                            std::map<std::string, std::string> names;
+                            for (const auto& f : okay::Friends(poller).List()) names[f.id] = f.display.empty() ? f.username : f.display;
+                            for (auto& d : newDms) { auto it = names.find(d.msg.from); d.fromName = it != names.end() ? it->second : std::string(); }
+                        }
+                    }
+                    notifiedUpTo = std::max(notifiedUpTo, newest);
+                }
                 if (g_pollMutex) okay::thr::LockMutex(g_pollMutex);
                 if (counts) { g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest; g_pollReady = true; }
+                for (auto& d : newDms) g_pollNewDms.push_back(std::move(d));
                 for (auto& f : fresh) {
                     bool dup = false; for (const auto& q : g_pollInvites) if (q.id == f.id) dup = true;
                     if (!dup) g_pollInvites.push_back(std::move(f));
@@ -10265,6 +10324,164 @@ static void ChatHostSync() {
 }
 static bool ChatHostFocused() {
     return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
+}
+
+// ---- Desktop notifications (launcher/DesktopNotify.hpp decides; tests/test_launcher_notify.cpp) ---------------------
+// okl::notify::Post is THE way to raise one: it reads the launcher's state, records it in the Notifications tab
+// (UpsertNotif), shows the in-app toast when the launcher is in front (or there is no tray icon), or queues a desktop
+// pop-up. NotifyPump shows the queued pop-ups one at a time through the tray icon's balloon (TrayWin32.cpp Notify);
+// a click on one (NIN_BALLOONUSERCLICK) brings the launcher back and opens NotifyOpenTarget's page.
+// The Notifications tab's filter kind (0 system, 1 friend, 2 message, 3 update) and page for a pop-up.
+static int NotifyTabKind(okl::notify::Kind k) {
+    using K = okl::notify::Kind;
+    return k == K::FriendRequest ? 1 : (k == K::Message || k == K::Invite) ? 2 : (k == K::Update || k == K::Download) ? 3 : 0;
+}
+static int NotifyGotoTab(const okl::notify::Target& t) {
+    using P = okl::notify::Place;
+    switch (t.place) {
+        case P::Chat: case P::GroupChat: case P::FriendRequests: return 6;   // Friends & chat
+        case P::Invite:        return t.id.empty() ? 14 : 6;                    // a party invite: Multiplayer; a game invite: the chat
+        case P::Versions:      return 15;
+        case P::Downloads:     return 10;
+        case P::Notifications: return 16;
+        case P::Settings:      return 4;
+        default:               return -1;
+    }
+}
+static bool NotifyAppFocused() {
+    SDL_Window* w = g_launcherWindow;
+    if (!w || (g_tray && g_tray->Hidden())) return false;
+    if (okay::platform::IsBackgroundWindow(lw::IsVisible(w), lw::IsMinimized(w))) return ChatHostFocused();
+    return lw::HasInputFocus(w) || ChatHostFocused();
+}
+namespace notify {   // (okl::notify: this file is inside namespace okl)
+PostResult Post(const Event& ev) {
+    Context c;
+    c.appFocused = NotifyAppFocused();
+    c.trayIcon = g_tray && g_tray->IconShown();
+    c.presence = MyOnlineStatus();   // the one status getter (launcher/FriendsList.hpp), Do not disturb included
+    c.senderBlocked = !ev.fromUid.empty() && g_blockedUsers.count(ev.fromUid) != 0;
+    if (ev.kind == Kind::Message) {
+        const std::string conv = ev.target.place == Place::GroupChat ? "g:" + ev.target.id : (ev.target.id.empty() ? ev.fromUid : ev.target.id);
+        c.conversationMuted = g_mutedChats.count(conv) != 0;
+        const bool open = ev.target.place == Place::GroupChat ? std::to_string((long)g_chatSelGroup) == ev.target.id
+                                                              : (g_chatSelGroup == 0 && !conv.empty() && g_chatSelUid == conv);
+        c.conversationFocused = g_chatWinOpen && open && okay::platform::TicksMs32() - g_chatViewMs < 1500;
+    }
+    const PostResult r = g_notifyCentre.Post(ev, c, (uint64_t)okay::platform::TicksMs32());
+    if (r.route == Route::Drop) return r;
+    if (ev.kind != Kind::Test)   // every pop-up is also in the Notifications tab (one row per burst; a caller's own key keeps one row)
+        UpsertNotif(ev.tabKey.empty() ? "notify:" + BurstKeyOf(ev) : ev.tabKey,
+                    r.title, r.body, NotifyTabKind(ev.kind), NotifyGotoTab(r.target));
+    if (r.route == Route::InApp) Toast(r.body.empty() ? r.title : r.title + ": " + r.body, ev.failure ? 2 : 1);
+    if (ev.onceKey.rfind("update:", 0) == 0) { g_notifyUpdateSeen = ev.onceKey.substr(7); SavePrefs(); }
+    return r;
+}
+PostResult Post(Kind kind, const std::string& title, const std::string& body, const Target& target,
+                const std::string& fromUid, const std::string& fromName) {
+    Event ev; ev.kind = kind; ev.title = title; ev.body = body; ev.target = target; ev.fromUid = fromUid; ev.fromName = fromName;
+    return Post(ev);
+}
+} // namespace notify
+// Once per pass of the main loop, hidden or not: a balloon went away or was clicked, and the next queued pop-up.
+// Returns the page a click asked for (Place::None when none).
+static okl::notify::Target NotifyPump() {
+    const uint64_t now = (uint64_t)okay::platform::TicksMs32();
+    okl::notify::Target clicked;
+    if (const int bev = g_notifyBalloonEv) {
+        g_notifyBalloonEv = 0;
+        const okaytray::BalloonEvent be = (okaytray::BalloonEvent)bev;
+        if (be == okaytray::BalloonEvent::Clicked) clicked = g_notifyCentre.OnClicked(now);
+        else if (be == okaytray::BalloonEvent::Closed) g_notifyCentre.OnClosed(now);
+    }
+    okl::notify::Popup p;
+    if (g_notifyCentre.Next(now, &p) && !(g_tray && g_tray->Notify(p.title, p.body, p.sound))) {
+        g_notifyCentre.OnClosed(now);   // the icon went away: the launcher's own toast instead
+        Toast(p.body.empty() ? p.title : p.title + ": " + p.body, 1);
+    }
+    return clicked;
+}
+// The events that exist today, each through okl::notify::Post.
+// A new direct message (from the friends poll). True when it became a desktop pop-up with sound (no chime then).
+static bool NotifyDirectMessage(const std::string& fromUid, const std::string& fromName, const std::string& body) {
+    if (fromUid.empty() || okl::notify::IsSignalMessage(body)) return false;   // calls ring, invites have their own pop-up
+    okl::notify::Event ev;
+    ev.kind = okl::notify::Kind::Message;
+    ev.fromUid = fromUid; ev.fromName = fromName;
+    ev.title = fromName.empty() ? std::string("New message") : fromName;
+    ev.body = ChatPreviewSmart(body, 200);
+    ev.target.place = okl::notify::Place::Chat; ev.target.id = fromUid; ev.target.name = fromName;
+    ev.tabKey = "msg:" + fromUid;   // one row per conversation, with its newest message
+    return okl::notify::Post(ev).route == okl::notify::Route::Desktop && g_notifyCentre.settings.sound;
+}
+// More pending friend requests than at the last poll (the poll has the count, not the names).
+static void NotifyFriendRequests(int added) {
+    if (added <= 0) return;
+    okl::notify::Event ev;
+    ev.kind = okl::notify::Kind::FriendRequest;
+    ev.title = added == 1 ? "New friend request" : std::to_string(added) + " new friend requests";
+    ev.body = "Open Friends to accept or decline.";
+    ev.target.place = okl::notify::Place::FriendRequests;
+    ev.tabKey = "dyn:friends";   // the tab's own "N pending friend requests" row (RefreshNotifs)
+    okl::notify::Post(ev);
+}
+// Game and party invites the poll found. The launcher's own "X invited you" pop-up (DrawInvitePopups) shows them once
+// it draws; this pops them up on the desktop while the launcher is hidden, minimized or in the background.
+static void NotifyInvites() {
+    static long notifiedUpTo = 0;
+    std::vector<PendingInvite> fresh;
+    if (g_pollMutex) { okay::thr::LockMutex(g_pollMutex); fresh = g_pollInvites; okay::thr::UnlockMutex(g_pollMutex); }   // a copy: DrawInvitePopups takes them
+    for (const PendingInvite& f : fresh) {
+        if (f.id <= notifiedUpTo || f.id <= g_inviteSeenId) continue;
+        notifiedUpTo = std::max(notifiedUpTo, f.id);
+        if (NotifyAppFocused()) continue;   // in front: the launcher's own invite pop-up is enough
+        const bool party = f.body.rfind("[Party] ", 0) == 0;
+        ChatInviteInfo ci;
+        if (!party && !ParseChatInvite(f.body, ci)) continue;
+        okl::notify::Event ev;
+        ev.kind = okl::notify::Kind::Invite;
+        ev.fromUid = f.from; ev.fromName = f.fromName;
+        // The same title and text as DrawInvitePopups' row, so the tab keeps one row for it.
+        ev.title = party ? f.fromName + " invited you to their party" : f.fromName + " invited you to play " + ci.title;
+        ev.body = party ? "Open the Multiplayer page to join." : "Open the chat with " + f.fromName + " to join.";
+        ev.target.place = okl::notify::Place::Invite; ev.target.id = party ? std::string() : f.from; ev.target.name = f.fromName;
+        ev.tabKey = "invite:" + std::to_string(f.id);
+        okl::notify::Post(ev);
+    }
+}
+// Marketplace downloads (the Downloads page) that finished or failed since the last look.
+static void NotifyDownloads() {
+    static std::set<int> told;
+    if (!g_dlMutex) return;
+    std::vector<std::pair<std::string, int>> done;   // (title, status)
+    okay::thr::LockMutex(g_dlMutex);
+    for (auto& d : g_dls)
+        if ((d->status == 2 || d->status == 3) && told.insert(d->id).second) done.push_back({d->title, d->status});
+    okay::thr::UnlockMutex(g_dlMutex);
+    for (const auto& [title, status] : done) {
+        okl::notify::Event ev;
+        ev.kind = okl::notify::Kind::Download;
+        ev.failure = status == 3;
+        ev.title = status == 2 ? "Download finished" : "Download failed";
+        ev.body = title.empty() ? std::string(status == 2 ? "Your download is ready." : "Open Downloads to try again.") : title;
+        ev.target.place = okl::notify::Place::Downloads;
+        ev.burstKey = "dl:" + title;
+        okl::notify::Post(ev);
+    }
+}
+// A click on a pop-up: the launcher is already back (RestoreLauncher); open the page it was about.
+static void NotifyOpenTarget(const okl::notify::Target& t, int& tab) {
+    using P = okl::notify::Place;
+    if (t.place == P::None) return;
+    ClosePublicProfile();
+    switch (t.place) {
+        case P::Chat:    if (!t.id.empty()) OpenChatWith(t.id, t.name, ""); else tab = 6; break;
+        case P::Invite:  if (!t.id.empty()) OpenChatWith(t.id, t.name, ""); else tab = 14; break;   // the invite's Join is in the chat
+        case P::Update:  StartUpdateCheck(true); break;                                              // the update dialog, as the tray's Check for Updates
+        case P::Versions: okayversionsui::RequestPage(t.id); break;                                   // (the loop switches to the page)
+        case P::Settings: tab = 4; g_lastTab = 4; g_setCatJump = 1; break;                            // Settings > Chat & Notifications
+        default: { const int to = NotifyGotoTab(t); if (to >= 0) tab = to; break; }
+    }
 }
 static void ChatToggleOnTop() {
     g_chatOnTop = !g_chatOnTop;
@@ -11607,6 +11824,15 @@ static const okayversionsui::Host& VersionsHost() {
         h.savePrefs = [] { SavePrefs(); };
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
+        h.downloadDone = [](const std::string& v, bool ok, const std::string& msg) {   // a desktop notification, or the toast in front
+            okl::notify::Event ev;
+            ev.kind = okl::notify::Kind::Download; ev.failure = !ok;
+            ev.title = ok ? "Download finished" : "Download failed";
+            ev.body = msg;
+            ev.target.place = okl::notify::Place::Versions; ev.target.id = v;
+            ev.burstKey = "version:" + v;
+            if (okl::notify::Post(ev).route == okl::notify::Route::TabOnly) Toast(msg, ok ? 1 : 2);   // switched off: the toast as before
+        };
         h.fetchText = [](const std::string& url, std::string& out) { return FetchTextFile(url, out); };
     }
     if (builtAt == 0 || now - builtAt > 1000) {
@@ -13065,6 +13291,12 @@ int main(int argc, char** argv) {
                                                    : okaytray::MenuState()));
             if (iev == okaytray::IconEvent::ShowMenu) g_trayIconEv = 0;   // clicks made while the menu was open
         }
+        {   // Desktop notifications: the next queued pop-up, and a click on one brings the launcher back on its page
+            NotifyInvites();
+            NotifyDownloads();
+            const okl::notify::Target clicked = NotifyPump();
+            if (clicked.place != okl::notify::Place::None) { RestoreLauncher(window); NotifyOpenTarget(clicked, tab); }
+        }
         {
             static Uint32 nextWatch = 0;
             if (!g_tray->Hidden()) nextWatch = 0;
@@ -13108,19 +13340,23 @@ int main(int argc, char** argv) {
             static int lastReqSeen = -1;
             if (account.IsLoggedIn()) {
                 bool apply = false; int fr = 0, unread = 0; long newest = 0;
+                std::vector<PolledDm> newDms;
                 if (g_pollMutex) {
                     okay::thr::LockMutex(g_pollMutex);
                     if (g_pollReady) { apply = true; fr = g_pollFriendReqs; unread = g_pollUnread; newest = g_pollNewestDm; g_pollReady = false; }
+                    newDms.swap(g_pollNewDms);
                     okay::thr::UnlockMutex(g_pollMutex);
                 }
                 if (apply) {
-                    if (lastReqSeen >= 0 && fr > lastReqSeen && tab != 6)
-                        Toast(fr == 1 ? "New friend request" : "New friend requests", 1);
+                    if (lastReqSeen >= 0 && fr > lastReqSeen && tab != 6) NotifyFriendRequests(fr - lastReqSeen);
                     lastReqSeen = fr;
                     g_friendRequests = fr;
                     g_newestDmId = newest;
-                    if (unread > g_dmUnread && tab != 6 && !g_chatWinOpen) Toast("New message", 1);
-                    if (unread > g_dmUnread && !g_chatWinOpen) PlayChatChime();
+                }
+                bool popSound = false;   // a desktop pop-up plays Windows' own sound: no chime on top of it
+                for (const PolledDm& d : newDms) popSound |= NotifyDirectMessage(d.msg.from, d.fromName, d.msg.body);   // pop-up, toast or tab
+                if (apply) {
+                    if (unread > g_dmUnread && !g_chatWinOpen && !popSound) PlayChatChime();
                     g_dmUnread = unread;
                 }
                 // Reading chats in the chat window counts as seeing them (not only the
@@ -13130,6 +13366,7 @@ int main(int argc, char** argv) {
                 }
                 SyncChatSeen(account.CurrentSession().username);
             } else {
+                if (lastReqSeen >= 0 || g_friendRequests || g_dmUnread) g_notifyCentre.Clear();   // signed out: no one's pop-ups left waiting
                 g_friendRequests = 0; lastReqSeen = -1; g_dmUnread = 0;
             }
         }
@@ -13139,8 +13376,25 @@ int main(int argc, char** argv) {
             int us = (int)GetState();
             if (us != lastUp) {
                 if (us == (int)Up_Updated || us == (int)Up_Failed) okayversionsui::InvalidateInstalled();   // the update kept / pruned versions
-                if (us == (int)Up_Updated) Toast(g_upRelaunchNeeded ? "Updated — restarting..."
-                                                                     : "Update installed", 1);
+                if (us == (int)Up_Updated) {   // the toast in front; a desktop pop-up when hidden or in the background
+                    okl::notify::Event ev;
+                    ev.kind = okl::notify::Kind::Update;
+                    ev.title = "Update installed";
+                    ev.body = g_upRelaunchNeeded ? "Restarting OkaySpace to finish." : "OkaySpace is up to date.";
+                    ev.target.place = okl::notify::Place::Notifications;
+                    ev.tabKey = "dyn:update";   // the tab's own "Update installed" row (RefreshNotifs)
+                    if (okl::notify::Post(ev).route == okl::notify::Route::TabOnly)
+                        Toast(g_upRelaunchNeeded ? "Updated — restarting..." : "Update installed", 1);   // switched off: the toast as before
+                }
+                else if (us == (int)Up_Failed && lastUp == (int)Up_Downloading && !g_suToastedFail) {   // an install that failed (not just a check; the start-up screen says its own)
+                    okl::notify::Event ev;
+                    ev.kind = okl::notify::Kind::Update; ev.failure = true;
+                    ev.title = "Update failed";
+                    ev.body = GetUpMsg();
+                    ev.target.place = okl::notify::Place::Update;
+                    ev.burstKey = "update-failed";
+                    if (okl::notify::Post(ev).route == okl::notify::Route::TabOnly) Toast("Update failed", 2);
+                }
                 else if (us == (int)Up_Failed) { if (!g_suToastedFail) Toast("Update check failed", 2); }
                 else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date", 1);
                 lastUp = us;
@@ -13210,14 +13464,20 @@ int main(int argc, char** argv) {
             if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
                 g_upAvailable = latest;
                 g_upAvailableTitle = okay::testbuild::IsTestVersion(latest) ? (latestTitle.empty() ? std::string("Test build") : latestTitle) : std::string();
-                if (g_upAvailableTitle.empty()) {
-                    Toast("Update available: OkaySpace v" + latest, 1);
-                    UpsertNotif("update:" + latest, "Update available",
-                                "OkaySpace v" + latest + " is ready. Install it from the sidebar.", 3, -1);
-                } else {   // a test build (the person switched "Get test builds" on): say what it is, in the words of the notes
-                    Toast(g_upAvailableTitle + " is ready (v" + latest + ")", 1);
-                    UpsertNotif("update:" + latest, "Test build available",
-                                g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
+                {   // once per version: a desktop pop-up (or the toast, when the launcher is in front) and the tab's row
+                    okl::notify::Event ev;
+                    ev.kind = okl::notify::Kind::Update;
+                    ev.target.place = okl::notify::Place::Update; ev.target.id = latest;
+                    ev.onceKey = ev.tabKey = "update:" + latest;
+                    if (g_upAvailableTitle.empty()) {
+                        ev.title = "Update available";
+                        ev.body = "OkaySpace v" + latest + " is ready. Install it from the sidebar.";
+                    } else {   // a test build (the person switched "Get test builds" on): say what it is, in the words of the notes
+                        ev.title = "Test build available";
+                        ev.body = g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.";
+                    }
+                    if (okl::notify::Post(ev).route == okl::notify::Route::Drop)   // already told about this version: the row as before
+                        UpsertNotif(ev.tabKey, ev.title, ev.body, 3, -1);
                 }
                 if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
                     lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
@@ -17059,6 +17319,47 @@ int main(int argc, char** argv) {
                         if (ImGui::Button("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) tab = 16;
                     });
                     cardEnd();
+
+                    {   // Desktop notifications (launcher/DesktopNotify.hpp): pop-ups in the corner of the screen
+                        okl::notify::Settings& ns = g_notifyCentre.settings;
+                        const bool trayOk = g_tray && g_tray->Supported();
+                        cardBegin("##sc_desk", "DESKTOP NOTIFICATIONS");
+                        settingRow("Show desktop notifications", trayOk
+                                       ? "Pop-ups in the bottom-right corner of the screen when the launcher is in the background or in the tray. In front, they show inside the launcher. Everything is also kept in the Notification center."
+                                       : "Pop-ups in the corner of the screen need the tray icon (Windows, Settings > Behavior). Here they show inside the launcher.",
+                                   40.0f, 22.0f, [&](float) { if (ToggleSwitch("##ntf_on", &ns.enabled)) SavePrefs(); });
+                        rowDivider();
+                        ImGui::BeginDisabled(!ns.enabled);
+                        struct KindRow { const char* label; const char* desc; const char* id; bool* v; };
+                        const KindRow rows[] = {
+                            {"Messages", "A new direct message, unless you are reading that chat.", "##ntf_msg", &ns.messages},
+                            {"Friend requests", "Someone wants to be your friend.", "##ntf_fr", &ns.friendRequests},
+                            {"Invites", "A friend invites you to a game or a party.", "##ntf_inv", &ns.invites},
+                            {"Updates", "A new version is ready (once per version), or an update finished or failed.", "##ntf_up", &ns.updates},
+                            {"Downloads", "A download finished or failed.", "##ntf_dl", &ns.downloads},
+                        };
+                        for (const KindRow& kr : rows) {
+                            settingRow(kr.label, kr.desc, 40.0f, 22.0f, [&](float) { if (ToggleSwitch(kr.id, kr.v)) SavePrefs(); });
+                            rowDivider();
+                        }
+                        settingRow("Do not disturb", "No pop-ups at all; they still go to the Notification center. Being Invisible does the same.",
+                                   40.0f, 22.0f, [&](float) { if (ToggleSwitch("##ntf_dnd", &ns.doNotDisturb)) SavePrefs(); });
+                        rowDivider();
+                        settingRow("Notification sound", "Play the Windows notification sound with a pop-up.",
+                                   40.0f, 22.0f, [&](float) { if (ToggleSwitch("##ntf_snd", &ns.sound)) SavePrefs(); });
+                        ImGui::EndDisabled();
+                        rowDivider();
+                        settingRow("Send a test notification", "Shows one now, so you can see where it appears. It ignores the switches above.", 120.0f, 30.0f, [&](float) {
+                            if (ImGui::Button("Send test", ImVec2(okl::FitButtonW("Send test", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) {
+                                okl::notify::Event ev;
+                                ev.kind = okl::notify::Kind::Test;
+                                ev.title = "OkaySpace";
+                                ev.body = "This is a test notification. Click it to come back to Settings.";
+                                okl::notify::Post(ev);
+                            }
+                        });
+                        cardEnd();
+                    }
                 } else if (setCat == 7) {   // ---- Privacy & Safety ----
                     cardBegin("##sc_reach", "WHO CAN REACH ME");
                     const bool privMissing = g_privSupport == 2;

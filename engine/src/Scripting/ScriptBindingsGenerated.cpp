@@ -4368,6 +4368,15 @@ void BindWorldUI() {
 
 } // namespace
 
+const DenyRules& GeneratedDenyRules() {
+    static const DenyRules r{
+        {"NetValidator", "NetworkManager", "NetworkObject", "NetworkPlayerSpawner", "NetworkSync", "SteamManager", "UIFilePicker", "UIHotReload"},
+        {"BuilderMode.SaveMap", "BuilderMode.SaveModel", "NavMeshSurface.Save", "ScriptComponent.SetPath", "SurvivalSave.Load", "SurvivalSave.Save", "Terrain.ExportHeightmap", "Terrain.ImportHeightmap", "VehicleController.LoadPresetText", "VehicleController.SavePresetText", "VehicleController.ToFile", "VisualScriptComponent.SetPath"},
+        {"address", "dir", "directory", "dirs", "file", "filename", "filepath", "files", "folder", "host", "hostname", "link", "path", "paths", "root", "uri", "url"},
+        {"client", "clipboard", "cloud", "connect", "download", "export", "file", "files", "http", "import", "lobby", "overlay", "relay", "server", "socket", "upload", "url", "workshop"}};
+    return r;
+}
+
 void RegisterGeneratedBindings() {
     BindActionList();
     BindActiveRagdoll();

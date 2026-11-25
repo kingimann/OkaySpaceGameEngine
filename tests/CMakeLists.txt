@@ -724,6 +724,23 @@ add_executable(test_script_removed_langs test_script_removed_langs.cpp)
 target_link_libraries(test_script_removed_langs PRIVATE okay::engine)
 add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
 
+# okay::lua, our own Lua 5.4 interpreter: conformance checks written from the reference manual
+# (tests/lua/conformance.lua), errors with line/column, run budget, memory limit, host API and a
+# mutation fuzz. Standalone (only the interpreter sources) so it also builds under sanitizers.
+add_executable(test_lua_core test_lua_core.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaCompiler.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaState.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibBase.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibString.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibTable.cpp ${PROJECT_SOURCE_DIR}/engine/src/Lua/LuaLibUtf8.cpp)
+target_compile_features(test_lua_core PRIVATE cxx_std_17)
+target_include_directories(test_lua_core PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_lua_core PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME lua_core COMMAND test_lua_core)
+set_tests_properties(lua_core PROPERTIES TIMEOUT 600)
+# Lua game scripts (language "lua") on okay::lua driving GameObjects through the shared engine binding table.
+add_executable(test_lua_script test_lua_script.cpp)
+target_link_libraries(test_lua_script PRIVATE okay::engine)
+add_test(NAME lua_script COMMAND test_lua_script)
+
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)
 add_test(NAME follow COMMAND test_follow)
@@ -5406,3 +5423,13 @@ add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)
 target_include_directories(test_input_grok PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME input_grok COMMAND test_input_grok)
+
+# The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
+# completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
+add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
+target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                           ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_cli COMMAND test_launcher_cli)
+set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)

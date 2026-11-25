@@ -1,0 +1,31 @@
+true	5
+false	expected a number, got string
+false	NEG	-3
+false	nil
+false	no position
+false	nil
+false	handled: errors.lua:17: division by zero
+true	3
+false	errors.lua:23: attempt to index a nil value (field 'a')
+false	errors.lua:25: attempt to perform arithmetic on a nil value
+false	errors.lua:26: attempt to perform arithmetic on a string value (local 's')
+false	errors.lua:27: attempt to get length of a nil value
+false	errors.lua:28: attempt to compare two table values
+false	errors.lua:29: bad argument #1 to 'floor' (number expected, got table)
+false	errors.lua:30: attempt to concatenate a nil value
+false	errors.lua:31: attempt to call a nil value (global 'undefined_function')
+false	errors.lua:32: attempt to call a nil value (method 'missing')
+false	bad argument #2 to 'format' (number has no integer representation)
+false	errors.lua:34: attempt to perform 'n//0'
+false	errors.lua:35: bad argument #1 to 'tostring' (value expected)
+false	bad argument #2 to 'setmetatable' (nil or table expected, got number)
+nil	cfg:1: unexpected symbol near '='
+nil	multi:4: unexpected symbol near 'if'
+nil	str:1: unfinished string near <eof>
+nil	for:1: ',' expected near 'do'
+nil	goto:1: no visible label 'nowhere' for <goto> at line 1
+nil	attempt to load a text chunk (mode is 'b')
+42
+false	chunk:1: inside chunk
+2
+false	true	true

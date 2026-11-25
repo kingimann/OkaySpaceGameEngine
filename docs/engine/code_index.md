@@ -21,6 +21,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Graphics | 5 | 36 | [code_index/engine-Graphics.md](code_index/engine-Graphics.md) |
 | engine-Input | 22 | 113 | [code_index/engine-Input.md](code_index/engine-Input.md) |
 | engine-Inventory | 9 | 64 | [code_index/engine-Inventory.md](code_index/engine-Inventory.md) |
+| engine-Lua | 2 | 18 | [code_index/engine-Lua.md](code_index/engine-Lua.md) |
 | engine-Math | 22 | 80 | [code_index/engine-Math.md](code_index/engine-Math.md) |
 | engine-Modeling | 21 | 196 | [code_index/engine-Modeling.md](code_index/engine-Modeling.md) |
 | engine-Modules | 3 | 11 | [code_index/engine-Modules.md](code_index/engine-Modules.md) |
@@ -31,7 +32,7 @@ file to use per job. Methods are not listed: open the class. Plain rules: [no_du
 | engine-Render | 49 | 467 | [code_index/engine-Render.md](code_index/engine-Render.md) |
 | engine-Scene | 28 | 131 | [code_index/engine-Scene.md](code_index/engine-Scene.md) |
 | engine-Script | 1 | 12 | [code_index/engine-Script.md](code_index/engine-Script.md) |
-| engine-Scripting | 7 | 68 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
+| engine-Scripting | 7 | 75 | [code_index/engine-Scripting.md](code_index/engine-Scripting.md) |
 | engine-Testing | 5 | 43 | [code_index/engine-Testing.md](code_index/engine-Testing.md) |
 | engine-Texture | 8 | 75 | [code_index/engine-Texture.md](code_index/engine-Texture.md) |
 | engine-UI | 16 | 78 | [code_index/engine-UI.md](code_index/engine-UI.md) |

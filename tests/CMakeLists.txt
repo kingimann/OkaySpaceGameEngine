@@ -1380,6 +1380,14 @@ target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
 
+# The editor's sign-in gate (editor/SignInGate.hpp): no session blocked, a confirmed session opens, an unconfirmed one is
+# blocked (no offline grace), the test switch, and the player / exported games never gated. Header-only like test_account.
+add_executable(test_signin_gate test_signin_gate.cpp)
+target_compile_features(test_signin_gate PRIVATE cxx_std_17)
+target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME signin_gate COMMAND test_signin_gate)
+
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
 add_executable(test_sha256_unify test_sha256_unify.cpp)
@@ -2834,8 +2842,8 @@ add_executable(test_timers_fifth test_timers_fifth.cpp)
 target_link_libraries(test_timers_fifth PRIVATE okay::engine)
 add_test(NAME timers_fifth COMMAND test_timers_fifth)
 
-add_executable(test_editor_tabs test_editor_tabs.cpp)
-target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_executable(test_editor_tabs test_editor_tabs.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)   # Paths: where the editor keeps its files
+target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME editor_tabs COMMAND test_editor_tabs)
 
 add_executable(test_ui_tabs test_ui_tabs.cpp)

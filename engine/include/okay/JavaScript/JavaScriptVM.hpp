@@ -33,28 +33,8 @@ public:
     JavaScriptVM();
     ~JavaScriptVM() override;
 
-    // dup-allow-begin: the IScriptVM overrides every script backend declares (LuaScriptVM and NextScriptVM list the same)
-
     const char* Language() const override { return kLanguage; }
-    std::vector<std::string> BuiltinNames() const override;
-
-    bool Load(const std::string& source, std::string* error = nullptr) override;
-    bool Validate(const std::string& source, std::string* error = nullptr) override;
-    std::vector<ScriptDiagnostic> ValidateAll(const std::string& source) override;
-
-    void Bind(ScriptHost* host) override;
-    void CallStart() override;
-    void CallUpdate(float deltaTime) override;
-    void CallEvent(const std::string& function) override;
-    void CallEventWith(const std::string& function, const vs::VsValue& arg) override;
-    vs::VsValue CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& args,
-                              std::string* error = nullptr) override;
-    bool HasEvent(const std::string& function) const override;
-
-    vs::VsValue GetGlobal(const std::string& name) const override;
-    void SetGlobal(const std::string& name, const vs::VsValue& v) override;
-    std::vector<std::string> GlobalNames() const override;
-    // dup-allow-end
+    OKAY_SCRIPT_VM_OVERRIDES   // the IScriptVM overrides every backend declares (ScriptVM.hpp)
 
     // dup-allow-begin: the statics every text-language backend gives the editor (LuaScriptVM declares the same set)
     /// The last runtime error ("script:12: TypeError: message"), empty if none.

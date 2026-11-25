@@ -6,7 +6,8 @@
 # and checks that it exited with code 0 (or the code of the script's `exit N`; pass EXPECT_EXIT=N). Pictures the script saves with `shot NAME.png` land in
 # <outdir>/<backend>/ (outside the repository). With two backends it then compares every picture of one with the other (ImageMagick `compare`, per-pixel
 # fuzz 4 percent): MAX_DIFF_PIXELS (default 0) differing pixels allowed per picture. Exit 0 = all good. Environment: APP_ARGS (program arguments, the editor
-# needs --dev), EXPECT_EXIT, MAX_DIFF_PIXELS, FUZZ.
+# needs --dev), EXPECT_EXIT, MAX_DIFF_PIXELS, FUZZ, SCREEN (the Xvfb screen size, default 1280x800; make it at least the window size in launcher.cfg),
+# APP_SEED (a folder whose contents are copied next to the program before it starts: a launcher.cfg with win_w / win_h / ui_scale, a community/ folder ...).
 prog=$1; script=$2; outdir=$3; limit=${4:-120}; shift 4 2>/dev/null || shift $#
 backends=${*:-sdl2 own}
 [ -x "$prog" ] && [ -f "$script" ] || { echo "usage: $0 <program> <script> <outdir> [seconds] [backend...]" >&2; exit 2; }
@@ -19,12 +20,13 @@ for b in $backends; do
     # a FIXED folder (not a random one): a path shown in the program (project location ...) must be the same text on every backend
     tmp=/tmp/okay_run_app_script; rm -rf "$tmp"; mkdir -p "$tmp" || exit 2
     rm -rf "$outdir/$b"; mkdir -p "$outdir/$b" "$tmp/home"   # a clean folder: the editor keeps some state files in the working folder
-    Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$tmp/disp" >/dev/null 2>&1 &
+    Xvfb -displayfd 3 -screen 0 ${SCREEN:-1280x800}x24 -nolisten tcp 3>"$tmp/disp" >/dev/null 2>&1 &
     xp=$!
     i=0; while [ ! -s "$tmp/disp" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
     # The launcher and editor keep their settings next to the program, so each run gets its own copy of the program in a private folder: no run starts from what
     # the other one saved (last page, window size ...).
     mkdir -p "$tmp/app" && cp "$prog" "$tmp/app/" || exit 2
+    if [ -n "$APP_SEED" ]; then cp -R "$APP_SEED"/. "$tmp/app/" || exit 2; fi
     cprog="$tmp/app/$(basename "$prog")"
     # the script's `shot` paths are relative: they are written into the backend's folder
     ( cd "$outdir/$b" && env DISPLAY=":$(head -n1 "$tmp/disp" | tr -d '\n')" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/home" XDG_DATA_HOME="$tmp/home/data" \

@@ -294,16 +294,11 @@ bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::s
 
 // ---- the page's layout --------------------------------------------------------------------------------------------
 
-bool Overlap(const Rect& a, const Rect& b) {
-    if (a.w <= 0 || a.h <= 0 || b.w <= 0 || b.h <= 0) return false;
-    return a.x < b.Right() && b.x < a.Right() && a.y < b.Bottom() && b.y < a.Bottom();
-}
-
-PageLayout LayoutPage(float w, float h, float frameH, float lineH) {
+PageLayout LayoutPage(float w, float h, float frameH, float lineH, const PageButtons& b) {
     PageLayout L;
     const float gap = 8.0f;
     // Top row, right to left: Clear, Copy all, Open command line; the project picker takes the rest.
-    const float clearW = 64.0f, copyW = 84.0f, termW = 160.0f;
+    const float clearW = b.clear, copyW = b.copy, termW = b.terminal;
     float x = w;
     L.clear = {x - clearW, 0, clearW, frameH};
     x -= clearW + gap;
@@ -316,15 +311,15 @@ PageLayout LayoutPage(float w, float h, float frameH, float lineH) {
         L.project = {0, 0, w, frameH};
         L.clear.y = L.copy.y = L.terminal.y = frameH + 6.0f;
     }
-    const float topBottom = std::max(L.project.Bottom(), L.clear.Bottom());
+    const float topBottom = std::max(L.project.B(), L.clear.B());
     L.hint = {0, topBottom + 6.0f, w, lineH};
     // Bottom row: the line, then Run and Stop.
-    const float runW = 64.0f, stopW = 64.0f;
+    const float runW = b.run, stopW = b.stop;
     const float rowY = h - frameH;
     L.stop = {w - stopW, rowY, stopW, frameH};
     L.run = {w - stopW - gap - runW, rowY, runW, frameH};
     L.input = {0, rowY, std::max(0.0f, L.run.x - gap), frameH};
-    const float outY = L.hint.Bottom() + 8.0f;
+    const float outY = L.hint.B() + 8.0f;
     L.output = {0, outY, w, std::max(0.0f, rowY - 8.0f - outY)};
     return L;
 }

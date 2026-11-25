@@ -167,21 +167,21 @@ int main() {
             bool inside = true, apart = true, sized = true;
             for (std::size_t i = 0; i < all.size(); ++i) {
                 const Rect& r = all[i];
-                if (r.x < 0 || r.y < 0 || r.Right() > w + 0.01f || r.Bottom() > h + 0.01f) inside = false;
+                if (r.x < 0 || r.y < 0 || r.R() > w + 0.01f || r.B() > h + 0.01f) inside = false;
                 if (r.w <= 0 || r.h <= 0) sized = false;
-                for (std::size_t j = i + 1; j < all.size(); ++j) if (Overlap(r, all[j])) apart = false;
+                for (std::size_t j = i + 1; j < all.size(); ++j) if (Overlaps(r, all[j])) apart = false;
             }
             CHECK(inside);
             CHECK(apart);
             CHECK(sized);
             CHECK(L.output.h >= 100.0f);            // the output gets the room
             CHECK(L.input.w >= 160.0f);
-            CHECK(L.input.y > L.output.Bottom());   // the line is under the output
+            CHECK(L.input.y > L.output.B());   // the line is under the output
         }
         // The page inside a 960 x 600 launcher window: the sidebar, header and footer take some; it still fits.
         const PageLayout L = LayoutPage(960 - 232 - 40, 600 - 150 - 44, 26.0f, 16.0f);
         CHECK(L.output.h > 200.0f);
-        CHECK(!Overlap(L.project, L.terminal));
+        CHECK(!Overlaps(L.project, L.terminal));
     }
 
 #if !defined(_WIN32)

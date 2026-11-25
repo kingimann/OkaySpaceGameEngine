@@ -3,6 +3,7 @@
 #include "CommandLineUI.hpp"
 
 #include "CommandLine.hpp"
+#include "NavIcons.hpp"      // the launcher's shared controls: BeginSlateCombo, FitButtonW, PageFooterH, UiPx
 #include "imgui_internal.h"   // SetScrollY on the output box's own window
 
 #include <algorithm>
@@ -88,16 +89,22 @@ void DrawPage(const Host& host) {
 
     const ImVec2 origin = ImGui::GetCursorPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float footer = 44.0f;   // main.cpp's version line is pinned under every page
+    const float footer = okl::PageFooterH() + okl::UiPx(6.0f);   // main.cpp's version line is pinned under every page
     const float frameH = ImGui::GetFrameHeight(), lineH = ImGui::GetTextLineHeight();
-    const PageLayout L = LayoutPage(avail.x, std::max(frameH * 6.0f, avail.y - footer), frameH, lineH);
+    PageButtons bw;
+    bw.terminal = okl::FitButtonW("Open command line");
+    bw.copy = okl::FitButtonW("Copy all");
+    bw.clear = okl::FitButtonW("Clear", okl::UiPx(56.0f));
+    bw.run = okl::FitButtonW("Run", okl::UiPx(56.0f));
+    bw.stop = okl::FitButtonW("Stop", okl::UiPx(56.0f));
+    const PageLayout L = LayoutPage(avail.x, std::max(frameH * 6.0f, avail.y - footer), frameH, lineH, bw);
 
     // ---- the project ----
     Place(L.project, origin);
     ImGui::SetNextItemWidth(L.project.w);
     const std::string shown = g_projectRoot.empty() ? std::string("No project (runs in the launcher's folder)")
                                                     : "Project: " + (g_projectName.empty() ? g_projectRoot : g_projectName);
-    if (ImGui::BeginCombo("##cliproj", shown.c_str())) {
+    if (okl::BeginSlateCombo("##cliproj", shown.c_str())) {
         if (host.projects.empty()) ImGui::TextDisabled("No projects yet. Make one on the Create page.");
         for (const ProjectRef& p : host.projects) {
             ImGui::PushID(p.root.c_str());
@@ -172,9 +179,7 @@ void DrawPage(const Host& host) {
     if (host.mono) ImGui::PopFont();
     Place(L.run, origin);
     ImGui::BeginDisabled(running);
-    ImGui::PushStyleColor(ImGuiCol_Button, host.accent);
-    const bool runClicked = ImGui::Button("Run", ImVec2(L.run.w, L.run.h));
-    ImGui::PopStyleColor();
+    const bool runClicked = okl::PrimaryButton("Run", ImVec2(L.run.w, L.run.h));
     ImGui::EndDisabled();
     if ((entered || runClicked) && !running) Run(host);
     else if (entered) g_focusInput = true;
@@ -184,7 +189,7 @@ void DrawPage(const Host& host) {
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("End the running command, and anything it started.");
     // Leave the cursor under the page so main.cpp's footer goes below it.
-    ImGui::SetCursorPos(ImVec2(origin.x, origin.y + L.stop.Bottom() + 4.0f));
+    ImGui::SetCursorPos(ImVec2(origin.x, origin.y + L.stop.B() + 4.0f));
 }
 
 }  // namespace okaylcli

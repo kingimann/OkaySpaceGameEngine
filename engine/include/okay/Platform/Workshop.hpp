@@ -54,9 +54,10 @@ public:
 
     bool Available() const { return acct_.IsLoggedIn(); }
 
-    // Everything published, newest first. Readable by anyone (RLS select=true).
-    std::vector<WorkshopItem> List() {
-        return Query("&order=featured.desc,created_at.desc", "&order=created_at.desc");
+    // Everything published, newest first. Readable by anyone (RLS select=true). `reached` (optional) is set to false
+    // when the server could not be asked or refused (offline, not set up), so a caller can tell that from "nothing listed".
+    std::vector<WorkshopItem> List(bool* reached = nullptr) {
+        return Query("&order=featured.desc,created_at.desc", "&order=created_at.desc", reached);
     }
     /// Listings with a review status (mods see every status; RLS shows others
     /// only approved ones + their own). Empty status = all.
@@ -86,13 +87,14 @@ public:
 private:
     // `orderA` is tried with the review columns; `orderB` (if set) without
     // them, for servers that haven't run admin.sql.
-    std::vector<WorkshopItem> Query(const std::string& orderA, const std::string& orderB) {
+    std::vector<WorkshopItem> Query(const std::string& orderA, const std::string& orderB, bool* reached = nullptr) {
         std::vector<WorkshopItem> out;
+        if (reached) *reached = true;
         static const char* kBase = "/rest/v1/workshop_items?select=id,author,author_name,title,description,kind,storage_path,downloads,created_at";
         bool review = true;
         auto r = acct_.Api(std::string(kBase) + ",status,review_note,reviews_locked,featured" + orderA, "GET");
         if (!r.ok && !orderB.empty()) { review = false; r = acct_.Api(std::string(kBase) + orderB, "GET"); }
-        if (!r.ok) return out;
+        if (!r.ok) { if (reached) *reached = false; return out; }
         for (const auto& obj : SplitObjects(r.body)) {
             WorkshopItem w;
             w.authorId    = Field(obj, "author");

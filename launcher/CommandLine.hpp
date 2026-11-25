@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "PageLayout.hpp"  // launcher: Rect, Overlaps, ButtonW (pure maths, no ImGui)
 #include "Process.hpp"   // tools/okay-cli: the one place that starts a program
 
 namespace okaylcli {
@@ -130,12 +131,7 @@ bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::s
 
 // ---- the page's layout --------------------------------------------------------------------------------------------
 
-struct Rect {
-    float x = 0, y = 0, w = 0, h = 0;
-    float Right() const { return x + w; }
-    float Bottom() const { return y + h; }
-};
-bool Overlap(const Rect& a, const Rect& b);
+using okay::launcherlayout::Rect;   // launcher/PageLayout.hpp: the launcher pages' one box type and overlap test
 
 /// Where everything on the page goes inside a `w` x `h` area (the page body under the section header).
 /// Top row: the project picker, then Open command line, Copy all and Clear on the right. Then the one-line hint, the
@@ -144,6 +140,8 @@ struct PageLayout {
     Rect project, terminal, copy, clear, hint, output, input, run, stop;
     std::vector<Rect> All() const { return {project, terminal, copy, clear, hint, output, input, run, stop}; }
 };
-PageLayout LayoutPage(float w, float h, float frameH, float lineH);
+/// The buttons' widths (FitButtonW in the launcher: the label plus padding, so text never spills).
+struct PageButtons { float terminal = 160, copy = 84, clear = 64, run = 64, stop = 64; };
+PageLayout LayoutPage(float w, float h, float frameH, float lineH, const PageButtons& b = PageButtons());
 
 } // namespace okaylcli

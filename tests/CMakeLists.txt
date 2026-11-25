@@ -4217,6 +4217,16 @@ add_test(NAME editor_layout COMMAND test_editor_layout)
 add_executable(test_launcher_nav_layout test_launcher_nav_layout.cpp)
 target_include_directories(test_launcher_nav_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME launcher_nav_layout COMMAND test_launcher_nav_layout)
+# The launcher's page layouts (launcher/PageLayout.hpp): Marketplace, Community and Notifications at three window sizes and
+# UI scale 1.0 / 1.5, with the launcher's own font when its Dear ImGui is in the build (launcher_imgui), else a stand-in width.
+add_executable(test_launcher_page_layout test_launcher_page_layout.cpp)
+target_include_directories(test_launcher_page_layout PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared)
+target_compile_features(test_launcher_page_layout PRIVATE cxx_std_17)
+if(TARGET launcher_imgui)
+    target_link_libraries(test_launcher_page_layout PRIVATE launcher_imgui)
+    target_compile_definitions(test_launcher_page_layout PRIVATE OKAY_LAYOUT_REAL_FONT=1)
+endif()
+add_test(NAME launcher_page_layout COMMAND test_launcher_page_layout)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
 add_executable(test_editor_perf test_editor_perf.cpp)

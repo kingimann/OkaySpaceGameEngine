@@ -134,6 +134,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "AntiCheatPages.hpp"   // Admin > Anti-cheat, my bans and appeals, session tickets
 #include "CoverArtAvatars.hpp"  // game cover art, avatar textures
 #include "NavIcons.hpp"         // the sidebar's line icons, round icon buttons, stars
+#include "PageLayout.hpp"       // where the page toolbar, chips, card grids and listing cards go (tested headless)
 #include "NewsHistory.hpp"      // What's New history (news.cfg)
 #include "AdminPage.hpp"        // reports, Admin > Reports, the Admin page, the ban banner
 #include "PublicProfilePage.hpp"   // public profiles: the page, showcase, social links table
@@ -321,6 +322,30 @@ void SetNews(const std::string& ver, const std::string& lines) {
 void GetNews(std::string& ver, std::string& lines) {
     if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     ver = g_newsVersion; lines = g_newsLines;
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
+}
+
+// The What's New page's "Test builds" section: the newest test builds from dev/versions.json and the newest one's notes
+// (dev/NOTES-DEV.txt), copied by the update worker when "Get test builds" is on (it reads those files for the update anyway).
+struct DevBuildRow { std::string version, date, branch, note; };
+std::vector<DevBuildRow> g_devBuilds;          // newest first (guarded by g_upMutex)
+std::string g_devNotes;                        // the newest test build's notes, one per line (guarded)
+int g_devState = 0;                            // 0 not looked yet, 1 read, 2 could not be read (guarded)
+std::map<std::string, std::string> g_releaseDates;   // "v2.903" -> its date, from the version lists the worker read (guarded)
+void SetDevBuilds(std::vector<DevBuildRow> rows, const std::string& notes, int state) {
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    g_devBuilds = std::move(rows); g_devNotes = notes; g_devState = state;
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
+}
+void GetDevBuilds(std::vector<DevBuildRow>& rows, std::string& notes, int& state, std::map<std::string, std::string>& dates) {
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    rows = g_devBuilds; notes = g_devNotes; state = g_devState; dates = g_releaseDates;
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
+}
+void NoteReleaseDates(const okayversions::Index& idx) {
+    if (!idx.ok) return;
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    for (const auto& e : idx.versions) if (!e.date.empty()) g_releaseDates["v" + e.version] = e.date;
     if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 
@@ -898,23 +923,36 @@ static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string&
     return t;
 }
 
-// "What's new" lines published beside a Supabase release (NOTES.txt).
-static void FetchSupabaseNews(const std::string& ver, const std::string& notesPath = "NOTES.txt") {
+// The note lines of a notes file in the releases bucket (NOTES.txt, dev/NOTES-DEV.txt), one per line; "" when it can't be read.
+static std::string FetchNotesLines(const std::string& notesPath) {
     const std::string sb = SupabaseReleasesBase();
-    if (sb.empty()) return;
+    if (sb.empty()) return {};
     std::error_code ec;
     const fs::path nf = fs::temp_directory_path(ec) / "okayspace_notes_sb.txt";
-    if (!Download(sb + notesPath, nf.string())) return;
+    if (!Download(sb + notesPath, nf.string())) return {};
     std::ifstream f(nf);
+    // Every note line, up to okay::launcherlayout::kNotesMaxLines (a test build lists each change since its release); a
+    // line longer than kNotesMaxLineBytes is cut at a character boundary. Old six-line notes files read the same as before.
     std::string ln, lines; int kept = 0;
-    while (kept < 6 && std::getline(f, ln)) {
+    while (kept < okay::launcherlayout::kNotesMaxLines && std::getline(f, ln)) {
         while (!ln.empty() && (ln.back() == '\r' || ln.back() == ' ')) ln.pop_back();
         std::size_t a = ln.find_first_not_of(" \t-*");
         if (a == std::string::npos) continue;
-        lines += ln.substr(a) + "\n"; ++kept;
+        std::string t = ln.substr(a);
+        if (t.size() > okay::launcherlayout::kNotesMaxLineBytes) {
+            std::size_t cut = okay::launcherlayout::kNotesMaxLineBytes;
+            while (cut > 0 && ((unsigned char)t[cut] & 0xC0) == 0x80) --cut;   // not inside a UTF-8 character
+            t = t.substr(0, cut) + "\xE2\x80\xA6";
+        }
+        lines += t + "\n"; ++kept;
     }
     f.close(); fs::remove(nf, ec);
-    if (kept > 0) SetNews("v" + ver, lines);
+    return lines;
+}
+// "What's new" lines published beside a Supabase release (NOTES.txt).
+static void FetchSupabaseNews(const std::string& ver, const std::string& notesPath = "NOTES.txt") {
+    const std::string lines = FetchNotesLines(notesPath);
+    if (!lines.empty()) SetNews("v" + ver, lines);
 }
 
 okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
@@ -939,6 +977,18 @@ int RunUpdateCheck(void*) {
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "test builds: " + target.devIndex.error);
     SetUpTag(target.test ? (target.title.empty() ? std::string("Test build") : target.title)
                          : target.goBack ? std::string("Going back to the newest normal release (a test build is replaced)") : std::string());
+    if (g_upSettings.testBuilds && !g_upGoBackNow) {   // the What's New page's test builds (only the dev files the update check reads anyway)
+        std::vector<DevBuildRow> rows;
+        std::string devNotes;
+        if (target.devIndex.ok) {
+            for (const auto& e : target.devIndex.versions) {
+                if (rows.size() >= 12) break;
+                rows.push_back({e.version, e.date, e.branch, e.note});
+            }
+            if (!rows.empty()) devNotes = FetchNotesLines(std::string(okay::testbuild::kArea) + "/" + okay::testbuild::kNotesName);
+        }
+        SetDevBuilds(std::move(rows), devNotes, target.devIndex.ok ? 1 : 2);
+    }
     const std::string latest = target.version;
     if (latest.empty()) {
         if (!target.message.empty()) {   // the LTS channel with nothing to do in place (or no LTS information): said in its own words
@@ -963,7 +1013,7 @@ int RunUpdateCheck(void*) {
       if (g_upMutex) okay::thr::LockMutex(g_upMutex);
       nv = g_newsVersion; nl = g_newsLines;
       if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
-      SetUpChangelog(nv == latest || nv == "v" + latest ? nl : std::string()); }
+      SetUpChangelog(okayver::WithV(nv) == okayver::WithV(latest) ? nl : std::string()); }
 
     fs::path dir(g_exeDir);
     // "newer" = this check CHANGES the installed version: a newer release or test build (installed < published), or the one deliberate way back from a
@@ -1005,6 +1055,7 @@ int RunUpdateCheck(void*) {
     // versions.json lists the size and SHA-256 of every file and the update REQUIRES them: no index, no entry for this version or a
     // file without a checksum is a refusal with a reason (never "skip the check"). See launcher/UpdaterCore.hpp.
     const okayversions::Index vindex = target.test ? target.devIndex : okayversions::LoadIndex(VersionSources(), FetchTextFile);
+    if (!target.test) NoteReleaseDates(vindex);
     const okayversions::Entry* ventry = vindex.ok ? vindex.Find(latest) : nullptr;
     auto checkFor = [&](const char* name) -> const okayversions::FileInfo* {
         if (!ventry) return nullptr;
@@ -2069,6 +2120,7 @@ void LoadNotifs() {
         else if (c.size() == 8 && c[0] == "n" && g_notifs.size() < 50) {
             Notif n; n.key = NotifUnesc(c[1]); n.kind = std::atoi(c[2].c_str()); n.gotoTab = std::atoi(c[3].c_str());
             n.read = c[4] == "1"; n.wall = std::atol(c[5].c_str()); n.title = NotifUnesc(c[6]); n.body = NotifUnesc(c[7]);
+            if (n.title.rfind("What's new in vv", 0) == 0) n.title.erase(14, 1);   // saved by an older launcher with a doubled "v"
             const long age = std::clamp(nowW - n.wall, 0L, 40L * 86400L);   // ticks wrap after ~49 days
             n.time = t0 - (Uint32)age * 1000u;                              // ages are (now - time) mod 2^32
             g_notifs.push_back(n);
@@ -2077,7 +2129,6 @@ void LoadNotifs() {
     g_notifs.erase(std::remove_if(g_notifs.begin(), g_notifs.end(),
                                   [](const Notif& n) { return g_notifGoneSigs.count(NotifSig(n)) != 0; }), g_notifs.end());
 }
-bool g_notifPanelOpen = false;      // UI: notifications popup shown
 std::set<std::string> g_notifFresh; // UI: keys that were unread when the panel opened (shown as new)
 ImVec2 g_notifBellMin, g_notifBellMax;   // UI: sidebar bell row (clicks there toggle, not "outside")
 
@@ -2193,7 +2244,7 @@ void RefreshNotifs() {
     if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
     if (!nv.empty() && !nl.empty()) {
         std::string first = nl.substr(0, nl.find('\n'));
-        UpsertNotif("news:" + nv, "What's new in v" + nv, first, 0, 0);
+        UpsertNotif("news:" + nv, "What's new in " + okayver::WithV(nv), first, 0, 0);   // (nv is "v2.903.6" already: never "vv")
     }
     // Remember what has been read, and save when the feed changes.
     static std::size_t lastHash = 0;
@@ -2884,17 +2935,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             ImGui::Dummy(ImVec2(0, 0));
         }
         auto searchPill = [&](const char* sid, const char* hint, char* sbuf, std::size_t scap) {
-            ImVec2 sp = ImGui::GetCursorScreenPos();
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, 6));
-            ImGui::SetNextItemWidth(-1);
-            bool enter = ImGui::InputTextWithHint(sid, hint, sbuf, scap, ImGuiInputTextFlags_EnterReturnsTrue);
-            ImGui::PopStyleVar(2);
-            float fh = ImGui::GetItemRectSize().y;
-            ImVec2 mc(sp.x + 14.0f, sp.y + fh * 0.5f - 1.0f);
-            dl->AddCircle(mc, 4.4f, cDim, 16, 1.5f);
-            dl->AddLine(ImVec2(mc.x + 3.2f, mc.y + 3.2f), ImVec2(mc.x + 6.4f, mc.y + 6.4f), cDim, 1.7f);
-            return enter;
+            return SearchPill(sid, hint, sbuf, scap, -1, ImGuiInputTextFlags_EnterReturnsTrue);
         };
         // Pending upload (custom emoji / sticker): name it, then upload.
         auto pendingRow = [&]() {
@@ -5085,7 +5126,7 @@ static void DrawStatusDialog(bool& req) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Clear after"); ImGui::SameLine();
     ImGui::SetNextItemWidth(160);
-    ImGui::Combo("##clearafter", &clearAfter, kClear, (int)(sizeof(kClear) / sizeof(kClear[0])));
+    SlateCombo("##clearafter", &clearAfter, kClear, (int)(sizeof(kClear) / sizeof(kClear[0])));
     ImGui::Dummy(ImVec2(0, 6));
     if (!g_myStatus.empty()) {
         if (ImGui::Button("Clear status", ImVec2(120, 30))) { SetMyStatus("", 0); Toast("Status cleared", 1); ImGui::CloseCurrentPopup(); }
@@ -8671,16 +8712,23 @@ static volatile bool g_wsFetching = false;
 static bool g_wsReady = false;                       // (guarded)
 static std::vector<okay::WorkshopItem> g_wsList;     // (guarded)
 static std::map<long, std::pair<long,long>> g_wsRatings;  // (guarded)
+static bool g_wsFailed = false;                      // (guarded) the last fetch did not reach the server
 static int MarketListWorker(void*) {
+    bool reached = false;
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         okay::Workshop ws(a);
-        auto l = ws.List();
-        auto r = ws.Ratings();
+        auto l = ws.List(&reached);
+        auto r = reached ? ws.Ratings() : std::map<long, std::pair<long, long>>{};
         if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
-        g_wsList = std::move(l); g_wsRatings = std::move(r); g_wsReady = true;
+        if (reached) { g_wsList = std::move(l); g_wsRatings = std::move(r); }   // a failed fetch keeps what is shown
+        g_wsFailed = !reached; g_wsReady = true;
         if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
-    } catch (...) {}
+    } catch (...) {
+        if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
+        g_wsFailed = true; g_wsReady = true;
+        if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
+    }
     g_wsFetching = false;
     return 0;
 }
@@ -11038,6 +11086,281 @@ static const okaylcli::Host& CommandLineHost() {
     return h;
 }
 
+// The What's New page's data beyond the release history: the test builds, the newest one's notes, the release dates and
+// whether "Get test builds" is on. One copy for the Dear ImGui page and the OkayUI one.
+static int g_wnSection = 0;   // the page's section: 0 Releases, 1 Test builds
+static void WhatsNewData(std::vector<DevBuildRow>& devRows, std::string& devNotes, int& devState, std::map<std::string, std::string>& relDates, bool& testsOn) {
+    GetDevBuilds(devRows, devNotes, devState, relDates);
+    testsOn = okayversions::GlobalSettings().testBuilds;
+    if (const char* dn = std::getenv("OKAY_UI_DEMO_NEWS")) {   // dev screenshot hook: long | tests | off | empty
+        const std::string d = dn;
+        static bool seeded = false;
+        if (!seeded) {
+            seeded = true;
+            NewsRelease r{"v2.904", {}};
+            const int n = d == "long" ? okay::launcherlayout::kNotesMaxLines : 5;
+            for (int i = 0; i < n; ++i) {
+                std::string t = "Fixed " + std::to_string(i + 1) + ": ";
+                if (d == "long") while (t.size() < okay::launcherlayout::kNotesMaxLineBytes - 40) t += "the launcher now explains what changed in plain words, ";
+                else t += "a short note about one change.";
+                r.lines.push_back(t);
+            }
+            g_newsHistory.insert(g_newsHistory.begin(), r);
+            if (g_newsHistory.size() < 2) g_newsHistory.push_back({"v2.903", {"Older release note one.", "Older release note two."}});
+        }
+        testsOn = d != "off";
+        relDates["v2.904"] = "2026-11-24";
+        devState = 1; devRows.clear(); devNotes.clear();
+        if (d == "tests" || d == "long") {
+            devRows = {{"2.904.0.3", "2026-11-25", "claude/launcher-ui-1", "Marketplace, Community and Notifications redone"},
+                       {"2.904.0.2", "2026-11-24", "claude2/work", "Ragdoll joints no longer stretch when a character falls down a slope at speed"},
+                       {"2.904.0.1", "2026-11-24", "claude3/work", ""},
+                       {std::string(OKAY_ENGINE_VERSION), "2026-11-23", "claude/work", "The build you are running"}};
+            devNotes = "Launcher: Marketplace cards, loading and error states\nLauncher: Community toolbar and drop zone\nLauncher: notifications header wraps at big UI scale\n";
+        }
+    }
+}
+
+// Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
+// launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
+// flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
+// true the page's Dear ImGui version is drawn instead, which ImGui layers correctly. (Notifications is a page now, not a flyout.)
+static bool OkayPageCovered(float w, float h) {
+#ifdef OKAY_HAVE_OKAYUI
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    return okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), p.x, p.y, w, h);
+#else
+    (void)w; (void)h; return false;
+#endif
+}
+
+// ---- The Notifications page (sidebar > Notifications; it replaced the flyout over the current page, owner 2026-11-25) ----------
+// Header actions (Mark all read, Clear), filter chips, pending friend requests with Accept / Decline, then the feed grouped
+// Today / Yesterday / Earlier as roomy rows with the whole text wrapped. Returns the tab a clicked row asks for (-1 none).
+// Where things go: launcher/PageLayout.hpp (tests/test_launcher_page_layout.cpp).
+static int s_ntFilter = 0;   // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
+static int DrawNotificationsPage(okay::account::AccountService& account) {
+    namespace PL = okay::launcherlayout;
+    const bool demo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+    int gotoTab = -1;
+    std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    auto sigOf    = [](const Notif& n) { return n.key + "\n" + n.body; };
+    auto isHidden = [&](const Notif& n) { return ntHidden.count(sigOf(n)) != 0; };
+    auto isUnread = [&](const Notif& n) { return !n.read || g_notifFresh.count(n.key) != 0; };
+    auto kindOf   = [](const Notif& n) { return (n.kind >= 1 && n.kind <= 3) ? n.kind : 0; };
+    int totalN = 0, unreadN = 0;
+    for (const auto& n : g_notifs) if (!isHidden(n)) { ++totalN; if (isUnread(n)) ++unreadN; }
+    const float W = ImGui::GetContentRegionAvail().x, gap = UiPx(10.0f);
+    const float btnH = ImGui::GetFrameHeight() + UiPx(6.0f);
+
+    // ---- Chips on the left, Mark all read / Clear on the right (under the chips when they do not fit beside them).
+    {
+        std::vector<Chip> chips;
+        const char* chipLbl[] = {"All", "Unread", "Friends", "Messages", "Updates", "System"};
+        float chipsW = 0;
+        for (int k = 0; k < 6; ++k) {
+            Chip c; c.label = chipLbl[k];
+            if (k == 1 && unreadN > 0) { c.count = unreadN; c.countBadge = true; }
+            chips.push_back(c);
+            chipsW += ImGui::CalcTextSize(chipLbl[k]).x + UiPx(22.0f) + UiPx(8.0f) + (k == 1 && unreadN > 0 ? UiPx(30.0f) : 0.0f);
+        }
+        const float markW = FitButtonW("Mark all read"), clearW = FitButtonW("Clear");
+        const float actW = markW + gap + clearW;
+        const bool beside = chipsW + gap * 2 + actW <= W;
+        const ImVec2 o = ImGui::GetCursorScreenPos();
+        const int hit = ChipRow("##ntchips", chips, s_ntFilter, beside ? W - actW - gap * 2 : W);
+        if (hit >= 0) s_ntFilter = hit;
+        const float chipsBottom = ImGui::GetCursorScreenPos().y;
+        const float ay = beside ? o.y + std::max(0.0f, (chipsBottom - o.y - btnH) * 0.5f) : chipsBottom + gap;
+        ImGui::SetCursorScreenPos(ImVec2(o.x + W - actW, ay));
+        ImGui::BeginDisabled(unreadN == 0);
+        if (ImGui::Button("Mark all read", ImVec2(markW, btnH))) { for (auto& n : g_notifs) n.read = true; g_notifFresh.clear(); }
+        ImGui::EndDisabled();
+        ImGui::SameLine(0, gap);
+        ImGui::BeginDisabled(totalN == 0);
+        if (ImGui::Button("Clear", ImVec2(clearW, btnH))) { for (auto& n : g_notifs) { ntHidden.insert(sigOf(n)); n.read = true; } g_notifFresh.clear(); }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove every notification from this list");
+        ImGui::SetCursorScreenPos(ImVec2(o.x, std::max(chipsBottom, ay + btnH) + UiPx(16.0f)));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    ImGui::BeginChild("##ntpage", ImVec2(0, ImGui::GetContentRegionAvail().y - PageFooterH()), false);
+    const float LW = ImGui::GetContentRegionAvail().x;
+    const float th = ImGui::GetTextLineHeight(), pad = UiPx(16.0f), icD = UiPx(40.0f);
+    ImDrawList* ld = ImGui::GetWindowDrawList();
+
+    // ---- Friend requests waiting for an answer (Accept / Decline right here) ----
+    if (s_ntFilter == 0 || s_ntFilter == 2) {
+        struct Req { std::string name; long rowId; };
+        std::vector<Req> reqs;
+        if (demo) reqs = {{"alexr", 0}, {"nova_builds", 0}};
+        else if (account.IsLoggedIn()) {
+            static Uint32 s_next = 0;
+            const Uint32 now = okay::platform::TicksMs32();
+            if (!g_frMutex) g_frMutex = okay::thr::CreateMutex();
+            if (g_friendRequests > 0 && now >= s_next && !g_frFetching) {   // the same worker the Friends page uses
+                g_frFetching = true; s_next = now + 15000;
+                if (okay::thr::Thread* t = okay::thr::CreateThread(FriendsListWorker, "okay-frlist", nullptr)) okay::thr::DetachThread(t);
+                else g_frFetching = false;
+            }
+            okay::thr::LockMutex(g_frMutex);
+            for (const auto& f : g_frList)
+                if (f.status == "pending" && f.incoming) reqs.push_back({f.display.empty() ? f.username : f.display, f.rowId});
+            okay::thr::UnlockMutex(g_frMutex);
+        }
+        if (!reqs.empty()) {
+            SectionLabel("FRIEND REQUESTS", (int)reqs.size());
+            ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+            for (std::size_t i = 0; i < reqs.size(); ++i) {
+                ImGui::PushID((int)i + 7000);
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                const float rh = icD + 2 * pad - UiPx(8.0f);
+                CardBackground(ld, rp, ImVec2(rp.x + LW, rp.y + rh), false);
+                const ImVec2 ac(rp.x + pad + icD * 0.5f, rp.y + rh * 0.5f);
+                ld->AddCircleFilled(ac, icD * 0.5f, ImGui::GetColorU32(NameColor(reqs[i].name)), 32);
+                const std::string ini(1, (char)std::toupper((unsigned char)(reqs[i].name.empty() ? '?' : reqs[i].name[0])));
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                ld->AddText(ImVec2(ac.x - is.x * 0.5f, ac.y - is.y * 0.5f), IM_COL32_WHITE, ini.c_str());
+                const float acceptW = FitButtonW("Accept", UiPx(90.0f)), declineW = FitButtonW("Decline", UiPx(90.0f));
+                const float bx = rp.x + LW - pad - acceptW - gap - declineW;
+                const float tx = rp.x + pad + icD + UiPx(14.0f);
+                ld->AddText(ImVec2(tx, rp.y + rh * 0.5f - th), cText, FitText(reqs[i].name, bx - tx - gap).c_str());
+                ld->AddText(ImVec2(tx, rp.y + rh * 0.5f + UiPx(2.0f)), cDim, FitText("wants to be your friend", bx - tx - gap).c_str());
+                ImGui::SetCursorScreenPos(ImVec2(bx, rp.y + (rh - btnH) * 0.5f));
+                if (PrimaryButton("Accept", ImVec2(acceptW, btnH))) {
+                    if (demo) Toast("You're now friends with " + reqs[i].name, 1);
+                    else { okay::Friends fr(account); if (fr.Accept(reqs[i].rowId)) Toast("You're now friends with " + reqs[i].name, 1); else Toast("Couldn't accept the request", 2); }
+                }
+                ImGui::SameLine(0, gap);
+                if (ImGui::Button("Decline", ImVec2(declineW, btnH))) {
+                    if (!demo) { okay::Friends fr(account); fr.Remove(reqs[i].rowId); }
+                    Toast("Request declined", 1);
+                }
+                ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + UiPx(8.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        }
+    }
+
+    // ---- The feed, newest first, grouped Today / Yesterday / Earlier ----
+    const Uint32 nowT = okay::platform::TicksMs32();
+    const long nowUnix = (long)std::time(nullptr);
+    const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
+    std::vector<int> order;
+    for (int i = 0; i < (int)g_notifs.size(); ++i) {
+        const Notif& n = g_notifs[(std::size_t)i];
+        if (isHidden(n)) continue;
+        if (!PL::NotifMatches(s_ntFilter, kindOf(n), isUnread(n))) continue;
+        order.push_back(i);
+    }
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        return (Uint32)(nowT - g_notifs[(std::size_t)a].time) < (Uint32)(nowT - g_notifs[(std::size_t)b].time);
+    });
+    const float timeW = ImGui::CalcTextSize("00m").x + UiPx(28.0f);
+    int lastGroup = -1, dismissIdx = -1;
+    for (int idx : order) {
+        Notif& n = g_notifs[(std::size_t)idx];
+        const int kind = kindOf(n);
+        const bool un = isUnread(n);
+        const Uint32 ageS = (Uint32)(nowT - n.time) / 1000u;
+        const long dk = DayKey(nowUnix - (long)ageS);
+        const int grp = dk == today ? 0 : dk == yday ? 1 : 2;
+        if (grp != lastGroup) {
+            if (lastGroup != -1) ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+            SectionLabel(grp == 0 ? "TODAY" : grp == 1 ? "YESTERDAY" : "EARLIER", -1);
+            ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+            lastGroup = grp;
+        }
+        ImGui::PushID(n.key.c_str());
+        const ImVec2 rp = ImGui::GetCursorScreenPos();
+        const float tx = rp.x + pad + icD + UiPx(14.0f);
+        const float textW = std::max(UiPx(80.0f), LW - (tx - rp.x) - timeW - pad);
+        const std::string body = n.body;
+        const float bodyH = body.empty() ? 0.0f : ImGui::CalcTextSize(body.c_str(), nullptr, false, textW).y;
+        const float rh = std::max(icD + 2 * pad, pad + th + UiPx(4.0f) + bodyH + pad);
+        ImGui::SetNextItemAllowOverlap();
+        const bool click = ImGui::InvisibleButton("##ntrow", ImVec2(LW, rh));
+        const bool focus = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
+        const bool hov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + LW, rp.y + rh)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        CardBackground(ld, rp, ImVec2(rp.x + LW, rp.y + rh), hov);
+        if (un) ld->AddRectFilled(rp, ImVec2(rp.x + LW, rp.y + rh), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.08f)), UiPx(12.0f));
+        if (focus) ld->AddRect(rp, ImVec2(rp.x + LW, rp.y + rh), ImGui::GetColorU32(kAccent), UiPx(12.0f), 0, 1.5f);
+        const ImVec4 kc = kind == 1 ? ImVec4(0.38f, 0.68f, 0.98f, 1.0f) : kind == 2 ? ImVec4(0.38f, 0.80f, 0.55f, 1.0f)
+                        : kind == 3 ? ImVec4(0.66f, 0.54f, 0.98f, 1.0f) : ImVec4(0.95f, 0.72f, 0.30f, 1.0f);
+        const ImVec2 ic(rp.x + pad + icD * 0.5f, rp.y + pad + icD * 0.5f);
+        ld->AddCircleFilled(ic, icD * 0.5f, ImGui::GetColorU32(ImVec4(kc.x, kc.y, kc.z, 0.17f)), 32);
+        const int icon = kind == 1 ? 6 : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell;
+        DrawNavIcon(ld, icon, ic, ImGui::GetColorU32(ImVec4(kc.x * 0.8f + 0.2f, kc.y * 0.8f + 0.2f, kc.z * 0.8f + 0.2f, 1.0f)));
+        const std::string title = FitText(n.title.empty() ? std::string("Notification") : n.title, textW);
+        const ImU32 tcol = un ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.82f);
+        ld->AddText(ImVec2(tx, rp.y + pad), tcol, title.c_str());
+        if (un) ld->AddText(ImVec2(tx + 0.7f, rp.y + pad), tcol, title.c_str());
+        if (!body.empty()) ld->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, rp.y + pad + th + UiPx(4.0f)), cDim, body.c_str(), nullptr, textW);
+        char rt[16];
+        if (ageS < 60) std::snprintf(rt, sizeof(rt), "now");
+        else if (ageS < 3600) std::snprintf(rt, sizeof(rt), "%um", (unsigned)(ageS / 60));
+        else if (ageS < 86400) std::snprintf(rt, sizeof(rt), "%uh", (unsigned)(ageS / 3600));
+        else std::snprintf(rt, sizeof(rt), "%ud", (unsigned)(ageS / 86400));
+        const float rx = rp.x + LW - pad;
+        if (hov) {
+            const float xd = UiPx(26.0f);
+            const ImVec2 xp(rx - xd, rp.y + pad - UiPx(4.0f));
+            ImGui::SetCursorScreenPos(xp);
+            if (RoundIconButton("##ntx", kRibClose, xd, IM_COL32(255, 255, 255, 14), IM_COL32(255, 255, 255, 34), cText, "Dismiss")) dismissIdx = idx;
+        } else {
+            const ImVec2 ts = ImGui::CalcTextSize(rt);
+            ld->AddText(ImVec2(rx - ts.x, rp.y + pad), un ? ImGui::GetColorU32(accLt) : cDim, rt);
+        }
+        if (un) ld->AddCircleFilled(ImVec2(rx - UiPx(5.0f), rp.y + pad + th + UiPx(10.0f)), UiPx(4.5f), ImGui::GetColorU32(kAccent), 14);
+        if (click && dismissIdx != idx) {   // open its target and mark it read
+            n.read = true; g_notifFresh.erase(n.key);
+            if (n.gotoTab >= 0) gotoTab = n.gotoTab;
+            if (n.key.rfind("crash:", 0) == 0) g_setCatJump = 9;   // straight to Crash reports
+            if (n.kind == 2 && n.gotoTab == 6) g_chatWinOpen = true;   // a message opens the chat
+        }
+        ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + UiPx(8.0f)));
+        ImGui::Dummy(ImVec2(0, 0));
+        ImGui::PopID();
+    }
+    if (dismissIdx >= 0 && dismissIdx < (int)g_notifs.size()) {
+        Notif& n = g_notifs[(std::size_t)dismissIdx];
+        ntHidden.insert(sigOf(n)); n.read = true; g_notifFresh.erase(n.key);
+    }
+    // Static notifications that were dismissed can go for good; the re-synced ones (dyn:/news:) stay hidden via ntHidden.
+    for (auto it = g_notifs.begin(); it != g_notifs.end();) {
+        const bool synced = it->key.rfind("dyn:", 0) == 0 || it->key.rfind("news:", 0) == 0;
+        if (!synced && isHidden(*it)) it = g_notifs.erase(it);
+        else ++it;
+    }
+    if (order.empty()) {   // ---- Empty states ----
+        const bool signedOut = !account.IsLoggedIn() && !demo;
+        const bool caughtUp = totalN == 0 || s_ntFilter == 1;
+        const char* hint = signedOut ? "Sign in to get friend requests, messages and invites here. Update and download notices show up either way."
+                         : totalN == 0 ? "Friend requests, messages and updates show up here."
+                         : s_ntFilter == 1 ? "No unread notifications."
+                         : s_ntFilter == 2 ? "No friend notifications."
+                         : s_ntFilter == 3 ? "No message notifications."
+                         : s_ntFilter == 4 ? "No update notifications."
+                                           : "No system notifications.";
+        EmptyState(kIcoBell, PL::NotifEmptyTitle(signedOut, totalN, s_ntFilter), hint, UiPx(40.0f), caughtUp && !signedOut);
+        const char* btn = signedOut && totalN == 0 ? "Sign in" : (!caughtUp && s_ntFilter != 0) ? "Show all" : nullptr;
+        if (btn) {
+            const float bw = FitButtonW(btn, UiPx(140.0f));
+            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+            if (PrimaryButton(btn, ImVec2(bw, btnH))) { if (signedOut) gotoTab = 3; else s_ntFilter = 0; }
+        }
+    }
+    ImGui::EndChild();
+    return gotoTab;
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -11330,7 +11653,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 16 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab <= 17 && g_lastTab != 11) ? g_lastTab : 0;
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -11911,11 +12234,14 @@ int main(int argc, char** argv) {
         // A Slate flyout anchored beside the sidebar: header (new count, Mark all
         // read, Clear), filter chips, then the feed grouped by day. Opened by the
         // sidebar bell; closes on its [x], Escape, the bell, or clicking away.
+        // Where it sits and how its header wraps: launcher/PageLayout.hpp (tests/test_launcher_page_layout.cpp).
         {
             static const bool kNtDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
+            static const char* kNtDemoState = std::getenv("OKAY_UI_DEMO_NOTIF");      // dev screenshot hook: open | empty | many | long (opens the panel)
             static bool ntSeeded = false;
-            if (kNtDemo && !ntSeeded) {   // seed a realistic feed once (ages relative to now)
-                ntSeeded = true;
+            if (!ntSeeded && kNtDemoState) tab = 16;   // (opens the Notifications page)
+            const std::string ntDemo = kNtDemoState ? kNtDemoState : "";
+            if (kNtDemo && !ntSeeded && ntDemo != "empty") {   // seed a realistic feed once (ages relative to now)
                 struct Seed { const char* key; const char* title; const char* body; int kind; Uint32 agoMin; bool unread; int go; };
                 const Seed seed[] = {
                     {"demo:dm", "maya sent you a message", "Perfect. First playable by tonight? I can share the build link as soon as it's up.", 2, 2, true, 6},
@@ -11928,322 +12254,26 @@ int main(int argc, char** argv) {
                     {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
                 };
                 const Uint32 t0 = okay::platform::TicksMs32();
-                for (const Seed& s : seed) {
-                    Notif n; n.key = s.key; n.title = s.title; n.body = s.body; n.kind = s.kind;
-                    n.time = t0 - s.agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
-                    n.read = !s.unread; n.gotoTab = s.go;
+                auto add = [&](const std::string& key, const std::string& title, const std::string& body, int kind, Uint32 agoMin, bool unread, int go) {
+                    Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
+                    n.time = t0 - agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
+                    n.read = !unread; n.gotoTab = go;
                     g_notifs.push_back(n);
-                }
-            }
-        }
-        static bool ntWasOpen = false;
-        static int  ntFilter = 0;                  // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
-        std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
-        if (g_notifPanelOpen) {
-            ImGuiViewport* vp = ImGui::GetMainViewport();
-            const float navWNow = g_navCollapsed ? 64.0f : 232.0f;
-            const float pw = std::max(300.0f, std::min(480.0f, vp->WorkSize.x - navWNow - 24.0f));
-            const float ph = std::max(280.0f, std::min(640.0f, vp->WorkSize.y - 24.0f));
-            const ImVec2 pp(vp->WorkPos.x + navWNow + 10.0f, vp->WorkPos.y + vp->WorkSize.y - ph - 12.0f);
-            ImGui::SetNextWindowPos(pp, ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
-            if (!ntWasOpen) ImGui::SetNextWindowFocus();
-            const ImVec4 panelBg = g_themeIndex == 0 ? okaytheme::kRaised : ImGui::GetStyleColorVec4(ImGuiCol_PopupBg);
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(panelBg.x, panelBg.y, panelBg.z, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1, 1, 1, 0.07f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
-            ImGui::Begin("##notifpanel", nullptr,
-                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-            ImGui::PopStyleVar(3);
-            ImGui::PopStyleColor(2);
-            const ImVec2 wpos = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            {   // Soft drop shadow just outside the panel edge.
-                const ImVec2 a = wpos, b(wpos.x + wsz.x, wpos.y + wsz.y);
-                dl->PushClipRect(ImVec2(a.x - 24, a.y - 24), ImVec2(b.x + 24, b.y + 24), false);
-                for (int i = 1; i <= 12; ++i)
-                    dl->AddRect(ImVec2(a.x - i, a.y - i * 0.5f), ImVec2(b.x + i, b.y + i * 1.5f),
-                                IM_COL32(0, 0, 0, std::max(0, 46 - i * 4)), 12.0f + i, 0, 1.0f);
-                dl->PopClipRect();
-            }
-            const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
-            const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
-            auto sigOf    = [](const Notif& n) { return n.key + "\n" + n.body; };
-            auto isHidden = [&](const Notif& n) { return ntHidden.count(sigOf(n)) != 0; };
-            auto isUnread = [&](const Notif& n) { return !n.read || g_notifFresh.count(n.key) != 0; };
-            auto kindOf   = [](const Notif& n) { return (n.kind >= 1 && n.kind <= 3) ? n.kind : 0; };
-            int totalN = 0, unreadN = 0, kindN[4] = {0, 0, 0, 0};
-            for (const auto& n : g_notifs)
-                if (!isHidden(n)) { ++totalN; if (isUnread(n)) ++unreadN; ++kindN[kindOf(n)]; }
-            int gotoTabReq = -1;
-            bool closeReq = false;
-
-            // ---- Header: title + "N new" pill, then Mark all read / Clear / close.
-            const ImVec2 hp = ImGui::GetCursorScreenPos();
-            const float cw = ImGui::GetContentRegionAvail().x;
-            const float hh = 28.0f;
-            ImGui::SetWindowFontScale(1.22f);
-            const ImVec2 tsz = ImGui::CalcTextSize("Notifications");
-            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(hp.x, hp.y + (hh - tsz.y) * 0.5f), cText, "Notifications");
-            ImGui::SetWindowFontScale(1.0f);
-            if (unreadN > 0) {
-                char nb[24]; std::snprintf(nb, sizeof(nb), "%d new", unreadN);
-                const ImVec2 bs = ImGui::CalcTextSize(nb);
-                const ImVec2 b0(hp.x + tsz.x + 10.0f, hp.y + hh * 0.5f - 10.0f);
-                dl->AddRectFilled(b0, ImVec2(b0.x + bs.x + 14.0f, b0.y + 20.0f), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)), 10.0f);
-                dl->AddText(ImVec2(b0.x + 7.0f, b0.y + (20.0f - bs.y) * 0.5f), ImGui::GetColorU32(accLt), nb);
-            }
-            auto textBtn = [&](const char* id, const char* label, float x, bool enabled, bool accent) -> bool {
-                const ImVec2 ts = ImGui::CalcTextSize(label);
-                const ImVec2 p(x, hp.y + (hh - 26.0f) * 0.5f), sz(ts.x + 16.0f, 26.0f);
-                ImGui::SetCursorScreenPos(p);
-                const bool c = ImGui::InvisibleButton(id, sz) && enabled;
-                const bool h = enabled && ImGui::IsItemHovered();
-                if (h) { dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), IM_COL32(255, 255, 255, 16), 7.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
-                const ImU32 col = !enabled ? ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.55f)
-                                : h ? cText : accent ? ImGui::GetColorU32(accLt) : cDim;
-                dl->AddText(ImVec2(p.x + 8.0f, p.y + (sz.y - ts.y) * 0.5f), col, label);
-                return c;
-            };
-            {   // close (round x) on the far right
-                const ImVec2 xp(hp.x + cw - 26.0f, hp.y + (hh - 26.0f) * 0.5f);
-                ImGui::SetCursorScreenPos(xp);
-                if (ImGui::InvisibleButton("##ntclose", ImVec2(26, 26))) closeReq = true;
-                const bool xh = ImGui::IsItemHovered();
-                const ImVec2 xc(xp.x + 13.0f, xp.y + 13.0f);
-                if (xh) { dl->AddCircleFilled(xc, 13.0f, IM_COL32(255, 255, 255, 20), 24); ImGui::SetTooltip("Close  (Esc)"); }
-                const ImU32 xcol = xh ? cText : cDim;
-                dl->AddLine(ImVec2(xc.x - 4.5f, xc.y - 4.5f), ImVec2(xc.x + 4.5f, xc.y + 4.5f), xcol, 1.6f);
-                dl->AddLine(ImVec2(xc.x + 4.5f, xc.y - 4.5f), ImVec2(xc.x - 4.5f, xc.y + 4.5f), xcol, 1.6f);
-                const float clearW = ImGui::CalcTextSize("Clear").x + 16.0f;
-                const float markW  = ImGui::CalcTextSize("Mark all read").x + 16.0f;
-                const float clearX = xp.x - 6.0f - clearW, markX = clearX - 2.0f - markW;
-                if (textBtn("##ntmark", "Mark all read", markX, unreadN > 0, true)) {
-                    for (auto& n : g_notifs) n.read = true;
-                    g_notifFresh.clear();
-                }
-                if (textBtn("##ntclear", "Clear", clearX, totalN > 0, false)) {
-                    for (auto& n : g_notifs) { ntHidden.insert(sigOf(n)); n.read = true; }
-                    g_notifFresh.clear();
-                }
-            }
-            ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + hh + 10.0f));
-            ImGui::Dummy(ImVec2(0, 0));
-
-            // ---- Filter chips (wrap onto a second row on narrow panels).
-            {
-                const char* chipLbl[] = {"All", "Unread", "Friends", "Messages", "Updates", "System"};
-                const ImVec2 cp = ImGui::GetCursorScreenPos();
-                const float ch = ImGui::GetTextLineHeight() + 10.0f;
-                float x = cp.x, y = cp.y;
-                for (int k = 0; k < 6; ++k) {
-                    const ImVec2 ts = ImGui::CalcTextSize(chipLbl[k]);
-                    char cnt[8] = "";
-                    if (k == 1 && unreadN > 0) std::snprintf(cnt, sizeof(cnt), "%d", unreadN);
-                    const ImVec2 cs = ImGui::CalcTextSize(cnt);
-                    const float w = ts.x + 18.0f + (cnt[0] ? cs.x + 16.0f : 0.0f);
-                    if (x > cp.x && x + w > cp.x + cw) { x = cp.x; y += ch + 6.0f; }
-                    ImGui::SetCursorScreenPos(ImVec2(x, y));
-                    ImGui::PushID(k);
-                    if (ImGui::InvisibleButton("##ntchip", ImVec2(w, ch))) ntFilter = k;
-                    const bool h = ImGui::IsItemHovered();
-                    ImGui::PopID();
-                    const bool on = ntFilter == k;
-                    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + ch),
-                                      on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
-                                         : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
-                    dl->AddText(ImVec2(x + 9.0f, y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), chipLbl[k]);
-                    if (cnt[0]) {
-                        const float bx = x + 9.0f + ts.x + 6.0f, bw = cs.x + 10.0f;
-                        dl->AddRectFilled(ImVec2(bx, y + (ch - 16) * 0.5f), ImVec2(bx + bw, y + (ch + 16) * 0.5f), ImGui::GetColorU32(kAccent), 8.0f);
-                        dl->AddText(ImVec2(bx + 5.0f, y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
-                    }
-                    if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    x += w + 6.0f;
-                }
-                ImGui::SetCursorScreenPos(ImVec2(cp.x, y + ch + 12.0f));
-                const ImVec2 lp = ImGui::GetCursorScreenPos();
-                dl->AddLine(ImVec2(lp.x - 16.0f, lp.y), ImVec2(lp.x + cw + 16.0f, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
-                ImGui::Dummy(ImVec2(0, 4));
-            }
-
-            // ---- The feed, newest first, grouped Today / Yesterday / Earlier.
-            ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6.0f);
-            ImGui::BeginChild("##ntlist", ImVec2(0, 0), ImGuiChildFlags_None);
-            ImGui::PopStyleVar();
-            {
-                ImDrawList* ld = ImGui::GetWindowDrawList();
-                const Uint32 nowT = okay::platform::TicksMs32();
-                const long nowUnix = (long)std::time(nullptr);
-                const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
-                static const int kFilterKind[] = {-1, -1, 1, 2, 3, 0};
-                std::vector<int> order;
-                for (int i = 0; i < (int)g_notifs.size(); ++i) {
-                    const Notif& n = g_notifs[(std::size_t)i];
-                    if (isHidden(n)) continue;
-                    if (ntFilter == 1 && !isUnread(n)) continue;
-                    if (ntFilter >= 2 && kindOf(n) != kFilterKind[ntFilter]) continue;
-                    order.push_back(i);
-                }
-                std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
-                    return (Uint32)(nowT - g_notifs[(std::size_t)a].time) < (Uint32)(nowT - g_notifs[(std::size_t)b].time);
-                });
-                // First line that fits, then the rest ellipsized onto a second line.
-                auto wrap2 = [](const std::string& s, float maxW, std::string& l1, std::string& l2) {
-                    l1.clear(); l2.clear();
-                    if (ImGui::CalcTextSize(s.c_str()).x <= maxW) { l1 = s; return; }
-                    std::size_t cut = 0;
-                    for (std::size_t i = 0; i < s.size(); ++i)
-                        if (s[i] == ' ') { if (ImGui::CalcTextSize(s.c_str(), s.c_str() + i).x <= maxW) cut = i; else break; }
-                    if (cut == 0) { l1 = FitText(s, maxW); return; }
-                    l1 = s.substr(0, cut); l2 = FitText(s.substr(cut + 1), maxW);
                 };
-                const float th = ImGui::GetTextLineHeight();
-                int lastGroup = -1;
-                int dismissIdx = -1;
-                for (int idx : order) {
-                    Notif& n = g_notifs[(std::size_t)idx];
-                    const int kind = kindOf(n);
-                    const bool un = isUnread(n);
-                    const Uint32 ageS = (Uint32)(nowT - n.time) / 1000u;
-                    const long dk = DayKey(nowUnix - (long)ageS);
-                    const int grp = dk == today ? 0 : dk == yday ? 1 : 2;
-                    if (grp != lastGroup) {
-                        if (lastGroup != -1) ImGui::Dummy(ImVec2(0, 4));
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
-                        ImGui::SetWindowFontScale(0.80f);
-                        ImGui::TextDisabled("%s", grp == 0 ? "TODAY" : grp == 1 ? "YESTERDAY" : "EARLIER");
-                        ImGui::SetWindowFontScale(1.0f);
-                        ImGui::Dummy(ImVec2(0, 1));
-                        lastGroup = grp;
-                    }
-                    ImGui::PushID(n.key.c_str());
-                    const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    const float rw = ImGui::GetContentRegionAvail().x;
-                    const float icD = 36.0f, tx = rp.x + 10.0f + icD + 12.0f;
-                    const float textW = rw - (tx - rp.x) - 46.0f;
-                    std::string b1, b2; wrap2(n.body, textW, b1, b2);
-                    const int bodyLines = n.body.empty() ? 0 : (b2.empty() ? 1 : 2);
-                    const float rh = std::max(58.0f, 11.0f + th + 3.0f + bodyLines * (th + 1.0f) + 10.0f);
-                    ImGui::SetNextItemAllowOverlap();
-                    const bool click = ImGui::InvisibleButton("##ntrow", ImVec2(rw, rh));
-                    const bool hov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + rw, rp.y + rh)) &&
-                                          ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-                    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    ld->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh),
-                                      hov ? IM_COL32(255, 255, 255, 15) : un ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)) : IM_COL32(0, 0, 0, 0), 10.0f);
-                    // Kind icon on a tinted disc.
-                    const ImVec4 kc = kind == 1 ? ImVec4(0.38f, 0.68f, 0.98f, 1.0f)    // friend
-                                    : kind == 2 ? ImVec4(0.38f, 0.80f, 0.55f, 1.0f)    // message
-                                    : kind == 3 ? ImVec4(0.66f, 0.54f, 0.98f, 1.0f)    // update
-                                                : ImVec4(0.95f, 0.72f, 0.30f, 1.0f);   // system
-                    const ImVec2 ic(rp.x + 10.0f + icD * 0.5f, rp.y + 11.0f + icD * 0.5f - 2.0f);
-                    ld->AddCircleFilled(ic, icD * 0.5f, ImGui::GetColorU32(ImVec4(kc.x, kc.y, kc.z, 0.17f)), 32);
-                    const int icon = kind == 1 ? 6 : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell;
-                    DrawNavIcon(ld, icon, ic, ImGui::GetColorU32(ImVec4(kc.x * 0.8f + 0.2f, kc.y * 0.8f + 0.2f, kc.z * 0.8f + 0.2f, 1.0f)));
-                    // Title (faux-bold + brighter when unread), then up to two body lines.
-                    const std::string title = FitText(n.title.empty() ? std::string("Notification") : n.title, textW);
-                    const ImU32 tcol = un ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.80f);
-                    ld->AddText(ImVec2(tx, rp.y + 11.0f), tcol, title.c_str());
-                    if (un) ld->AddText(ImVec2(tx + 0.7f, rp.y + 11.0f), tcol, title.c_str());
-                    float by = rp.y + 11.0f + th + 3.0f;
-                    if (!b1.empty()) { ld->AddText(ImVec2(tx, by), cDim, b1.c_str()); by += th + 1.0f; }
-                    if (!b2.empty()) ld->AddText(ImVec2(tx, by), cDim, b2.c_str());
-                    // Right column: relative time (or a dismiss x on hover) + unread dot.
-                    char rt[16];
-                    if (ageS < 60) std::snprintf(rt, sizeof(rt), "now");
-                    else if (ageS < 3600) std::snprintf(rt, sizeof(rt), "%um", (unsigned)(ageS / 60));
-                    else if (ageS < 86400) std::snprintf(rt, sizeof(rt), "%uh", (unsigned)(ageS / 3600));
-                    else std::snprintf(rt, sizeof(rt), "%ud", (unsigned)(ageS / 86400));
-                    const float rx = rp.x + rw - 12.0f;
-                    if (hov) {
-                        const ImVec2 xp(rx - 22.0f, rp.y + 8.0f);
-                        ImGui::SetCursorScreenPos(xp);
-                        if (ImGui::InvisibleButton("##ntx", ImVec2(22, 22))) dismissIdx = idx;
-                        const bool xh = ImGui::IsItemHovered();
-                        const ImVec2 xc(xp.x + 11.0f, xp.y + 11.0f);
-                        ld->AddCircleFilled(xc, 11.0f, xh ? IM_COL32(255, 255, 255, 34) : IM_COL32(255, 255, 255, 14), 20);
-                        const ImU32 xcol = xh ? cText : cDim;
-                        ld->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xcol, 1.5f);
-                        ld->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xcol, 1.5f);
-                        if (xh) ImGui::SetTooltip("Dismiss");
-                    } else {
-                        const ImVec2 ts = ImGui::CalcTextSize(rt);
-                        ld->AddText(ImVec2(rx - ts.x, rp.y + 11.0f), un ? ImGui::GetColorU32(accLt) : cDim, rt);
-                    }
-                    if (un) ld->AddCircleFilled(ImVec2(rx - 5.0f, rp.y + 11.0f + th + 3.0f + th * 0.5f + 1.0f), 4.5f, ImGui::GetColorU32(kAccent), 14);
-                    if (click && dismissIdx != idx) {
-                        n.read = true; g_notifFresh.erase(n.key);
-                        if (n.gotoTab >= 0) gotoTabReq = n.gotoTab;
-                        if (n.key.rfind("crash:", 0) == 0) g_setCatJump = 9;   // straight to Crash reports
-                    }
-                    ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + 3.0f));
-                    ImGui::Dummy(ImVec2(0, 0));
-                    ImGui::PopID();
-                }
-                if (dismissIdx >= 0 && dismissIdx < (int)g_notifs.size()) {
-                    Notif& n = g_notifs[(std::size_t)dismissIdx];
-                    ntHidden.insert(sigOf(n)); n.read = true; g_notifFresh.erase(n.key);
-                }
-                // Static notifications that were dismissed can go for good; the
-                // re-synced ones (dyn:/news:) stay hidden via ntHidden.
-                for (auto it = g_notifs.begin(); it != g_notifs.end();) {
-                    const bool synced = it->key.rfind("dyn:", 0) == 0 || it->key.rfind("news:", 0) == 0;
-                    if (!synced && isHidden(*it)) it = g_notifs.erase(it);   // (its sig stays in the cleared list)
-                    else ++it;
-                }
-                if (order.empty()) {   // ---- Empty state ----
-                    const float aw = ImGui::GetContentRegionAvail().x, ah = ImGui::GetContentRegionAvail().y;
-                    ImGui::Dummy(ImVec2(0, std::max(16.0f, ah * 0.20f)));
-                    const ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30.0f);
-                    const bool caughtUp = totalN == 0 || ntFilter == 1;
-                    ld->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
-                    DrawNavIcon(ld, kIcoBell, c, cDim);
-                    if (caughtUp) {   // small green check badge
-                        const ImVec2 bc(c.x + 20.0f, c.y + 20.0f);
-                        ld->AddCircleFilled(bc, 10.0f, ImGui::GetColorU32(panelBg), 20);
-                        ld->AddCircleFilled(bc, 8.0f, IM_COL32(64, 186, 104, 255), 20);
-                        ld->PathLineTo(ImVec2(bc.x - 3.6f, bc.y + 0.2f)); ld->PathLineTo(ImVec2(bc.x - 1.0f, bc.y + 2.8f));
-                        ld->PathLineTo(ImVec2(bc.x + 3.8f, bc.y - 2.8f)); ld->PathStroke(IM_COL32_WHITE, 0, 1.8f);
-                    }
-                    ImGui::Dummy(ImVec2(0, 74));
-                    auto centered = [&](const char* s, bool dim) {
-                        const float tw = ImGui::CalcTextSize(s).x;
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
-                        if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
-                    };
-                    const char* hint = totalN == 0 ? "Friend requests, messages and updates show up here."
-                                     : ntFilter == 1 ? "No unread notifications."
-                                     : ntFilter == 2 ? "No friend notifications."
-                                     : ntFilter == 3 ? "No message notifications."
-                                     : ntFilter == 4 ? "No update notifications."
-                                                     : "No system notifications.";
-                    ImGui::SetWindowFontScale(1.08f);
-                    centered(caughtUp ? "You're all caught up" : "Nothing here", false);
-                    ImGui::SetWindowFontScale(1.0f);
-                    centered(hint, true);
+                for (const Seed& s : seed) add(s.key, s.title, s.body, s.kind, s.agoMin, s.unread, s.go);
+                if (ntDemo == "many")
+                    for (int i = 0; i < 30; ++i)
+                        add("demo:many" + std::to_string(i), "Friend " + std::to_string(i) + " is now playing", "Orbit Hopper  \xC2\xB7  join from their profile", i % 4, 300u + (Uint32)i * 400u, i < 4, 6);
+                if (ntDemo == "long") {
+                    add("demo:long1", "averyveryverylongusername_2026 sent you a message with a really long title that will not fit",
+                        "This body text is long on purpose: it keeps going past the end of the first line, past the second line too, and should be cut "
+                        "with an ellipsis instead of running out of the panel or under the time.", 2, 1, true, 6);
+                    add("demo:long2", "Supercalifragilisticexpialidocious_no_spaces_at_all_in_this_notification_title", "Short body.", 0, 3, true, -1);
                 }
             }
-            ImGui::EndChild();
-            ImGui::End();
-            if (gotoTabReq >= 0) { tab = gotoTabReq; closeReq = true; }
-            if (closeReq || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_notifPanelOpen = false;
-            // Clicking anywhere outside closes it (the bell itself toggles).
-            if (ntWasOpen && g_notifPanelOpen && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
-                const ImVec2 m = ImGui::GetIO().MousePos;
-                const bool inPanel = m.x >= wpos.x && m.y >= wpos.y && m.x < wpos.x + wsz.x && m.y < wpos.y + wsz.y;
-                const bool inBell = m.x >= g_notifBellMin.x && m.y >= g_notifBellMin.y && m.x < g_notifBellMax.x && m.y < g_notifBellMax.y;
-                if (!inPanel && !inBell) g_notifPanelOpen = false;
-            }
-        } else {
-            g_notifFresh.clear();   // "new since you opened it" only lasts while it's open
+            ntSeeded = true;
         }
-        ntWasOpen = g_notifPanelOpen;
+        // The Notifications page itself is drawn with the other pages (tab 16, DrawNotificationsPage).
 
         // Keyboard shortcuts: 1-5 switch tabs (when not typing in a field);
         // Ctrl+F focuses the current tab's search box; Esc clears every search.
@@ -12312,10 +12342,17 @@ int main(int argc, char** argv) {
         float navItemH = navRowH;
         bool navCompact = false;
         int navRowsDrawn = 0, navSectionsDrawn = 0;
+        bool navRecordRows = false; std::vector<float>* navRowBottoms = nullptr; float navRowTop = 0.0f;
+        bool navScrollToSel = false;   // this frame the page or the window height changed: bring the selected row into view   // the rows area's row positions (WholeRowsHeight)
         auto navRow = [&](const char* id, const char* label, int icon, bool sel, int badge, ImU32 badgeCol) -> bool {
             const float navRowH = navItemH;   // (this row's height)
             ++navRowsDrawn;
             ImVec2 mn = ImGui::GetCursorScreenPos();
+            if (navRowsDrawn > 0 && navRecordRows) navRowBottoms->push_back(mn.y + navRowH - navRowTop);
+            if (sel && navRecordRows && navScrollToSel) {   // the selected row is scrolled fully into view (page change, resize)
+                const float wy = ImGui::GetWindowPos().y, wh = ImGui::GetWindowHeight();
+                if (mn.y < wy || mn.y + navRowH > wy + wh) ImGui::SetScrollY(ImGui::GetScrollY() + (mn.y + navRowH * 0.5f) - (wy + wh * 0.5f));
+            }
             float w = ImGui::GetContentRegionAvail().x;
             ImVec2 mx(mn.x + w, mn.y + navRowH);
             bool click = ImGui::InvisibleButton(id, ImVec2(w, navRowH));
@@ -12448,15 +12485,30 @@ int main(int argc, char** argv) {
         // Rows that do not fit used to be cut off at the bottom of this area, right above Notifications (a window about 750
         // high cut "What's New" in half). Now, from the last frame's counts: when the full layout does not fit, the group
         // labels become hairlines and the rows 4 px shorter; when even that does not fit, the area shows its scrollbar.
-        const float itemsH = ImGui::GetContentRegionAvail().y - footH;
+        static float s_navFootMeasured = 0.0f;   // the footer's real height last frame (see the end of the sidebar)
+        float itemsH = okay::launchernav::NavItemsHeight(ImGui::GetContentRegionAvail().y, footH, s_navFootMeasured);
         static int s_navRows = 0, s_navSections = 0;
         const okay::launchernav::NavFit navFit =
             okay::launchernav::FitNavRows(s_navRows, s_navSections, itemsH, navRowH, ImGui::GetTextLineHeight(), g_navCollapsed);
         navCompact = navFit.compact;
         navItemH = navFit.rowH;
         const bool navScroll = navFit.scroll;
-        ImGui::BeginChild("navitems", ImVec2(0, itemsH), false, navScroll ? 0 : ImGuiWindowFlags_NoScrollbar);
+        if (navScroll) itemsH = std::max(0.0f, itemsH - 8.0f - ImGui::GetStyle().ItemSpacing.y);   // room for the divider gap
+        // When the rows scroll, the area stops at the bottom of the last row that fits whole (from last frame's row positions),
+        // so its edge never cuts a row in half right above Notifications (owner's 720 x 500 screenshot).
+        static std::vector<float> s_navRowBottoms;   // each row's bottom, from the area's top, scrolled to the top
+        const float navAreaH = navScroll ? okay::launchernav::WholeRowsHeight(s_navRowBottoms, itemsH) : itemsH;
+        {
+            static int s_selTab = -1; static float s_selH = -1.0f;
+            navScrollToSel = navScroll && (s_selTab != tab || std::fabs(s_selH - itemsH) > 0.5f);
+            s_selTab = tab; s_selH = itemsH;
+        }
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(1, 1, 1, 0.28f));   // a thumb you can see when the menu overflows
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(1, 1, 1, 0.40f));
+        ImGui::BeginChild("navitems", ImVec2(0, navAreaH), false, navScroll ? 0 : ImGuiWindowFlags_NoScrollbar);
         navRowsDrawn = 0; navSectionsDrawn = 0;   // count only the rows in this area
+        s_navRowBottoms.clear();
+        navRecordRows = true; navRowBottoms = &s_navRowBottoms; navRowTop = ImGui::GetCursorScreenPos().y + ImGui::GetScrollY();
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
             char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
@@ -12471,7 +12523,7 @@ int main(int argc, char** argv) {
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
-        if (navRow("##navcli", "Command line", kIcoTerminal, tab == 16 && !g_pfOpen, 0, 0)) { tab = 16; ClosePublicProfile(); }
+        if (navRow("##navcli", "Command line", kIcoTerminal, tab == 17 && !g_pfOpen, 0, 0)) { tab = 17; ClosePublicProfile(); }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
         if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed)) {
@@ -12490,7 +12542,28 @@ int main(int argc, char** argv) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
         }
-        ImGui::EndChild();   // end scrollable nav items
+        {   // When the rows scroll, the last visible one fades out at the area's edge and a hairline separates the pinned rows,
+            // so a row cut by the scroll edge reads as "more below", never as drawn under Notifications.
+            navRecordRows = false;
+            const ImVec2 lmin = ImGui::GetWindowPos();   // (the rows area itself, asked from inside it)
+            const ImVec2 lmax(lmin.x + ImGui::GetWindowSize().x, lmin.y + ImGui::GetWindowSize().y);
+            const bool moreBelow = ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 1.0f;
+            ImGui::EndChild();
+            ImGui::PopStyleColor(2);   // end scrollable nav items
+            if (navScroll && moreBelow) {
+                ImDrawList* fdl = ImGui::GetWindowDrawList();
+                const ImU32 solid = ImGui::GetColorU32(navBg), clear = ImGui::GetColorU32(ImVec4(navBg.x, navBg.y, navBg.z, 0.0f));
+                const float fadeH = std::min(28.0f, (lmax.y - lmin.y) * 0.3f);
+                fdl->AddRectFilledMultiColor(ImVec2(lmin.x, lmax.y - fadeH), ImVec2(lmax.x, lmax.y), clear, clear, solid, solid);
+            }
+            ImGui::Dummy(ImVec2(0, std::max(0.0f, itemsH - navAreaH)));   // the pinned rows stay at the bottom
+            if (navScroll) {   // a divider and 8 px between the scrolling menu and the pinned rows
+                const ImVec2 dp = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(lmin.x + 10.0f, dp.y + 4.0f), ImVec2(lmax.x - 10.0f, dp.y + 4.0f), IM_COL32(255, 255, 255, 26), 1.0f);
+                ImGui::Dummy(ImVec2(0, 8.0f));
+            }
+        }
+        const float navFootStartY = ImGui::GetCursorScreenPos().y;
         s_navRows = navRowsDrawn; s_navSections = navSectionsDrawn;
         navItemH = navRowH; navCompact = false;   // the footer rows below are full height
 
@@ -12575,13 +12648,7 @@ int main(int argc, char** argv) {
         }
         {   // ---- Notifications + Settings ----
             int unread = NotifUnread();
-            if (navRow("##navbell", "Notifications", kIcoBell, g_notifPanelOpen, unread, navRed)) {
-                g_notifPanelOpen = !g_notifPanelOpen;
-                if (g_notifPanelOpen) {
-                    g_notifFresh.clear();
-                    for (auto& n : g_notifs) { if (!n.read) g_notifFresh.insert(n.key); n.read = true; }   // opening clears unread
-                }
-            }
+            if (navRow("##navbell", "Notifications", kIcoBell, tab == 16 && !g_pfOpen, unread, navRed)) { tab = 16; ClosePublicProfile(); }
             g_notifBellMin = ImGui::GetItemRectMin(); g_notifBellMax = ImGui::GetItemRectMax();
             if (navRow("##nav4", navs[4], 4, tab == 4, 0, 0)) { tab = 4; ClosePublicProfile(); }
         }
@@ -12654,6 +12721,7 @@ int main(int argc, char** argv) {
             }
             if (click) { tab = 3; g_lastTab = 3; SavePrefs(); ClosePublicProfile(); }
         }
+        s_navFootMeasured = ImGui::GetCursorScreenPos().y - navFootStartY;   // next frame's rows area ends above all of this
         ImGui::PopStyleVar();   // ItemSpacing
         ImGui::EndChild();
         ImGui::PopStyleColor(); // nav ChildBg
@@ -12699,14 +12767,12 @@ int main(int argc, char** argv) {
         // renders a centered "sign in" card and returns false.
         auto loginGate = [&](const char* what) -> bool {
             if (account.IsLoggedIn()) return true;
-            ImGui::Dummy(ImVec2(0, 40));
-            auto center = [&](const char* s, bool dim){ float tw=ImGui::CalcTextSize(s).x; float o=(ImGui::GetContentRegionAvail().x-tw)*0.5f; if(o>0) ImGui::SetCursorPosX(ImGui::GetCursorPosX()+o); if(dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s); };
-            center("Sign in required", false);
-            char line[96]; std::snprintf(line, sizeof(line), "Sign in to your OkaySpace account to use %s.", what);
-            center(line, true);
-            ImGui::Dummy(ImVec2(0, 10));
-            float o=(ImGui::GetContentRegionAvail().x-180)*0.5f; if(o>0) ImGui::SetCursorPosX(ImGui::GetCursorPosX()+o);
-            if (PrimaryButton("Sign in", ImVec2(180, 42))) { tab = 3; g_lastTab = 3; SavePrefs(); }
+            char line[128]; std::snprintf(line, sizeof(line), "Sign in to your OkaySpace account to use %s.", what);
+            EmptyState(3, "Sign in required", line, UiPx(40.0f));
+            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+            const float bw = FitButtonW("Sign in", UiPx(180.0f));
+            const float o = (ImGui::GetContentRegionAvail().x - bw) * 0.5f; if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
+            if (PrimaryButton("Sign in", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(14.0f)))) { tab = 3; g_lastTab = 3; SavePrefs(); }
             return false;
         };
         // Public profile page: overlays the current tab (Back returns to it);
@@ -12946,7 +13012,7 @@ int main(int argc, char** argv) {
                 s_projSearchActive = ImGui::IsItemActive();
                 ImGui::SameLine(0, 8);
                 ImGui::SetNextItemWidth(sortW);
-                ImGui::Combo("##projsort", &s_projSort, "Recent\0Name\0");
+                SlateCombo("##projsort", &s_projSort, "Recent\0Name\0");
                 ImGui::SameLine(0, 8);
                 if (RoundIconButton("##projrefresh", kIcoRefresh, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText, "Refresh"))
                     s_projScanned = "\x01";
@@ -12959,7 +13025,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(0, 6);
                 if (RoundIconButton("##projclipage", kIcoTerminal, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
                                     "Command line: run okay on a project, here in the launcher"))
-                    tab = 16;
+                    tab = 17;
             }
             {
                 static char ghUrl[300] = "";
@@ -13129,7 +13195,7 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
                         ImGui::Separator();
                         if (ImGui::MenuItem("Open command line", nullptr, false, !pr.missing)) okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
-                        if (ImGui::MenuItem("Command line in the launcher", nullptr, false, !pr.missing)) { okaylcli::SetProject(root.string(), pr.name); tab = 16; g_lastTab = 16; }
+                        if (ImGui::MenuItem("Command line in the launcher", nullptr, false, !pr.missing)) { okaylcli::SetProject(root.string(), pr.name); tab = 17; g_lastTab = 17; }
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
                             OpenExternal(fs::path(pr.scene).parent_path().parent_path().string());
                         if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(pr.scene.c_str());
@@ -13324,7 +13390,7 @@ int main(int argc, char** argv) {
                             if (!verProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", verProblem.c_str());
                             ImGui::TextUnformatted("Renderer");
                             ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x));
-                            ImGui::Combo("##wizgpu", &s_gpu, "GPU\0Software\0");
+                            SlateCombo("##wizgpu", &s_gpu, "GPU\0Software\0");
                             ImGui::BeginDisabled(!GitAvailable());
                             ImGui::Checkbox("Initialize a Git repository", &s_git);
                             ImGui::EndDisabled();
@@ -13517,7 +13583,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 12 && okayFrame && !OkayPageCovered(
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
@@ -13555,7 +13621,26 @@ int main(int argc, char** argv) {
             ImGui::InvisibleButton("##okayui_whatsnew", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
             g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            {   // the two sections, as on the Dear ImGui page
+                std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
+                WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
+                using TV = okayuiscreens::WhatsNewModel::TestView;
+                using LV = okay::launcherlayout::TestBuildsView;
+                const LV lv = okay::launcherlayout::TestBuildsViewOf(testsOn, devState, devRows.size());
+                wn.showSections = true; wn.section = g_wnSection;
+                wn.testView = lv == LV::Off ? TV::Off : lv == LV::Loading ? TV::Loading : lv == LV::Failed ? TV::Failed : lv == LV::Empty ? TV::Empty : TV::List;
+                for (const DevBuildRow& b : devRows)
+                    wn.testBuilds.push_back({okayver::WithV(b.version), b.date, b.branch.empty() ? std::string() : okay::testbuild::DisplayBranch(b.branch), b.note, b.version == OKAY_ENGINE_VERSION});
+                for (std::size_t a = 0; a < devNotes.size();) {
+                    std::size_t e = devNotes.find('\n', a); if (e == std::string::npos) e = devNotes.size();
+                    if (e > a) wn.testNotes.push_back(devNotes.substr(a, e - a));
+                    a = e + 1;
+                }
+            }
             const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            if (wr.sectionClicked >= 0) g_wnSection = wr.sectionClicked;
+            if (wr.openUpdateSettings) { tab = 4; g_setCatJump = 3; }
+            if (wr.checkAgain) StartUpdateCheck();
             if (wr.installNow) StartUpdateCheck(true);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
             if (wr.checkForUpdates) StartUpdateCheck();
@@ -13596,55 +13681,163 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
             }
-            ImGui::Dummy(ImVec2(0, 10));
-            // One release: version title (+ "Latest" pill) and its notes as bullets.
-            auto releaseCard = [&](const NewsRelease& r, bool latest) {
-                ImGui::PushID(r.ver.c_str());
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
-                ImGui::BeginChild("##rel", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
-                ImGui::SetWindowFontScale(1.12f);
-                ImGui::TextUnformatted(r.ver.c_str());
-                ImGui::SetWindowFontScale(1.0f);
-                if (latest) {
-                    ImGui::SameLine(0, 10);
-                    ImVec2 pp = ImGui::GetCursorScreenPos();
-                    const char* pill = "Latest";
-                    ImVec2 ts = ImGui::CalcTextSize(pill);
-                    pp.y += 2.0f;
-                    ImGui::GetWindowDrawList()->AddRectFilled(pp, ImVec2(pp.x + ts.x + 14, pp.y + ts.y + 4),
-                                                              ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), 9.0f);
-                    ImGui::GetWindowDrawList()->AddText(ImVec2(pp.x + 7, pp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), pill);
-                    ImGui::Dummy(ImVec2(ts.x + 14, ts.y));
-                }
-                ImGui::Dummy(ImVec2(0, 2));
-                ImGui::PushTextWrapPos(0.0f);
-                for (const auto& l : r.lines) ImGui::BulletText("%s", l.c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::EndChild();
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-                ImGui::PopID();
-            };
-            if (!g_newsHistory.empty()) {
-                releaseCard(g_newsHistory[0], true);
-                if (g_newsHistory.size() > 1) {
-                    ImGui::Dummy(ImVec2(0, 10));
-                    ImGui::SeparatorText("Earlier releases");
-                    for (std::size_t i = 1; i < g_newsHistory.size(); ++i) {
-                        ImGui::PushID((int)i);
-                        if (ImGui::CollapsingHeader(g_newsHistory[i].ver.c_str(), i == 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-                            ImGui::Indent(8.0f);
-                            for (const auto& l : g_newsHistory[i].lines) ImGui::BulletText("%s", l.c_str());
-                            ImGui::Unindent(8.0f);
-                        }
-                        ImGui::PopID();
-                    }
-                }
-            } else {
-                ImGui::TextWrapped("Release notes are not loaded yet. They appear here once the launcher has checked for updates (you may be offline).");
+            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+            namespace PL = okay::launcherlayout;
+            // Two sections: the releases' notes, and the test builds (dev/versions.json and the newest one's dev/NOTES-DEV.txt).
+            std::vector<DevBuildRow> devRows; std::string devNotes; int devState = 0; std::map<std::string, std::string> relDates; bool testsOn = false;
+            WhatsNewData(devRows, devNotes, devState, relDates, testsOn);
+            int& wnSection = g_wnSection;   // 0 Releases, 1 Test builds (shared with the OkayUI version of the page)
+            {
+                std::vector<Chip> chips(2);
+                chips[0].label = "Releases";
+                chips[1].label = "Test builds";
+                if (testsOn && !devRows.empty()) chips[1].count = (int)devRows.size();
+                const int hit = ChipRow("##wnsect", chips, wnSection, ImGui::GetContentRegionAvail().x);
+                if (hit >= 0) wnSection = hit;
+                ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
             }
-        } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+            static std::set<std::string> s_wnExpanded;   // releases / builds whose notes show in full
+            // Notes as wrapped bullets: a long list shows its first lines and "Show all N notes".
+            auto notesList = [&](const std::string& key, const std::vector<std::string>& lines) {
+                const bool expanded = s_wnExpanded.count(key) != 0;
+                const PL::NotesView nv = PL::NotesShown((int)lines.size(), expanded);
+                ImGui::PushTextWrapPos(0.0f);
+                for (int i = 0; i < nv.shown; ++i) {   // (ImGui::BulletText never wraps: a long note ran off the card, cut at its edge)
+                    ImGui::Bullet();
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();   // the wrapped lines line up under the first one, not under the bullet
+                    ImGui::TextWrapped("%s", lines[(std::size_t)i].c_str());
+                    ImGui::EndGroup();
+                }
+                ImGui::PopTextWrapPos();
+                if (nv.toggle) {
+                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                    char tl[64];
+                    if (expanded) std::snprintf(tl, sizeof(tl), "Show less##%s", key.c_str());
+                    else std::snprintf(tl, sizeof(tl), "Show all %d notes##%s", (int)lines.size(), key.c_str());
+                    if (FitButton(tl, 0.0f)) { if (expanded) s_wnExpanded.erase(key); else s_wnExpanded.insert(key); }
+                }
+            };
+            auto splitLines = [](const std::string& text) {
+                std::vector<std::string> v;
+                for (std::size_t a = 0; a < text.size();) {
+                    std::size_t e = text.find('\n', a); if (e == std::string::npos) e = text.size();
+                    if (e > a) v.push_back(text.substr(a, e - a));
+                    a = e + 1;
+                }
+                return v;
+            };
+            auto pill = [&](const char* text, ImVec4 col) {
+                ImGui::SameLine(0, UiPx(10.0f));
+                ImVec2 pp = ImGui::GetCursorScreenPos();
+                const ImVec2 ts = ImGui::CalcTextSize(text);
+                pp.y += UiPx(2.0f);
+                ImGui::GetWindowDrawList()->AddRectFilled(pp, ImVec2(pp.x + ts.x + UiPx(14.0f), pp.y + ts.y + UiPx(4.0f)), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.30f)), (ts.y + UiPx(4.0f)) * 0.5f);
+                ImGui::GetWindowDrawList()->AddText(ImVec2(pp.x + UiPx(7.0f), pp.y + UiPx(2.0f)), ImGui::GetColorU32(ImGuiCol_Text), text);
+                ImGui::Dummy(ImVec2(ts.x + UiPx(14.0f), ts.y));
+            };
+            ImGui::BeginChild("##wnbody", ImVec2(0, std::max(UiPx(120.0f), ImGui::GetContentRegionAvail().y - PageFooterH())), false);
+            if (wnSection == 0) {   // ---- Releases ----
+                if (!g_newsHistory.empty()) {
+                    const NewsRelease& r = g_newsHistory[0];
+                    ImGui::PushID(r.ver.c_str());
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, cardBg);
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(16.0f), UiPx(12.0f)));
+                    ImGui::BeginChild("##rel", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+                    ImGui::SetWindowFontScale(1.12f);
+                    ImGui::TextUnformatted(r.ver.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                    pill("Latest", kAccent);
+                    const auto dIt = relDates.find(r.ver);
+                    if (dIt != relDates.end()) { ImGui::SameLine(0, UiPx(10.0f)); ImGui::TextDisabled("%s", dIt->second.c_str()); }
+                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                    notesList(r.ver, r.lines);
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::PopID();
+                    if (g_newsHistory.size() > 1) {
+                        ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                        SectionLabel("EARLIER RELEASES", (int)g_newsHistory.size() - 1);
+                        for (std::size_t i = 1; i < g_newsHistory.size(); ++i) {
+                            const NewsRelease& er = g_newsHistory[i];
+                            ImGui::PushID((int)i);
+                            const auto ed = relDates.find(er.ver);
+                            const std::string head = er.ver + (ed != relDates.end() ? "   " + ed->second : std::string()) + "###rel";
+                            if (ImGui::CollapsingHeader(head.c_str(), 0)) {
+                                ImGui::Indent(UiPx(8.0f));
+                                notesList(er.ver, er.lines);
+                                ImGui::Unindent(UiPx(8.0f));
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                } else {
+                    EmptyState(kIcoSpark, "No release notes yet", "They appear here once the launcher has checked for updates. You may be offline.", UiPx(30.0f));
+                }
+            } else {   // ---- Test builds ----
+                const PL::TestBuildsView tv = PL::TestBuildsViewOf(testsOn, devState, devRows.size());
+                auto openUpdateSettings = [&]() {
+                    const float bw = FitButtonW("Open update settings", UiPx(160.0f));
+                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                    if (ImGui::Button("Open update settings", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) { tab = 4; g_setCatJump = 3; }
+                };
+                if (tv == PL::TestBuildsView::Off) {
+                    EmptyState(kIcoRefresh, "Test builds are off", "Turn on Settings > Behavior > Get test builds to see and get builds made for testing, before they are released.", UiPx(30.0f));
+                    openUpdateSettings();
+                } else if (tv == PL::TestBuildsView::Loading) {
+                    EmptyState(kIcoRefresh, "Looking for test builds\xE2\x80\xA6", "They show here after the next update check.", UiPx(30.0f));
+                } else if (tv == PL::TestBuildsView::Failed) {
+                    EmptyState(kIcoAlert, "Couldn't read the test builds", "The list could not be downloaded or was not signed. Check your connection; the next update check tries again.", UiPx(30.0f));
+                    const float bw = FitButtonW("Check again", UiPx(140.0f));
+                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                    if (ImGui::Button("Check again", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) StartUpdateCheck();
+                } else if (tv == PL::TestBuildsView::Empty) {
+                    EmptyState(kIcoRefresh, "No test builds right now", "When a build is made for testing it shows here, newest first.", UiPx(30.0f));
+                } else {
+                    SectionLabel("RECENT TEST BUILDS", (int)devRows.size());
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    const float W = ImGui::GetContentRegionAvail().x, pad = UiPx(14.0f), lh = ImGui::GetTextLineHeight();
+                    for (std::size_t i = 0; i < devRows.size(); ++i) {
+                        const DevBuildRow& b = devRows[i];
+                        const bool installed = b.version == OKAY_ENGINE_VERSION;
+                        const std::string ver = okayver::WithV(b.version);
+                        const std::string note = b.note.empty() ? std::string("No note was given for this build.") : b.note;
+                        const float noteW = W - 2 * pad;
+                        const float noteH = ImGui::CalcTextSize(note.c_str(), nullptr, false, noteW).y;
+                        const float pillW = installed ? ImGui::CalcTextSize("Installed").x + UiPx(14.0f) : 0.0f;
+                        const PL::BuildRow L = PL::LayoutBuildRow(W, pad, lh, ImGui::CalcTextSize(ver.c_str()).x + 1.0f, pillW, ImGui::CalcTextSize(b.date.c_str()).x, noteH);
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        const ImVec2 o = ImGui::GetCursorScreenPos();
+                        dl->AddRectFilled(o, ImVec2(o.x + W, o.y + L.row.h), ImGui::GetColorU32(cardBg), UiPx(12.0f));
+                        if (installed) dl->AddRect(o, ImVec2(o.x + W, o.y + L.row.h), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)), UiPx(12.0f), 0, 1.2f);
+                        dl->AddText(ImVec2(o.x + L.version.x, o.y + L.version.y), ImGui::GetColorU32(ImGuiCol_Text), FitText(ver, L.version.w).c_str());
+                        if (installed) {
+                            dl->AddRectFilled(ImVec2(o.x + L.pill.x, o.y + L.pill.y), ImVec2(o.x + L.pill.R(), o.y + L.pill.B()), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.30f)), lh * 0.5f);
+                            dl->AddText(ImVec2(o.x + L.pill.x + UiPx(7.0f), o.y + L.pill.y), ImGui::GetColorU32(ImGuiCol_Text), "Installed");
+                        }
+                        dl->AddText(ImVec2(o.x + L.date.x, o.y + L.date.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), b.date.c_str());
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(o.x + L.note.x, o.y + L.note.y),
+                                    b.note.empty() ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text, 0.85f), note.c_str(), nullptr, noteW);
+                        const std::string br = "Branch: " + (b.branch.empty() ? std::string("not given") : okay::testbuild::DisplayBranch(b.branch));
+                        dl->AddText(ImVec2(o.x + L.branch.x, o.y + L.branch.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), FitText(br, L.branch.w).c_str());
+                        ImGui::Dummy(ImVec2(W, L.row.h));
+                        if (i == 0 && !devNotes.empty()) {   // the newest build's own notes (dev/NOTES-DEV.txt)
+                            ImGui::Indent(pad);
+                            ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                            ImGui::TextDisabled("What changed in this build");
+                            notesList("dev:" + b.version, splitLines(devNotes));
+                            ImGui::Unindent(pad);
+                        }
+                        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    }
+                    ImGui::TextDisabled("Test builds can be broken. Settings > Behavior > Get test builds turns them off.");
+                }
+            }
+            ImGui::EndChild();   // ##wnbody
+        } else if (tab == 13 && okayFrame && !OkayPageCovered(
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
@@ -13827,13 +14020,17 @@ int main(int argc, char** argv) {
                     centered("Make one on the Create page and export it with File > Build Game,", true);
                     centered("or drop a built game (or an .html web game) into the games folder.", true);
                     ImGui::Dummy(ImVec2(0, 10));
-                    const float row = 170 + 8 + 130 + 8 + 100;
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (cw - row) * 0.5f));
-                    if (PrimaryButton("Create a game", ImVec2(170, 36))) tab = 0;
-                    ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Open games folder", ImVec2(130, 36))) OpenExternal(g_exeDir);
-                    ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Refresh", ImVec2(100, 36))) { scenes = FindScenes(); s_webScanned = false; }
+                    const float b1 = FitButtonW("Create a game", UiPx(150.0f)), b2 = FitButtonW("Open games folder"), b3 = FitButtonW("Refresh", UiPx(90.0f));
+                    const float bh = ImGui::GetFrameHeight() + UiPx(10.0f), bg = UiPx(8.0f);
+                    const bool oneRow = b1 + b2 + b3 + 2 * bg <= cw;   // a narrow card stacks them
+                    const float row = oneRow ? b1 + b2 + b3 + 2 * bg : b1;
+                    const float x0 = ImGui::GetCursorPosX();
+                    ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - row) * 0.5f));
+                    if (PrimaryButton("Create a game", ImVec2(b1, bh))) tab = 0;
+                    if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b2) * 0.5f));
+                    if (ImGui::Button("Open games folder", ImVec2(b2, bh))) OpenExternal(g_exeDir);
+                    if (oneRow) ImGui::SameLine(0, bg); else ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - b3) * 0.5f));
+                    if (ImGui::Button("Refresh", ImVec2(b3, bh))) { scenes = FindScenes(); s_webScanned = false; }
                 }
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
@@ -13856,7 +14053,7 @@ int main(int argc, char** argv) {
                 ImGui::InputTextWithHint("##playFilter", "Search games...  (Ctrl+F)", playFilter, sizeof(playFilter));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(156);
-                if (ImGui::Combo("##playsort", &g_playSort,
+                if (SlateCombo("##playsort", &g_playSort,
                                  "Favorites first\0Name A\xE2\x80\x93Z\0Recently played\0Most played\0")) SavePrefs();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sort order");
                 ImGui::SameLine();
@@ -14233,7 +14430,8 @@ int main(int argc, char** argv) {
                 }   // end list view
             }
         } else if (tab == 2) {                            // ---- Community ----
-            sectionHeader("Community", nullptr);
+            namespace PL = okay::launcherlayout;
+            sectionHeader("Community", "Games, levels, scripts and models made by other OkaySpace creators. What you add here also shows in Play.");
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
@@ -14265,28 +14463,6 @@ int main(int argc, char** argv) {
                     }
                 }
             };
-            // Search pill (Friends-style): rounded field with a drawn magnifier.
-            auto searchPill = [&](const char* id, const char* hint, char* buf, size_t sz, float w) {
-                ImVec2 sp = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
-                ImGui::SetNextItemWidth(w);
-                ImGui::InputTextWithHint(id, hint, buf, sz);
-                ImGui::PopStyleVar(2);
-                float fh = ImGui::GetItemRectSize().y;
-                ImVec2 mc(sp.x + 15.0f, sp.y + fh * 0.5f - 1.0f);
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
-                dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
-            };
-            // Section label row: "YOUR LIBRARY — 3" (small caps) + hairline.
-            auto commLabel = [&](const char* title, int n) {
-                char t[64];
-                if (n >= 0) std::snprintf(t, sizeof(t), "%s  \xE2\x80\x94  %d", title, n); else std::snprintf(t, sizeof(t), "%s", title);
-                ImGui::SetWindowFontScale(0.80f);
-                ImGui::TextDisabled("%s", t);
-                ImGui::SetWindowFontScale(1.0f);
-            };
             auto folderGlyph = [](ImDrawList* d, ImVec2 c, ImU32 col) {
                 d->PathLineTo(ImVec2(c.x - 7.5f, c.y - 5.5f)); d->PathLineTo(ImVec2(c.x - 2.5f, c.y - 5.5f));
                 d->PathLineTo(ImVec2(c.x - 0.5f, c.y - 3.5f)); d->PathLineTo(ImVec2(c.x + 7.5f, c.y - 3.5f));
@@ -14313,7 +14489,8 @@ int main(int argc, char** argv) {
             };
             auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); };
 
-            // Collect library items (scenes living under community/).
+            // Collect library items (scenes living under community/). One search filters the library and the templates.
+            const std::string cneedle = lowerStr(commFilter);
             struct CommItem { std::size_t idx; fs::path root; std::string title; };
             std::vector<CommItem> commAll, commShown;
             for (std::size_t i = 0; i < scenes.size(); ++i) {
@@ -14321,155 +14498,106 @@ int main(int argc, char** argv) {
                 if (croot.empty()) continue;
                 CommItem ci{i, croot, croot.filename().string()};
                 commAll.push_back(ci);
-                std::string cneedle = lowerStr(commFilter);
                 if (cneedle.empty() || lowerStr(scenes[i].filename().string() + " " + ci.title).find(cneedle) != std::string::npos)
                     commShown.push_back(ci);
             }
 
-            const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+            // ---- Toolbar: search, Refresh, Open folder, Publish (wraps under the search at narrow widths) ----
+            const float actH = ImGui::GetFrameHeight() + UiPx(4.0f);
+            {
+                const float TW = ImGui::GetContentRegionAvail().x, gap = UiPx(8.0f);
+                const std::vector<float> bw{FitButtonW("Refresh"), FitButtonW("Open folder"), FitButtonW("Publish to Marketplace")};
+                const PL::Toolbar tb = PL::LayoutToolbar(TW, UiPx(220.0f), UiPx(460.0f), bw, actH, gap);
+                const ImVec2 o = ImGui::GetCursorScreenPos();
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.search.x, o.y + tb.search.y));
+                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+                SearchPill("##commFilter", "Search your library and templates  (Ctrl+F)", commFilter, sizeof(commFilter), tb.search.w, 0, actH);
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[0].x, o.y + tb.buttons[0].y));
+                if (ImGui::Button("Refresh", ImVec2(tb.buttons[0].w, actH))) { refreshLibrary(); Toast("Library refreshed", 1); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan the community folder");
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[1].x, o.y + tb.buttons[1].y));
+                if (ImGui::Button("Open folder", ImVec2(tb.buttons[1].w, actH))) OpenExternal(CommunityDir().string());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the community folder: anything you put there joins your library");
+                ImGui::SetCursorScreenPos(ImVec2(o.x + tb.buttons[2].x, o.y + tb.buttons[2].y));
+                if (PrimaryButton("Publish to Marketplace", ImVec2(tb.buttons[2].w, actH))) { tab = 7; g_openPublishForm = true; }
+                ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + tb.height + UiPx(12.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
+            }
+
+            const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
             ImGui::BeginChild("##commbody", ImVec2(0, bodyH), false);
             const float W = ImGui::GetContentRegionAvail().x;
+            const float lh = ImGui::GetTextLineHeight(), pad = UiPx(14.0f);
 
-            // ---- Hero: what Community is + primary actions -------------------------
-            {
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 20));
-                ImGui::BeginChild("##commhero", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                                  ImGuiWindowFlags_NoScrollbar);
+            // The drop zone: a dashed card that opens the community folder. Big as the empty library, a strip after the cards.
+            auto dropZone = [&](float h, bool big) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                const float hw = ImGui::GetContentRegionAvail().x;
-                const bool art = hw >= 560.0f;
-                const float textW = art ? hw - 190.0f : hw;
-                ImVec2 hp = ImGui::GetCursorScreenPos();
-                // Decorative stack of tiles (play / grid / bag) on the right.
-                if (art) {
-                    const float S = 58.0f;
-                    struct { float dx, dy; int icon; float a; } tiles[] = {{-150, 18, 1, 0.16f}, {-104, 2, 2, 0.26f}, {-58, 22, 7, 0.18f}};
-                    for (auto& t : tiles) {
-                        ImVec2 a(hp.x + hw + t.dx, hp.y + t.dy);
-                        dl->AddRectFilled(a, ImVec2(a.x + S, a.y + S), ImGui::GetColorU32(okaytheme::kRaised), 14.0f);
-                        dl->AddRectFilled(a, ImVec2(a.x + S, a.y + S), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, t.a)), 14.0f);
-                        dl->AddRect(a, ImVec2(a.x + S, a.y + S), IM_COL32(255, 255, 255, 26), 14.0f, 0, 1.0f);
-                        DrawNavIcon(dl, t.icon, ImVec2(a.x + S * 0.5f, a.y + S * 0.5f), ImGui::GetColorU32(accLt));
-                    }
-                }
-                ImGui::SetWindowFontScale(1.22f);
-                ImGui::TextUnformatted("Play and share community creations");
-                ImGui::SetWindowFontScale(1.0f);
-                ImGui::Dummy(ImVec2(0, 2));
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textW);
-                ImGui::TextDisabled("Games, levels, scripts and models made by other OkaySpace creators. Everything you add "
-                                    "lives in your community folder and also shows up in Play.");
-                ImGui::PopTextWrapPos();
-                ImGui::Dummy(ImVec2(0, 8));
-                // Actions: wrap onto a new line when the card is narrow.
-                const float bh = 36.0f;
-                float x = 0.0f;
-                auto place = [&](float bw) {
-                    if (x > 0 && x + 8 + bw <= hw) { ImGui::SameLine(0, 8); x += 8 + bw; }
-                    else x = bw;
-                };
-                place(206);
-                if (PrimaryButton("Publish to Marketplace", ImVec2(206, bh))) { tab = 7; g_openPublishForm = true; }
-                place(206);
-                if (ImGui::Button("Open community folder", ImVec2(206, bh))) OpenExternal(CommunityDir().string());
-                place(112);
-                {
-                    ImVec2 rp = ImGui::GetCursorScreenPos();
-                    if (ImGui::Button("      Refresh", ImVec2(112, bh))) { refreshLibrary(); Toast("Library refreshed", 1); }
-                    DrawNavIcon(ImGui::GetWindowDrawList(), kIcoRefresh, ImVec2(rp.x + 22, rp.y + bh * 0.5f), cText);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan the community folder");
-                }
-                ImGui::EndChild();
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0, 10));
-
-            // ---- Drop zone: dashed card, click opens the community folder ----------
-            {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                const float h = 88.0f;
+                const ImVec2 p = ImGui::GetCursorScreenPos();
                 const bool clicked = ImGui::InvisibleButton("##commdrop", ImVec2(W, h));
                 const bool hov = ImGui::IsItemHovered();
-                dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, hov ? 0.10f : 0.05f)), 12.0f);
-                dashedRoundRect(dl, ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + W - 0.5f, p.y + h - 0.5f), 12.0f,
+                dl->AddRectFilled(p, ImVec2(p.x + W, p.y + h), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, hov ? 0.10f : 0.05f)), UiPx(12.0f));
+                dashedRoundRect(dl, ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + W - 0.5f, p.y + h - 0.5f), UiPx(12.0f),
                                 ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, hov ? 0.85f : 0.50f)), 1.5f, 7.0f, 5.0f);
-                ImVec2 ic(p.x + 46.0f, p.y + h * 0.5f);
-                dl->AddCircleFilled(ic, 22.0f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.18f)), 32);
-                DrawNavIcon(dl, 10, ic, ImGui::GetColorU32(accLt));
-                const float tx = p.x + 84.0f, tw = W - 84.0f - 18.0f;
-                const float lh = ImGui::GetTextLineHeight();
-                const char* d1 = "Drag a game folder, scene, script or model onto this window to add it to your library. "
-                                 "A dropped .okayscene plays right away.";
-                ImVec2 ds = ImGui::CalcTextSize(d1, nullptr, false, tw);
-                const float ty = p.y + (h - (lh + 4.0f + ds.y)) * 0.5f;
-                dl->AddText(ImVec2(tx, ty), cText, "Drop files here to add them to your library");
-                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty + lh + 4.0f), cDim, d1, nullptr, tw);
+                if (big) {
+                    const ImVec2 ic(p.x + W * 0.5f, p.y + UiPx(48.0f));
+                    dl->AddCircleFilled(ic, UiPx(26.0f), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.18f)), 32);
+                    DrawNavIcon(dl, 10, ic, ImGui::GetColorU32(accLt));
+                    const char* t1 = "Your library is empty";
+                    const char* t2 = "Drag a game folder, scene, script or model onto this window to add it. A dropped .okayscene plays right away.";
+                    ImGui::SetWindowFontScale(1.12f);
+                    const ImVec2 s1 = ImGui::CalcTextSize(t1);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + (W - s1.x) * 0.5f, p.y + UiPx(86.0f)), cText, t1);
+                    ImGui::SetWindowFontScale(1.0f);
+                    const float wrapW = std::min(W - 2 * pad, UiPx(520.0f));
+                    const ImVec2 s2 = ImGui::CalcTextSize(t2, nullptr, false, wrapW);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + (W - std::min(wrapW, s2.x)) * 0.5f, p.y + UiPx(86.0f) + s1.y + UiPx(6.0f)), cDim, t2, nullptr, wrapW);
+                    const char* t3 = "Click to open the community folder";
+                    const ImVec2 s3 = ImGui::CalcTextSize(t3);
+                    dl->AddText(ImVec2(p.x + (W - s3.x) * 0.5f, p.y + h - pad - s3.y), ImGui::GetColorU32(accLt), t3);
+                } else {
+                    const ImVec2 ic(p.x + pad + UiPx(14.0f), p.y + h * 0.5f);
+                    DrawNavIcon(dl, 10, ic, ImGui::GetColorU32(accLt));
+                    const char* t = "Drop more games, scenes, scripts or models onto this window to add them";
+                    dl->AddText(ImVec2(ic.x + UiPx(24.0f), p.y + (h - lh) * 0.5f), cDim, FitText(t, W - (ic.x - p.x) - UiPx(24.0f) - pad).c_str());
+                }
                 if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Open the community folder"); }
                 if (clicked) OpenExternal(CommunityDir().string());
-            }
-            ImGui::Dummy(ImVec2(0, 14));
+            };
 
-            // ---- Your library: header (label + search) and a grid of cards ---------
-            {
-                const bool pillBelow = W < 560.0f;
-                ImVec2 lp = ImGui::GetCursorScreenPos();
-                const float pillW = pillBelow ? W : std::min(300.0f, W * 0.45f);
-                ImGui::SetCursorScreenPos(ImVec2(lp.x, lp.y + (pillBelow ? 0.0f : 9.0f)));
-                commLabel("YOUR LIBRARY", (int)commAll.size());
-                if (!pillBelow) ImGui::SetCursorScreenPos(ImVec2(lp.x + W - pillW, lp.y));
-                else ImGui::Dummy(ImVec2(0, 2));
-                if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-                searchPill("##commFilter", "Search your library  (Ctrl+F)", commFilter, sizeof(commFilter), pillW);
-                ImGui::Dummy(ImVec2(0, 6));
-            }
-            if (commShown.empty()) {
-                // Centered empty state.
-                ImGui::Dummy(ImVec2(0, 14));
-                ImVec2 c(ImGui::GetCursorScreenPos().x + W * 0.5f, ImGui::GetCursorScreenPos().y + 30);
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
-                DrawNavIcon(dl, 2, c, cDim);
-                ImGui::Dummy(ImVec2(0, 70));
-                auto centered = [&](const char* s, bool dim) {
-                    float tw = ImGui::CalcTextSize(s).x;
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (W - tw) * 0.5f));
-                    if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
-                };
-                if (commFilter[0]) {
-                    centered("No matches", false);
-                    std::string m = std::string("Nothing in your library matches \"") + commFilter + "\".";
-                    centered(m.c_str(), true);
-                } else {
-                    centered("Your library is empty", false);
-                    centered("Drop a shared game onto this window, or put it in the community folder and Refresh.", true);
-                }
-                ImGui::Dummy(ImVec2(0, 18));
+            // ---- Your library ----
+            SectionLabel("YOUR LIBRARY", (int)commAll.size());
+            ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+            if (commAll.empty()) {
+                dropZone(std::max(UiPx(200.0f), UiPx(86.0f) + lh * 4 + 2 * pad), true);
+            } else if (commShown.empty()) {
+                EmptyState(2, "No matches", (std::string("Nothing in your library matches \"") + commFilter + "\".").c_str(), UiPx(10.0f));
+                ImGui::Dummy(ImVec2(0, UiPx(16.0f)));
             } else {
-                const float gap = 12.0f, cardH = 128.0f;
-                int cols = std::max(1, (int)((W + gap) / (270.0f + gap)));
-                const float cardW = std::floor((W - (cols - 1) * gap) / cols);
+                const PL::Grid grid = PL::FitGrid(W, UiPx(280.0f), UiPx(12.0f), 4);
+                const float A = UiPx(52.0f);
+                const PL::ListCard lc = PL::LayoutListCard(grid.cardW, pad, A, lh * 3 + UiPx(8.0f), actH);
+                const float cardH = lc.card.h;
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                const ImU32 rbg = IM_COL32(255, 255, 255, 16), rbgh = IM_COL32(255, 255, 255, 34);
                 int n = 0;
                 for (const CommItem& it : commShown) {
                     const fs::path& scene = scenes[it.idx];
                     const std::string cpath = scene.string();
                     ImGui::PushID((int)(it.idx + 5000));
-                    const ImVec2 cp(g0.x + (n % cols) * (cardW + gap), g0.y + (n / cols) * (cardH + gap));
-                    ++n;
+                    const PL::Rect cell = PL::GridCell(grid, n++, cardH);
+                    const ImVec2 cp(g0.x + cell.x, g0.y + cell.y);
+                    const float cardW = cell.w;
                     ImGui::SetCursorScreenPos(cp);
                     ImGui::SetNextItemAllowOverlap();
                     ImGui::InvisibleButton("##ccard", ImVec2(cardW, cardH));
                     const bool bgHov = ImGui::IsItemHovered();
-                    const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + cardW, cp.y + cardH)) && ImGui::IsWindowHovered();
+                    const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + cardW, cp.y + cardH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
                     // Double-click plays, right-click opens the item menu.
                     if (bgHov && !player.empty() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         Launch(player, cpath); RecordPlayed(cpath); SavePrefs();
                     }
+                    if (bgHov) ImGui::SetTooltip("Double-click to play, right-click for more");
                     if (ImGui::BeginPopupContextItem("##commctx")) {
                         if (!player.empty() && ImGui::MenuItem("Play")) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
                         if (ImGui::MenuItem("Show in Explorer")) OpenExternal(it.root.string());
@@ -14480,140 +14608,79 @@ int main(int argc, char** argv) {
                         ImGui::PopStyleColor();
                         ImGui::EndPopup();
                     }
-                    dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(okaytheme::kRaised), 10.0f);
-                    if (hov) {
-                        dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 8), 10.0f);
-                        dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 30), 10.0f, 0, 1.0f);
-                    }
+                    CardBackground(dl, cp, ImVec2(cp.x + cardW, cp.y + cardH), hov);
                     // Tile (cover art if the game ships one) + title + meta.
-                    const float A = 52.0f;
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, cp.y + 14));
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + lc.icon.x, cp.y + lc.icon.y));
                     DrawGameIcon(cpath, it.title, A);
-                    const float tx = cp.x + 14 + A + 12, tr = cp.x + cardW - 14;
-                    dl->AddText(ImVec2(tx, cp.y + 16), cText, FitText(it.title, tr - tx).c_str());
-                    dl->AddText(ImVec2(tx, cp.y + 37), ImGui::GetColorU32(accLt), FitText(itemMeta(it.root, scene), tr - tx).c_str());
+                    const float tx = cp.x + lc.text.x, tw = lc.text.w;
+                    float ty = cp.y + lc.text.y;
+                    dl->AddText(ImVec2(tx, ty), cText, FitText(it.title, tw).c_str());
+                    dl->AddText(ImVec2(tx + 0.6f, ty), cText, FitText(it.title, tw).c_str());   // faux bold, like the Marketplace cards
+                    ty += lh + UiPx(4.0f);
+                    dl->AddText(ImVec2(tx, ty), ImGui::GetColorU32(accLt), FitText(itemMeta(it.root, scene), tw).c_str());
+                    ty += lh + UiPx(4.0f);
                     std::string ago = ModifiedAgo(scene);
                     std::string sub = scene.filename().string() + (ago.empty() ? "" : "  \xC2\xB7  " + ago);
-                    dl->AddText(ImVec2(tx, cp.y + 56), cDim, FitText(sub, tr - tx).c_str());
-                    // Actions: Play (primary) + reveal folder + more.
-                    const float d = 32.0f, by = cp.y + cardH - 14 - d;
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, by));
+                    dl->AddText(ImVec2(tx, ty), cDim, FitText(sub, tw).c_str());
+                    // Actions: Play (main) + reveal folder + more.
+                    const std::vector<PL::Rect> row = PL::LayoutActionRow(lc.actions.w, actH, FitButtonW("Play"), {actH, actH}, UiPx(8.0f));
+                    const ImVec2 ra(cp.x + lc.actions.x, cp.y + lc.actions.y);
+                    ImGui::SetCursorScreenPos(ImVec2(ra.x + row[0].x, ra.y));
                     ImGui::BeginDisabled(player.empty());
-                    if (PrimaryButton("Play", ImVec2(cardW - 28 - 2 * (d + 8), d))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+                    if (PrimaryButton("Play", ImVec2(row[0].w, actH))) { Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
                     ImGui::EndDisabled();
                     if (player.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("Player runtime not found next to the launcher");
-                    const ImU32 rbg = IM_COL32(255, 255, 255, 16), rbgh = IM_COL32(255, 255, 255, 34);
                     {
-                        ImVec2 fp(cp.x + cardW - 14 - 2 * d - 8, by);
+                        const ImVec2 fp(ra.x + row[1].x, ra.y);
                         ImGui::SetCursorScreenPos(fp);
-                        if (ImGui::InvisibleButton("##reveal", ImVec2(d, d))) OpenExternal(it.root.string());
+                        if (ImGui::InvisibleButton("##reveal", ImVec2(actH, actH))) OpenExternal(it.root.string());
                         const bool fh = ImGui::IsItemHovered();
-                        ImVec2 fc(fp.x + d * 0.5f, fp.y + d * 0.5f);
-                        dl->AddCircleFilled(fc, d * 0.5f, fh ? rbgh : rbg, 28);
+                        const ImVec2 fc(fp.x + actH * 0.5f, fp.y + actH * 0.5f);
+                        dl->AddCircleFilled(fc, actH * 0.5f, fh ? rbgh : rbg, 28);
                         folderGlyph(dl, fc, cText);
                         if (fh) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Show in folder"); }
                     }
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x + cardW - 14 - d, by));
-                    if (RoundIconButton("##more", kRibMore, d, rbg, rbgh, cText, "More")) ImGui::OpenPopup("##commctx");
+                    ImGui::SetCursorScreenPos(ImVec2(ra.x + row[2].x, ra.y));
+                    if (RoundIconButton("##more", kRibMore, actH, rbg, rbgh, cText, "More")) ImGui::OpenPopup("##commctx");
                     ImGui::PopID();
                 }
-                const int rows = (n + cols - 1) / cols;
-                ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap) - gap));
-                ImGui::Dummy(ImVec2(W, 0));
+                ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, n, cardH) + UiPx(10.0f)));
+                dropZone(lh + 2 * pad, false);
             }
-            ImGui::Dummy(ImVec2(0, 12));
+            ImGui::Dummy(ImVec2(0, UiPx(18.0f)));
 
-            // ---- Share your creation: numbered how-to ------------------------------
+            // ---- Starter templates (grid like the Create tab), filtered by the same search ----
             {
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
-                ImGui::BeginChild("##commshare", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                                  ImGuiWindowFlags_NoScrollbar);
-                commLabel("SHARE YOUR CREATION", -1);
-                ImGui::Dummy(ImVec2(0, 4));
-                static const struct { const char* title; const char* desc; } kSteps[] = {
-                    {"Build it",  "In the editor, File > Build Game makes a self-contained game folder."},
-                    {"Share it",  "Zip the folder and send it. Friends drop it onto their launcher to play."},
-                    {"Publish it","Or put it on the Marketplace so anyone can find and download it."},
-                };
-                const float sw = ImGui::GetContentRegionAvail().x;
-                const bool rowLayout = sw >= 620.0f;
-                const float colW = rowLayout ? (sw - 2 * 18.0f) / 3.0f : sw;
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                for (int k = 0; k < 3; ++k) {
-                    if (rowLayout && k) ImGui::SameLine(0, 18);
-                    ImGui::BeginGroup();
-                    ImVec2 p = ImGui::GetCursorScreenPos();
-                    ImVec2 nc(p.x + 14, p.y + 14);
-                    dl->AddCircleFilled(nc, 14.0f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 28);
-                    char num[4]; std::snprintf(num, sizeof(num), "%d", k + 1);
-                    ImVec2 ns = ImGui::CalcTextSize(num);
-                    dl->AddText(ImVec2(nc.x - ns.x * 0.5f, nc.y - ns.y * 0.5f), ImGui::GetColorU32(accLt), num);
-                    const float tx = 40.0f, tw = colW - tx;
-                    ImGui::SetCursorScreenPos(ImVec2(p.x + tx, p.y + 2));
-                    ImGui::BeginGroup();
-                    ImGui::TextUnformatted(kSteps[k].title);
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
-                    ImGui::TextDisabled("%s", kSteps[k].desc);
-                    ImGui::PopTextWrapPos();
-                    ImGui::EndGroup();
-                    ImGui::EndGroup();
-                    if (!rowLayout && k < 2) ImGui::Dummy(ImVec2(0, 6));
-                }
-                ImGui::Dummy(ImVec2(0, 8));
-                if (ImGui::Button("Reveal my games folder", ImVec2(196, 32))) OpenExternal(g_exeDir);
-                if (sw >= 196 + 8 + 200) ImGui::SameLine(0, 8);
-                if (ImGui::Button("Publish to Marketplace\xE2\x80\xA6", ImVec2(200, 32))) { tab = 7; g_openPublishForm = true; }
-                ImGui::EndChild();
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor();
-            }
-            ImGui::Dummy(ImVec2(0, 16));
-
-            // ---- Starter templates (grid like the Create tab) ----------------------
-            {
-                const bool pillBelow = W < 560.0f;
-                ImVec2 lp = ImGui::GetCursorScreenPos();
-                const float pillW = pillBelow ? W : std::min(300.0f, W * 0.45f);
-                ImGui::SetCursorScreenPos(ImVec2(lp.x, lp.y + (pillBelow ? 0.0f : 9.0f)));
-                commLabel("STARTER TEMPLATES", -1);
-                if (!pillBelow) ImGui::SetCursorScreenPos(ImVec2(lp.x + W - pillW, lp.y));
-                else ImGui::Dummy(ImVec2(0, 2));
-                searchPill("##marketFilter", "Search templates", marketFilter, sizeof(marketFilter), pillW);
-                ImGui::Dummy(ImVec2(0, 6));
-                std::string mneedle = lowerStr(marketFilter);
-                const float gap = 10.0f, cardH = 72.0f;
-                int cols = std::clamp((int)((W + gap) / (230.0f + gap)), 1, 4);
-                const float cardW = std::floor((W - (cols - 1) * gap) / cols);
+                SectionLabel("STARTER TEMPLATES", -1);
+                ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                const PL::Grid grid = PL::FitGrid(W, UiPx(240.0f), UiPx(10.0f), 4);
+                const float tile = UiPx(40.0f), cardH = std::max(tile, 2 * lh + UiPx(4.0f)) + 2 * pad;
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 g0 = ImGui::GetCursorScreenPos();
                 int shown = 0;
                 for (const auto& t : templates) {
-                    if (!mneedle.empty() && lowerStr(std::string(t.name) + " " + t.desc).find(mneedle) == std::string::npos) continue;
-                    const ImVec2 cp(g0.x + (shown % cols) * (cardW + gap), g0.y + (shown / cols) * (cardH + gap));
-                    ++shown;
+                    if (!cneedle.empty() && lowerStr(std::string(t.name) + " " + t.desc).find(cneedle) == std::string::npos) continue;
+                    const PL::Rect cell = PL::GridCell(grid, shown++, cardH);
+                    const ImVec2 cp(g0.x + cell.x, g0.y + cell.y);
+                    const float cardW = cell.w;
                     ImGui::PushID(t.name);
                     ImGui::SetCursorScreenPos(cp);
                     const bool clicked = ImGui::InvisibleButton("##tpl", ImVec2(cardW, cardH));
                     const bool hov = ImGui::IsItemHovered() && !editor.empty();
-                    dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(okaytheme::kRaised), 10.0f);
+                    CardBackground(dl, cp, ImVec2(cp.x + cardW, cp.y + cardH), hov, ImGui::GetColorU32(kAccent), 1.5f);
                     if (hov) {
-                        dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 10), 10.0f);
-                        dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(kAccent), 10.0f, 0, 1.5f);
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         ImGui::SetTooltip("Start a new project from the %s template (you confirm the name first)", t.name);
                     } else if (editor.empty() && ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Editor not found next to the launcher");
                     }
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x + 14, cp.y + (cardH - 40) * 0.5f));
-                    IconTile(t.name, 40.0f);
-                    const float tx = cp.x + 14 + 40 + 12, tr = cp.x + cardW - 12;
-                    const float lh = ImGui::GetTextLineHeight();
-                    const ImU32 a = editor.empty() ? IM_COL32(255, 255, 255, 110) : cText;
-                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f - lh - 1), a, FitText(t.name, tr - tx).c_str());
-                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f + 2), cDim, FitText(t.desc, tr - tx).c_str());
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x + pad, cp.y + (cardH - tile) * 0.5f));
+                    IconTile(t.name, tile);
+                    const float tx = cp.x + pad + tile + UiPx(12.0f), tr = cp.x + cardW - pad;
+                    const ImU32 a = editor.empty() ? ImGui::GetColorU32(ImGuiCol_Text, 0.55f) : cText;
+                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f - lh - UiPx(1.0f)), a, FitText(t.name, tr - tx).c_str());
+                    dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f + UiPx(2.0f)), cDim, FitText(t.desc, tr - tx).c_str());
                     if (clicked && !editor.empty()) {   // a card only opens the New Project wizard; the person confirms name and place
                         g_wizardTemplateRequest = t.tmpl;
                         tab = 0; g_lastTab = 0;
@@ -14621,15 +14688,66 @@ int main(int argc, char** argv) {
                     ImGui::PopID();
                 }
                 if (shown > 0) {
-                    const int rows = (shown + cols - 1) / cols;
-                    ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap) - gap));
+                    ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, shown, cardH)));
                     ImGui::Dummy(ImVec2(W, 0));
+                } else {
+                    ImGui::TextDisabled("No templates match \"%s\".", commFilter);
                 }
-                if (shown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
-                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
                 ImGui::TextDisabled("A template opens New Project on that starting point. Nothing is made until you press Create.");
-                ImGui::Dummy(ImVec2(0, 6));
             }
+            ImGui::Dummy(ImVec2(0, UiPx(18.0f)));
+
+            // ---- Share your creation: three steps ----
+            {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(12.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(20.0f), UiPx(16.0f)));
+                ImGui::BeginChild("##commshare", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar);
+                SectionLabel("SHARE YOUR CREATION", -1);
+                ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                static const struct { const char* title; const char* desc; } kSteps[] = {
+                    {"Build it",  "In the editor, File > Build Game makes a self-contained game folder."},
+                    {"Share it",  "Zip the folder and send it. Friends drop it onto their launcher to play."},
+                    {"Publish it","Or put it on the Marketplace so anyone can find and download it."},
+                };
+                const float sw = ImGui::GetContentRegionAvail().x;
+                const bool rowLayout = sw >= UiPx(620.0f);
+                const float colGap = UiPx(18.0f);
+                const float colW = rowLayout ? (sw - 2 * colGap) / 3.0f : sw;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const float nr = UiPx(14.0f);
+                for (int k = 0; k < 3; ++k) {
+                    if (rowLayout && k) ImGui::SameLine(0, colGap);
+                    ImGui::BeginGroup();
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    const ImVec2 nc(p.x + nr, p.y + nr);
+                    dl->AddCircleFilled(nc, nr, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 28);
+                    char num[4]; std::snprintf(num, sizeof(num), "%d", k + 1);
+                    const ImVec2 ns = ImGui::CalcTextSize(num);
+                    dl->AddText(ImVec2(nc.x - ns.x * 0.5f, nc.y - ns.y * 0.5f), ImGui::GetColorU32(accLt), num);
+                    const float tx = 2 * nr + UiPx(12.0f), tw = colW - tx;
+                    ImGui::SetCursorScreenPos(ImVec2(p.x + tx, p.y + UiPx(2.0f)));
+                    ImGui::BeginGroup();
+                    ImGui::TextUnformatted(kSteps[k].title);
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tw);
+                    ImGui::TextDisabled("%s", kSteps[k].desc);
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndGroup();
+                    ImGui::EndGroup();
+                    if (!rowLayout && k < 2) ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                }
+                ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                const float b1 = FitButtonW("Reveal my games folder"), b2 = FitButtonW("Publish to Marketplace\xE2\x80\xA6");
+                if (ImGui::Button("Reveal my games folder", ImVec2(b1, actH))) OpenExternal(g_exeDir);
+                if (sw >= b1 + UiPx(8.0f) + b2) ImGui::SameLine(0, UiPx(8.0f));
+                if (ImGui::Button("Publish to Marketplace\xE2\x80\xA6", ImVec2(b2, actH))) { tab = 7; g_openPublishForm = true; }
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+            }
+            ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
             ImGui::EndChild();   // ##commbody
 
             // Confirm before deleting a community game's folder from disk.
@@ -15230,7 +15348,7 @@ int main(int argc, char** argv) {
                     acCard("##ac_priv", "PRIVACY");
                     acRow("Online status", "Invisible looks offline to everyone, and you can still chat.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
                         ImGui::SetNextItemWidth(w);
-                        if (ImGui::Combo("##ost", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                        if (SlateCombo("##ost", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                             if (!acDemo) {
                                 okay::Friends pf(account);
                                 if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
@@ -15258,7 +15376,7 @@ int main(int argc, char** argv) {
                     acDivider();
                     acRow("Direct messages", g_privSupport == 2 ? "Who can message you. Only this PC enforces it until the server owner runs docs/sql/blocks.sql." : "Who can message you. The server enforces it.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
                         ImGui::SetNextItemWidth(w);
-                        if (ImGui::Combo("##dmf", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                        if (SlateCombo("##dmf", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     ImGui::Dummy(ImVec2(0, 8));
                     if (ImGui::Button("All privacy & safety settings  \xE2\x86\x92", ImVec2(0, 32))) { tab = 4; g_setCatJump = 7; }
@@ -15560,7 +15678,7 @@ int main(int argc, char** argv) {
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
-            const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+            const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
             const bool iconOnly = availW < 600.0f;
             const float listW = iconOnly ? 52.0f : (availW >= 820.0f ? 212.0f : 184.0f);
 
@@ -15702,7 +15820,7 @@ int main(int argc, char** argv) {
                         settingRow("UI backend", bdesc, 220.0f, ImGui::GetFrameHeight(), [&](float w) {
                             ImGui::SetNextItemWidth(std::min(w, 240.0f));
                             ImGui::BeginDisabled(!can || src == 2);
-                            if (ImGui::BeginCombo("##uibackend", okayuibackend::Label(g_uiBackend))) {
+                            if (BeginSlateCombo("##uibackend", okayuibackend::Label(g_uiBackend))) {
                                 for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI}) {
                                     if (ImGui::Selectable(okayuibackend::Label(opt), g_uiBackend == opt) && g_uiBackend != opt) {
                                         g_uiBackendSetting = okayuibackend::Name(opt);
@@ -15737,7 +15855,7 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_notif", "NOTIFICATIONS");
                     settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30))) g_notifPanelOpen = true;
+                        if (ImGui::Button("Open", ImVec2(96, 30))) tab = 16;
                     });
                     cardEnd();
                 } else if (setCat == 7) {   // ---- Privacy & Safety ----
@@ -15748,14 +15866,14 @@ int main(int argc, char** argv) {
                                    : "The server refuses messages from anyone this excludes. Old chats from non-friends move to \"Message requests\".",
                                180.0f, ImGui::GetFrameHeight(), [&](float) {
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##dmfrom", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                        if (SlateCombo("##dmfrom", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
                     settingRow("Voice calls", privMissing ? "Only this PC ignores calls from others. The server does not enforce it yet (docs/sql/blocks.sql)."
                                                           : "Who can ring you. The server refuses calls from anyone this excludes.",
                                180.0f, ImGui::GetFrameHeight(), [&](float) {
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##callfrom", &g_callsFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                        if (SlateCombo("##callfrom", &g_callsFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
                     settingRow("Friend requests", privMissing ? okay::privacy::SetupNote() : "Who can send you a friend request. The server refuses the rest.",
@@ -15763,7 +15881,7 @@ int main(int argc, char** argv) {
                         if (privMissing) return;
                         int fr = g_friendReqs == 2 ? 1 : 0;
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##frreq", &fr, "Everyone\0Nobody\0")) { g_friendReqs = fr == 1 ? 2 : 0; MarkPrivacyChanged(); }
+                        if (SlateCombo("##frreq", &fr, "Everyone\0Nobody\0")) { g_friendReqs = fr == 1 ? 2 : 0; MarkPrivacyChanged(); }
                     });
                     if (!g_privNote.empty() && !privMissing) ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "Not saved to your account yet: %s", g_privNote.c_str());
                     else if (g_privSupport == 1) ImGui::TextDisabled("Saved to your account.");
@@ -15774,7 +15892,7 @@ int main(int argc, char** argv) {
                     if (account.IsOnline() || kUiDemoUser) {
                         settingRow("Online status", "Invisible appears offline to everyone, while you can still chat.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
                             ImGui::SetNextItemWidth(180);
-                            if (ImGui::Combo("##ostatus", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
+                            if (SlateCombo("##ostatus", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                                 if (!kUiDemoUser) {
                                     okay::Friends pf(account);
                                     if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
@@ -15793,7 +15911,7 @@ int main(int argc, char** argv) {
                                g_privSupport == 2 ? 0.0f : 180.0f, ImGui::GetFrameHeight(), [&](float) {
                         if (g_privSupport == 2) return;
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##onlinevis", &g_onlineVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                        if (SlateCombo("##onlinevis", &g_onlineVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
                     settingRow("Who sees my profile details", g_privSupport == 2 ? okay::privacy::SetupNote()
@@ -15801,7 +15919,7 @@ int main(int argc, char** argv) {
                                g_privSupport == 2 ? 0.0f : 180.0f, ImGui::GetFrameHeight(), [&](float) {
                         if (g_privSupport == 2) return;
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##profilevis", &g_profileVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                        if (SlateCombo("##profilevis", &g_profileVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
                     settingRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote()
@@ -15865,7 +15983,7 @@ int main(int argc, char** argv) {
                         const int n = pb ? pb->AudioDeviceCount(capture) : 0;
                         const std::string cur = sel.empty() ? std::string("System default") : sel;
                         ImGui::SetNextItemWidth(300);
-                        if (ImGui::BeginCombo(id, cur.c_str())) {
+                        if (BeginSlateCombo(id, cur.c_str())) {
                             if (ImGui::Selectable("System default", sel.empty())) { sel.clear(); SavePrefs(); }
                             for (int i = 0; i < n; ++i) {
                                 const std::string nm = pb->AudioDeviceName(i, capture);
@@ -16093,7 +16211,7 @@ int main(int argc, char** argv) {
                     cardBegin("##sc_ac", "ANTI-CHEAT");
                     settingRow("Check games before they start", "Compares a game's files with the list it was built with. Report flags a mismatch and still starts the game; Enforce doesn't start it.", 140.0f, 30.0f, [&](float) {
                         ImGui::SetNextItemWidth(140);
-                        if (ImGui::Combo("##acmode", &g_antiCheatMode, "Off\0Report\0Enforce\0")) SavePrefs();
+                        if (SlateCombo("##acmode", &g_antiCheatMode, "Off\0Report\0Enforce\0")) SavePrefs();
                     });
                     cardEnd();
 
@@ -16562,74 +16680,98 @@ int main(int argc, char** argv) {
             };
 
             // ---- Header card: medal stack, count, latest unlock, quick stats ----
+            // Laid out by okay::launcherlayout::SplitHeader: the medals and text on the left wrap to the room they have, and the
+            // level ring, POINTS, THIS MONTH and "View my profile" move under them when the card is too narrow (nothing overlaps;
+            // the owner's v2.903.8.7 screenshot had the level ring over the subtitle).
             {
+                namespace PL = okay::launcherlayout;
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 16));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(12.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(22.0f), UiPx(20.0f)));
                 ImGui::BeginChild("##achhead", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                // Three overlapping medals (latest unlocks) as the hero art.
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float W = ImGui::GetContentRegionAvail().x, gap = UiPx(24.0f), lh = ImGui::GetTextLineHeight();
                 std::vector<const okay::Achievement*> top;
                 for (const auto& a : achs) top.push_back(&a);
                 std::sort(top.begin(), top.end(), [](const okay::Achievement* x, const okay::Achievement* y) { return x->when > y->when; });
                 const int heroN = std::min<int>(3, (int)top.size());
-                for (int k = heroN - 1; k >= 0; --k)
-                    DrawAchMedal(dl, ImVec2(p.x + 30 + k * 26.0f, p.y + 32), k == 0 ? 26.0f : 22.0f, top[k]->id, k == 0 ? 1.0f : 0.75f);
-                if (heroN == 0) { dl->AddNgon(ImVec2(p.x + 30, p.y + 32), 24.0f, cDim, 6, 1.8f); DrawNavIcon(dl, 5, ImVec2(p.x + 30, p.y + 32), cDim); }
-                const float tx = p.x + 30 + std::max(1, heroN) * 26.0f + 32.0f;
-                ImGui::SetCursorScreenPos(ImVec2(tx, p.y + 2));
-                ImGui::BeginGroup();
-                ImGui::SetWindowFontScale(1.45f);
-                ImGui::Text("%d", (int)achs.size());
-                ImGui::SetWindowFontScale(1.0f);
-                ImGui::SameLine(0, 8);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
-                ImGui::TextUnformatted(achs.size() == 1 ? "achievement unlocked" : "achievements unlocked");
-                if (latest) ImGui::TextDisabled("Latest: %s  \xC2\xB7  %s", latest->label.c_str(), RelTime(latest->when).c_str());
-                else ImGui::TextDisabled("Play games to start earning achievements.");
-                ImGui::EndGroup();
-                // Right: mini stats + profile button.
-                const float bw = 150.0f;
-                const float rx = p.x + ImGui::GetContentRegionAvail().x;
-                auto stat = [&](float x, const char* big, const char* small) {
-                    ImGui::SetWindowFontScale(1.2f);
-                    ImVec2 bs = ImGui::CalcTextSize(big);
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x, p.y + 6), cText, big);
-                    ImGui::SetWindowFontScale(1.0f);
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(x, p.y + 10 + bs.y), cDim, small);
-                };
+                const float artW = UiPx(30.0f) + std::max(1, heroN) * UiPx(26.0f) + UiPx(28.0f);   // the medals and the gap after them
+                // The right group: level ring, two stats, the profile button.
                 char m[16]; std::snprintf(m, sizeof(m), "%d", monthN);
                 const int pts = okay::Achievements::TotalPoints(achs), lvl = okay::Achievements::Level(pts) + 1;
                 char ps[24]; std::snprintf(ps, sizeof(ps), "%d", pts);
-                if (ImGui::GetContentRegionAvail().x > 640) {
-                    // Level badge: ring filling toward the next level.
-                    const ImVec2 lc(rx - bw - 300, p.y + 30);
+                const float ringR = UiPx(22.0f), statGap = UiPx(22.0f);
+                ImGui::SetWindowFontScale(0.8f);
+                const float statW1 = std::max(ImGui::CalcTextSize("POINTS").x, UiPx(40.0f)), statW2 = std::max(ImGui::CalcTextSize("THIS MONTH").x, UiPx(40.0f));
+                ImGui::SetWindowFontScale(1.0f);
+                const float bw = FitButtonW("View my profile", UiPx(140.0f)), bh = ImGui::GetFrameHeight() + UiPx(10.0f);
+                const float rightW = 2 * ringR + statGap + statW1 + statGap + statW2 + statGap + bw;
+                const float rightH = std::max(2 * ringR + UiPx(4.0f), bh);
+                const std::string headline = std::string(achs.size() == 1 ? "achievement unlocked" : "achievements unlocked");
+                const std::string sub = latest ? ("Latest: " + latest->label + "  \xC2\xB7  " + RelTime(latest->when)) : std::string("Play games to start earning achievements.");
+                PL::HeaderSplit hs = PL::SplitHeader(W, artW + UiPx(200.0f), rightW, gap);
+                const float textW = hs.leftW - artW;
+                ImGui::SetWindowFontScale(1.45f);
+                const float bigH = ImGui::GetTextLineHeight();
+                ImGui::SetWindowFontScale(1.0f);
+                const float subH = ImGui::CalcTextSize(sub.c_str(), nullptr, false, textW).y;
+                const float leftH = std::max(UiPx(64.0f), bigH + UiPx(4.0f) + subH);
+                PL::PlaceHeader(hs, W, leftH, rightW, rightH, UiPx(16.0f));
+                // Left: medals, then the count and the wrapped line.
+                const ImVec2 L0(p.x + hs.left.x, p.y + hs.left.y);
+                const ImVec2 medal(L0.x + UiPx(30.0f), L0.y + leftH * 0.5f);
+                for (int k = heroN - 1; k >= 0; --k)
+                    DrawAchMedal(dl, ImVec2(medal.x + k * UiPx(26.0f), medal.y), k == 0 ? UiPx(26.0f) : UiPx(22.0f), top[k]->id, k == 0 ? 1.0f : 0.75f);
+                if (heroN == 0) { dl->AddNgon(medal, UiPx(24.0f), cDim, 6, 1.8f); DrawNavIcon(dl, 5, medal, cDim); }
+                const float tx = L0.x + artW, ty = L0.y + (leftH - (bigH + UiPx(4.0f) + subH)) * 0.5f;
+                char cnt[16]; std::snprintf(cnt, sizeof(cnt), "%d", (int)achs.size());
+                ImGui::SetWindowFontScale(1.45f);
+                const float cntW = ImGui::CalcTextSize(cnt).x;
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty), cText, cnt);
+                ImGui::SetWindowFontScale(1.0f);
+                dl->AddText(ImVec2(tx + cntW + UiPx(8.0f), ty + bigH - lh - UiPx(2.0f)), cText, FitText(headline, textW - cntW - UiPx(8.0f)).c_str());
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, ty + bigH + UiPx(4.0f)), cDim, sub.c_str(), nullptr, textW);
+                // Right: the level ring, the stats, the button, left to right.
+                float x = p.x + hs.right.x;
+                const float rcy = p.y + hs.right.y + rightH * 0.5f;
+                {
+                    const ImVec2 lc(x + ringR, rcy);
                     const float prog = okay::Achievements::LevelProgress(pts);
-                    dl->AddCircle(lc, 22.0f, IM_COL32(255, 255, 255, 30), 40, 4.0f);
-                    dl->PathArcTo(lc, 22.0f, -1.5707963f, -1.5707963f + prog * 6.2831853f, 40);
+                    dl->AddCircle(lc, ringR, IM_COL32(255, 255, 255, 30), 40, 4.0f);
+                    dl->PathArcTo(lc, ringR, -1.5707963f, -1.5707963f + prog * 6.2831853f, 40);
                     dl->PathStroke(gold, 0, 4.0f);
                     char ls[8]; std::snprintf(ls, sizeof(ls), "%d", lvl);
                     ImGui::SetWindowFontScale(1.2f);
-                    ImVec2 lsz = ImGui::CalcTextSize(ls);
+                    const ImVec2 lsz = ImGui::CalcTextSize(ls);
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(lc.x - lsz.x * 0.5f, lc.y - lsz.y * 0.5f), cText, ls);
                     ImGui::SetWindowFontScale(1.0f);
-                    ImGui::SetCursorScreenPos(ImVec2(lc.x - 24, lc.y - 24));
-                    ImGui::InvisibleButton("##lvl", ImVec2(48, 48));
+                    ImGui::SetCursorScreenPos(ImVec2(lc.x - ringR, lc.y - ringR));
+                    ImGui::InvisibleButton("##lvl", ImVec2(2 * ringR, 2 * ringR));
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level %d  \xC2\xB7  %d%% to level %d\nEvery achievement earns points; games can make hard ones worth more.", lvl, (int)(prog * 100), lvl + 1);
-                    stat(rx - bw - 230, ps, "POINTS");
-                    stat(rx - bw - 120, m, "THIS MONTH");
+                    x += 2 * ringR + statGap;
                 }
-                ImGui::SetCursorScreenPos(ImVec2(rx - bw, p.y + 12));
-                if (ImGui::Button("View my profile", ImVec2(bw, 34)))
+                auto stat = [&](float sx, float sw, const char* big, const char* small) {
+                    (void)sw;
+                    ImGui::SetWindowFontScale(1.2f);
+                    const ImVec2 bs = ImGui::CalcTextSize(big);
+                    const float sh = bs.y + UiPx(2.0f) + lh * 0.8f;
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(sx, rcy - sh * 0.5f), cText, big);
+                    ImGui::SetWindowFontScale(1.0f);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.8f, ImVec2(sx, rcy - sh * 0.5f + bs.y + UiPx(2.0f)), cDim, small);
+                };
+                stat(x, statW1, ps, "POINTS");     x += statW1 + statGap;
+                stat(x, statW2, m, "THIS MONTH");  x += statW2 + statGap;
+                ImGui::SetCursorScreenPos(ImVec2(x, rcy - bh * 0.5f));
+                if (ImGui::Button("View my profile", ImVec2(bw, bh)))
                     OpenPublicProfile(account.IsLoggedIn() ? account.UserId() : std::string(),
                                       account.IsLoggedIn() ? account.CurrentSession().username : std::string(kAchDemo ? std::getenv("OKAY_UI_DEMO_USER") : ""));
-                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 66));
-                ImGui::Dummy(ImVec2(0, 0));
+                ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + hs.height));
+                ImGui::Dummy(ImVec2(W, 0));
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
-                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
             }
 
             // ---- Chips + sort + search ----
@@ -16661,27 +16803,24 @@ int main(int argc, char** argv) {
                     if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     x += cw + 8;
                 }
-                // Sort (right) + search pill (between).
-                const float sortW = 132.0f, right = cp.x + ImGui::GetContentRegionAvail().x;
-                ImGui::SetCursorScreenPos(ImVec2(right - sortW, cp.y));
+                // Search pill + sort dropdown on the right, the same height and roundness as each other and as the chips; when they
+                // do not fit beside the chips they get a row of their own under them (the search used to vanish on a narrow window).
+                const float right = cp.x + ImGui::GetContentRegionAvail().x, gap = UiPx(10.0f);
+                float sortTextW = 0; for (const char* o : {"Newest first", "Oldest first", "A to Z"}) sortTextW = std::max(sortTextW, ImGui::CalcTextSize(o).x);
+                const float sortW = sortTextW + UiPx(14.0f) * 2 + ch * 0.9f;   // (the padding pushed below, and the chevron)
+                const float searchMin = UiPx(180.0f), searchMax = UiPx(300.0f);
+                const bool beside = x + gap + searchMin + gap + sortW <= right;
+                const float rowY = beside ? cp.y : cp.y + ch + UiPx(8.0f);
+                const float sw = beside ? std::min(searchMax, right - sortW - gap - (x + gap)) : std::max(UiPx(120.0f), right - cp.x - sortW - gap);
+                ImGui::SetCursorScreenPos(ImVec2(right - sortW - gap - sw, rowY));
+                SearchPill("##achsearch", "Search achievements", achFilter, sizeof(achFilter), sw, 0, ch);
+                ImGui::SetCursorScreenPos(ImVec2(right - sortW, rowY));
                 ImGui::SetNextItemWidth(sortW);
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
-                ImGui::Combo("##achsort", &achSort, "Newest first\0Oldest first\0A to Z\0");
-                ImGui::PopStyleVar();
-                const float sw = std::min(280.0f, right - sortW - 10 - (x + 10));
-                if (sw > 120) {
-                    ImVec2 sp(right - sortW - 10 - sw, cp.y);
-                    ImGui::SetCursorScreenPos(sp);
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
-                    ImGui::SetNextItemWidth(sw);
-                    ImGui::InputTextWithHint("##achsearch", "Search achievements", achFilter, sizeof(achFilter));
-                    ImGui::PopStyleVar(2);
-                    ImVec2 mc(sp.x + 15.0f, sp.y + ImGui::GetItemRectSize().y * 0.5f - 1.0f);
-                    dl->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
-                    dl->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
-                }
-                ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 12));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ch * 0.5f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UiPx(14.0f), (ch - ImGui::GetTextLineHeight()) * 0.5f));
+                SlateCombo("##achsort", &achSort, "Newest first\0Oldest first\0A to Z\0");
+                ImGui::PopStyleVar(2);
+                ImGui::SetCursorScreenPos(ImVec2(cp.x, rowY + ch + UiPx(12.0f)));
                 ImGui::Dummy(ImVec2(0, 0));
             }
 
@@ -16699,7 +16838,7 @@ int main(int argc, char** argv) {
                 if (achSort == 2) return alo(x->label) < alo(y->label);
                 return achSort == 1 ? x->when < y->when : x->when > y->when;
             });
-            ImGui::BeginChild("##achlist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+            ImGui::BeginChild("##achlist", ImVec2(0, ImGui::GetContentRegionAvail().y - PageFooterH()), false);
             if (list.empty()) {
                 float aw = ImGui::GetContentRegionAvail().x;
                 ImGui::Dummy(ImVec2(0, 30));
@@ -17099,22 +17238,7 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 6));
                 };
                 // Centered empty state with a big icon.
-                auto emptyState = [&](int icon, const char* title, const char* sub) {
-                    float aw = ImGui::GetContentRegionAvail().x;
-                    ImGui::Dummy(ImVec2(0, 40));
-                    ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
-                    DrawNavIcon(dl, icon, c, cDim);
-                    ImGui::Dummy(ImVec2(0, 70));
-                    auto centered = [&](const char* s, bool dim) {
-                        float tw = ImGui::CalcTextSize(s).x;
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - tw) * 0.5f));
-                        if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
-                    };
-                    centered(title, false);
-                    centered(sub, true);
-                };
+                auto emptyState = [&](int icon, const char* title, const char* sub) { EmptyState(icon, title, sub, 40.0f); };
                 // Friend code card (side panel / add view).
                 auto codeCard = [&]() {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
@@ -17174,7 +17298,7 @@ int main(int argc, char** argv) {
                 const float availW = ImGui::GetContentRegionAvail().x;
                 const bool side = availW >= 760.0f;
                 const float sideW = side ? 280.0f : 0.0f;
-                const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
+                const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
                 ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - 18.0f : 0.0f, bodyH), false);
                 if (fView == 4 || fView == 5) {   // ---- Following / Followers ----
                     const bool ing = fView == 4;
@@ -17406,8 +17530,8 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
-            sectionHeader("Marketplace", nullptr);
-            if (kUiDemoUser || loginGate("the marketplace")) {
+            sectionHeader("Marketplace", "Games, 3D models, textures, art, audio, scripts and templates from the community.");
+            {   // browsing needs no account; Get, Sell, reviews and reports ask to sign in (needSignIn)
             okay::Workshop ws(account);
             static std::vector<okay::WorkshopItem> wCache;
             static std::map<long, std::pair<long, long>> wRatings;  // itemId -> (starSum, count)
@@ -17417,6 +17541,9 @@ int main(int argc, char** argv) {
             static bool rvOpen = false;        // request to open the reviews popup
             static long rvItem = 0;
             static std::string rvTitle, rvErr;
+            static std::string rvDesc, rvMeta;
+            static long dvReviewsFor = 0;                       // the item page's reviews (loaded when it opens)
+            static std::vector<okay::WorkshopReview> dvReviews;   // the listing's full description and "Game  ·  by maya", shown over its reviews
             static std::vector<okay::WorkshopReview> rvList;
             static int  rvStars = 5;
             static char rvBody[400] = "";
@@ -17462,10 +17589,14 @@ int main(int argc, char** argv) {
                     okay::thr::DetachThread(t);
                 else g_wsFetching = false;
             }
+            // What the list shows: loading until the first answer, then the list, or the error when the server was not reached.
+            static bool wLoaded = false, wFailed = false;
+            static const char* kMktDemo = std::getenv("OKAY_UI_DEMO_MKT");   // dev screenshot hook: loading | error | empty | many | long
+            const std::string mktDemo = kMktDemo ? kMktDemo : "";
             if (g_wsMutex) {
                 okay::thr::LockMutex(g_wsMutex);
-                if (g_wsReady) { wCache = g_wsList; wRatings = g_wsRatings; g_wsReady = false; }
-                if (kUiDemoUser && wCache.empty()) {   // dev screenshot hook: sample listings of every type
+                if (g_wsReady) { if (!g_wsFailed) { wCache = g_wsList; wRatings = g_wsRatings; } wFailed = g_wsFailed; wLoaded = true; g_wsReady = false; }
+                if (kUiDemoUser && wCache.empty() && mktDemo != "loading" && mktDemo != "error" && mktDemo != "empty") {   // dev screenshot hook: sample listings of every type
                     auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
                         okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
                         wCache.push_back(w); wRatings[id] = {rs, rc}; };
@@ -17476,18 +17607,73 @@ int main(int argc, char** argv) {
                     it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
                     it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
                     it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
-                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 9, 2);
+                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 0, 0);
+                    if (mktDemo == "many")
+                        for (long i = 9; i <= 40; ++i) {
+                            static const char* kinds[] = {"game", "model", "texture", "sprite", "audio", "script", "template", "tool"};
+                            const std::string t = "Community pack " + std::to_string(i);
+                            it(i, t.c_str(), i % 3 ? "maya" : "jonas", kinds[i % 8], "A sample listing so the page scrolls.", i * 37, (i % 5) * 9, i % 5 ? 2 : 0);
+                        }
+                    if (mktDemo == "long") {
+                        it(41, "The Extraordinarily Long Title Of A Community Space Exploration And Trading Game", "averyveryverylongusername_2026", "game",
+                           "A description that runs on and on: procedural galaxies, trading, ship building, co-op missions, a full soundtrack, "
+                           "mod support and a level editor, all in one download that is far too long to fit on a card.", 123456, 400, 90);
+                        it(42, "Supercalifragilisticexpialidocious-Texture-Pack-With-No-Spaces", "x", "texture", "", 1, 5, 1);
+                    }
+                    wLoaded = true;
                 }
+                if (kUiDemoUser && mktDemo == "error") { wLoaded = true; wFailed = true; }
+                if (kUiDemoUser && mktDemo == "empty") { wLoaded = true; wFailed = false; }
+                if (kUiDemoUser && mktDemo == "loading") wLoaded = false;
+                if (kUiDemoUser && mktDemo != "error") wFailed = false;   // (the demo has no server: its own listings are the list)
                 okay::thr::UnlockMutex(g_wsMutex);
             }
 
-            ImGui::TextDisabled("Games, 3D models, textures, art, audio, scripts and templates from the community.");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 196);
-            if (ImGui::Button(wShowPublish ? "Browse" : "Publish an item", ImVec2(110, 0)))
-                wShowPublish = !wShowPublish;
-            ImGui::SameLine();
-            if (ImGui::Button("Refresh", ImVec2(78, 0))) wNextRefresh = 0;
-            ImGui::Spacing();
+            // ---- Top bar: Browse / Your listings / Saved on the left; Filters (narrow pages), Refresh and Sell an item on the right ----
+            // The page is a shop: a filter rail, a grid of item tiles and an item page (launcher/PageLayout.hpp LayoutMarketPage,
+            // LayoutMarketTile, LayoutMarketDetail; tests/test_launcher_page_layout.cpp). Browsing needs no account; Get and Sell do.
+            namespace PL = okay::launcherlayout;
+            static PL::MarketQuery mq;
+            char* const wSearch = marketFilter;   // the main loop's buffer: a profile's "see their listings" and Esc reach it
+            static int  wSort = 0;         // 0 Newest, 1 Popular (downloads), 2 Top rated
+            static bool wFiltersOpen = false;
+            const bool signedIn = account.IsLoggedIn() || kUiDemoUser;
+            const std::string meName = kUiDemoUser ? std::string(kUiDemoUser) : account.CurrentSession().username;
+            auto needSignIn = [&](const char* what) {
+                Toast(std::string("Sign in to ") + what + ".", 0);
+                tab = 3; g_lastTab = 3; SavePrefs();
+            };
+            const float mktBtnH = ImGui::GetFrameHeight() + UiPx(8.0f);
+            const PL::MarketPage mp = PL::LayoutMarketPage(ImGui::GetContentRegionAvail().x, UiPx(236.0f), UiPx(24.0f), UiPx(176.0f), UiPx(16.0f), UiPx(760.0f));
+            {
+                const ImVec2 o = ImGui::GetCursorScreenPos();
+                const float W = ImGui::GetContentRegionAvail().x, gap = UiPx(10.0f);
+                if (!wShowPublish && mq.detail == 0) {
+                    int myN = 0; for (const auto& w : wCache) if (!meName.empty() && w.author == meName) ++myN;
+                    std::vector<Chip> views(3);
+                    views[0].label = "Browse"; views[1].label = "Your listings"; views[1].count = myN; views[2].label = "Saved"; views[2].count = (int)g_wishlist.size();
+                    const float rightW = (mp.railShown ? 0.0f : FitButtonW("Filters") + gap) + FitButtonW("Refresh") + gap + FitButtonW("Sell an item");
+                    const int hit = ChipRow("##mktviews", views, mq.view, std::max(UiPx(200.0f), W - rightW - gap));
+                    if (hit >= 0) { mq.view = hit; if (hit == 1 && !signedIn) needSignIn("see your listings"); }
+                }
+                float x = o.x + W;
+                auto rightBtn = [&](const char* label, bool primary) {
+                    const float bw = FitButtonW(label);
+                    x -= bw;
+                    ImGui::SetCursorScreenPos(ImVec2(x, o.y));
+                    x -= gap;
+                    return primary ? PrimaryButton(label, ImVec2(bw, mktBtnH)) : ImGui::Button(label, ImVec2(bw, mktBtnH));
+                };
+                if (wShowPublish) { if (rightBtn("Back to the marketplace", false)) wShowPublish = false; }
+                else {
+                    if (rightBtn("Sell an item", true)) { if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace"); }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Publish a game, model, texture, sound or script");
+                    if (rightBtn("Refresh", false)) wNextRefresh = 0;
+                    if (!mp.railShown && mq.detail == 0 && rightBtn(wFiltersOpen ? "Hide filters" : "Filters", false)) wFiltersOpen = !wFiltersOpen;
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + mktBtnH + UiPx(14.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
+            }
 
             if (wShowPublish) {
                 if (!ws.Available() && !kUiDemoUser) {
@@ -17498,7 +17684,7 @@ int main(int argc, char** argv) {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 16));
-                    ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::BeginChild("##publish", ImVec2(0, ImGui::GetContentRegionAvail().y - PageFooterH()), ImGuiChildFlags_AlwaysUseWindowPadding);
                     ImGui::PopStyleVar(2);
                     ImGui::PopStyleColor();
                     ImGui::SetWindowFontScale(1.15f);
@@ -17578,232 +17764,416 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
             } else {
-                // Search + sort + wishlist, with a category chip row underneath.
-                static char wSearch[96] = "";
-                static int  wFilterKind = 0;   // 0 All, else 1 + index into kMktKinds
-                static int  wSort = 0;         // 0 Newest, 1 Most downloaded, 2 Highest rated
-                static bool wWishOnly = false;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 170 - 108);
-                ImGui::InputTextWithHint("##mktsearch", "Search the marketplace...", wSearch, sizeof(wSearch));
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(162);
-                ImGui::Combo("##mktsort", &wSort, "Newest\0Most downloaded\0Highest rated\0");
-                ImGui::SameLine();
-                if (wWishOnly) ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                if (ImGui::Button(wWishOnly ? "Wishlist *" : "Wishlist", ImVec2(100, 0))) wWishOnly = !wWishOnly;
-                if (wWishOnly) ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show only wishlisted items");
-                ImGui::Dummy(ImVec2(0, 4));
-
                 auto mlo = [](std::string s){ for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-                std::string nd = mlo(wSearch);
-
-
-                // Category chips (wrapping): All + every listing type, with counts.
-                {
-                    std::vector<int> counts((std::size_t)kMktKindN + 1, 0);
-                    long totalDl = 0;
-                    for (const auto& w : wCache) { counts[0]++; counts[(std::size_t)MktKindIndex(w.kind) + 1]++; totalDl += w.downloads; }
-                    ImDrawList* cdl = ImGui::GetWindowDrawList();
-                    const ImVec2 o = ImGui::GetCursorScreenPos();
-                    const float right = o.x + ImGui::GetContentRegionAvail().x, ch = ImGui::GetTextLineHeight() + 12.0f;
-                    float x = o.x, y = o.y;
-                    for (int c = 0; c <= kMktKindN; ++c) {
-                        if (c > 0 && counts[(std::size_t)c] == 0 && wFilterKind != c) continue;   // hide empty types
-                        const char* lbl = c == 0 ? "All" : kMktKinds[c - 1].plural;
-                        char cnt[16]; std::snprintf(cnt, sizeof(cnt), "%d", counts[(std::size_t)c]);
-                        const ImVec2 ts = ImGui::CalcTextSize(lbl), cs = ImGui::CalcTextSize(cnt);
-                        const float cw = ts.x + cs.x + 34 + (c ? 12 : 0);
-                        if (x + cw > right && x > o.x) { x = o.x; y += ch + 6; }
-                        ImGui::SetCursorScreenPos(ImVec2(x, y));
-                        ImGui::PushID(c);
-                        if (ImGui::InvisibleButton("##mk", ImVec2(cw, ch))) wFilterKind = c;
-                        const bool h = ImGui::IsItemHovered(), on = wFilterKind == c;
-                        ImGui::PopID();
-                        cdl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.26f)) : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
-                        float tx = x + 12;
-                        if (c) { cdl->AddCircleFilled(ImVec2(tx + 3, y + ch * 0.5f), 4.0f, ImGui::GetColorU32(kMktKinds[c - 1].color), 10); tx += 12; }
-                        cdl->AddText(ImVec2(tx, y + (ch - ts.y) * 0.5f), on || h ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled), lbl);
-                        cdl->AddText(ImVec2(tx + ts.x + 8, y + (ch - cs.y) * 0.5f), IM_COL32(150, 158, 175, 255), cnt);
-                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        x += cw + 6;
-                    }
-                    ImGui::SetCursorScreenPos(ImVec2(o.x, y + ch + 4));
-                    char stat[64]; std::snprintf(stat, sizeof(stat), "%ld total download%s", totalDl, totalDl == 1 ? "" : "s");
-                    ImGui::TextDisabled("%s", stat);
-                    ImGui::Dummy(ImVec2(0, 2));
-                }
-                // Build the display order from the chosen sort (wCache is newest-first).
+                mq.needle = mlo(wSearch);
                 auto avgOf = [&](long id)->float {
                     auto it = wRatings.find(id);
-                    return (it != wRatings.end() && it->second.second > 0)
-                         ? (float)it->second.first / (float)it->second.second : 0.0f;
+                    return (it != wRatings.end() && it->second.second > 0) ? (float)it->second.first / (float)it->second.second : 0.0f;
                 };
-                std::vector<const okay::WorkshopItem*> order;
-                order.reserve(wCache.size());
-                for (const auto& w : wCache) order.push_back(&w);
-                if (wSort == 1)
-                    std::stable_sort(order.begin(), order.end(),
-                        [](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return a->downloads > b->downloads; });
-                else if (wSort == 2)
-                    std::stable_sort(order.begin(), order.end(),
-                        [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return avgOf(a->id) > avgOf(b->id); });
+                auto rateCount = [&](long id)->long { auto it = wRatings.find(id); return it != wRatings.end() ? it->second.second : 0; };
+                const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                const float lh = ImGui::GetTextLineHeight();
+                auto openReviews = [&](const okay::WorkshopItem& w) {
+                    rvItem = w.id; rvTitle = w.title; rvOpen = true;
+                    rvDesc = w.description;
+                    rvMeta = std::string(kMktKinds[MktKindIndex(w.kind)].label) + "  \xC2\xB7  by " + (w.author.empty() ? std::string("unknown") : w.author) +
+                             "  \xC2\xB7  " + PL::ShortCount(w.downloads) + (w.downloads == 1 ? " download" : " downloads");
+                    rvStars = 5; rvBody[0] = '\0'; rvErr.clear();
+                    rvList = ws.Reviews(w.id);
+                    for (const auto& rev : rvList) if (rev.mine) { rvStars = rev.rating; std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str()); }
+                };
+                auto getItem = [&](const okay::WorkshopItem& w) {
+                    if (!signedIn) { needSignIn("get items from the marketplace"); return; }
+                    getId = w.id; getUrl = w.url; getTitle = w.title; getAuthor = w.author; getKind = w.kind; getDl = w.downloads; getConfirmOpen = true;
+                };
+                // The item's picture: listings carry no image yet, so a tile in the category's colour with the title's initial
+                // and the category's name (the same picture everywhere the item shows).
+                auto drawPicture = [&](ImDrawList* dl, ImVec2 a, ImVec2 b, const okay::WorkshopItem& w, float rounding, float letterScale) {
+                    const ImVec4 kc = kMktKinds[MktKindIndex(w.kind)].color;
+                    const ImU32 top = ImGui::GetColorU32(ImVec4(kc.x * 0.55f + 0.08f, kc.y * 0.55f + 0.08f, kc.z * 0.55f + 0.10f, 1.0f));
+                    const ImU32 bot = ImGui::GetColorU32(ImVec4(kc.x * 0.25f + 0.06f, kc.y * 0.25f + 0.07f, kc.z * 0.25f + 0.09f, 1.0f));
+                    dl->AddRectFilled(a, b, bot, rounding);
+                    dl->PushClipRect(a, b, true);
+                    dl->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + (b.y - a.y) * 0.65f), top, top, bot, bot);
+                    dl->PopClipRect();
+                    const std::string ini(1, (char)std::toupper((unsigned char)(w.title.empty() ? '?' : w.title[0])));
+                    ImGui::SetWindowFontScale(letterScale);
+                    const ImVec2 ls = ImGui::CalcTextSize(ini.c_str());
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2((a.x + b.x - ls.x) * 0.5f, (a.y + b.y - ls.y) * 0.5f), IM_COL32(255, 255, 255, 220), ini.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                    const char* kl = kMktKinds[MktKindIndex(w.kind)].label;
+                    const ImVec2 ks = ImGui::CalcTextSize(kl);
+                    const ImVec2 kp(a.x + UiPx(10.0f), b.y - UiPx(10.0f) - ks.y - UiPx(4.0f));
+                    dl->AddRectFilled(kp, ImVec2(kp.x + ks.x + UiPx(14.0f), kp.y + ks.y + UiPx(4.0f)), IM_COL32(0, 0, 0, 110), (ks.y + UiPx(4.0f)) * 0.5f);
+                    dl->AddText(ImVec2(kp.x + UiPx(7.0f), kp.y + UiPx(2.0f)), IM_COL32(255, 255, 255, 230), kl);
+                };
+                auto heartBtn = [&](const char* id, const okay::WorkshopItem& w, ImVec2 p, float d) {
+                    const bool wished = IsWishlisted(w.id);
+                    ImGui::SetCursorScreenPos(p);
+                    if (RoundIconButton(id, wished ? kRibStarOn : kRibStar, d, IM_COL32(15, 17, 22, 170), IM_COL32(15, 17, 22, 230), IM_COL32_WHITE,
+                                        wished ? "Saved (click to remove)" : "Save for later")) { ToggleWishlist(w.id); SavePrefs(); }
+                };
 
-                // Featured strip: top-rated items, shown only on the unfiltered
-                // default view so it doesn't fight an active search/sort.
-                if (nd.empty() && wFilterKind == 0 && !wWishOnly && wSort == 0) {   // (featured)
-                    std::vector<const okay::WorkshopItem*> top;
-                    for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
-                    std::stable_sort(top.begin(), top.end(),
-                        [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b){ return avgOf(a->id) > avgOf(b->id); });
-                    if (top.size() > 3) top.resize(3);
-                    if (!top.empty()) {
-                        ImGui::TextDisabled("FEATURED  -  TOP RATED");
-                        ImGui::Dummy(ImVec2(0, 2));
-                        float cw = (ImGui::GetContentRegionAvail().x - 2 * 10) / 3.0f;
-                        for (std::size_t i = 0; i < top.size(); ++i) {
-                            const okay::WorkshopItem& w = *top[i];
-                            if (i) ImGui::SameLine(0, 10);
-                            ImGui::PushID((int)(90000 + w.id));
-                            ImGui::BeginChild("##feat", ImVec2(cw, 86), true);
-                            HoverRing();
-                            ImGui::SetCursorPos(ImVec2(10, 12)); IconTile(w.title, 40.0f);
-                            ImGui::SameLine(); ImGui::SetCursorPosX(60);
-                            ImGui::BeginGroup();
-                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-                            ImGui::TextUnformatted(w.title.c_str());
-                            ImVec2 fp = ImGui::GetCursorScreenPos(); fp.y += 2;
-                            DrawStars(ImGui::GetWindowDrawList(), fp, 10.0f, avgOf(w.id),
-                                      IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
-                            ImGui::Dummy(ImVec2(66, 13)); ImGui::SameLine();
-                            ImGui::TextDisabled("%.1f", avgOf(w.id));
-                            ImGui::TextDisabled("by %s", w.author.empty() ? "unknown" : w.author.c_str());
-                            ImGui::EndGroup();
-                            if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                                rvItem = w.id; rvTitle = w.title; rvOpen = true;
-                                rvStars = 5; rvBody[0] = '\0'; rvErr.clear();
-                                rvList = ws.Reviews(w.id);
-                                for (const auto& rev : rvList) if (rev.mine) {
-                                    rvStars = rev.rating; std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str()); }
-                            }
-                            ImGui::EndChild();
-                            ImGui::PopID();
+                // ---- The filter rail: search, categories, rating, sort, price (beside the grid, or in a popup on narrow pages) ----
+                auto drawRail = [&](float rw) {
+                    if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
+                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), rw, 0, mktBtnH);
+                    ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                    std::vector<int> counts((std::size_t)kMktKindN, 0);
+                    for (const auto& w : wCache) counts[(std::size_t)MktKindIndex(w.kind)]++;
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    const float rowH = lh + UiPx(14.0f);
+                    auto railRow = [&](const char* id, const char* label, int count, ImU32 dot, bool on) {
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const bool click = ImGui::InvisibleButton(id, ImVec2(rw, rowH));
+                        const bool hov = ImGui::IsItemHovered();
+                        if (on || hov) dl->AddRectFilled(p, ImVec2(p.x + rw, p.y + rowH), on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)) : IM_COL32(255, 255, 255, 12), UiPx(8.0f));
+                        float tx = p.x + UiPx(12.0f);
+                        if (dot) { dl->AddCircleFilled(ImVec2(tx + UiPx(4.0f), p.y + rowH * 0.5f), UiPx(5.0f), dot, 14); tx += UiPx(18.0f); }
+                        dl->AddText(ImVec2(tx, p.y + (rowH - lh) * 0.5f), on || hov ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.82f), label);
+                        if (count >= 0) {
+                            char c[12]; std::snprintf(c, sizeof(c), "%d", count);
+                            const ImVec2 cs = ImGui::CalcTextSize(c);
+                            dl->AddText(ImVec2(p.x + rw - UiPx(12.0f) - cs.x, p.y + (rowH - lh) * 0.5f), cDim, c);
                         }
-                        ImGui::Dummy(ImVec2(0, 6));
+                        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        return click;
+                    };
+                    SectionLabel("CATEGORIES", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                    if (railRow("##cat_all", "Browse all", (int)wCache.size(), 0, mq.kind < 0)) mq.kind = -1;
+                    for (int k = 0; k < kMktKindN; ++k) {
+                        char id[24]; std::snprintf(id, sizeof(id), "##cat%d", k);
+                        if (railRow(id, kMktKinds[k].plural, counts[(std::size_t)k], ImGui::GetColorU32(kMktKinds[k].color), mq.kind == k)) mq.kind = mq.kind == k ? -1 : k;
                     }
+                    ImGui::Dummy(ImVec2(0, UiPx(14.0f)));
+                    SectionLabel("RATING", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                    if (railRow("##rt0", "Any rating", -1, 0, mq.minRating <= 0.0f)) mq.minRating = 0.0f;
+                    if (railRow("##rt4", "4 stars and up", -1, 0, mq.minRating >= 4.0f)) mq.minRating = 4.0f;
+                    if (railRow("##rt3", "3 stars and up", -1, 0, mq.minRating >= 3.0f && mq.minRating < 4.0f)) mq.minRating = 3.0f;
+                    ImGui::Dummy(ImVec2(0, UiPx(14.0f)));
+                    SectionLabel("SORT BY", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+                    if (railRow("##s0", "Newest", -1, 0, wSort == 0)) wSort = 0;
+                    if (railRow("##s1", "Popular", -1, 0, wSort == 1)) wSort = 1;
+                    if (railRow("##s2", "Top rated", -1, 0, wSort == 2)) wSort = 2;
+                    ImGui::Dummy(ImVec2(0, UiPx(14.0f)));
+                    SectionLabel("PRICE", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + rw);
+                    ImGui::TextDisabled("Everything on the marketplace is free for now.");
+                    ImGui::PopTextWrapPos();
+                };
+
+                // ---- The list the grid shows ----
+                std::vector<const okay::WorkshopItem*> order;
+                for (const auto& w : wCache) {
+                    const bool mine = !meName.empty() && w.author == meName;
+                    if (PL::MarketMatches(mq, MktKindIndex(w.kind), avgOf(w.id), IsWishlisted(w.id), mine, mlo(w.title + " " + w.description + " " + w.author)))
+                        order.push_back(&w);
                 }
-                ImGui::BeginChild("##market", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
-                std::string me = account.CurrentSession().username;
-                int mktShown = 0;
-                for (const okay::WorkshopItem* wp : order) {
-                    const okay::WorkshopItem& w = *wp;
-                    const int ki = MktKindIndex(w.kind);
-                    const MktKind& mk = kMktKinds[ki];
-                    if (wFilterKind != 0 && ki != wFilterKind - 1) continue;
-                    if (wWishOnly && !IsWishlisted(w.id)) continue;
-                    if (!nd.empty() &&
-                        mlo(w.title + " " + w.description + " " + w.author).find(nd) == std::string::npos) continue;
-                    ++mktShown;
-                    ImGui::PushID((int)w.id);
-                    ImGui::BeginChild("##witem", ImVec2(0, 118), true);
-                    HoverRing();
-                    // Colored icon tile from the title.
-                    ImGui::SetCursorPos(ImVec2(12, 14));
-                    IconTile(w.title, 56.0f);
-                    ImGui::SameLine(); ImGui::SetCursorPosX(84);
-                    ImGui::BeginGroup();
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
-                    ImGui::TextUnformatted(w.title.c_str());
-                    // Kind badge pill (colored per kind) + author + downloads.
-                    const ImVec4 kc = mk.color;
-                    ImVec2 bp = ImGui::GetCursorScreenPos();
-                    ImVec2 ks = ImGui::CalcTextSize(mk.label);
-                    ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x+ks.x+14, bp.y+ks.y+4),
-                        ImGui::GetColorU32(ImVec4(kc.x,kc.y,kc.z,0.28f)), (ks.y+4)*0.5f);
-                    ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x+7, bp.y+2), ImGui::GetColorU32(ImVec4(kc.x*0.55f+0.45f,kc.y*0.55f+0.45f,kc.z*0.55f+0.45f,1)), mk.label);
-                    ImGui::Dummy(ImVec2(ks.x+14, ks.y+4));
-                    ImGui::SameLine(0, 8);
-                    ImGui::TextDisabled("by %s  -  %ld download%s",
-                                        w.author.empty() ? "unknown" : w.author.c_str(),
-                                        w.downloads, w.downloads == 1 ? "" : "s");
-                    // Rating row: star meter + average + count (or "Not yet rated").
-                    {
-                        auto it = wRatings.find(w.id);
-                        long sum = it != wRatings.end() ? it->second.first : 0;
-                        long cnt = it != wRatings.end() ? it->second.second : 0;
-                        float avg = cnt > 0 ? (float)sum / (float)cnt : 0.0f;
-                        ImVec2 sp = ImGui::GetCursorScreenPos(); sp.y += 2;
-                        float w5 = DrawStars(ImGui::GetWindowDrawList(), sp, 11.0f, avg,
-                                             IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
-                        ImGui::Dummy(ImVec2(w5, 15)); ImGui::SameLine(0, 8);
-                        if (cnt > 0) ImGui::TextDisabled("%.1f  (%ld)", avg, cnt);
-                        else         ImGui::TextDisabled("Not yet rated");
-                    }
-                    if (!w.description.empty()) {
-                        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - 100);
-                        ImGui::TextDisabled("%s", w.description.c_str());
-                        ImGui::PopTextWrapPos();
-                    }
-                    ImGui::EndGroup();
-                    // Right-aligned actions.
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 96);
-                    ImGui::SetCursorPosY(14.0f);
-                    ImGui::BeginGroup();
-                    if (!w.url.empty()) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                        if (ImGui::Button("Get", ImVec2(90, 30))) {
-                            getId = w.id; getUrl = w.url; getTitle = w.title;
-                            getAuthor = w.author; getKind = w.kind; getDl = w.downloads; getConfirmOpen = true;
-                        }
-                        ImGui::PopStyleColor();
-                    } else ImGui::TextDisabled("no link");
-                    bool wished = IsWishlisted(w.id);
-                    if (wished) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f,0.80f,0.35f,1));
-                    if (ImGui::SmallButton(wished ? "* Wishlisted" : "+ Wishlist")) { ToggleWishlist(w.id); SavePrefs(); }
-                    if (wished) ImGui::PopStyleColor();
-                    if (ImGui::SmallButton("Reviews")) {
-                        rvItem = w.id; rvTitle = w.title; rvOpen = true;
-                        rvStars = 5; rvBody[0] = '\0'; rvErr.clear();
-                        rvList = ws.Reviews(w.id);
-                        for (const auto& rev : rvList) if (rev.mine) {   // prefill my existing review
-                            rvStars = rev.rating;
-                            std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str());
-                        }
-                    }
-                    if (me.empty() || me != w.author) {
-                        if (ImGui::SmallButton("Report")) OpenReport(okayrep::Target::MarketItem, std::to_string(w.id), w.title);
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Report this listing to the moderators");
-                    }
-                    if (!me.empty() && me == w.author) {
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Edit")) {
-                            edId = w.id; edKind = ki;
-                            std::snprintf(edTitle, sizeof(edTitle), "%s", w.title.c_str());
-                            std::snprintf(edDesc,  sizeof(edDesc),  "%s", w.description.c_str());
-                            std::snprintf(edUrl,   sizeof(edUrl),   "%s", w.url.c_str());
-                            edErr.clear(); edOpen = true;
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Remove")) { ws.Remove(w.id); wNextRefresh = 0; }
-                        if (w.status == "pending") {
-                            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Waiting for review");
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only you can see it until a moderator approves it.");
-                        } else if (w.status == "rejected") {
-                            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Not approved");
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", w.reviewNote.empty() ? "Edit it and it goes back for review." : (w.reviewNote + "\nEdit it and it goes back for review.").c_str());
-                        }
-                    }
-                    ImGui::EndGroup();
+                if (wSort == 1) std::stable_sort(order.begin(), order.end(), [](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return a->downloads > b->downloads; });
+                else if (wSort == 2) std::stable_sort(order.begin(), order.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return avgOf(a->id) > avgOf(b->id); });
+                const okay::WorkshopItem* detailItem = nullptr;
+                for (const auto& w : wCache) if (w.id == mq.detail) detailItem = &w;
+                if (mq.detail && !detailItem && wLoaded) mq.Back();   // the listing went away
+
+                const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
+                const ImVec2 bodyO = ImGui::GetCursorScreenPos();
+                if (mp.railShown && !detailItem) {
+                    ImGui::BeginChild("##mktrail", ImVec2(mp.rail.w, bodyH), false);
+                    drawRail(ImGui::GetContentRegionAvail().x - UiPx(4.0f));
                     ImGui::EndChild();
-                    ImGui::PopID();
+                    ImGui::SetCursorScreenPos(ImVec2(bodyO.x + mp.grid.x, bodyO.y));
+                } else if (wFiltersOpen && !detailItem) {   // narrow page: the rail opens over the grid (a popup: opaque, on top, closes on a click outside)
+                    ImGui::SetNextWindowPos(ImVec2(bodyO.x, bodyO.y));
+                    ImGui::SetNextWindowSize(ImVec2(std::min(UiPx(280.0f), mp.grid.w), 0));
+                    ImGui::OpenPopup("##mktfilters");
                 }
-                if (wCache.empty()) {
-                    ImGui::Dummy(ImVec2(0, 20));
-                    ImGui::TextDisabled("Nothing published yet. Be the first — hit \"Publish an item\".");
-                    ImGui::TextDisabled("(Run docs/sql/social.sql in your Supabase project if this stays empty.)");
-                } else if (mktShown == 0) {
-                    ImGui::Dummy(ImVec2(0, 20));
-                    ImGui::TextDisabled("No items match your search or filter.");
+                if (ImGui::BeginPopup("##mktfilters")) { drawRail(ImGui::GetContentRegionAvail().x); ImGui::EndPopup(); }
+                else wFiltersOpen = false;
+
+                ImGui::BeginChild("##market", ImVec2(detailItem ? 0.0f : (mp.railShown ? mp.grid.w : 0.0f), bodyH), false);
+                const float GW = ImGui::GetContentRegionAvail().x;
+                const PL::Grid grid = PL::FitGrid(GW, UiPx(176.0f), UiPx(16.0f), 6);
+                ImGui::SetWindowFontScale(1.2f);
+                const float priceH = ImGui::GetTextLineHeight();
+                ImGui::SetWindowFontScale(1.0f);
+                const float tpad = UiPx(12.0f), heartD = UiPx(32.0f);
+                const PL::MarketTile tl = PL::LayoutMarketTile(grid.cardW, lh, priceH, tpad, heartD);
+                const float tileH = tl.tile.h;
+                // One tile: picture, price, two lines of title, seller and downloads; the whole tile opens the item page.
+                auto drawTile = [&](const okay::WorkshopItem& w, ImVec2 cp, float tw) {
+                    const PL::MarketTile T = PL::LayoutMarketTile(tw, lh, priceH, tpad, heartD);
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImGui::PushID((int)w.id);
+                    ImGui::SetCursorScreenPos(cp);
+                    ImGui::SetNextItemAllowOverlap();
+                    const bool click = ImGui::InvisibleButton("##tile", ImVec2(tw, tileH));
+                    const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + tw, cp.y + tileH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+                    const float lift = hov ? UiPx(2.0f) : 0.0f;   // the tile rises a little under the mouse
+                    const ImVec2 a(cp.x, cp.y - lift), b(cp.x + tw, cp.y + tileH - lift);
+                    if (hov) dl->AddRectFilled(ImVec2(a.x + 2, a.y + 6), ImVec2(b.x - 2, b.y + 6), IM_COL32(0, 0, 0, 70), UiPx(14.0f));
+                    CardBackground(dl, a, b, hov);
+                    drawPicture(dl, a, ImVec2(b.x, a.y + T.picture.h), w, UiPx(12.0f), std::max(1.6f, tw / UiPx(90.0f)));
+                    dl->AddRectFilled(ImVec2(a.x, a.y + T.picture.h - UiPx(12.0f)), ImVec2(b.x, a.y + T.picture.h), ImGui::GetColorU32(okaytheme::kRaised));   // square bottom edge
+                    if (hov) dl->AddRectFilled(ImVec2(a.x, a.y + T.picture.h - UiPx(12.0f)), ImVec2(b.x, a.y + T.picture.h), IM_COL32(255, 255, 255, 7));
+                    ImGui::SetWindowFontScale(1.2f);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + T.price.x, a.y + T.price.y), cText, "Free");
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + T.price.x + 0.7f, a.y + T.price.y), cText, "Free");
+                    ImGui::SetWindowFontScale(1.0f);
+                    std::string t1, t2;
+                    WrapTwoLines(w.title.empty() ? std::string("Untitled") : w.title, T.title.w, t1, t2);
+                    dl->AddText(ImVec2(a.x + T.title.x, a.y + T.title.y), ImGui::GetColorU32(ImGuiCol_Text, 0.92f), t1.c_str());
+                    if (!t2.empty()) dl->AddText(ImVec2(a.x + T.title.x, a.y + T.title.y + lh), ImGui::GetColorU32(ImGuiCol_Text, 0.92f), t2.c_str());
+                    if (rateCount(w.id) > 0) {   // the rating on the price's line, right-aligned
+                        char rs[24]; std::snprintf(rs, sizeof(rs), "%.1f stars", avgOf(w.id));
+                        const ImVec2 rsz = ImGui::CalcTextSize(rs);
+                        dl->AddText(ImVec2(a.x + T.price.R() - rsz.x, a.y + T.price.y + (priceH - lh) * 0.5f), IM_COL32(240, 196, 92, 255), rs);
+                    }
+                    char rt[48];
+                    std::snprintf(rt, sizeof(rt), "%s download%s", PL::ShortCount(w.downloads).c_str(), w.downloads == 1 ? "" : "s");
+                    const std::string seller = w.author.empty() ? std::string("unknown") : w.author;
+                    const float rtW = ImGui::CalcTextSize(rt).x;
+                    dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(seller, std::max(UiPx(30.0f), T.meta.w - rtW - UiPx(10.0f))).c_str());
+                    dl->AddText(ImVec2(a.x + T.meta.R() - rtW, a.y + T.meta.y), cDim, rt);
+                    if (!meName.empty() && w.author == meName && w.status != "approved" && !w.status.empty()) {   // my listing's review state
+                        const char* st = w.status == "pending" ? "In review" : "Not approved";
+                        const ImVec2 ss = ImGui::CalcTextSize(st);
+                        const ImVec2 sp(a.x + UiPx(10.0f), a.y + UiPx(10.0f));
+                        dl->AddRectFilled(sp, ImVec2(sp.x + ss.x + UiPx(14.0f), sp.y + ss.y + UiPx(4.0f)), w.status == "pending" ? IM_COL32(150, 110, 30, 230) : IM_COL32(150, 50, 50, 230), (ss.y + UiPx(4.0f)) * 0.5f);
+                        dl->AddText(ImVec2(sp.x + UiPx(7.0f), sp.y + UiPx(2.0f)), IM_COL32_WHITE, st);
+                    }
+                    heartBtn("##heart", w, ImVec2(a.x + T.heart.x, a.y + T.heart.y), heartD);
+                    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (click) { mq.Open(w.id); dvReviewsFor = 0; }
+                    ImGui::PopID();
+                };
+
+                if (detailItem) {   // ---- The item page ----
+                    const okay::WorkshopItem& w = *detailItem;
+                    if (dvReviewsFor != w.id) { dvReviewsFor = w.id; dvReviews = ws.Reviews(w.id); }
+                    if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) mq.Back();
+                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                    const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f));
+                    const ImVec2 o = ImGui::GetCursorScreenPos();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    drawPicture(dl, ImVec2(o.x + D.picture.x, o.y + D.picture.y), ImVec2(o.x + D.picture.R(), o.y + D.picture.B()), w, UiPx(14.0f), 4.0f);
+                    heartBtn("##dheart", w, ImVec2(o.x + D.picture.R() - UiPx(48.0f), o.y + D.picture.y + UiPx(12.0f)), UiPx(36.0f));
+                    ImGui::SetCursorScreenPos(ImVec2(o.x + D.info.x, o.y + D.info.y));
+                    ImGui::BeginGroup();
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + D.info.w);
+                    ImGui::SetWindowFontScale(1.45f);
+                    ImGui::TextWrapped("%s", w.title.empty() ? "Untitled" : w.title.c_str());
+                    ImGui::SetWindowFontScale(1.3f);
+                    ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.62f, 1.0f), "Free");
+                    ImGui::SetWindowFontScale(1.0f);
+                    {   // category chip, rating, downloads
+                        const MktKind& mk = kMktKinds[MktKindIndex(w.kind)];
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const ImVec2 ks = ImGui::CalcTextSize(mk.label);
+                        dl->AddRectFilled(p, ImVec2(p.x + ks.x + UiPx(16.0f), p.y + lh + UiPx(6.0f)), ImGui::GetColorU32(ImVec4(mk.color.x, mk.color.y, mk.color.z, 0.28f)), (lh + UiPx(6.0f)) * 0.5f);
+                        dl->AddText(ImVec2(p.x + UiPx(8.0f), p.y + UiPx(3.0f)), cText, mk.label);
+                        const float sx = p.x + ks.x + UiPx(28.0f);
+                        const float s5 = DrawStars(dl, ImVec2(sx, p.y + (lh + UiPx(6.0f) - UiPx(12.0f)) * 0.5f), UiPx(12.0f), avgOf(w.id), IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
+                        char rt[64];
+                        if (rateCount(w.id) > 0) std::snprintf(rt, sizeof(rt), "%.1f (%ld)  \xC2\xB7  %s downloads", avgOf(w.id), rateCount(w.id), PL::ShortCount(w.downloads).c_str());
+                        else std::snprintf(rt, sizeof(rt), "No ratings yet  \xC2\xB7  %s downloads", PL::ShortCount(w.downloads).c_str());
+                        dl->AddText(ImVec2(sx + s5 + UiPx(8.0f), p.y + UiPx(3.0f)), cDim, rt);
+                        ImGui::Dummy(ImVec2(D.info.w, lh + UiPx(10.0f)));
+                    }
+                    ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                    const bool mine = !meName.empty() && w.author == meName;
+                    ImGui::BeginDisabled(w.url.empty());
+                    if (PrimaryButton("Get", ImVec2(std::min(D.info.w, UiPx(260.0f)), mktBtnH + UiPx(6.0f)))) getItem(w);
+                    ImGui::EndDisabled();
+                    if (w.url.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("This listing has no file to download");
+                    {
+                        const bool wished = IsWishlisted(w.id);
+                        if (ImGui::Button(wished ? "Saved" : "Save", ImVec2(FitButtonW("Saved", UiPx(90.0f)), mktBtnH))) { ToggleWishlist(w.id); SavePrefs(); }
+                        ImGui::SameLine(0, UiPx(8.0f));
+                        if (mine) {
+                            if (ImGui::Button("Edit", ImVec2(FitButtonW("Edit", UiPx(80.0f)), mktBtnH))) {
+                                edId = w.id; edKind = MktKindIndex(w.kind);
+                                std::snprintf(edTitle, sizeof(edTitle), "%s", w.title.c_str());
+                                std::snprintf(edDesc,  sizeof(edDesc),  "%s", w.description.c_str());
+                                std::snprintf(edUrl,   sizeof(edUrl),   "%s", w.url.c_str());
+                                edErr.clear(); edOpen = true;
+                            }
+                            ImGui::SameLine(0, UiPx(8.0f));
+                            if (ImGui::Button("Remove listing", ImVec2(FitButtonW("Remove listing"), mktBtnH))) { ws.Remove(w.id); wNextRefresh = 0; mq.Back(); }
+                        } else if (ImGui::Button("Report", ImVec2(FitButtonW("Report", UiPx(80.0f)), mktBtnH))) {
+                            if (signedIn) OpenReport(okayrep::Target::MarketItem, std::to_string(w.id), w.title); else needSignIn("report a listing");
+                        }
+                    }
+                    if (mine && w.status == "pending") ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "In review: only you can see it until a moderator approves it.");
+                    if (mine && w.status == "rejected") ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Not approved%s%s", w.reviewNote.empty() ? "" : ": ", w.reviewNote.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndGroup();
+                    const float infoBottom = ImGui::GetItemRectMax().y;
+                    ImGui::SetCursorScreenPos(ImVec2(o.x, std::max(infoBottom, o.y + (D.twoColumns ? D.picture.B() : 0.0f)) + UiPx(24.0f)));
+                    // Description, what's included, the seller, reviews: full width under the picture and the details.
+                    auto block = [&](const char* id) {
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(12.0f));
+                        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(20.0f), UiPx(18.0f)));
+                        ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+                    };
+                    auto endBlock = [&]() { ImGui::EndChild(); ImGui::PopStyleVar(2); ImGui::PopStyleColor(); ImGui::Dummy(ImVec2(0, UiPx(14.0f))); };
+                    block("##dvdesc");
+                    SectionLabel("DESCRIPTION", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    ImGui::TextWrapped("%s", w.description.empty() ? "The seller did not write a description." : w.description.c_str());
+                    ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                    SectionLabel("WHAT'S INCLUDED", -1);
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    {
+                        std::string file = w.url;
+                        const std::size_t sl = file.find_last_of('/');
+                        if (sl != std::string::npos) file = file.substr(sl + 1);
+                        if (file.empty()) ImGui::TextDisabled("No file is attached to this listing.");
+                        else { ImGui::Bullet(); ImGui::SameLine(); ImGui::TextWrapped("%s", file.c_str()); ImGui::TextDisabled("The size shows in Downloads once you get it."); }
+                    }
+                    endBlock();
+                    block("##dvseller");
+                    {
+                        const std::string seller = w.author.empty() ? std::string("unknown") : w.author;
+                        int others = 0; for (const auto& x : wCache) if (x.author == w.author && x.id != w.id) ++others;
+                        const ImVec2 p = ImGui::GetCursorScreenPos();
+                        const float av = UiPx(48.0f);
+                        dl = ImGui::GetWindowDrawList();
+                        dl->AddCircleFilled(ImVec2(p.x + av * 0.5f, p.y + av * 0.5f), av * 0.5f, ImGui::GetColorU32(NameColor(seller)), 32);
+                        const std::string ini(1, (char)std::toupper((unsigned char)seller[0]));
+                        ImGui::SetWindowFontScale(1.3f);
+                        const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + (av - is.x) * 0.5f, p.y + (av - is.y) * 0.5f), IM_COL32_WHITE, ini.c_str());
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::SetCursorScreenPos(ImVec2(p.x + av + UiPx(14.0f), p.y + UiPx(2.0f)));
+                        ImGui::BeginGroup();
+                        ImGui::TextUnformatted(seller.c_str());
+                        ImGui::TextDisabled("%d other item%s on the marketplace", others, others == 1 ? "" : "s");
+                        ImGui::EndGroup();
+                        const bool canMsg = !w.authorId.empty() && seller != meName;
+                        const float mbw = FitButtonW("Message seller");
+                        ImGui::SetCursorScreenPos(ImVec2(p.x + ImGui::GetContentRegionAvail().x - mbw, p.y + (av - mktBtnH) * 0.5f));
+                        ImGui::BeginDisabled(!canMsg);
+                        if (ImGui::Button("Message seller", ImVec2(mbw, mktBtnH))) { if (signedIn) OpenChatWith(w.authorId, seller, ""); else needSignIn("message sellers"); }
+                        ImGui::EndDisabled();
+                        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + av));
+                        ImGui::Dummy(ImVec2(0, 0));
+                        if (others > 0) {
+                            ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                            if (ImGui::SmallButton(("See " + seller + "'s other items").c_str())) { mq.Back(); mq.view = 0; mq.kind = -1; std::snprintf(wSearch, sizeof(marketFilter), "%s", seller.c_str()); }
+                        }
+                    }
+                    endBlock();
+                    block("##dvreviews");
+                    {
+                        SectionLabel("REVIEWS", (int)dvReviews.size());
+                        ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                        if (ImGui::Button("Write a review", ImVec2(FitButtonW("Write a review"), 0))) { if (signedIn) openReviews(w); else needSignIn("write a review"); }
+                        ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                        if (dvReviews.empty()) ImGui::TextDisabled("No reviews yet. Be the first to say what you think.");
+                        for (std::size_t i = 0; i < dvReviews.size() && i < 20; ++i) {
+                            const auto& rev = dvReviews[i];
+                            const ImVec2 rp = ImGui::GetCursorScreenPos();
+                            DrawStars(ImGui::GetWindowDrawList(), ImVec2(rp.x, rp.y + UiPx(3.0f)), UiPx(10.0f), (float)rev.rating, IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
+                            ImGui::Dummy(ImVec2(UiPx(70.0f), lh)); ImGui::SameLine();
+                            ImGui::Text("%s%s", rev.reviewer.empty() ? "someone" : rev.reviewer.c_str(), rev.mine ? "  (you)" : "");
+                            if (!rev.body.empty()) ImGui::TextWrapped("%s", rev.body.c_str());
+                            ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                        }
+                    }
+                    endBlock();
+                } else if (!wLoaded) {   // ---- Loading: placeholder tiles ----
+                    const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    for (int i = 0; i < grid.cols * 2; ++i) {
+                        const PL::Rect c = PL::GridCell(grid, i, tileH);
+                        const ImVec2 a(g0.x + c.x, g0.y + c.y);
+                        dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), UiPx(12.0f));
+                        SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + tl.picture.h), UiPx(12.0f));
+                        SkeletonBlock(dl, ImVec2(a.x + tl.price.x, a.y + tl.price.y), ImVec2(a.x + tl.price.x + c.w * 0.3f, a.y + tl.price.B()), 4.0f);
+                        SkeletonBlock(dl, ImVec2(a.x + tl.title.x, a.y + tl.title.y + 2), ImVec2(a.x + tl.title.x + c.w * 0.75f, a.y + tl.title.y + lh), 4.0f);
+                        SkeletonBlock(dl, ImVec2(a.x + tl.meta.x, a.y + tl.meta.y + 2), ImVec2(a.x + tl.meta.x + c.w * 0.5f, a.y + tl.meta.B() - 2), 4.0f);
+                    }
+                    ImGui::Dummy(ImVec2(GW, PL::GridHeight(grid, grid.cols * 2, tileH)));
+                } else if (wFailed && wCache.empty()) {   // ---- Offline / server error ----
+                    EmptyState(kIcoAlert, "Couldn't reach the marketplace", "Check your internet connection, then try again. Your downloads and saved items are safe.", UiPx(30.0f));
+                    const float bw = FitButtonW("Try again", UiPx(140.0f));
+                    ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (GW - bw) * 0.5f));
+                    if (PrimaryButton("Try again", ImVec2(bw, mktBtnH))) wNextRefresh = 0;
+                } else {
+                    if (wFailed) {   // a refresh failed but the last list is still here: a gentle banner
+                        const ImVec2 bp = ImGui::GetCursorScreenPos();
+                        const float bh = mktBtnH + UiPx(12.0f);
+                        ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x + GW, bp.y + bh), IM_COL32(120, 90, 30, 70), UiPx(10.0f));
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x + UiPx(14.0f), bp.y + (bh - lh) * 0.5f), IM_COL32(242, 200, 110, 255),
+                                                            FitText("Couldn't refresh the marketplace. Showing the last list.", GW - UiPx(150.0f)).c_str());
+                        ImGui::SetCursorScreenPos(ImVec2(bp.x + GW - FitButtonW("Try again") - UiPx(8.0f), bp.y + UiPx(6.0f)));
+                        if (ImGui::Button("Try again", ImVec2(FitButtonW("Try again"), mktBtnH))) wNextRefresh = 0;
+                        ImGui::SetCursorScreenPos(ImVec2(bp.x, bp.y + bh + UiPx(12.0f)));
+                        ImGui::Dummy(ImVec2(0, 0));
+                    }
+                    // Today's picks: the top-rated listings, on the plain Browse view only.
+                    if (mq.view == 0 && mq.kind < 0 && mq.needle.empty() && mq.minRating <= 0.0f && wSort == 0) {
+                        std::vector<const okay::WorkshopItem*> top;
+                        for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
+                        std::stable_sort(top.begin(), top.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return avgOf(a->id) > avgOf(b->id); });
+                        if ((int)top.size() > grid.cols) top.resize((std::size_t)grid.cols);
+                        if (!top.empty()) {
+                            ImGui::SetWindowFontScale(1.15f);
+                            ImGui::TextUnformatted("Today's picks");
+                            ImGui::SetWindowFontScale(1.0f);
+                            ImGui::TextDisabled("The best-rated things on the marketplace right now.");
+                            ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                            const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                            for (std::size_t i = 0; i < top.size(); ++i) {
+                                const PL::Rect c = PL::GridCell(grid, (int)i, tileH);
+                                ImGui::PushID(80000 + (int)i);
+                                drawTile(*top[i], ImVec2(g0.x + c.x, g0.y + c.y), c.w);
+                                ImGui::PopID();
+                            }
+                            ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + tileH + UiPx(26.0f)));
+                            ImGui::Dummy(ImVec2(0, 0));
+                        }
+                    }
+                    const char* head = mq.view == 1 ? "Your listings" : mq.view == 2 ? "Saved items" : mq.kind >= 0 ? kMktKinds[mq.kind].plural : !mq.needle.empty() ? "Results" : "Browse all";
+                    ImGui::SetWindowFontScale(1.15f);
+                    ImGui::TextUnformatted(head);
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::SameLine(0, UiPx(10.0f));
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + UiPx(2.0f));
+                    ImGui::TextDisabled("%d item%s", (int)order.size(), order.size() == 1 ? "" : "s");
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    if (order.empty()) {
+                        const bool filtered = !mq.needle.empty() || mq.kind >= 0 || mq.minRating > 0.0f;
+                        if (mq.view == 1 && !filtered) EmptyState(7, "You haven't listed anything yet", "Sell an item to share your game, models, textures or sounds with everyone.", UiPx(20.0f));
+                        else if (mq.view == 2 && !filtered) EmptyState(7, "Nothing saved yet", "Tap the star on any item to keep it here for later.", UiPx(20.0f));
+                        else if (wCache.empty()) EmptyState(7, "Nothing listed yet", "Be the first: share a game, a model pack, textures or sounds with everyone.", UiPx(20.0f));
+                        else EmptyState(7, "No items match", "Try another word, another category or a lower rating.", UiPx(20.0f));
+                        const char* act = filtered ? "Clear search and filters" : mq.view == 1 || wCache.empty() ? "Sell an item" : nullptr;
+                        if (act) {
+                            const float bw = FitButtonW(act, UiPx(160.0f));
+                            ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (GW - bw) * 0.5f));
+                            if (PrimaryButton(act, ImVec2(bw, mktBtnH))) {
+                                if (filtered) { wSearch[0] = '\0'; mq.kind = -1; mq.minRating = 0.0f; }
+                                else if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace");
+                            }
+                        }
+                    } else {
+                        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                        for (std::size_t i = 0; i < order.size(); ++i) {
+                            const PL::Rect c = PL::GridCell(grid, (int)i, tileH);
+                            if (!ImGui::IsRectVisible(ImVec2(g0.x + c.x, g0.y + c.y - UiPx(4.0f)), ImVec2(g0.x + c.R(), g0.y + c.B() + UiPx(8.0f)))) continue;   // off screen
+                            drawTile(*order[i], ImVec2(g0.x + c.x, g0.y + c.y), c.w);
+                        }
+                        ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, (int)order.size(), tileH)));
+                        ImGui::Dummy(ImVec2(GW, UiPx(16.0f)));
+                    }
                 }
                 ImGui::EndChild();
             }
@@ -17815,7 +18185,7 @@ int main(int argc, char** argv) {
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##edtitle", "Title", edTitle, sizeof(edTitle));
                 ImGui::SetNextItemWidth(200);
-                if (ImGui::BeginCombo("Type##ed", kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].label)) {
+                if (BeginSlateCombo("Type##ed", kMktKinds[std::clamp(edKind, 0, kMktKindN - 1)].label)) {
                     for (int i = 0; i < kMktKindN; ++i) if (ImGui::Selectable(kMktKinds[i].label, edKind == i)) edKind = i;
                     ImGui::EndCombo();
                 }
@@ -17888,7 +18258,16 @@ int main(int argc, char** argv) {
             if (rvOpen) { ImGui::OpenPopup("Reviews"); rvOpen = false; }
             ImGui::SetNextWindowSize(ImVec2(520, 520), ImGuiCond_Appearing);
             if (ImGui::BeginPopupModal("Reviews", nullptr, ImGuiWindowFlags_NoCollapse)) {
-                ImGui::TextUnformatted(rvTitle.c_str());
+                ImGui::SetWindowFontScale(1.15f);
+                ImGui::TextWrapped("%s", rvTitle.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+                if (!rvMeta.empty()) ImGui::TextDisabled("%s", rvMeta.c_str());
+                if (!rvDesc.empty()) {   // the whole description (a card shows two lines of it)
+                    ImGui::BeginChild("##rvdesc", ImVec2(0, std::min(ImGui::GetTextLineHeightWithSpacing() * 4.0f, ImGui::CalcTextSize(rvDesc.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + 6.0f)), false);
+                    ImGui::TextWrapped("%s", rvDesc.c_str());
+                    ImGui::EndChild();
+                }
+                ImGui::Dummy(ImVec2(0, 2));
                 // Aggregate for this item.
                 long sum = 0, cnt = 0;
                 auto rit = wRatings.find(rvItem);
@@ -17960,7 +18339,7 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
-            }   // end marketplace login gate
+            }   // end marketplace
         } else if (tab == 8) {                            // ---- Servers (Discord-style) ----
             sectionHeader("Servers", nullptr);
             static const bool kSvDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
@@ -18072,7 +18451,7 @@ int main(int argc, char** argv) {
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
                 const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
                 const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
-                const float colH = ImGui::GetContentRegionAvail().y - 46.0f;   // leave the page footer clear
+                const float colH = ImGui::GetContentRegionAvail().y - PageFooterH();   // leave the page footer clear
                 const float availW = ImGui::GetContentRegionAvail().x;
                 auto initials = [](const std::string& n) {
                     std::string o;
@@ -19189,17 +19568,7 @@ int main(int argc, char** argv) {
                 dl->AddRect(ImVec2(c.x - 6, c.y - 5), ImVec2(c.x + 6, c.y + 3), col, 3.0f, 0, 1.4f);
                 dl->AddTriangleFilled(ImVec2(c.x - 3, c.y + 3), ImVec2(c.x + 1, c.y + 3), ImVec2(c.x - 3, c.y + 7), col);
             };
-            auto searchPill = [&](const char* id, const char* hint, char* buf, std::size_t cap, float w) {
-                ImVec2 sp = ImGui::GetCursorScreenPos();
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
-                ImGui::SetNextItemWidth(w);
-                ImGui::InputTextWithHint(id, hint, buf, cap);
-                ImGui::PopStyleVar(2);
-                ImVec2 mc(sp.x + 15.0f, sp.y + ImGui::GetItemRectSize().y * 0.5f - 1.0f);
-                ImGui::GetWindowDrawList()->AddCircle(mc, 4.6f, cDim, 16, 1.5f);
-                ImGui::GetWindowDrawList()->AddLine(ImVec2(mc.x + 3.4f, mc.y + 3.4f), ImVec2(mc.x + 6.8f, mc.y + 6.8f), cDim, 1.8f);
-            };
+            auto searchPill = [&](const char* id, const char* hint, char* buf, std::size_t cap, float w) { SearchPill(id, hint, buf, cap, w); };
 
             // ---- Sections (o/slug, Reddit-style; docs/sql/forum_sections.sql) ----
             const int nSecColors = (int)(sizeof(kAccentPresets) / sizeof(kAccentPresets[0]));
@@ -19306,7 +19675,7 @@ int main(int argc, char** argv) {
                 std::string cur = "All posts";
                 if (const okay::ForumSection* x = sectionById(foSection)) cur = "o/" + x->slug;
                 ImGui::SetNextItemWidth(220);
-                if (ImGui::BeginCombo("##secstrip", cur.c_str())) {
+                if (BeginSlateCombo("##secstrip", cur.c_str())) {
                     if (ImGui::Selectable("All posts", foSection == 0)) openSectionPage(0);
                     for (const auto& x : foSections) if (ImGui::Selectable(("o/" + x.slug).c_str(), foSection == x.id)) openSectionPage(x.id);
                     ImGui::EndCombo();
@@ -19571,7 +19940,7 @@ int main(int argc, char** argv) {
 
             if (openThread == 0) {
                 // Sections rail (left) on wide windows; the list lives beside it.
-                const float foAvailY = ImGui::GetContentRegionAvail().y - 46.0f;
+                const float foAvailY = ImGui::GetContentRegionAvail().y - PageFooterH();
                 const bool showRail = foSecSup && ImGui::GetContentRegionAvail().x > 820.0f;
                 if (showRail) { drawSectionsRail(220.0f, foAvailY); ImGui::SameLine(0, 14); }
                 ImGui::BeginChild("##fomain", ImVec2(0, foAvailY), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -19646,7 +20015,7 @@ int main(int argc, char** argv) {
                             std::string lbl = "General";
                             for (const auto& x : foSections) if (x.id == cur) lbl = "o/" + x.slug;
                             ImGui::SetNextItemWidth(200);
-                            if (ImGui::BeginCombo("##nsec", lbl.c_str())) {
+                            if (BeginSlateCombo("##nsec", lbl.c_str())) {
                                 if (ImGui::Selectable("General", cur == 0)) foNewSection = 0;
                                 for (const auto& x : foSections) {
                                     if (x.banned) continue;
@@ -19828,7 +20197,7 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 4));
                 }
                 const float composerH = ImGui::GetTextLineHeight() + 18.0f + 16.0f;
-                ImGui::BeginChild("##fothread", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f - composerH), false);
+                ImGui::BeginChild("##fothread", ImVec2(0, ImGui::GetContentRegionAvail().y - PageFooterH() - composerH), false);
                 {   // Original post card
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
@@ -19974,7 +20343,7 @@ int main(int argc, char** argv) {
         } else if (tab == 10) {                           // ---- Downloads ----
             sectionHeader("Downloads", "Games you download from the marketplace land here.");
             fs::path ddir = fs::path(g_exeDir) / "downloads";
-            if (ImGui::Button("Open downloads folder", ImVec2(200, 0))) {
+            if (FitButton("Open downloads folder", 0.0f)) {
                 std::error_code ec; fs::create_directories(ddir, ec);
                 OpenExternal(ddir.string());
             }
@@ -19984,7 +20353,7 @@ int main(int argc, char** argv) {
             for (auto& d : g_dls) if (d->status >= 2) { anyDone = true; break; }
             okay::thr::UnlockMutex(g_dlMutex);
             ImGui::BeginDisabled(!anyDone);
-            if (ImGui::Button("Clear finished", ImVec2(130, 0))) {
+            if (FitButton("Clear finished", 0.0f)) {
                 okay::thr::LockMutex(g_dlMutex);
                 for (auto it = g_dls.begin(); it != g_dls.end(); ) {
                     if ((*it)->status >= 2) { if ((*it)->th) okay::thr::WaitThread((*it)->th, nullptr); it = g_dls.erase(it); }
@@ -20001,31 +20370,13 @@ int main(int argc, char** argv) {
             snap = g_dls;
             okay::thr::UnlockMutex(g_dlMutex);
 
-            ImGui::BeginChild("##dllist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
+            ImGui::BeginChild("##dllist", ImVec2(0, ImGui::GetContentRegionAvail().y - PageFooterH()), false);
             if (snap.empty()) {
-                float cw = ImGui::GetContentRegionAvail().x;
-                auto center = [&](const char* s, bool dim) {
-                    float tw = ImGui::CalcTextSize(s).x, o = (cw - tw) * 0.5f;
-                    if (o > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + o);
-                    if (dim) ImGui::TextDisabled("%s", s); else ImGui::TextUnformatted(s);
-                };
-                ImGui::Dummy(ImVec2(0, 34));
-                // Download-into-tray icon.
-                ImVec2 ip = ImGui::GetCursorScreenPos();
-                float icx = ip.x + cw * 0.5f, icy = ip.y + 12;
-                ImDrawList* dl2 = ImGui::GetWindowDrawList();
-                ImU32 ic = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                dl2->AddLine(ImVec2(icx, icy - 16), ImVec2(icx, icy + 6), ic, 2.6f);
-                dl2->AddLine(ImVec2(icx - 9, icy - 3), ImVec2(icx, icy + 6), ic, 2.6f);
-                dl2->AddLine(ImVec2(icx + 9, icy - 3), ImVec2(icx, icy + 6), ic, 2.6f);
-                dl2->AddLine(ImVec2(icx - 15, icy + 15), ImVec2(icx + 15, icy + 15), ic, 2.6f);
-                ImGui::Dummy(ImVec2(0, 40));
-                center("No downloads yet", false);
-                ImGui::Dummy(ImVec2(0, 2));
-                center("Games you get from the Marketplace land here.", true);
-                ImGui::Dummy(ImVec2(0, 12));
-                float bw = 210.0f; ImGui::SetCursorPosX((cw - bw) * 0.5f);
-                if (PrimaryButton("Browse Marketplace", ImVec2(bw, 38))) { tab = 7; g_lastTab = 7; SavePrefs(); }
+                EmptyState(10, "No downloads yet", "Anything you get from the Marketplace downloads here, with its progress.", UiPx(34.0f));
+                const float bw = FitButtonW("Browse Marketplace", UiPx(200.0f));
+                ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+                if (PrimaryButton("Browse Marketplace", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(14.0f)))) { tab = 7; g_lastTab = 7; SavePrefs(); }
             }
             auto humanBytes = [](long long b) {
                 char out[32];
@@ -20088,10 +20439,22 @@ int main(int argc, char** argv) {
                 ImGui::PopID();
             }
             ImGui::EndChild();
+        } else if (tab == 16) {                           // ---- Notifications ----
+            sectionHeader("Notifications", "Friend requests, messages, updates and news, newest first.");
+            {   // Opening the page reads everything: what was unread stays highlighted ("new") while the page is open.
+                static int s_ntLastFrame = -10;
+                if (s_ntLastFrame != ImGui::GetFrameCount() - 1) {
+                    g_notifFresh.clear();
+                    for (auto& n : g_notifs) { if (!n.read) g_notifFresh.insert(n.key); n.read = true; }
+                }
+                s_ntLastFrame = ImGui::GetFrameCount();
+            }
+            const int to = DrawNotificationsPage(account);
+            if (to >= 0) { tab = to; g_lastTab = to; }
         } else if (tab == 15) {                           // ---- Versions ----
             sectionHeader("Versions", "Keep other versions of the editor next to this one, so every project can open with the version it was made with.");
             okayversionsui::DrawPage(VersionsHost());
-        } else if (tab == 16) {                           // ---- Command line ----
+        } else if (tab == 17) {                           // ---- Command line ----
             sectionHeader("Command line", "Run okay, the engine's command line, on a project: check scenes, build, save versions and more.");
             okaylcli::DrawPage(CommandLineHost());
         } else if (tab == 11) {                           // ---- Admin ----
@@ -20100,7 +20463,7 @@ int main(int argc, char** argv) {
 
         // ---- Footer (pinned to the bottom of the content panel) ----
         {
-            float fy = ImGui::GetWindowHeight() - 38.0f;
+            float fy = ImGui::GetWindowHeight() - (PageFooterH() - 8.0f);   // the pages leave PageFooterH() free for it
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();
             ImGui::TextDisabled("OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());

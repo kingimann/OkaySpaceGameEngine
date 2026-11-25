@@ -2123,6 +2123,16 @@ private:
                 d.file = cur().file;
                 advance();
                 auto target = parseBase();
+                while (isP("*") || isP("&")) {
+                    // operator T *() and operator T &() ([class.conv.fct]: a conversion-type-id
+                    // may end in pointer and reference operators).
+                    auto w = ty(isP("*") ? Type::Kind::Pointer : Type::Kind::Reference);
+                    advance();
+                    while (eatKw("const")) {
+                    }
+                    w->inner = std::move(target);
+                    target = std::move(w);
+                }
                 expectP("(", "(");
                 expectP(")", ")");
                 d.name = "operator " + mangleType(*target);
@@ -4288,6 +4298,21 @@ private:
         return s;
     }
 
+    // At the token after "if (": a ';' before the matching ')' means an init-statement ([stmt.if]).
+    bool hasInitStatement() const {
+        int depth = 0;
+        for (std::size_t k = i_; k < toks_.size() && toks_[k].kind != Tok::End; ++k) {
+            if (isP(toks_[k], "(") || isP(toks_[k], "[") || isP(toks_[k], "{")) ++depth;
+            else if (isP(toks_[k], ")") || isP(toks_[k], "]") || isP(toks_[k], "}")) {
+                if (depth == 0) return false;
+                --depth;
+            } else if (isP(toks_[k], ";") && depth == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     std::unique_ptr<Stmt> parseIf() {
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::If;
@@ -4295,6 +4320,42 @@ private:
         s->col = cur().column;
         advance();
         expectP("(", "(");
+        if (hasInitStatement()) {
+            // if (init; cond) A else B  is  { init; if (cond) A else B } ([stmt.if] p3): what init
+            // declares is in scope in both branches and is destroyed after the whole statement.
+            tscopes_.emplace_back();
+            dscopes_.emplace_back();
+            std::size_t localMark = localNames_.size();
+            auto block = std::make_unique<Stmt>();
+            block->kind = Stmt::Kind::Block;
+            block->line = s->line;
+            block->col = s->col;
+            std::size_t at0 = block->stmts.size();
+            if (isTypeKw(cur())) {
+                parseDeclInto(block->stmts, false);
+            } else {
+                auto st = std::make_unique<Stmt>();
+                st->kind = Stmt::Kind::Expr;
+                st->line = cur().line;
+                st->expr = parseExpr();
+                expectP(";", ";");
+                block->stmts.push_back(std::move(st));
+            }
+            flushPre(block->stmts, at0);
+            std::size_t at1 = block->stmts.size();
+            s->expr = parseExpr();
+            flushPre(block->stmts, at1);
+            expectP(")", ")");
+            s->thenS = parseStmt();
+            if (eatKw("else")) s->elseS = parseStmt();
+            block->stmts.push_back(std::move(s));
+            auto ds = pendingDtors(dscopes_.size() - 1, here());
+            for (auto& d : ds) block->stmts.push_back(std::move(d));
+            dscopes_.pop_back();
+            tscopes_.pop_back();
+            localNames_.resize(localMark);
+            return block;
+        }
         if (conditionIsDecl()) {
             // if (T x = e) A else B  is  { T x = e; if (x) A else B }: x is in scope in both
             // branches and is destroyed after the whole statement.

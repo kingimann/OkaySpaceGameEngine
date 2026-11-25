@@ -679,6 +679,9 @@ private:
         }
         case Expr::Kind::Cast: {
             if (!need(0) || !e.ty) return bad(e.line, e.col);
+            // (int)obj for a class with a conversion function: obj.operator int() first
+            // ([expr.cast], [class.conv.fct]).
+            if (e.ty->kind != Type::Kind::Struct && e.ty->kind != Type::Kind::Void) convertIfNeeded(*e.kids[0]);
             ET inner = decay(checkExpr(*e.kids[0]));
             if (inner.bad) return bad(e.line, e.col);
             r.type = cloneType(*e.ty);
@@ -2687,7 +2690,9 @@ private:
         auto& sc = scopes_.front();
         auto it = sc.find(d.name);
         bool cFile = d.file.size() >= 2 && d.file.compare(d.file.size() - 2, 2, ".c") == 0;
-        bool plain = it == sc.end() || !it->second.func || !it->second.type || !d.methodTag.empty() ||
+        // (A static member function is overloaded like a namespace function: Quat::Euler(x, y, z) and
+        // Quat::Euler(v), [over.load].)
+        bool plain = it == sc.end() || !it->second.func || !it->second.type || (!d.methodTag.empty() && !d.staticMember) ||
                      d.name.compare(0, 2, "_Z") == 0 || cFile;
         if (!overloads_.count(d.name) && (plain || sameType(*it->second.type, *d.type))) {
             add(d.name, cloneType(*d.type), true, d.line, d.col);  // C: a conflicting type stays an error

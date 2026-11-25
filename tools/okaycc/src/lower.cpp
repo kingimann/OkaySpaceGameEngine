@@ -1590,9 +1590,9 @@ private:
             return {};
         }
         Sym* simple = e.kids[0]->kind == Expr::Kind::Name ? find(e.kids[0]->text) : nullptr;
-        if (!simple || simple->global || simple->array) {
-            // Any other object (a field, an element, *p, a global): x++ is (x += 1) - 1 and ++x is
-            // x += 1, with the object evaluated once.
+        if (!simple || simple->global || simple->array || simple->ref) {
+            // Any other object (a field, an element, *p, a global, what a reference names): x++ is
+            // (x += 1) - 1 and ++x is x += 1, with the object evaluated once.
             auto one = std::make_unique<Expr>();
             one->kind = Expr::Kind::Int;
             one->ival = 1;

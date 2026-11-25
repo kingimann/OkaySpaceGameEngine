@@ -278,6 +278,14 @@ jobs:
       # On a tag push, release that tag. On a manual run, create/refresh a
       # release for the version in dist/VERSION.txt (the runner's GITHUB_TOKEN
       # can push the tag).
+      - name: Full release notes for the GitHub page
+        env:
+          VER: ${{ steps.pkg.outputs.ver }}
+        run: |
+          python3 -I scripts/fast_release.py changelog-notes --version "$VER" --markdown > github-release-body.md ||
+            printf '## What%ss new in v%s\n\n- See CHANGELOG.txt.\n' "'" "$VER" > github-release-body.md
+          cat github-release-body.md
+
       # Upload the zip AND the individual files as release assets. The in-app
       # updater (launcher + editor) downloads the individual files from
       # releases/latest/download/<name>, so they must be present as assets.
@@ -305,7 +313,9 @@ jobs:
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true
           # Fast release only: the notes players read come from the changelog entries (empty = none, as before).
-          body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || '' }}
+          # The GitHub release page shows the full release notes (owner, 2026-11-25): the fast release's assembled body, else this
+          # version's whole block of dist/CHANGELOG.txt (step "Full release notes for the GitHub page"); the PR list follows it.
+          body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || 'github-release-body.md' }}
           # An LTS patch must not become GitHub's "latest" release: the in-app
           # updater downloads releases/latest/download/<name> on the latest channel.
           # Never "latest" here. A launcher that reads releases/latest sees the version the moment it is "latest", and

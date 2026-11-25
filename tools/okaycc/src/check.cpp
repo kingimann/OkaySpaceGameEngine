@@ -1188,13 +1188,19 @@ private:
     // e becomes e.operator T() (the first conversion function the class has). Only an lvalue
     // object is converted (a call result is not), and the result is not converted again.
     void convertIfNeeded(Expr& e) {
-        const bool call = e.kind == Expr::Kind::Call;
+        const bool call = e.kind == Expr::Kind::Call ||
+                          (e.kind == Expr::Kind::Unary && e.text == "*" && !e.kids.empty() && e.kids[0] &&
+                           e.kids[0]->kind == Expr::Kind::Call);  // *f(): a call returning T&
         if (!simpleOperand(e) && !call) return;
         ++quiet_;
         ET probe = checkExpr(e);
         --quiet_;
         // A call result (f() in "if (f())", [conv] p4 contextual conversion) is converted on a hidden
         // copy: the member call below puts an object result in a hidden local.
+        if (!probe.bad && probe.type && probe.type->kind == Type::Kind::Reference && probe.type->inner) {
+            probe.type = cloneType(*probe.type->inner);  // f() returning T&: the object
+            probe.lvalue = true;
+        }
         if (probe.bad || !probe.type || probe.type->kind != Type::Kind::Struct || (!probe.lvalue && !call)) return;
         const Type* st = canonOf(probe.type.get());
         if (!st) return;
@@ -1419,6 +1425,14 @@ private:
             return derivedFrom(*arg.type, *param.inner) ? (rv ? 1 : 3) : -1;
         }
         if (param.kind == Type::Kind::Reference && param.inner) {
+            // const T& of a number or pointer given a value of another type: a converted temporary
+            // binds ([dcl.init.ref] p5.4), a conversion as for a by-value parameter.
+            if (param.inner->cnst && param.inner->kind != Type::Kind::Struct && param.inner->kind != Type::Kind::Union &&
+                arg.type->kind != Type::Kind::Struct && !sameType(*param.inner, *arg.type)) {
+                auto plain = cloneType(*param.inner);
+                plain->cnst = false;
+                return canAssign(*plain, arg) ? 4 : -1;
+            }
             // A temporary binds to const T& ([dcl.init.ref]; const is not tracked, so any T&),
             // worse than to T&&.
             if (!arg.lvalue)

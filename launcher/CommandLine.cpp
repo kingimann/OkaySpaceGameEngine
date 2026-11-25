@@ -18,6 +18,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace okaylcli {
@@ -257,6 +259,142 @@ void Session::Clear() {
     ++revision_;
 }
 
+// ---- shells -------------------------------------------------------------------------------------------------------
+
+std::vector<ShellKind> AvailableShells() {
+#if defined(_WIN32)
+    return {ShellKind::PowerShell, ShellKind::CommandPrompt, ShellKind::Okay};
+#else
+    return {ShellKind::UserShell, ShellKind::Okay};
+#endif
+}
+
+ShellKind DefaultShell() { return AvailableShells().front(); }
+
+namespace {
+#if defined(_WIN32)
+std::string SystemFolder() {
+    wchar_t dir[MAX_PATH + 1] = {};
+    const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+    if (n == 0 || n > MAX_PATH) return "";
+    return fs::path(std::wstring(dir, n)).u8string();
+}
+#endif
+bool IsProgram(const std::string& p) {
+    std::error_code ec;
+    if (p.empty() || !fs::path(p).is_absolute() || !fs::is_regular_file(fs::u8path(p), ec)) return false;
+#if !defined(_WIN32)
+    if (::access(p.c_str(), X_OK) != 0) return false;
+#endif
+    return true;
+}
+std::string HomeFolder() {
+#if defined(_WIN32)
+    const char* h = std::getenv("USERPROFILE");
+#else
+    const char* h = std::getenv("HOME");
+#endif
+    return h ? std::string(h) : std::string();
+}
+} // namespace
+
+std::vector<std::string> ShellArgv(ShellKind kind, std::string& error) {
+    error.clear();
+#if defined(_WIN32)
+    const std::string sys = SystemFolder();
+    if (kind == ShellKind::PowerShell) {
+        const std::string ps = sys.empty() ? std::string() : (fs::u8path(sys) / "WindowsPowerShell" / "v1.0" / "powershell.exe").u8string();
+        if (IsProgram(ps)) return {ps, "-NoLogo"};
+        error = "Windows PowerShell was not found in the system folder.";
+        return {};
+    }
+    if (kind == ShellKind::CommandPrompt) {
+        const std::string cmd = sys.empty() ? std::string() : (fs::u8path(sys) / "cmd.exe").u8string();
+        if (IsProgram(cmd)) return {cmd};
+        error = "cmd.exe was not found in the system folder.";
+        return {};
+    }
+#else
+    if (kind == ShellKind::UserShell) {
+        if (const char* sh = std::getenv("SHELL"))
+            if (IsProgram(sh)) return {sh};
+        for (const char* p : {"/bin/bash", "/bin/sh"})
+            if (IsProgram(p)) return {p};
+        error = "No shell was found on this computer.";
+        return {};
+    }
+#endif
+    error = kind == ShellKind::Okay ? "okay only runs the okay program, not a shell." : "That shell is not on this computer.";
+    return {};
+}
+
+std::string ShellLabel(ShellKind kind) {
+    switch (kind) {
+    case ShellKind::PowerShell: return "PowerShell";
+    case ShellKind::CommandPrompt: return "Command Prompt";
+    case ShellKind::Okay: return "okay only";
+    case ShellKind::UserShell: {
+        std::string err;
+        const std::vector<std::string> argv = ShellArgv(kind, err);
+        return argv.empty() ? std::string("Shell") : fs::path(argv[0]).filename().string();
+    }
+    }
+    return "Shell";
+}
+
+bool ShellSession::Start(ShellKind kind, const std::string& folder, const std::string& toolsDir, std::string& error) {
+    const std::vector<std::string> argv = ShellArgv(kind, error);
+    if (argv.empty()) {
+        term_.Feed("\x1b[31m" + error + "\x1b[0m\r\n");
+        return false;
+    }
+    return StartArgv(argv, folder, toolsDir, error);
+}
+
+bool ShellSession::StartArgv(const std::vector<std::string>& argv, const std::string& folder, const std::string& toolsDir,
+                             std::string& error) {
+    okaycli::Pty::Options o;
+    o.argv = argv;
+    std::error_code ec;
+    o.cwd = !folder.empty() && fs::is_directory(fs::u8path(folder), ec) ? folder : HomeFolder();
+    o.pathFirst = toolsDir;
+    o.cols = term_.Cols();
+    o.rows = term_.Rows();
+    endedNoted_ = false;
+    if (!pty_.Start(o, error)) {
+        term_.Feed("\x1b[31m" + error + "\x1b[0m\r\n");
+        return false;
+    }
+    started_ = true;
+    return true;
+}
+
+void ShellSession::Poll() {
+    if (!started_) return;
+    std::string out;
+    pty_.Read(out);
+    if (!out.empty()) term_.Feed(out);
+    const std::string reply = term_.TakeReply();
+    if (!reply.empty()) pty_.Write(reply);
+    if (!pty_.Running() && !endedNoted_) {
+        endedNoted_ = true;
+        if (term_.AltScreen()) term_.Feed("\x1b[?1049l");   // a full-screen program that died: back to the text
+        const std::string how = pty_.Stopped() ? std::string("The shell was stopped")
+                                               : "The shell ended (exit code " + std::to_string(pty_.ExitCode()) + ")";
+        term_.Feed("\r\n\x1b[0;90m[" + how + ". Press Enter to start it again.]\x1b[0m\r\n");
+    }
+}
+
+bool ShellSession::Send(const std::string& bytes) { return !bytes.empty() && pty_.Write(bytes); }
+
+void ShellSession::Resize(int cols, int rows) {
+    if (cols == term_.Cols() && rows == term_.Rows()) return;
+    term_.Resize(cols, rows);
+    pty_.Resize(cols, rows);
+}
+
+void ShellSession::Stop() { pty_.Stop(); }
+
 // ---- a terminal window --------------------------------------------------------------------------------------------
 
 std::vector<std::string> TerminalArgv() {
@@ -292,34 +430,67 @@ bool OpenTerminal(const std::string& folder, const std::string& toolsDir, std::s
 
 // ---- the page's layout --------------------------------------------------------------------------------------------
 
-PageLayout LayoutPage(float w, float h, float frameH, float lineH, const PageButtons& b) {
+PageLayout LayoutPage(float w, float h, float frameH, float lineH, const PageButtons& b, bool okayMode) {
     PageLayout L;
     const float gap = 8.0f;
-    // Top row, right to left: Clear, Copy all, Open command line; the project picker takes the rest.
-    const float clearW = b.clear, copyW = b.copy, termW = b.terminal;
-    float x = w;
-    L.clear = {x - clearW, 0, clearW, frameH};
-    x -= clearW + gap;
-    L.copy = {x - copyW, 0, copyW, frameH};
-    x -= copyW + gap;
-    L.terminal = {x - termW, 0, termW, frameH};
-    x -= termW + gap;
-    L.project = {0, 0, std::max(0.0f, x), frameH};
-    if (L.project.w < 160.0f) {   // narrow: the picker gets its own row above the buttons
-        L.project = {0, 0, w, frameH};
-        L.clear.y = L.copy.y = L.terminal.y = frameH + 6.0f;
+    L.tabs = {0, 0, w, frameH};
+    float y = frameH + 6.0f;
+    // The buttons, right to left: A+, A-, Clear, Copy, Open in external window.
+    auto buttonsW = [&](bool font) { return b.terminal + gap + b.copy + gap + b.clear + (font ? 2 * (gap + b.font) : 0.0f); };
+    auto placeButtons = [&](float rowY, bool font) {
+        float x = w;
+        if (font) {
+            L.bigger = {x - b.font, rowY, b.font, frameH};
+            x -= b.font + gap;
+            L.smaller = {x - b.font, rowY, b.font, frameH};
+            x -= b.font + gap;
+        }
+        L.clear = {x - b.clear, rowY, b.clear, frameH};
+        x -= b.clear + gap;
+        L.copy = {x - b.copy, rowY, b.copy, frameH};
+        x -= b.copy + gap;
+        L.terminal = {x - b.terminal, rowY, b.terminal, frameH};
+        return x - b.terminal - gap;   // what is left on the left
+    };
+    const float pickersMin = b.shell + gap + 160.0f;
+    if (w - buttonsW(true) - gap >= pickersMin) {   // one row: the pickers, then the buttons
+        const float left = placeButtons(y, true);
+        L.shell = {0, y, b.shell, frameH};
+        L.project = {b.shell + gap, y, std::max(0.0f, left - b.shell - gap), frameH};
+        y += frameH;
+    } else {   // narrow: the pickers on one row (or two), the buttons under them
+        if (w >= pickersMin) {
+            L.shell = {0, y, b.shell, frameH};
+            L.project = {b.shell + gap, y, w - b.shell - gap, frameH};
+            y += frameH + 6.0f;
+        } else {
+            L.shell = {0, y, w, frameH};
+            y += frameH + 6.0f;
+            L.project = {0, y, w, frameH};
+            y += frameH + 6.0f;
+        }
+        placeButtons(y, buttonsW(true) <= w);
+        y += frameH;
     }
-    const float topBottom = std::max(L.project.B(), L.clear.B());
-    L.hint = {0, topBottom + 6.0f, w, lineH};
-    // Bottom row: the line, then Run and Stop.
-    const float runW = b.run, stopW = b.stop;
-    const float rowY = h - frameH;
-    L.stop = {w - stopW, rowY, stopW, frameH};
-    L.run = {w - stopW - gap - runW, rowY, runW, frameH};
-    L.input = {0, rowY, std::max(0.0f, L.run.x - gap), frameH};
+    L.hint = {0, y + 6.0f, w, lineH};
     const float outY = L.hint.B() + 8.0f;
-    L.output = {0, outY, w, std::max(0.0f, rowY - 8.0f - outY)};
+    if (okayMode) {   // the input row: the line, then Run and Stop
+        const float rowY = h - frameH;
+        L.stop = {w - b.stop, rowY, b.stop, frameH};
+        L.run = {w - b.stop - gap - b.run, rowY, b.run, frameH};
+        L.input = {0, rowY, std::max(0.0f, L.run.x - gap), frameH};
+        L.output = {0, outY, w, std::max(0.0f, rowY - 8.0f - outY)};
+    } else {
+        L.output = {0, outY, w, std::max(0.0f, h - outY)};
+    }
     return L;
+}
+
+void CellsFor(float w, float h, float cellW, float cellH, int& cols, int& rows) {
+    cols = cellW > 0 ? (int)(w / cellW) : 2;
+    rows = cellH > 0 ? (int)(h / cellH) : 1;
+    cols = std::max(2, std::min(cols, 1000));
+    rows = std::max(1, std::min(rows, 500));
 }
 
 } // namespace okaylcli

@@ -56,6 +56,14 @@ bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hov
 /// the launcher sidebar at the end of the frame).
 extern bool g_panelShortcut;
 inline bool TakePanelShortcut() { const bool b = g_panelShortcut; g_panelShortcut = false; return b; }
+/// One icon of an icon rail (Servers' servers, Forums' folded sections): a round badge that turns into a rounded square when
+/// hovered or selected, with the rail's selection pill on the left edge, a tooltip with the full name, and an optional dot
+/// (new / unread). Content: `initials` on `fill`, or a line icon (`navIcon`), or a "+" (`plus`). Drawn in `r` (screen
+/// coordinates); `railX` is the rail's left edge (for the pill). True when clicked.
+struct RailIcon { std::string tip, initials; int navIcon = -1; bool plus = false; ImU32 fill = 0; bool selected = false, dot = false; };
+bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 pos, float d, float railX);
+/// The thin line between groups of a rail, centred in a band from `a` to `b`.
+void DrawRailDivider(ImVec2 a, ImVec2 b);
 /// A plain button exactly as wide as its label needs (UI-scaled padding), at least `minW`.
 bool FitButton(const char* label, float h, float minW = 0.0f, bool primary = false);
 float FitButtonW(const char* label, float minW = 0.0f);   // the width FitButton will take

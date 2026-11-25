@@ -285,6 +285,35 @@ void CheckShowcase(float winW) {
     if (winW >= 1280 && g_scale == 1.0f) CHECK(!b.stacked);
 }
 
+// A folded side panel is an icon rail: Forums' folded sections give one icon per item (All posts, each joined section,
+// Discover, Create, Staff tools) and never an empty rail; the icons sit inside the rail, one under another, never overlapping.
+void CheckIconRail(float winW, float winH) {
+    for (int joined : {0, 1, 4}) for (bool create : {false, true}) for (bool staff : {false, true}) {
+        const auto ent = L::ForumRailEntries(joined, create, staff);
+        int icons = 0, sections = 0;
+        bool sawDiv = false;
+        std::vector<bool> div;
+        for (auto e : ent) {
+            div.push_back(e == L::ForumRail::Divider);
+            if (e == L::ForumRail::Divider) sawDiv = true; else ++icons;
+            if (e == L::ForumRail::Section) ++sections;
+        }
+        CHECK(icons == 1 + joined + 1 + (create ? 1 : 0) + (staff ? 1 : 0));   // one icon per item
+        CHECK(icons >= 2 && sawDiv);                                          // never an empty rail
+        CHECK(sections == joined);
+        CHECK(ent.front() == L::ForumRail::AllPosts);
+        const float railW = Px(60.0f), d = Px(40.0f);
+        const auto rs = L::LayoutIconRail(div, railW, Px(48.0f), d, Px(8.0f), Px(6.0f));
+        CHECK(rs.size() == ent.size());
+        for (std::size_t i = 0; i < rs.size(); ++i) {
+            CHECK(rs[i].x >= 0 && rs[i].R() <= railW + 0.5f);
+            if (i) CHECK(rs[i].y >= rs[i - 1].B());
+        }
+        if (joined <= 4) CHECK(rs.back().B() <= winH - Px(200.0f) || g_scale > 1.0f || winH < 700);   // fits the page at the normal sizes
+    }
+    (void)winW;
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -303,6 +332,7 @@ void RunAll() {
         CheckAchievementsHeader(s[0]);
         CheckMarketShop(s[0]);
         CheckShowcase(s[0]);
+        CheckIconRail(s[0], s[1]);
     }
 }
 

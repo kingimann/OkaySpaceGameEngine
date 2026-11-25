@@ -432,6 +432,46 @@ bool PanelToggle(const char* id, bool open, const char* what, float d, ImU32 hov
     return click;
 }
 
+bool DrawRailIcon(const char* id, const RailIcon& it, ImVec2 ip, float S, float railX) {
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    ImGui::SetCursorScreenPos(ip);
+    const bool click = ImGui::InvisibleButton(id, ImVec2(S, S));
+    const bool hov = ImGui::IsItemHovered();
+    const bool lit = it.selected || hov;
+    ImU32 fill = it.fill ? it.fill : ImGui::GetColorU32(okaytheme::kControl);
+    if (it.plus && hov) fill = okaytheme::SuccessFillU32();
+    if (it.selected && !it.fill) fill = ImGui::GetColorU32(kAccentDim);
+    d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), fill, lit ? S * 0.32f : S * 0.5f);   // a circle; a rounded square when lit
+    const ImVec2 c(ip.x + S * 0.5f, ip.y + S * 0.5f);
+    const bool onColour = it.fill != 0 || (it.selected && !it.plus);
+    if (it.plus) {
+        const ImU32 pc = hov ? okaytheme::OnColorU32() : okaytheme::SuccessU32();
+        const float k = S * 0.16f;
+        d->AddLine(ImVec2(c.x - k, c.y), ImVec2(c.x + k, c.y), pc, 2.2f);
+        d->AddLine(ImVec2(c.x, c.y - k), ImVec2(c.x, c.y + k), pc, 2.2f);
+    } else if (it.navIcon >= 0) {
+        DrawNavIcon(d, it.navIcon, c, onColour ? okaytheme::OnColorU32() : (hov ? okaytheme::TextU32() : okaytheme::TextDimU32()));
+    } else if (!it.initials.empty()) {
+        const ImVec2 ts = ImGui::CalcTextSize(it.initials.c_str());
+        d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), onColour ? okaytheme::OnColorU32() : okaytheme::TextU32(), it.initials.c_str());
+    }
+    if (it.dot) {
+        const ImVec2 dc(ip.x + S - S * 0.12f, ip.y + S * 0.12f);
+        d->AddCircleFilled(dc, S * 0.15f, ImGui::GetColorU32(okaytheme::kSunken), 16);
+        d->AddCircleFilled(dc, S * 0.10f, okaytheme::DangerFillU32(), 16);
+    }
+    if (lit) {   // the selection pill on the rail's left edge
+        const float ph = it.selected ? S * 0.8f : S * 0.4f;
+        d->AddRectFilled(ImVec2(railX, c.y - ph * 0.5f), ImVec2(railX + UiPx(4.0f), c.y + ph * 0.5f), okaytheme::TextU32(), 2.0f);
+    }
+    if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!it.tip.empty()) ImGui::SetTooltip("%s", it.tip.c_str()); }
+    return click;
+}
+void DrawRailDivider(ImVec2 a, ImVec2 b) {
+    const float y = (a.y + b.y) * 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), okaytheme::Ink(26), 2.0f);
+}
+
 float FitButtonW(const char* label, float minW) {
     const char* end = std::strstr(label, "##");   // the visible part of the label
     return okay::launcherlayout::ButtonW(ImGui::CalcTextSize(label, end).x, UiPx(14.0f), minW);

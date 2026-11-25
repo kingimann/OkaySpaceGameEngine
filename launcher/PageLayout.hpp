@@ -168,6 +168,32 @@ inline SidePanel LayoutSidePanel(float availW, float panelW, float gap, float na
     return p;
 }
 
+// ---- A folded side panel as an icon rail (Servers' server list, Forums' sections when folded) -----------------------------
+/// Where the icons of a rail go: one `d`-pixel icon per item, centred in a rail `railW` wide, from `top`, `gap` apart; an
+/// entry marked as a divider takes `divH` instead (its rect is the divider line's band). One rect per entry, in order.
+inline std::vector<Rect> LayoutIconRail(const std::vector<bool>& isDivider, float railW, float top, float d, float gap, float divH) {
+    std::vector<Rect> out;
+    float y = top;
+    for (bool div : isDivider) {
+        if (div) { out.push_back(Rect{railW * 0.25f, y, railW * 0.5f, divH}); y += divH + gap; }
+        else { out.push_back(Rect{(railW - d) * 0.5f, y, d, d}); y += d + gap; }
+    }
+    return out;
+}
+/// What the Forums page's folded sections rail holds, top to bottom: All posts, each joined section (its letter badge), a
+/// divider, Discover (the other sections), Create a section (when you can), Staff tools (staff only). Never empty: All posts
+/// and Discover are always there.
+enum class ForumRail { AllPosts, Section, Divider, Discover, Create, Staff };
+inline std::vector<ForumRail> ForumRailEntries(int joinedSections, bool canCreate, bool staff) {
+    std::vector<ForumRail> v{ForumRail::AllPosts};
+    for (int i = 0; i < joinedSections; ++i) v.push_back(ForumRail::Section);
+    v.push_back(ForumRail::Divider);
+    v.push_back(ForumRail::Discover);
+    if (canCreate) v.push_back(ForumRail::Create);
+    if (staff) v.push_back(ForumRail::Staff);
+    return v;
+}
+
 // ---- The Marketplace (a browse-and-shop page: a filter rail, a grid of item tiles, an item page) ----------------------------
 /// Where the filter rail and the grid go. Below `railMinPageW` the rail folds into a "Filters" button (it then opens over the
 /// grid). The grid has 3 to 6 columns of tiles at least `tileMinW` wide (fewer than 3 only when even 3 do not fit).

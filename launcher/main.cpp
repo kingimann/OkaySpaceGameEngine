@@ -19109,52 +19109,34 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 10));
                 }
                 {
-                    ImDrawList* d = ImGui::GetWindowDrawList();
                     const float S = 44.0f;
+                    // The same icon rail as Forums' folded sections (okl::DrawRailIcon).
+                    const float railX = ImGui::GetWindowPos().x;
                     for (const auto& s : svList) {
                         const bool sel = (s.id == svSel);
                         ImGui::PushID((int)s.id);
                         ImVec2 rp = ImGui::GetCursorScreenPos();
-                        ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
-                        ImGui::SetCursorScreenPos(ip);
-                        if (ImGui::InvisibleButton("##srv", ImVec2(S, S)) && !sel) {
+                        RailIcon it;
+                        it.tip = s.name; it.initials = initials(s.name); it.selected = sel;
+                        const ImVec4 sc = NameColor(s.name);
+                        it.fill = ImGui::GetColorU32(sel ? kAccentDim : ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1));
+                        if (DrawRailIcon("##srv", it, ImVec2(rp.x + (72.0f - S) * 0.5f, rp.y), S, railX) && !sel) {
                             svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear(); svEditId = 0;
                             if (!kSvDemo) { svChannels.clear(); svMembers.clear(); }
                             else svChan = 11;
                         }
-                        const bool hov = ImGui::IsItemHovered();
-                        ImVec4 sc = NameColor(s.name);
-                        ImU32 fill = ImGui::GetColorU32(sel ? kAccentDim : ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1));
-                        // Selected/hovered icons morph from a circle to a rounded square.
-                        d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), fill, (sel || hov) ? 14.0f : S * 0.5f);
-                        std::string ini = initials(s.name);
-                        ImVec2 ts = ImGui::CalcTextSize(ini.c_str());
-                        d->AddText(ImVec2(ip.x + (S - ts.x) * 0.5f, ip.y + (S - ts.y) * 0.5f), okaytheme::TextU32(), ini.c_str());
-                        if (sel || hov) {   // left pill
-                            float ph = sel ? 36.0f : 18.0f;
-                            d->AddRectFilled(ImVec2(rp.x, ip.y + (S - ph) * 0.5f), ImVec2(rp.x + 4, ip.y + (S + ph) * 0.5f), okaytheme::TextU32(), 2.0f);
-                        }
-                        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", s.name.c_str()); }
-                        ImGui::SetCursorScreenPos(ImVec2(rp.x, ip.y + S + 8));
+                        ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + S + 8));
                         ImGui::Dummy(ImVec2(0, 0));
                         ImGui::PopID();
                     }
                     if (!svList.empty()) {
                         ImVec2 lp = ImGui::GetCursorScreenPos();
-                        d->AddLine(ImVec2(lp.x + 22, lp.y), ImVec2(lp.x + 50, lp.y), okaytheme::Ink(22), 2.0f);
+                        DrawRailDivider(ImVec2(lp.x + 22, lp.y - 3), ImVec2(lp.x + 50, lp.y + 3));
                         ImGui::Dummy(ImVec2(0, 8));
                     }
                     ImVec2 rp = ImGui::GetCursorScreenPos();
-                    ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
-                    ImGui::SetCursorScreenPos(ip);
-                    if (ImGui::InvisibleButton("##svadd", ImVec2(S, S))) { svAddOpen = true; svErr.clear(); }
-                    const bool ah = ImGui::IsItemHovered();
-                    d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), ah ? okaytheme::SuccessFillU32() : ImGui::GetColorU32(okaytheme::kControl), ah ? 14.0f : S * 0.5f);
-                    ImU32 pc = ah ? IM_COL32_WHITE : okaytheme::SuccessFillU32();
-                    ImVec2 c(ip.x + S * 0.5f, ip.y + S * 0.5f);
-                    d->AddLine(ImVec2(c.x - 7, c.y), ImVec2(c.x + 7, c.y), pc, 2.2f);
-                    d->AddLine(ImVec2(c.x, c.y - 7), ImVec2(c.x, c.y + 7), pc, 2.2f);
-                    if (ah) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Create or join a server"); }
+                    RailIcon add; add.tip = "Create or join a server"; add.plus = true;
+                    if (DrawRailIcon("##svadd", add, ImVec2(rp.x + (72.0f - S) * 0.5f, rp.y), S, railX)) { svAddOpen = true; svErr.clear(); }
                 }
                 ImGui::EndChild();
                 ImGui::PopStyleVar();
@@ -20263,7 +20245,9 @@ int main(int argc, char** argv) {
                 const ImVec2 is = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ini);
                 d->AddText(ImGui::GetFont(), fs, ImVec2(c.x - is.x * 0.5f, c.y - is.y * 0.5f), IM_COL32_WHITE, ini);
             };
-            auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; };
+            static std::map<long, long> foSecSeen;   // section -> its newest post when you last opened it (this run): newer ones get a dot
+            auto newestIn = [&](long sid) { long t = 0; for (const auto& th : ftCache) if (th.sectionId == sid) t = std::max(t, th.when); return t; };
+            auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; foSecSeen[id] = newestIn(id); };
             // Left rail: Home, joined sections, all sections, create. It folds away (g_foSectionsFolded, PanelToggle, Ctrl+B) and opens
             // over the list on a narrow page (okay::launcherlayout::LayoutSidePanel).
             bool foRailToggle = TakePanelShortcut();
@@ -20613,12 +20597,58 @@ int main(int argc, char** argv) {
                 const okay::launcherlayout::SidePanel foPanel = okay::launcherlayout::LayoutSidePanel(foW, 220.0f, 14.0f, 820.0f, g_foSectionsFolded, foRailOverlay);
                 const bool showRail = foSecSup && foPanel.shown;
                 if (showRail) { drawSectionsRail(220.0f, foAvailY); ImGui::SameLine(0, 14); }
-                else if (foSecSup) {   // folded (or a narrow page): a thin rail with the button that shows the sections
+                else if (foSecSup) {   // folded (or a narrow page): an icon rail (okay::launcherlayout::ForumRailEntries, DrawRailIcon)
+                    namespace PL = okay::launcherlayout;
+                    std::vector<const okay::ForumSection*> joined;
+                    for (const auto& x : foSections) if (!x.myRole.empty()) joined.push_back(&x);
+                    const std::vector<PL::ForumRail> ent = PL::ForumRailEntries((int)joined.size(), canAct, foStaff);
+                    const float railW = UiPx(60.0f), S = UiPx(40.0f);
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-                    ImGui::BeginChild("##forailthin", ImVec2(44.0f, foAvailY), false, ImGuiWindowFlags_NoScrollbar);
-                    ImGui::SetCursorPos(ImVec2(8.0f, 8.0f));
-                    if (PanelToggle("##founfold", false, "the sections", 28.0f, okaytheme::Ink(18), cDim, cText)) foRailToggle = true;
+                    ImGui::BeginChild("##forailthin", ImVec2(railW, foAvailY), false, ImGuiWindowFlags_NoScrollbar);
+                    const ImVec2 r0 = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(r0.x + (railW - UiPx(28.0f)) * 0.5f, r0.y + UiPx(8.0f)));
+                    if (PanelToggle("##founfold", false, "the sections", UiPx(28.0f), okaytheme::Ink(18), cDim, cText)) foRailToggle = true;
+                    std::vector<bool> div;
+                    for (PL::ForumRail e : ent) div.push_back(e == PL::ForumRail::Divider);
+                    const std::vector<PL::Rect> rs = PL::LayoutIconRail(div, railW, UiPx(48.0f), S, UiPx(8.0f), UiPx(6.0f));
+                    std::size_t js = 0;
+                    for (std::size_t i = 0; i < ent.size(); ++i) {
+                        const ImVec2 at(r0.x + rs[i].x, r0.y + rs[i].y);
+                        if (ent[i] == PL::ForumRail::Divider) { DrawRailDivider(at, ImVec2(at.x + rs[i].w, at.y + rs[i].h)); continue; }
+                        RailIcon it;
+                        ImGui::PushID((int)i);
+                        switch (ent[i]) {
+                        case PL::ForumRail::AllPosts: it.tip = "All posts"; it.navIcon = 9; it.selected = foSection == 0; break;
+                        case PL::ForumRail::Section: {
+                            const okay::ForumSection& x = *joined[js++];
+                            it.tip = x.name + "  (o/" + x.slug + ")";
+                            it.initials = std::string(1, x.name.empty() ? '?' : (char)std::toupper((unsigned char)x.name[0]));
+                            it.fill = ImGui::GetColorU32(sectionColor(x));
+                            it.selected = foSection == x.id;
+                            {   // new posts since you last opened it (first sight: remembered, no dot)
+                                const long newest = newestIn(x.id);
+                                auto seen = foSecSeen.find(x.id);
+                                if (seen == foSecSeen.end()) foSecSeen[x.id] = newest;
+                                else it.dot = foSection != x.id && newest > seen->second;
+                            }
+                            if (DrawRailIcon("##sec", it, at, S, r0.x)) openSectionPage(x.id);
+                            ImGui::PopID();
+                            continue;
+                        }
+                        case PL::ForumRail::Discover: it.tip = "Discover sections"; it.navIcon = kIcoGlobe; break;
+                        case PL::ForumRail::Create: it.tip = "Create a section"; it.plus = true; break;
+                        case PL::ForumRail::Staff: it.tip = "Staff tools"; it.navIcon = kIcoShield; break;
+                        default: break;
+                        }
+                        if (DrawRailIcon("##ri", it, at, S, r0.x)) {
+                            if (ent[i] == PL::ForumRail::AllPosts) openSectionPage(0);
+                            else if (ent[i] == PL::ForumRail::Discover) foRailToggle = true;   // the full list shows every section
+                            else if (ent[i] == PL::ForumRail::Create) foCreateOpen = true;
+                            else if (ent[i] == PL::ForumRail::Staff) foStaffOpen = true;
+                        }
+                        ImGui::PopID();
+                    }
                     ImGui::EndChild();
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor();
@@ -20637,7 +20667,7 @@ int main(int argc, char** argv) {
                 else foRailOverlay = false;
                 ImGui::PopStyleVar();
                 ImGui::BeginChild("##fomain", ImVec2(0, foAvailY), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                if (!showRail && foSecSup) drawSectionsStrip();
+                if (!showRail && foSecSup && foW < 820.0f) drawSectionsStrip();   // (narrow pages; a folded rail has the icons)
                 if (foSection != 0) drawSectionHeader();
                 // ---- Toolbar: categories (left), sort + search + New post (right) ----
                 std::vector<std::string> cats;
@@ -21035,6 +21065,19 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 10) {                           // ---- Downloads ----
             sectionHeader("Downloads", "Games you download from the marketplace land here.");
+            {   // dev screenshot hook: sample downloads in every state
+                static bool seeded = false;
+                if (!seeded && kUiDemoUser && std::getenv("OKAY_UI_DEMO_DL")) {
+                    seeded = true;
+                    auto add = [](const char* t, const char* dest, long long rec, long long tot, int st) {
+                        auto d = std::make_shared<DlItem>(); d->id = g_dlNextId++; d->title = t; d->dest = dest; d->received = rec; d->total = tot; d->status = st;
+                        okay::thr::LockMutex(g_dlMutex); g_dls.push_back(d); okay::thr::UnlockMutex(g_dlMutex); };
+                    add("Orbit Hopper", "orbit_hopper.zip", 13000000, 36700000, 1);
+                    add("Crystal Caverns (level)", "crystal_caverns.zip", 8200000, 8200000, 2);
+                    add("Low-poly Trees Pack", "trees.zip", 0, 52000000, 0);
+                    add("Retro Sound Effects", "retro_sfx.zip", 1200000, 9800000, 3);
+                }
+            }
             fs::path ddir = fs::path(g_exeDir) / "downloads";
             if (FitButton("Open downloads folder", 0.0f)) {
                 std::error_code ec; fs::create_directories(ddir, ec);
@@ -21080,55 +21123,70 @@ int main(int argc, char** argv) {
                 else std::snprintf(out, sizeof(out), "%.2f GB", b/(1024.0*1024*1024));
                 return std::string(out);
             };
+            // One card per download: the title and its state on the first line, a thin progress bar, then
+            // "12.4 MB of 35.0 MB" and the actions on the right.
             for (auto& d : snap) {
                 long long rec, tot; int stt; std::string title, dest;
                 okay::thr::LockMutex(g_dlMutex);
                 rec = d->received; tot = d->total; stt = d->status; title = d->title; dest = d->dest;
                 okay::thr::UnlockMutex(g_dlMutex);
                 ImGui::PushID(d->id);
-                ImGui::BeginChild("##dlrow", ImVec2(0, 80), true);
-                HoverRing();
-                ImGui::TextUnformatted(title.c_str());
-                const char* stTxt = stt==0?"Queued":stt==1?"Downloading":stt==2?"Completed":stt==3?"Failed":"Canceled";
-                ImVec4 stCol = stt==2?okaytheme::SuccessFill():stt==3?okaytheme::DangerFill()
-                             : stt==4?okaytheme::WarningFill():ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-                // Progress bar.
-                float frac = (tot > 0) ? (float)rec / (float)tot : (stt==2?1.0f:0.0f);
-                if (frac > 1.0f) frac = 1.0f;
-                char overlay[64];
-                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", humanBytes(rec).c_str(), humanBytes(tot).c_str());
-                else         std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
-                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), overlay);
-                ImGui::SameLine();
-                ImGui::TextColored(stCol, "%s", stTxt);
-                // Actions.
-                if (stt == 0 || stt == 1) {
-                    if (ImGui::SmallButton("Cancel")) { okay::thr::LockMutex(g_dlMutex); d->cancelReq = true; okay::thr::UnlockMutex(g_dlMutex); }
-                } else {
-                    if (stt == 2) {
-                        if (ImGui::SmallButton("Open folder")) OpenExternal(ddir.string());
-                        bool isZip = dest.size() > 4 &&
-                            (dest.substr(dest.size()-4) == ".zip" || dest.substr(dest.size()-4) == ".ZIP");
-                        if (isZip) {
-                            ImGui::SameLine();
-                            if (ImGui::SmallButton("Install to Community")) {
-                                fs::path sub = CommunityDir() /
-                                    fs::path(dest).stem();
-                                if (ExtractZip(dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
-                                else Toast("Couldn't extract the archive", 2);
-                            }
-                        }
-                        ImGui::SameLine();
-                    }
-                    if (ImGui::SmallButton("Remove")) {
+                const float lh = ImGui::GetTextLineHeight(), pad = UiPx(16.0f), btnH = ImGui::GetFrameHeight();
+                const float W = ImGui::GetContentRegionAvail().x, cardH = pad + lh + UiPx(10.0f) + UiPx(6.0f) + UiPx(10.0f) + btnH + pad;
+                const ImVec2 a0 = ImGui::GetCursorScreenPos(), a1(a0.x + W, a0.y + cardH);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                CardBackground(dl, a0, a1, ImGui::IsMouseHoveringRect(a0, a1) && ImGui::IsWindowHovered());
+                const char* stTxt = stt == 0 ? "Queued" : stt == 1 ? "Downloading" : stt == 2 ? "Completed" : stt == 3 ? "Failed" : "Canceled";
+                const ImU32 stCol = stt == 2 ? okaytheme::SuccessU32() : stt == 3 ? okaytheme::DangerU32() : stt == 4 ? okaytheme::WarningU32()
+                                  : stt == 1 ? ImGui::GetColorU32(okaytheme::AccentText(kAccent)) : okaytheme::TextDimU32();
+                const ImU32 barCol = stt == 2 ? okaytheme::SuccessFillU32() : stt == 3 ? okaytheme::DangerFillU32() : stt == 4 ? okaytheme::WarningFillU32()
+                                   : ImGui::GetColorU32(kAccent);
+                float frac = (tot > 0) ? (float)rec / (float)tot : (stt == 2 ? 1.0f : 0.0f);
+                frac = std::clamp(frac, 0.0f, 1.0f);
+                const ImVec2 stS = ImGui::CalcTextSize(stTxt);
+                dl->AddText(ImVec2(a0.x + pad, a0.y + pad), okaytheme::TextU32(), FitText(title, W - 3 * pad - stS.x).c_str());
+                dl->AddText(ImVec2(a1.x - pad - stS.x, a0.y + pad), stCol, stTxt);
+                const float by = a0.y + pad + lh + UiPx(10.0f), bh = UiPx(6.0f);
+                dl->AddRectFilled(ImVec2(a0.x + pad, by), ImVec2(a1.x - pad, by + bh), okaytheme::Ink(22), bh * 0.5f);
+                if (frac > 0.0f) dl->AddRectFilled(ImVec2(a0.x + pad, by), ImVec2(a0.x + pad + (W - 2 * pad) * frac, by + bh), barCol, bh * 0.5f);
+                char sizes[96];
+                if (tot > 0) std::snprintf(sizes, sizeof(sizes), "%s of %s  (%d%%)", humanBytes(rec).c_str(), humanBytes(tot).c_str(), (int)(frac * 100.0f));
+                else std::snprintf(sizes, sizeof(sizes), "%s", humanBytes(rec).c_str());
+                const float ly = by + bh + UiPx(10.0f);
+                dl->AddText(ImVec2(a0.x + pad, ly + (btnH - lh) * 0.5f), okaytheme::TextDimU32(), sizes);
+                // Actions, right-aligned.
+                std::vector<const char*> acts;
+                const bool isZip = dest.size() > 4 && (dest.substr(dest.size() - 4) == ".zip" || dest.substr(dest.size() - 4) == ".ZIP");
+                if (stt == 0 || stt == 1) acts.push_back("Cancel");
+                else {
+                    if (stt == 2) { acts.push_back("Open folder"); if (isZip) acts.push_back("Install to Community"); }
+                    acts.push_back("Remove");
+                }
+                float x = a1.x - pad;
+                for (int k = (int)acts.size() - 1; k >= 0; --k) {
+                    const float bw = FitButtonW(acts[(std::size_t)k], UiPx(80.0f));
+                    x -= bw;
+                    ImGui::SetCursorScreenPos(ImVec2(x, ly));
+                    const bool hit = std::strcmp(acts[(std::size_t)k], "Install to Community") == 0 ? PrimaryButton(acts[(std::size_t)k], ImVec2(bw, btnH))
+                                                                                                    : ImGui::Button(acts[(std::size_t)k], ImVec2(bw, btnH));
+                    x -= UiPx(8.0f);
+                    if (!hit) continue;
+                    const std::string what = acts[(std::size_t)k];
+                    if (what == "Cancel") { okay::thr::LockMutex(g_dlMutex); d->cancelReq = true; okay::thr::UnlockMutex(g_dlMutex); }
+                    else if (what == "Open folder") OpenExternal(ddir.string());
+                    else if (what == "Install to Community") {
+                        fs::path sub = CommunityDir() / fs::path(dest).stem();
+                        if (ExtractZip(dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
+                        else Toast("Couldn't extract the archive", 2);
+                    } else if (what == "Remove") {
                         okay::thr::LockMutex(g_dlMutex);
                         for (auto it = g_dls.begin(); it != g_dls.end(); ++it)
                             if ((*it)->id == d->id) { if ((*it)->th) okay::thr::WaitThread((*it)->th, nullptr); g_dls.erase(it); break; }
                         okay::thr::UnlockMutex(g_dlMutex);
                     }
                 }
-                ImGui::EndChild();
+                ImGui::SetCursorScreenPos(ImVec2(a0.x, a1.y + UiPx(12.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
                 ImGui::PopID();
             }
             ImGui::EndChild();

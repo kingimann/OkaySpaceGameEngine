@@ -7,7 +7,8 @@ usage: compare_cmake_commands.py CMAKE_COMPILE_COMMANDS.json OKAYBUILD_COMPILE_C
        compare_cmake_commands.py --exact [--target NAME]... [--map CMAKE_BUILD_DIR=OKAYBUILD_BIN_DIR] CMAKE_COMPILE_COMMANDS.json OKAYBUILD_COMPILE_COMMANDS.json REPO_ROOT
 --exact compares each object's command word by word, in order (for a manifest with compile_order = cmake). Commands are paired by
 target and source (CMake's object path CMakeFiles/<target>.dir/..., okay-build's .okaybuild/obj/<target>/...). Left out of the
-comparison: the compiler's name, the output, the dependency-file options (-MD/-MMD/-MF/-MT), -c and the source path, and okay-build's
+comparison: the compiler's name, the output, the dependency-file options (-MD/-MMD/-MF/-MT), -c and the source path (also a windres
+line's source and .res output, which have no -c / -o), and okay-build's
 -ffile-prefix-map; the account definitions are compared by name and place, not value (okay-build hides the value). --target limits
 the comparison to those targets; then the object lists must also be the same. --map spells CMake's build folder the way okay-build
 names its {bin} folder (generated sources and folders in the build tree), in source paths and in the words. Exit code 0 only when everything is the same.
@@ -71,8 +72,11 @@ def exact_load(path, ninja_style, maps=()):
         else:
             if "/obj/" not in obj: continue
             target = obj.split("/obj/")[1].split("/")[0]
-        src = mapped(os.path.realpath(os.path.join(d, e["file"])))
-        out[(target, src)] = [mapped(w) for w in exact_words(args)]
+        real = os.path.realpath(os.path.join(d, e["file"]))
+        src = mapped(real)
+        # a resource compile (windres -O coff ... FILE OUT.res) names its source and output without -c / -o: leave both out too
+        words = [w for w in exact_words(args) if w != obj and os.path.realpath(os.path.join(d, w)) != real]
+        out[(target, src)] = [mapped(w) for w in words]
     return out
 
 def exact_main(argv):

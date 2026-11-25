@@ -212,7 +212,7 @@ static std::set<std::string> g_invitedUids;     // invited to the current sessio
 static std::string g_invitedFor;                // ...which session that was
 void MpInviteUser(const std::string& uid, const std::string& name) {
     if (!MpCanInvite()) { Toast("Host or join a match in your game first, then invite friends.", 2); return; }
-    OutboxSend(uid, 0, InviteMessageBody(g_myGame.title, g_myGame.invite));
+    OutboxSendInvite(uid, InviteMessageBody(g_myGame.title, g_myGame.invite));   // card + game_invites record (expiry, answer)
     g_invitedUids.insert(uid);
     Toast("Invited " + name + " to " + g_myGame.title, 1);
 }

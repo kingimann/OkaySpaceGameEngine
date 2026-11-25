@@ -79,15 +79,7 @@ inline long CurrentPid() {
 }
 inline fs::path FileFor(long pid, const char* ext) { return Dir() / ("game-" + std::to_string(pid) + ext); }
 
-inline bool WriteAtomic(const fs::path& p, const std::string& body) {
-    std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
-    const fs::path tmp = p.string() + ".tmp";
-    { std::ofstream f(tmp, std::ios::trunc | std::ios::binary); if (!f) return false; f << body; }
-    fs::rename(tmp, p, ec);
-    if (ec) { fs::remove(p, ec); ec.clear(); fs::rename(tmp, p, ec); }
-    return !ec;
-}
+inline bool WriteAtomic(const fs::path& p, const std::string& body) { return okay::account::detail::WriteFileAtomic(p, body); }
 inline std::string OneLine(std::string s) { for (char& c : s) if (c == '\n' || c == '\r') c = ' '; return s; }
 
 // ---- game side -------------------------------------------------------------

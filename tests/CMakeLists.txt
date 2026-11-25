@@ -2749,6 +2749,12 @@ endif()
 find_program(OKAY_NODE node)
 if(OKAY_NODE)
     add_test(NAME password_reset_page COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_password_reset_page.js)
+    # okay.js (web/okayjs/, docs/scripting/okayjs.md): maths, meshes, scene graph, input, game loop and the engine's game
+    # scripts in plain node; then the examples in headless Chromium (skipped, 77, when playwright cannot be loaded).
+    add_test(NAME okayjs_unit COMMAND ${OKAY_NODE} --test ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_math.mjs
+             ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_script.mjs ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_renderer.mjs)
+    add_test(NAME okayjs_browser COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/okayjs/test_okayjs_browser.js)
+    set_tests_properties(okayjs_browser PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.
@@ -2776,6 +2782,11 @@ add_executable(test_friends_json test_friends_json.cpp)
 target_compile_features(test_friends_json PRIVATE cxx_std_17)
 target_include_directories(test_friends_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME friends_json COMMAND test_friends_json)
+# ...chat delivery, limits, safe links, game invites and which program a join starts (ChatDelivery.hpp, Invites.hpp, JoinPlan.hpp).
+add_executable(test_chat_invites test_chat_invites.cpp)
+target_compile_features(test_chat_invites PRIVATE cxx_std_17)
+target_include_directories(test_chat_invites PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME chat_invites COMMAND test_chat_invites)
 
 # Anti-cheat (opt-in): the build's integrity manifest + ed25519, and the runtime
 # checks' logic. Linked to the engine so a libsodium build tests that backend too.
@@ -2865,6 +2876,9 @@ if(UNIX)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME chat_receipts_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_receipts_sql.sh)
     set_tests_properties(chat_receipts_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/chat_invites.sql (client ids, chat limits, friends-only invites, game_invites) on a LOCAL Postgres, same opt-in.
+    add_test(NAME chat_invites_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_invites_sql.sh)
+    set_tests_properties(chat_invites_sql PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(test_tween test_tween.cpp)
@@ -4639,9 +4653,9 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
-# HTTP seam (okay/Platform/NativeFetch.hpp): the shipped programs start curl only inside CurlFallback.hpp, the seam's last
-# fallback after WinHTTP (Windows) or our own client (Linux). Fails and names the file for a curl spawn anywhere else.
-add_test(NAME curl_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_curl_seam_wiring.cmake)
+# HTTP seam (okay/Platform/NativeFetch.hpp): no shipped program starts the external curl program; WinHTTP on Windows,
+# our own client elsewhere. Fails and names the file for any curl spawn in engine/launcher/editor/player/server/shared/platform.
+add_test(NAME no_curl_spawn COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_no_curl.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
@@ -5528,6 +5542,14 @@ target_compile_definitions(test_launcher_tray PRIVATE OKAY_LAUNCHER_MAIN="${CMAK
 add_test(NAME launcher_tray COMMAND test_launcher_tray)
 set_tests_properties(launcher_tray PROPERTIES TIMEOUT 60)
 
+# The launcher's desktop notifications (launcher/DesktopNotify.hpp): pop-up, in-app or tab only (focus, the switches,
+# Do not disturb, presence, blocked and muted senders), bursts, rate limits, the one-at-a-time queue, once per version,
+# where a click goes, and the tray balloon's messages (launcher/TrayLogic.hpp). Headless; no SDL, ImGui or Win32.
+add_executable(test_launcher_notify test_launcher_notify.cpp)
+target_compile_features(test_launcher_notify PRIVATE cxx_std_17)
+target_include_directories(test_launcher_notify PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_notify COMMAND test_launcher_notify)
+set_tests_properties(launcher_notify PROPERTIES TIMEOUT 60)
 # The chat window's Friends list (launcher/FriendsList.hpp): grouping, the friend menu, status, layout. Headless.
 add_executable(test_launcher_friends test_launcher_friends.cpp)
 target_compile_features(test_launcher_friends PRIVATE cxx_std_17)

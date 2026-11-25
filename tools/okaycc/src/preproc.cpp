@@ -894,6 +894,9 @@ private:
         std::string contents;
         std::string n = normalizePath(path);
         if (!files_.read(n, contents)) return false;
+        // A file that does not end in a new-line is read as if it did ([lex.phases] p1.2), so the
+        // line after its #include in the includer is still a directive.
+        if (!contents.empty() && contents.back() != '\n') contents += '\n';
         stack_.push_back(Frame{std::make_unique<Lexer>(n, std::move(contents), diags_), n});
         (void)at;
         return true;

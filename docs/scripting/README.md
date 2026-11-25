@@ -12,3 +12,4 @@
 - [OkayScript bytecode machine](okayscript_vm.md): Design note for the compiler and stack machine that run OkayScript.
 - [Visual Script clarity](visual_script_clarity.md): How visual-script nodes explain themselves, and the audit behind it.
 - [OkayVS — the visual scripting text format](visual_scripting.md): A visual script is a graph of **nodes** wired by **execution** links (control flow) and **data** links (values).
+- [okay.js](okayjs.md): Design note for our own browser library (`web/okayjs/`): maths, scene graph, WebGL renderer, input and game loop with the engine's script API, so one game script runs in the engine and in a web page.

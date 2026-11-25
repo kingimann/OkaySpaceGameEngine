@@ -446,8 +446,8 @@ public:
             for (const auto& o : SplitObjects(p.body)) {
                 const std::string id = Field(o, "id");
                 for (auto& m : out) if (m.uid == id) {
-                    m.username = Field(o, "username");
-                    m.name = Field(o, "display_name"); if (m.name.empty()) m.name = m.username;
+                    m.username = okay::account::PublicName(Field(o, "username"));
+                    m.name = okay::account::PublicName(Field(o, "display_name")); if (m.name.empty()) m.name = m.username;
                     m.avatar = Field(o, "avatar_url");
                     m.lastSeen = ParseIso(Field(o, "last_seen"));
                 }
@@ -468,7 +468,7 @@ public:
             GroupMessage m;
             m.id        = std::atol(Field(o, "id").c_str());
             m.sender    = Field(o, "sender");
-            m.senderName= Field(o, "sender_name");
+            m.senderName= okay::account::PublicName(Field(o, "sender_name"));
             m.body      = Field(o, "body");
             m.when      = ParseIso(Field(o, "created_at"));
             m.edited    = Field(o, "edited") == "true";
@@ -597,7 +597,7 @@ public:
             for (const auto& o : SplitObjects(g.body)) {
                 SearchHit h; h.scope = "group"; h.id = std::atol(Field(o, "id").c_str());
                 h.groupId = std::atol(Field(o, "convo_id").c_str());
-                h.senderName = Field(o, "sender_name");
+                h.senderName = okay::account::PublicName(Field(o, "sender_name"));
                 h.mine = !mine.empty() && Field(o, "sender") == mine;
                 h.body = Field(o, "body"); h.when = ParseIso(Field(o, "created_at"));
                 out.push_back(h);

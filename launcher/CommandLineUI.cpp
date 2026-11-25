@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include "OkayTheme.hpp"   // the theme palette's colours
 
 namespace okaylcli {
 
@@ -140,7 +141,7 @@ void DrawOkayTab(Tab& t, const Host& host, const PageLayout& L, ImVec2 origin) {
     Session& s = *t.okay;
     Place(L.output, origin);
     if (host.mono) ImGui::PushFont(host.mono, g_fontSize);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.07f, 0.075f, 0.09f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kDeep);
     // New lines: show the end. For a few frames, because the box learns its new text height a frame late.
     if (s.Revision() != t.seenRevision) t.follow = 3;
     t.seenRevision = s.Revision();

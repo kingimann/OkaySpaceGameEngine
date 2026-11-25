@@ -136,6 +136,10 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "AntiCheatPages.hpp"   // Admin > Anti-cheat, my bans and appeals, session tickets
 #include "CoverArtAvatars.hpp"  // game cover art, avatar textures
 #include "NavIcons.hpp"         // the sidebar's line icons, round icon buttons, stars
+#include "okay/Core/Random.hpp"   // the welcome screen's star field
+#include "UpdateView.hpp"       // what the Software Update dialog shows for the updater's state (tested headless)
+#include "SignInGate.hpp"       // what the window may show before and after signing in (tested headless)
+#include "AuthForm.hpp"         // the welcome screen's fields, checks and plain-words errors (tested headless)
 #include "PageLayout.hpp"       // where the page toolbar, chips, card grids and listing cards go (tested headless)
 #include "NewsHistory.hpp"      // What's New history (news.cfg)
 #include "AdminPage.hpp"        // reports, Admin > Reports, the Admin page, the ban banner
@@ -1265,6 +1269,66 @@ static void StartupUpdateBegin() {
     g_suLastCheckEpoch = now; SaveLastStartupCheck();   // (only that one line of launcher.cfg: SavePrefs this early could write back a default)
 }
 
+// The OkaySpace mark: a ringed planet, `L` pixels across, centred at c.
+// theme-allow-begin: the OkaySpace logo, the same in every theme
+static void DrawLogoMark(ImDrawList* ld, ImVec2 c, float L) {
+    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 32);
+    ld->AddCircleFilled(ImVec2(c.x - L * 0.07f, c.y - L * 0.07f), L * 0.30f, IM_COL32(255, 255, 255, 40), 32);
+    ImVec2 ring[32];
+    for (int k = 0; k < 32; ++k) {
+        const float a = k * (6.2831853f / 32), rx = L * 0.46f, ry = L * 0.16f, rot = -0.5f;
+        const float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+        ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
+    }
+    ld->AddPolyline(ring, 32, IM_COL32(220, 232, 255, 235), ImDrawFlags_Closed, std::max(1.8f, L * 0.03f));
+}
+// theme-allow-end
+
+// The start-up screen's look, shared by "Checking for updates" and "Signing you in": the whole window, the logo and the name in
+// the middle, a slim bar (progress 0..1, or < 0 for a moving one) with one plain status line, the version small at the bottom.
+// Returns true when its optional button (`button`, e.g. "Skip") was pressed.
+static bool DrawLoadingScreen(const char* status, float progress, const char* button) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::kDeep);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##loadingscreen", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 c(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.42f);
+    DrawLogoMark(dl, c, UiPx(84.0f));
+    ImGui::SetWindowFontScale(1.6f);
+    const ImVec2 ns = ImGui::CalcTextSize("OkaySpace");
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(c.x - ns.x * 0.5f, c.y + UiPx(52.0f)), ImGui::GetColorU32(ImGuiCol_Text), "OkaySpace");
+    ImGui::SetWindowFontScale(1.0f);
+    const float bw = std::min(UiPx(280.0f), vp->Size.x - UiPx(80.0f)), bh = UiPx(4.0f);
+    const ImVec2 bp(c.x - bw * 0.5f, c.y + UiPx(52.0f) + ns.y + UiPx(26.0f));
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + bh), okaytheme::Ink(22), bh * 0.5f);
+    if (progress >= 0.0f) dl->AddRectFilled(bp, ImVec2(bp.x + bw * std::min(1.0f, progress), bp.y + bh), ImGui::GetColorU32(kAccent), bh * 0.5f);
+    else {
+        const float t = (float)std::fmod(ImGui::GetTime() * 0.7, 1.0), seg = bw * 0.35f, x0 = bp.x + (bw + seg) * t - seg;
+        dl->PushClipRect(bp, ImVec2(bp.x + bw, bp.y + bh), true);
+        dl->AddRectFilled(ImVec2(x0, bp.y), ImVec2(x0 + seg, bp.y + bh), ImGui::GetColorU32(kAccent), bh * 0.5f);
+        dl->PopClipRect();
+    }
+    const ImVec2 ss = ImGui::CalcTextSize(status);
+    dl->AddText(ImVec2(c.x - ss.x * 0.5f, bp.y + bh + UiPx(14.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), status);
+    bool pressed = false;
+    if (button && *button) {
+        const float w = FitButtonW(button, UiPx(90.0f));
+        ImGui::SetCursorScreenPos(ImVec2(c.x - w * 0.5f, bp.y + bh + UiPx(14.0f) + ss.y + UiPx(18.0f)));
+        pressed = ImGui::Button(button, ImVec2(w, 0));
+    }
+    char ver[64]; std::snprintf(ver, sizeof(ver), "v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
+    const ImVec2 vs = ImGui::CalcTextSize(ver);
+    dl->AddText(ImVec2(c.x - vs.x * 0.5f, vp->Pos.y + vp->Size.y - vs.y - UiPx(18.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.7f), ver);
+    ImGui::End();
+    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+    return pressed;
+}
+
 // Once per frame, last thing before the toasts: decides what the person sees and draws the panel. Sets g_suLocked while an install runs.
 static void StartupUpdateFrame() {
     using namespace okay::startupupdate;
@@ -1295,27 +1359,7 @@ static void StartupUpdateFrame() {
     if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
     g_suLocked = v.locked;
     if (!v.visible) return;
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
-    ImGui::SetNextWindowBgAlpha(1.0f);
-    ImGui::SetNextWindowFocus();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::Begin("##startupupdate", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
-    const float w = 360.0f, h = 128.0f;
-    ImGui::SetCursorPos(ImVec2((vp->Size.x - w) * 0.5f, (vp->Size.y - h) * 0.5f));
-    ImGui::BeginChild("##suCard", ImVec2(w, h), true);
-    ImGui::TextUnformatted("OkaySpace");
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextUnformatted(v.text.c_str());
-    float frac = v.progress;
-    if (frac < 0.0f) frac = -1.0f * (float)ImGui::GetTime();   // ImGui's moving bar for "unknown"
-    ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
-    if (v.canSkip) { ImGui::Dummy(ImVec2(0, 6)); if (ImGui::Button("Skip", ImVec2(80, 26))) g_suSkipped = true; }
-    ImGui::EndChild();
-    ImGui::End();
-    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+    if (DrawLoadingScreen(v.text.c_str(), v.progress, v.canSkip ? "Skip" : nullptr)) g_suSkipped = true;
 }
 
 // ---- Periodic "is a newer version out?" check -------------------------------
@@ -1669,6 +1713,11 @@ std::string g_projectJustMade;              // name to highlight in the list
 std::string g_projectsDir;                  // the Create page's projects folder ("" = <launcher>/Projects)
 std::vector<std::string> g_extraProjects;   // projects opened from other folders (scene paths), remembered
 std::vector<std::string> g_hiddenProjects;  // project folders removed from the list (files kept), remembered
+std::string g_trayOpenScene;                // the tray menu asked to open this project (the Create page opens it)
+// The Create page's projects folder (g_projectsDir, else <launcher>/Projects).
+static std::string ProjectsLocation() {
+    return g_projectsDir.empty() ? (fs::path(g_exeDir) / "Projects").string() : g_projectsDir;
+}
 
 // Make a real project on disk, in the LAUNCHER, so clicking a template actually
 // creates something (the folder + Assets exist the instant you click) instead of
@@ -1925,11 +1974,11 @@ long                               g_statusUntil = 0;
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
 // these, so changing them and re-applying restyles everything).
-ImVec4 kAccent(0.26f, 0.59f, 0.98f, 1.0f);     // matches the editor's default accent
-ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f);
+ImVec4 kAccent(0.26f, 0.59f, 0.98f, 1.0f);     // matches the editor's default accent  theme-allow: the accent people pick (Settings)
+ImVec4 kAccentDim(0.19f, 0.43f, 0.72f, 1.0f); // theme-allow: the accent people pick (Settings)
 
 int g_accentIndex = 0;            // current accent preset (persisted)
-bool g_minimizeToTray = true;     // Settings > Behavior: minimizing hides the launcher to the tray (Windows; persisted, default ON)
+bool g_minimizeToTray = false;    // Settings > Behavior: minimizing hides the launcher to the tray (Windows; persisted as tray_minimize, default OFF)
 bool g_closeToTray = true;        // Settings > Behavior: the X button hides the launcher to the tray (Windows; persisted, default ON)
 bool g_trayHintShown = false;     // the "still running in the tray" note was shown once (persisted)
 bool g_updateOnLaunch = true;     // check for updates at startup, like Steam (persisted; default ON, a saved update_on_launch=0 is kept)
@@ -1952,6 +2001,9 @@ std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" 
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
 static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
+bool g_svChannelsFolded = false;  // Servers: the channel list folded away (persisted; PanelToggle / Ctrl+B)
+bool g_foSectionsFolded = false;  // Forums: the sections rail folded away (persisted)
+bool g_mktRailFolded = false;     // Marketplace: the filter rail folded to icons (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
 int g_chatWinX = -1, g_chatWinY = -1, g_chatWinW = 900, g_chatWinH = 640;   // the chat window's own geometry (persisted)
@@ -2365,76 +2417,23 @@ void RecordPlayed(const std::string& p) {
     }
 }
 
-// Apply the selected theme (g_themeIndex), accent (kAccent), and UI scale.
+// Apply the selected theme (g_themeIndex: 0 Slate, 1 Midnight, 2 Light), accent (kAccent) and UI scale. Every colour comes from
+// the theme's palette (shared/OkayTheme.hpp): ImGui's own colours here, and the page code's through the okaytheme tokens.
 void DarkTheme() {
-    const bool light = (g_themeIndex == 2);
-    if (light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
+    const okaytheme::Palette P = g_themeIndex == 1 ? okaytheme::MidnightPalette() : g_themeIndex == 2 ? okaytheme::LightPalette() : okaytheme::SlatePalette();
+    okaytheme::SetPalette(P);
+    if (P.light) ImGui::StyleColorsLight(); else ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Utilitarian, Steam/metrics: mostly square, dense, flat. Small
-    // corner radii only (no big pill rounding), tight spacing, thin separators.
-    s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
-    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
-    s.ScrollbarRounding = 2.0f;
     s.WindowPadding   = ImVec2(14, 12); s.FramePadding = ImVec2(10, 7);
     s.ItemSpacing     = ImVec2(9, 8);   s.ItemInnerSpacing = ImVec2(7, 6);
-    s.WindowBorderSize = 0.0f;          s.ChildBorderSize = 1.0f;
-    s.FrameBorderSize  = 0.0f;          s.PopupBorderSize = 1.0f;
     s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
     s.SeparatorTextBorderSize = 1.0f;
     s.SeparatorTextPadding = ImVec2(14, 5);
     s.TabBarBorderSize = 1.0f;
     s.DisabledAlpha = 0.55f;
-    ImVec4* c = s.Colors;
-    const ImVec4 accent = kAccent;
-    const ImVec4 accentDim = kAccentDim;
-    const bool darkGrabs = !light;
-    if (g_themeIndex == 1) {                              // Midnight (deep, bluer)
-        c[ImGuiCol_WindowBg]  = ImVec4(0.035f, 0.040f, 0.060f, 1.0f);
-        c[ImGuiCol_ChildBg]   = ImVec4(0.070f, 0.080f, 0.110f, 1.0f);
-        c[ImGuiCol_PopupBg]   = ImVec4(0.070f, 0.080f, 0.110f, 0.98f);
-        c[ImGuiCol_Border]    = ImVec4(1, 1, 1, 0.05f);
-        c[ImGuiCol_Text]      = ImVec4(0.90f, 0.93f, 0.98f, 1.0f);
-        c[ImGuiCol_TextDisabled] = ImVec4(0.46f, 0.50f, 0.60f, 1.0f);
-        c[ImGuiCol_Button]    = ImVec4(0.12f, 0.14f, 0.20f, 1.0f);
-        c[ImGuiCol_FrameBg]   = ImVec4(0.10f, 0.12f, 0.17f, 1.0f);
-        c[ImGuiCol_FrameBgHovered] = ImVec4(0.14f, 0.16f, 0.23f, 1.0f);
-        c[ImGuiCol_FrameBgActive]  = ImVec4(0.16f, 0.19f, 0.27f, 1.0f);
-        c[ImGuiCol_Separator] = ImVec4(1, 1, 1, 0.06f);
-    } else if (light) {                                   // Light
-        c[ImGuiCol_WindowBg]  = ImVec4(0.93f, 0.94f, 0.96f, 1.0f);
-        c[ImGuiCol_ChildBg]   = ImVec4(0.99f, 0.99f, 1.00f, 1.0f);
-        c[ImGuiCol_PopupBg]   = ImVec4(0.99f, 0.99f, 1.00f, 0.98f);
-        c[ImGuiCol_Border]    = ImVec4(0, 0, 0, 0.10f);
-        c[ImGuiCol_Text]      = ImVec4(0.10f, 0.12f, 0.16f, 1.0f);
-        c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.55f, 1.0f);
-        c[ImGuiCol_Button]    = ImVec4(0.87f, 0.89f, 0.93f, 1.0f);
-        c[ImGuiCol_FrameBg]   = ImVec4(0.90f, 0.92f, 0.96f, 1.0f);
-        c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.88f, 0.93f, 1.0f);
-        c[ImGuiCol_FrameBgActive]  = ImVec4(0.82f, 0.86f, 0.92f, 1.0f);
-        c[ImGuiCol_Separator] = ImVec4(0, 0, 0, 0.10f);
-    } else {                                              // Slate (default): shared with the editor + chat
-        okaytheme::ApplySlateMetrics(s);
-        s.WindowRounding = 0.0f;           // the launcher's root window fills the OS window
-        okaytheme::ApplySlateColors(s, accent);
-        ImGui::GetIO().FontGlobalScale = g_uiScale;
-        return;   // Dark theme is fully specified above (no shared overrides needed)
-    }
-    // Accent-tinted slots (shared by the Midnight / Light themes).
-    c[ImGuiCol_ButtonHovered]    = accent;
-    c[ImGuiCol_ButtonActive]     = accentDim;
-    c[ImGuiCol_Header]           = ImVec4(accent.x, accent.y, accent.z, 0.28f);
-    c[ImGuiCol_HeaderHovered]    = ImVec4(accent.x, accent.y, accent.z, 0.45f);
-    c[ImGuiCol_HeaderActive]     = ImVec4(accent.x, accent.y, accent.z, 0.65f);
-    c[ImGuiCol_SeparatorHovered] = accent;
-    c[ImGuiCol_SeparatorActive]  = accent;
-    c[ImGuiCol_CheckMark]        = accent;
-    c[ImGuiCol_SliderGrab]       = accent;
-    c[ImGuiCol_SliderGrabActive] = accentDim;
-    c[ImGuiCol_ScrollbarBg]      = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab]    = ImVec4(darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, 0.16f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, darkGrabs ? 1.f : 0.f, 0.28f);
-    c[ImGuiCol_ScrollbarGrabActive]  = accent;
+    okaytheme::ApplySlateMetrics(s);
+    s.WindowRounding = 0.0f;           // the launcher's root window fills the OS window
+    okaytheme::ApplyColors(s, P, kAccent);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
 }
 
@@ -2552,8 +2551,8 @@ bool ToggleSwitch(const char* id, bool* v) {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(okaytheme::Mix(off, on, *t)), h * 0.5f);
     const float r = h * 0.5f - 3.0f;
     ImVec2 kc(p.x + h * 0.5f + (w - h) * (*t), p.y + h * 0.5f);
-    dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.0f), r, IM_COL32(0, 0, 0, 50), 20);
-    dl->AddCircleFilled(kc, r, IM_COL32(250, 251, 253, 255), 20);
+    dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.0f), r, okaytheme::Shade(50), 20);
+    dl->AddCircleFilled(kc, r, okaytheme::OnColorU32(), 20);
     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     return changed;
 }
@@ -2564,7 +2563,7 @@ bool PrimaryButton(const char* label, const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                           ImVec4(lift(kAccent.x), lift(kAccent.y), lift(kAccent.z), 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentDim);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor);
     bool hit = ImGui::Button(label, size);
     ImGui::PopStyleColor(4);
     return hit;
@@ -2907,7 +2906,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
     const bool bh = ImGui::IsItemHovered();
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        if (bh) dl->AddRectFilled(bp, ImVec2(bp.x + B, bp.y + B), IM_COL32(255, 255, 255, 22), 8.0f);
+        if (bh) dl->AddRectFilled(bp, ImVec2(bp.x + B, bp.y + B), okaytheme::Ink(22), 8.0f);
         EmojiCatalogPump();
         DrawEmojiToken(dl, ImVec2(bp.x + B * 0.5f, bp.y + B * 0.5f), B * 0.70f, "<e:1F642>");
         if (bh) ImGui::SetTooltip(canSendMedia ? "Emoji, GIFs and stickers" : "Emoji");
@@ -2925,7 +2924,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
     if (ImGui::BeginPopup("##mediapop")) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        const ImVec4 accLt = okaytheme::AccentText(kAccent);
         if (!canSendMedia) tab = 0;
         // Tabs.
         if (canSendMedia) {
@@ -2945,7 +2944,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 ImGui::PopID();
                 bool on = tab == k;
                 dl->AddRectFilled(ImVec2(x, tp.y), ImVec2(x + tw, tp.y + th),
-                                  on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? IM_COL32(255, 255, 255, 20) : IM_COL32(255, 255, 255, 8)), th * 0.5f);
+                                  on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? okaytheme::Ink(20) : okaytheme::Ink(8)), th * 0.5f);
                 dl->AddText(ImVec2(x + 12, tp.y + (th - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : cDim, tabs[k]);
                 x += tw + 6;
             }
@@ -2965,7 +2964,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             ImGui::InputTextWithHint("##pname", "name", pendingName, sizeof(pendingName));
             ImGui::SameLine();
             ImGui::BeginDisabled(!pendingName[0] || g_libBusy);
-            if (PrimaryButton("Upload", ImVec2(70, 0))) { LibraryUpload(pendingPath, pendingFolder, pendingName); pendingPath.clear(); }
+            if (PrimaryButton("Upload", ImVec2(okl::FitButtonW("Upload", okl::UiPx(70.0f)), 0))) { LibraryUpload(pendingPath, pendingFolder, pendingName); pendingPath.clear(); }
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Cancel")) pendingPath.clear();
@@ -3011,12 +3010,12 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                     if (ImGui::InvisibleButton("##cat", ImVec2(cs, cs))) cat = c;
                     bool h = ImGui::IsItemHovered();
                     ImGui::PopID();
-                    if (cat == c || h) dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cs, cp.y + cs), cat == c ? IM_COL32(255, 255, 255, 30) : IM_COL32(255, 255, 255, 14), 7.0f);
+                    if (cat == c || h) dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cs, cp.y + cs), cat == c ? okaytheme::Ink(30) : okaytheme::Ink(14), 7.0f);
                     ImVec2 cc(x + cs * 0.5f, cp.y + cs * 0.5f);
                     if (c == -2) {   // clock
                         dl->AddCircle(cc, 7.0f, cDim, 16, 1.5f);
                         dl->AddLine(cc, ImVec2(cc.x, cc.y - 4.5f), cDim, 1.5f); dl->AddLine(cc, ImVec2(cc.x + 3.5f, cc.y), cDim, 1.5f);
-                    } else if (c == -1) DrawStar(dl, cc, 7.5f, cat == c ? IM_COL32(250, 200, 70, 255) : cDim);
+                    } else if (c == -1) DrawStar(dl, cc, 7.5f, cat == c ? okaytheme::WarningFillU32() : cDim);
                     else DrawEmojiToken(dl, cc, 20.0f, std::string("<e:") + kCatIcon[c] + ">");
                     if (h) ImGui::SetTooltip("%s", tip);
                     x += cs + 3;
@@ -3045,7 +3044,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 bool h = ImGui::IsItemHovered();
                 ImGui::PopID();
                 ImDrawList* gdl = ImGui::GetWindowDrawList();
-                if (h) { gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 22), 8.0f); hoverName = name; }
+                if (h) { gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), okaytheme::Ink(22), 8.0f); hoverName = name; }
                 DrawEmojiToken(gdl, ImVec2(p.x + cell * 0.5f, p.y + cell * 0.5f), h ? es + 4 : es, tok);
                 if (click) {
                     insert(insertText);
@@ -3155,7 +3154,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                     bool hv = ImGui::IsItemHovered();
                     ImGui::PopID();
                     ImDrawList* gdl = ImGui::GetWindowDrawList();
-                    gdl->AddRectFilled(p, ImVec2(p.x + colW, p.y + h), IM_COL32(255, 255, 255, 12), 8.0f);
+                    gdl->AddRectFilled(p, ImVec2(p.x + colW, p.y + h), okaytheme::Ink(12), 8.0f);
                     if (t) gdl->AddImageRounded((ImTextureID)(intptr_t)t, p, ImVec2(p.x + colW, p.y + h), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
                     if (hv) { gdl->AddRect(p, ImVec2(p.x + colW, p.y + h), ImGui::GetColorU32(kAccent), 8.0f, 0, 2.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!g.desc.empty()) ImGui::SetTooltip("%s", g.desc.c_str()); }
                     if (click) { sendNow = g.full.empty() ? g.preview : g.full; ImGui::CloseCurrentPopup(); }
@@ -3179,7 +3178,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 ImGui::InputTextWithHint("##tenorkey", "Tenor API key", keyBuf, sizeof(keyBuf), ImGuiInputTextFlags_Password);
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!keyBuf[0]);
-                if (PrimaryButton("Save", ImVec2(66, 0))) { g_tenorKey = keyBuf; keyBuf[0] = '\0'; SavePrefs(); GifSearch(""); }
+                if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(66.0f)), 0))) { g_tenorKey = keyBuf; keyBuf[0] = '\0'; SavePrefs(); GifSearch(""); }
                 ImGui::EndDisabled();
                 if (ImGui::SmallButton("How to get a key")) OpenExternal("https://developers.google.com/tenor/guides/quickstart");
                 ImGui::EndChild();
@@ -3187,7 +3186,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             } else if (busy && res.empty()) {
                 ImGui::TextDisabled("Searching\xE2\x80\xA6");
             } else if (!gerr.empty()) {
-                ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1), "%s", gerr.c_str());
+                ImGui::TextColored(okaytheme::Current().danger, "%s", gerr.c_str());
                 if (ImGui::SmallButton("Remove key")) { g_tenorKey.clear(); SavePrefs(); }
             } else {
                 gifGrid(res);
@@ -3214,7 +3213,7 @@ std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
                 }
                 ImGui::PopID();
                 ImDrawList* gdl = ImGui::GetWindowDrawList();
-                if (h) gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 18), 10.0f);
+                if (h) gdl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), okaytheme::Ink(18), 10.0f);
                 int iw = 0, ih = 0;
                 if (SDL_Texture* t = ChatImageTexture(st.url, &iw, &ih)) {
                     float s = cell - 12, k = (iw > 0 && ih > 0) ? std::min(s / iw, s / ih) : 1.0f;
@@ -3261,6 +3260,15 @@ static void OkayUIFrameBegin() {
     if (!looked) { looked = true; OkayUI::SetFont(OkayUI::FontDefault()); OkayUI::UseLauncherLook(true); }
     OkayUI::Theme& t = OkayUI::Style();   // follow the launcher's UI scale and accent, so the page does not look like a stranger
     t.textScale = OkayUI::SlateTheme().textScale * g_uiScale;
+    {   // and the launcher's theme (Slate, Midnight or Light): the same palette tokens as the ImGui pages
+        auto put = [](unsigned char* d, const ImVec4& c, float a = 1.0f) {
+            d[0] = (unsigned char)(c.x * 255.0f + 0.5f); d[1] = (unsigned char)(c.y * 255.0f + 0.5f);
+            d[2] = (unsigned char)(c.z * 255.0f + 0.5f); d[3] = (unsigned char)(c.w * a * 255.0f + 0.5f); };
+        const okaytheme::Palette& P = okaytheme::Current();
+        put(t.bg, P.control); put(t.bgHover, okaytheme::Mix(P.control, P.ink, 0.08f)); put(t.bgDown, okaytheme::Mix(P.control, P.ink, 0.14f));
+        put(t.border, okaytheme::Mix(P.raised, P.ink, 0.10f)); put(t.text, P.text); put(t.textDim, P.textDim);
+        put(t.panel, P.raised); put(t.track, P.sunken); put(t.titleBg, P.deep); put(t.field, P.field);
+    }
     t.accent[0] = (unsigned char)(kAccent.x * 255.0f + 0.5f); t.accent[1] = (unsigned char)(kAccent.y * 255.0f + 0.5f);
     t.accent[2] = (unsigned char)(kAccent.z * 255.0f + 0.5f);
     ImGuiIO& io = ImGui::GetIO();
@@ -3294,7 +3302,10 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
-        else if (k == "minimize_to_tray") g_minimizeToTray = (v != "0");
+        // "minimize_to_tray" (2026-11-25, default ON) is ignored on purpose: every launcher saved it as 1, and minimizing to the
+        // tray trapped the window for the owner ("when i minimize it i cant open it back up"). The option is OFF unless the
+        // person turns it on again, which is saved under the new key.
+        else if (k == "tray_minimize") g_minimizeToTray = (v == "1");
         else if (k == "close_to_tray") g_closeToTray = (v != "0");
         else if (k == "tray_hint_shown") g_trayHintShown = (v == "1");
         else if (k == "last_startup_check") { try { g_suLastCheckEpoch = std::stoll(v); } catch (...) {} }
@@ -3349,6 +3360,9 @@ void LoadPrefs() {
             }
         }
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
+        else if (k == "servers_channels_folded") g_svChannelsFolded = (v != "0");
+        else if (k == "forums_sections_folded") g_foSectionsFolded = (v != "0");
+        else if (k == "market_rail_folded") g_mktRailFolded = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
         else if (k == "libdir" && !v.empty()) g_libraryDirs.push_back(v);
@@ -3417,7 +3431,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
-    f << "minimize_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\nclose_to_tray=" << (g_closeToTray ? 1 : 0)
+    f << "tray_minimize=" << (g_minimizeToTray ? 1 : 0) << "\nclose_to_tray=" << (g_closeToTray ? 1 : 0)
       << "\ntray_hint_shown=" << (g_trayHintShown ? 1 : 0) << "\n";
     if (g_suLastCheckEpoch > 0) f << "last_startup_check=" << g_suLastCheckEpoch << "\n";
     okayversions::WriteSettings(okayversions::GlobalSettings(), f);
@@ -3478,6 +3492,9 @@ void SavePrefs() {
     for (const auto& kv : g_starred)
         f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
+    f << "servers_channels_folded=" << (g_svChannelsFolded ? 1 : 0) << "\n";
+    f << "forums_sections_folded=" << (g_foSectionsFolded ? 1 : 0) << "\n";
+    f << "market_rail_folded=" << (g_mktRailFolded ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
     for (const auto& p : g_libraryDirs)  f << "libdir=" << p << "\n";
@@ -3554,10 +3571,10 @@ void RenderChatFileCard(const ChatFileInfo& f, float width) {
     bool hov = ImGui::IsItemHovered();
     ImGui::PopID();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    d->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov ? IM_COL32(255, 255, 255, 34) : IM_COL32(0, 0, 0, 46), 9.0f);
+    d->AddRectFilled(p, ImVec2(p.x + width, p.y + h), hov ? okaytheme::Ink(34) : okaytheme::Shade(46), 9.0f);
     // Page with a folded corner.
     ImVec2 ip(p.x + 8, p.y + 6); const float iw = 24, ih = 32, fold = 7;
-    ImU32 pageC = IM_COL32(232, 236, 244, 255), foldC = IM_COL32(170, 180, 198, 255);
+    ImU32 pageC = okaytheme::TextU32(), foldC = okaytheme::TextU32();
     d->AddRectFilled(ip, ImVec2(ip.x + iw - fold, ip.y + ih), pageC, 3.0f, ImDrawFlags_RoundCornersLeft);
     d->AddRectFilled(ImVec2(ip.x + iw - fold, ip.y + fold), ImVec2(ip.x + iw, ip.y + ih), pageC, 3.0f, ImDrawFlags_RoundCornersBottomRight);
     d->AddTriangleFilled(ImVec2(ip.x + iw - fold, ip.y), ImVec2(ip.x + iw, ip.y + fold), ImVec2(ip.x + iw - fold, ip.y + fold), foldC);
@@ -3568,20 +3585,20 @@ void RenderChatFileCard(const ChatFileInfo& f, float width) {
     ImVec2 es = ImGui::CalcTextSize(ext.c_str());
     float sc = 0.62f;   // tiny extension label on the page
     d->AddText(nullptr, ImGui::GetFontSize() * sc, ImVec2(ip.x + (iw - es.x * sc) * 0.5f, ip.y + ih - es.y * sc - 4),
-               IM_COL32(60, 70, 90, 255), ext.c_str());
+               okaytheme::U32(okaytheme::kControl), ext.c_str());
     float tx = p.x + 42, avail = width - 50;
     std::string nm = f.name;
     while (nm.size() > 4 && ImGui::CalcTextSize(nm.c_str()).x > avail) nm = nm.substr(0, nm.size() - 4) + "\xE2\x80\xA6";
-    d->AddText(ImVec2(tx, p.y + 5), IM_COL32(235, 238, 245, 255), nm.c_str());
-    d->AddText(ImVec2(tx, p.y + 24), IM_COL32(190, 198, 215, 200), (f.size.empty() ? std::string("File") : f.size + "  \xC2\xB7  Open").c_str());
+    d->AddText(ImVec2(tx, p.y + 5), okaytheme::TextU32(), nm.c_str());
+    d->AddText(ImVec2(tx, p.y + 24), okaytheme::TextU32(0.784f), (f.size.empty() ? std::string("File") : f.size + "  \xC2\xB7  Open").c_str());
     if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Open / download\n%s", f.name.c_str()); }
     if (clicked) OpenExternal(f.url);
 }
 // Chat window palette (dark slate, Messenger-dark): the bubbles, header strip
 // and composer are designed around it.
-extern const ImVec4 kChatWinBg   = okaytheme::kBase;
-static const ImVec4 kChatSideBg  = okaytheme::kSunken;
-static const ImVec4 kChatSideSel (0.170f, 0.178f, 0.204f, 1.0f);   // side bg + the selected-row wash
+const ImVec4& kChatWinBg   = okaytheme::kBase;     // (references: they follow the theme)
+static const ImVec4& kChatSideBg  = okaytheme::kSunken;
+#define kChatSideSel okaytheme::Mix(okaytheme::kSunken, okaytheme::Current().ink, 0.07f)   // side bg + the selected-row wash
 
 // Truncate to fit maxW pixels with an ellipsis, never splitting a UTF-8 sequence.
 std::string FitText(const std::string& s, float maxW) {
@@ -3669,7 +3686,7 @@ std::string InviteMessageBody(const std::string& title, const std::string& link)
 void DrawGamepadIcon(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     const float w = s * 0.5f, h = s * 0.30f;
     d->AddRectFilled(ImVec2(c.x - w, c.y - h), ImVec2(c.x + w, c.y + h), col, h * 0.9f);
-    const ImU32 cut = IM_COL32(0, 0, 0, 120);
+    const ImU32 cut = okaytheme::Shade(120);
     const float dx = c.x - w * 0.52f, k = s * 0.07f;
     d->AddRectFilled(ImVec2(dx - k * 2.6f, c.y - k * 0.8f), ImVec2(dx + k * 2.6f, c.y + k * 0.8f), cut);
     d->AddRectFilled(ImVec2(dx - k * 0.8f, c.y - k * 2.6f), ImVec2(dx + k * 0.8f, c.y + k * 2.6f), cut);
@@ -3682,7 +3699,7 @@ void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float wid
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float tile = 44.0f;
     d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), ImGui::GetColorU32(kAccent), 10.0f);
-    DrawGamepadIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 240));
+    DrawGamepadIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, okaytheme::OnColorU32(0.941f));
     ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 10, p.y + 1));
     ImGui::BeginGroup();
     ImGui::TextDisabled(mine ? "You sent an invite to play" : "Invite to play");
@@ -3697,9 +3714,9 @@ void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float wid
     const bool old = when > 0 && (long)std::time(nullptr) - when > 6 * 3600;   // a long-gone session
     if (!mine) {
         ImGui::Dummy(ImVec2(0, 2));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.46f, 0.27f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, okaytheme::SuccessFill());
         ImGui::PushID(inv.link.Format().c_str());
         if (ImGui::Button(old ? "Try to join" : "Join game", ImVec2(width, 30))) MpJoin(inv.link.Format(), inv.link.host);
         ImGui::PopID();
@@ -4137,9 +4154,9 @@ void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 acce
     bool tap = ImGui::InvisibleButton("##vplay", ImVec2(r * 2 + 2, h));
     bool hov = ImGui::IsItemHovered();
     const float k = hov ? 1.7f : 1.5f;   // received: a brighter take on the chat colour so it pops off the grey bubble
-    ImU32 discC = mine ? IM_COL32(255, 255, 255, hov ? 255 : 235)
+    ImU32 discC = mine ? okaytheme::Ink(hov ? 255 : 235)
                        : ImGui::GetColorU32(ImVec4(std::min(1.0f, accent.x * k), std::min(1.0f, accent.y * k), std::min(1.0f, accent.z * k), 1.0f));
-    ImU32 glyphC = mine ? ImGui::GetColorU32(accent) : IM_COL32(255, 255, 255, 255);
+    ImU32 glyphC = mine ? ImGui::GetColorU32(accent) : okaytheme::OnColorU32();
     d->AddCircleFilled(cc, r, discC, 28);
     if (loading && g_voiceWant == v.url) {   // spinner while the clip downloads
         float t = (float)ImGui::GetTime() * 6.0f;
@@ -4171,8 +4188,8 @@ void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 acce
     }
     if (ImGui::IsItemHovered() && clip && clip->ok) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     const float step = ww / kVoiceBars, bw = std::max(2.0f, step * 0.55f);
-    ImU32 onC  = mine ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
-    ImU32 offC = mine ? IM_COL32(255, 255, 255, 105) : IM_COL32(200, 210, 230, 95);
+    ImU32 onC  = mine ? okaytheme::OnColorU32() : ImGui::GetColorU32(okaytheme::Current().info);
+    ImU32 offC = mine ? okaytheme::Ink(105) : okaytheme::TextU32(0.373f);
     for (int b = 0; b < kVoiceBars; ++b) {
         float a = clip && clip->ok ? clip->bars[b] : VoiceBarStub(v.url, b);
         float bh = std::max(3.0f, a * (h - 14));
@@ -4186,7 +4203,7 @@ void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 acce
     }
     ImVec2 ts = ImGui::CalcTextSize(tm.c_str());
     d->AddText(ImVec2(p.x + width - ts.x, cc.y - ts.y * 0.5f),
-               mine ? IM_COL32(235, 240, 255, 230) : IM_COL32(200, 208, 225, 220), tm.c_str());
+               mine ? okaytheme::TextU32(0.902f) : okaytheme::TextU32(0.863f), tm.c_str());
     {   // speed pill: tap to cycle; a clip that's playing continues from the same spot
         const char* sl = kVoiceSpeedLabels[std::clamp(g_voiceSpeed, 0, 2)];
         ImVec2 pp(wx + ww + 6, cc.y - 10);
@@ -4194,11 +4211,11 @@ void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 acce
         const bool ptap = ImGui::InvisibleButton("##vspeed", ImVec2(pillW, 20));
         const bool phov = ImGui::IsItemHovered();
         const bool fast = g_voiceSpeed != 0;
-        ImU32 pbg = mine ? IM_COL32(255, 255, 255, fast ? 70 : (phov ? 45 : 28))
-                         : (fast ? ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.85f)) : IM_COL32(255, 255, 255, phov ? 34 : 20));
+        ImU32 pbg = mine ? okaytheme::Ink(fast ? 70 : (phov ? 45 : 28))
+                         : (fast ? ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.85f)) : okaytheme::Ink(phov ? 34 : 20));
         d->AddRectFilled(pp, ImVec2(pp.x + pillW, pp.y + 20), pbg, 10.0f);
         ImVec2 ss = ImGui::CalcTextSize(sl);
-        d->AddText(ImVec2(pp.x + (pillW - ss.x) * 0.5f, pp.y + (20 - ss.y) * 0.5f), IM_COL32(240, 244, 255, fast ? 255 : 200), sl);
+        d->AddText(ImVec2(pp.x + (pillW - ss.x) * 0.5f, pp.y + (20 - ss.y) * 0.5f), okaytheme::TextU32(((fast ? 255 : 200) / 255.0f)), sl);
         if (phov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Playback speed"); }
         if (ptap) {
             g_voiceSpeed = (g_voiceSpeed + 1) % 3;
@@ -4222,20 +4239,20 @@ void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
     float w = ImGui::GetContentRegionAvail().x - sendW - 8;
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(41, 46, 59, 255), 12.0f);
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::U32(okaytheme::kField), 12.0f);
     // Discard.
     ImGui::SetCursorScreenPos(p);
     bool bin = ImGui::InvisibleButton("##vbin", ImVec2(h, h));
     bool bhov = ImGui::IsItemHovered();
     if (bhov) ImGui::SetTooltip("Discard recording");
-    DrawBinIcon(d, ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.9f, bhov ? IM_COL32(255, 110, 110, 255) : IM_COL32(205, 212, 228, 230));
+    DrawBinIcon(d, ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.9f, bhov ? okaytheme::DangerFillU32() : okaytheme::TextU32(0.902f));
     // Pulsing red dot + clock.
     float pulse = 0.55f + 0.45f * std::sin((float)ImGui::GetTime() * 5.0f);
     float cy = p.y + h * 0.5f, x = p.x + h + 6;
-    d->AddCircleFilled(ImVec2(x + 5, cy), 5.0f, IM_COL32(240, 70, 70, (int)(255 * pulse)), 16);
+    d->AddCircleFilled(ImVec2(x + 5, cy), 5.0f, okaytheme::DangerFillU32((((int)(255 * pulse)) / 255.0f)), 16);
     std::string clk = VoiceClock((int)VoiceRecSeconds());
     ImVec2 cs = ImGui::CalcTextSize(clk.c_str());
-    d->AddText(ImVec2(x + 16, cy - cs.y * 0.5f), IM_COL32(240, 243, 250, 255), clk.c_str());
+    d->AddText(ImVec2(x + 16, cy - cs.y * 0.5f), okaytheme::TextU32(), clk.c_str());
     // Live level meter: newest on the right, scrolling left.
     float mx0 = x + 16 + ImGui::CalcTextSize("00:00").x + 10, mx1 = p.x + w - 12;
     const float step = 5.0f;
@@ -4246,7 +4263,7 @@ void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
         float bh = std::max(2.0f, lv * (h - 12));
         float bx = mx0 + i * step;
         d->AddRectFilled(ImVec2(bx, cy - bh * 0.5f), ImVec2(bx + 3, cy + bh * 0.5f),
-                         li >= 0 ? IM_COL32(235, 240, 250, 220) : IM_COL32(235, 240, 250, 50), 1.5f);
+                         li >= 0 ? okaytheme::TextU32(0.863f) : okaytheme::TextU32(0.196f), 1.5f);
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x + w + 8, p.y));
     auto brighten = [](ImVec4 c, float k) { return ImVec4(std::min(1.0f, c.x * k), std::min(1.0f, c.y * k), std::min(1.0f, c.z * k), 1.0f); };
@@ -4315,7 +4332,7 @@ void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const std::stri
     ImGui::PopStyleColor(2);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Record a voice message");
     DrawMicIcon(ImGui::GetWindowDrawList(), ImVec2(p.x + size.x * 0.5f, p.y + size.y * 0.5f),
-                std::min(size.y, 26.0f), IM_COL32(255, 255, 255, 255));
+                std::min(size.y, 26.0f), okaytheme::OnColorU32());
     if (click) StartVoiceRecord(toUid, toGroup, toChannel);
 }
 
@@ -4720,7 +4737,7 @@ void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool group, lon
     if (idx >= (int)pins.size()) idx = 0;
     const ChatPinRef& cur = pins[(std::size_t)idx];
     ImGui::PushID(id);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.17f, 0.19f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kField);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
     ImGui::BeginChild("##pinbar", ImVec2(0, 34), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* d = ImGui::GetWindowDrawList();
@@ -4753,7 +4770,7 @@ void DrawPinnedBar(const char* id, std::vector<ChatPinRef> pins, bool group, lon
     const ImVec2 lb = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##pinlist", ImVec2(28, 28))) ImGui::OpenPopup("##pinlistpop");
     const bool lh = ImGui::IsItemHovered();
-    if (lh) { d->AddRectFilled(lb, ImVec2(lb.x + 28, lb.y + 28), IM_COL32(255, 255, 255, 20), 6.0f); ImGui::SetTooltip("All pinned messages"); }
+    if (lh) { d->AddRectFilled(lb, ImVec2(lb.x + 28, lb.y + 28), okaytheme::Ink(20), 6.0f); ImGui::SetTooltip("All pinned messages"); }
     {
         const ImU32 ic = ImGui::GetColorU32(lh ? ImGuiCol_Text : ImGuiCol_TextDisabled);
         for (int k = 0; k < 3; ++k) {
@@ -4822,7 +4839,7 @@ static void DrawEditHistoryPopup() {
     if (ImGui::BeginPopupModal("Edit history", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const float w = 400.0f;
         auto version = [&](const char* id, const char* label, const std::string& body, bool now) {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, now ? ImVec4(kAccentDim.x, kAccentDim.y, kAccentDim.z, 0.55f) : ImVec4(0.17f, 0.19f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, now ? ImVec4(kAccentDim.x, kAccentDim.y, kAccentDim.z, 0.55f) : okaytheme::kField);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 8));
             ImGui::BeginChild(id, ImVec2(w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -4847,7 +4864,7 @@ static void DrawEditHistoryPopup() {
         }
         version("##cur", "Now", g_editHist.current, true);
         ImGui::Dummy(ImVec2(0, 4));
-        if (ImGui::Button("Close", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -4986,10 +5003,10 @@ void DrawScheduleDialog(const char* popupId, char* text, std::size_t cap,
     ImGui::Dummy(ImVec2(0, 4));
     std::string b = body; while (!b.empty() && (b.back() == ' ' || b.back() == '\n')) b.pop_back();
     const bool ok = !b.empty() && when > (long)now;
-    if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
     ImGui::SameLine();
     ImGui::BeginDisabled(!ok);
-    if (PrimaryButton("Schedule", ImVec2(120, 30))) {
+    if (PrimaryButton("Schedule", ImVec2(okl::FitButtonW("Schedule", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) {
         ScheduleMessage(toUid, toName, toGroup, ExpandCustomEmoji(b.c_str()), when);
         Toast("Scheduled for " + SchedWhen(when), 1);
         text[0] = '\0'; (void)cap;
@@ -5008,7 +5025,7 @@ void DrawScheduledStrip(const std::string& toUid, long toGroup) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float lh = ImGui::GetTextLineHeight();
     ImDrawList* d = ImGui::GetWindowDrawList();
-    const ImU32 col = ImGui::GetColorU32(ImVec4(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f));
+    const ImU32 col = ImGui::GetColorU32(okaytheme::AccentText(kAccent));
     const ImVec2 cc(p.x + 8, p.y + lh * 0.5f);
     d->AddCircle(cc, 6.0f, col, 16, 1.4f);
     d->AddLine(cc, ImVec2(cc.x, cc.y - 3.5f), col, 1.4f); d->AddLine(cc, ImVec2(cc.x + 3.0f, cc.y), col, 1.4f);
@@ -5027,7 +5044,7 @@ void DrawScheduledStrip(const std::string& toUid, long toGroup) {
         long sendNow = 0, drop = 0;
         for (SchedMsg* m : mine) {
             ImGui::PushID((int)m->id);
-            ImGui::TextColored(ImVec4(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f), "%s", SchedWhen(m->at).c_str());
+            ImGui::TextColored(okaytheme::AccentText(kAccent), "%s", SchedWhen(m->at).c_str());
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             DrawRichLine(ImGui::GetWindowDrawList(), rp, ImGui::GetColorU32(ImGuiCol_Text), ChatPreviewSmart(m->body, 120), 300.0f);
             ImGui::Dummy(ImVec2(300, lh));
@@ -5154,13 +5171,13 @@ static void DrawStatusDialog(bool& req) {
     SlateCombo("##clearafter", &clearAfter, kClear, (int)(sizeof(kClear) / sizeof(kClear[0])));
     ImGui::Dummy(ImVec2(0, 6));
     if (!g_myStatus.empty()) {
-        if (ImGui::Button("Clear status", ImVec2(120, 30))) { SetMyStatus("", 0); Toast("Status cleared", 1); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Clear status", ImVec2(okl::FitButtonW("Clear status", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) { SetMyStatus("", 0); Toast("Status cleared", 1); ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
     }
-    if (ImGui::Button("Cancel", ImVec2(90, 30))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
     ImGui::SameLine();
     std::string t = text; while (!t.empty() && t.back() == ' ') t.pop_back();
-    if (PrimaryButton("Save", ImVec2(100, 30))) {
+    if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
         long until = 0;
         const std::time_t now = std::time(nullptr);
         switch (clearAfter) {
@@ -5253,7 +5270,7 @@ int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* bt
     const bool onOwnerBar = ownerLive && ImGui::IsMouseHoveringRect(s_min, s_max, false);
     if (onOwnerBar ? s_owner != msgId : !ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) return -1;
     s_owner = msgId; s_min = tMin; s_max = tMax; s_frame = ImGui::GetFrameCount();
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(rowMin.x - 6, rowMin.y - 2), ImVec2(rowMax.x + 6, rowMax.y + 2), IM_COL32(255, 255, 255, 7), 8.0f);
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(rowMin.x - 6, rowMin.y - 2), ImVec2(rowMax.x + 6, rowMax.y + 2), okaytheme::Ink(7), 8.0f);
     const ImVec2 after = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos(tMin);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(3, 2));
@@ -5261,7 +5278,7 @@ int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* bt
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1, 1, 1, 0.086f));
+    ImGui::PushStyleColor(ImGuiCol_Border, okaytheme::InkV(0.086f));
     int clicked = -1;
     if (ImGui::BeginChild("##chatmsgtb", ImVec2(tMax.x - tMin.x, tMax.y - tMin.y), ImGuiChildFlags_Borders,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings)) {
@@ -5273,11 +5290,11 @@ int ChatMsgToolbar(long msgId, ImVec2 rowMin, ImVec2 rowMax, const ChatTbBtn* bt
             const ImVec2 bp = ImGui::GetCursorScreenPos();
             if (ImGui::InvisibleButton("##tb", ImVec2(bs, bs))) clicked = b;
             const bool h = ImGui::IsItemHovered();
-            if (h) d->AddRectFilled(ImVec2(bp.x + 2, bp.y + 2), ImVec2(bp.x + bs - 2, bp.y + bs - 2), IM_COL32(255, 255, 255, 26), 6.0f);
+            if (h) d->AddRectFilled(ImVec2(bp.x + 2, bp.y + 2), ImVec2(bp.x + bs - 2, bp.y + bs - 2), okaytheme::Ink(26), 6.0f);
             const ImVec2 c(bp.x + bs * 0.5f, bp.y + bs * 0.5f);
-            const ImU32 ic = h ? cText : IM_COL32(200, 208, 225, 230);
+            const ImU32 ic = h ? cText : okaytheme::TextU32(0.902f);
             switch (btns[b].icon) {
-                case 'L': DrawHeart(d, c, 6.0f, liked ? IM_COL32(232, 72, 92, 255) : ic); break;
+                case 'L': DrawHeart(d, c, 6.0f, liked ? okaytheme::DangerFillU32() : ic); break;
                 case 'R': DrawReplyIcon(d, c, ic); break;
                 case 'T': DrawThreadIcon(d, c, ic); break;
                 case 'E': DrawPencilIcon(d, c, ic); break;
@@ -5302,7 +5319,7 @@ bool ChatHeaderIconButton(const char* id, ImVec2 pos, bool active, const char* t
     const bool hit = ImGui::InvisibleButton(id, ImVec2(30, 30));
     const bool h = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     if (h || active) ImGui::GetWindowDrawList()->AddRectFilled(pos, ImVec2(pos.x + 30, pos.y + 30),
-                                                               h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10), 8.0f);
+                                                               h ? okaytheme::Ink(22) : okaytheme::Ink(10), 8.0f);
     if (h && tip && *tip) ImGui::SetTooltip("%s", tip);
     *centre = ImVec2(pos.x + 15, pos.y + 15);
     return hit;
@@ -5361,7 +5378,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
         ImGui::Dummy(ImVec2(0, 2));
         ImGui::SetCursorPosX(baseX + std::max(0.0f, avW - useW - 8.0f));
         ImGui::PushID((int)o.localId);
-        ImVec4 bg = o.state == -1 ? ImVec4(0.42f, 0.18f, 0.20f, 1.0f) : ImVec4(bubbleCol.x, bubbleCol.y, bubbleCol.z, 0.78f);
+        ImVec4 bg = o.state == -1 ? okaytheme::DangerFill() : ImVec4(bubbleCol.x, bubbleCol.y, bubbleCol.z, 0.78f);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
@@ -5373,7 +5390,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
         const float av = ImGui::GetContentRegionAvail().x;
         if (o.state == -1) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, av - statW));
-            ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.70f, 1.0f), "%s", status);
+            ImGui::TextColored(okaytheme::Current().danger, "%s", status);
             ImGui::SameLine(0, 8);
             if (ImGui::SmallButton("Retry")) {
                 okay::thr::LockMutex(g_outMutex);
@@ -5389,7 +5406,7 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
             }
             if (!o.err.empty()) {   // the server said why (e.g. "This person does not accept messages from you.")
                 ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.78f, 1.0f), "%s", o.err.c_str());
+                ImGui::TextColored(okaytheme::Current().danger, "%s", o.err.c_str());
                 ImGui::PopTextWrapPos();
             }
         } else {
@@ -5398,12 +5415,12 @@ int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, ImVec4 
             ImVec2 cp = ImGui::GetCursorScreenPos();
             const float r = 5.0f, cy = cp.y + ImGui::GetTextLineHeight() * 0.5f;
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImU32 cc = IM_COL32(220, 228, 245, 170);
+            const ImU32 cc = okaytheme::TextU32(0.667f);
             dl->AddCircle(ImVec2(cp.x + r, cy), r, cc, 12, 1.2f);   // clock face + hands
             dl->AddLine(ImVec2(cp.x + r, cy), ImVec2(cp.x + r, cy - 3.2f), cc, 1.2f);
             dl->AddLine(ImVec2(cp.x + r, cy), ImVec2(cp.x + r + 2.4f, cy), cc, 1.2f);
             ImGui::Dummy(ImVec2(14, 0)); ImGui::SameLine(0, 2);
-            ImGui::TextColored(ImVec4(0.86f, 0.90f, 1.0f, 0.65f), "%s", status);
+            ImGui::TextColored(okaytheme::WithAlpha(okaytheme::kText, 0.65f), "%s", status);
         }
         ImGui::PopStyleVar();
         ImGui::EndChild();
@@ -5444,6 +5461,7 @@ std::string g_chatLightboxReq;   // an image to show full-size (set from the gro
 // Messenger-style per-chat theme colours: the fill of *your* bubbles in that
 // conversation. Index 0 follows the app accent.
 const char* kChatThemeNames[] = { "Default", "Purple", "Pink", "Orange", "Green", "Teal", "Red", "Graphite" };
+// theme-allow-begin: the chat bubble colours people pick (filled, with white text)
 ImVec4 ChatThemeColor(int idx) {
     static const ImVec4 pal[kChatThemeCount] = {
         ImVec4(0.19f, 0.43f, 0.72f, 1.0f), ImVec4(0.50f, 0.30f, 0.80f, 1.0f),
@@ -5454,6 +5472,7 @@ ImVec4 ChatThemeColor(int idx) {
     if (idx <= 0 || idx >= kChatThemeCount) return kAccentDim;
     return pal[idx];
 }
+// theme-allow-end
 ImVec4 ChatThemeFor(const std::string& uid) {
     auto it = g_chatColor.find(uid);
     return ChatThemeColor(it == g_chatColor.end() ? 0 : it->second);
@@ -5506,7 +5525,7 @@ void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<s
     ImGui::PushID((int)id);
     {   // header: a little bar-chart glyph + "Poll", then the question
         ImVec2 hp = ImGui::GetCursorScreenPos();
-        const ImU32 hc = mineBubble ? IM_COL32(230, 236, 255, 200) : IM_COL32(170, 182, 205, 230);
+        const ImU32 hc = mineBubble ? okaytheme::TextU32(0.784f) : okaytheme::TextU32(0.902f);
         for (int b = 0; b < 3; ++b) {
             const float bh = 5.0f + b * 3.0f, bx = hp.x + b * 4.5f;
             d->AddRectFilled(ImVec2(bx, hp.y + 13 - bh), ImVec2(bx + 3, hp.y + 13), hc, 1.0f);
@@ -5529,30 +5548,30 @@ void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std::map<s
         if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         const bool chosen = myChoice == (int)i;
         const float frac = total > 0 ? (float)tally[i] / (float)total : 0.0f;
-        const ImU32 track = mineBubble ? IM_COL32(255, 255, 255, hov ? 34 : 22) : IM_COL32(255, 255, 255, hov ? 22 : 12);
-        const ImU32 fill  = mineBubble ? IM_COL32(255, 255, 255, chosen ? 70 : 40)
+        const ImU32 track = mineBubble ? okaytheme::Ink(hov ? 34 : 22) : okaytheme::Ink(hov ? 22 : 12);
+        const ImU32 fill  = mineBubble ? okaytheme::Ink(chosen ? 70 : 40)
                                        : ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, chosen ? 0.75f : 0.40f));
         d->AddRectFilled(rp, ImVec2(rp.x + width, rp.y + rowH - 4), track, 8.0f);
         if (frac > 0.0f) d->AddRectFilled(rp, ImVec2(rp.x + std::max(10.0f, width * frac), rp.y + rowH - 4), fill, 8.0f);
         // radio / check
         const ImVec2 cc(rp.x + 14, rp.y + (rowH - 4) * 0.5f);
-        const ImU32 ink = IM_COL32(240, 244, 255, 235);
+        const ImU32 ink = okaytheme::TextU32(0.922f);
         if (chosen) {
-            d->AddCircleFilled(cc, 7.0f, mineBubble ? IM_COL32(255, 255, 255, 240) : ImGui::GetColorU32(accent), 20);
-            const ImU32 tick = mineBubble ? ImGui::GetColorU32(accent) : IM_COL32(255, 255, 255, 255);
+            d->AddCircleFilled(cc, 7.0f, mineBubble ? okaytheme::OnColorU32(0.941f) : ImGui::GetColorU32(accent), 20);
+            const ImU32 tick = mineBubble ? ImGui::GetColorU32(accent) : okaytheme::OnColorU32();
             d->AddLine(ImVec2(cc.x - 3.2f, cc.y), ImVec2(cc.x - 0.8f, cc.y + 2.6f), tick, 1.6f);
             d->AddLine(ImVec2(cc.x - 0.8f, cc.y + 2.6f), ImVec2(cc.x + 3.6f, cc.y - 2.8f), tick, 1.6f);
-        } else d->AddCircle(cc, 7.0f, IM_COL32(220, 228, 245, 170), 20, 1.5f);
+        } else d->AddCircle(cc, 7.0f, okaytheme::TextU32(0.667f), 20, 1.5f);
         const std::string cnt = std::to_string(tally[i]);
         const float cw = ImGui::CalcTextSize(cnt.c_str()).x;
         const float ty = rp.y + (rowH - 4 - ImGui::GetTextLineHeight()) * 0.5f;
         d->PushClipRect(ImVec2(rp.x + 28, rp.y), ImVec2(rp.x + width - cw - 14, rp.y + rowH), true);
         d->AddText(ImVec2(rp.x + 28, ty), ink, p.options[i].c_str());
         d->PopClipRect();
-        if (total > 0) d->AddText(ImVec2(rp.x + width - cw - 8, ty), IM_COL32(230, 236, 250, 210), cnt.c_str());
+        if (total > 0) d->AddText(ImVec2(rp.x + width - cw - 8, ty), okaytheme::TextU32(0.824f), cnt.c_str());
         ImGui::PopID();
     }
-    ImGui::TextColored(mineBubble ? ImVec4(0.86f, 0.90f, 1.0f, 0.70f) : ImVec4(0.62f, 0.67f, 0.76f, 0.95f),
+    ImGui::TextColored(mineBubble ? okaytheme::WithAlpha(okaytheme::kText, 0.7f) : okaytheme::WithAlpha(okaytheme::kTextDim, 0.95f),
                        "%ld vote%s%s", total, total == 1 ? "" : "s", myChoice >= 0 ? "  \xC2\xB7  tap your choice to undo" : "");
     ImGui::PopID();
     if (clicked >= 0) {
@@ -5585,7 +5604,7 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
         ImGui::SetNextItemWidth(opts.size() > 2 ? ImGui::GetContentRegionAvail().x - 30 : -1);
         char hint[24]; std::snprintf(hint, sizeof(hint), "Option %d", (int)i + 1);
         ImGui::InputTextWithHint("##po", hint, opts[i].data(), opts[i].size());
-        if (opts.size() > 2) { ImGui::SameLine(0, 4); if (ImGui::Button("x", ImVec2(26, 0))) removeAt = (int)i; }
+        if (opts.size() > 2) { ImGui::SameLine(0, 4); if (ImGui::Button("x", ImVec2(okl::FitButtonW("x", okl::UiPx(26.0f)), 0))) removeAt = (int)i; }
         ImGui::PopID();
     }
     if (removeAt >= 0) opts.erase(opts.begin() + removeAt);
@@ -5596,10 +5615,10 @@ static void PollCreatorPopup(const char* id, const std::string& toUid, long toGr
     std::string qs = q; while (!qs.empty() && qs.back() == ' ') qs.pop_back();
     const bool ok = !qs.empty() && filled.size() >= 2;
     auto reset = [&]() { q[0] = '\0'; opts.assign(2, {}); };
-    if (ImGui::Button("Cancel", ImVec2(90, 30))) { reset(); ImGui::CloseCurrentPopup(); }
+    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) { reset(); ImGui::CloseCurrentPopup(); }
     ImGui::SameLine();
     ImGui::BeginDisabled(!ok);
-    if (PrimaryButton("Send poll", ImVec2(110, 30))) {
+    if (PrimaryButton("Send poll", ImVec2(okl::FitButtonW("Send poll", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) {
         OutboxSend(toUid, toGroup, PollMessageBody(qs, filled));
         reset(); ImGui::CloseCurrentPopup();
     }
@@ -5616,7 +5635,7 @@ void ComposerPlusButton(const char* id, float size, const std::string& toUid, lo
     const bool ahov = ImGui::IsItemHovered();
     ImDrawList* ad = ImGui::GetWindowDrawList();
     ImVec2 c(ap.x + size * 0.5f, ap.y + size * 0.5f);
-    ImU32 acol = ahov ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 206, 220, 220);
+    ImU32 acol = ahov ? okaytheme::OnColorU32() : okaytheme::TextU32(0.863f);
     ad->AddCircle(c, size * 0.35f, acol, 20, 1.6f);
     ad->AddLine(ImVec2(c.x - 4, c.y), ImVec2(c.x + 4, c.y), acol, 1.8f);
     ad->AddLine(ImVec2(c.x, c.y - 4), ImVec2(c.x, c.y + 4), acol, 1.8f);
@@ -5669,8 +5688,8 @@ static void RenderJoinRequest(const std::string& game, bool mine, const std::str
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float tile = 36.0f;
-    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), IM_COL32(255, 255, 255, 30), 9.0f);
-    DrawGamepadIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 220));
+    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), okaytheme::Ink(30), 9.0f);
+    DrawGamepadIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, okaytheme::OnColorU32(0.863f));
     ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 10, p.y));
     ImGui::BeginGroup();
     ImGui::TextUnformatted(mine ? "You asked to join" : (name + " wants to join").c_str());
@@ -5703,14 +5722,14 @@ static void DrawChatGameBar(const okay::Friend* f, const std::string& uid, const
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float h = 40.0f;
-    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), IM_COL32(46, 150, 86, 34), 8.0f);
-    d->AddRect(p, ImVec2(p.x + w, p.y + h), IM_COL32(46, 150, 86, 90), 8.0f);
-    DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + h * 0.5f), 22.0f, IM_COL32(115, 209, 143, 255));
+    d->AddRectFilled(p, ImVec2(p.x + w, p.y + h), okaytheme::SuccessFillU32(0.133f), 8.0f);
+    d->AddRect(p, ImVec2(p.x + w, p.y + h), okaytheme::SuccessFillU32(0.353f), 8.0f);
+    DrawGamepadIcon(d, ImVec2(p.x + 22, p.y + h * 0.5f), 22.0f, okaytheme::SuccessFillU32());
     const float bw = 116.0f;
     std::string line = "Playing " + game;
     std::string detail = f->playing.size() > 8 + game.size() ? f->playing.substr(8 + game.size()) : std::string();
     while (!detail.empty() && (detail[0] == ' ' || (unsigned char)detail[0] == 0xC2 || (unsigned char)detail[0] == 0xB7)) detail.erase(0, 1);
-    d->AddText(ImVec2(p.x + 42, p.y + 4), IM_COL32(115, 209, 143, 255), FitText(line, w - 42 - bw - 16).c_str());
+    d->AddText(ImVec2(p.x + 42, p.y + 4), okaytheme::SuccessU32(), FitText(line, w - 42 - bw - 16).c_str());
     d->AddText(ImVec2(p.x + 42, p.y + 21), ImGui::GetColorU32(ImGuiCol_TextDisabled),
                FitText(together ? std::string("You're in the same match") : !detail.empty() ? detail : joinable ? std::string("Open to friends") : std::string("Not open to join"), w - 42 - bw - 16).c_str());
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw - 6, p.y + 6));
@@ -5718,8 +5737,8 @@ static void DrawChatGameBar(const okay::Friend* f, const std::string& uid, const
     static std::set<std::string> asked;   // asked once per friend per run
     if (together) { ImGui::BeginDisabled(); ImGui::Button("Joined", ImVec2(bw, 28)); ImGui::EndDisabled(); }
     else if (joinable) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.52f, 0.30f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.21f, 0.62f, 0.36f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::SuccessFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::SuccessFill());
         if (ImGui::Button("Join game", ImVec2(bw, 28))) MpJoinFriend(f->sessionCode, name);
         ImGui::PopStyleColor(2);
     } else if (asked.count(uid)) { ImGui::BeginDisabled(); ImGui::Button("Asked", ImVec2(bw, 28)); ImGui::EndDisabled(); }
@@ -5742,8 +5761,8 @@ static void RenderPartyInvite(const std::string& partyId, const std::string& fro
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float tile = 44.0f;
-    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), IM_COL32(124, 92, 230, 255), 10.0f);
-    DrawPeopleIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, IM_COL32(255, 255, 255, 240));
+    d->AddRectFilled(p, ImVec2(p.x + tile, p.y + tile), okaytheme::U32(kAccent), 10.0f);
+    DrawPeopleIcon(d, ImVec2(p.x + tile * 0.5f, p.y + tile * 0.5f), tile * 0.62f, okaytheme::OnColorU32(0.941f));
     ImGui::SetCursorScreenPos(ImVec2(p.x + tile + 10, p.y + 1));
     ImGui::BeginGroup();
     ImGui::TextDisabled(mine ? "You sent a party invite" : "Party invite");
@@ -5755,8 +5774,8 @@ static void RenderPartyInvite(const std::string& partyId, const std::string& fro
     if (!mine) {
         const bool already = MpPartyId() == partyId;
         ImGui::BeginDisabled(already);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.43f, 0.32f, 0.85f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.51f, 0.40f, 0.93f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::Current().info);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::Current().info);
         ImGui::PushID(partyId.c_str());
         if (ImGui::Button(already ? "You're in this party" : "Join party", ImVec2(width, 30)))
             MpPartyJoinFromInvite(okay::Parties::InviteBody(partyId, from));
@@ -5780,7 +5799,7 @@ bool ChatSlashCommand(const std::string& text, const std::string& uid, const std
 void ChatForwardedLabel(const std::string& from) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float lh = ImGui::GetTextLineHeight();
-    const ImU32 col = ImGui::GetColorU32(ImVec4(0.78f, 0.82f, 0.90f, 0.75f));
+    const ImU32 col = ImGui::GetColorU32(okaytheme::WithAlpha(okaytheme::kText, 0.75f));
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 a(p.x + 1, p.y + lh * 0.62f), b(p.x + 9, p.y + lh * 0.62f);
     d->AddLine(ImVec2(a.x, a.y - 4), a, col, 1.3f);
@@ -5991,14 +6010,14 @@ static void DrawMicGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col, bool off) 
     d->PathArcTo(ImVec2(c.x, c.y - s * 0.10f), s * 0.25f, 0.0f, 3.14159265f, 12);
     d->PathStroke(col, 0, 1.6f);
     d->AddLine(ImVec2(c.x, c.y + s * 0.15f), ImVec2(c.x, c.y + s * 0.32f), col, 1.6f);
-    if (off) d->AddLine(ImVec2(c.x - s * 0.36f, c.y - s * 0.40f), ImVec2(c.x + s * 0.36f, c.y + s * 0.34f), IM_COL32(240, 80, 80, 255), 2.0f);
+    if (off) d->AddLine(ImVec2(c.x - s * 0.36f, c.y - s * 0.40f), ImVec2(c.x + s * 0.36f, c.y + s * 0.34f), okaytheme::DangerFillU32(), 2.0f);
 }
 static void DrawHeadsetGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col, bool off) {
     d->PathArcTo(ImVec2(c.x, c.y + s * 0.05f), s * 0.34f, 3.14159265f, 3.14159265f * 2.0f, 14);
     d->PathStroke(col, 0, 1.7f);
     d->AddRectFilled(ImVec2(c.x - s * 0.40f, c.y), ImVec2(c.x - s * 0.24f, c.y + s * 0.30f), col, 2.0f);
     d->AddRectFilled(ImVec2(c.x + s * 0.24f, c.y), ImVec2(c.x + s * 0.40f, c.y + s * 0.30f), col, 2.0f);
-    if (off) d->AddLine(ImVec2(c.x - s * 0.40f, c.y - s * 0.38f), ImVec2(c.x + s * 0.40f, c.y + s * 0.36f), IM_COL32(240, 80, 80, 255), 2.0f);
+    if (off) d->AddLine(ImVec2(c.x - s * 0.40f, c.y - s * 0.38f), ImVec2(c.x + s * 0.40f, c.y + s * 0.36f), okaytheme::DangerFillU32(), 2.0f);
 }
 static void DrawSpeakerGlyph(ImDrawList* d, ImVec2 c, float s, ImU32 col) {
     d->AddRectFilled(ImVec2(c.x - s * 0.40f, c.y - s * 0.12f), ImVec2(c.x - s * 0.22f, c.y + s * 0.12f), col);
@@ -6025,11 +6044,11 @@ static void VoiceAvatar(const std::string& avatar, const std::string& name, floa
     DrawAvatar(avatar, name, size);
     ImDrawList* d = ImGui::GetWindowDrawList();
     const ImVec2 c(p.x + size * 0.5f, p.y + size * 0.5f);
-    if (speaking) d->AddCircle(c, size * 0.5f + 2.0f, IM_COL32(67, 181, 129, 255), 28, 2.5f);
+    if (speaking) d->AddCircle(c, size * 0.5f + 2.0f, okaytheme::SuccessFillU32(), 28, 2.5f);
     if (muted) {
         const ImVec2 m(p.x + size - 4, p.y + size - 4);
-        d->AddCircleFilled(m, 7.0f, IM_COL32(32, 34, 40, 255), 14);
-        DrawMicGlyph(d, m, 10.0f, IM_COL32(220, 225, 235, 255), true);
+        d->AddCircleFilled(m, 7.0f, okaytheme::U32(okaytheme::kBase), 14);
+        DrawMicGlyph(d, m, 10.0f, okaytheme::TextU32(), true);
     }
 }
 
@@ -6043,12 +6062,12 @@ static void DrawIncomingCall() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::kRaised);
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.71f, 0.51f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_Border, okaytheme::WithAlpha(okaytheme::SuccessFill(), 0.8f));
     if (ImGui::Begin("##incomingcall", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
         const float pulse = 0.5f + 0.5f * std::sin((float)okay::platform::TicksMs32() * 0.008f);
         ImVec2 ap = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddCircle(ImVec2(ap.x + 22, ap.y + 22), 24.0f + pulse * 4.0f, IM_COL32(67, 181, 129, (int)(160 * (1.0f - pulse))), 28, 2.0f);
+        ImGui::GetWindowDrawList()->AddCircle(ImVec2(ap.x + 22, ap.y + 22), 24.0f + pulse * 4.0f, okaytheme::SuccessFillU32(0.63f * (1.0f - pulse)), 28, 2.0f);
         DrawAvatar(g_incoming.fromAvatar, g_incoming.fromName, 44.0f);
         ImGui::SameLine(0, 12);
         ImGui::BeginGroup();
@@ -6057,14 +6076,14 @@ static void DrawIncomingCall() {
         ImGui::EndGroup();
         ImGui::SameLine(ImGui::GetContentRegionMax().x - 92);
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-        if (CallButton("##decline", 38, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), "Decline",
+        if (CallButton("##decline", 38, okaytheme::DangerFillU32(), okaytheme::DangerFillU32(), "Decline",
                        [](ImDrawList* d, ImVec2 c) { DrawPhoneIcon(d, c, 18, IM_COL32_WHITE, true); })) {
             OutboxSend(g_incoming.fromUid, 0, "[CallEnd] " + g_incoming.code + " 0");
             g_incoming = IncomingCall{};
         }
         ImGui::SameLine(0, 12);
         if (!g_incoming.code.empty() &&
-            CallButton("##accept", 38, IM_COL32(59, 165, 93, 255), IM_COL32(76, 196, 114, 255), "Accept",
+            CallButton("##accept", 38, okaytheme::SuccessFillU32(), okaytheme::SuccessFillU32(), "Accept",
                        [](ImDrawList* d, ImVec2 c) { DrawPhoneIcon(d, c, 18, IM_COL32_WHITE); })) {
             const IncomingCall in = g_incoming; g_incoming = IncomingCall{};
             VoiceJoinDmCall(in.fromUid, in.fromName, in.fromAvatar, in.code, in.key);
@@ -6087,18 +6106,18 @@ static void DrawVoicePanel(float width, bool compact) {
     const auto peers = g_voice.Peers();
     const bool connected = g_voice.StateNow() == okay::voice::Session::Connected;
     const bool ringing = g_call.kind == 1 && !g_call.answered;
-    const ImU32 green = IM_COL32(67, 181, 129, 255);
+    const ImU32 green = okaytheme::SuccessFillU32();
     std::string status = !connected ? "Connecting\xE2\x80\xA6" : ringing ? "Calling\xE2\x80\xA6" : "Voice connected";
     std::string where = g_call.kind == 2 ? "Lounge / " + g_call.title : g_call.title;
     // signal bars + status
-    for (int b = 0; b < 3; ++b) d->AddRectFilled(ImVec2(p.x + 10 + b * 4.5f, p.y + 18 - 4 - b * 3.0f), ImVec2(p.x + 13 + b * 4.5f, p.y + 18), connected ? green : IM_COL32(150, 156, 170, 255), 1.0f);
-    d->AddText(ImVec2(p.x + 28, p.y + 6), connected && !ringing ? green : IM_COL32(220, 200, 120, 255), status.c_str());
+    for (int b = 0; b < 3; ++b) d->AddRectFilled(ImVec2(p.x + 10 + b * 4.5f, p.y + 18 - 4 - b * 3.0f), ImVec2(p.x + 13 + b * 4.5f, p.y + 18), connected ? green : okaytheme::TextDimU32(), 1.0f);
+    d->AddText(ImVec2(p.x + 28, p.y + 6), connected && !ringing ? green : okaytheme::WarningU32(), status.c_str());
     const long secs = connected && g_voice.ConnectedSince() ? (long)(okay::platform::TicksMs32() - g_voice.ConnectedSince()) / 1000 : 0;
     const std::string clock = CallClock(secs);
     const float cw = ImGui::CalcTextSize(clock.c_str()).x;
-    if (!compact) d->AddText(ImVec2(p.x + 28 + ImGui::CalcTextSize(status.c_str()).x + 8, p.y + 6), IM_COL32(150, 156, 170, 255), clock.c_str());
-    else d->AddText(ImVec2(p.x + width - cw - 10, p.y + 6), IM_COL32(150, 156, 170, 255), clock.c_str());
-    if (compact) d->AddText(ImVec2(p.x + 10, p.y + 24), IM_COL32(170, 178, 195, 255), FitText(where, width - 20).c_str());
+    if (!compact) d->AddText(ImVec2(p.x + 28 + ImGui::CalcTextSize(status.c_str()).x + 8, p.y + 6), okaytheme::TextDimU32(), clock.c_str());
+    else d->AddText(ImVec2(p.x + width - cw - 10, p.y + 6), okaytheme::TextDimU32(), clock.c_str());
+    if (compact) d->AddText(ImVec2(p.x + 10, p.y + 24), okaytheme::TextU32(), FitText(where, width - 20).c_str());
     // participants (me first)
     float ax = p.x + 10, ay = p.y + (compact ? 46 : 30);
     if (!compact) { ax = p.x + width - 150; ay = p.y + 8; }
@@ -6122,19 +6141,19 @@ static void DrawVoicePanel(float width, bool compact) {
         face(std::string(), g_voiceMe, g_voice.SelfSpeaking(), g_voice.Muted() || g_voice.Deafened());
         for (const auto& pv : peers) face(pv.uid == g_call.peerUid ? g_call.peerAvatar : std::string(), pv.name, pv.speaking, pv.muted || pv.deafened);
     }
-    const ImU32 bg = IM_COL32(255, 255, 255, 16), bgh = IM_COL32(255, 255, 255, 34);
+    const ImU32 bg = okaytheme::Ink(16), bgh = okaytheme::Ink(34);
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     const bool muted = g_voice.Muted();
-    if (CallButton("##vmute", bd, muted ? IM_COL32(237, 66, 69, 60) : bg, bgh, muted ? "Unmute" : "Mute",
-                   [&](ImDrawList* dd, ImVec2 c) { DrawMicGlyph(dd, c, 16, IM_COL32(225, 230, 240, 255), muted); }))
+    if (CallButton("##vmute", bd, muted ? okaytheme::DangerFillU32(0.235f) : bg, bgh, muted ? "Unmute" : "Mute",
+                   [&](ImDrawList* dd, ImVec2 c) { DrawMicGlyph(dd, c, 16, okaytheme::TextU32(), muted); }))
         g_voice.SetMuted(!muted);
     ImGui::SetCursorScreenPos(ImVec2(bx + bd + 6, by));
     const bool deaf = g_voice.Deafened();
-    if (CallButton("##vdeaf", bd, deaf ? IM_COL32(237, 66, 69, 60) : bg, bgh, deaf ? "Undeafen" : "Deafen",
-                   [&](ImDrawList* dd, ImVec2 c) { DrawHeadsetGlyph(dd, c, 16, IM_COL32(225, 230, 240, 255), deaf); }))
+    if (CallButton("##vdeaf", bd, deaf ? okaytheme::DangerFillU32(0.235f) : bg, bgh, deaf ? "Undeafen" : "Deafen",
+                   [&](ImDrawList* dd, ImVec2 c) { DrawHeadsetGlyph(dd, c, 16, okaytheme::TextU32(), deaf); }))
         g_voice.SetDeafened(!deaf);
     ImGui::SetCursorScreenPos(ImVec2(bx + (bd + 6) * 2, by));
-    if (CallButton("##vhang", bd, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), g_call.kind == 2 ? "Disconnect" : "Hang up",
+    if (CallButton("##vhang", bd, okaytheme::DangerFillU32(), okaytheme::DangerFillU32(), g_call.kind == 2 ? "Disconnect" : "Hang up",
                    [](ImDrawList* dd, ImVec2 c) { DrawPhoneIcon(dd, c, 15, IM_COL32_WHITE, true); }))
         VoiceHangup();
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 6));
@@ -6149,14 +6168,14 @@ static void RenderChatCallCard(const CallBody& cb, long endSecs, bool ended, boo
     ImVec2 p = ImGui::GetCursorScreenPos();
     const bool live = g_call.kind == 1 && g_call.code == cb.code;
     const bool missed = ended && endSecs == 0;
-    const ImU32 disc = missed ? IM_COL32(237, 66, 69, 255) : IM_COL32(59, 165, 93, 255);
+    const ImU32 disc = missed ? okaytheme::DangerFillU32() : okaytheme::SuccessFillU32();
     d->AddCircleFilled(ImVec2(p.x + 17, p.y + 17), 17.0f, disc, 24);
     DrawPhoneIcon(d, ImVec2(p.x + 17, p.y + 17), 17.0f, IM_COL32_WHITE, missed);
     ImGui::SetCursorScreenPos(ImVec2(p.x + 44, p.y));
     ImGui::BeginGroup();
     ImGui::TextUnformatted(missed ? (mine ? "No answer" : "Missed voice call") : mine ? "Outgoing voice call" : "Incoming voice call");
     const long age = (long)std::time(nullptr) - when;
-    if (live) ImGui::TextColored(ImVec4(0.40f, 0.85f, 0.55f, 1.0f), "In progress");
+    if (live) ImGui::TextColored(okaytheme::Current().success, "In progress");
     else if (ended && endSecs > 0) ImGui::TextDisabled("%s", CallClock(endSecs).c_str());
     else if (!ended && age < 2 * 3600) {
         ImGui::TextDisabled(age < 50 ? "Ringing\xE2\x80\xA6" : "Ongoing");
@@ -6166,6 +6185,24 @@ static void RenderChatCallCard(const CallBody& cb, long endSecs, bool ended, boo
         ImGui::PopID();
     } else if (!ended) ImGui::TextDisabled("Ended");
     ImGui::EndGroup();
+}
+
+// One reaction under a chat message: the emoji (or the heart) and the count in a pill; yours is tinted. Returns true when
+// clicked (the caller toggles the reaction). Used by direct messages and group conversations.
+bool ReactionPill(ImDrawList* dl, const std::string& key, const std::string& cnt, bool mine) {
+    const float pw = 26.0f + ImGui::CalcTextSize(cnt.c_str()).x;
+    ImGui::PushID(ReactionEmojiId(key));
+    const ImVec2 pp = ImGui::GetCursorScreenPos();
+    const bool hit = ImGui::InvisibleButton("##pill", ImVec2(pw, 20));
+    const bool ph = ImGui::IsItemHovered();
+    if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(mine ? "Remove" : "React"); }
+    dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 20), mine ? okaytheme::DangerFillU32((ph ? 60 : 42) / 255.0f) : okaytheme::Ink(ph ? 26 : 14), 10.0f);
+    if (mine) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 20), okaytheme::DangerFillU32(0.588f), 10.0f, 0, 1.0f);
+    if (key == "heart") DrawHeart(dl, ImVec2(pp.x + 11, pp.y + 10), 5.5f, mine ? okaytheme::DangerFillU32() : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    else DrawEmoji(dl, ImVec2(pp.x + 11, pp.y + 10), 13, ReactionEmojiId(key));
+    dl->AddText(ImVec2(pp.x + 20, pp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
+    ImGui::PopID();
+    return hit;
 }
 
 void DrawChatWindow(okay::account::AccountService& account) {
@@ -6467,21 +6504,21 @@ void DrawChatWindow(okay::account::AccountService& account) {
         int n = 0;
         ~ChatStyleScope() { if (n) ImGui::PopStyleColor(n); }
     } chatStyle;
-    if (g_themeIndex != 2) {
-        const ImVec4 title(0.082f, 0.090f, 0.114f, 1.0f);
+    {
+        const ImVec4 title = okaytheme::kDeep;
         ImGui::PushStyleColor(ImGuiCol_WindowBg, kChatWinBg);
         ImGui::PushStyleColor(ImGuiCol_TitleBg, title);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, title);
         ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, title);
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1, 1, 1, 0.08f));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.22f, 0.28f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.29f, 0.36f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.19f, 0.21f, 0.27f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.130f, 0.142f, 0.178f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.08f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.92f, 0.96f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0.55f, 0.59f, 0.67f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, okaytheme::InkV(0.08f));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::kControl);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::kControl);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kField);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, okaytheme::kControl);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, okaytheme::WithAlpha(okaytheme::kBase, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.08f));
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::kText);
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, okaytheme::kTextDim);
         chatStyle.n = 13;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));   // the list/thread manage their own padding
@@ -6572,10 +6609,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
         const bool wideChat = !okaychat::ListFolded(false, ImGui::GetContentRegionAvail().x);   // wide enough for the list
         const bool folded = okaychat::ListFolded(g_chatListFolded, ImGui::GetContentRegionAvail().x);   // avatar-only strip (folded, or too narrow)
         float listW = folded ? 76.0f : (ImGui::GetContentRegionAvail().x < 640 ? 214.0f : 280.0f);
-        const ImU32 cText   = IM_COL32(232, 236, 244, 255);
-        const ImU32 cDim    = IM_COL32(150, 158, 175, 255);
-        const ImU32 cFaint  = IM_COL32(118, 126, 142, 255);
-        const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+        const ImU32 cText   = okaytheme::TextU32();
+        const ImU32 cDim    = okaytheme::TextDimU32();
+        const ImU32 cFaint  = okaytheme::TextDimU32();
+        const ImVec4 accLt = okaytheme::AccentText(kAccent);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, kChatSideBg);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
         ImGui::BeginChild("##chatlist", ImVec2(listW, 0), ImGuiChildFlags_AlwaysUseWindowPadding,
@@ -6601,8 +6638,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 bool c = ImGui::InvisibleButton(id, ImVec2(B, B));
                 bool h = ImGui::IsItemHovered();
                 ImVec2 cc(p.x + B * 0.5f, p.y + B * 0.5f);
-                dl->AddCircleFilled(cc, B * 0.5f, h ? IM_COL32(255, 255, 255, 36) : IM_COL32(255, 255, 255, 16), 28);
-                ImU32 ic = IM_COL32(232, 236, 244, 255);
+                dl->AddCircleFilled(cc, B * 0.5f, h ? okaytheme::Ink(36) : okaytheme::Ink(16), 28);
+                ImU32 ic = okaytheme::TextU32();
                 if (kind == 2) {   // fold / unfold the list
                     DrawNavIcon(dl, kIcoPanel, cc, ic);
                 } else if (kind == 3) {   // pop out (arrow leaving a box) / dock back (arrow into it)
@@ -6610,7 +6647,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     const bool out = !g_chatInOwnWindow;
                     const ImVec2 a0 = out ? ImVec2(cc.x - 1, cc.y + 1) : ImVec2(cc.x + 7, cc.y - 7);
                     const ImVec2 a1 = out ? ImVec2(cc.x + 7, cc.y - 7) : ImVec2(cc.x - 1, cc.y + 1);
-                    dl->AddRectFilled(ImVec2(cc.x + 1, cc.y - 9), ImVec2(cc.x + 9, cc.y - 1), IM_COL32(40, 44, 54, 255));
+                    dl->AddRectFilled(ImVec2(cc.x + 1, cc.y - 9), ImVec2(cc.x + 9, cc.y - 1), okaytheme::U32(okaytheme::kRaised));
                     dl->AddLine(a0, a1, ic, 1.6f);
                     dl->AddLine(a1, ImVec2(a1.x + (out ? -4.5f : 4.5f), a1.y), ic, 1.6f);
                     dl->AddLine(a1, ImVec2(a1.x, a1.y + (out ? 4.5f : -4.5f)), ic, 1.6f);
@@ -6646,7 +6683,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ChatToggleOnTop();
                 ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + B * stacked + 8 * (stacked - 1) + 10));
                 ImVec2 lp = ImGui::GetCursorScreenPos();
-                dl->AddLine(ImVec2(lp.x + 10, lp.y), ImVec2(lp.x + hw - 10, lp.y), IM_COL32(255, 255, 255, 18), 1.0f);
+                dl->AddLine(ImVec2(lp.x + 10, lp.y), ImVec2(lp.x + hw - 10, lp.y), okaytheme::Ink(18), 1.0f);
                 ImGui::Dummy(ImVec2(0, 8));
             } else {
                 float by = hp.y + (th - B) * 0.5f;
@@ -6671,7 +6708,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             const float sw = ImGui::GetContentRegionAvail().x, sh = ImGui::GetTextLineHeight() + 12.0f;
             if (ImGui::InvisibleButton("##mystatus", ImVec2(sw, sh))) g_statusDialogReqChat = true;
             const bool sh2 = ImGui::IsItemHovered();
-            dl->AddRectFilled(sp, ImVec2(sp.x + sw, sp.y + sh), sh2 ? IM_COL32(255, 255, 255, 20) : IM_COL32(255, 255, 255, 8), sh * 0.5f);
+            dl->AddRectFilled(sp, ImVec2(sp.x + sw, sp.y + sh), sh2 ? okaytheme::Ink(20) : okaytheme::Ink(8), sh * 0.5f);
             if (sh2) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(g_myStatus.empty() ? "Set a status" : "Change or clear your status"); }
             if (g_myStatus.empty()) {   // smiley + "Set a status"
                 const ImVec2 c(sp.x + 15, sp.y + sh * 0.5f);
@@ -6706,9 +6743,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImVec2 sp = ImGui::GetCursorScreenPos();
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(30, 7));
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1, 1, 1, 0.065f));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1, 1, 1, 0.09f));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1, 1, 1, 0.11f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::InkV(0.065f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, okaytheme::InkV(0.09f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, okaytheme::InkV(0.11f));
             ImGui::SetNextItemWidth(-1);
             ImGui::InputTextWithHint("##convfilter", "Search chats", convFilter, sizeof(convFilter));
             ImGui::PopStyleColor(3);
@@ -6734,7 +6771,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 bool on = convTab == k;
                 dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch),
                                   on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
-                                     : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10)), ch * 0.5f);
+                                     : (h ? okaytheme::Ink(22) : okaytheme::Ink(10)), ch * 0.5f);
                 dl->AddText(ImVec2(x + 12.0f, cp.y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : cDim, chips[k]);
                 if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 x += cw + 6.0f;
@@ -6840,7 +6877,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::EndPopup();
             }
             if (click) { if (r.gid) openGroup(r.gid); else openConv(r.uid, r.name, r.avatar, r.online); }
-            if (sel || hov) rdl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), sel ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 11), 10.0f);
+            if (sel || hov) rdl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), sel ? okaytheme::Ink(22) : okaytheme::Ink(11), 10.0f);
             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
             // Avatar (groups: two overlapping discs) + presence dot.
@@ -6869,7 +6906,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (r.online && !g_blockedUsers.count(r.uid)) {
                     ImVec2 pd(ac.x + A * 0.35f, ac.y + A * 0.35f);
                     rdl->AddCircleFilled(pd, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
-                    rdl->AddCircleFilled(pd, 5.0f, IM_COL32(76, 200, 110, 255), 16);
+                    rdl->AddCircleFilled(pd, 5.0f, okaytheme::SuccessFillU32(), 16);
                 } else if (r.lastSeen > 0 && !g_blockedUsers.count(r.uid)) {
                     // Recently active (Messenger-style): a tiny "12m" / "3h" tag on the avatar.
                     const long ago = std::max(0L, (long)std::time(nullptr) - r.lastSeen);
@@ -6882,8 +6919,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         const ImVec2 tc(ac.x + A * 0.30f, ac.y + A * 0.36f);
                         const ImVec2 t0(tc.x - ts.x * 0.5f - 4, tc.y - ts.y * 0.5f - 1), t1(tc.x + ts.x * 0.5f + 4, tc.y + ts.y * 0.5f + 1);
                         rdl->AddRectFilled(ImVec2(t0.x - 2, t0.y - 2), ImVec2(t1.x + 2, t1.y + 2), ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 9.0f);
-                        rdl->AddRectFilled(t0, t1, IM_COL32(38, 62, 44, 255), 8.0f);
-                        rdl->AddText(tf, fs, ImVec2(tc.x - ts.x * 0.5f, tc.y - ts.y * 0.5f), IM_COL32(120, 214, 130, 255), tag);
+                        rdl->AddRectFilled(t0, t1, okaytheme::U32(okaytheme::kRaised), 8.0f);
+                        rdl->AddText(tf, fs, ImVec2(tc.x - ts.x * 0.5f, tc.y - ts.y * 0.5f), okaytheme::SuccessU32(), tag);
                     }
                 }
             }
@@ -6892,7 +6929,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (r.unread) {
                     ImVec2 ud(ac.x + A * 0.36f, ac.y - A * 0.36f);
                     rdl->AddCircleFilled(ud, 7.0f, ImGui::GetColorU32(sel ? kChatSideSel : kChatSideBg), 16);
-                    rdl->AddCircleFilled(ud, 5.0f, muted ? IM_COL32(120, 128, 145, 255) : ImGui::GetColorU32(kAccent), 16);
+                    rdl->AddCircleFilled(ud, 5.0f, muted ? okaytheme::TextDimU32() : ImGui::GetColorU32(kAccent), 16);
                 }
                 if (sel) rdl->AddRectFilled(ImVec2(rp.x, rp.y + 14), ImVec2(rp.x + 3, rp.y + rowH - 14), ImGui::GetColorU32(kAccent), 1.5f);
                 ImGui::PopID();
@@ -6912,7 +6949,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // Markers on the preview line (right to left): unread dot, muted, pinned.
             float mx = right;
             if (r.unread) {
-                ImU32 uc = muted ? IM_COL32(120, 128, 145, 255) : ImGui::GetColorU32(kAccent);
+                ImU32 uc = muted ? okaytheme::TextDimU32() : ImGui::GetColorU32(kAccent);
                 rdl->AddCircleFilled(ImVec2(mx - 5.0f, y2 + 8.0f), 5.0f, uc, 16);
                 mx -= 16.0f;
             }
@@ -6935,12 +6972,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (dr != drafts.end() && !dr->second.empty() && !sel) {
                 const char* lbl = "Draft: ";
                 float lw = ImGui::CalcTextSize(lbl).x;
-                rdl->AddText(ImVec2(tx, y2), IM_COL32(240, 120, 120, 255), lbl);
+                rdl->AddText(ImVec2(tx, y2), okaytheme::DangerU32(), lbl);
                 rdl->AddText(ImVec2(tx + lw, y2), cDim, FitText(ChatPreview(dr->second, 90), pw - lw).c_str());
             } else if (sel && !r.gid && peerTyping) {
                 rdl->AddText(ImVec2(tx, y2), ImGui::GetColorU32(accLt), "typing\xE2\x80\xA6");
             } else {
-                DrawRichLine(rdl, ImVec2(tx, y2), r.unread ? IM_COL32(214, 220, 232, 255) : cDim, r.preview, pw);
+                DrawRichLine(rdl, ImVec2(tx, y2), r.unread ? okaytheme::TextU32() : cDim, r.preview, pw);
             }
             ImGui::PopID();
         };
@@ -6960,7 +6997,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (!header && folded) {
                     header = true;
                     ImVec2 lp = ImGui::GetCursorScreenPos();
-                    rdl->AddLine(ImVec2(lp.x + 10, lp.y + 4), ImVec2(lp.x + ImGui::GetContentRegionAvail().x - 10, lp.y + 4), IM_COL32(255, 255, 255, 18), 1.0f);
+                    rdl->AddLine(ImVec2(lp.x + 10, lp.y + 4), ImVec2(lp.x + ImGui::GetContentRegionAvail().x - 10, lp.y + 4), okaytheme::Ink(18), 1.0f);
                     ImGui::Dummy(ImVec2(0, 10));
                 }
                 if (!header) {
@@ -6982,7 +7019,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             float aw = ImGui::GetContentRegionAvail().x, ah = 34.0f;
             if (ImGui::InvisibleButton("##archrow", ImVec2(aw, ah))) showArchived = !showArchived;
             bool ahov = ImGui::IsItemHovered();
-            if (ahov) rdl->AddRectFilled(ap, ImVec2(ap.x + aw, ap.y + ah), IM_COL32(255, 255, 255, 11), 8.0f);
+            if (ahov) rdl->AddRectFilled(ap, ImVec2(ap.x + aw, ap.y + ah), okaytheme::Ink(11), 8.0f);
             ImVec2 bx(ap.x + 8.0f + 22.0f - 7.0f, ap.y + ah * 0.5f);   // archive box icon
             rdl->AddRect(ImVec2(bx.x - 1, bx.y - 6), ImVec2(bx.x + 15, bx.y - 2), cDim, 1.5f, 0, 1.4f);
             rdl->AddRect(ImVec2(bx.x + 1, bx.y - 2), ImVec2(bx.x + 13, bx.y + 7), cDim, 1.5f, 0, 1.4f);
@@ -7071,11 +7108,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         else { openConv(h.uid, title, avatar, online); scrollToId = flashId = h.id; flashUntil = now + 1800; }
                     }
                     const bool hov = ImGui::IsItemHovered();
-                    if (hov) { rdl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 11), 10.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+                    if (hov) { rdl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(11), 10.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
                     const ImVec2 ac(rp.x + 8.0f + A * 0.5f, rp.y + rowH * 0.5f);
                     if (h.scope == "group") {
                         rdl->AddCircleFilled(ImVec2(ac.x - 5, ac.y - 5), A * 0.32f, ImGui::GetColorU32(kAccentDim), 20);
-                        rdl->AddCircleFilled(ImVec2(ac.x + 5, ac.y + 5), A * 0.32f, IM_COL32(92, 102, 122, 255), 20);
+                        rdl->AddCircleFilled(ImVec2(ac.x + 5, ac.y + 5), A * 0.32f, okaytheme::TextDimU32(), 20);
                     } else {
                         ImGui::SetCursorScreenPos(ImVec2(ac.x - A * 0.5f, ac.y - A * 0.5f));
                         DrawAvatar(avatar, title, A);
@@ -7098,7 +7135,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             float aw = ImGui::GetContentRegionAvail().x;
             ImGui::Dummy(ImVec2(0, 28));
             ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 26);
-            rdl->AddCircleFilled(c, 26.0f, IM_COL32(255, 255, 255, 14), 32);
+            rdl->AddCircleFilled(c, 26.0f, okaytheme::Ink(14), 32);
             rdl->PathArcTo(c, 12.0f, 3.14159f * 0.80f, 3.14159f * 2.62f, 26);
             rdl->PathLineTo(ImVec2(c.x - 12.0f, c.y + 12.0f));
             rdl->PathStroke(cDim, ImDrawFlags_Closed, 2.0f);
@@ -7120,7 +7157,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::PopStyleColor();
         {   // hairline between the list and the thread
             ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x, a.y), ImVec2(b.x, b.y), IM_COL32(255, 255, 255, 14), 1.0f);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x, a.y), ImVec2(b.x, b.y), okaytheme::Ink(14), 1.0f);
         }
         ImGui::SameLine(0, 0);
 
@@ -7176,7 +7213,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) closeIdx = (int)i;
                 if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 td->AddRectFilled(p, ImVec2(p.x + tw, p.y + tabH),
-                                  active ? IM_COL32(255, 255, 255, 26) : hov ? IM_COL32(255, 255, 255, 15) : IM_COL32(255, 255, 255, 7), 8.0f);
+                                  active ? okaytheme::Ink(26) : hov ? okaytheme::Ink(15) : okaytheme::Ink(7), 8.0f);
                 if (active) td->AddRectFilled(ImVec2(p.x + 10, p.y + tabH - 2.5f), ImVec2(p.x + tw - 10, p.y + tabH),
                                               ImGui::GetColorU32(kAccent), 1.5f);
                 // Mini avatar.
@@ -7211,7 +7248,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (xh) ImGui::SetTooltip("Close  (Ctrl+W)");
                 if (active || hov || xh) {
                     ImVec2 xc(xp.x + closeW * 0.5f, xp.y + closeW * 0.5f);
-                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, IM_COL32(255, 255, 255, 30), 16);
+                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, okaytheme::Ink(30), 16);
                     ImU32 xcCol = xh ? cText : cDim;
                     td->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xcCol, 1.5f);
                     td->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xcCol, 1.5f);
@@ -7258,7 +7295,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const float av = 28.0f;
                 ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y - 1));
                 DrawAvatar(selAvatar, selName, av);
-                ImU32 dot = (selOnline && !selBlocked) ? IM_COL32(120, 200, 110, 255) : IM_COL32(120, 128, 140, 255);
+                ImU32 dot = (selOnline && !selBlocked) ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32();
                 hd->AddCircleFilled(ImVec2(hdrPos.x + av - 4, hdrPos.y + av - 5), 5.0f, dot, 16);
                 hd->AddCircle(ImVec2(hdrPos.x + av - 4, hdrPos.y + av - 5), 5.0f, ImGui::GetColorU32(ImGuiCol_WindowBg), 16, 2.0f);
                 ImGui::SetWindowFontScale(1.12f);
@@ -7268,9 +7305,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetWindowFontScale(1.0f);
                 ImGui::SameLine(0, 10);
                 ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, hdrPos.y + (av - ImGui::GetTextLineHeight()) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(selBlocked ? ImVec4(0.92f,0.45f,0.45f,1)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(selBlocked ? okaytheme::Current().danger
                                             : peerTyping ? kAccent
-                                            : ((selOnline || peerHere) ? ImVec4(0.47f,0.80f,0.43f,1) : ImVec4(0.6f,0.64f,0.7f,1))));
+                                            : ((selOnline || peerHere) ? okaytheme::SuccessFill() : okaytheme::kTextDim)));
                 const std::string sub = selBlocked ? std::string("Blocked") : peerTyping ? std::string("typing\xE2\x80\xA6")
                                       : peerHere ? std::string("In the chat") : selOnline ? std::string("Active now")
                                       : peerLastSeen > 978307200 ? "Last seen " + RelTime(peerLastSeen) : std::string("Offline");   // (Invisible backdates to 2000)
@@ -7298,7 +7335,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (inThisCall) VoiceHangup(); else VoiceStartDm(selUid, selName, selAvatar);
                 }
                 ImGui::EndDisabled();
-                DrawPhoneIcon(hd, c, 15.0f, inThisCall ? IM_COL32(237, 66, 69, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled), inThisCall);
+                DrawPhoneIcon(hd, c, 15.0f, inThisCall ? okaytheme::DangerFillU32() : ImGui::GetColorU32(ImGuiCol_TextDisabled), inThisCall);
                 if (ChatHeaderIconButton("##convmenu", ImVec2(hdrPos.x + hdrW - 64, hdrPos.y - 2), ImGui::IsPopupOpen("##convmenu_pop"),
                                          "Conversation options", &c))
                     ImGui::OpenPopup("##convmenu_pop");
@@ -7369,7 +7406,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (ImGui::MenuItem("Media & links")) openMedia = true;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                 if (ImGui::MenuItem("Report user\xE2\x80\xA6")) OpenReport(okayrep::Target::User, selUid, selName);
                 if (ImGui::MenuItem("Report cheating\xE2\x80\xA6")) { g_acReportUid = selUid; g_acReportName = selName; g_acReportOpen = true; }
                 if (ImGui::MenuItem(selBlocked ? "Unblock" : "Block")) {
@@ -7397,7 +7434,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         ImGui::CloseCurrentPopup();
                     }
                     DrawStar(ImGui::GetWindowDrawList(), ImVec2(sp.x + 8, sp.y + ImGui::GetTextLineHeight() * 0.5f),
-                             6.0f, IM_COL32(250, 200, 70, 255));
+                             6.0f, okaytheme::WarningFillU32());
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) unstar = s.first;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unstar");
@@ -7441,7 +7478,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         md->AddImageRounded((ImTextureID)(intptr_t)tx, tp, ImVec2(tp.x + th, tp.y + th),
                                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 8.0f);
                     else
-                        md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), IM_COL32(44, 48, 58, 255), 8.0f);
+                        md->AddRectFilled(tp, ImVec2(tp.x + th, tp.y + th), okaytheme::U32(okaytheme::kField), 8.0f);
                     if (ImGui::IsItemHovered()) {
                         md->AddRect(tp, ImVec2(tp.x + th, tp.y + th), ImGui::GetColorU32(kAccent), 8.0f, 0, 2.0f);
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -7455,7 +7492,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (links.empty()) ImGui::TextDisabled("No links shared yet.");
                 for (std::size_t k = 0; k < links.size(); ++k) {
                     ImGui::PushID((int)(1000 + k));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.78f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().info);
                     if (ImGui::Selectable(ChatPreview(links[k], 52).c_str())) { OpenExternal(links[k]); ImGui::CloseCurrentPopup(); }
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", links[k].c_str());
@@ -7466,7 +7503,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::SetCursorScreenPos(ImVec2(hdrPos.x, hdrPos.y + 34));
             {   // hairline under the header (as in server channels)
                 const ImVec2 lp = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
+                ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + hdrW, lp.y), okaytheme::Ink(16), 1.0f);
             }
             ImGui::Dummy(ImVec2(0, 6));
             if (!selBlocked) if (auto fg = fById.find(selUid); fg != fById.end()) DrawChatGameBar(fg->second, selUid, selName, hdrW);
@@ -7679,7 +7716,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         dl->AddCircleFilled(ImVec2(ax+avatarW*0.5f, ay+avatarW*0.5f), avatarW*0.5f, ImGui::GetColorU32(ImVec4(col.x*0.55f,col.y*0.55f,col.z*0.55f,1)), 20);
                         char init[2]={selName.empty()?'?':(char)std::toupper((unsigned char)selName[0]),0};
                         ImVec2 tsz=ImGui::CalcTextSize(init);
-                        dl->AddText(ImVec2(ax+avatarW*0.5f-tsz.x*0.5f, ay+avatarW*0.5f-tsz.y*0.5f), IM_COL32(255,255,255,255), init);
+                        dl->AddText(ImVec2(ax+avatarW*0.5f-tsz.x*0.5f, ay+avatarW*0.5f-tsz.y*0.5f), okaytheme::OnColorU32(), init);
                     }
                 }
 
@@ -7688,8 +7725,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // the content natively (no draw-list channel tricks), so it always
                 // hugs what it renders and stays correct on resize.
                 ImGui::SetCursorPosX(baseX + x0);
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0,0,0,0)
-                                        : (m.mine ? myBubble : ImVec4(0.204f,0.235f,0.306f,1.0f)));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, bare ? ImVec4(0, 0, 0, 0.0f)
+                                        : (m.mine ? myBubble : okaytheme::kControl));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, padY));
                 // AlwaysUseWindowPadding: a border-less child ignores WindowPadding
@@ -7704,7 +7741,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::BeginGroup();
                     ImVec2 qp = ImGui::GetCursorScreenPos();
                     bdl->AddRectFilled(ImVec2(qp.x-4, qp.y), ImVec2(qp.x-1, qp.y + ImGui::GetTextLineHeight()*1.7f), ImGui::GetColorU32(kAccent), 1.0f);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImVec4(0.8f,0.85f,0.95f,0.9f)));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(okaytheme::WithAlpha(okaytheme::kText, 0.9f)));
                     ImGui::TextUnformatted((rep->mine ? "You" : selName).c_str());
                     ImGui::PopStyleColor();
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -7742,10 +7779,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         bdl->AddImageRounded((ImTextureID)(intptr_t)mt, ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y),
                                              ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, isSticker ? 0.0f : 12.0f);
                     else {   // loading placeholder
-                        bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), IM_COL32(255, 255, 255, 14), 12.0f);
+                        bdl->AddRectFilled(ip, ImVec2(ip.x + mediaSz.x, ip.y + mediaSz.y), okaytheme::Ink(14), 12.0f);
                         float a0 = (float)ImGui::GetTime() * 6.0f;
                         bdl->PathArcTo(ImVec2(ip.x + mediaSz.x * 0.5f, ip.y + mediaSz.y * 0.5f), 10.0f, a0, a0 + 4.6f, 20);
-                        bdl->PathStroke(IM_COL32(255, 255, 255, 120), 0, 2.0f);
+                        bdl->PathStroke(okaytheme::Ink(120), 0, 2.0f);
                     }
                     if (!isSticker && mhov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (mclick) lightboxUrl = mediaUrl; }
                 } else {
@@ -7790,11 +7827,11 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (starred) {   // gold star just left of the timestamp
                         ImVec2 sp = ImGui::GetCursorScreenPos();
                         DrawStar(bdl, ImVec2(sp.x - 8.0f, sp.y + ImGui::GetTextLineHeight() * 0.5f), 5.0f,
-                                 IM_COL32(250, 200, 70, 255));
+                                 okaytheme::WarningFillU32());
                     }
                 }
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? ImVec4(0.6f,0.64f,0.72f,0.9f)
-                                        : (m.mine ? ImVec4(0.82f,0.88f,1.0f,0.60f) : ImVec4(0.60f,0.66f,0.76f,0.70f))));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(bare ? okaytheme::WithAlpha(okaytheme::kTextDim, 0.9f)
+                                        : (m.mine ? okaytheme::WithAlpha(okaytheme::Current().info, 0.6f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f))));
                 ImGui::TextUnformatted(meta.c_str());
                 ImGui::PopStyleColor();
                 if (m.edited && ImGui::IsItemHovered()) {   // "edited" -> earlier versions
@@ -7807,7 +7844,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (m.mine && !bare) {
                     ImVec2 tmin = ImGui::GetItemRectMin(), tmax = ImGui::GetItemRectMax();
                     const int ds = deliveryState(m.id, m.when);
-                    ImU32 tc = ds == 3 ? ImGui::GetColorU32(ImVec4(0.42f, 0.70f, 1.0f, 1.0f)) : IM_COL32(205, 214, 230, 150);
+                    ImU32 tc = ds == 3 ? ImGui::GetColorU32(okaytheme::Current().info) : okaytheme::TextU32(0.588f);
                     float bx = tmax.x + 4.0f, by = (tmin.y + tmax.y) * 0.5f;
                     auto tick = [&](float ox) {
                         bdl->AddLine(ImVec2(bx + ox, by + 1), ImVec2(bx + ox + 2.5f, by + 3.5f), tc, 1.3f);
@@ -7907,20 +7944,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
                         firstPill = false;
                         bool mineR = myset.count(kv.first) != 0;
                         std::string cnt = std::to_string(kv.second);
-                        float pw = 22.0f + ImGui::CalcTextSize(cnt.c_str()).x;
-                        ImGui::PushID(ReactionEmojiId(kv.first));
                         // Same pill as a server channel's like: tap to toggle.
-                        pw += 4.0f;
-                        ImVec2 pp = ImGui::GetCursorScreenPos();
-                        if (ImGui::InvisibleButton("##pill", ImVec2(pw, 20))) { dm.React(m.id, kv.first, !mineR); g_chatForceLog = true; }
-                        const bool ph = ImGui::IsItemHovered();
-                        if (ph) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip(mineR ? "Remove" : "React"); }
-                        dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + 20), mineR ? IM_COL32(232, 72, 92, ph ? 60 : 42) : IM_COL32(255, 255, 255, ph ? 26 : 14), 10.0f);
-                        if (mineR) dl->AddRect(pp, ImVec2(pp.x + pw, pp.y + 20), IM_COL32(232, 72, 92, 150), 10.0f, 0, 1.0f);
-                        if (kv.first == "heart") DrawHeart(dl, ImVec2(pp.x + 11, pp.y + 10), 5.5f, mineR ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
-                        else DrawEmoji(dl, ImVec2(pp.x + 11, pp.y + 10), 13, ReactionEmojiId(kv.first));
-                        dl->AddText(ImVec2(pp.x + 20, pp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), cnt.c_str());
-                        ImGui::PopID();
+                        if (ReactionPill(dl, kv.first, cnt, mineR)) { dm.React(m.id, kv.first, !mineR); g_chatForceLog = true; }
                     }
                     ImGui::PopStyleVar();
                 }
@@ -7945,7 +7970,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const char* st = ds == 3 ? "Read" : ds == 2 ? "Delivered" : "Sent";
                 const float sw = ImGui::CalcTextSize(st).x;
                 ImGui::SetCursorPosX(baseX + avW - sw - 10.0f);
-                ImGui::TextColored(ds == 3 ? ImVec4(0.55f, 0.76f, 1.0f, 0.95f) : ImVec4(0.60f, 0.64f, 0.72f, 0.90f), "%s", st);
+                ImGui::TextColored(ds == 3 ? okaytheme::WithAlpha(okaytheme::Current().info, 0.95f) : okaytheme::WithAlpha(okaytheme::kTextDim, 0.9f), "%s", st);
             }
             // Snapchat-style presence: their avatar sits at the bottom of the
             // thread while they have this chat open (with the typing dots when
@@ -7961,14 +7986,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 const float sz = 26.0f, a = hereAnim;
                 const float pulse = 0.5f + 0.5f * std::sin((float)okay::platform::TicksMs32() * 0.004f);
                 const ImVec2 hc(hp.x + sz * 0.5f, hp.y + sz * 0.5f);
-                dl->AddCircleFilled(hc, sz * 0.5f + 3.0f + pulse * 2.0f, IM_COL32(120, 200, 110, (int)(40 * a)), 28);
-                dl->AddCircle(hc, sz * 0.5f + 1.5f, IM_COL32(120, 200, 110, (int)(230 * a)), 28, 2.0f);
+                dl->AddCircleFilled(hc, sz * 0.5f + 3.0f + pulse * 2.0f, okaytheme::SuccessFillU32((((int)(40 * a)) / 255.0f)), 28);
+                dl->AddCircle(hc, sz * 0.5f + 1.5f, okaytheme::SuccessFillU32((((int)(230 * a)) / 255.0f)), 28, 2.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * a);
                 DrawAvatar(selAvatar, selName, sz);
                 ImGui::SameLine(0, 10);
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (sz - ImGui::GetTextLineHeight()) * 0.5f);
                 std::string first = selName.substr(0, selName.find(' '));
-                ImGui::TextColored(ImVec4(0.55f, 0.82f, 0.52f, 1.0f), "%s is here", first.c_str());
+                ImGui::TextColored(okaytheme::Current().success, "%s is here", first.c_str());
                 ImGui::PopStyleVar();
             }
             // Typing bubble: a little received-style bubble with animated dots.
@@ -7980,14 +8005,14 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     ImGui::SetCursorScreenPos(ImVec2(ap.x, ap.y + (26.0f - avatarW) * 0.5f));
                     DrawAvatar(selAvatar, selName, avatarW);
                     if (peerHere) dl->AddCircle(ImVec2(ap.x + avatarW * 0.5f, ap.y + 13.0f), avatarW * 0.5f + 1.5f,
-                                                IM_COL32(120, 200, 110, 230), 28, 2.0f);
+                                                okaytheme::SuccessFillU32(0.902f), 28, 2.0f);
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ap);
                 }
                 ImGui::SetCursorPosX(baseX + avatarW + avatarGap);
                 ImVec2 tp = ImGui::GetCursorScreenPos();
                 float bw = 54.0f, bh = 26.0f;
-                dl->AddRectFilled(tp, ImVec2(tp.x + bw, tp.y + bh), IM_COL32(52, 60, 78, 255), 11.0f);
+                dl->AddRectFilled(tp, ImVec2(tp.x + bw, tp.y + bh), okaytheme::U32(okaytheme::kControl), 11.0f);
                 float t = (float)(okay::platform::TicksMs32() % 1200) / 1200.0f;
                 for (int d = 0; d < 3; ++d) {
                     float ph = t - d * 0.18f; if (ph < 0) ph += 1.0f;
@@ -8041,10 +8066,10 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 {   // round button with a drawn chevron (the arrow glyph isn't in Roboto)
                     ImDrawList* jd = ImGui::GetWindowDrawList();
                     ImVec2 jc(jp.x + 17, jp.y + 17);
-                    jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? ImVec4(0.30f, 0.33f, 0.40f, 1.0f)
-                                                                         : ImVec4(0.22f, 0.24f, 0.30f, 0.97f)), 24);
-                    jd->AddCircle(jc, 16.0f, IM_COL32(255, 255, 255, 34), 24, 1.0f);
-                    ImU32 ac = IM_COL32(230, 234, 242, 255);
+                    jd->AddCircleFilled(jc, 16.0f, ImGui::GetColorU32(jh ? okaytheme::kTextDim
+                                                                         : okaytheme::WithAlpha(okaytheme::kControl, 0.97f)), 24);
+                    jd->AddCircle(jc, 16.0f, okaytheme::Ink(34), 24, 1.0f);
+                    ImU32 ac = okaytheme::TextU32();
                     jd->AddLine(ImVec2(jc.x - 5.5f, jc.y - 2.5f), ImVec2(jc.x, jc.y + 3.0f), ac, 2.0f);
                     jd->AddLine(ImVec2(jc.x, jc.y + 3.0f), ImVec2(jc.x + 5.5f, jc.y - 2.5f), ac, 2.0f);
                 }
@@ -8178,7 +8203,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (ImGui::BeginPopupModal("Forward message", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                 const ChatFwd inner = ParseChatFwd(g_fwdBody);
                 const std::string origin = inner.ok ? inner.from : g_fwdFrom;
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.17f, 0.19f, 0.25f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kField);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
                 ImGui::BeginChild("##fwdprev", ImVec2(400, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
                 ChatForwardedLabel(origin);
@@ -8230,7 +8255,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     const ImVec2 ac(rp.x + 15, rp.y + 15);
                     if (t.group) {
                         fd->AddCircleFilled(ImVec2(ac.x - 3, ac.y - 3), 8.0f, ImGui::GetColorU32(kAccentDim), 16);
-                        fd->AddCircleFilled(ImVec2(ac.x + 4, ac.y + 4), 8.0f, IM_COL32(92, 102, 122, 255), 16);
+                        fd->AddCircleFilled(ImVec2(ac.x + 4, ac.y + 4), 8.0f, okaytheme::TextDimU32(), 16);
                     } else {
                         ImGui::SetCursorScreenPos(ImVec2(rp.x + 2, rp.y + 2));
                         DrawAvatar(t.avatar, t.name, 26.0f);
@@ -8256,7 +8281,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetNextItemWidth(400);
                 ImGui::InputTextWithHint("##fwdnote", "Add a message (optional)", fwdNote, sizeof(fwdNote));
                 ImGui::Dummy(ImVec2(0, 4));
-                if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                 ImGui::SameLine();
                 ImGui::BeginDisabled(fwdSel.empty());
                 char sl[32]; std::snprintf(sl, sizeof(sl), fwdSel.size() > 1 ? "Send to %d" : "Send", (int)fwdSel.size());
@@ -8326,7 +8351,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->Pos);
         ImGui::SetNextWindowSize(vp->Size);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.03f, 0.92f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::WithAlpha(okaytheme::kDeep, 0.92f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::SetNextWindowFocus();
         if (ImGui::Begin("##lightbox", nullptr,
@@ -8370,14 +8395,16 @@ void DrawChatWindow(okay::account::AccountService& account) {
 
 // ---- The system tray (Settings > Behavior "Minimize to tray" / "Close to tray") ------------------------------
 // The decisions are in launcher/TrayLogic.hpp (tested by launcher_tray); the Win32 calls in launcher/TrayWin32.cpp.
-// The X button and minimize hide the launcher to the tray (it keeps running: updates, downloads, friends, chat);
-// double-clicking the icon brings it back; the icon's menu has Open Launcher, Check for Updates, Settings and Exit.
-// Off Windows the controller has no shell, so it reports "not supported" and nothing changes.
+// The X button (and minimize, when the person turned "Minimize to tray" on) hides the launcher to the tray (it keeps
+// running: updates, downloads, friends, chat); a click on the icon brings it back; its right-click menu is
+// okaytray::BuildMenu. Every way back goes through RestoreLauncher (below). Off Windows the controller has no shell,
+// so it reports "not supported" and nothing changes.
 static std::unique_ptr<okaytray::TrayShell> g_trayShell;   // the Win32 shell (null off Windows)
 static std::unique_ptr<okaytray::TrayController> g_tray;   // made in main() once the window exists
 static volatile bool     g_trayRestoreReq = false;          // bring the window back (a second launch)
-static volatile unsigned g_trayIconEv = 0;                  // a tray-icon message waiting for the main loop
+static volatile int      g_trayIconEv = 0;                  // a tray-icon event (okaytray::IconEvent) waiting for the main loop
 static volatile bool     g_trayTaskbarReq = false;          // Explorer restarted: add the icon again
+static std::vector<okaytray::ProjectEntry> g_trayRecent;    // the projects the last tray menu listed (Recent projects)
 // Settings > Behavior changed (or were loaded): hand them to the tray and add / remove the icon to match.
 static void TrayApplySettings() {
     if (!g_tray) return;
@@ -8385,6 +8412,36 @@ static void TrayApplySettings() {
     g_tray->settings.closeToTray = g_closeToTray;
     g_tray->hintShown = g_trayHintShown;
     g_tray->Sync();
+}
+// THE way back to the launcher window, for every trigger: a click on the tray icon, the tray menu, a second launch, a
+// game asking us to come forward, the --versions hand-off and the watchdog. okaytray::TrayController::Restore clears the
+// hidden state (so the loop draws at full speed again) and shows the window on Windows; the lw:: calls then bring it
+// back on every platform and keep the backend's own idea of the window (shown, not minimized) in step.
+static void RestoreLauncher(SDL_Window* window) {
+    if (g_tray) g_tray->Restore();
+    if (!lw::IsVisible(window)) lw::Show(window);
+    if (lw::IsMinimized(window)) lw::Restore(window);
+    lw::Raise(window);
+}
+// What the tray menu shows right now (okaytray::BuildMenu).
+static okaytray::MenuState TrayMenuState(bool chatPoppedOut, bool editorFound, bool signedIn) {
+    okaytray::MenuState st;
+    st.chatPoppedOut = chatPoppedOut;
+    st.editorAvailable = editorFound;
+    std::vector<okaytray::ProjectEntry> all;
+    for (const auto& lp : okayproj::ScanProjects(fs::path(ProjectsLocation()), g_hiddenProjects, g_extraProjects)) {
+        okaytray::ProjectEntry pe; pe.name = lp.name; pe.scene = lp.scene;
+        std::error_code e;
+        if (fs::exists(fs::path(lp.scene), e)) pe.mtime = (long long)fs::last_write_time(fs::path(lp.scene), e).time_since_epoch().count();
+        all.push_back(pe);
+    }
+    g_trayRecent = okaytray::MostRecentProjects(all);
+    for (const auto& pe : g_trayRecent) st.recentProjects.push_back(pe.name);
+    st.signedIn = signedIn;
+    st.onlineStatus = g_onlineStatus;
+    st.unreadNotifications = NotifUnread();
+    st.activeDownloads = ActiveDownloads();
+    return st;
 }
 static bool TrayShiftHeld() {
 #if defined(_WIN32)
@@ -8398,18 +8455,23 @@ static bool TrayShiftHeld() {
 // itself (single-instance). Registered in main() before the hook can fire.
 static UINT          g_showMsg = 0;
 
-// SDL (or the own backend) pumps Win32 messages on the main thread, so this hook runs there too; it only flags work
-// for the main loop (the tray menu blocks, so it must not run inside the window procedure).
-static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
-    (void)userdata; (void)hWnd; (void)wParam;
+// The tray's own window (launcher/TrayWin32.cpp) and the backend's message hook both hand messages here, on the main
+// thread (the pump runs there). It only flags work for the main loop (the tray menu blocks, so it must not run inside a
+// window procedure). The icon's clicks only ever come through the tray window: SDL's hook never sees sent messages.
+static void TrayOnMessage(unsigned msg, uint64_t wParam, int64_t lParam) {   // okaytray::MessageSink
     if (msg == okaytray::CallbackMessage()) {
-        const unsigned ev = (unsigned)(lParam & 0xFFFF);
-        if (okaytray::ClassifyIconMessage(ev) != okaytray::IconEvent::None) g_trayIconEv = ev;
+        const unsigned ver = okaytray::IconVersion();
+        const okaytray::IconEvent ev = okaytray::ClassifyIconMessage(okaytray::DecodeIconMessage(ver, wParam, lParam).event, ver);
+        if (ev != okaytray::IconEvent::None) g_trayIconEv = (int)ev;
     } else if (msg == okaytray::TaskbarCreatedMessage()) {
         g_trayTaskbarReq = true;
     } else if (g_showMsg && msg == g_showMsg) {
         g_trayRestoreReq = true;   // a second launcher asked us to come forward
     }
+}
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
+    (void)userdata; (void)hWnd;
+    if (msg != okaytray::CallbackMessage()) TrayOnMessage(msg, wParam, lParam);   // (the second-launch message, when the tray window is missing)
 }
 #endif
 
@@ -8673,6 +8735,12 @@ std::string PresenceText() {
     if (g_presMutex) { okay::thr::LockMutex(g_presMutex); t = g_presText; okay::thr::UnlockMutex(g_presMutex); }
     return !t.empty() ? t : g_onlineStatus == 1 ? "Away" : "In OkaySpace";
 }
+static std::string PresenceJoin();
+// Tell friends my chosen online status (g_onlineStatus: 2 = Invisible looks offline). Used by the Account page, Settings,
+// the friends worker and the tray menu.
+static void BroadcastOnlineStatus(okay::Friends& fr) {
+    if (g_onlineStatus == 2) fr.GoOffline(); else fr.MarkPresence(PresenceText(), PresenceJoin());
+}
 static std::string PresenceJoin() {
     std::string j;
     if (g_presMutex) { okay::thr::LockMutex(g_presMutex); j = g_presJoin; okay::thr::UnlockMutex(g_presMutex); }
@@ -8695,11 +8763,10 @@ int FriendsListWorker(void*) {
         // make sure my profile exists, broadcast presence per my chosen status,
         // and fetch my code + the list/feed.
         fr.EnsureProfile();
-        if (g_onlineStatus == 2) fr.GoOffline();
-        else fr.MarkPresence(PresenceText(), PresenceJoin());
+        BroadcastOnlineStatus(fr);
         auto code = fr.MyCode();
         auto l = fr.List();
-        auto fd = fr.Feed(14);
+        auto fd = fr.Feed(40);   // (grouped into lines on the page)
         if (g_frMutex) okay::thr::LockMutex(g_frMutex);
         g_frList = std::move(l); g_frFeed = std::move(fd); g_frCode = std::move(code);
         g_frReady = true;
@@ -8717,6 +8784,7 @@ static bool g_wsReady = false;                       // (guarded)
 static std::vector<okay::WorkshopItem> g_wsList;     // (guarded)
 static std::map<long, std::pair<long,long>> g_wsRatings;  // (guarded)
 static bool g_wsFailed = false;                      // (guarded) the last fetch did not reach the server
+static bool g_wsEverDone = false;                    // (guarded) a fetch has finished (the Community showcase reads the list without taking g_wsReady)
 static int MarketListWorker(void*) {
     bool reached = false;
     try {
@@ -8726,11 +8794,11 @@ static int MarketListWorker(void*) {
         auto r = reached ? ws.Ratings() : std::map<long, std::pair<long, long>>{};
         if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
         if (reached) { g_wsList = std::move(l); g_wsRatings = std::move(r); }   // a failed fetch keeps what is shown
-        g_wsFailed = !reached; g_wsReady = true;
+        g_wsFailed = !reached; g_wsReady = true; g_wsEverDone = true;
         if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
     } catch (...) {
         if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
-        g_wsFailed = true; g_wsReady = true;
+        g_wsFailed = true; g_wsReady = true; g_wsEverDone = true;
         if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
     }
     g_wsFetching = false;
@@ -9000,6 +9068,15 @@ static void DrawSocialLinksEditor(float fieldW, float btnW) {
 int MktKindIndex(const std::string& k) {
     for (int i = 0; i < kMktKindN; ++i) if (k == kMktKinds[i].key) return i;
     return 0;   // unknown / empty -> game
+}
+// The marketplace listings this viewer may see, counted per kind (the filter rail open and folded both show these counts).
+// Returns the total; counts gets one entry per kind.
+static int MktVisibleCounts(const std::vector<okay::WorkshopItem>& items, const std::string& meName, bool staff, std::vector<int>& counts) {
+    counts.assign((std::size_t)kMktKindN, 0);
+    int all = 0;
+    for (const auto& w : items)
+        if (okay::launcherlayout::MarketListingVisible(w.status, !meName.empty() && w.author == meName, staff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++all; }
+    return all;
 }
 // Publish in the background: upload the file (if any) to the workshop bucket,
 // then create the listing.
@@ -9569,8 +9646,8 @@ static void DrawToastOverlay() {
         float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
-        ImVec4 tcol = g_toastKind == 1 ? ImVec4(0.45f, 0.85f, 0.52f, 1)
-                    : g_toastKind == 2 ? ImVec4(0.96f, 0.48f, 0.45f, 1)
+        ImVec4 tcol = g_toastKind == 1 ? okaytheme::SuccessFill()
+                    : g_toastKind == 2 ? okaytheme::DangerFill()
                                        : kAccent;
         ImGui::SetNextWindowPos(ImVec2(wp.x + ws.x - 18, wp.y + ws.y - 18), ImGuiCond_Always, ImVec2(1, 1));
         ImGui::SetNextWindowBgAlpha(0.92f * alpha);
@@ -10227,7 +10304,7 @@ static void DrawOfficialCard() {
     } else {
         dl->AddRectFilled(ca, cb, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)), 8.0f);
         const ImVec2 cc((ca.x + cb.x) * 0.5f, (ca.y + cb.y) * 0.5f);
-        dl->AddCircleFilled(cc, 26.0f, IM_COL32(10, 12, 16, 120), 32);
+        dl->AddCircleFilled(cc, 26.0f, okaytheme::U32(okaytheme::kDeep, 0.471f), 32);
         DrawNavIcon(dl, 1, cc, ImGui::GetColorU32(kAccent));
     }
 
@@ -10251,7 +10328,7 @@ static void DrawOfficialCard() {
     ty += ImGui::GetTextLineHeight() + 3.0f;
     std::string note = shown.notes.substr(0, shown.notes.find('\n'));
     note.erase(0, std::min(note.find_first_not_of(" -*\t"), note.size()));
-    if (!lastError.empty() && job == Off_Idle) dl->AddText(ImVec2(tx, ty), IM_COL32(230, 120, 110, 255), FitText(lastError, tw).c_str());
+    if (!lastError.empty() && job == Off_Idle) dl->AddText(ImVec2(tx, ty), okaytheme::DangerU32(), FitText(lastError, tw).c_str());
     else if (!note.empty()) dl->AddText(ImVec2(tx, ty), cDim, FitText(note, tw).c_str());
 
     // Actions along the bottom.
@@ -10296,13 +10373,13 @@ static void DrawOfficialCard() {
         }
         const float d = 34.0f;
         ImGui::SetCursorScreenPos(ImVec2(tr - d, by + (bh - d) * 0.5f));
-        if (RoundIconButton("##offmore", kRibMore, d, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 34), cText, "More"))
+        if (RoundIconButton("##offmore", kRibMore, d, okaytheme::Ink(16), okaytheme::Ink(34), cText, "More"))
             ImGui::OpenPopup("##offmenu");
         if (ImGui::BeginPopup("##offmenu")) {
             if (ImGui::MenuItem("Check for updates", nullptr, false, job == Off_Idle)) StartOfficialJob(false, true);
             if (ImGui::MenuItem("Open folder")) OpenExternal(OfficialDir().string());
             ImGui::Separator();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
             if (ImGui::MenuItem("Uninstall\xE2\x80\xA6", nullptr, false, job == Off_Idle && !running)) g_offConfirmUninstall = true;
             ImGui::PopStyleColor();
             ImGui::EndPopup();
@@ -10318,15 +10395,15 @@ static void DrawOfficialCard() {
         ImGui::Text("Uninstall %s?", shown.name.c_str());
         ImGui::TextDisabled("This deletes %s. You can install it again any time.", OfficialDir().string().c_str());
         ImGui::Dummy(ImVec2(0, 6));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
         ImGui::BeginDisabled(running || job != Off_Idle);
-        const bool doIt = ImGui::Button("Uninstall", ImVec2(110, 0));
+        const bool doIt = ImGui::Button("Uninstall", ImVec2(okl::FitButtonW("Uninstall", okl::UiPx(110.0f)), 0));
         ImGui::EndDisabled();
         ImGui::PopStyleColor(2);
         if (doIt) { UninstallOfficial(); g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { g_offConfirmUninstall = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -10734,7 +10811,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     }
 
     if (s.needSql) {   // the server refused a write: say what to do, not the raw error
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.45f, 0.30f, 0.10f, 0.55f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::WithAlpha(okaytheme::WarningFill(), 0.55f));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##oa_sql", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -10752,7 +10829,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     const OaVersion* liveV = nullptr;
     for (const OaVersion& v : s.versions) if (v.version == s.live) liveV = &v;
     if (!s.loaded) ImGui::TextDisabled(busy ? "Loading\xE2\x80\xA6" : "Not loaded yet.");
-    else if (!s.reached) ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1), "Couldn't reach the server.");
+    else if (!s.reached) ImGui::TextColored(okaytheme::Current().danger, "Couldn't reach the server.");
     else if (s.live.empty()) ImGui::TextDisabled("Nothing is published yet. Players don't see an official game until you publish one.");
     else {
         ImGui::SetWindowFontScale(1.3f);
@@ -10760,7 +10837,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::SetWindowFontScale(1.0f);
         if (liveV && liveV->manifestOk)
             ImGui::TextDisabled("%d files  \xC2\xB7  %s  \xC2\xB7  players install it from the Play page", liveV->files, OffBytes((long long)liveV->size).c_str());
-        else ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1), "Its file list (manifest.json) is missing or broken: players can't install it.");
+        else ImGui::TextColored(okaytheme::Current().danger, "Its file list (manifest.json) is missing or broken: players can't install it.");
         if (!s.liveNotes.empty()) {
             ImGui::Dummy(ImVec2(0, 2));
             ImGui::PushTextWrapPos(0.0f);
@@ -10770,7 +10847,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     }
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::BeginDisabled(busy);
-    if (ImGui::Button("Refresh", ImVec2(100, 30))) refresh();
+    if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) refresh();
     ImGui::EndDisabled();
     cardEnd();
 
@@ -10784,7 +10861,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - 230));
     if (ImGui::InputTextWithHint("##oa_folder", "Built game folder", folder, sizeof(folder), ImGuiInputTextFlags_EnterReturnsTrue)) rescan();
     ImGui::SameLine(0, 8);
-    if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(100, 0))) {
+    if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(okl::FitButtonW("Browse\xE2\x80\xA6", okl::UiPx(100.0f)), 0))) {
         // `folder` and the scan state are statics of this function, so the callback can run on a later frame.
         okay::filedialog::FolderOne("Choose the built game folder", folder, [](const std::string& picked) {
             std::snprintf(folder, sizeof(folder), "%s", picked.c_str());
@@ -10793,9 +10870,9 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     }
     ImGui::SameLine(0, 8);
     ImGui::BeginDisabled(!folder[0]);
-    if (ImGui::Button("Reload", ImVec2(100, 0))) rescan();
+    if (ImGui::Button("Reload", ImVec2(okl::FitButtonW("Reload", okl::UiPx(100.0f)), 0))) rescan();
     ImGui::EndDisabled();
-    if (!scanErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1), "%s", scanErr.c_str());
+    if (!scanErr.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", scanErr.c_str());
     if (scanned) {
         ImGui::Dummy(ImVec2(0, 6));
         // What was found: cover, name, exe, size.
@@ -10821,7 +10898,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         float ty = cp.y;
         auto line = [&](const char* label, const std::string& value, bool bad = false) {
             dl->AddText(ImVec2(tx, ty), cDim, label);
-            dl->AddText(ImVec2(tx + 90, ty), bad ? IM_COL32(240, 120, 110, 255) : cText, value.c_str());
+            dl->AddText(ImVec2(tx + 90, ty), bad ? okaytheme::DangerU32() : cText, value.c_str());
             ty += ImGui::GetTextLineHeight() + 6;
         };
         line("Game", pf.name().empty() ? std::string("(no name found)") : pf.name(), pf.name().empty());
@@ -10869,9 +10946,9 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
                     problems.push_back("v" + v.version + " is already in the bucket. Pick another version, or tick \"Allow same or older\" to replace it.");
             checked = true;
         };
-        if (ImGui::Button("Check", ImVec2(100, 34))) runCheck();
+        if (ImGui::Button("Check", ImVec2(okl::FitButtonW("Check", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) runCheck();
         ImGui::SameLine(0, 8);
-        if (PrimaryButton("Publish\xE2\x80\xA6", ImVec2(140, 34))) {
+        if (PrimaryButton("Publish\xE2\x80\xA6", ImVec2(okl::FitButtonW("Publish\xE2\x80\xA6", okl::UiPx(140.0f)), okl::UiPx(34.0f)))) {
             runCheck();
             if (problems.empty()) confirmPublish = true;
         }
@@ -10879,14 +10956,14 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         if (checked) {
             ImGui::Dummy(ImVec2(0, 4));
             for (const std::string& p : problems) {
-                ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1), "\xE2\x80\xA2");
+                ImGui::TextColored(okaytheme::Current().danger, "\xE2\x80\xA2");
                 ImGui::SameLine(0, 6);
                 ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(p.c_str()); ImGui::PopTextWrapPos();
             }
-            if (problems.empty()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Everything checks out: %s v%s, %d files, %s.", nameBuf, verBuf,
+            if (problems.empty()) ImGui::TextColored(okaytheme::Current().success, "Everything checks out: %s v%s, %d files, %s.", nameBuf, verBuf,
                                           (int)pf.files.size(), OffBytes((long long)pf.total()).c_str());
             if (allowOlder && s.live == verBuf)
-                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "v%s is live: its files are replaced in place while players may be downloading them.", verBuf);
+                ImGui::TextColored(okaytheme::Current().warning, "v%s is live: its files are replaced in place while players may be downloading them.", verBuf);
         }
     } else ImGui::EndDisabled();
     if (publishing) {
@@ -10912,7 +10989,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
     smallCaps("VERSIONS IN THE BUCKET");
     ImGui::Dummy(ImVec2(0, 2));
     if (s.listHidden)
-        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "The server doesn't let this account list official/ yet. %s", kOaNeedSql);
+        ImGui::TextColored(okaytheme::Current().warning, "The server doesn't let this account list official/ yet. %s", kOaNeedSql);
     std::function<bool(const std::string&)> okFn = [&](const std::string& v) {
         for (const OaVersion& x : s.versions) if (x.version == v) return x.manifestOk;
         return false;
@@ -10926,9 +11003,9 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::AlignTextToFramePadding();
         ImGui::Text("v%s", v.version.c_str());
         ImGui::SameLine(150);
-        if (v.version == s.live) pill("LIVE", IM_COL32(67, 160, 110, 255));
-        else if (v.version == prev) pill("PREVIOUS", IM_COL32(88, 120, 200, 255));
-        else if (!v.manifestOk) pill("INCOMPLETE", IM_COL32(190, 120, 60, 255));
+        if (v.version == s.live) pill("LIVE", okaytheme::SuccessFillU32());
+        else if (v.version == prev) pill("PREVIOUS", okaytheme::U32(kAccent));
+        else if (!v.manifestOk) pill("INCOMPLETE", okaytheme::WarningFillU32());
         else ImGui::Dummy(ImVec2(80, ImGui::GetFrameHeight()));
         ImGui::SameLine(250);
         ImGui::AlignTextToFramePadding();
@@ -10938,13 +11015,13 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::SameLine(std::max(bx, ImGui::GetCursorPosX() + 8));
         const std::string why = og::MakeLiveProblem(v.version, s.live, names, v.manifestOk);
         ImGui::BeginDisabled(busy || !why.empty());
-        if (ImGui::Button("Make live", ImVec2(100, 0))) confirmLive = v.version;
+        if (ImGui::Button("Make live", ImVec2(okl::FitButtonW("Make live", okl::UiPx(100.0f)), 0))) confirmLive = v.version;
         ImGui::EndDisabled();
         if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
         ImGui::SameLine(0, 6);
         ImGui::BeginDisabled(busy || v.version == s.live);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.50f, 0.50f, 1));
-        if (ImGui::Button("Delete", ImVec2(100, 0))) confirmDelete = v.version;
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
+        if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), 0))) confirmDelete = v.version;
         ImGui::PopStyleColor();
         ImGui::EndDisabled();
         if (v.version == s.live && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The live version can't be deleted.");
@@ -10976,8 +11053,8 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         return ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     };
     auto danger = [](const char* label) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
         const bool b = ImGui::Button(label, ImVec2(130, 0));
         ImGui::PopStyleColor(2);
         return b;
@@ -10987,14 +11064,14 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
         ImGui::TextDisabled("%d files, %s, uploaded with your account. Players' launchers pick it up\non their next update check%s.",
                             (int)pf.files.size(), OffBytes((long long)pf.total()).c_str(), s.live.empty() ? "" : (" (replacing v" + s.live + ")").c_str());
         ImGui::Dummy(ImVec2(0, 6));
-        if (PrimaryButton("Publish", ImVec2(130, 0))) {
+        if (PrimaryButton("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0))) {
             auto* a = new OaJobArgs; a->kind = Oa_Publish; a->folder = scannedDir; a->name = og::Trim(nameBuf); a->version = og::Trim(verBuf);
             a->notes = notesBuf; a->allowNotNewer = allowOlder;
             if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
             confirmPublish = false; checked = false; ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmPublish = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { confirmPublish = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Make this version live?", !confirmLive.empty())) {
@@ -11004,13 +11081,13 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
                                 "already have v%s keep it; new installs get v%s.", s.live.c_str(), s.live.c_str(), confirmLive.c_str());
         else ImGui::TextDisabled("Players move from v%s to it on their launcher's next update check.", s.live.c_str());
         ImGui::Dummy(ImVec2(0, 6));
-        if (PrimaryButton("Make live", ImVec2(130, 0))) {
+        if (PrimaryButton("Make live", ImVec2(okl::FitButtonW("Make live", okl::UiPx(130.0f)), 0))) {
             auto* a = new OaJobArgs; a->kind = Oa_MakeLive; a->target = confirmLive;
             if (!StartOfficialAdminJob(a)) Toast("Still working on the last action\xE2\x80\xA6", 0);
             confirmLive.clear(); ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) { confirmLive.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { confirmLive.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Delete this version?", !confirmDelete.empty())) {
@@ -11023,7 +11100,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
             confirmDelete.clear(); ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Keep", ImVec2(110, 0))) { confirmDelete.clear(); ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Keep", ImVec2(okl::FitButtonW("Keep", okl::UiPx(110.0f)), 0))) { confirmDelete.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     if (modal("Clean up old versions?", confirmCleanup)) {
@@ -11041,7 +11118,7 @@ void DrawOfficialAdmin(okay::account::AccountService& account) {
             confirmCleanup = false; ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Keep them", ImVec2(110, 0))) { confirmCleanup = false; ImGui::CloseCurrentPopup(); }
+        if (ImGui::Button("Keep them", ImVec2(okl::FitButtonW("Keep them", okl::UiPx(110.0f)), 0))) { confirmCleanup = false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -11076,7 +11153,7 @@ static const okayversionsui::Host& VersionsHost() {
     }
     h.accent = kAccent;
     h.accentDim = kAccentDim;
-    h.cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    h.cardBg = okaytheme::kRaised;
     return h;
 }
 
@@ -11097,7 +11174,7 @@ static const okaylcli::Host& CommandLineHost() {
     }
     h.mono = g_fontMono;
     h.accent = kAccent;
-    h.cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    h.cardBg = okaytheme::kRaised;
     return h;
 }
 
@@ -11136,6 +11213,311 @@ static void WhatsNewData(std::vector<DevBuildRow>& devRows, std::string& devNote
     }
 }
 
+// Sample listings for the dev screenshot hooks (OKAY_UI_DEMO_USER): the Marketplace and the Community showcase use the same ones.
+// `mode` "many" adds rows to scroll, "long" adds long titles. Never used outside the demo hooks.
+static void MarketDemoListings(const std::string& mode, std::vector<okay::WorkshopItem>& out, std::map<long, std::pair<long, long>>& ratings) {
+    const std::string& mktDemo = mode;
+    auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
+        okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
+        w.created = (long)std::time(nullptr) - id * 7200; w.featured = id == 1 || id == 7;
+        out.push_back(w); ratings[id] = {rs, rc}; };
+                    it(1, "Neon Drift", "kingimann", "game", "Synthwave arcade racer with drift combos.", 4210, 46, 10);
+                    it(2, "Low-poly Space Props", "maya", "model", "120 ships, crates and stations. CC0.", 980, 28, 6);
+                    it(3, "Sci-fi Panels PBR", "priya", "texture", "Tileable 2K metal + emissive panels.", 640, 18, 4);
+                    it(4, "Pixel Dungeon Tileset", "jonas", "sprite", "16x16 tiles, 4 biomes, animated torches.", 1530, 44, 9);
+                    it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
+                    it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
+                    it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
+                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 0, 0);
+                    if (mktDemo == "many")
+                        for (long i = 9; i <= 40; ++i) {
+                            static const char* kinds[] = {"game", "model", "texture", "sprite", "audio", "script", "template", "tool"};
+                            const std::string t = "Community pack " + std::to_string(i);
+                            it(i, t.c_str(), i % 3 ? "maya" : "jonas", kinds[i % 8], "A sample listing so the page scrolls.", i * 37, (i % 5) * 9, i % 5 ? 2 : 0);
+                        }
+                    if (mktDemo == "long") {
+                        it(41, "The Extraordinarily Long Title Of A Community Space Exploration And Trading Game", "averyveryverylongusername_2026", "game",
+                           "A description that runs on and on: procedural galaxies, trading, ship building, co-op missions, a full soundtrack, "
+                           "mod support and a level editor, all in one download that is far too long to fit on a card.", 123456, 400, 90);
+                        it(42, "Supercalifragilisticexpialidocious-Texture-Pack-With-No-Spaces", "x", "texture", "", 1, 5, 1);
+                    }
+    it(43, "Orbit Hopper", "maya", "game", "Hop between tiny planets, collect stardust and dodge comets. Made for Game Jam #12.", 3480, 45, 10);
+    it(44, "Crystal Caverns (level)", "jonas", "scene", "A cave level with glowing crystals and a hidden room.", 760, 17, 4);
+}
+
+// Loading placeholders for a grid of cards (the Marketplace tiles, the Community showcase): two rows of grey cards, each with
+// its picture block and text bars (`bars`: x, y, width as a share of the card, height, in card pixels). Leaves the cursor under.
+struct SkelBar { float x, y, wFrac, h; };
+static void SkeletonGrid(const okay::launcherlayout::Grid& grid, float cardH, float picH, float rounding, std::initializer_list<SkelBar> bars) {
+    const ImVec2 g0 = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < grid.cols * 2; ++i) {
+        const okay::launcherlayout::Rect c = okay::launcherlayout::GridCell(grid, i, cardH);
+        const ImVec2 a(g0.x + c.x, g0.y + c.y);
+        dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), rounding);
+        SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + picH), rounding);
+        for (const SkelBar& b : bars) SkeletonBlock(dl, ImVec2(a.x + b.x, a.y + b.y), ImVec2(a.x + b.x + c.w * b.wFrac, a.y + b.y + b.h), 4.0f);
+    }
+    ImGui::Dummy(ImVec2(grid.cols * grid.cardW + (grid.cols - 1) * grid.gap, okay::launcherlayout::GridHeight(grid, grid.cols * 2, cardH)));
+}
+
+// ---- The Community showcase (owner 2026-11-25: "its a place where users can showcase their games, levels") ----------------------
+// Published creations from the marketplace list (the same fetch, MarketListWorker), shown big: Featured, New, Popular, Following
+// (your friends' creations) and Your creations (your listings, then your library: the old Community page). A card opens the
+// creation's page, which is the Marketplace item page (one page for an item: big picture, description, Get, the creator,
+// reviews). Real numbers only: downloads and reviews; the server has no likes yet (no table for them), so there is no like count.
+// Where things go: launcher/PageLayout.hpp LayoutShowcase (tests/test_launcher_page_layout.cpp).
+long g_mktOpenItem = 0;   // a creation to open on the Marketplace item page (set by the Community showcase)
+static void DrawCommunityShowcase(okay::account::AccountService& account, int view, int& tab, const char* demoUser, const std::vector<fs::path>& scenes) {
+    namespace PL = okay::launcherlayout;
+    static Uint32 s_nextFetch = 0;
+    static std::vector<okay::WorkshopItem> items;
+    static std::map<long, std::pair<long, long>> ratings;
+    static bool loaded = false, failed = false;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
+    if (now >= s_nextFetch && !g_wsFetching) {   // the marketplace list, the same worker the Marketplace uses
+        g_wsFetching = true; s_nextFetch = now + 30000;
+        if (okay::thr::Thread* t = okay::thr::CreateThread(MarketListWorker, "okay-wslist", nullptr)) okay::thr::DetachThread(t);
+        else g_wsFetching = false;
+    }
+    okay::thr::LockMutex(g_wsMutex);
+    if (g_wsEverDone) { if (!g_wsFailed) { items = g_wsList; ratings = g_wsRatings; } failed = g_wsFailed; loaded = true; }
+    okay::thr::UnlockMutex(g_wsMutex);
+    static const char* kDemoState = std::getenv("OKAY_UI_DEMO_SHOWCASE");   // dev screenshot hook: loading | empty | offline
+    const std::string demo = kDemoState ? kDemoState : "";
+    if (demoUser && items.empty() && demo.empty()) { MarketDemoListings("", items, ratings); loaded = true; failed = false; }
+    if (demoUser && demo == "loading") loaded = false;
+    if (demoUser && demo == "empty") { loaded = true; failed = false; items.clear(); }
+    if (demoUser && demo == "offline") { loaded = true; failed = true; items.clear(); }
+    const std::string me = demoUser ? std::string(demoUser) : account.CurrentSession().username;
+    auto avgOf = [&](long id) { auto it = ratings.find(id); return it != ratings.end() && it->second.second > 0 ? (float)it->second.first / (float)it->second.second : 0.0f; };
+    auto countOf = [&](long id) { auto it = ratings.find(id); return it != ratings.end() ? it->second.second : 0L; };
+    // Friends (for Following and the "playing now" rail), from the Friends worker's list.
+    std::set<std::string> friendNames;
+    std::vector<std::pair<std::string, std::string>> playing;   // name, what
+    if (g_frMutex) {
+        okay::thr::LockMutex(g_frMutex);
+        for (const auto& f : g_frList) if (f.status == "accepted") {
+            friendNames.insert(f.username);
+            if (!f.playing.empty() && f.online) playing.push_back({f.display.empty() ? f.username : f.display, f.playing});
+        }
+        okay::thr::UnlockMutex(g_frMutex);
+    }
+    if (demoUser) { friendNames = {"maya", "jonas"}; playing = {{"maya", "Playing Orbit Hopper"}, {"jonas", "In the editor"}}; }
+
+    // The list for this view.
+    std::vector<const okay::WorkshopItem*> list;
+    for (const auto& w : items) {
+        if (view == 3 && !friendNames.count(w.author)) continue;
+        if (view == 4 && (me.empty() || w.author != me)) continue;
+        if (!okay::launcherlayout::MarketFeaturable(w.status)) continue;   // approved only (yours in review show in Your creations / Your listings)
+        list.push_back(&w);
+    }
+    if (view == 0) {   // Featured: the ones staff featured, then the best rated
+        std::stable_sort(list.begin(), list.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) {
+            if (a->featured != b->featured) return a->featured;
+            return avgOf(a->id) > avgOf(b->id); });
+    } else if (view == 1) std::stable_sort(list.begin(), list.end(), [](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return a->created > b->created; });
+    else if (view == 2) std::stable_sort(list.begin(), list.end(), [](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return a->downloads > b->downloads; });
+
+    const float W = ImGui::GetContentRegionAvail().x, lh = ImGui::GetTextLineHeight();
+    const PL::Showcase sc = PL::LayoutShowcase(W, UiPx(300.0f), UiPx(20.0f), UiPx(280.0f), UiPx(28.0f), UiPx(1240.0f));
+    const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
+    ImGui::BeginChild("##showfeed", ImVec2(sc.feed.w, bodyH), false);
+    const float FW = ImGui::GetContentRegionAvail().x;
+    const PL::Grid grid = PL::FitGrid(FW, UiPx(300.0f), UiPx(20.0f), 3);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float pad = UiPx(16.0f);
+
+    // ---- Share your creation (top of the feed) ----
+    {
+        static int pick = 0;
+        std::vector<std::string> names;
+        for (const auto& sp : scenes) if (IsBuiltGame(sp) || sp.extension() == ".okayscene") names.push_back(sp.stem().string());
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const float shareW = FitButtonW("Share", UiPx(100.0f)), btnH = ImGui::GetFrameHeight() + UiPx(8.0f);
+        const char* kTitle = "Showcase your game or level";
+        const PL::ShareBox sb = PL::LayoutShareBox(FW, pad, ImGui::CalcTextSize(kTitle).x * 1.15f, lh * 1.15f, lh, UiPx(260.0f), shareW, btnH, UiPx(10.0f));
+        const float bh = sb.h;
+        CardBackground(dl, bp, ImVec2(bp.x + FW, bp.y + bh), false);
+        dl->AddRectFilled(bp, ImVec2(bp.x + UiPx(5.0f), bp.y + bh), ImGui::GetColorU32(kAccent), UiPx(3.0f));
+        ImGui::SetWindowFontScale(1.15f);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(bp.x + sb.title.x, bp.y + sb.title.y), cText, kTitle);
+        ImGui::SetWindowFontScale(1.0f);
+        dl->AddText(ImVec2(bp.x + sb.sub.x, bp.y + sb.sub.y), cDim, FitText("Pick something from your library and share it with everyone.", sb.sub.w).c_str());
+        const float cx = bp.x + sb.combo.x, cy = bp.y + sb.combo.y, comboW = sb.combo.w, bx = bp.x + sb.share.x;
+        if (!names.empty()) {
+            pick = std::clamp(pick, 0, (int)names.size() - 1);
+            ImGui::SetCursorScreenPos(ImVec2(cx, cy));
+            ImGui::SetNextItemWidth(comboW);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UiPx(12.0f), (btnH - lh) * 0.5f));
+            if (BeginSlateCombo("##sharepick", names[(std::size_t)pick].c_str())) {
+                for (int i = 0; i < (int)names.size(); ++i) if (ImGui::Selectable(names[(std::size_t)i].c_str(), i == pick)) pick = i;
+                ImGui::EndCombo();
+            }
+            ImGui::PopStyleVar();
+        } else {
+            dl->AddText(ImVec2(cx, cy + (btnH - lh) * 0.5f), cDim, FitText("Your library is empty", comboW).c_str());
+        }
+        ImGui::SetCursorScreenPos(ImVec2(bx, bp.y + sb.share.y));
+        ImGui::BeginDisabled(names.empty());
+        if (PrimaryButton("Share", ImVec2(shareW, btnH))) { g_pendingPublishTitle = names[(std::size_t)pick]; tab = 7; }   // the publish form, prefilled
+        ImGui::EndDisabled();
+        if (names.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Build a game in the editor (File > Build Game) or drop one in Your creations first");
+        ImGui::SetCursorScreenPos(ImVec2(bp.x, bp.y + bh + UiPx(24.0f)));
+        ImGui::Dummy(ImVec2(0, 0));
+    }
+
+    // ---- The cards ----
+    const float picH = std::floor(grid.cardW * 9.0f / 16.0f);
+    const float cardH = picH + pad + lh * 1.25f + UiPx(10.0f) + UiPx(28.0f) + UiPx(8.0f) + 2 * lh + pad + ImGui::GetFrameHeight() + UiPx(8.0f) + pad;
+    if (!loaded) {
+        SkeletonGrid(grid, cardH, picH, UiPx(14.0f), {{pad, picH + pad, 0.6f, lh}, {pad, picH + pad + lh * 2.2f, 0.4f, lh * 0.8f}});
+    } else if (failed && items.empty()) {
+        EmptyState(kIcoAlert, "Can't reach the OkaySpace server", "The showcase loads from the server. Check your internet connection, then try again.", UiPx(30.0f));
+        const float bw = FitButtonW("Try again", UiPx(140.0f));
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (FW - bw) * 0.5f));
+        if (PrimaryButton("Try again", ImVec2(bw, ImGui::GetFrameHeight() + UiPx(8.0f)))) s_nextFetch = 0;
+    } else if (list.empty()) {
+        if (view == 3) EmptyState(6, "Nothing from your friends yet", "When a friend shares a game or a level, it shows here.", UiPx(30.0f));
+        else EmptyState(2, "Be the first to showcase a game", "Share a game or a level you made: it shows here for everyone.", UiPx(30.0f));
+    } else {
+        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            const okay::WorkshopItem& w = *list[i];
+            const PL::Rect c = PL::GridCell(grid, (int)i, cardH);
+            const ImVec2 a(g0.x + c.x, g0.y + c.y), b(a.x + c.w, a.y + c.h);
+            if (!ImGui::IsRectVisible(a, b)) continue;
+            ImGui::PushID((int)w.id);
+            ImGui::SetCursorScreenPos(a);
+            ImGui::SetNextItemAllowOverlap();
+            const bool click = ImGui::InvisibleButton("##sc", ImVec2(c.w, c.h));
+            const bool hov = ImGui::IsMouseHoveringRect(a, b) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+            CardBackground(dl, a, b, hov);
+            // The picture: the category colour, the initial, the type (listings carry no image yet).
+            const ImVec4 kc = kMktKinds[MktKindIndex(w.kind)].color;
+            const ImU32 top = ImGui::GetColorU32(ImVec4(kc.x * 0.6f + 0.08f, kc.y * 0.6f + 0.08f, kc.z * 0.6f + 0.1f, 1.0f));
+            const ImU32 bot = ImGui::GetColorU32(ImVec4(kc.x * 0.22f + 0.06f, kc.y * 0.22f + 0.07f, kc.z * 0.22f + 0.09f, 1.0f));
+            dl->PushClipRect(a, ImVec2(b.x, a.y + picH), true);
+            dl->AddRectFilled(a, ImVec2(b.x, a.y + picH + UiPx(14.0f)), bot, UiPx(14.0f));
+            dl->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + picH * 0.7f), top, top, bot, bot);
+            dl->PopClipRect();
+            {
+                const std::string ini(1, (char)std::toupper((unsigned char)(w.title.empty() ? '?' : w.title[0])));
+                ImGui::SetWindowFontScale(3.2f);
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2((a.x + b.x - is.x) * 0.5f, a.y + (picH - is.y) * 0.5f), okaytheme::OnColorU32(0.843f), ini.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+            }
+            {   // the type chip on the picture
+                const char* kl = MktKindIndex(w.kind) == MktKindIndex("scene") ? "Level" : kMktKinds[MktKindIndex(w.kind)].label;
+                const ImVec2 ks = ImGui::CalcTextSize(kl);
+                const ImVec2 kp(a.x + UiPx(12.0f), a.y + UiPx(12.0f));
+                dl->AddRectFilled(kp, ImVec2(kp.x + ks.x + UiPx(16.0f), kp.y + ks.y + UiPx(6.0f)), okaytheme::Shade(130), (ks.y + UiPx(6.0f)) * 0.5f);
+                dl->AddText(ImVec2(kp.x + UiPx(8.0f), kp.y + UiPx(3.0f)), IM_COL32_WHITE, kl);
+                if (w.featured) {
+                    const char* fl = "Featured";
+                    const ImVec2 fs = ImGui::CalcTextSize(fl);
+                    const ImVec2 fp(b.x - UiPx(12.0f) - fs.x - UiPx(16.0f), kp.y);
+                    dl->AddRectFilled(fp, ImVec2(fp.x + fs.x + UiPx(16.0f), fp.y + fs.y + UiPx(6.0f)), okaytheme::WarningFillU32(0.902f), (fs.y + UiPx(6.0f)) * 0.5f);
+                    dl->AddText(ImVec2(fp.x + UiPx(8.0f), fp.y + UiPx(3.0f)), IM_COL32_WHITE, fl);
+                }
+            }
+            float y = a.y + picH + pad;
+            const float tw = c.w - 2 * pad;
+            ImGui::SetWindowFontScale(1.25f);
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + pad, y), cText, FitText(w.title.empty() ? std::string("Untitled") : w.title, tw / 1.25f).c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            y += lh * 1.25f + UiPx(10.0f);
+            {   // the creator: avatar initial and name
+                const std::string by = w.author.empty() ? std::string("unknown") : w.author;
+                const float av = UiPx(28.0f);
+                dl->AddCircleFilled(ImVec2(a.x + pad + av * 0.5f, y + av * 0.5f), av * 0.5f, ImGui::GetColorU32(NameColor(by)), 24);
+                const std::string ini(1, (char)std::toupper((unsigned char)by[0]));
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                dl->AddText(ImVec2(a.x + pad + (av - is.x) * 0.5f, y + (av - is.y) * 0.5f), IM_COL32_WHITE, ini.c_str());
+                dl->AddText(ImVec2(a.x + pad + av + UiPx(10.0f), y + (av - lh) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text, 0.85f), FitText(by, tw - av - UiPx(10.0f)).c_str());
+            }
+            y += UiPx(28.0f) + UiPx(8.0f);
+            {   // a short description, two lines
+                std::string d1, d2;
+                WrapTwoLines(w.description.empty() ? std::string("No description yet.") : w.description, tw, d1, d2);
+                dl->AddText(ImVec2(a.x + pad, y), cDim, d1.c_str());
+                if (!d2.empty()) dl->AddText(ImVec2(a.x + pad, y + lh), cDim, d2.c_str());
+            }
+            y += 2 * lh + pad;
+            {   // Play (opens the creation's page) and the real numbers: downloads, reviews
+                const float pw = FitButtonW("Play", UiPx(96.0f)), ph = ImGui::GetFrameHeight() + UiPx(8.0f);
+                ImGui::SetCursorScreenPos(ImVec2(a.x + pad, y));
+                const bool play = PrimaryButton(MktKindIndex(w.kind) == MktKindIndex("game") || MktKindIndex(w.kind) == MktKindIndex("scene") ? "Play" : "Get", ImVec2(pw, ph));
+                char st[64];
+                const long rc = countOf(w.id);
+                if (rc > 0) std::snprintf(st, sizeof(st), "%s downloads  \xC2\xB7  %.1f/5", PL::ShortCount(w.downloads).c_str(), avgOf(w.id));
+                else std::snprintf(st, sizeof(st), "%s downloads", PL::ShortCount(w.downloads).c_str());
+                dl->AddText(ImVec2(a.x + pad + pw + UiPx(12.0f), y + (ph - lh) * 0.5f), cDim, FitText(st, tw - pw - UiPx(12.0f)).c_str());
+                if (play) { g_mktOpenItem = w.id; tab = 7; }
+            }
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (click) { g_mktOpenItem = w.id; tab = 7; }   // the creation's page
+            ImGui::PopID();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, (int)list.size(), cardH)));
+        ImGui::Dummy(ImVec2(FW, UiPx(20.0f)));
+    }
+    ImGui::EndChild();
+
+    // ---- The right rail at the wide sizes: top creators, friends playing now ----
+    if (sc.railShown) {
+        ImGui::SameLine(0, sc.rail.x - sc.feed.R());
+        ImGui::BeginChild("##showrail", ImVec2(sc.rail.w, bodyH), false);
+        auto railCard = [&](const char* id, const char* title, auto&& body) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(14.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
+            ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+            SectionLabel(title, -1);
+            ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+            body();
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, UiPx(16.0f)));
+        };
+        railCard("##topcreators", "TOP CREATORS", [&]() {
+            std::map<std::string, std::pair<long, int>> by;   // downloads, creations
+            for (const auto& w : items) if (!w.author.empty()) { by[w.author].first += w.downloads; by[w.author].second += 1; }
+            std::vector<std::pair<std::string, std::pair<long, int>>> v(by.begin(), by.end());
+            std::sort(v.begin(), v.end(), [](const auto& x, const auto& y) { return x.second.first > y.second.first; });
+            if (v.empty()) ImGui::TextDisabled("No creators yet.");
+            for (std::size_t i = 0; i < v.size() && i < 5; ++i) {
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float av = UiPx(32.0f);
+                ImDrawList* rd = ImGui::GetWindowDrawList();
+                rd->AddCircleFilled(ImVec2(p.x + av * 0.5f, p.y + av * 0.5f), av * 0.5f, ImGui::GetColorU32(NameColor(v[i].first)), 24);
+                const std::string ini(1, (char)std::toupper((unsigned char)v[i].first[0]));
+                const ImVec2 is = ImGui::CalcTextSize(ini.c_str());
+                rd->AddText(ImVec2(p.x + (av - is.x) * 0.5f, p.y + (av - is.y) * 0.5f), IM_COL32_WHITE, ini.c_str());
+                rd->AddText(ImVec2(p.x + av + UiPx(10.0f), p.y - UiPx(1.0f)), cText, v[i].first.c_str());
+                char t[64]; std::snprintf(t, sizeof(t), "%d creation%s  \xC2\xB7  %s downloads", v[i].second.second, v[i].second.second == 1 ? "" : "s", PL::ShortCount(v[i].second.first).c_str());
+                rd->AddText(ImVec2(p.x + av + UiPx(10.0f), p.y + lh), cDim, t);
+                ImGui::Dummy(ImVec2(0, av + UiPx(10.0f)));
+            }
+        });
+        railCard("##playingnow", "FRIENDS PLAYING NOW", [&]() {
+            if (playing.empty()) ImGui::TextDisabled("None of your friends are playing right now.");
+            for (const auto& p : playing) {
+                ImGui::TextUnformatted(p.first.c_str());
+                ImGui::TextDisabled("%s", p.second.c_str());
+                ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+            }
+        });
+        ImGui::EndChild();
+    }
+}
+
 // Is the page rectangle (w x h at the cursor) under something Dear ImGui draws in front: an open popup, or a window above the
 // launcher's root window (the floating chat window, an incoming call, a toast ...)? An OkayUI-drawn page is
 // flushed after ImGui and would paint over it (owner's screenshot, What's New over the Notifications flyout), so while this is
@@ -11160,7 +11542,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     int gotoTab = -1;
     std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+    const ImVec4 accLt = okaytheme::AccentText(kAccent);
     auto sigOf    = [](const Notif& n) { return n.key + "\n" + n.body; };
     auto isHidden = [&](const Notif& n) { return ntHidden.count(sigOf(n)) != 0; };
     auto isUnread = [&](const Notif& n) { return !n.read || g_notifFresh.count(n.key) != 0; };
@@ -11306,8 +11688,8 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
         CardBackground(ld, rp, ImVec2(rp.x + LW, rp.y + rh), hov);
         if (un) ld->AddRectFilled(rp, ImVec2(rp.x + LW, rp.y + rh), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.08f)), UiPx(12.0f));
         if (focus) ld->AddRect(rp, ImVec2(rp.x + LW, rp.y + rh), ImGui::GetColorU32(kAccent), UiPx(12.0f), 0, 1.5f);
-        const ImVec4 kc = kind == 1 ? ImVec4(0.38f, 0.68f, 0.98f, 1.0f) : kind == 2 ? ImVec4(0.38f, 0.80f, 0.55f, 1.0f)
-                        : kind == 3 ? ImVec4(0.66f, 0.54f, 0.98f, 1.0f) : ImVec4(0.95f, 0.72f, 0.30f, 1.0f);
+        const ImVec4 kc = kind == 1 ? okaytheme::Current().info : kind == 2 ? okaytheme::SuccessFill()
+                        : kind == 3 ? okaytheme::Current().info : okaytheme::WarningFill();
         const ImVec2 ic(rp.x + pad + icD * 0.5f, rp.y + pad + icD * 0.5f);
         ld->AddCircleFilled(ic, icD * 0.5f, ImGui::GetColorU32(ImVec4(kc.x, kc.y, kc.z, 0.17f)), 32);
         const int icon = kind == 1 ? 6 : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell;
@@ -11327,7 +11709,7 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
             const float xd = UiPx(26.0f);
             const ImVec2 xp(rx - xd, rp.y + pad - UiPx(4.0f));
             ImGui::SetCursorScreenPos(xp);
-            if (RoundIconButton("##ntx", kRibClose, xd, IM_COL32(255, 255, 255, 14), IM_COL32(255, 255, 255, 34), cText, "Dismiss")) dismissIdx = idx;
+            if (RoundIconButton("##ntx", kRibClose, xd, okaytheme::Ink(14), okaytheme::Ink(34), cText, "Dismiss")) dismissIdx = idx;
         } else {
             const ImVec2 ts = ImGui::CalcTextSize(rt);
             ld->AddText(ImVec2(rx - ts.x, rp.y + pad), un ? ImGui::GetColorU32(accLt) : cDim, rt);
@@ -11374,6 +11756,399 @@ static int DrawNotificationsPage(okay::account::AccountService& account) {
     }
     ImGui::EndChild();
     return gotoTab;
+}
+
+// ---- The sign-in gate and the welcome screen (owner 2026-11-25: "forced to sign in", "fully blocked", "improve the login and
+// sign up screen") ------------------------------------------------------------------------------------------------------------
+// The rules are pure and tested: launcher/SignInGate.hpp (what the window may show) and launcher/AuthForm.hpp (fields, checks,
+// errors in plain words, where things go). Every request goes through the one account client (okay::account::AccountService),
+// on a worker thread so the window stays alive and the button can show it is busy.
+struct AuthJob {
+    okay::account::AccountService* acct = nullptr;
+    int kind = 0;                 // 1 sign in, 2 create account, 3 reset email, 4 resend confirmation, 5 check the saved session, 6 reset with code
+    std::string a, b, c;          // identifier/email, password, username/code
+    okay::account::Result r;
+    bool reached = true;
+    volatile bool done = false;
+};
+static AuthJob* g_authJob = nullptr;           // the request in flight (main thread owns it; the worker only fills it)
+static int g_signinCheck = -1;                 // this start's check of the saved session: -1 not answered, 0 not reached, 1 confirmed
+static bool g_staySignedIn = true;             // "Stay signed in": off = signed out when the launcher closes
+static int AuthWorker(void* p) {
+    AuthJob* j = (AuthJob*)p;
+    try {
+        switch (j->kind) {
+        case 1: j->r = j->acct->Login(j->a, j->b); break;
+        case 2: j->r = j->acct->Register(j->a, j->b, j->c); break;
+        case 3: j->r = j->acct->RequestPasswordReset(j->a); break;
+        case 4: j->r = j->acct->ResendConfirmation(j->a); break;
+        case 5: j->r.ok = j->acct->VerifySession(&j->reached); break;
+        case 6: j->r = j->acct->ResetPasswordWithCode(j->a, j->c, j->b); break;
+        }
+    } catch (...) { j->r.ok = false; j->r.error = "Something went wrong."; }
+    j->done = true;
+    return 0;
+}
+static bool StartAuthJob(okay::account::AccountService& acct, int kind, const std::string& a, const std::string& b, const std::string& c) {
+    if (g_authJob) return false;
+    g_authJob = new AuthJob{&acct, kind, a, b, c};
+    if (okay::thr::Thread* t = okay::thr::CreateThread(AuthWorker, "okay-auth", g_authJob)) { okay::thr::DetachThread(t); return true; }
+    delete g_authJob; g_authJob = nullptr;
+    return false;
+}
+/// Start this start's check of a saved session (and "Try again" on the blocked screen).
+static void StartSessionCheck(okay::account::AccountService& acct) {
+    if (acct.IsLoggedIn() && acct.IsOnline() && StartAuthJob(acct, 5, "", "", "")) g_signinCheck = -1;
+}
+
+
+// The left art panel at the wide sizes: a calm gradient, a few planets and a dust of stars (generated, no images).
+// theme-allow-begin: the welcome screen artwork, the same in every theme
+static void DrawWelcomeArt(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    const ImU32 top = ImGui::GetColorU32(ImVec4(kAccent.x * 0.35f + 0.05f, kAccent.y * 0.35f + 0.06f, kAccent.z * 0.35f + 0.10f, 1.0f));
+    const ImU32 bot = IM_COL32(10, 12, 20, 255);   // the art is a night sky in every theme (its text is light)
+    dl->AddRectFilledMultiColor(a, b, top, top, bot, bot);
+    const float w = b.x - a.x, h = b.y - a.y;
+    okay::Random stars(1234567u);   // the same sky every frame
+    auto rnd = [&]() { return stars.Value(); };
+    for (int i = 0; i < 90; ++i) {
+        const ImVec2 p(a.x + rnd() * w, a.y + rnd() * h);
+        dl->AddCircleFilled(p, 0.6f + rnd() * 1.2f, IM_COL32(255, 255, 255, (int)(40 + rnd() * 120)), 8);
+    }
+    const ImVec2 big(a.x + w * 0.62f, a.y + h * 0.40f);
+    const float R = std::min(w, h) * 0.22f;
+    dl->AddCircleFilled(big, R * 1.35f, ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.07f)), 64);
+    dl->AddCircleFilled(big, R, ImGui::GetColorU32(ImVec4(kAccent.x * 0.8f + 0.1f, kAccent.y * 0.8f + 0.1f, kAccent.z * 0.8f + 0.15f, 1.0f)), 64);
+    dl->AddCircleFilled(ImVec2(big.x - R * 0.25f, big.y - R * 0.25f), R * 0.78f, IM_COL32(255, 255, 255, 26), 64);
+    ImVec2 ring[64];
+    for (int k = 0; k < 64; ++k) {
+        const float t = k * (6.2831853f / 64), rx = R * 1.75f, ry = R * 0.42f, rot = -0.35f;
+        const float ex = std::cos(t) * rx, ey = std::sin(t) * ry;
+        ring[k] = ImVec2(big.x + ex * std::cos(rot) - ey * std::sin(rot), big.y + ex * std::sin(rot) + ey * std::cos(rot));
+    }
+    dl->AddPolyline(ring, 64, IM_COL32(220, 232, 255, 150), ImDrawFlags_Closed, 2.0f);
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.25f, a.y + h * 0.72f), R * 0.32f, IM_COL32(120, 200, 170, 200), 40);
+    dl->AddCircleFilled(ImVec2(a.x + w * 0.80f, a.y + h * 0.80f), R * 0.18f, IM_COL32(240, 180, 110, 210), 32);
+    const char* t1 = "Make games. Share them.";
+    const char* t2 = "Play what others build.";
+    ImGui::SetWindowFontScale(1.5f);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + UiPx(36.0f), b.y - UiPx(130.0f)), IM_COL32(240, 244, 252, 255), t1);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + UiPx(36.0f), b.y - UiPx(130.0f) + ImGui::GetTextLineHeight() + UiPx(4.0f)), IM_COL32(240, 244, 252, 170), t2);
+    ImGui::SetWindowFontScale(1.0f);
+}
+// theme-allow-end
+
+/// The whole window while the pages are not allowed: the welcome screen with sign in / create account / forgot password, or the
+/// check of a saved session, or the blocked screen when the server can't be reached. `running` false = quit.
+static void DrawWelcomeScreen(okay::account::AccountService& account, okay::signingate::State gate, bool& running) {
+    namespace AF = okay::authform;
+    using GS = okay::signingate::State;
+    static AF::Step step = AF::Step::SignIn;
+    static char fId[128] = "", fUser[64] = "", fEmail[128] = "", fPass[128] = "", fConfirm[128] = "", fDisplay[64] = "", fCode[16] = "", fNewPass[128] = "";
+    static bool showPass = false, submitted = false, haveCode = false;
+    static std::string banner;           // the last answer, in plain words
+    static bool bannerError = true, bannerUnreachable = false;
+    static std::string sentTo;           // the email a link or a confirmation went to
+    static bool s_demoOnce = false;
+    if (!s_demoOnce) {   // dev screenshot hook (OKAY_UI_DEMO_GATE): the screen in a given state, with sample text
+        s_demoOnce = true;
+        if (const char* g = std::getenv("OKAY_UI_DEMO_GATE")) {
+            const std::string d = g;
+            if (d == "signup" || d == "errors") {
+                step = AF::Step::SignUp;
+                std::snprintf(fUser, sizeof(fUser), "%s", d == "errors" ? "x" : "starpilot");
+                std::snprintf(fEmail, sizeof(fEmail), "%s", d == "errors" ? "star@pilot" : "star@example.com");
+                std::snprintf(fPass, sizeof(fPass), "%s", d == "errors" ? "abc" : "Orbit42!");
+                std::snprintf(fConfirm, sizeof(fConfirm), "%s", d == "errors" ? "abd" : "Orbit42!");
+                if (d == "errors") { submitted = true; banner = AF::FriendlyError("User already registered").text; }
+            } else if (d == "forgot") { step = AF::Step::Forgot; std::snprintf(fEmail, sizeof(fEmail), "star@example.com"); }
+            else if (d == "sent") { step = AF::Step::ForgotSent; sentTo = "star@example.com"; }
+            else if (d == "check") { step = AF::Step::CheckEmail; sentTo = "star@example.com"; }
+            else if (d == "unreach") { std::snprintf(fId, sizeof(fId), "starpilot"); banner = AF::FriendlyError("Couldn't reach the account server (offline or unreachable).").text; bannerUnreachable = true; }
+            else if (d == "wrong") { std::snprintf(fId, sizeof(fId), "starpilot"); banner = AF::FriendlyError("Invalid login credentials").text; }
+        }
+    }
+    const bool emailAccounts = account.UsesEmail();
+    const bool busy = g_authJob != nullptr;
+    // A finished request: what it means for the screen.
+    if (g_authJob && g_authJob->done) {
+        AuthJob* j = g_authJob; g_authJob = nullptr;
+        if (j->kind == 5) {
+            if (!j->reached) g_signinCheck = 0;
+            else { g_signinCheck = account.IsLoggedIn() ? 1 : -1; if (!account.IsLoggedIn()) { banner = "Your sign-in has expired. Sign in again."; bannerError = true; bannerUnreachable = false; } }
+        } else if (j->r.ok) {
+            banner.clear(); bannerUnreachable = false;
+            if (j->kind == 1 || j->kind == 2) {
+                if (account.IsLoggedIn()) {
+                    g_signinCheck = 1;   // the server just answered: this start is confirmed
+                    if (j->kind == 2 && fDisplay[0]) okay::Friends(account).SetDisplayName(fDisplay);
+                    std::memset(fPass, 0, sizeof(fPass)); std::memset(fConfirm, 0, sizeof(fConfirm));
+                    Toast("Signed in", 1);
+                }
+            } else if (j->kind == 3) { step = AF::Step::ForgotSent; sentTo = j->a; }
+            else if (j->kind == 4) { banner = "Sent again. It can take a minute to arrive."; bannerError = false; }
+            else if (j->kind == 6) { step = AF::Step::SignIn; haveCode = false; banner = "Your password is changed. Sign in with the new one."; bannerError = false; std::memset(fNewPass, 0, sizeof(fNewPass)); }
+        } else {
+            const AF::Friendly f = AF::FriendlyError(j->r.error);
+            if (f.outcome == AF::Outcome::CheckYourEmail) { step = AF::Step::CheckEmail; sentTo = j->a; banner.clear(); }
+            else { banner = f.text; bannerError = true; bannerUnreachable = f.outcome == AF::Outcome::Unreachable; }
+        }
+        delete j;
+    }
+
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float lh = ImGui::GetTextLineHeight(), pad = UiPx(28.0f), fieldH = ImGui::GetFrameHeight() + UiPx(14.0f), btnH = UiPx(46.0f);
+    const float logoH = UiPx(96.0f);
+    // The card's height for this step (to centre it): measured last frame.
+    static float s_cardH = UiPx(420.0f);
+    const AF::Welcome L = AF::LayoutWelcome(avail.x, avail.y, UiPx(420.0f), s_cardH, logoH, UiPx(24.0f), UiPx(1100.0f));
+    if (L.art) DrawWelcomeArt(dl, o, ImVec2(o.x + L.artPanel.w, o.y + avail.y));
+    // Logo and name.
+    {
+        const ImVec2 lc(o.x + L.logo.x + L.logo.w * 0.5f, o.y + L.logo.y + UiPx(30.0f));
+        DrawLogoMark(dl, lc, UiPx(60.0f));
+        ImGui::SetWindowFontScale(1.6f);
+        const char* name = "OkaySpace";
+        const ImVec2 ns = ImGui::CalcTextSize(name);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(lc.x - ns.x * 0.5f, o.y + L.logo.y + UiPx(62.0f)), ImGui::GetColorU32(ImGuiCol_Text), name);
+        ImGui::SetWindowFontScale(1.0f);
+    }
+    // A launcher update is allowed before signing in.
+    if (!g_upAvailable.empty()) {
+        const std::string t = "A launcher update is ready (v" + g_upAvailable + ").";
+        const float bw = FitButtonW("Install now");
+        const ImVec2 bp(o.x + avail.x - pad - bw, o.y + UiPx(16.0f));
+        dl->AddText(ImVec2(bp.x - UiPx(12.0f) - ImGui::CalcTextSize(t.c_str()).x, bp.y + (ImGui::GetFrameHeight() - lh) * 0.5f), ImGui::GetColorU32(okaytheme::Current().success), t.c_str());
+        ImGui::SetCursorScreenPos(bp);
+        if (PrimaryButton("Install now", ImVec2(bw, 0))) StartUpdateCheck(true);
+    }
+
+    // ---- The card ----
+    ImGui::SetCursorScreenPos(ImVec2(o.x + L.card.x, o.y + L.card.y));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(16.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(UiPx(8.0f), UiPx(6.0f)));
+    ImGui::BeginChild("##welcomecard", ImVec2(L.card.w, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    const float cw = ImGui::GetContentRegionAvail().x;
+    ImDrawList* cdl = ImGui::GetWindowDrawList();
+    auto title = [&](const char* t, const char* sub) {
+        ImGui::SetWindowFontScale(1.35f);
+        ImGui::TextUnformatted(t);
+        ImGui::SetWindowFontScale(1.0f);
+        if (sub) { ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw); ImGui::TextDisabled("%s", sub); ImGui::PopTextWrapPos(); }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+    };
+    auto errorLine = [&](const std::string& e) {
+        if (e.empty()) return;
+        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw);
+        ImGui::TextUnformatted(e.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    };
+    auto spinner = [&](ImVec2 c, float r) {
+        const float a0 = (float)ImGui::GetTime() * 6.0f;
+        cdl->PathArcTo(c, r, a0, a0 + 4.4f, 24);
+        cdl->PathStroke(IM_COL32_WHITE, 0, 2.2f);
+    };
+    // The big main button, with a spinner while the request runs. True when pressed (or Enter in a field).
+    auto mainButton = [&](const char* label, const char* busyLabel, bool enabled, bool enter) {
+        ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+        ImGui::BeginDisabled(!enabled || busy);
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const bool hit = PrimaryButton(busy ? busyLabel : label, ImVec2(cw, btnH));
+        ImGui::EndDisabled();
+        if (busy) spinner(ImVec2(bp.x + UiPx(22.0f), bp.y + btnH * 0.5f), UiPx(8.0f));
+        return (hit || (enter && enabled)) && !busy;
+    };
+    auto link = [&](const char* id, const char* prefix, const char* label) {
+        if (prefix && *prefix) { ImGui::TextDisabled("%s", prefix); ImGui::SameLine(0, UiPx(6.0f)); }
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        ImGui::PushID(id);
+        const bool c = ImGui::InvisibleButton("##link", ImVec2(ts.x, lh));
+        ImGui::PopID();
+        const bool h = ImGui::IsItemHovered();
+        const ImVec4 lc = okaytheme::AccentText(kAccent);
+        cdl->AddText(p, ImGui::GetColorU32(lc), label);
+        if (h) { cdl->AddLine(ImVec2(p.x, p.y + lh), ImVec2(p.x + ts.x, p.y + lh), ImGui::GetColorU32(lc), 1.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+        return c && !busy;
+    };
+    auto bannerBox = [&]() {
+        if (banner.empty()) return;
+        ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
+        const ImVec2 bp = ImGui::GetCursorScreenPos();
+        const float th = ImGui::CalcTextSize(banner.c_str(), nullptr, false, cw - UiPx(24.0f)).y;
+        const float bh = th + UiPx(20.0f);
+        cdl->AddRectFilled(bp, ImVec2(bp.x + cw, bp.y + bh), bannerError ? okaytheme::DangerFillU32(0.235f) : okaytheme::SuccessFillU32(0.235f), UiPx(10.0f));
+        cdl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(bp.x + UiPx(12.0f), bp.y + UiPx(10.0f)),
+                     bannerError ? okaytheme::DangerFillU32() : okaytheme::SuccessFillU32(), banner.c_str(), nullptr, cw - UiPx(24.0f));
+        ImGui::Dummy(ImVec2(cw, bh));
+    };
+    // One labelled field; returns true on Enter. `check` is shown under it in red.
+    bool enter = false;
+    auto field = [&](const char* label, const char* id, const char* hint, char* buf, std::size_t cap, int flags, const std::string& check, bool eye) {
+        ImGui::TextUnformatted(label);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(UiPx(12.0f), (fieldH - lh) * 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiPx(10.0f));
+        const ImVec2 fp = ImGui::GetCursorScreenPos();
+        const float eyeW = eye ? FitButtonW(showPass ? "Hide" : "Show") : 0.0f;
+        ImGui::SetNextItemWidth(cw);
+        if (!check.empty()) ImGui::PushStyleColor(ImGuiCol_Border, okaytheme::WithAlpha(okaytheme::DangerFill(), 0.8f));
+        if (!check.empty()) ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        if (ImGui::InputTextWithHint(id, hint, buf, cap, flags | ImGuiInputTextFlags_EnterReturnsTrue)) enter = true;
+        if (!check.empty()) { ImGui::PopStyleVar(); ImGui::PopStyleColor(); }
+        const bool active = ImGui::IsItemActive();
+        ImGui::PopStyleVar(2);
+        if (eye) {   // show / hide, inside the field's right end (not a Tab stop: Tab goes field to field)
+            const ImVec2 ep(fp.x + cw - eyeW - UiPx(4.0f), fp.y + (fieldH - ImGui::GetFrameHeight()) * 0.5f);
+            const ImVec2 after = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ep);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoTabStop, true);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0.0f));
+            if (ImGui::Button(showPass ? "Hide" : "Show", ImVec2(eyeW, 0))) showPass = !showPass;
+            ImGui::PopStyleColor();
+            ImGui::PopItemFlag();
+            ImGui::SetCursorScreenPos(after);
+            if (active && (SDL_GetModState() & KMOD_CAPS)) {   // caps lock warning
+                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().warning);
+                ImGui::TextUnformatted("Caps Lock is on.");
+                ImGui::PopStyleColor();
+            }
+        }
+        errorLine(check);
+        ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+    };
+
+    if (gate == GS::Checking) {
+        title("Signing you in", "Checking your saved sign-in with the OkaySpace server.");
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        const float a0 = (float)ImGui::GetTime() * 6.0f;
+        cdl->PathArcTo(ImVec2(sp.x + cw * 0.5f, sp.y + UiPx(24.0f)), UiPx(16.0f), a0, a0 + 4.4f, 32);
+        cdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 3.0f);
+        ImGui::Dummy(ImVec2(cw, UiPx(56.0f)));
+    } else if (gate == GS::Blocked) {
+        title("Can't reach the OkaySpace server", "OkaySpace checks your sign-in with the server each time it starts. Check your internet connection, then try again.");
+        if (mainButton("Try again", "Checking\xE2\x80\xA6", true, false)) StartSessionCheck(account);
+        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+        if (link("##out", "", "Sign in with another account")) { account.Logout(); g_signinCheck = -1; step = AF::Step::SignIn; }
+    } else if (step == AF::Step::SignIn) {
+        title("Welcome back", "Sign in to use OkaySpace.");
+        const std::string eId = AF::CheckIdentifier(fId, submitted), ePass = AF::CheckPassword(fPass, false, submitted);
+        for (AF::Field f : AF::FieldOrder(step, emailAccounts)) {
+            if (f == AF::Field::Identifier) field(emailAccounts ? "Email or username" : "Username", "##wid", emailAccounts ? "you@example.com or your username" : "your username", fId, sizeof(fId), 0, eId, false);
+            if (f == AF::Field::Password) field("Password", "##wpass", "Your password", fPass, sizeof(fPass), showPass ? 0 : ImGuiInputTextFlags_Password, ePass, true);
+        }
+        ImGui::Checkbox("Stay signed in", &g_staySignedIn);
+        if (emailAccounts) { ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x + cw - ImGui::CalcTextSize("Forgot password?").x); if (link("##forgot", "", "Forgot password?")) { step = AF::Step::Forgot; banner.clear(); submitted = false; if (std::strchr(fId, '@')) std::snprintf(fEmail, sizeof(fEmail), "%s", fId); } }
+        bannerBox();
+        if (bannerUnreachable && !banner.empty() && link("##retry", "", "Try again")) { submitted = true; if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) StartAuthJob(account, 1, okay::str::Trim(fId), fPass, ""); }
+        if (mainButton("Sign in", "Signing in\xE2\x80\xA6", true, enter)) {
+            submitted = true;
+            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 1, okay::str::Trim(fId), fPass, ""); }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##tosignup", "New here?", "Create an account")) { step = AF::Step::SignUp; banner.clear(); submitted = false; }
+    } else if (step == AF::Step::SignUp) {
+        title("Create your account", "One account for the launcher, the editor and playing online.");
+        const std::string eUser = AF::CheckUsername(fUser, submitted), eEmail = AF::CheckEmail(fEmail, submitted);
+        const std::string ePass = AF::CheckPassword(fPass, true, submitted), eConf = AF::CheckConfirm(fPass, fConfirm, submitted);
+        for (AF::Field f : AF::FieldOrder(step, emailAccounts)) {
+            switch (f) {
+            case AF::Field::Username: field("Username", "##wuser", "e.g. starpilot", fUser, sizeof(fUser), 0, eUser, false); break;
+            case AF::Field::Email: field("Email", "##wemail", "you@example.com", fEmail, sizeof(fEmail), 0, eEmail, false); break;
+            case AF::Field::Password: {
+                field("Password", "##wpass2", "Choose a password", fPass, sizeof(fPass), showPass ? 0 : ImGuiInputTextFlags_Password, ePass, true);
+                if (fPass[0]) {   // strength meter + the rules, as you type
+                    const int st = AF::PasswordStrength(fPass);
+                    const ImVec2 mp = ImGui::GetCursorScreenPos();
+                    const float segW = (cw - UiPx(90.0f) - 3 * UiPx(4.0f)) / 4.0f;
+                    const ImU32 on = st <= 1 ? okaytheme::DangerFillU32() : st == 2 ? okaytheme::WarningFillU32() : okaytheme::SuccessFillU32();
+                    for (int k = 0; k < 4; ++k) {
+                        const ImVec2 a(mp.x + k * (segW + UiPx(4.0f)), mp.y + UiPx(4.0f));
+                        cdl->AddRectFilled(a, ImVec2(a.x + segW, a.y + UiPx(5.0f)), k < st ? on : okaytheme::Ink(26), UiPx(3.0f));
+                    }
+                    cdl->AddText(ImVec2(mp.x + cw - UiPx(84.0f), mp.y - UiPx(2.0f)), on, AF::StrengthWord(st));
+                    ImGui::Dummy(ImVec2(cw, lh));
+                    for (const AF::Rule& r : AF::PasswordRules(fPass)) {
+                        const ImVec2 rp = ImGui::GetCursorScreenPos();
+                        const ImVec2 c(rp.x + UiPx(6.0f), rp.y + lh * 0.5f);
+                        if (r.met) { cdl->PathLineTo(ImVec2(c.x - 4, c.y)); cdl->PathLineTo(ImVec2(c.x - 1, c.y + 3)); cdl->PathLineTo(ImVec2(c.x + 4, c.y - 3)); cdl->PathStroke(okaytheme::SuccessFillU32(), 0, 1.8f); }
+                        else cdl->AddCircle(c, 3.0f, r.required ? okaytheme::DangerFillU32() : okaytheme::Ink(90), 12, 1.4f);
+                        cdl->AddText(ImVec2(rp.x + UiPx(18.0f), rp.y), r.met ? ImGui::GetColorU32(ImGuiCol_Text, 0.85f) : ImGui::GetColorU32(ImGuiCol_TextDisabled), r.text);
+                        ImGui::Dummy(ImVec2(cw, lh));
+                    }
+                    ImGui::Dummy(ImVec2(0, UiPx(6.0f)));
+                }
+                break;
+            }
+            case AF::Field::Confirm: field("Confirm password", "##wconf", "Type it again", fConfirm, sizeof(fConfirm), showPass ? 0 : ImGuiInputTextFlags_Password, eConf, false); break;
+            case AF::Field::DisplayName: field("Display name (optional)", "##wdisp", "e.g. Star Pilot", fDisplay, sizeof(fDisplay), 0, "", false); break;
+            default: break;
+            }
+        }
+        bannerBox();
+        if (mainButton("Create account", "Creating your account\xE2\x80\xA6", true, enter)) {
+            submitted = true;
+            if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) {
+                banner.clear();
+                if (emailAccounts) StartAuthJob(account, 2, okay::str::Trim(fEmail), fPass, okay::str::Trim(fUser));
+                else StartAuthJob(account, 2, okay::str::Trim(fUser), fPass, "");
+            }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##tosignin", "Already have an account?", "Sign in")) { step = AF::Step::SignIn; banner.clear(); submitted = false; }
+    } else if (step == AF::Step::Forgot || step == AF::Step::ForgotSent) {
+        if (step == AF::Step::Forgot) {
+            title("Reset your password", "Enter the email of your account. We'll send you a link to choose a new password.");
+            field("Email", "##wfemail", "you@example.com", fEmail, sizeof(fEmail), 0, AF::CheckEmail(fEmail, submitted), false);
+            bannerBox();
+            if (mainButton("Send reset link", "Sending\xE2\x80\xA6", true, enter)) {
+                submitted = true;
+                if (AF::CanSubmit(step, emailAccounts, fId, fUser, fEmail, fPass, fConfirm)) { banner.clear(); StartAuthJob(account, 3, okay::str::Trim(fEmail), "", ""); }
+            }
+        } else {
+            title("We sent you a link", ("Open the email we sent to " + sentTo + " and follow the link to choose a new password.").c_str());
+            if (!haveCode) { if (link("##havecode", "The email has a code instead?", "Enter it here")) haveCode = true; }
+            else {
+                field("Code from the email", "##wcode", "123456", fCode, sizeof(fCode), ImGuiInputTextFlags_CharsDecimal, "", false);
+                field("New password", "##wnew", "At least 6 characters", fNewPass, sizeof(fNewPass), showPass ? 0 : ImGuiInputTextFlags_Password, AF::CheckPassword(fNewPass, true, false), true);
+                bannerBox();
+                if (mainButton("Set new password", "Saving\xE2\x80\xA6", fCode[0] && std::strlen(fNewPass) >= 6, enter)) StartAuthJob(account, 6, sentTo, fNewPass, fCode);
+            }
+        }
+        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
+        if (link("##backsignin", "", "Back to sign in")) { step = AF::Step::SignIn; banner.clear(); submitted = false; haveCode = false; }
+    } else if (step == AF::Step::CheckEmail) {
+        title("Check your email", ("We sent a link to " + sentTo + ". Open it to confirm your account, then sign in here.").c_str());
+        bannerBox();
+        if (mainButton("Back to sign in", "Back to sign in", true, false)) { step = AF::Step::SignIn; banner.clear(); std::snprintf(fId, sizeof(fId), "%s", sentTo.c_str()); }
+        ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+        if (link("##resend", "Nothing arrived?", "Send it again")) StartAuthJob(account, 4, sentTo, "", "");
+    }
+    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+    s_cardH = ImGui::GetWindowHeight();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    if (L.card.y + s_cardH + UiPx(80.0f) < avail.y) {   // the version, small, at the bottom of the card's side (when the card leaves room)
+        char ver[64]; std::snprintf(ver, sizeof(ver), "OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
+        const ImVec2 vs = ImGui::CalcTextSize(ver);
+        dl->AddText(ImVec2(o.x + L.artPanel.w + (avail.x - L.artPanel.w - vs.x) * 0.5f, o.y + avail.y - vs.y - UiPx(14.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), ver);
+    }
+    // Quit, under the card.
+    {
+        const char* q = "Quit OkaySpace";
+        const ImVec2 qs = ImGui::CalcTextSize(q);
+        ImGui::SetCursorScreenPos(ImVec2(o.x + L.card.x + (L.card.w - qs.x) * 0.5f, o.y + L.card.y + s_cardH + UiPx(18.0f)));
+        if (ImGui::InvisibleButton("##quit", qs)) running = false;
+        const bool h = ImGui::IsItemHovered();
+        dl->AddText(ImGui::GetItemRectMin(), ImGui::GetColorU32(h ? ImGuiCol_Text : ImGuiCol_TextDisabled), q);
+        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -11465,9 +12240,9 @@ int main(int argc, char** argv) {
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(*mainWinOwner);   // placeholder OkaySpace logo
 #if defined(_WIN32)
-    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
-    g_trayShell = okaytray::MakeWin32Shell(lw::Win32Handle(window));
-    if (g_trayShell) okaytray::InstallCrashCleanup(lw::Win32Handle(window));   // no ghost icon after a crash
+    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // the second-launch broadcast also reaches the main window
+    g_trayShell = okaytray::MakeWin32Shell(lw::Win32Handle(window), TrayOnMessage);   // the icon's own window gets its clicks
+    if (g_trayShell) okaytray::InstallCrashCleanup();   // no ghost icon after a crash
 #endif
     g_tray.reset(new okaytray::TrayController(g_trayShell.get(), g_trayShell != nullptr));
     TrayApplySettings();   // Settings > Behavior: the icon is there while either tray option is on
@@ -11608,20 +12383,9 @@ int main(int argc, char** argv) {
     // needed before the UI: a still-valid token goes straight in, and the
     // background refresher (PumpTokenRefresh) renews it before it lapses. That
     // removes the network wait from every normal startup.
-    const long tokExp = accountPtr->IsLoggedIn() && accountPtr->IsOnline() ? accountPtr->TokenExpiresAt() : 0;
-    const bool needVerify = accountPtr->IsLoggedIn() && accountPtr->IsOnline() &&
-                            (tokExp <= 0 || tokExp - (long)std::time(nullptr) < 120);
-    if (needVerify) {
-        VerifyJob vj{ accountPtr.get(), false };
-        okay::thr::Thread* vt = okay::thr::CreateThread(VerifySessionWorker, "okay-verify", &vj);
-        while (!vj.done) {
-            sdlSeam->PumpEvents();   // keep the window responsive (and mapped) while we wait
-            int sw = g_winW, sh = g_winH; okay::pb::OutputSize(renderer, &sw, &sh);
-            okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-            okay::platform::DelayMs(16);
-        }
-        if (vt) okay::thr::WaitThread(vt, nullptr);
-    }
+    // Every start confirms a saved session with the server ("fully blocked": no offline use). It runs on a worker; the window
+    // shows "Signing you in" until it answers, then the pages, or the blocked screen when the server could not be reached.
+    StartSessionCheck(*accountPtr);
 
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.
@@ -11645,9 +12409,6 @@ int main(int argc, char** argv) {
     // or any way to change it in the UI — it just uses whatever was configured.
     char acctUser[64] = {0};
     char acctPass[64] = {0};
-    char acctName[64] = {0};             // username (handle) on register
-    char acctDisplay[64] = {0};          // display name on register (optional)
-    bool acctShowPass = false;           // show/hide the password field
     char acctNewPass[64] = {0};          // change-password field (signed in)
     char acctChgName[64] = {0};          // change-username field (signed in)
     char acctChgDisplay[64] = {0};       // change-display-name field (signed in)
@@ -11659,10 +12420,8 @@ int main(int argc, char** argv) {
     int  acctAccent = 0;                 // chosen profile accent index
     bool acctProfileLoaded = false;      // customization fields fetched once
     char acctChgEmail[64] = {0};         // change-email field (signed in)
-    bool acctRegisterMode = false;       // false = sign in, true = create account
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
-    bool acctBusy = false;
     char adDelUser[64] = {0}, adDelPass[128] = {0};   // delete-account confirmation fields
     bool adDelAck = false;
 
@@ -11702,11 +12461,20 @@ int main(int argc, char** argv) {
             case okaytray::CloseAction::Quit:       quitLauncher(); break;
         }
     };
-    // What the tray menu (or a double-click on the icon) asked for. The window is already back when `show` is set.
+    // What the tray menu (or a click on the icon) asked for, carried out with the launcher's existing actions.
     auto applyTray = [&](const okaytray::Effect& fx) {
-        if (fx.show) { lw::Restore(window); lw::Raise(window); }
+        if (fx.show) RestoreLauncher(window);
         if (fx.checkUpdates) StartUpdateCheck(true);              // the same check as the sidebar's button, with its dialog
         if (fx.openSettings) { tab = 4; g_lastTab = 4; g_setCatJump = 3; ClosePublicProfile(); }   // Settings > Behavior
+        if (fx.openNotifications) { tab = 16; ClosePublicProfile(); }   // the sidebar's Notifications row
+        if (fx.openDownloads) { tab = 10; ClosePublicProfile(); }       // the sidebar's Downloads row
+        if (fx.openProject >= 0 && fx.openProject < (int)g_trayRecent.size()) {   // the Create page opens it (its openProject)
+            g_trayOpenScene = g_trayRecent[(size_t)fx.openProject].scene; tab = 0; ClosePublicProfile();
+        }
+        if (fx.setStatus >= 0 && fx.setStatus != g_onlineStatus) {   // the Account page's Online status
+            g_onlineStatus = fx.setStatus; SavePrefs();
+            if (accountPtr->IsLoggedIn()) { okay::Friends pf(*accountPtr); BroadcastOnlineStatus(pf); }
+        }
         if (fx.chatIn) ChatApplyPlace(okaychat::PopIn({g_chatWinOpen, g_chatSeparate}));   // the chat back inside the launcher
         if (fx.quit) quitLauncher();
     };
@@ -11718,6 +12486,17 @@ int main(int argc, char** argv) {
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
+        // The sign-in gate (launcher/SignInGate.hpp): the pages only for a session the server confirmed this start.
+        static const bool kGateDemoMode = okay::IsLauncherDemoMode();
+        static const char* kGateDemo = std::getenv("OKAY_UI_DEMO_GATE");   // dev screenshot hook: signin signup errors forgot sent check unreach blocked checking
+        okay::signingate::State gateState = kGateDemoMode ? okay::signingate::State::Open
+                                          : okay::signingate::Decide(account.IsLoggedIn(), account.IsOnline(), g_signinCheck);
+        if (kGateDemo) {
+            const std::string g = kGateDemo;
+            gateState = g == "blocked" ? okay::signingate::State::Blocked : g == "checking" ? okay::signingate::State::Checking : okay::signingate::State::SignIn;
+        }
+        const bool gateOpen = okay::signingate::PagesAllowed(gateState);
+        if (!gateOpen && g_pfOpen) ClosePublicProfile();
 #ifdef OKAY_ENABLE_TEST_HOOKS
         testHooks.Frame();   // due scripted events are pushed into the queue the loop below polls
         if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
@@ -11796,12 +12575,25 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        // The tray: Explorer restarted, a click on the icon (double-click restores, right-click the menu), a minimize,
-        // or a second launch asking us to come forward.
+        // The tray: Explorer restarted, a click on the icon (left click restores, right-click the menu), a minimize,
+        // a second launch asking us to come forward, and the watchdog while hidden.
         if (g_trayTaskbarReq) { g_trayTaskbarReq = false; g_tray->OnTaskbarCreated(); }
-        if (const unsigned ev = g_trayIconEv) {
+        if (const int ev = g_trayIconEv) {
             g_trayIconEv = 0;
-            applyTray(g_tray->OnIconMessage(ev, g_chatSeparate && g_chatHost.shown));
+            const okaytray::IconEvent iev = (okaytray::IconEvent)ev;
+            applyTray(g_tray->OnIconEvent(iev, iev == okaytray::IconEvent::ShowMenu
+                                                   ? TrayMenuState(g_chatSeparate && g_chatHost.shown, !editor.empty(),
+                                                                   accountPtr->IsLoggedIn())
+                                                   : okaytray::MenuState()));
+            if (iev == okaytray::IconEvent::ShowMenu) g_trayIconEv = 0;   // clicks made while the menu was open
+        }
+        {
+            static Uint32 nextWatch = 0;
+            if (!g_tray->Hidden()) nextWatch = 0;
+            else if (okay::platform::TicksMs32() >= nextWatch) {
+                nextWatch = okay::platform::TicksMs32() + okaytray::kWatchdogMs;
+                if (g_tray->Watchdog()) RestoreLauncher(window);   // the icon is gone: never stay hidden with no way back
+            }
         }
         {
             static bool wasMinimized = false;
@@ -11810,12 +12602,9 @@ int main(int argc, char** argv) {
             wasMinimized = minNow;
         }
         if (g_tray->TakeHintJustShown()) { g_trayHintShown = true; SavePrefs(); }
-        if (g_trayRestoreReq) {
+        if (g_trayRestoreReq) {   // a second launch
             g_trayRestoreReq = false;
-            if (g_tray->Hidden()) g_tray->Restore();
-            lw::Show(window);
-            lw::Restore(window);
-            lw::Raise(window);
+            RestoreLauncher(window);
         }
         // A finished git job (clone/pull/push) reports its result as a toast.
         if (g_gitMutex) {
@@ -11900,9 +12689,7 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    if (g_tray->Hidden()) g_tray->Restore();
-                    lw::Restore(window);
-                    lw::Raise(window);
+                    RestoreLauncher(window);
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -11983,7 +12770,7 @@ int main(int argc, char** argv) {
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; if (g_tray->Hidden()) g_tray->Restore(); lw::Restore(window); lw::Raise(window); }   // (a game asked us to come forward: out of the tray too)
+        if (g_raiseMainReq) { g_raiseMainReq = false; RestoreLauncher(window); }   // (a game asked us to come forward: out of the tray too)
         // Hidden in the tray, hidden or minimized: nothing to draw, so idle slowly (TrayLogic.hpp IdleDelayMs). The
         // pumps above (updates, downloads, friends, chat, voice, notifications) still run every pass.
         if (g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
@@ -12013,17 +12800,17 @@ int main(int argc, char** argv) {
                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 ImGui::TextUnformatted("Do you want to exit OkaySpace, or just minimize it?");
                 ImGui::Dummy(ImVec2(0, 10));
-                if (ImGui::Button("Exit", ImVec2(120, 0))) {
+                if (ImGui::Button("Exit", ImVec2(okl::FitButtonW("Exit", okl::UiPx(120.0f)), 0))) {
                     if (EditorRunning()) g_afterEditor = 1;   // the editor closes (saved) first
                     else running = false;
                     closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Minimize", ImVec2(120, 0))) {
+                if (ImGui::Button("Minimize", ImVec2(okl::FitButtonW("Minimize", okl::UiPx(120.0f)), 0))) {
                     lw::Minimize(window); closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(120.0f)), 0)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                     closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
@@ -12044,11 +12831,11 @@ int main(int argc, char** argv) {
             ImGui::TextWrapped("%s", okaycrash::upload::NoticeText().c_str());
             ImGui::PopTextWrapPos();
             ImGui::Dummy(ImVec2(0, 8));
-            if (ImGui::Button("OK, keep sending", ImVec2(180, 32))) {
+            if (ImGui::Button("OK, keep sending", ImVec2(okl::FitButtonW("OK, keep sending", okl::UiPx(180.0f)), okl::UiPx(32.0f)))) {
                 g_crashNoticeSeen = true; g_crashNoticeReq = false; SavePrefs(); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Turn it off", ImVec2(140, 32))) {
+            if (ImGui::Button("Turn it off", ImVec2(okl::FitButtonW("Turn it off", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) {
                 g_crashUpload = false; g_crashNoticeSeen = true; g_crashNoticeReq = false; g_crashUpNote.clear(); SavePrefs(); ImGui::CloseCurrentPopup();
                 Toast("Crash reports will not be sent. They stay on this computer.", 1);
             }
@@ -12093,181 +12880,200 @@ int main(int argc, char** argv) {
                         if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = okay::platform::TicksMs32(); }
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(32.0f))) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         g_afterEditor = 0; g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear(); ImGui::CloseCurrentPopup();
                     }
                 } else if (ack == "save-failed") {
-                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The editor couldn't save everything, so it stayed open.");
+                    ImGui::TextColored(okaytheme::Current().danger, "The editor couldn't save everything, so it stayed open.");
                     ImGui::TextDisabled("Save from the editor (File > Save), close it, then try again.");
-                    if (ImGui::Button("OK", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("OK", ImVec2(okl::FitButtonW("OK", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 } else {
                     static const char* kDots[] = {"", ".", "..", "..."};
                     ImGui::Text("Saving your project and closing the editor%s", kDots[(okay::platform::TicksMs32() / 400) % 4]);
                     if (okay::platform::TicksMs32() - s_sentAt > 15000)
                         ImGui::TextDisabled("Still open - it may be waiting for you. Check the editor window.");
                     ImGui::Dummy(ImVec2(0, 6));
-                    if (ImGui::Button("Cancel", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 }
                 ImGui::EndPopup();
             }
         }
 
         // ---- Software Update dialog ----------------------------------------
-        // A real update window: version from -> to, stepped progress, a live
-        // download bar in MB, elapsed time and the changelog. Opened by the
-        // "Check for updates" button (StartUpdateCheck sets g_upModalOpen).
+        // What it shows comes from okay::updateview::Evaluate (launcher/UpdateView.hpp, tests/test_update_view.cpp): the
+        // version and its notes, Install now / Later, the download with MB, speed and time left, the check and the install,
+        // Ready to restart, a failure in plain words with Details, Up to date with when it was checked. The update logic is
+        // unchanged (RunUpdateCheck); only its state is read here.
+        { static bool s_demoUp = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW") != nullptr; if (s_demoUp) { g_upModalOpen = true; s_demoUp = false; } }
         if (g_upModalOpen && !ImGui::IsPopupOpen("Software Update"))
             ImGui::OpenPopup("Software Update");
         {
-            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
-            if (ImGui::BeginPopupModal("Software Update", nullptr,
-                    ImGuiWindowFlags_NoSavedSettings)) {
-                UpState us = GetState();
-                bool busy = (us == Up_Checking || us == Up_Downloading);
-                std::string fromV, toV; GetUpVers(fromV, toV);
+            namespace UV = okay::updateview;
+            const UpState us = GetState();
+            std::string fromV, toV; GetUpVers(fromV, toV);
+            static Uint32 s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
+            const int stepIdx = okay::thr::AtomicGet(&g_upStepIdx), stepTot = okay::thr::AtomicGet(&g_upStepTotal);
+            if (stepIdx != s_stepWas || us != Up_Downloading) { s_stepWas = stepIdx; s_stepTicks = okay::platform::TicksMs32(); }
+            if (us == Up_UpToDate && s_lastChecked == 0) s_lastChecked = (long long)std::time(nullptr);
+            if (us == Up_Checking) s_lastChecked = 0;
+            UV::Inputs ui;
+            ui.fromVersion = fromV.empty() ? std::string(OKAY_ENGINE_VERSION) : fromV;
+            ui.toVersion = toV.empty() ? g_upAvailable : toV;
+            ui.testTag = GetUpTag();
+            if (ui.testTag.empty() && !g_upAvailableTitle.empty()) ui.testTag = g_upAvailableTitle;
+            ui.step = GetUpStep(); ui.stepIndex = stepIdx; ui.stepCount = stepTot;
+            ui.bytesNow = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
+            ui.bytesTotal = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
+            ui.secondsInStep = (double)(Uint32)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
+            ui.error = GetUpMsg();
+            ui.lastCheckedUnix = s_lastChecked; ui.nowUnix = (long long)std::time(nullptr);
+            ui.restartNeeded = g_upRelaunchNeeded;
+            ui.phase = us == Up_Checking ? UV::Phase::Checking
+                     : us == Up_Downloading ? (GetUpMsg().rfind("Installing", 0) == 0 ? UV::Phase::Verifying : UV::Phase::Downloading)
+                     : us == Up_Updated ? UV::Phase::Ready
+                     : us == Up_Failed ? UV::Phase::Failed
+                     : !g_upAvailable.empty() ? UV::Phase::Available
+                     : us == Up_UpToDate ? UV::Phase::UpToDate : UV::Phase::Idle;
+            if (const char* d = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW")) {   // dev screenshot hook: available downloading verifying ready failed uptodate checking
+                const std::string s = d;
+                ui.fromVersion = "2.903.9"; ui.toVersion = "2.904.0";
+                ui.phase = s == "available" ? UV::Phase::Available : s == "downloading" ? UV::Phase::Downloading : s == "verifying" ? UV::Phase::Verifying
+                         : s == "ready" ? UV::Phase::Ready : s == "failed" ? UV::Phase::Failed : s == "uptodate" ? UV::Phase::UpToDate : UV::Phase::Checking;
+                ui.step = "Downloading editor (OkayEngine)"; ui.stepIndex = 1; ui.stepCount = 3;
+                ui.bytesNow = 13002342; ui.bytesTotal = 36700160; ui.secondsInStep = 4.0;
+                ui.error = "Update refused. versions.json has no SHA-256 for OkayEngine.exe (HTTP 200, schema 3).";
+                ui.restartNeeded = true; ui.lastCheckedUnix = ui.nowUnix - 300;
+            }
+            const UV::View v = UV::Evaluate(ui);
+            std::string notes = GetUpChangelog();
+            if (std::getenv("OKAY_UI_DEMO_UPDATE_VIEW") && notes.empty())
+                notes = "Launcher: the Marketplace is a shop now, with an item page\nLauncher: sign in before using the launcher\nEditor: faster scene loading for big projects\nFixed: the notifications list no longer draws over What's New\n";
+            const bool showNotes = !notes.empty() && (v.error.empty());
+            const ImGuiViewport* vpU = ImGui::GetMainViewport();
+            const float lh = ImGui::GetTextLineHeight(), padX = UiPx(24.0f), btnH = ImGui::GetFrameHeight() + UiPx(12.0f);
+            const float b1 = v.primary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.primary), UiPx(110.0f)) : 0.0f;
+            const float b2 = v.secondary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.secondary), UiPx(90.0f)) : 0.0f;
+            const float fixedH = UiPx(260.0f) + (v.error.empty() ? 0.0f : lh * 3);
+            const UV::DialogBox box = UV::LayoutDialog(vpU->WorkSize.x, vpU->WorkSize.y, UiPx(560.0f), UiPx(20.0f), fixedH, showNotes,
+                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX);
+            ImGui::SetNextWindowPos(vpU->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(box.w, 0), ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, UiPx(22.0f)));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiPx(14.0f));
+            const bool open = ImGui::BeginPopupModal("Software Update", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::PopStyleVar(2);
+            if (open) {
+                const float cw = box.w - 2 * padX;
                 ImDrawList* mdl = ImGui::GetWindowDrawList();
-
-                // Header: a small accent cube glyph + title + sub-line.
-                ImVec2 hp = ImGui::GetCursorScreenPos();
-                float cs = 20.0f, cx0 = hp.x + cs * 0.5f, cy0 = hp.y + cs * 0.6f;
-                ImU32 acol = ImGui::GetColorU32(kAccent);
-                mdl->AddQuadFilled(ImVec2(cx0, cy0 - 9), ImVec2(cx0 + 10, cy0 - 3),
-                                   ImVec2(cx0, cy0 + 3), ImVec2(cx0 - 10, cy0 - 3), acol);
-                mdl->AddQuadFilled(ImVec2(cx0 - 10, cy0 - 3), ImVec2(cx0, cy0 + 3),
-                                   ImVec2(cx0, cy0 + 13), ImVec2(cx0 - 10, cy0 + 7),
-                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.55f,kAccent.y*0.55f,kAccent.z*0.55f,1)));
-                mdl->AddQuadFilled(ImVec2(cx0, cy0 + 3), ImVec2(cx0 + 10, cy0 - 3),
-                                   ImVec2(cx0 + 10, cy0 + 7), ImVec2(cx0, cy0 + 13),
-                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.78f,kAccent.y*0.78f,kAccent.z*0.78f,1)));
-                ImGui::SetCursorScreenPos(ImVec2(hp.x + cs + 12, hp.y));
-                ImGui::BeginGroup();
-                ImGui::TextUnformatted(
-                    us == Up_Updated  ? "Update installed" :
-                    us == Up_Failed   ? "Update failed" :
-                    us == Up_UpToDate ? "You're up to date" :
-                    us == Up_Downloading ? "Downloading update" : "Checking for updates");
-                if (!fromV.empty()) {
-                    if (!toV.empty() && toV != fromV)
-                        ImGui::TextDisabled("v%s  \xC2\xBB  v%s", fromV.c_str(), toV.c_str());   // » (arrows aren't in Roboto)
-                    else
-                        ImGui::TextDisabled("Installed: v%s", fromV.c_str());
+                const bool busyU = ui.phase == UV::Phase::Checking || ui.phase == UV::Phase::Downloading || ui.phase == UV::Phase::Verifying;
+                // Header: the logo mark (spinning ring while busy), the title and the line under it.
+                {
+                    const ImVec2 hp = ImGui::GetCursorScreenPos();
+                    const float L = UiPx(44.0f);
+                    DrawLogoMark(mdl, ImVec2(hp.x + L * 0.5f, hp.y + L * 0.5f), L);
+                    if (busyU) { const float a0 = (float)ImGui::GetTime() * 5.0f; mdl->PathArcTo(ImVec2(hp.x + L * 0.5f, hp.y + L * 0.5f), L * 0.56f, a0, a0 + 2.2f, 24); mdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.2f); }
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + L + UiPx(14.0f), hp.y));
+                    ImGui::BeginGroup();
+                    ImGui::SetWindowFontScale(1.3f);
+                    ImGui::TextUnformatted(v.title.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                    if (!v.sub.empty()) { ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw - L - UiPx(14.0f)); ImGui::TextDisabled("%s", v.sub.c_str()); ImGui::PopTextWrapPos(); }
+                    if (!v.checked.empty()) ImGui::TextDisabled("%s", v.checked.c_str());
+                    ImGui::EndGroup();
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x, std::max(ImGui::GetCursorScreenPos().y, hp.y + L) + UiPx(12.0f)));
+                    ImGui::Dummy(ImVec2(cw, 0));
                 }
-                if (const std::string tag = GetUpTag(); !tag.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%s", tag.c_str());   // test build / the way back
-                ImGui::EndGroup();
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::Separator();
-                ImGui::Dummy(ImVec2(0, 4));
-
-                // Current step label + animated spinner while busy.
-                if (busy) {
-                    ImVec2 sp = ImGui::GetCursorScreenPos();
-                    float rad = 7.0f; ImVec2 ctr(sp.x + rad + 1, sp.y + rad + 2);
-                    float a0 = (float)ImGui::GetTime() * 6.0f;
-                    mdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
-                    mdl->PathStroke(acol, 0, 2.6f);
-                    ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
+                // Progress: the file being downloaded, then all of it.
+                auto bar = [&](float f, float h) {
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    mdl->AddRectFilled(p, ImVec2(p.x + cw, p.y + h), okaytheme::Ink(18), h * 0.5f);
+                    if (f >= 0.0f) { if (f > 0.0f) mdl->AddRectFilled(p, ImVec2(p.x + std::max(h, cw * f), p.y + h), ImGui::GetColorU32(kAccent), h * 0.5f); }
+                    else {   // moving: the size is not known yet
+                        const float t = (float)std::fmod(ImGui::GetTime() * 0.8, 1.0), seg = cw * 0.3f;
+                        const float x0 = p.x + (cw + seg) * t - seg;
+                        mdl->PushClipRect(p, ImVec2(p.x + cw, p.y + h), true);
+                        mdl->AddRectFilled(ImVec2(x0, p.y), ImVec2(x0 + seg, p.y + h), ImGui::GetColorU32(kAccent), h * 0.5f);
+                        mdl->PopClipRect();
+                    }
+                    ImGui::Dummy(ImVec2(cw, h));
+                };
+                if (!v.stepLine.empty()) ImGui::TextUnformatted(v.stepLine.c_str());
+                if (v.file != -1.0f) { bar(v.file >= 0.0f ? v.file : -1.0f, UiPx(10.0f)); }
+                if (!v.bytesLine.empty() || !v.speedLine.empty()) {
+                    const std::string right = v.speedLine + (v.etaLine.empty() ? "" : "  \xC2\xB7  " + v.etaLine);
+                    ImGui::TextDisabled("%s", v.bytesLine.c_str());
+                    if (!right.empty()) { ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x + cw - ImGui::CalcTextSize(right.c_str()).x); ImGui::TextDisabled("%s", right.c_str()); }
                 }
-                ImGui::TextUnformatted(GetUpStep().c_str());
-                if (us == Up_Failed) {   // the reason and what to do, in full (the sidebar note only has room for the start of it)
-                    const std::string why = GetUpMsg();
-                    if (!why.empty()) {
-                        ImGui::Dummy(ImVec2(0, 2));
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1.0f), "%s", why.c_str());
+                if (v.overall >= 0.0f && ui.phase == UV::Phase::Downloading) {
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    ImGui::TextDisabled("All of the update");
+                    bar(v.overall, UiPx(6.0f));
+                }
+                // A failure: in plain words, with the updater's own text under Details.
+                if (!v.error.empty()) {
+                    const ImVec2 ep = ImGui::GetCursorScreenPos();
+                    const float th = ImGui::CalcTextSize(v.error.c_str(), nullptr, false, cw - UiPx(24.0f)).y;
+                    mdl->AddRectFilled(ep, ImVec2(ep.x + cw, ep.y + th + UiPx(20.0f)), okaytheme::DangerFillU32(0.235f), UiPx(10.0f));
+                    mdl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(ep.x + UiPx(12.0f), ep.y + UiPx(10.0f)), okaytheme::DangerU32(), v.error.c_str(), nullptr, cw - UiPx(24.0f));
+                    ImGui::Dummy(ImVec2(cw, th + UiPx(20.0f)));
+                    if (!v.details.empty() && ImGui::TreeNode("Details")) {
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw - UiPx(20.0f));
+                        ImGui::TextDisabled("%s", v.details.c_str());
                         ImGui::PopTextWrapPos();
-                        ImGui::Dummy(ImVec2(0, 2));
+                        if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(v.details.c_str());
+                        ImGui::TreePop();
                     }
                 }
-
-                // Overall step progress (engine / player / launcher).
-                int si = okay::thr::AtomicGet(&g_upStepIdx), stt = okay::thr::AtomicGet(&g_upStepTotal);
-                if (stt > 0 && us == Up_Downloading) {
-                    float sf = (float)si / (float)stt;
-                    ImGui::ProgressBar(sf, ImVec2(-FLT_MIN, 6.0f), "");
-                }
-
-                // Live download bar for the current file (MB + %).
-                long long bn = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
-                long long bt = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
-                if (us == Up_Downloading) {
-                    char ov[64];
-                    double mbN = (double)bn / (1024.0 * 1024.0);
-                    if (bt > 0) {
-                        double mbT = (double)bt / (1024.0 * 1024.0);
-                        float f = (float)bn / (float)bt; if (f > 1) f = 1;
-                        std::snprintf(ov, sizeof(ov), "%.1f / %.1f MB  (%.0f%%)", mbN, mbT, f * 100.0f);
-                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
-                    } else {
-                        // Unknown size: indeterminate sweep + MB-so-far readout.
-                        float t = (float)ImGui::GetTime();
-                        float f = 0.5f + 0.5f * std::sin(t * 2.2f);
-                        std::snprintf(ov, sizeof(ov), "%.1f MB", mbN);
-                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
-                    }
-                }
-
-                // Elapsed time.
-                int startMs = okay::thr::AtomicGet(&g_upStartMs);
-                if (startMs && us != Up_Idle) {
-                    int el = ((int)okay::platform::TicksMs32() - startMs) / 1000; if (el < 0) el = 0;
-                    ImGui::TextDisabled("Elapsed: %d:%02d", el / 60, el % 60);
-                }
-
-                // Changelog / what's-new.
-                std::string cl = GetUpChangelog();
-                if (!cl.empty() && us != Up_Failed) {   // (a failure needs the room for its reason and the Retry button)
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
-                                        toV.empty() ? "" : toV.c_str());
-                    ImGui::BeginChild("##upchangelog", ImVec2(0, 120), true);
-                    // One bullet per line.
-                    std::size_t s0 = 0;
-                    while (s0 < cl.size()) {
-                        std::size_t e0 = cl.find('\n', s0);
-                        std::string ln = cl.substr(s0, e0 == std::string::npos ? std::string::npos : e0 - s0);
-                        if (!ln.empty()) {
-                            ImGui::TextColored(kAccent, "\xE2\x80\xA2"); ImGui::SameLine();
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(ln.c_str());
-                            ImGui::PopTextWrapPos();
+                // What's new in that version: every note, wrapped, in a scroll area.
+                if (showNotes) {
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    SectionLabel(ui.toVersion.empty() ? "WHAT'S NEW" : ("WHAT'S NEW IN " + okayver::WithV(ui.toVersion)).c_str(), -1);
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kSunken);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(10.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(14.0f), UiPx(10.0f)));
+                    ImGui::BeginChild("##upnotes", ImVec2(cw, box.notesH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    for (std::size_t s0 = 0; s0 < notes.size();) {
+                        std::size_t e0 = notes.find('\n', s0); if (e0 == std::string::npos) e0 = notes.size();
+                        if (e0 > s0) {
+                            ImGui::Bullet(); ImGui::SameLine();
+                            ImGui::BeginGroup();
+                            ImGui::TextWrapped("%s", notes.substr(s0, e0 - s0).c_str());
+                            ImGui::EndGroup();
                         }
-                        if (e0 == std::string::npos) break; s0 = e0 + 1;
+                        s0 = e0 + 1;
                     }
                     ImGui::EndChild();
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor();
                 }
-
-                ImGui::Dummy(ImVec2(0, 8));
-                // Action buttons depend on state.
-                if (us == Up_Updated && g_upRelaunchNeeded) {
-                    if (ImGui::Button("Restart now", ImVec2(140, 34))) {
+                // Buttons, right-aligned (stacked on a very narrow dialog).
+                ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                auto act = [&](UV::Button b) {
+                    switch (b) {
+                    case UV::Button::InstallNow: StartUpdateCheck(true); break;
+                    case UV::Button::TryAgain: case UV::Button::CheckAgain: StartUpdateCheck(); break;
+                    case UV::Button::RestartNow:
                         if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; }
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
+                    case UV::Button::Close:
+                        if (us == Up_Failed) g_upGoBack = false;   // a failed way back is not tried again by the next ordinary check
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
+                    default: g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;   // Later, Hide, Restart later
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Later", ImVec2(110, 34))) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                } else if (us == Up_Failed) {
-                    if (ImGui::Button("Retry", ImVec2(130, 34))) StartUpdateCheck();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Close", ImVec2(110, 34))) {
-                        g_upGoBack = false;   // a failed way back is not tried again by the next ordinary check
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                } else if (busy) {
-                    if (ImGui::Button("Hide", ImVec2(110, 34))) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Keep updating in the background");
-                } else {   // UpToDate / Idle
-                    if (ImGui::Button("Close", ImVec2(130, 34)) ||
-                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
+                };
+                const float rowX = ImGui::GetCursorPosX();
+                if (!box.stackButtons) ImGui::SetCursorPosX(rowX + cw - b1 - (b2 > 0 ? b2 + UiPx(8.0f) : 0.0f));
+                if (v.secondary != UV::Button::None) {
+                    if (ImGui::Button(UV::ButtonLabel(v.secondary), ImVec2(box.stackButtons ? cw : b2, btnH))) act(v.secondary);
+                    if (!box.stackButtons) ImGui::SameLine(0, UiPx(8.0f));
                 }
+                if (v.primary != UV::Button::None) {
+                    const bool prim = v.primary != UV::Button::Hide && v.primary != UV::Button::Close;
+                    if (prim ? PrimaryButton(UV::ButtonLabel(v.primary), ImVec2(box.stackButtons ? cw : b1, btnH))
+                             : ImGui::Button(UV::ButtonLabel(v.primary), ImVec2(box.stackButtons ? cw : b1, btnH))) act(v.primary);
+                    if (v.primary == UV::Button::Hide && ImGui::IsItemHovered()) ImGui::SetTooltip("Keep updating in the background");
+                }
+                if (!busyU && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_upModalOpen = false; ImGui::CloseCurrentPopup(); }
                 ImGui::EndPopup();
             }
         }
@@ -12327,10 +13133,11 @@ int main(int argc, char** argv) {
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false))
             focusSearch = true;
+        g_panelShortcut = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !ImGui::GetIO().WantTextInput;   // Ctrl+B: fold a side panel
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
-        PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
-        PumpBlocks(account);
-        PumpPrivacy(account);
+        if (gateOpen) PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
+        if (gateOpen) PumpBlocks(account);
+        if (gateOpen) PumpPrivacy(account);
         PumpCrashUpload();
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
         PumpTicketPreflight();
@@ -12365,17 +13172,15 @@ int main(int argc, char** argv) {
         const float kNavExpandedW = 232.0f, kNavCollapsedW = 64.0f;
         const float navW = g_navCollapsed ? kNavCollapsedW : kNavExpandedW;
         const float navRowH = g_navCollapsed ? 40.0f : 36.0f;
-        const bool  navLight = (g_themeIndex == 2);
-        const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-        const float  navK = navLight ? 0.955f : 0.78f;
-        const ImVec4 navBg = g_themeIndex == 0 ? okaytheme::kSunken : ImVec4(wbg.x * navK, wbg.y * navK, wbg.z * navK, 1.0f);
-        const ImU32 navHover  = navLight ? IM_COL32(0, 0, 0, 12) : IM_COL32(255, 255, 255, 11);
-        const ImU32 navSel    = navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 21);
-        const ImU32 navTextHi = navLight ? IM_COL32(22, 24, 28, 255) : IM_COL32(244, 245, 247, 255);
+        const bool  navLight = okaytheme::Current().light;
+        const ImVec4 navBg = okaytheme::kSunken;
+        const ImU32 navHover  = okaytheme::Ink(11);
+        const ImU32 navSel    = okaytheme::Ink(21);
+        const ImU32 navTextHi = okaytheme::TextU32();
         const ImU32 navText   = ImGui::GetColorU32(ImGuiCol_Text, 0.86f);
         const ImU32 navIcon   = ImGui::GetColorU32(ImGuiCol_Text, 0.62f);
-        const ImU32 navDivide = navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 14);
-        const ImU32 navRed    = IM_COL32(222, 76, 76, 255);
+        const ImU32 navDivide = okaytheme::Ink(14);
+        const ImU32 navRed    = okaytheme::DangerFillU32();
         const ImU32 navAccent = ImGui::GetColorU32(kAccent);
 
         // One sidebar row: icon + label (+ count pill). Returns true on click.
@@ -12420,7 +13225,8 @@ int main(int argc, char** argv) {
                     ImVec2 ts = ImGui::CalcTextSize(nb);
                     float bw = std::max(20.0f, ts.x + 12.0f), bx = mx.x - bw - 8.0f;
                     dl->AddRectFilled(ImVec2(bx, cy - 9.0f), ImVec2(bx + bw, cy + 9.0f), badgeCol, 9.0f);
-                    dl->AddText(ImVec2(bx + (bw - ts.x) * 0.5f, cy - ts.y * 0.5f), IM_COL32_WHITE, nb);
+                    const bool soft = ((badgeCol >> IM_COL32_A_SHIFT) & 0xFF) < 200;   // a see-through badge: page text; a filled one: white
+                    dl->AddText(ImVec2(bx + (bw - ts.x) * 0.5f, cy - ts.y * 0.5f), soft ? okaytheme::TextU32() : IM_COL32_WHITE, nb);
                 }
             }
             if (hov) {
@@ -12450,6 +13256,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 4));
         };
 
+        if (gateOpen) {   // the sidebar only once signed in (okay::signingate)
         ImGui::PushStyleColor(ImGuiCol_ChildBg, navBg);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 14));
         ImGui::BeginChild("nav", ImVec2(navW, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
@@ -12464,9 +13271,9 @@ int main(int argc, char** argv) {
             ImVec2 br(lp.x + S, lp.y + S);
             // Brand tile: accent fill with a soft top sheen; ringed planet + star.
             dl->AddRectFilled(lp, br, ImGui::GetColorU32(kAccentDim), 8.0f);
-            dl->AddRectFilled(lp, ImVec2(br.x, lp.y + S * 0.5f), IM_COL32(255, 255, 255, 20), 8.0f, ImDrawFlags_RoundCornersTop);
+            dl->AddRectFilled(lp, ImVec2(br.x, lp.y + S * 0.5f), okaytheme::Ink(20), 8.0f, ImDrawFlags_RoundCornersTop);
             ImVec2 c(lp.x + S * 0.47f, lp.y + S * 0.53f);
-            dl->AddCircleFilled(c, 6.8f, IM_COL32(236, 240, 248, 255), 24);
+            dl->AddCircleFilled(c, 6.8f, okaytheme::TextU32(), 24);
             ImVec2 ring[28];
             for (int k = 0; k < 28; ++k) {
                 float a = k * (6.2831853f / 28), rx = 12.0f, ry = 4.0f, rot = -0.5f;
@@ -12474,9 +13281,9 @@ int main(int argc, char** argv) {
                 ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
             }
             dl->PushClipRect(lp, br, true);
-            dl->AddPolyline(ring, 28, IM_COL32(255, 255, 255, 235), ImDrawFlags_Closed, 1.5f);
+            dl->AddPolyline(ring, 28, okaytheme::OnColorU32(0.922f), ImDrawFlags_Closed, 1.5f);
             dl->PopClipRect();
-            dl->AddCircleFilled(ImVec2(lp.x + S * 0.78f, lp.y + S * 0.24f), 1.4f, IM_COL32(255, 255, 255, 240));
+            dl->AddCircleFilled(ImVec2(lp.x + S * 0.78f, lp.y + S * 0.24f), 1.4f, okaytheme::OnColorU32(0.941f));
             ImGui::Dummy(ImVec2(avail, S));
             if (!g_navCollapsed) {
                 float tx = br.x + 10.0f;
@@ -12496,11 +13303,7 @@ int main(int argc, char** argv) {
                 // Collapse toggle on the right of the header.
                 ImVec2 tp(start.x + avail - 30.0f, start.y + 2.0f);
                 ImGui::SetCursorScreenPos(tp);
-                if (ImGui::InvisibleButton("##navtoggle", ImVec2(28, 28))) { g_navCollapsed = true; SavePrefs(); }
-                bool th = ImGui::IsItemHovered();
-                if (th) dl->AddRectFilled(tp, ImVec2(tp.x + 28, tp.y + 28), navHover, 6.0f);
-                DrawNavIcon(dl, kIcoPanel, ImVec2(tp.x + 14, tp.y + 14), th ? navTextHi : navIcon);
-                if (th) ImGui::SetTooltip("Collapse sidebar");
+                if (PanelToggle("##navtoggle", true, "the sidebar", 28.0f, navHover, navIcon, navTextHi)) { g_navCollapsed = true; SavePrefs(); }
                 ImGui::SetCursorScreenPos(ImVec2(start.x, br.y));
                 ImGui::Dummy(ImVec2(avail, 6));
             } else {
@@ -12545,8 +13348,8 @@ int main(int argc, char** argv) {
             navScrollToSel = navScroll && (s_selTab != tab || std::fabs(s_selH - itemsH) > 0.5f);
             s_selTab = tab; s_selH = itemsH;
         }
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(1, 1, 1, 0.28f));   // a thumb you can see when the menu overflows
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(1, 1, 1, 0.40f));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, okaytheme::InkV(0.28f));   // a thumb you can see when the menu overflows
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, okaytheme::InkV(0.4f));
         ImGui::BeginChild("navitems", ImVec2(0, navAreaH), false, navScroll ? 0 : ImGuiWindowFlags_NoScrollbar);
         navRowsDrawn = 0; navSectionsDrawn = 0;   // count only the rows in this area
         s_navRowBottoms.clear();
@@ -12601,7 +13404,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, std::max(0.0f, itemsH - navAreaH)));   // the pinned rows stay at the bottom
             if (navScroll) {   // a divider and 8 px between the scrolling menu and the pinned rows
                 const ImVec2 dp = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddLine(ImVec2(lmin.x + 10.0f, dp.y + 4.0f), ImVec2(lmax.x - 10.0f, dp.y + 4.0f), IM_COL32(255, 255, 255, 26), 1.0f);
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(lmin.x + 10.0f, dp.y + 4.0f), ImVec2(lmax.x - 10.0f, dp.y + 4.0f), okaytheme::Ink(26), 1.0f);
                 ImGui::Dummy(ImVec2(0, 8.0f));
             }
         }
@@ -12615,9 +13418,9 @@ int main(int argc, char** argv) {
                              : (st == Up_Updated)     ? "Update installed"
                              : upAvail                ? (g_upAvailableTitle.empty() ? "Update available" : "Test build available")
                                                       : "Update failed";
-            ImU32 tone = upAvail ? IM_COL32(110, 205, 140, 255)
-                       : (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
-                       : (st == Up_Updated) ? IM_COL32(110, 205, 140, 255) : navAccent;
+            ImU32 tone = upAvail ? okaytheme::SuccessFillU32()
+                       : (st == Up_Failed) ? okaytheme::DangerFillU32()
+                       : (st == Up_Updated) ? okaytheme::SuccessFillU32() : navAccent;
             std::string upMsg = upAvail ? (g_upAvailableTitle.empty() ? "v" + g_upAvailable + " is ready" : g_upAvailableTitle + " is ready") : GetUpMsg();
             if (upNote && g_navCollapsed) {
                 ImVec2 mn = ImGui::GetCursorScreenPos();
@@ -12679,7 +13482,7 @@ int main(int argc, char** argv) {
                 ImVec2 vp2 = ImGui::GetCursorScreenPos();
                 const float w = ImGui::GetContentRegionAvail().x;
                 ImGui::SetCursorScreenPos(ImVec2(vp2.x + (w - navRowH + 8) * 0.5f, vp2.y + 4));
-                if (CallButton("##vhangmini", navRowH - 8, IM_COL32(237, 66, 69, 255), IM_COL32(255, 90, 92, 255), "Hang up",
+                if (CallButton("##vhangmini", navRowH - 8, okaytheme::DangerFillU32(), okaytheme::DangerFillU32(), "Hang up",
                                [](ImDrawList* dd, ImVec2 c) { DrawPhoneIcon(dd, c, 15, IM_COL32_WHITE, true); }))
                     VoiceHangup();
                 ImGui::SetCursorScreenPos(ImVec2(vp2.x, vp2.y + navRowH + 2.0f));
@@ -12719,7 +13522,7 @@ int main(int argc, char** argv) {
             const float A = g_navCollapsed ? 30.0f : 32.0f;
             ImVec2 ac(g_navCollapsed ? mn.x + w * 0.5f : mn.x + 8.0f + A * 0.5f, mn.y + h * 0.5f);
             if (!navSignedIn) {   // generic person on a neutral disc
-                dl->AddCircleFilled(ac, A * 0.5f, navLight ? IM_COL32(0, 0, 0, 22) : IM_COL32(255, 255, 255, 22), 28);
+                dl->AddCircleFilled(ac, A * 0.5f, okaytheme::Ink(22), 28);
                 DrawNavIcon(dl, 3, ImVec2(ac.x, ac.y + 1.0f), navIcon);
             } else {
                 SDL_Texture* at = AvatarTexture(g_myAvatarSlot ? *g_myAvatarSlot : std::string());
@@ -12733,9 +13536,9 @@ int main(int argc, char** argv) {
                     dl->AddText(ImVec2(ac.x - ts.x * 0.5f, ac.y - ts.y * 0.5f), IM_COL32_WHITE, init);
                 }
                 // Presence dot.
-                ImU32 pc = !account.IsOnline() && !kUiDemoUser ? IM_COL32(140, 146, 156, 255)
-                         : g_onlineStatus == 1 ? IM_COL32(236, 180, 64, 255)
-                         : g_onlineStatus == 2 ? IM_COL32(140, 146, 156, 255) : IM_COL32(76, 200, 110, 255);
+                ImU32 pc = !account.IsOnline() && !kUiDemoUser ? okaytheme::TextDimU32()
+                         : g_onlineStatus == 1 ? okaytheme::WarningFillU32()
+                         : g_onlineStatus == 2 ? okaytheme::TextDimU32() : okaytheme::SuccessFillU32();
                 ImVec2 pd(ac.x + A * 0.36f, ac.y + A * 0.36f);
                 dl->AddCircleFilled(pd, 5.5f, ImGui::GetColorU32(navBg), 12);
                 dl->AddCircleFilled(pd, 4.0f, pc, 12);
@@ -12772,15 +13575,16 @@ int main(int argc, char** argv) {
         {   // A single hairline between the rail and the page.
             ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
             ImGui::GetWindowDrawList()->AddLine(ImVec2(b.x - 0.5f, a.y), ImVec2(b.x - 0.5f, b.y),
-                                                navLight ? IM_COL32(0, 0, 0, 34) : IM_COL32(0, 0, 0, 120), 1.0f);
+                                                navLight ? okaytheme::Shade(34) : okaytheme::Shade(120), 1.0f);
         }
 
         ImGui::SameLine(0, 0);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28, 20));
+        }   // (sidebar)
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, gateOpen ? ImVec2(28, 20) : ImVec2(0, 0));
         ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PopStyleVar();
 
-        const ImVec4 kTitle(0.95f, 0.96f, 0.98f, 1.0f);
+        const ImVec4 kTitle = okaytheme::kText;
         // Page header: a large title with a short accent underline bar (tab-style),
         // an optional subtitle, and a faint full-width divider below it.
         auto sectionHeader = [&](const char* title, const char* subtitle) {
@@ -12800,7 +13604,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("%s", subtitle);
                 ImGui::Dummy(ImVec2(0, 8));
             }
-            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.05f));
+            ImGui::PushStyleColor(ImGuiCol_Separator, okaytheme::InkV(0.05f));
             ImGui::Separator();
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 8));
@@ -12833,7 +13637,12 @@ int main(int argc, char** argv) {
         DrawBanBanner();
         DrawAcBanBanner();
         DrawReportPopup();
-        if (g_pfOpen) {
+        if (!gateOpen) {   // ---- Signed out, checking, or blocked: the welcome screen and nothing else ----
+            if (gateState == okay::signingate::State::Checking) {   // the start-up look while the saved session is checked
+                DrawWelcomeScreen(account, gateState, running);      // (keeps handling the check's answer)
+                DrawLoadingScreen("Signing you in", -1.0f, nullptr);
+            } else DrawWelcomeScreen(account, gateState, running);
+        } else if (g_pfOpen) {
             PfPageOut po = DrawPublicProfilePage(account, tab);
             if (po.gotoTab >= 0) {
                 tab = po.gotoTab;
@@ -12841,15 +13650,14 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 0) {                            // ---- Create ----
             sectionHeader("Create", nullptr);
-            const ImVec4 crCardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+            const ImVec4 crCardBg = okaytheme::kRaised;
             const ImU32 crText = ImGui::GetColorU32(ImGuiCol_Text), crDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
 
             // Where projects live (remembered), and the new project's name.
             static char npName[96] = "MyGame";
             static char npLoc[400] = {0};
             if (!npLoc[0])
-                std::snprintf(npLoc, sizeof(npLoc), "%s", g_projectsDir.empty()
-                              ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
+                std::snprintf(npLoc, sizeof(npLoc), "%s", ProjectsLocation().c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
             struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
@@ -12906,6 +13714,12 @@ int main(int argc, char** argv) {
                     okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
                 openProjectWith(pr, t.version);
             };
+            if (!g_trayOpenScene.empty()) {   // Tray menu > Open Editor / Recent projects
+                const std::string want = g_trayOpenScene; g_trayOpenScene.clear();
+                auto it = std::find_if(s_projects.begin(), s_projects.end(), [&](const CrProj& pr) { return pr.scene == want; });
+                if (it != s_projects.end() && it->ready && !editor.empty()) openProject(*it);
+                else Toast("That project can't be opened from here", 2);
+            }
             auto playProject = [&](const CrProj& pr) {
                 if (player.empty() || !pr.ready) return;
                 Launch(player, pr.scene); RecordPlayed(pr.scene); SavePrefs();
@@ -13056,16 +13870,16 @@ int main(int argc, char** argv) {
                 ImGui::SetNextItemWidth(sortW);
                 SlateCombo("##projsort", &s_projSort, "Recent\0Name\0");
                 ImGui::SameLine(0, 8);
-                if (RoundIconButton("##projrefresh", kIcoRefresh, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText, "Refresh"))
+                if (RoundIconButton("##projrefresh", kIcoRefresh, iconD, okaytheme::Ink(16), okaytheme::Ink(32), crText, "Refresh"))
                     s_projScanned = "\x01";
                 ImGui::SameLine(0, 6);
                 ImGui::BeginDisabled(!GitAvailable() || g_gitBusy);
-                if (RoundIconButton("##projclone", kIcoGlobe, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                if (RoundIconButton("##projclone", kIcoGlobe, iconD, okaytheme::Ink(16), okaytheme::Ink(32), crText,
                                     g_gitBusy ? "Git is working" : "Clone with Git"))
                     ImGui::OpenPopup("##clonegh");
                 ImGui::EndDisabled();
                 ImGui::SameLine(0, 6);
-                if (RoundIconButton("##projclipage", kIcoTerminal, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                if (RoundIconButton("##projclipage", kIcoTerminal, iconD, okaytheme::Ink(16), okaytheme::Ink(32), crText,
                                     "Command line: run okay on a project, here in the launcher"))
                     tab = 17;
             }
@@ -13195,8 +14009,8 @@ int main(int argc, char** argv) {
                             const float fs = ImGui::GetFontSize() * 0.84f;
                             const ImVec2 pmin(tx + ImGui::CalcTextSize(title.c_str()).x * 1.08f + 8.0f, wp.y + 17.0f), pmax(pmin.x + pillW, pmin.y + fs + 5.0f);
                             const bool older = badge.tone == okayversions::ProjectBadge::Older;
-                            dl->AddRectFilled(pmin, pmax, older ? IM_COL32(240, 200, 100, 50) : IM_COL32(240, 125, 120, 55), (pmax.y - pmin.y) * 0.5f);
-                            dl->AddText(ImGui::GetFont(), fs, ImVec2(pmin.x + 7.0f, pmin.y + 2.5f), older ? IM_COL32(244, 214, 130, 255) : IM_COL32(246, 150, 145, 255), badge.text.c_str());
+                            dl->AddRectFilled(pmin, pmax, older ? okaytheme::WarningFillU32(0.196f) : okaytheme::DangerFillU32(0.216f), (pmax.y - pmin.y) * 0.5f);
+                            dl->AddText(ImGui::GetFont(), fs, ImVec2(pmin.x + 7.0f, pmin.y + 2.5f), older ? okaytheme::WarningU32() : okaytheme::DangerU32(), badge.text.c_str());
                             if (ImGui::IsMouseHoveringRect(pmin, pmax)) ImGui::SetTooltip("%s", badge.tip.c_str());
                         }
                     }
@@ -13205,15 +14019,15 @@ int main(int argc, char** argv) {
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
                     else ImGui::SetCursorPos(ImVec2(cardW - 16 - 288, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
-                    if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
+                    if (PrimaryButton("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(78.0f)), okl::UiPx(34.0f)))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Remove", ImVec2(88, 34))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
+                    if (ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(88.0f)), okl::UiPx(34.0f)))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
+                    if (ImGui::Button("More", ImVec2(okl::FitButtonW("More", okl::UiPx(64.0f)), okl::UiPx(34.0f)))) ImGui::OpenPopup("projctx");
                     ImGui::SameLine(0, 8);
                     ImGui::BeginDisabled(pr.missing);
-                    if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                    if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, okaytheme::Ink(16), okaytheme::Ink(32), crText,
                                         "Open command line: a terminal in this project's folder where okay works"))
                         okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
                     ImGui::EndDisabled();
@@ -13265,7 +14079,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("Remove from list")) { if (forgetProject(pr.scene, pr.extra)) Toast("Removed " + pr.name + " from the list (its files are still on disk)", 1); }
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                         if (ImGui::MenuItem("Delete project\xE2\x80\xA6")) {
                             delName = pr.name; delScene = pr.scene; delExtra = pr.extra; delErr.clear(); delOpen = true;
                         }
@@ -13290,7 +14104,7 @@ int main(int argc, char** argv) {
                 const float mh = std::clamp(vp.y - 48.0f, 420.0f, 680.0f);
                 ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
                 ImGui::SetNextWindowSize(ImVec2(mw, mh), ImGuiCond_Always);
-                ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.02f, 0.03f, 0.06f, 0.66f));
+                ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, okaytheme::WithAlpha(okaytheme::kDeep, 0.66f));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 18));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
@@ -13303,7 +14117,7 @@ int main(int argc, char** argv) {
                     for (int i = 0; i < 3; ++i) {
                         const float x = dots.x + i * 118.0f;
                         const bool on = s_wiz.step == i, done = s_wiz.step > i;
-                        const ImU32 col = ImGui::GetColorU32(on || done ? kAccent : ImVec4(1, 1, 1, 0.18f));
+                        const ImU32 col = ImGui::GetColorU32(on || done ? kAccent : okaytheme::InkV(0.18f));
                         dl->AddCircleFilled(ImVec2(x + 8, dots.y + 8), 8.0f, col, 16);
                         dl->AddText(ImVec2(x + 22, dots.y), on ? crText : crDim, stepName[i]);
                         if (i < 2) dl->AddLine(ImVec2(x + 92, dots.y + 8), ImVec2(x + 112, dots.y + 8), col, 2.0f);
@@ -13377,7 +14191,7 @@ int main(int argc, char** argv) {
                             dl->PushClipRect(stage, stage2, true);
                             DrawTemplateStage(dl, s_tpls[(std::size_t)i].title, stage, stage2);
                             dl->PopClipRect();
-                            dl->AddRect(stage, stage2, IM_COL32(255, 255, 255, 24), 12.0f, 0, 1.0f);
+                            dl->AddRect(stage, stage2, okaytheme::Ink(24), 12.0f, 0, 1.0f);
                             const float tx = cp.x + 14, tr = cp.x + cardW - 14;
                             dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.15f, ImVec2(tx, cp.y + 128), crText,
                                         FitText(s_tpls[(std::size_t)i].title, tr - tx).c_str());
@@ -13390,7 +14204,7 @@ int main(int argc, char** argv) {
                                 dl->AddText(ImVec2(tx, cp.y + 178), ImGui::GetColorU32(kAccent), FitText(line, tr - tx).c_str());
                                 if (hov && fc && *fc) ImGui::SetTooltip("%s", fc);
                             }
-                            dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(on ? kAccent : ImVec4(1, 1, 1, 0.08f)), 16.0f, 0, on ? 2.4f : 1.0f);
+                            dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(on ? kAccent : okaytheme::InkV(0.08f)), 16.0f, 0, on ? 2.4f : 1.0f);
                             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             ImGui::PopID();
                         }
@@ -13405,8 +14219,8 @@ int main(int argc, char** argv) {
                         ImGui::TextUnformatted("Project name");
                         ImGui::SetNextItemWidth(-1);
                         const bool nameEnter = ImGui::InputText("##wizname", npName, sizeof(npName), ImGuiInputTextFlags_EnterReturnsTrue);
-                        if (!s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.nameProblem.c_str());
-                        else if (s_plan.renamed) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
+                        if (!s_plan.nameProblem.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", s_plan.nameProblem.c_str());
+                        else if (s_plan.renamed) ImGui::TextColored(okaytheme::Current().warning, "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
                         ImGui::Dummy(ImVec2(0, 6));
                         ImGui::TextUnformatted("Location");
                         const bool stack = ImGui::GetContentRegionAvail().x < 460.0f;
@@ -13419,8 +14233,8 @@ int main(int argc, char** argv) {
                                 std::snprintf(npLoc, sizeof(npLoc), "%s", picked.c_str()); g_projectsDir = npLoc; SavePrefs(); s_planAt = 0;
                             });
                         }
-                        if (!s_plan.locationProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.locationProblem.c_str());
-                        else if (!s_plan.pathProblem.empty() && s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.pathProblem.c_str());
+                        if (!s_plan.locationProblem.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", s_plan.locationProblem.c_str());
+                        else if (!s_plan.pathProblem.empty() && s_plan.nameProblem.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", s_plan.pathProblem.c_str());
                         ImGui::Dummy(ImVec2(0, 8));
                         ImGui::SetNextItemOpen(s_wiz.moreOpen, ImGuiCond_Always);
                         s_wiz.moreOpen = ImGui::CollapsingHeader("More options");
@@ -13429,7 +14243,7 @@ int main(int argc, char** argv) {
                             ImGui::TextUnformatted("Version");
                             ImGui::SetNextItemWidth(std::min(220.0f, ImGui::GetContentRegionAvail().x));
                             verEnter = ImGui::InputText("##wizver", s_ver, sizeof(s_ver), ImGuiInputTextFlags_EnterReturnsTrue);
-                            if (!verProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", verProblem.c_str());
+                            if (!verProblem.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", verProblem.c_str());
                             ImGui::TextUnformatted("Renderer");
                             ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x));
                             SlateCombo("##wizgpu", &s_gpu, "GPU\0Software\0");
@@ -13463,7 +14277,7 @@ int main(int argc, char** argv) {
                         ImGui::Separator();
                         ImGui::Dummy(ImVec2(0, 4));
                         if (s_wiz.step > 0) {
-                            if (ImGui::Button("Back", ImVec2(110, 40))) okayproj::WizardBack(s_wiz);
+                            if (ImGui::Button("Back", ImVec2(okl::FitButtonW("Back", okl::UiPx(110.0f)), okl::UiPx(40.0f)))) okayproj::WizardBack(s_wiz);
                         } else {
                             ImGui::Dummy(ImVec2(110, 40));
                         }
@@ -13531,13 +14345,13 @@ int main(int argc, char** argv) {
 #endif
                 const std::string stop = !delErr.empty() ? delErr : !delWhy.empty() ? "Can't delete it from disk. " + delWhy
                                        : delEditor ? std::string(kCloseEditor) : std::string();
-                if (!stop.empty()) { ImGui::Dummy(ImVec2(0, 4)); ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "%s", stop.c_str()); }
+                if (!stop.empty()) { ImGui::Dummy(ImVec2(0, 4)); ImGui::TextColored(okaytheme::Current().danger, "%s", stop.c_str()); }
                 ImGui::PopTextWrapPos();
                 ImGui::Dummy(ImVec2(0, 6));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
                 ImGui::BeginDisabled(!delWhy.empty());
-                const bool doDelete = ImGui::Button("Delete from disk", ImVec2(150, 0));
+                const bool doDelete = ImGui::Button("Delete from disk", ImVec2(okl::FitButtonW("Delete from disk", okl::UiPx(150.0f)), 0));
                 ImGui::EndDisabled();
                 ImGui::PopStyleColor(2);
                 if (doDelete) {
@@ -13568,12 +14382,12 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Remove from list", ImVec2(150, 0))) {
+                if (ImGui::Button("Remove from list", ImVec2(okl::FitButtonW("Remove from list", okl::UiPx(150.0f)), 0))) {
                     if (forgetProject(delScene, delExtra)) Toast("Removed " + delName + " from the list (its files are still on disk)", 1);
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             // ---- Git commit-message + publish-URL popups ----
@@ -13582,7 +14396,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Commit all changes in \"%s\" and push to its Git server.", gitCommitName.c_str());
                 ImGui::SetNextItemWidth(360);
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
-                if (ImGui::Button("Commit & Push", ImVec2(150, 0)) && gitCommitMsg[0]) {
+                if (ImGui::Button("Commit & Push", ImVec2(okl::FitButtonW("Commit & Push", okl::UiPx(150.0f)), 0)) && gitCommitMsg[0]) {
                     GitJob* j = new GitJob();
                     j->cmds = { GitC(gitCommitRoot) + "add -A",
                                 GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
@@ -13594,7 +14408,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             if (gitOpenPublish) { ImGui::OpenPopup("Publish with Git"); gitOpenPublish = false; }
@@ -13603,7 +14417,7 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Publishes \"%s\" to that repository (initial commit on main).", gitPublishName.c_str());
                 ImGui::SetNextItemWidth(380);
                 ImGui::InputTextWithHint("##purl", "https://example.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
-                if (ImGui::Button("Publish", ImVec2(130, 0)) && gitPublishUrl[0]) {
+                if (ImGui::Button("Publish", ImVec2(okl::FitButtonW("Publish", okl::UiPx(130.0f)), 0)) && gitPublishUrl[0]) {
                     GitJob* j = new GitJob();
                     j->cmds = { GitC(gitPublishRoot) + "init",
                                 GitC(gitPublishRoot) + "add -A",
@@ -13618,7 +14432,7 @@ int main(int argc, char** argv) {
                     gitPublishUrl[0] = '\0'; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
 
@@ -13690,7 +14504,7 @@ int main(int argc, char** argv) {
         } else if (tab == 12) {                           // ---- What's New ----
             sectionHeader("What's New", "Release notes for OkaySpace, newest first.");
             if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
-            const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+            const ImVec4 cardBg = okaytheme::kRaised;
             // ---- Your version + update status ----
             {
                 const UpState us = GetState();
@@ -13704,11 +14518,11 @@ int main(int argc, char** argv) {
                 ImGui::SetWindowFontScale(1.12f);
                 ImGui::Text("You're on v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
                 ImGui::SetWindowFontScale(1.0f);
-                if (avail) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "%s is ready to install.",
+                if (avail) ImGui::TextColored(okaytheme::Current().success, "%s is ready to install.",
                                               (g_upAvailableTitle.empty() ? "v" + g_upAvailable : g_upAvailableTitle + " (v" + g_upAvailable + ")").c_str());
                 else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
-                else if (us == Up_Updated) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "Update installed.");
-                else if (us == Up_Failed) ImGui::TextColored(ImVec4(0.94f, 0.50f, 0.50f, 1.0f), "%s", GetUpMsg().c_str());
+                else if (us == Up_Updated) ImGui::TextColored(okaytheme::Current().success, "Update installed.");
+                else if (us == Up_Failed) ImGui::TextColored(okaytheme::Current().danger, "%s", GetUpMsg().c_str());
                 else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) ImGui::TextDisabled("You're up to date.");
                 else ImGui::TextDisabled("Updates are checked automatically while the launcher is open.");
                 const float below = ImGui::GetCursorPosY();
@@ -13910,7 +14724,7 @@ int main(int argc, char** argv) {
             static char s_q[96] = "";
             static int s_daily = -1;
             if (s_daily < 0) { std::time_t now = std::time(nullptr); s_daily = (int)((now / 86400) % nTips); }
-            const ImVec4 cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+            const ImVec4 cardBg = okaytheme::kRaised;
             // ---- Tip of the day ----
             {
                 const Tip& t = kTips[s_daily];
@@ -13920,7 +14734,7 @@ int main(int argc, char** argv) {
                 const ImVec2 bp = ImGui::GetCursorScreenPos();
                 DrawNavIcon(ImGui::GetWindowDrawList(), kIcoBulb, ImVec2(bp.x + 9, bp.y + 10), ImGui::GetColorU32(kAccent));
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 26);
-                ImGui::TextColored(ImVec4(kAccent.x * 0.6f + 0.4f, kAccent.y * 0.6f + 0.4f, kAccent.z * 0.6f + 0.4f, 1.0f), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
+                ImGui::TextColored(okaytheme::AccentText(kAccent), "Tip of the day  \xC2\xB7  %s", kCats[t.cat]);
                 ImGui::SetWindowFontScale(1.12f);
                 ImGui::TextUnformatted(t.title);
                 ImGui::SetWindowFontScale(1.0f);
@@ -13999,15 +14813,15 @@ int main(int argc, char** argv) {
                     if (ImGui::IsWindowHovered()) {
                         ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
                         ImGui::GetWindowDrawList()->AddRectFilled(
-                            wp, ImVec2(wp.x + ws.x, wp.y + ws.y), IM_COL32(255, 255, 255, 10), 3.0f);
+                            wp, ImVec2(wp.x + ws.x, wp.y + ws.y), okaytheme::Ink(10), 3.0f);
                     }
                     // A small "JS" tile badge.
                     ImGui::SetCursorPos(ImVec2(10, 8));
                     ImVec2 tp = ImGui::GetCursorScreenPos();
                     ImDrawList* wdl = ImGui::GetWindowDrawList();
                     wdl->AddRectFilled(tp, ImVec2(tp.x + 32, tp.y + 32),
-                                       IM_COL32(222, 196, 60, 255), 5.0f);           // JS yellow
-                    wdl->AddText(ImVec2(tp.x + 7, tp.y + 8), IM_COL32(28, 28, 20, 255), "JS");
+                                       okaytheme::WarningFillU32(), 5.0f);           // JS yellow
+                    wdl->AddText(ImVec2(tp.x + 7, tp.y + 8), okaytheme::U32(okaytheme::kDeep), "JS");
                     ImGui::SetCursorPos(ImVec2(52, 7));
                     ImGui::BeginGroup();
                     ImGui::TextUnformatted(nm.c_str());
@@ -14015,7 +14829,7 @@ int main(int argc, char** argv) {
                     ImGui::EndGroup();
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 88);
                     ImGui::SetCursorPosY(7);
-                    if (PrimaryButton("Play", ImVec2(84, 34))) {
+                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(84.0f)), okl::UiPx(34.0f)))) {
                         OpenExternal(wg.string());
                         Toast("Opening " + nm + " in your browser", 1);
                     }
@@ -14032,12 +14846,12 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 10));
             }
             if (player.empty())
-                ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Player runtime not found next to the launcher.");
+                ImGui::TextColored(okaytheme::Current().danger, "Player runtime not found next to the launcher.");
             else if (std::none_of(scenes.begin(), scenes.end(), IsBuiltGame)) {
                 // No *built* games (dev scenes don't count): a friendly card that says
                 // how games get here, with the next step (the editor opens via a project).
                 ImGui::Dummy(ImVec2(0, 18));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 22));
                 ImGui::BeginChild("noGames", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
@@ -14110,10 +14924,10 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(0, 2);
                 viewBtn("Grid", 1);
                 ImGui::SameLine();
-                if (ImGui::Button("Folder", ImVec2(92, 0))) OpenExternal(g_exeDir);
+                if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(92.0f)), 0))) OpenExternal(g_exeDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the games folder");
                 ImGui::SameLine();
-                if (ImGui::Button("Refresh", ImVec2(84, 0))) scenes = FindScenes();
+                if (ImGui::Button("Refresh", ImVec2(okl::FitButtonW("Refresh", okl::UiPx(84.0f)), 0))) scenes = FindScenes();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rescan for games");
                 ImGui::Dummy(ImVec2(0, 6));
 
@@ -14122,7 +14936,7 @@ int main(int argc, char** argv) {
                 {
                     auto chip = [&](const char* label, bool active) {
                         if (active) { ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
-                                      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1)); }
+                                      ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().onColor); }
                         bool c = ImGui::Button(label);
                         if (active) ImGui::PopStyleColor(2);
                         return c;
@@ -14184,7 +14998,7 @@ int main(int argc, char** argv) {
                         ImGui::EndGroup();
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 100);
                         ImGui::SetCursorPosY(13.0f);
-                        if (PrimaryButton("Resume", ImVec2(96, 40))) {
+                        if (PrimaryButton("Resume", ImVec2(okl::FitButtonW("Resume", okl::UiPx(96.0f)), okl::UiPx(40.0f)))) {
                             Launch(player, resume); RecordPlayed(resume); SavePrefs();
                             Toast(std::string("Playing ") + rname);
                         }
@@ -14278,9 +15092,9 @@ int main(int argc, char** argv) {
                             }
                             ImDrawList* sdl = ImGui::GetWindowDrawList();
                             if (fav)
-                                sdl->AddConcavePolyFilled(pts, 10, IM_COL32(255, 204, 64, 255));
+                                sdl->AddConcavePolyFilled(pts, 10, okaytheme::WarningFillU32());
                             else
-                                sdl->AddPolyline(pts, 10, IM_COL32(170, 175, 188, 220), ImDrawFlags_Closed, 1.6f);
+                                sdl->AddPolyline(pts, 10, okaytheme::TextDimU32(0.863f), ImDrawFlags_Closed, 1.6f);
                         }
                         if (tileHov) {
                             // Hover play overlay on the icon: dark disc + accent triangle.
@@ -14290,11 +15104,11 @@ int main(int argc, char** argv) {
                             ImVec2 m = ImGui::GetIO().MousePos;
                             overPlay = (m.x - cc.x) * (m.x - cc.x) + (m.y - cc.y) * (m.y - cc.y) < 17.0f * 17.0f;
                             ImDrawList* odl = ImGui::GetWindowDrawList();
-                            odl->AddCircleFilled(cc, 16.0f, IM_COL32(10, 12, 16, overPlay ? 215 : 165));
+                            odl->AddCircleFilled(cc, 16.0f, okaytheme::U32(okaytheme::kDeep, ((overPlay ? 215 : 165) / 255.0f)));
                             odl->AddCircle(cc, 16.0f, ImGui::GetColorU32(kAccent), 0, overPlay ? 2.2f : 1.4f);
                             odl->AddTriangleFilled(ImVec2(cc.x - 4.5f, cc.y - 7.0f),
                                                    ImVec2(cc.x - 4.5f, cc.y + 7.0f),
-                                                   ImVec2(cc.x + 8.0f, cc.y), IM_COL32(255, 255, 255, 245));
+                                                   ImVec2(cc.x + 8.0f, cc.y), okaytheme::OnColorU32(0.961f));
                         }
                         if (tileHov) {
                             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -14397,16 +15211,16 @@ int main(int argc, char** argv) {
                         }
                         ImDrawList* fdl = ImGui::GetWindowDrawList();
                         if (fav)
-                            fdl->AddConcavePolyFilled(pts, 10, IM_COL32(255, 204, 64, 255));
+                            fdl->AddConcavePolyFilled(pts, 10, okaytheme::WarningFillU32());
                         else
-                            fdl->AddPolyline(pts, 10, IM_COL32(150, 155, 168, 255),
+                            fdl->AddPolyline(pts, 10, okaytheme::TextDimU32(),
                                              ImDrawFlags_Closed, 1.6f);
                     }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(fav ? "Unfavorite" : "Favorite");
                     ImGui::SameLine();
-                    if (ImGui::Button("Folder", ImVec2(82, 40))) OpenExternal(scenes[i].parent_path().string());
+                    if (ImGui::Button("Folder", ImVec2(okl::FitButtonW("Folder", okl::UiPx(82.0f)), okl::UiPx(40.0f)))) OpenExternal(scenes[i].parent_path().string());
                     ImGui::SameLine();
-                    if (PrimaryButton("Play", ImVec2(80, 40))) {
+                    if (PrimaryButton("Play", ImVec2(okl::FitButtonW("Play", okl::UiPx(80.0f)), okl::UiPx(40.0f)))) {
                         Launch(player, path);
                         RecordPlayed(path); SavePrefs();
                         Toast(std::string("Playing ") + name);
@@ -14473,10 +15287,21 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 2) {                            // ---- Community ----
             namespace PL = okay::launcherlayout;
-            sectionHeader("Community", "Games, levels, scripts and models made by other OkaySpace creators. What you add here also shows in Play.");
+            sectionHeader("Community", "Games and levels the OkaySpace community made. Play them, and share your own.");
+            static int cmTab = 0;   // 0 Featured, 1 New, 2 Popular, 3 Following, 4 Your creations
+            {
+                std::vector<Chip> tabs(5);
+                tabs[0].label = "Featured"; tabs[1].label = "New"; tabs[2].label = "Popular"; tabs[3].label = "Following"; tabs[4].label = "Your creations";
+                const int hit = ChipRow("##cmtabs", tabs, cmTab, ImGui::GetContentRegionAvail().x);
+                if (hit >= 0) cmTab = hit;
+                ImGui::Dummy(ImVec2(0, UiPx(14.0f)));
+            }
+            if (cmTab != 4) {
+                DrawCommunityShowcase(account, cmTab, tab, kUiDemoUser, scenes);
+            } else {   // ---- Your creations: your library (what you made or added) and the drop zone ----
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             auto lowerStr = [](std::string s) {
                 for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
                 return s;
@@ -14621,7 +15446,7 @@ int main(int argc, char** argv) {
                 const float cardH = lc.card.h;
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 g0 = ImGui::GetCursorScreenPos();
-                const ImU32 rbg = IM_COL32(255, 255, 255, 16), rbgh = IM_COL32(255, 255, 255, 34);
+                const ImU32 rbg = okaytheme::Ink(16), rbgh = okaytheme::Ink(34);
                 int n = 0;
                 for (const CommItem& it : commShown) {
                     const fs::path& scene = scenes[it.idx];
@@ -14645,7 +15470,7 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem("Show in Explorer")) OpenExternal(it.root.string());
                         if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(cpath.c_str());
                         ImGui::Separator();
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                         if (ImGui::MenuItem("Remove from library...")) { commRemovePath = it.root.string(); commRemoveName = it.title; }
                         ImGui::PopStyleColor();
                         ImGui::EndPopup();
@@ -14802,9 +15627,9 @@ int main(int argc, char** argv) {
                 ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
                 ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
                 ImGui::Dummy(ImVec2(0, 6));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-                bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
+                bool doRemove = ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0));
                 ImGui::PopStyleColor(2);
                 if (doRemove) {
                     std::error_code rec; fs::remove_all(commRemovePath, rec);
@@ -14814,12 +15639,13 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) {
                     commRemovePath.clear();
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndPopup();
             }
+            }   // (Your creations)
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
@@ -14913,8 +15739,9 @@ int main(int argc, char** argv) {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     const float w = ImGui::GetContentRegionAvail().x;
-                    const bool stack = (w - ctrlW - 24.0f) < 180.0f;
-                    const float textW = stack ? w : w - ctrlW - 24.0f;
+                    ctrlW = UiPx(ctrlW);   // (callers give the size at UI scale 1)
+                    const bool stack = (w - ctrlW - UiPx(24.0f)) < UiPx(180.0f);
+                    const float textW = stack ? w : w - ctrlW - UiPx(24.0f);
                     const float lh = ImGui::GetTextLineHeight();
                     ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
                     const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);
@@ -14935,7 +15762,7 @@ int main(int argc, char** argv) {
                 auto acDivider = [&]() {
                     ImGui::Dummy(ImVec2(0, 6));
                     ImVec2 lp = ImGui::GetCursorScreenPos();
-                    ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), IM_COL32(255, 255, 255, 14), 1.0f);
+                    ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), okaytheme::Ink(14), 1.0f);
                     ImGui::Dummy(ImVec2(0, 6));
                 };
                 auto acCard = [&](const char* id, const char* title, float w = 0.0f) {
@@ -14970,11 +15797,11 @@ int main(int argc, char** argv) {
                     const float W = ImGui::GetWindowSize().x, bannerH = 86.0f;
                     // Banner in the profile colour, with two soft "planets".
                     d->AddRectFilledMultiColor(o, ImVec2(o.x + W, o.y + bannerH), acc(0.85f), acc(0.35f), acc(0.20f), acc(0.70f));
-                    d->AddRectFilled(o, ImVec2(o.x + W, o.y + bannerH), IM_COL32(0, 0, 0, 40), 14.0f, ImDrawFlags_RoundCornersTop);
+                    d->AddRectFilled(o, ImVec2(o.x + W, o.y + bannerH), okaytheme::Shade(40), 14.0f, ImDrawFlags_RoundCornersTop);
                     d->PushClipRect(o, ImVec2(o.x + W, o.y + bannerH), true);
-                    d->AddCircleFilled(ImVec2(o.x + W - 120, o.y + 18), 70.0f, IM_COL32(255, 255, 255, 18), 48);
-                    d->AddCircleFilled(ImVec2(o.x + W - 230, o.y + 74), 26.0f, IM_COL32(255, 255, 255, 14), 32);
-                    d->AddEllipse(ImVec2(o.x + W - 120, o.y + 18), ImVec2(118, 24), IM_COL32(255, 255, 255, 30), -0.25f, 48, 1.5f);
+                    d->AddCircleFilled(ImVec2(o.x + W - 120, o.y + 18), 70.0f, okaytheme::Ink(18), 48);
+                    d->AddCircleFilled(ImVec2(o.x + W - 230, o.y + 74), 26.0f, okaytheme::Ink(14), 32);
+                    d->AddEllipse(ImVec2(o.x + W - 120, o.y + 18), ImVec2(118, 24), okaytheme::Ink(30), -0.25f, 48, 1.5f);
                     d->PopClipRect();
                     // Avatar overlapping the banner edge.
                     const float ar = 46.0f;
@@ -14982,10 +15809,10 @@ int main(int argc, char** argv) {
                     d->AddCircleFilled(ac, ar + 5, ImGui::GetColorU32(okaytheme::kRaised), 48);
                     avatarDisc(d, ac, ar, s_myAvatar);
                     // Presence dot.
-                    const ImU32 presCol = g_onlineStatus == 2 ? IM_COL32(140, 146, 160, 255) : g_onlineStatus == 1 ? IM_COL32(240, 178, 60, 255) : IM_COL32(67, 181, 129, 255);
+                    const ImU32 presCol = g_onlineStatus == 2 ? okaytheme::TextDimU32() : g_onlineStatus == 1 ? okaytheme::WarningFillU32() : okaytheme::SuccessFillU32();
                     const ImVec2 pd(ac.x + ar * 0.72f, ac.y + ar * 0.72f);
                     d->AddCircleFilled(pd, 10.0f, ImGui::GetColorU32(okaytheme::kRaised), 20);
-                    d->AddCircleFilled(pd, 7.0f, online ? presCol : IM_COL32(140, 146, 160, 255), 20);
+                    d->AddCircleFilled(pd, 7.0f, online ? presCol : okaytheme::TextDimU32(), 20);
                     // Name block.
                     const float tx = ac.x + ar + 20;
                     const float nsz = ImGui::GetFontSize() * 1.5f;
@@ -14996,18 +15823,18 @@ int main(int argc, char** argv) {
                     d->AddText(ImVec2(tx, o.y + bannerH + 10 + nsz), cDim, sub.c_str());
                     if (acctStatus[0]) {
                         std::string q = std::string("\xE2\x80\x9C") + acctStatus + "\xE2\x80\x9D";
-                        d->AddText(ImVec2(tx, o.y + bannerH + 30 + nsz), ImGui::GetColorU32(ImVec4(0.80f, 0.83f, 0.90f, 1)), q.c_str());
+                        d->AddText(ImVec2(tx, o.y + bannerH + 30 + nsz), ImGui::GetColorU32(okaytheme::kText), q.c_str());
                     }
                     // Actions, top-right over the banner.
                     ImGui::SetCursorScreenPos(ImVec2(o.x + W - 16 - 132 - 8 - 104, o.y + bannerH + 12));
                     ImGui::BeginDisabled(!account.IsOnline());
-                    if (PrimaryButton("View my profile", ImVec2(132, 32)))
+                    if (PrimaryButton("View my profile", ImVec2(okl::FitButtonW("View my profile", okl::UiPx(132.0f)), okl::UiPx(32.0f))))
                         OpenPublicProfile(acDemo ? std::string() : account.UserId(), myUser, shownName, s_myAvatar, acctAccent);   // by id: the saved name can lag the real one
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("%s", account.IsOnline() ? "See your public profile exactly as other players do" : "Public profiles need an online account");
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Sign out", ImVec2(104, 32)) && !acDemo) {
+                    if (ImGui::Button("Sign out", ImVec2(okl::FitButtonW("Sign out", okl::UiPx(104.0f)), okl::UiPx(32.0f))) && !acDemo) {
                         account.Logout();
                         acctMessage.clear();
                         acctUser[0] = acctPass[0] = '\0';
@@ -15025,7 +15852,7 @@ int main(int argc, char** argv) {
                         auto chip = [&](const char* big, const char* small, float extraW) -> ImVec2 {
                             const float bw = ImGui::CalcTextSize(big).x, sw = ImGui::CalcTextSize(small).x;
                             const float w = std::max(bw * 1.15f, sw) + 26 + extraW;
-                            d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + 34), IM_COL32(255, 255, 255, 10), 9.0f);
+                            d->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + w, cy + 34), okaytheme::Ink(10), 9.0f);
                             d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.1f, ImVec2(cx + 12, cy + 2), cText, big);
                             d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.80f, ImVec2(cx + 12, cy + 19), cDim, small);
                             const ImVec2 at(cx, cy);
@@ -15038,7 +15865,7 @@ int main(int argc, char** argv) {
                         const ImVec2 lc = chip(b1, s1, 60);
                         // level progress ring-bar inside the level chip
                         const float bx = lc.x + 12 + std::max(ImGui::CalcTextSize(b1).x * 1.15f, ImGui::CalcTextSize(s1).x) + 10;
-                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50, cy + 19), IM_COL32(255, 255, 255, 24), 2.0f);
+                        d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50, cy + 19), okaytheme::Ink(24), 2.0f);
                         d->AddRectFilled(ImVec2(bx, cy + 15), ImVec2(bx + 50 * prog, cy + 19), acc(1.0f), 2.0f);
                         std::snprintf(b2, sizeof(b2), "%d", (int)achs.size());
                         chip(b2, achs.size() == 1 ? "achievement" : "achievements", 0);
@@ -15080,14 +15907,14 @@ int main(int argc, char** argv) {
                         const bool h = ImGui::IsItemHovered(), on = acSec == i;
                         ImGui::PopID();
                         if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        if (on || h) d->AddRectFilled(ImVec2(x, base.y), ImVec2(x + ts.x + 24, base.y + 34), IM_COL32(255, 255, 255, on ? 14 : 7), 8.0f);
+                        if (on || h) d->AddRectFilled(ImVec2(x, base.y), ImVec2(x + ts.x + 24, base.y + 34), okaytheme::Ink(on ? 14 : 7), 8.0f);
                         d->AddText(ImVec2(x + 12, base.y + 17 - ts.y * 0.5f), on ? cText : cDim, secs[i]);
                         if (on) d->AddRectFilled(ImVec2(x + 12, base.y + 31), ImVec2(x + 12 + ts.x, base.y + 34), ImGui::GetColorU32(kAccent), 2.0f);
                         x += ts.x + 24 + 6;
                     }
                     ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + 34));
                     ImVec2 lp = ImGui::GetCursorScreenPos();
-                    d->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), IM_COL32(255, 255, 255, 18));
+                    d->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), okaytheme::Ink(18));
                     ImGui::Dummy(ImVec2(0, 12));
                 }
                 if (acSec == 2 && !online) acSec = 0;
@@ -15150,7 +15977,7 @@ int main(int argc, char** argv) {
                                 if (ImGui::InvisibleButton("##acc", ImVec2(28, 28))) acctAccent = ai;
                                 if (ImGui::IsItemHovered()) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", kAccentPresets[ai].name); }
                                 d2->AddCircleFilled(ImVec2(sp.x + 14, sp.y + 14), 11.0f, ImGui::GetColorU32(kAccentPresets[ai].col), 24);
-                                if (ai == acctAccent) d2->AddCircle(ImVec2(sp.x + 14, sp.y + 14), 14.0f, IM_COL32(255, 255, 255, 230), 28, 2.0f);
+                                if (ai == acctAccent) d2->AddCircle(ImVec2(sp.x + 14, sp.y + 14), 14.0f, okaytheme::OnColorU32(0.902f), 28, 2.0f);
                                 ImGui::PopID();
                             }
                         });
@@ -15168,12 +15995,12 @@ int main(int argc, char** argv) {
                             }
                         }
                         ImGui::SameLine(0, 8);
-                        if (ImGui::Button("Discard", ImVec2(100, 34))) fillForm();
+                        if (ImGui::Button("Discard", ImVec2(okl::FitButtonW("Discard", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) fillForm();
                         ImGui::EndDisabled();
                         if (dirty && !g_acSaving) {
                             ImGui::SameLine(0, 12);
                             ImGui::AlignTextToFramePadding();
-                            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Unsaved changes");
+                            ImGui::TextColored(okaytheme::Current().warning, "Unsaved changes");
                         }
                         acCardEnd();
                         acCard("##ac_social", "SOCIAL LINKS", formW);
@@ -15193,7 +16020,7 @@ int main(int argc, char** argv) {
                             d->ChannelsSetCurrent(1);
                             d->AddRectFilledMultiColor(p, ImVec2(p.x + w, p.y + 54), acc(0.85f), acc(0.40f), acc(0.25f), acc(0.70f));
                             const ImVec2 c(p.x + 44, p.y + 58);
-                            d->AddCircleFilled(c, 31, IM_COL32(20, 22, 28, 255), 40);
+                            d->AddCircleFilled(c, 31, okaytheme::U32(okaytheme::kDeep), 40);
                             avatarDisc(d, c, 28, acctAvatar);
                             float y = p.y + 96;
                             d->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.2f, ImVec2(p.x + 14, y), cText, shownName.c_str());
@@ -15203,14 +16030,14 @@ int main(int argc, char** argv) {
                             if (acctStatus[0]) { d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), acc(1.0f), acctStatus, nullptr, w - 28); y += ImGui::GetTextLineHeight() + 6; }
                             if (acctBio[0]) {
                                 const ImVec2 bs = ImGui::CalcTextSize(acctBio, nullptr, false, w - 28);
-                                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), ImGui::GetColorU32(ImVec4(0.82f, 0.84f, 0.90f, 1)), acctBio, nullptr, w - 28);
+                                d->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(p.x + 14, y), ImGui::GetColorU32(okaytheme::kText), acctBio, nullptr, w - 28);
                                 y += std::min(bs.y, 80.0f) + 6;
                             }
                             if (acctFavGame[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, (std::string("Favorite game: ") + acctFavGame).c_str()); y += ImGui::GetTextLineHeight() + 2; }
                             if (acctLocation[0]) { d->AddText(ImVec2(p.x + 14, y), cDim, acctLocation); y += ImGui::GetTextLineHeight() + 2; }
                             const float ph = std::max(200.0f, y - p.y + 12);
                             d->ChannelsSetCurrent(0);
-                            d->AddRectFilled(p, ImVec2(p.x + w, p.y + ph), IM_COL32(0, 0, 0, 50), 10.0f);
+                            d->AddRectFilled(p, ImVec2(p.x + w, p.y + ph), okaytheme::Shade(50), 10.0f);
                             d->ChannelsMerge();
                             ImGui::Dummy(ImVec2(w, ph));
                         }
@@ -15263,12 +16090,12 @@ int main(int argc, char** argv) {
                         for (unsigned char ch : pw) { lo |= std::islower(ch) != 0; up |= std::isupper(ch) != 0; dg |= std::isdigit(ch) != 0; sy |= !std::isalnum(ch); }
                         score += (lo && up) + dg + sy;
                         const char* lbl = pw.empty() ? "" : score <= 1 ? "Weak" : score <= 3 ? "Okay" : "Strong";
-                        const ImU32 col = score <= 1 ? IM_COL32(230, 100, 100, 255) : score <= 3 ? IM_COL32(240, 190, 80, 255) : IM_COL32(67, 181, 129, 255);
+                        const ImU32 col = score <= 1 ? okaytheme::DangerFillU32() : score <= 3 ? okaytheme::WarningFillU32() : okaytheme::SuccessFillU32();
                         ImVec2 mp = ImGui::GetCursorScreenPos();
                         const float segW = (w - 70 - 12) / 5.0f;
                         for (int i = 0; i < 5; ++i)
                             ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mp.x + i * (segW + 3), mp.y + 6), ImVec2(mp.x + i * (segW + 3) + segW, mp.y + 10),
-                                                                      !pw.empty() && i < score ? col : IM_COL32(255, 255, 255, 22), 2.0f);
+                                                                      !pw.empty() && i < score ? col : okaytheme::Ink(22), 2.0f);
                         ImGui::GetWindowDrawList()->AddText(ImVec2(mp.x + w - 60, mp.y), pw.empty() ? cDim : col, lbl);
                         ImGui::Dummy(ImVec2(w, 18));
                         const bool match = pw == acPass2;
@@ -15288,7 +16115,7 @@ int main(int argc, char** argv) {
                     if (!acctMessage.empty()) {
                         ImGui::Dummy(ImVec2(0, 6));
                         ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1) : ImVec4(0.55f, 0.9f, 0.6f, 1), "%s", acctMessage.c_str());
+                        ImGui::TextColored(acctMessageError ? okaytheme::Current().danger : okaytheme::Current().success, "%s", acctMessage.c_str());
                         ImGui::PopTextWrapPos();
                     }
                     acCardEnd();
@@ -15297,12 +16124,12 @@ int main(int argc, char** argv) {
                     acRow("Signed in", online ? "Online OkaySpace account. Your session renews itself while the launcher is open."
                                               : "Local account: stored only on this computer.", 250.0f, 32.0f, [&](float) {
                         ImGui::BeginDisabled(!account.IsOnline());
-                        if (ImGui::Button("Re-check session", ImVec2(140, 32))) {
+                        if (ImGui::Button("Re-check session", ImVec2(okl::FitButtonW("Re-check session", okl::UiPx(140.0f)), okl::UiPx(32.0f)))) {
                             if (account.VerifySession()) Toast("Session is valid", 1); else Toast("Session expired \xE2\x80\x94 sign in again", 2);
                         }
                         ImGui::EndDisabled();
                         ImGui::SameLine(0, 8);
-                        if (ImGui::Button("Sign out##dev", ImVec2(102, 32)) && !acDemo) {
+                        if (ImGui::Button("Sign out##dev", ImVec2(okl::FitButtonW("Sign out##dev", okl::UiPx(102.0f)), okl::UiPx(32.0f))) && !acDemo) {
                             account.Logout();
                             acctMessage.clear();
                             acctUser[0] = acctPass[0] = '\0';
@@ -15324,13 +16151,13 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("Reading %s (%zu of %zu)...", adj.step.c_str(), adj.done, adj.total);
                         } else if (adj.kind == 1 && adj.ready) {
                             ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextColored(adj.ok ? ImVec4(0.55f, 0.9f, 0.6f, 1) : ImVec4(1, 0.55f, 0.55f, 1), "%s", adj.message.c_str());
+                            ImGui::TextColored(adj.ok ? okaytheme::Current().success : okaytheme::Current().danger, "%s", adj.message.c_str());
                             ImGui::PopTextWrapPos();
                             if (!adj.savedPath.empty() && ImGui::SmallButton("Open exports folder")) OpenExternal(fs::path(adj.savedPath).parent_path().string());
                         }
                         acDivider();
                         acRow("Delete my account", "Permanently deletes your account and data. This cannot be undone.", 190.0f, 32.0f, [&](float w) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1));
+                            ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                             ImGui::BeginDisabled(acDemo || adj.running);
                             if (ImGui::Button("Delete my account...", ImVec2(w, 32))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::OpenPopup("Delete my account##ad"); }
                             ImGui::EndDisabled();
@@ -15341,13 +16168,13 @@ int main(int argc, char** argv) {
                             ImGui::TextDisabled("Deleting on the server. This can take a minute. Keep the launcher open.");
                         } else if (adj.kind == 2 && adj.ready && !adj.ok) {
                             ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextColored(ImVec4(1, 0.55f, 0.55f, 1), "%s", adj.message.c_str());
+                            ImGui::TextColored(okaytheme::Current().danger, "%s", adj.message.c_str());
                             ImGui::PopTextWrapPos();
                         }
                         ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Appearing);
                         if (ImGui::BeginPopupModal("Delete my account##ad", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                             ImGui::PushTextWrapPos(430.0f);
-                            ImGui::TextColored(ImVec4(1, 0.6f, 0.6f, 1), "This permanently deletes your account.");
+                            ImGui::TextColored(okaytheme::Current().danger, "This permanently deletes your account.");
                             ImGui::TextUnformatted("Deleted for good: your profile, friends, follows, every message you sent or received, forum threads and posts (replies by others to your threads go with them), marketplace listings and reviews, achievements, cloud saves, leaderboard entries, files you uploaded, your anti-cheat reports and appeals, and the sign-in itself.");
                             ImGui::TextUnformatted("Servers and group chats YOU own are deleted for everyone in them.");
                             ImGui::TextUnformatted("Kept without your name: moderation log entries and machine-level ban records.");
@@ -15363,8 +16190,8 @@ int main(int argc, char** argv) {
                             const bool can = acct::data::DeleteConfirmed(adDelUser, myUser, adDelPass, adDelAck) && !adj.running;
                             ImGui::Dummy(ImVec2(0, 4));
                             ImGui::BeginDisabled(!can);
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1));
-                            if (ImGui::Button("Delete everything", ImVec2(200, 32)) && can) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                            if (ImGui::Button("Delete everything", ImVec2(okl::FitButtonW("Delete everything", okl::UiPx(200.0f)), okl::UiPx(32.0f))) && can) {
                                 AcctStartJob(2, myUser, adDelPass);
                                 adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false;
                                 ImGui::CloseCurrentPopup();
@@ -15372,7 +16199,7 @@ int main(int argc, char** argv) {
                             ImGui::PopStyleColor();
                             ImGui::EndDisabled();
                             ImGui::SameLine(0, 8);
-                            if (ImGui::Button("Cancel", ImVec2(120, 32))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::CloseCurrentPopup(); }
+                            if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(120.0f)), okl::UiPx(32.0f)))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::CloseCurrentPopup(); }
                             ImGui::EndPopup();
                         }
                         // The account is gone: sign out here once, like the Sign out button.
@@ -15393,7 +16220,7 @@ int main(int argc, char** argv) {
                         if (SlateCombo("##ost", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                             if (!acDemo) {
                                 okay::Friends pf(account);
-                                if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
+                                BroadcastOnlineStatus(pf);
                             }
                             SavePrefs();
                         }
@@ -15446,183 +16273,14 @@ int main(int argc, char** argv) {
                     acCardEnd();
                 }
             } else {
-                ImGui::TextWrapped(account.IsOnline()
-                    ? "Sign in to your OkaySpace account to sync your work and use "
-                      "Friends and the Marketplace."
-                    : "Using a local account on this device.");
-                ImGui::Dummy(ImVec2(0, 12));
-
-                // --- Centered sign-in / create-account card ---
-                const float cardW = 420.0f;
-                float offx = (ImGui::GetContentRegionAvail().x - cardW) * 0.5f;
-                if (offx > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offx);
-                ImGui::BeginChild("##authcard", ImVec2(cardW, 0), true);
-                float innerW = ImGui::GetContentRegionAvail().x;
-
-                // Centered OkaySpace logo mark (ringed planet) atop the card.
-                {
-                    const float L = 46.0f;
-                    ImGui::Dummy(ImVec2(0, 6));
-                    float cxpos = (ImGui::GetContentRegionAvail().x - L) * 0.5f;
-                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
-                    ImVec2 lp = ImGui::GetCursorScreenPos();
-                    ImDrawList* ld = ImGui::GetWindowDrawList();
-                    ImVec2 c(lp.x + L * 0.5f, lp.y + L * 0.5f);
-                    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 28);
-                    ld->AddCircleFilled(ImVec2(c.x - L*0.07f, c.y - L*0.07f), L*0.30f, IM_COL32(255,255,255,40), 28);
-                    ImVec2 ring[28];
-                    for (int k = 0; k < 28; ++k) {
-                        float a = k * (6.2831853f/28), rx = L*0.46f, ry = L*0.16f, rot = -0.5f;
-                        float ex = std::cos(a)*rx, ey = std::sin(a)*ry;
-                        ring[k] = ImVec2(c.x + ex*std::cos(rot) - ey*std::sin(rot),
-                                         c.y + ex*std::sin(rot) + ey*std::cos(rot));
-                    }
-                    ld->AddPolyline(ring, 28, IM_COL32(220,232,255,235), ImDrawFlags_Closed, 1.8f);
-                    ImGui::Dummy(ImVec2(L, L));
-                }
-
-                // Heading (centered).
-                auto centerText = [&](const char* t, bool disabled) {
-                    float w = ImGui::CalcTextSize(t).x;
-                    float cxpos = (ImGui::GetContentRegionAvail().x - w) * 0.5f;
-                    if (cxpos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cxpos);
-                    if (disabled) ImGui::TextDisabled("%s", t); else ImGui::TextUnformatted(t);
-                };
-                centerText(acctRegisterMode ? "Create your account" : "Sign in to OkaySpace", false);
-                centerText(acctRegisterMode
-                    ? "Join to use Friends, the Marketplace, DMs and forums."
-                    : "Welcome back.", true);
-                ImGui::Dummy(ImVec2(0, 10));
-
-                // Segmented Sign in / Create toggle (two half-width buttons). The
-                // active mode is clearly highlighted in the accent with white text.
-                auto seg = [&](const char* label, bool active, float w) {
-                    if (active) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-                    }
-                    bool c = ImGui::Button(label, ImVec2(w, 0));
-                    if (active) ImGui::PopStyleColor(3);
-                    return c;
-                };
-                float halfW = (innerW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-                if (seg("Sign in", !acctRegisterMode, halfW)) { acctRegisterMode = false; acctMessage.clear(); }
-                ImGui::SameLine();
-                if (seg("Create account", acctRegisterMode, halfW)) { acctRegisterMode = true; acctMessage.clear(); }
-                ImGui::Dummy(ImVec2(0, 10));
-
-                // Register takes an email; sign-in accepts email OR username.
-                const char* idHint = !account.UsesEmail() ? "Username"
-                                   : acctRegisterMode ? "Email" : "Email or username";
-                ImGui::TextDisabled("%s", idHint);
-                ImGui::SetNextItemWidth(innerW);
-                ImGui::InputTextWithHint("##acctUser",
-                    !account.UsesEmail() ? "username" : acctRegisterMode ? "you@example.com" : "email or username",
-                    acctUser, sizeof(acctUser));
-
-                if (acctRegisterMode && account.UsesEmail()) {
-                    ImGui::TextDisabled("Username (unique handle)");
-                    ImGui::SetNextItemWidth(innerW);
-                    ImGui::InputTextWithHint("##acctName", "e.g. starpilot", acctName, sizeof(acctName));
-                    ImGui::TextDisabled("Display name (optional)");
-                    ImGui::SetNextItemWidth(innerW);
-                    ImGui::InputTextWithHint("##acctDisplay", "e.g. Star Pilot", acctDisplay, sizeof(acctDisplay));
-                }
-
-                ImGui::TextDisabled("Password");
-                ImGuiInputTextFlags pf = ImGuiInputTextFlags_EnterReturnsTrue |
-                    (acctShowPass ? 0 : ImGuiInputTextFlags_Password);
-                ImGui::SetNextItemWidth(innerW - 86);
-                bool submit = ImGui::InputTextWithHint("##acctPass", "••••••••", acctPass, sizeof(acctPass), pf);
-                ImGui::SameLine();
-                if (ImGui::Button(acctShowPass ? "Hide" : "Show", ImVec2(80, 0))) acctShowPass = !acctShowPass;
-                if (acctRegisterMode && account.UsesEmail())
-                    ImGui::TextDisabled("Use a real email (for password resets). Password: 6+ characters.");
-                ImGui::Dummy(ImVec2(0, 10));
-
-                const char* btn = acctRegisterMode ? "Create account" : "Sign in";
-                ImGui::BeginDisabled(acctBusy);
-                if (PrimaryButton(btn, ImVec2(innerW, 46)) || submit) {
-                    acctBusy = true;
-                    // On sign-up, require a username and reject one already taken.
-                    acct::Result r;
-                    if (acctRegisterMode && account.UsesEmail() && !acctName[0]) {
-                        r.ok = false; r.error = "Choose a username.";
-                    } else if (acctRegisterMode && account.UsesEmail() &&
-                               !account.UsernameAvailable(acctName)) {
-                        r.ok = false; r.error = "That username is taken — pick another.";
-                    } else {
-                        r = acctRegisterMode
-                            ? account.Register(acctUser, acctPass, acctName)
-                            : account.Login(acctUser, acctPass);
-                    }
-                    acctBusy = false;
-                    acctMessageError = !r.ok;
-                    if (r.ok) {
-                        acctMessage.clear();
-                        // Set the optional display name right after signing up.
-                        if (acctRegisterMode && account.IsLoggedIn() && acctDisplay[0])
-                            okay::Friends(account).SetDisplayName(acctDisplay);
-                        std::fill(acctPass, acctPass + sizeof(acctPass), '\0');
-                        acctDisplay[0] = '\0';
-                        if (account.IsLoggedIn()) Toast("Signed in", 1);
-                    } else {
-                        acctMessage = r.error;
-                    }
-                }
-                ImGui::EndDisabled();
-
-                // Forgot password (online/Supabase): emails a reset CODE, typed in here with the new password. No web page is
-                // needed (the old landing page was on GitHub Pages; the programs never need GitHub, owner decision 2026-11-20).
-                static bool resetCodeOpen = false;
-                static char resetCode[16] = "", resetPass[128] = "";
-                if (account.UsesEmail() && !acctRegisterMode) {
-                    if (ImGui::SmallButton("Forgot password?")) {
-                        acct::Result r = account.RequestPasswordReset(acctUser);
-                        acctMessageError = !r.ok;
-                        if (!r.ok) acctMessage = r.error;
-                        else {
-                            acctMessage = account.HasResetRedirect()
-                                ? "Password reset email sent. Open the link in it, or type the code from it below."
-                                : "Password reset email sent. Type the code from it below and choose a new password.";
-                            resetCodeOpen = true;
-                        }
-                    }
-                    if (resetCodeOpen) {
-                        ImGui::SetNextItemWidth(160);
-                        ImGui::InputTextWithHint("##resetcode", "Code from the email", resetCode, sizeof(resetCode), ImGuiInputTextFlags_CharsDecimal);
-                        ImGui::SetNextItemWidth(220);
-                        ImGui::InputTextWithHint("##resetpass", "New password", resetPass, sizeof(resetPass), ImGuiInputTextFlags_Password);
-                        if (ImGui::Button("Set new password")) {
-                            acct::Result r = account.ResetPasswordWithCode(acctUser, resetCode, resetPass);
-                            acctMessageError = !r.ok;
-                            acctMessage = r.ok ? "Your password is changed. Sign in with the new one." : r.error;
-                            if (r.ok) { resetCodeOpen = false; resetCode[0] = 0; }
-                            std::memset(resetPass, 0, sizeof(resetPass));
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("Cancel##reset")) { resetCodeOpen = false; resetCode[0] = 0; std::memset(resetPass, 0, sizeof(resetPass)); }
-                    }
-                }
-
-                if (!acctMessage.empty()) {
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextColored(acctMessageError ? ImVec4(1, 0.55f, 0.55f, 1)
-                                                        : ImVec4(0.55f, 0.9f, 0.6f, 1),
-                                       "%s", acctMessage.c_str());
-                    ImGui::PopTextWrapPos();
-                }
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::EndChild();
+                DrawWelcomeScreen(account, okay::signingate::State::SignIn, running);   // (the one sign-in screen; normally the gate shows it)
             }
         } else if (tab == 4) {                            // ---- Settings ----
             sectionHeader("Settings", nullptr);
 
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
 
             // One setting: label + one-line dim description on the left, the control
@@ -15632,8 +16290,9 @@ int main(int argc, char** argv) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 const float w = ImGui::GetContentRegionAvail().x;
-                const bool stack = ctrlW <= 0.0f || (w - ctrlW - 24.0f) < 200.0f;
-                const float textW = stack ? w : w - ctrlW - 24.0f;
+                ctrlW = UiPx(ctrlW);   // (callers give the size at UI scale 1)
+                const bool stack = ctrlW <= 0.0f || (w - ctrlW - UiPx(24.0f)) < UiPx(200.0f);
+                const float textW = stack ? w : w - ctrlW - UiPx(24.0f);
                 const float lh = ImGui::GetTextLineHeight();
                 ImVec2 ds = (desc && *desc) ? ImGui::CalcTextSize(desc, nullptr, false, textW) : ImVec2(0, 0);
                 const float textH = lh + (ds.y > 0 ? 3.0f + ds.y : 0.0f);
@@ -15656,7 +16315,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 7));
                 ImVec2 lp = ImGui::GetCursorScreenPos();
                 ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y),
-                                                    IM_COL32(255, 255, 255, 14), 1.0f);
+                                                    okaytheme::Ink(14), 1.0f);
                 ImGui::Dummy(ImVec2(0, 7));
             };
             // Settings card: kRaised panel with a small-caps title.
@@ -15689,7 +16348,7 @@ int main(int argc, char** argv) {
                 const bool hov = ImGui::IsItemHovered();
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 dl->AddRectFilled(p, ImVec2(p.x + 56, p.y + 26), ImGui::GetColorU32(ImVec4(col[0], col[1], col[2], 1)), 7.0f);
-                dl->AddRect(p, ImVec2(p.x + 56, p.y + 26), hov ? IM_COL32(255, 255, 255, 120) : IM_COL32(255, 255, 255, 40), 7.0f, 0, 1.2f);
+                dl->AddRect(p, ImVec2(p.x + 56, p.y + 26), hov ? okaytheme::Ink(120) : okaytheme::Ink(40), 7.0f, 0, 1.2f);
                 if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("#%02X%02X%02X", (int)(col[0] * 255 + 0.5f), (int)(col[1] * 255 + 0.5f), (int)(col[2] * 255 + 0.5f)); }
                 if (ImGui::BeginPopup("##swpick")) {
                     ImGui::SetNextItemWidth(220);
@@ -15744,7 +16403,7 @@ int main(int argc, char** argv) {
                     const float rw = ImGui::GetContentRegionAvail().x, rh = 36.0f;
                     if (ImGui::InvisibleButton("##cat", ImVec2(rw, rh))) setCat = i;
                     const bool hov = ImGui::IsItemHovered(), sel = (setCat == i);
-                    if (sel || hov) dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                    if (sel || hov) dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? okaytheme::Ink(24) : okaytheme::Ink(11), 7.0f);
                     if (sel) dl->AddRectFilled(ImVec2(rp.x, rp.y + 10), ImVec2(rp.x + 3, rp.y + rh - 10), ImGui::GetColorU32(kAccent), 1.5f);
                     ImVec2 ic(iconOnly ? rp.x + rw * 0.5f : rp.x + 20.0f, rp.y + rh * 0.5f);
                     DrawNavIcon(dl, kSetCats[i].icon, ic, sel ? ImGui::GetColorU32(kAccent) : (hov ? cText : cDim));
@@ -15781,11 +16440,11 @@ int main(int argc, char** argv) {
                     settingRow("Color theme", "Slate is the default look. Changes apply instantly.", 0.0f, 0.0f, [&](float w) {
                         // Preview cards: a tiny mock window per theme (top bar, side panel,
                         // content area, accent strip) — pick by look, not by name.
-                        static const struct { ImVec4 bg, panel, text; } kThemePrev[] = {
-                            {okaytheme::kSunken, okaytheme::kControl, okaytheme::kText},
-                            {ImVec4(0.035f, 0.040f, 0.060f, 1), ImVec4(0.120f, 0.140f, 0.200f, 1), ImVec4(0.90f, 0.93f, 0.98f, 1)},
-                            {ImVec4(0.930f, 0.940f, 0.960f, 1), ImVec4(0.845f, 0.865f, 0.905f, 1), ImVec4(0.10f, 0.12f, 0.16f, 1)},
-                        };
+                        const okaytheme::Palette kPrevPal[3] = {okaytheme::SlatePalette(), okaytheme::MidnightPalette(), okaytheme::LightPalette()};
+                        struct Prev { ImVec4 bg, panel, text; };
+                        const Prev kThemePrev[3] = {{kPrevPal[0].sunken, kPrevPal[0].raised, kPrevPal[0].text},
+                                                    {kPrevPal[1].sunken, kPrevPal[1].raised, kPrevPal[1].text},
+                                                    {kPrevPal[2].sunken, kPrevPal[2].raised, kPrevPal[2].text}};
                         const float cw = std::clamp((w - 20.0f) / 3.0f, 84.0f, 132.0f), chh = std::floor(cw * 0.66f);
                         for (int i = 0; i < 3; ++i) {
                             if (i) ImGui::SameLine(0, 10);
@@ -15807,7 +16466,7 @@ int main(int argc, char** argv) {
                             dl->AddText(ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + sz.y - 19), ImGui::GetColorU32(kThemePrev[i].text), kThemeNames[i]);
                             dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y),
                                         cur ? ImGui::GetColorU32(kAccent)
-                                            : (hov ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)) : IM_COL32(255, 255, 255, 26)),
+                                            : (hov ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.6f)) : okaytheme::Ink(26)),
                                         8.0f, 0, cur ? 2.5f : 1.5f);
                             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             if (clicked && !cur) { g_themeIndex = i; DarkTheme(); SavePrefs(); }
@@ -15827,12 +16486,12 @@ int main(int argc, char** argv) {
                             if (ImGui::InvisibleButton("##accent", ImVec2(30, 30))) { ApplyAccent(i); SavePrefs(); }
                             const bool hov = ImGui::IsItemHovered(), cur = (g_accentIndex == i);
                             ImVec2 c(p.x + 15, p.y + 15);
-                            if (cur) dl->AddCircle(c, 14.5f, IM_COL32(255, 255, 255, 230), 32, 2.0f);
-                            else if (hov) dl->AddCircle(c, 14.5f, IM_COL32(255, 255, 255, 90), 32, 1.5f);
+                            if (cur) dl->AddCircle(c, 14.5f, okaytheme::OnColorU32(0.902f), 32, 2.0f);
+                            else if (hov) dl->AddCircle(c, 14.5f, okaytheme::Ink(90), 32, 1.5f);
                             dl->AddCircleFilled(c, cur ? 11.0f : 12.0f, ImGui::GetColorU32(kAccentPresets[i].col), 32);
                             if (cur) {   // drawn check on the active swatch
-                                dl->AddLine(ImVec2(c.x - 4.5f, c.y + 0.2f), ImVec2(c.x - 1.5f, c.y + 3.2f), IM_COL32(255, 255, 255, 245), 2.2f);
-                                dl->AddLine(ImVec2(c.x - 1.5f, c.y + 3.2f), ImVec2(c.x + 4.5f, c.y - 3.0f), IM_COL32(255, 255, 255, 245), 2.2f);
+                                dl->AddLine(ImVec2(c.x - 4.5f, c.y + 0.2f), ImVec2(c.x - 1.5f, c.y + 3.2f), okaytheme::OnColorU32(0.961f), 2.2f);
+                                dl->AddLine(ImVec2(c.x - 1.5f, c.y + 3.2f), ImVec2(c.x + 4.5f, c.y - 3.0f), okaytheme::OnColorU32(0.961f), 2.2f);
                             }
                             if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", kAccentPresets[i].name); }
                             ImGui::PopID();
@@ -15891,13 +16550,13 @@ int main(int argc, char** argv) {
                     });
                     rowDivider();
                     settingRow("Test the chime", "Hear what a new message sounds like.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Play sound", ImVec2(96, 30))) PlayChatChime();
+                        if (ImGui::Button("Play sound", ImVec2(okl::FitButtonW("Play sound", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) PlayChatChime();
                     });
                     cardEnd();
 
                     cardBegin("##sc_notif", "NOTIFICATIONS");
                     settingRow("Notification center", "Friend requests, update notes and finished downloads collect here.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open", ImVec2(96, 30))) tab = 16;
+                        if (ImGui::Button("Open", ImVec2(okl::FitButtonW("Open", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) tab = 16;
                     });
                     cardEnd();
                 } else if (setCat == 7) {   // ---- Privacy & Safety ----
@@ -15925,7 +16584,7 @@ int main(int argc, char** argv) {
                         ImGui::SetNextItemWidth(180);
                         if (SlateCombo("##frreq", &fr, "Everyone\0Nobody\0")) { g_friendReqs = fr == 1 ? 2 : 0; MarkPrivacyChanged(); }
                     });
-                    if (!g_privNote.empty() && !privMissing) ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "Not saved to your account yet: %s", g_privNote.c_str());
+                    if (!g_privNote.empty() && !privMissing) ImGui::TextColored(okaytheme::Current().warning, "Not saved to your account yet: %s", g_privNote.c_str());
                     else if (g_privSupport == 1) ImGui::TextDisabled("Saved to your account.");
                     else if (!account.IsLoggedIn()) ImGui::TextDisabled("Sign in to keep these on your account. Until then they only apply on this PC.");
                     cardEnd();
@@ -15937,7 +16596,7 @@ int main(int argc, char** argv) {
                             if (SlateCombo("##ostatus", &g_onlineStatus, "Online\0Away\0Invisible\0")) {
                                 if (!kUiDemoUser) {
                                     okay::Friends pf(account);
-                                    if (g_onlineStatus == 2) pf.GoOffline(); else pf.MarkPresence(PresenceText(), PresenceJoin());
+                                    BroadcastOnlineStatus(pf);
                                 }
                                 SavePrefs();
                             }
@@ -15991,11 +16650,11 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_blocked", "BLOCKED");
                     if (g_blocksSupport == 2)
-                        ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "Blocking only hides people on this PC: the server has no block list yet. The server owner must run docs/sql/blocks.sql.");
+                        ImGui::TextColored(okaytheme::Current().warning, "Blocking only hides people on this PC: the server has no block list yet. The server owner must run docs/sql/blocks.sql.");
                     else if (!account.IsLoggedIn())
                         ImGui::TextDisabled("Signed out: blocks only apply on this PC. They are saved to your account the next time you sign in.");
                     else if (!g_blocksNote.empty())
-                        ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "%s", g_blocksNote.c_str());
+                        ImGui::TextColored(okaytheme::Current().warning, "%s", g_blocksNote.c_str());
                     if (!g_blockPending.empty() && g_blocksSupport != 2)
                         ImGui::TextDisabled("%d change%s not saved to your account yet (will retry).", (int)g_blockPending.size(), g_blockPending.size() == 1 ? "" : "s");
                     else if (g_blocksSupport == 1 && g_blocksNote.empty())
@@ -16011,7 +16670,7 @@ int main(int argc, char** argv) {
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted(name.c_str());
                         ImGui::SameLine(ImGui::GetContentRegionMax().x - 90);
-                        if (ImGui::Button("Unblock", ImVec2(90, 0))) unblock = uid;
+                        if (ImGui::Button("Unblock", ImVec2(okl::FitButtonW("Unblock", okl::UiPx(90.0f)), 0))) unblock = uid;
                         ImGui::PopID();
                     }
                     if (!unblock.empty()) SetBlocked(unblock, std::string(), false);
@@ -16075,17 +16734,17 @@ int main(int argc, char** argv) {
                         const bool live = micTest.Running();
                         const float level = live ? micTest.Level() : g_call.kind ? g_voice.SelfLevel() : 0.0f;
                         const float mw = std::min(ImGui::GetContentRegionAvail().x - 150.0f, 360.0f);
-                        if (live ? ImGui::Button("Stop test", ImVec2(130, 30)) : PrimaryButton("Test microphone", ImVec2(130, 30))) {
+                        if (live ? ImGui::Button("Stop test", ImVec2(okl::FitButtonW("Stop test", okl::UiPx(130.0f)), okl::UiPx(30.0f))) : PrimaryButton("Test microphone", ImVec2(okl::FitButtonW("Test microphone", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) {
                             if (live) micTest.Stop();
                             else if (!micTest.Start(g_voiceInDev, g_voiceOutDev, hearMyself, g_voiceInGain)) Toast("Couldn't open the microphone", 2);
                         }
                         ImGui::SameLine(0, 14);
                         ImVec2 mp = ImGui::GetCursorScreenPos(); mp.y += 11;
                         ImDrawList* md = ImGui::GetWindowDrawList();
-                        md->AddRectFilled(mp, ImVec2(mp.x + mw, mp.y + 8), IM_COL32(255, 255, 255, 20), 4.0f);
+                        md->AddRectFilled(mp, ImVec2(mp.x + mw, mp.y + 8), okaytheme::Ink(20), 4.0f);
                         const float gateFrac = std::clamp((g_voiceGate + 60.0f) / 60.0f, 0.0f, 1.0f);
-                        md->AddRectFilled(mp, ImVec2(mp.x + mw * level, mp.y + 8), level >= gateFrac ? IM_COL32(67, 181, 129, 255) : IM_COL32(150, 156, 170, 255), 4.0f);
-                        md->AddLine(ImVec2(mp.x + mw * gateFrac, mp.y - 3), ImVec2(mp.x + mw * gateFrac, mp.y + 11), IM_COL32(240, 200, 90, 255), 2.0f);
+                        md->AddRectFilled(mp, ImVec2(mp.x + mw * level, mp.y + 8), level >= gateFrac ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 4.0f);
+                        md->AddLine(ImVec2(mp.x + mw * gateFrac, mp.y - 3), ImVec2(mp.x + mw * gateFrac, mp.y + 11), okaytheme::WarningFillU32(), 2.0f);
                         ImGui::Dummy(ImVec2(mw, 30));
                         if (ImGui::Checkbox("Let me hear myself", &hearMyself) && live) {
                             micTest.Stop(); micTest.Start(g_voiceInDev, g_voiceOutDev, hearMyself, g_voiceInGain);
@@ -16108,7 +16767,7 @@ int main(int argc, char** argv) {
                     rowDivider();
                     {
                         const std::string inUse = !g_voiceRelay.empty() ? g_voiceRelay : g_siteVoiceRelay;
-                        if (inUse.empty()) ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.35f, 1.0f), "  No voice server yet \xE2\x80\x94 calls can't connect until one is set.");
+                        if (inUse.empty()) ImGui::TextColored(okaytheme::Current().warning, "  No voice server yet \xE2\x80\x94 calls can't connect until one is set.");
                         else ImGui::TextDisabled("  Calls use: %s%s", inUse.c_str(), g_voiceRelay.empty() ? "  (OkaySpace server)" : "  (custom)");
                     }
                     // Admins set the site-wide voice server every launcher uses by default.
@@ -16121,7 +16780,7 @@ int main(int argc, char** argv) {
                             ImGui::SetNextItemWidth(std::min(w, 260.0f) - 70.0f);
                             ImGui::InputTextWithHint("##vsite", "voice.yourdomain.com:45100", sbuf, sizeof(sbuf));
                             ImGui::SameLine();
-                            if (ImGui::Button("Save##vsite", ImVec2(62, 0))) SaveSiteVoiceRelay(sbuf);
+                            if (ImGui::Button("Save##vsite", ImVec2(okl::FitButtonW("Save##vsite", okl::UiPx(62.0f)), 0))) SaveSiteVoiceRelay(sbuf);
                         });
                     }
                     rowDivider();
@@ -16139,16 +16798,16 @@ int main(int argc, char** argv) {
                         const float* acc = g_splashAccentOverride ? g_splashAccent : nullptr;
                         ImVec4 a4 = acc ? ImVec4(acc[0], acc[1], acc[2], 1) : kAccent;
                         dl->AddRectFilledMultiColor(p, ImVec2(p.x + pw, p.y + ph), c3(g_splashBgTop), c3(g_splashBgTop), c3(g_splashBgBot), c3(g_splashBgBot));
-                        dl->AddRect(p, ImVec2(p.x + pw, p.y + ph), IM_COL32(255, 255, 255, 22), 0.0f, 0, 1.0f);
+                        dl->AddRect(p, ImVec2(p.x + pw, p.y + ph), okaytheme::Ink(22), 0.0f, 0, 1.0f);
                         ImVec2 c(p.x + pw * 0.5f, p.y + ph * 0.40f);
                         const float S = ph * 0.30f;
                         if (!g_splashLogo.empty() && g_splashLogoTex) {
                             dl->AddImage((ImTextureID)(intptr_t)g_splashLogoTex, ImVec2(c.x - S * 0.6f, c.y - S * 0.6f), ImVec2(c.x + S * 0.6f, c.y + S * 0.6f));
                         } else if (!g_splashLogo.empty()) {   // new path: loads on next launch
-                            dl->AddRect(ImVec2(c.x - S * 0.6f, c.y - S * 0.6f), ImVec2(c.x + S * 0.6f, c.y + S * 0.6f), IM_COL32(255, 255, 255, 90), 6.0f, 0, 1.5f);
+                            dl->AddRect(ImVec2(c.x - S * 0.6f, c.y - S * 0.6f), ImVec2(c.x + S * 0.6f, c.y + S * 0.6f), okaytheme::Ink(90), 6.0f, 0, 1.5f);
                             const char* lt = "PNG";
                             ImVec2 ts = ImGui::CalcTextSize(lt);
-                            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 255, 255, 150), lt);
+                            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), okaytheme::Ink(150), lt);
                         } else {   // isometric cube in the accent
                             float hw = S * 0.62f, hh = S * 0.34f, vh = S * 0.62f;
                             ImVec2 top(c.x, c.y - hh - vh * 0.5f), l(c.x - hw, c.y - vh * 0.5f), r(c.x + hw, c.y - vh * 0.5f), m(c.x, c.y + hh - vh * 0.5f);
@@ -16159,10 +16818,10 @@ int main(int argc, char** argv) {
                         }
                         const char* nm = "OkaySpace";
                         ImVec2 ts = ImGui::CalcTextSize(nm);
-                        dl->AddText(ImVec2(c.x - ts.x * 0.5f, p.y + ph * 0.66f), IM_COL32(240, 242, 246, 235), nm);
+                        dl->AddText(ImVec2(c.x - ts.x * 0.5f, p.y + ph * 0.66f), okaytheme::TextU32(0.922f), nm);
                         if (g_splashShowBar) {
                             float bw = pw * 0.42f, by = p.y + ph * 0.86f;
-                            dl->AddRectFilled(ImVec2(c.x - bw * 0.5f, by), ImVec2(c.x + bw * 0.5f, by + 3), IM_COL32(255, 255, 255, 30), 1.5f);
+                            dl->AddRectFilled(ImVec2(c.x - bw * 0.5f, by), ImVec2(c.x + bw * 0.5f, by + 3), okaytheme::Ink(30), 1.5f);
                             dl->AddRectFilled(ImVec2(c.x - bw * 0.5f, by), ImVec2(c.x + bw * 0.12f, by + 3), ImGui::GetColorU32(a4), 1.5f);
                         }
                         ImGui::Dummy(ImVec2(pw, ph));
@@ -16180,7 +16839,7 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste the location of a PNG.");
                         ImGui::SameLine(0, 8);
                         ImGui::BeginDisabled(g_splashLogo.empty());
-                        if (ImGui::Button("Clear##splashlogo", ImVec2(74, 0))) { g_splashLogo.clear(); SavePrefs(); }
+                        if (ImGui::Button("Clear##splashlogo", ImVec2(okl::FitButtonW("Clear##splashlogo", okl::UiPx(74.0f)), 0))) { g_splashLogo.clear(); SavePrefs(); }
                         ImGui::EndDisabled();
                     });
                     rowDivider();
@@ -16212,7 +16871,7 @@ int main(int argc, char** argv) {
                         const bool trayOk = g_tray && g_tray->Supported();
                         const char* offNote = " (Windows only for now.)";
                         ImGui::BeginDisabled(!trayOk);
-                        settingRow("Minimize to tray", trayOk ? "Minimizing hides OkaySpace from the taskbar and keeps it running in the tray. Double-click the tray icon to open it again."
+                        settingRow("Minimize to tray", trayOk ? "Minimizing hides OkaySpace from the taskbar and keeps it running in the tray. Click the tray icon to open it again."
                                                               : (std::string("Minimizing hides OkaySpace in the system tray.") + offNote).c_str(), 40.0f, 22.0f, [&](float) {
                             if (ToggleSwitch("##mintray", &g_minimizeToTray)) { SavePrefs(); TrayApplySettings(); }
                         });
@@ -16258,12 +16917,12 @@ int main(int argc, char** argv) {
                         settingRow(runningTitle.c_str(), testsOn ? "You are running a test build. Switch Get test builds off above, then you can go back to the newest normal release here."
                                                                   : "You are running a test build and will not be offered more. Go back to the newest normal release whenever you like.",
                                    testsOn ? 40.0f : 230.0f, testsOn ? 22.0f : 30.0f, [&](float) {
-                            if (!testsOn && ImGui::Button("Go back to the stable version", ImVec2(230, 30))) StartGoBackToStable();
+                            if (!testsOn && ImGui::Button("Go back to the stable version", ImVec2(okl::FitButtonW("Go back to the stable version", okl::UiPx(230.0f)), okl::UiPx(30.0f)))) StartGoBackToStable();
                         });
                         rowDivider();
                     }
                     settingRow("Other versions of the editor", "Keep older editors next to this one and open each project with the version it was made with.", 150.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Manage versions", ImVec2(150, 30))) { tab = 15; g_lastTab = 15; }
+                        if (ImGui::Button("Manage versions", ImVec2(okl::FitButtonW("Manage versions", okl::UiPx(150.0f)), okl::UiPx(30.0f)))) { tab = 15; g_lastTab = 15; }
                     });
                     cardEnd();
 
@@ -16276,13 +16935,13 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_maint", "MAINTENANCE");
                     settingRow("Configuration folder", "Preferences are stored in launcher.cfg next to the launcher.", 120.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Open folder", ImVec2(120, 30))) OpenExternal(g_exeDir);
+                        if (ImGui::Button("Open folder", ImVec2(okl::FitButtonW("Open folder", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) OpenExternal(g_exeDir);
                     });
                     rowDivider();
                     settingRow("Reset preferences", "Restores theme, accent, UI scale, sorting and update settings. Favorites and recent games are kept.", 120.0f, 30.0f, [&](float) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.55f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.26f, 0.26f, 1.0f));
-                        if (ImGui::Button("Reset\xE2\x80\xA6", ImVec2(120, 30))) setOpenReset = true;
+                        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::WithAlpha(okaytheme::DangerFill(), 0.55f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
+                        if (ImGui::Button("Reset\xE2\x80\xA6", ImVec2(okl::FitButtonW("Reset\xE2\x80\xA6", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) setOpenReset = true;
                         ImGui::PopStyleColor(2);
                     });
                     cardEnd();
@@ -16300,7 +16959,7 @@ int main(int argc, char** argv) {
                         ImVec2 rp = ImGui::GetCursorScreenPos();
                         const float rw = ImGui::GetContentRegionAvail().x, rh = 44.0f;
                         if (ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + rw, rp.y + rh)) && ImGui::IsWindowHovered())
-                            dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), IM_COL32(255, 255, 255, 10), 8.0f);
+                            dl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), okaytheme::Ink(10), 8.0f);
                         // Folder glyph.
                         ImVec2 fc(rp.x + 20, rp.y + rh * 0.5f);
                         dl->PathLineTo(ImVec2(fc.x - 8, fc.y - 6)); dl->PathLineTo(ImVec2(fc.x - 3, fc.y - 6));
@@ -16312,9 +16971,9 @@ int main(int argc, char** argv) {
                         const float tx = rp.x + 40;
                         dl->AddText(ImVec2(tx, rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f - (exists ? 0.0f : 8.0f)), cText,
                                     FitText(g_libraryDirs[li], rw - 40 - 48).c_str());
-                        if (!exists) dl->AddText(ImVec2(tx, rp.y + rh * 0.5f + 1), IM_COL32(236, 150, 90, 255), "Folder not found");
+                        if (!exists) dl->AddText(ImVec2(tx, rp.y + rh * 0.5f + 1), okaytheme::WarningU32(), "Folder not found");
                         ImGui::SetCursorScreenPos(ImVec2(rp.x + rw - 36, rp.y + (rh - 30) * 0.5f));
-                        if (RoundIconButton("##rmlib", kRibClose, 30.0f, IM_COL32(255, 255, 255, 14), IM_COL32(200, 70, 70, 255), cText, "Remove folder"))
+                        if (RoundIconButton("##rmlib", kRibClose, 30.0f, okaytheme::Ink(14), okaytheme::DangerFillU32(), cText, "Remove folder"))
                             removeIdx = (int)li;
                         ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rh + 2));
                         ImGui::Dummy(ImVec2(0, 0));
@@ -16337,7 +16996,7 @@ int main(int argc, char** argv) {
                                                               libBuf, sizeof(libBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                     ImGui::SameLine(0, 8);
                     ImGui::BeginDisabled(!libBuf[0]);
-                    bool addClick = PrimaryButton("Add folder", ImVec2(120, ImGui::GetFrameHeight()));
+                    bool addClick = PrimaryButton("Add folder", ImVec2(okl::FitButtonW("Add folder", okl::UiPx(120.0f)), ImGui::GetFrameHeight()));
                     ImGui::EndDisabled();
                     ImGui::PopStyleVar(2);
                     if ((addClick || addSubmit) && libBuf[0]) {
@@ -16366,11 +17025,11 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 6));
                     std::vector<std::string> allOn; osw::AllOn(allOn);
                     ImGui::BeginDisabled(st.chosen == allOn);
-                    if (ImGui::Button("All on (default)", ImVec2(220, 30))) { st.chosen = allOn; osw::SaveChosen(); }
+                    if (ImGui::Button("All on (default)", ImVec2(okl::FitButtonW("All on (default)", okl::UiPx(220.0f)), okl::UiPx(30.0f)))) { st.chosen = allOn; osw::SaveChosen(); }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
                     ImGui::BeginDisabled(st.chosen.empty());
-                    if (ImGui::Button("All off (third-party parts)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    if (ImGui::Button("All off (third-party parts)", ImVec2(okl::FitButtonW("All off (third-party parts)", okl::UiPx(220.0f)), okl::UiPx(30.0f)))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
                     ImGui::EndDisabled();
                     ImGui::Dummy(ImVec2(0, 4));
                     for (const osw::Item& it : osw::Items()) {
@@ -16394,7 +17053,7 @@ int main(int argc, char** argv) {
                         if (!altExe.empty()) {
                             rowDivider();
                             settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
-                                if (ImGui::Button("Restart", ImVec2(130, 30)) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                                if (ImGui::Button("Restart", ImVec2(okl::FitButtonW("Restart", okl::UiPx(130.0f)), okl::UiPx(30.0f))) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
                             });
                         }
                     }
@@ -16428,7 +17087,7 @@ int main(int argc, char** argv) {
                     rowDivider();
                     settingRow("Preview what would be sent", "The exact text of the newest report after names, folders, emails and addresses are removed. Looking sends nothing.", 130.0f, 30.0f, [&](float) {
                         ImGui::BeginDisabled(g_crashes.empty());
-                        if (ImGui::Button("Preview", ImVec2(130, 30))) { crashOpen = 0; crashView = 1; }
+                        if (ImGui::Button("Preview", ImVec2(okl::FitButtonW("Preview", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) { crashOpen = 0; crashView = 1; }
                         ImGui::EndDisabled();
                     });
                     cardEnd();
@@ -16442,24 +17101,24 @@ int main(int argc, char** argv) {
                                        : "Newest first. Copy a report into a Forums post or send it to support so the crash can be fixed.",
                                    250.0f, 30.0f, [&](float) {
                             ImGui::BeginDisabled(crashDir.empty());
-                            if (ImGui::Button("Open folder", ImVec2(110, 30))) OpenExternal(crashDir.string());
+                            if (ImGui::Button("Open folder", ImVec2(okl::FitButtonW("Open folder", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) OpenExternal(crashDir.string());
                             ImGui::EndDisabled();
                             ImGui::SameLine();
                             ImGui::BeginDisabled(g_crashes.empty());
-                            if (ImGui::Button("Clear all", ImVec2(110, 30))) ImGui::OpenPopup("Clear crash reports?");
+                            if (ImGui::Button("Clear all", ImVec2(okl::FitButtonW("Clear all", okl::UiPx(110.0f)), okl::UiPx(30.0f)))) ImGui::OpenPopup("Clear crash reports?");
                             ImGui::EndDisabled();
                             if (ImGui::BeginPopupModal("Clear crash reports?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                                 ImGui::TextUnformatted("Delete every saved editor crash report?");
                                 ImGui::TextDisabled("They can't be brought back.");
                                 ImGui::Dummy(ImVec2(0, 6));
-                                if (ImGui::Button("Delete", ImVec2(100, 30))) {
+                                if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
                                     if (okaycrash::Clear(crashDir)) Toast("Crash reports cleared", 1);
                                     else Toast("Couldn't delete the crash reports", 2);
                                     RefreshCrashes(true); crashOpen = -1;
                                     ImGui::CloseCurrentPopup();
                                 }
                                 ImGui::SameLine();
-                                if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                                 ImGui::EndPopup();
                             }
                         });
@@ -16473,8 +17132,8 @@ int main(int argc, char** argv) {
                         const ImVec2 p = ImGui::GetCursorScreenPos();
                         const float w = ImGui::GetContentRegionAvail().x;
                         // Red badge with the alert icon, then what / when / where.
-                        dl->AddCircleFilled(ImVec2(p.x + 18, p.y + 20), 18, IM_COL32(226, 82, 82, 40), 24);
-                        DrawNavIcon(dl, kIcoAlert, ImVec2(p.x + 18, p.y + 20), IM_COL32(240, 120, 120, 255));
+                        dl->AddCircleFilled(ImVec2(p.x + 18, p.y + 20), 18, okaytheme::DangerFillU32(0.157f), 24);
+                        DrawNavIcon(dl, kIcoAlert, ImVec2(p.x + 18, p.y + 20), okaytheme::DangerFillU32());
                         const float tx = p.x + 50;
                         dl->AddText(ImVec2(tx, p.y + 2), cText, okaycrash::ExceptionName(r.exception).c_str());
                         std::string meta = r.when.empty() ? std::string("Unknown time") : r.when;
@@ -16508,7 +17167,7 @@ int main(int argc, char** argv) {
                         const bool showDetails = open && crashView == 0, showPreview = open && crashView == 1;
                         if (ImGui::Button(showDetails ? "Hide details" : "Details", ImVec2(110, 28))) { crashOpen = showDetails ? -1 : i; crashView = 0; }
                         ImGui::SameLine();
-                        if (ImGui::Button("Copy report", ImVec2(110, 28))) {
+                        if (ImGui::Button("Copy report", ImVec2(okl::FitButtonW("Copy report", okl::UiPx(110.0f)), okl::UiPx(28.0f)))) {
                             ImGui::SetClipboardText(r.text.c_str());
                             Toast("Crash report copied", 1);
                         }
@@ -16558,7 +17217,7 @@ int main(int argc, char** argv) {
                             DrawAvatar(g_myAvatarSlot ? *g_myAvatarSlot : std::string(), uname, A);
                         } else {
                             ImVec2 c(p.x + A * 0.5f, p.y + A * 0.5f);
-                            dl->AddCircleFilled(c, A * 0.5f, IM_COL32(255, 255, 255, 18), 32);
+                            dl->AddCircleFilled(c, A * 0.5f, okaytheme::Ink(18), 32);
                             DrawNavIcon(dl, 3, ImVec2(c.x, c.y + 1), cDim);
                             ImGui::Dummy(ImVec2(A, A));
                         }
@@ -16572,7 +17231,7 @@ int main(int argc, char** argv) {
                         dl->AddText(ImVec2(tx, p.y + 28), cDim, FitText(sub, tr - tx).c_str());
                         ImVec2 bp = narrow ? ImVec2(p.x, p.y + A + 10) : ImVec2(p.x + w - 146.0f, p.y + (A - 34.0f) * 0.5f);
                         ImGui::SetCursorScreenPos(bp);
-                        if (signedIn ? ImGui::Button("Manage account", ImVec2(146, 34)) : PrimaryButton("Sign in", ImVec2(146, 34))) {
+                        if (signedIn ? ImGui::Button("Manage account", ImVec2(okl::FitButtonW("Manage account", okl::UiPx(146.0f)), okl::UiPx(34.0f))) : PrimaryButton("Sign in", ImVec2(okl::FitButtonW("Sign in", okl::UiPx(146.0f)), okl::UiPx(34.0f)))) {
                             tab = 3; g_lastTab = 3; SavePrefs();
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + A));
@@ -16589,8 +17248,8 @@ int main(int argc, char** argv) {
                         const char* lbl = online ? "Online" : "Local";
                         ImVec2 ts = ImGui::CalcTextSize(lbl);
                         const float pw = ts.x + 34.0f, px = p.x + 90.0f - pw;
-                        dl->AddRectFilled(ImVec2(px, p.y), ImVec2(px + pw, p.y + 26), IM_COL32(255, 255, 255, 14), 13.0f);
-                        dl->AddCircleFilled(ImVec2(px + 13, p.y + 13), 4.0f, online ? IM_COL32(76, 200, 110, 255) : IM_COL32(140, 146, 156, 255), 12);
+                        dl->AddRectFilled(ImVec2(px, p.y), ImVec2(px + pw, p.y + 26), okaytheme::Ink(14), 13.0f);
+                        dl->AddCircleFilled(ImVec2(px + 13, p.y + 13), 4.0f, online ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 12);
                         dl->AddText(ImVec2(px + 23, p.y + (26 - ts.y) * 0.5f), cText, lbl);
                         ImGui::Dummy(ImVec2(90, 26));
                     });
@@ -16604,9 +17263,9 @@ int main(int argc, char** argv) {
                         // Brand tile (same mark as the sidebar, larger).
                         ImVec2 br(p.x + S, p.y + S);
                         dl->AddRectFilled(p, br, ImGui::GetColorU32(kAccentDim), 13.0f);
-                        dl->AddRectFilled(p, ImVec2(br.x, p.y + S * 0.5f), IM_COL32(255, 255, 255, 20), 13.0f, ImDrawFlags_RoundCornersTop);
+                        dl->AddRectFilled(p, ImVec2(br.x, p.y + S * 0.5f), okaytheme::Ink(20), 13.0f, ImDrawFlags_RoundCornersTop);
                         ImVec2 c(p.x + S * 0.47f, p.y + S * 0.53f);
-                        dl->AddCircleFilled(c, S * 0.21f, IM_COL32(236, 240, 248, 255), 32);
+                        dl->AddCircleFilled(c, S * 0.21f, okaytheme::TextU32(), 32);
                         ImVec2 ring[36];
                         for (int k = 0; k < 36; ++k) {
                             float a = k * (6.2831853f / 36), rx = S * 0.375f, ry = S * 0.125f, rot = -0.5f;
@@ -16614,9 +17273,9 @@ int main(int argc, char** argv) {
                             ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
                         }
                         dl->PushClipRect(p, br, true);
-                        dl->AddPolyline(ring, 36, IM_COL32(255, 255, 255, 235), ImDrawFlags_Closed, 2.2f);
+                        dl->AddPolyline(ring, 36, okaytheme::OnColorU32(0.922f), ImDrawFlags_Closed, 2.2f);
                         dl->PopClipRect();
-                        dl->AddCircleFilled(ImVec2(p.x + S * 0.78f, p.y + S * 0.24f), 2.2f, IM_COL32(255, 255, 255, 240));
+                        dl->AddCircleFilled(ImVec2(p.x + S * 0.78f, p.y + S * 0.24f), 2.2f, okaytheme::OnColorU32(0.941f));
                         const bool narrow = w < 430.0f;
                         const float tx = p.x + S + 16.0f, tr = narrow ? p.x + w : p.x + w - 186.0f;
                         ImGui::SetWindowFontScale(1.2f);
@@ -16625,7 +17284,7 @@ int main(int argc, char** argv) {
                         dl->AddText(ImVec2(tx, p.y + 26), ImGui::GetColorU32(accLt), (std::string("Version " OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
                         {   // a test build says which one it is instead of the tagline
                             static const std::string aboutTest = okay::testbuild::RunningTitle(OKAY_ENGINE_VERSION, okay::testbuild::ReadMarker(fs::path(g_exeDir)));   // (fixed for this run)
-                            dl->AddText(ImVec2(tx, p.y + 44), aboutTest.empty() ? cDim : IM_COL32(240, 190, 90, 255), FitText(aboutTest.empty() ? std::string("A small C++ game engine.") : aboutTest, tr - tx).c_str());
+                            dl->AddText(ImVec2(tx, p.y + 44), aboutTest.empty() ? cDim : okaytheme::WarningU32(), FitText(aboutTest.empty() ? std::string("A small C++ game engine.") : aboutTest, tr - tx).c_str());
                         }
                         // Check for updates (+ live status underneath).
                         const UpState us = GetState();
@@ -16644,14 +17303,14 @@ int main(int argc, char** argv) {
                                           : us == Up_Downloading ? "Downloading the update\xE2\x80\xA6" : "";
                         if (*stTxt) {
                             ImVec2 ts = ImGui::CalcTextSize(stTxt);
-                            ImU32 sc = us == Up_Failed ? IM_COL32(236, 120, 120, 255) : us == Up_UpToDate || us == Up_Updated ? IM_COL32(110, 205, 140, 255) : cDim;
+                            ImU32 sc = us == Up_Failed ? okaytheme::DangerFillU32() : us == Up_UpToDate || us == Up_Updated ? okaytheme::SuccessFillU32() : cDim;
                             dl->AddText(ImVec2(narrow ? bp.x + 186.0f : bp.x + (176.0f - ts.x) * 0.5f, narrow ? bp.y + (34 - ts.y) * 0.5f : bp.y + 40), sc, stTxt);
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + S + 4));
                         ImGui::Dummy(ImVec2(0, 0));
                         {   // the update signature check: ON, or OFF with the reason (never silent; docs/online/security.md "Updater signing")
                             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
-                            const ImU32 sigCol = sigStatus.state == okayupdate::SigState::On ? IM_COL32(110, 205, 140, 255) : IM_COL32(236, 190, 90, 255);
+                            const ImU32 sigCol = sigStatus.state == okayupdate::SigState::On ? okaytheme::SuccessFillU32() : okaytheme::WarningFillU32();
                             ImGui::PushStyleColor(ImGuiCol_Text, sigCol);
                             ImGui::TextUnformatted(sigStatus.line.c_str());
                             ImGui::PopStyleColor();
@@ -16661,7 +17320,7 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_links", "RESOURCES");
                     settingRow("Version info", "Copy the version for bug reports.", 96.0f, 30.0f, [&](float) {
-                        if (ImGui::Button("Copy", ImVec2(96, 30))) {
+                        if (ImGui::Button("Copy", ImVec2(okl::FitButtonW("Copy", okl::UiPx(96.0f)), okl::UiPx(30.0f)))) {
                             ImGui::SetClipboardText((std::string("OkaySpace v" OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
                             Toast("Version copied", 1);
                         }
@@ -16680,13 +17339,13 @@ int main(int argc, char** argv) {
                 ImGui::TextUnformatted("Reset theme, accent, UI scale, sorting and update settings?");
                 ImGui::TextDisabled("Favorites and recent games are kept.");
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-                bool doReset = ImGui::Button("Reset", ImVec2(110, 0));
+                ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, okaytheme::DangerFill());
+                bool doReset = ImGui::Button("Reset", ImVec2(okl::FitButtonW("Reset", okl::UiPx(110.0f)), 0));
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_minimizeToTray = true; g_closeToTray = true; TrayApplySettings();
+                    g_minimizeToTray = false; g_closeToTray = true; TrayApplySettings();
     g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -16696,7 +17355,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
         } else if (tab == 5) {                            // ---- Achievements ----
@@ -16724,8 +17383,8 @@ int main(int argc, char** argv) {
                 if (kAchDemo && achShow.ach.empty()) achShow.ach = {"perfect_lap", "untouchable", "first_win"};
             }
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
-            const ImU32 gold = IM_COL32(250, 200, 70, 255);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
+            const ImU32 gold = okaytheme::WarningFillU32();
             const long nowT = (long)std::time(nullptr);
             int monthN = 0; const okay::Achievement* latest = nullptr;
             for (const auto& a : achs) {
@@ -16798,7 +17457,7 @@ int main(int argc, char** argv) {
                 {
                     const ImVec2 lc(x + ringR, rcy);
                     const float prog = okay::Achievements::LevelProgress(pts);
-                    dl->AddCircle(lc, ringR, IM_COL32(255, 255, 255, 30), 40, 4.0f);
+                    dl->AddCircle(lc, ringR, okaytheme::Ink(30), 40, 4.0f);
                     dl->PathArcTo(lc, ringR, -1.5707963f, -1.5707963f + prog * 6.2831853f, 40);
                     dl->PathStroke(gold, 0, 4.0f);
                     char ls[8]; std::snprintf(ls, sizeof(ls), "%d", lvl);
@@ -16855,10 +17514,10 @@ int main(int argc, char** argv) {
                     ImGui::PopID();
                     bool on = achView == k;
                     dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch),
-                                      on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
+                                      on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? okaytheme::Ink(22) : okaytheme::Ink(9)), ch * 0.5f);
                     dl->AddText(ImVec2(x + 13, cp.y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), labels[k]);
                     float bx = x + 13 + ts.x + 7;
-                    dl->AddRectFilled(ImVec2(bx, cp.y + (ch - 16) * 0.5f), ImVec2(bx + cs.x + 10, cp.y + (ch + 16) * 0.5f), IM_COL32(255, 255, 255, 28), 8.0f);
+                    dl->AddRectFilled(ImVec2(bx, cp.y + (ch - 16) * 0.5f), ImVec2(bx + cs.x + 10, cp.y + (ch + 16) * 0.5f), okaytheme::Ink(28), 8.0f);
                     dl->AddText(ImVec2(bx + 5, cp.y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
                     if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     x += cw + 8;
@@ -16904,7 +17563,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 30));
                 ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+                dl->AddCircleFilled(c, 30.0f, okaytheme::Ink(12), 40);
                 DrawNavIcon(dl, 5, c, cDim);
                 ImGui::Dummy(ImVec2(0, 70));
                 auto centered = [&](const char* s, bool dim) {
@@ -16917,7 +17576,7 @@ int main(int argc, char** argv) {
                     centered("Games award them with the \"Unlock Achievement\" action. Go play something!", true);
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - 150) * 0.5f));
-                    if (PrimaryButton("Browse games", ImVec2(150, 34))) tab = 1;
+                    if (PrimaryButton("Browse games", ImVec2(okl::FitButtonW("Browse games", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) tab = 1;
                 } else if (achView == 2) {
                     centered("Nothing showcased yet", false);
                     centered("Pick up to 6 achievements to show off on your profile (right-click a tile).", true);
@@ -16955,15 +17614,15 @@ int main(int argc, char** argv) {
                     }
                     ImGui::PopID();
                     const bool fresh = a.when > nowT - 2L * 86400;
-                    dl->AddRectFilled(p, ImVec2(p.x + tileW, p.y + tileH), ImGui::GetColorU32(hov ? okaytheme::Mix(okaytheme::kRaised, ImVec4(1, 1, 1, 1), 0.04f) : okaytheme::kRaised), 12.0f);
-                    if (pinned) dl->AddRect(p, ImVec2(p.x + tileW, p.y + tileH), ImGui::GetColorU32(ImVec4(1.0f, 0.80f, 0.30f, 0.45f)), 12.0f, 0, 1.5f);
+                    dl->AddRectFilled(p, ImVec2(p.x + tileW, p.y + tileH), ImGui::GetColorU32(hov ? okaytheme::Mix(okaytheme::kRaised, okaytheme::Current().onColor, 0.04f) : okaytheme::kRaised), 12.0f);
+                    if (pinned) dl->AddRect(p, ImVec2(p.x + tileW, p.y + tileH), ImGui::GetColorU32(okaytheme::WithAlpha(okaytheme::WarningFill(), 0.45f)), 12.0f, 0, 1.5f);
                     DrawAchMedal(dl, ImVec2(p.x + 38, p.y + tileH * 0.5f), 24.0f, a.id, 1.0f);
                     const float tx = p.x + 74, maxW = tileW - 74 - 14 - (pinned ? 16 : 0);
                     dl->AddText(ImVec2(tx, p.y + 18), cText, FitText(a.label.empty() ? PfPrettyId(a.id) : a.label, maxW).c_str());
                     std::string d = dateOf(a.when);
                     char ptxt[12]; std::snprintf(ptxt, sizeof(ptxt), "+%d", a.points);
                     const ImVec2 pts2 = ImGui::CalcTextSize(ptxt);
-                    dl->AddRectFilled(ImVec2(tx, p.y + 40), ImVec2(tx + pts2.x + 12, p.y + 40 + pts2.y + 2), IM_COL32(250, 200, 70, a.points >= 50 ? 60 : 32), 8.0f);
+                    dl->AddRectFilled(ImVec2(tx, p.y + 40), ImVec2(tx + pts2.x + 12, p.y + 40 + pts2.y + 2), okaytheme::WarningFillU32(((a.points >= 50 ? 60 : 32) / 255.0f)), 8.0f);
                     dl->AddText(ImVec2(tx + 6, p.y + 41), gold, ptxt);
                     dl->AddText(ImVec2(tx + pts2.x + 20, p.y + 40), cDim, FitText(d.empty() ? std::string("Unlocked") : d, maxW - pts2.x - 20).c_str());
                     if (pinned) DrawStar(dl, ImVec2(p.x + tileW - 18, p.y + 18), 6.0f, gold);
@@ -17095,61 +17754,36 @@ int main(int argc, char** argv) {
                 }
                 const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
-                const ImU32 cGreen = IM_COL32(76, 200, 110, 255);
+                const ImVec4 accLt = okaytheme::AccentText(kAccent);
+                const ImU32 cGreen = okaytheme::SuccessFillU32();
                 const ImU32 pageBg = ImGui::GetColorU32(ImGuiCol_WindowBg);
 
-                // ---- Toolbar: view chips (left) + my presence (right) ------------
+                // ---- Header: "3 friends · 1 online" (left), Add friend and my status (right); the views as tabs below ----
                 {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     ImVec2 cp = ImGui::GetCursorScreenPos();
-                    const float ch = ImGui::GetTextLineHeight() + 12.0f;
-                    float x = cp.x;
-                    auto chip = [&](int view, const char* label, int count, bool alert) {
-                        char txt[48];
-                        if (count >= 0) std::snprintf(txt, sizeof(txt), "%s", label); else std::snprintf(txt, sizeof(txt), "%s", label);
-                        ImVec2 ts = ImGui::CalcTextSize(txt);
-                        char cnt[8] = ""; if (count > 0) std::snprintf(cnt, sizeof(cnt), "%d", count);
-                        float cw = ts.x + 26.0f + (cnt[0] ? ImGui::CalcTextSize(cnt).x + 14.0f : 0.0f);
-                        ImGui::SetCursorScreenPos(ImVec2(x, cp.y));
-                        ImGui::PushID(view);
-                        if (ImGui::InvisibleButton("##frchip", ImVec2(cw, ch))) { fView = view; fErr.clear(); fOk.clear(); }
-                        bool h = ImGui::IsItemHovered();
-                        ImGui::PopID();
-                        const bool on = fView == view;
-                        const bool add = view == 3;
-                        ImU32 bg = add ? (on ? ImGui::GetColorU32(ImVec4(0.18f, 0.55f, 0.32f, 1)) : (h ? IM_COL32(46, 140, 82, 255) : IM_COL32(38, 120, 70, 255)))
-                                       : on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f))
-                                            : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9));
-                        dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch), bg, ch * 0.5f);
-                        dl->AddText(ImVec2(x + 13.0f, cp.y + (ch - ts.y) * 0.5f),
-                                    add ? IM_COL32_WHITE : on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), txt);
-                        if (cnt[0]) {
-                            ImVec2 cs = ImGui::CalcTextSize(cnt);
-                            float bx = x + 13.0f + ts.x + 7.0f, bw = cs.x + 10.0f;
-                            dl->AddRectFilled(ImVec2(bx, cp.y + (ch - 16) * 0.5f), ImVec2(bx + bw, cp.y + (ch + 16) * 0.5f),
-                                              alert ? IM_COL32(222, 76, 76, 255) : IM_COL32(255, 255, 255, 28), 8.0f);
-                            dl->AddText(ImVec2(bx + 5.0f, cp.y + (ch - cs.y) * 0.5f), IM_COL32_WHITE, cnt);
-                        }
-                        if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        x += cw + 8.0f;
-                    };
-                    chip(0, "Online", onlineN, false);
-                    chip(1, "All", acceptedN, false);
-                    chip(2, "Pending", reqN + sentN, reqN > 0);
-                    chip(4, "Following", (int)flFollowing.size(), false);
-                    chip(5, "Followers", (int)flFollowers.size(), false);
-                    chip(3, "Add friend", 0, false);
+                    const float ch = ImGui::GetFrameHeight() + UiPx(8.0f);
+                    {
+                        char sum[96];
+                        if (acceptedN == 0) std::snprintf(sum, sizeof(sum), "No friends yet");
+                        else std::snprintf(sum, sizeof(sum), "%d friend%s  \xC2\xB7  %d online", acceptedN, acceptedN == 1 ? "" : "s", onlineN);
+                        dl->AddText(ImVec2(cp.x, cp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cDim, sum);
+                    }
                     // Presence picker (right): dot + label, opens a small menu.
                     static const char* kStat[] = {"Online", "Away", "Invisible"};
-                    static const ImU32 kStatCol[] = {IM_COL32(76, 200, 110, 255), IM_COL32(236, 180, 64, 255), IM_COL32(140, 146, 156, 255)};
+                    const ImU32 kStatCol[] = {okaytheme::SuccessFillU32(), okaytheme::WarningFillU32(), okaytheme::TextDimU32()};
                     int si = std::clamp(g_onlineStatus, 0, 2);
-                    float pw = ImGui::CalcTextSize(kStat[si]).x + 52.0f;
+                    float pw = ImGui::CalcTextSize(kStat[si]).x + UiPx(52.0f);
                     ImVec2 pp(cp.x + ImGui::GetContentRegionAvail().x - pw, cp.y);
+                    {   // Add friend: the page's main action, left of the status
+                        const float aw = FitButtonW("Add friend", UiPx(120.0f));
+                        ImGui::SetCursorScreenPos(ImVec2(pp.x - UiPx(10.0f) - aw, cp.y));
+                        if (PrimaryButton("Add friend", ImVec2(aw, ch))) { fView = 3; fErr.clear(); fOk.clear(); }
+                    }
                     ImGui::SetCursorScreenPos(pp);
                     if (ImGui::InvisibleButton("##presence", ImVec2(pw, ch))) ImGui::OpenPopup("##presencepop");
                     bool ph = ImGui::IsItemHovered();
-                    dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + ch), ph ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9), ch * 0.5f);
+                    dl->AddRectFilled(pp, ImVec2(pp.x + pw, pp.y + ch), ph ? okaytheme::Ink(22) : okaytheme::Ink(9), ch * 0.5f);
                     dl->AddCircleFilled(ImVec2(pp.x + 15, pp.y + ch * 0.5f), 4.5f, kStatCol[si], 12);
                     dl->AddText(ImVec2(pp.x + 26, pp.y + (ch - ImGui::GetTextLineHeight()) * 0.5f), cText, kStat[si]);
                     float vx = pp.x + pw - 15, vy = pp.y + ch * 0.5f;   // chevron
@@ -17172,8 +17806,21 @@ int main(int argc, char** argv) {
                         }
                         ImGui::EndPopup();
                     }
-                    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + 14.0f));
-                    ImGui::Dummy(ImVec2(0, 0));
+                    ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + UiPx(14.0f)));
+                    // The views, as tabs under the header (Add friend is the button above, not a tab).
+                    static const int kViewOf[] = {0, 1, 2, 4, 5};
+                    std::vector<Chip> tabs(5);
+                    tabs[0].label = "Online"; tabs[0].count = onlineN; tabs[0].dot = cGreen;
+                    tabs[1].label = "All"; tabs[1].count = acceptedN;
+                    tabs[2].label = "Pending"; tabs[2].count = reqN + sentN; tabs[2].countBadge = reqN > 0;
+                    tabs[3].label = "Following"; tabs[3].count = (int)flFollowing.size();
+                    tabs[4].label = "Followers"; tabs[4].count = (int)flFollowers.size();
+                    for (Chip& c : tabs) if (c.count == 0) c.count = -1;
+                    int selTab = -1;
+                    for (int k = 0; k < 5; ++k) if (kViewOf[k] == fView) selTab = k;
+                    const int hit = ChipRow("##frtabs", tabs, selTab, ImGui::GetContentRegionAvail().x);
+                    if (hit >= 0) { fView = kViewOf[hit]; fErr.clear(); fOk.clear(); }
+                    ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
                 }
 
                 // Nickname editor popup state.
@@ -17220,14 +17867,14 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem("Copy username")) { ImGui::SetClipboardText(f->username.c_str()); Toast("Username copied", 1); }
                         if (ImGui::MenuItem("View profile")) OpenPublicProfile(f->id, f->username, dispName, f->avatar, f->accent);
                         ImGui::Separator();
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                         if (ImGui::MenuItem(kind == 1 ? "Decline request" : accepted ? "Remove friend" : "Cancel request")) {
                             fr.Remove(f->rowId); fNextRefresh = 0;
                         }
                         ImGui::PopStyleColor();
                         ImGui::EndPopup();
                     }
-                    if (rowHov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 11), 10.0f);
+                    if (rowHov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(11), 10.0f);
                     // Avatar + presence dot + favourite star.
                     ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (rowH - A) * 0.5f));
                     ImVec2 ap = ImGui::GetCursorScreenPos();
@@ -17235,12 +17882,13 @@ int main(int argc, char** argv) {
                     if (accepted || kind == 1) {
                         ImVec2 pd(ap.x + A * 0.85f, ap.y + A * 0.85f);
                         dl->AddCircleFilled(pd, 7.0f, pageBg, 16);
-                        dl->AddCircleFilled(pd, 5.0f, f->online ? cGreen : IM_COL32(120, 128, 140, 255), 16);
+                        dl->AddCircleFilled(pd, 5.0f, f->online ? cGreen : okaytheme::TextDimU32(), 16);
                     }
-                    if (fav) DrawStar(dl, ImVec2(ap.x + 3, ap.y + 3), 6.0f, IM_COL32(250, 200, 70, 255));
+                    if (fav) DrawStar(dl, ImVec2(ap.x + 3, ap.y + 3), 6.0f, okaytheme::WarningFillU32());
                     // Name, @username, status line.
                     const float tx = rp.x + 10 + A + 12, ty = rp.y + 12;
-                    const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : (joinable ? 3 : 2);
+                    const bool invitable = accepted && f->online && !joinable && MpCanInvite();   // you're in a joinable match: invite them
+                    const int nBtns = kind == 1 ? 2 : kind == 2 ? 1 : 2 + (joinable ? 1 : 0) + (invitable ? 1 : 0);
                     const float right = rp.x + w - 12 - nBtns * (d + 8);
                     std::string nm = FitText(dispName, right - tx - 10);
                     dl->AddText(ImVec2(tx, ty), cText, nm.c_str());
@@ -17261,11 +17909,11 @@ int main(int argc, char** argv) {
                     // Actions (right): round icon buttons.
                     float bx = rp.x + w - 12 - d;
                     const float by = rp.y + (rowH - d) * 0.5f;
-                    const ImU32 bg = IM_COL32(255, 255, 255, 16), bgh = IM_COL32(255, 255, 255, 34);
+                    const ImU32 bg = okaytheme::Ink(16), bgh = okaytheme::Ink(34);
                     auto at = [&](void) { ImGui::SetCursorScreenPos(ImVec2(bx, by)); bx -= d + 8; };
                     if (kind == 1) {
-                        at(); if (RoundIconButton("##decline", kRibClose, d, bg, IM_COL32(200, 70, 70, 255), cText, "Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
-                        at(); if (RoundIconButton("##accept", kRibCheck, d, IM_COL32(38, 120, 70, 255), IM_COL32(46, 150, 86, 255), IM_COL32_WHITE, "Accept")) {
+                        at(); if (RoundIconButton("##decline", kRibClose, d, bg, okaytheme::DangerFillU32(), cText, "Decline")) { fr.Remove(f->rowId); fNextRefresh = 0; }
+                        at(); if (RoundIconButton("##accept", kRibCheck, d, okaytheme::SuccessFillU32(), okaytheme::SuccessFillU32(), IM_COL32_WHITE, "Accept")) {
                             if (fr.Accept(f->rowId)) Toast("You're now friends with " + dispName, 1);
                             fNextRefresh = 0;
                         }
@@ -17275,8 +17923,14 @@ int main(int argc, char** argv) {
                         at(); if (RoundIconButton("##more", kRibMore, d, bg, bgh, cText, "More")) ImGui::OpenPopup("##frctx");
                         if (joinable) {
                             at();
-                            if (RoundIconButton("##join", kRibPlay, d, IM_COL32(38, 120, 70, 255), IM_COL32(46, 150, 86, 255), IM_COL32_WHITE, "Join their game"))
+                            if (RoundIconButton("##join", kRibPlay, d, okaytheme::SuccessFillU32(), okaytheme::SuccessFillU32(), IM_COL32_WHITE, "Join their game"))
                                 MpJoinFriend(f->sessionCode, dispName);
+                        }
+                        if (invitable) {
+                            at();
+                            if (RoundIconButton("##invite", kRibPlay, d, ImGui::GetColorU32(kAccent), ImGui::GetColorU32(kAccent), okaytheme::OnColorU32(),
+                                                ("Invite to " + MpGameTitle()).c_str()))
+                                MpInviteUser(f->id, dispName);
                         }
                         at(); if (RoundIconButton("##msg", kRibChat, d, bg, bgh, cText, "Message")) OpenChatWith(f->id, dispName, f->avatar);
                     }
@@ -17294,7 +17948,7 @@ int main(int argc, char** argv) {
                     ImGui::SetWindowFontScale(1.0f);
                     ImVec2 lp = ImGui::GetCursorScreenPos();
                     ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x + 10, lp.y + 2), ImVec2(lp.x + ImGui::GetContentRegionAvail().x - 10, lp.y + 2),
-                                                        IM_COL32(255, 255, 255, 14), 1.0f);
+                                                        okaytheme::Ink(14), 1.0f);
                     ImGui::Dummy(ImVec2(0, 6));
                 };
                 // Centered empty state with a big icon.
@@ -17302,7 +17956,7 @@ int main(int argc, char** argv) {
                 // Friend code card (side panel / add view).
                 auto codeCard = [&]() {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
                     ImGui::BeginChild("##frcode", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
                     ImGui::TextDisabled("YOUR FRIEND CODE");
                     ImGui::SetWindowFontScale(1.35f);
@@ -17310,8 +17964,9 @@ int main(int argc, char** argv) {
                     ImGui::TextUnformatted(fCode.empty() ? "\xE2\x80\xA6" : fCode.c_str());
                     ImGui::PopStyleColor();
                     ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
                     ImGui::BeginDisabled(fCode.empty());
-                    if (ImGui::Button("Copy code", ImVec2(-1, 0))) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
+                    if (ImGui::Button("Copy code", ImVec2(-1, ImGui::GetFrameHeight() + UiPx(6.0f)))) { ImGui::SetClipboardText(fCode.c_str()); Toast("Friend code copied", 1); }
                     ImGui::EndDisabled();
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextDisabled("Share it so friends can add you.");
@@ -17323,30 +17978,38 @@ int main(int argc, char** argv) {
                 // Recent activity card.
                 auto activityCard = [&]() {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
-                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(18.0f), UiPx(16.0f)));
                     ImGui::BeginChild("##fract", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-                    ImGui::TextDisabled("ACTIVITY");
-                    ImGui::Dummy(ImVec2(0, 2));
-                    if (fFeed.empty()) ImGui::TextDisabled("It's quiet\xE2\x80\xA6 nothing new from friends yet.");
+                    ImGui::TextDisabled("FRIENDS' ACTIVITY");
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    // Friends only (never your own events), repeats grouped: "maya played Neon Drift · 3 times this week".
+                    const std::string myName = kUiDemoUser ? std::string(kUiDemoUser) : account.CurrentSession().username;
+                    const long nowS = (long)std::time(nullptr);
+                    const std::vector<okay::FeedLine> lines = okay::GroupFeed(fFeed, kUiDemoUser ? std::string() : account.UserId(), myName, nowS);
+                    if (lines.empty()) ImGui::TextDisabled("It's quiet\xE2\x80\xA6 nothing new from friends yet.");
                     int n = 0;
-                    for (const auto& e : fFeed) {
+                    for (const okay::FeedLine& L : lines) {
                         if (n++ >= 8) break;
+                        const okay::FriendEvent& e = L.latest;
                         std::string av, who = e.actor;
-                        for (const auto& f : fCache) if (f.username == e.actor) { av = f.avatar; who = nameOf(&f); break; }
+                        for (const auto& f : fCache) if (f.username == e.actor || (!e.actorId.empty() && f.id == e.actorId)) { av = f.avatar; who = nameOf(&f); break; }
                         ImGui::PushID(n);
                         ImVec2 ip = ImGui::GetCursorScreenPos();
-                        DrawAvatar(av, who, 28.0f);
-                        ImGui::SetCursorScreenPos(ImVec2(ip.x + 38, ip.y - 1));
+                        DrawAvatar(av, who, UiPx(28.0f));
+                        ImGui::SetCursorScreenPos(ImVec2(ip.x + UiPx(40.0f), ip.y - 1));
                         ImGui::BeginGroup();
-                        const char* verb = e.kind == "playing" ? "is playing " : e.kind == "achievement" ? "unlocked "
+                        const bool live = e.kind == "playing" && L.count == 1 && nowS - e.when < 15 * 60;
+                        const char* verb = e.kind == "playing" ? (live ? "is playing " : "played ") : e.kind == "achievement" ? "unlocked "
                                          : e.kind == "publish" ? "published " : e.kind == "online" ? "came online" : "";
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
                         ImGui::TextWrapped("%s %s%s", who.c_str(), verb, e.detail.c_str());
                         ImGui::PopTextWrapPos();
-                        std::string ago = RelTime(e.when);
-                        if (!ago.empty()) ImGui::TextDisabled("%s", ago.c_str());
+                        std::string meta = RelTime(e.when);
+                        if (L.thisWeek > 1) meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::to_string(L.thisWeek) + " times this week";
+                        else if (L.count > 1) meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::to_string(L.count) + " times";
+                        if (!meta.empty()) ImGui::TextDisabled("%s", meta.c_str());
                         ImGui::EndGroup();
-                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
@@ -17356,10 +18019,10 @@ int main(int argc, char** argv) {
 
                 // ---- Body: list (left) + side panel (right on wide windows) ---------
                 const float availW = ImGui::GetContentRegionAvail().x;
-                const bool side = availW >= 760.0f;
-                const float sideW = side ? 280.0f : 0.0f;
+                const bool side = availW >= UiPx(760.0f);
+                const float sideW = side ? UiPx(300.0f) : 0.0f;
                 const float bodyH = ImGui::GetContentRegionAvail().y - PageFooterH();
-                ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - 18.0f : 0.0f, bodyH), false);
+                ImGui::BeginChild("##friendlist", ImVec2(side ? availW - sideW - UiPx(20.0f) : 0.0f, bodyH), false);
                 if (fView == 4 || fView == 5) {   // ---- Following / Followers ----
                     const bool ing = fView == 4;
                     if (!flSupported) emptyState(6, "Follows aren't switched on yet", "The server needs the follows update (docs/sql/follows.sql).");
@@ -17372,7 +18035,7 @@ int main(int argc, char** argv) {
                                                                       ImGuiInputTextFlags_EnterReturnsTrue);
                             ImGui::SameLine(0, 8);
                             ImGui::BeginDisabled(!flAddBuf[0] || g_flBusy);
-                            const bool go = PrimaryButton("Follow", ImVec2(110, ImGui::GetFrameHeight()));
+                            const bool go = PrimaryButton("Follow", ImVec2(okl::FitButtonW("Follow", okl::UiPx(110.0f)), ImGui::GetFrameHeight()));
                             ImGui::EndDisabled();
                             ImGui::PopStyleVar(2);
                             if ((go || sub) && flAddBuf[0]) {
@@ -17398,12 +18061,12 @@ int main(int argc, char** argv) {
                             ImGui::SetNextItemAllowOverlap();
                             if (ImGui::InvisibleButton("##flrow", ImVec2(w, rowH))) OpenPublicProfile(e.id, e.username, e.display, e.avatar);
                             const bool hov = ImGui::IsItemHovered();
-                            if (hov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), IM_COL32(255, 255, 255, 8), 10.0f);
+                            if (hov) dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + rowH), okaytheme::Ink(8), 10.0f);
                             ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (rowH - A) * 0.5f));
                             DrawAvatar(e.avatar, e.display, A);
                             const ImVec2 pd(rp.x + 10 + A * 0.85f, rp.y + (rowH + A) * 0.5f - A * 0.15f);
                             dl->AddCircleFilled(pd, 6.5f, ImGui::GetColorU32(okaytheme::kBase), 16);
-                            dl->AddCircleFilled(pd, 4.5f, e.online ? IM_COL32(76, 200, 110, 255) : IM_COL32(120, 128, 140, 255), 16);
+                            dl->AddCircleFilled(pd, 4.5f, e.online ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 16);
                             const float tx = rp.x + 10 + A + 12;
                             dl->AddText(ImVec2(tx, rp.y + 10), cText, e.display.c_str());
                             std::string sub = "@" + e.username + "  \xC2\xB7  " + (e.online ? std::string("Online")
@@ -17451,12 +18114,13 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 6));
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 156.0f);
+                    const float sendW = FitButtonW("Send request", UiPx(146.0f));
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - sendW - UiPx(10.0f));
                     bool submit = ImGui::InputTextWithHint("##addfriend", "Username or friend code", addBuf, sizeof(addBuf),
                                                            ImGuiInputTextFlags_EnterReturnsTrue);
-                    ImGui::SameLine(0, 10);
+                    ImGui::SameLine(0, UiPx(10.0f));
                     ImGui::BeginDisabled(!addBuf[0]);
-                    bool send = PrimaryButton("Send request", ImVec2(146, ImGui::GetFrameHeight()));
+                    bool send = PrimaryButton("Send request", ImVec2(sendW, ImGui::GetFrameHeight()));
                     ImGui::EndDisabled();
                     ImGui::PopStyleVar(2);
                     if ((send || submit) && addBuf[0]) {
@@ -17473,12 +18137,16 @@ int main(int argc, char** argv) {
                             fOk.clear();
                         }
                     }
-                    if (!fErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.50f, 1), "%s", fErr.c_str());
-                    if (!fOk.empty())  ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "%s", fOk.c_str());
+                    if (!fErr.empty()) ImGui::TextColored(okaytheme::Current().danger, "%s", fErr.c_str());
+                    if (!fOk.empty())  ImGui::TextColored(okaytheme::Current().success, "%s", fOk.c_str());
                     ImGui::EndChild();
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor();
                     if (!side) { ImGui::Dummy(ImVec2(0, 10)); codeCard(); }
+                    // People you played with recently (the Multiplayer page's list): open a profile to add them.
+                    ImGui::Dummy(ImVec2(0, UiPx(18.0f)));
+                    SectionLabel("PEOPLE YOU PLAYED WITH", -1);
+                    DrawRecentPlayersPanel(account.IsLoggedIn() || kUiDemoUser);
                 } else {
                     // Search pill.
                     static char friendFilter[64] = "";
@@ -17534,6 +18202,20 @@ int main(int argc, char** argv) {
                         for (auto* f : favs) if (f->online) on.push_back(f);
                         for (auto* f : online) on.push_back(f);
                         if (!on.empty()) { sectionLabel("ONLINE", (int)on.size()); for (auto* f : on) drawFriend(f, 0); shownN += (int)on.size(); }
+                        else if (acceptedN > 0 && ffilt.empty()) {
+                            // Nobody online but you have friends: say so in one line and list them by when they were last on,
+                            // instead of a page-sized empty state (owner screenshot, 2026-11-25).
+                            std::vector<const okay::Friend*> off;
+                            for (auto* f : favs) if (!f->online) off.push_back(f);
+                            for (auto* f : offline) off.push_back(f);
+                            std::stable_sort(off.begin(), off.end(), [](const okay::Friend* a, const okay::Friend* b) { return a->lastSeen > b->lastSeen; });
+                            ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                            ImGui::TextDisabled("No one's online right now. Your friends, by when they were last on:");
+                            ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                            sectionLabel("OFFLINE", (int)off.size());
+                            for (auto* f : off) drawFriend(f, 0);
+                            shownN += (int)off.size();
+                        }
                     } else if (fView == 1) {   // All
                         if (!favs.empty())    { sectionLabel("FAVORITES", (int)favs.size()); for (auto* f : favs) drawFriend(f, 0); }
                         if (!online.empty())  { sectionLabel("ONLINE", (int)online.size()); for (auto* f : online) drawFriend(f, 0); }
@@ -17563,10 +18245,10 @@ int main(int argc, char** argv) {
                 if (!side) { ImGui::Dummy(ImVec2(0, 12)); activityCard(); }
                 ImGui::EndChild();   // ##friendlist
                 if (side) {
-                    ImGui::SameLine(0, 18);
+                    ImGui::SameLine(0, UiPx(20.0f));
                     ImGui::BeginChild("##frside", ImVec2(0, bodyH), false);
                     codeCard();
-                    ImGui::Dummy(ImVec2(0, 10));
+                    ImGui::Dummy(ImVec2(0, UiPx(16.0f)));
                     activityCard();
                     ImGui::EndChild();
                 }
@@ -17577,7 +18259,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("Only you see this nickname.");
                     ImGui::SetNextItemWidth(260);
                     bool ok = ImGui::InputText("##nick", nickBuf, sizeof(nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
+                    if (ImGui::Button("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(110.0f)), 0)) || ok) {
                         if (!nickUid.empty()) {
                             if (nickBuf[0]) g_friendNicks[nickUid] = nickBuf; else g_friendNicks.erase(nickUid);
                             SavePrefs();
@@ -17585,7 +18267,7 @@ int main(int argc, char** argv) {
                         nickUid.clear(); ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(110.0f)), 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
                     ImGui::EndPopup();
                 }
             }
@@ -17657,29 +18339,7 @@ int main(int argc, char** argv) {
                 okay::thr::LockMutex(g_wsMutex);
                 if (g_wsReady) { if (!g_wsFailed) { wCache = g_wsList; wRatings = g_wsRatings; } wFailed = g_wsFailed; wLoaded = true; g_wsReady = false; }
                 if (kUiDemoUser && wCache.empty() && mktDemo != "loading" && mktDemo != "error" && mktDemo != "empty") {   // dev screenshot hook: sample listings of every type
-                    auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
-                        okay::WorkshopItem w; w.id = id; w.title = t; w.author = a; w.kind = k; w.description = d; w.downloads = dl; w.url = "https://example.com/x.zip";
-                        wCache.push_back(w); wRatings[id] = {rs, rc}; };
-                    it(1, "Neon Drift", "kingimann", "game", "Synthwave arcade racer with drift combos.", 4210, 46, 10);
-                    it(2, "Low-poly Space Props", "maya", "model", "120 ships, crates and stations. CC0.", 980, 28, 6);
-                    it(3, "Sci-fi Panels PBR", "priya", "texture", "Tileable 2K metal + emissive panels.", 640, 18, 4);
-                    it(4, "Pixel Dungeon Tileset", "jonas", "sprite", "16x16 tiles, 4 biomes, animated torches.", 1530, 44, 9);
-                    it(5, "Retro SFX Pack", "alexr", "audio", "200 chiptune blips, jumps and explosions.", 2210, 39, 8);
-                    it(6, "Inventory System", "priya", "script", "Drag & drop grid with stacking (OkayScript).", 870, 23, 5);
-                    it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
-                    it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 0, 0);
-                    if (mktDemo == "many")
-                        for (long i = 9; i <= 40; ++i) {
-                            static const char* kinds[] = {"game", "model", "texture", "sprite", "audio", "script", "template", "tool"};
-                            const std::string t = "Community pack " + std::to_string(i);
-                            it(i, t.c_str(), i % 3 ? "maya" : "jonas", kinds[i % 8], "A sample listing so the page scrolls.", i * 37, (i % 5) * 9, i % 5 ? 2 : 0);
-                        }
-                    if (mktDemo == "long") {
-                        it(41, "The Extraordinarily Long Title Of A Community Space Exploration And Trading Game", "averyveryverylongusername_2026", "game",
-                           "A description that runs on and on: procedural galaxies, trading, ship building, co-op missions, a full soundtrack, "
-                           "mod support and a level editor, all in one download that is far too long to fit on a card.", 123456, 400, 90);
-                        it(42, "Supercalifragilisticexpialidocious-Texture-Pack-With-No-Spaces", "x", "texture", "", 1, 5, 1);
-                    }
+                    MarketDemoListings(mktDemo, wCache, wRatings);
                     wLoaded = true;
                 }
                 if (kUiDemoUser && mktDemo == "error") { wLoaded = true; wFailed = true; }
@@ -17694,6 +18354,8 @@ int main(int argc, char** argv) {
             // LayoutMarketTile, LayoutMarketDetail; tests/test_launcher_page_layout.cpp). Browsing needs no account; Get and Sell do.
             namespace PL = okay::launcherlayout;
             static PL::MarketQuery mq;
+            static bool mqFromShowcase = false;   // the item page was opened from the Community showcase: Back goes back there
+            if (g_mktOpenItem) { mq.Open(g_mktOpenItem); g_mktOpenItem = 0; mqFromShowcase = true; }
             char* const wSearch = marketFilter;   // the main loop's buffer: a profile's "see their listings" and Esc reach it
             static int  wSort = 0;         // 0 Newest, 1 Popular (downloads), 2 Top rated
             static bool wFiltersOpen = false;
@@ -17704,7 +18366,13 @@ int main(int argc, char** argv) {
                 tab = 3; g_lastTab = 3; SavePrefs();
             };
             const float mktBtnH = ImGui::GetFrameHeight() + UiPx(8.0f);
-            const PL::MarketPage mp = PL::LayoutMarketPage(ImGui::GetContentRegionAvail().x, UiPx(236.0f), UiPx(24.0f), UiPx(176.0f), UiPx(16.0f), UiPx(760.0f));
+            const PL::MarketPage mp = PL::LayoutMarketPage(ImGui::GetContentRegionAvail().x, UiPx(236.0f), UiPx(24.0f), UiPx(176.0f), UiPx(16.0f), UiPx(760.0f),
+                                                           g_mktRailFolded, UiPx(60.0f));
+            const bool mktStaff = g_myRank >= 1;
+            if (TakePanelShortcut() && mq.detail == 0 && !wShowPublish) {   // Ctrl+B: fold the filter rail (narrow pages: open it over the grid)
+                if (mp.railShown || mp.iconRail) { g_mktRailFolded = !g_mktRailFolded; SavePrefs(); }
+                else wFiltersOpen = !wFiltersOpen;
+            }
             {
                 const ImVec2 o = ImGui::GetCursorScreenPos();
                 const float W = ImGui::GetContentRegionAvail().x, gap = UiPx(10.0f);
@@ -17712,7 +18380,7 @@ int main(int argc, char** argv) {
                     int myN = 0; for (const auto& w : wCache) if (!meName.empty() && w.author == meName) ++myN;
                     std::vector<Chip> views(3);
                     views[0].label = "Browse"; views[1].label = "Your listings"; views[1].count = myN; views[2].label = "Saved"; views[2].count = (int)g_wishlist.size();
-                    const float rightW = (mp.railShown ? 0.0f : FitButtonW("Filters") + gap) + FitButtonW("Refresh") + gap + FitButtonW("Sell an item");
+                    const float rightW = (mp.railShown || mp.iconRail ? 0.0f : FitButtonW("Filters") + gap) + FitButtonW("Refresh") + gap + FitButtonW("Sell an item");
                     const int hit = ChipRow("##mktviews", views, mq.view, std::max(UiPx(200.0f), W - rightW - gap));
                     if (hit >= 0) { mq.view = hit; if (hit == 1 && !signedIn) needSignIn("see your listings"); }
                 }
@@ -17729,7 +18397,7 @@ int main(int argc, char** argv) {
                     if (rightBtn("Sell an item", true)) { if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace"); }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Publish a game, model, texture, sound or script");
                     if (rightBtn("Refresh", false)) wNextRefresh = 0;
-                    if (!mp.railShown && mq.detail == 0 && rightBtn(wFiltersOpen ? "Hide filters" : "Filters", false)) wFiltersOpen = !wFiltersOpen;
+                    if (!mp.railShown && !mp.iconRail && mq.detail == 0 && rightBtn(wFiltersOpen ? "Hide filters" : "Filters", false)) wFiltersOpen = !wFiltersOpen;
                 }
                 ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + mktBtnH + UiPx(14.0f)));
                 ImGui::Dummy(ImVec2(0, 0));
@@ -17767,7 +18435,7 @@ int main(int argc, char** argv) {
                             if (ImGui::InvisibleButton("##kind", ImVec2(cw, chh))) wKind = i;
                             const bool h = ImGui::IsItemHovered(), on = wKind == i;
                             ImGui::PopID();
-                            d->AddRectFilled(p, ImVec2(p.x + cw, p.y + chh), on ? ImGui::GetColorU32(ImVec4(k.color.x, k.color.y, k.color.z, 0.20f)) : IM_COL32(255, 255, 255, h ? 14 : 7), 10.0f);
+                            d->AddRectFilled(p, ImVec2(p.x + cw, p.y + chh), on ? ImGui::GetColorU32(ImVec4(k.color.x, k.color.y, k.color.z, 0.20f)) : okaytheme::Ink(h ? 14 : 7), 10.0f);
                             if (on) d->AddRect(p, ImVec2(p.x + cw, p.y + chh), ImGui::GetColorU32(k.color), 10.0f, 0, 1.6f);
                             d->AddCircleFilled(ImVec2(p.x + 18, p.y + 18), 6.0f, ImGui::GetColorU32(k.color), 14);
                             d->AddText(ImVec2(p.x + 32, p.y + 9), ImGui::GetColorU32(ImGuiCol_Text), k.label);
@@ -17818,8 +18486,8 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(100, 34))) wShowPublish = false;
-                    if (!wErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f,0.45f,0.45f,1));
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(34.0f)))) wShowPublish = false;
+                    if (!wErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                          ImGui::TextWrapped("%s", wErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::EndChild();
                 }
@@ -17859,35 +18527,42 @@ int main(int argc, char** argv) {
                     const std::string ini(1, (char)std::toupper((unsigned char)(w.title.empty() ? '?' : w.title[0])));
                     ImGui::SetWindowFontScale(letterScale);
                     const ImVec2 ls = ImGui::CalcTextSize(ini.c_str());
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2((a.x + b.x - ls.x) * 0.5f, (a.y + b.y - ls.y) * 0.5f), IM_COL32(255, 255, 255, 220), ini.c_str());
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2((a.x + b.x - ls.x) * 0.5f, (a.y + b.y - ls.y) * 0.5f), okaytheme::OnColorU32(0.863f), ini.c_str());
                     ImGui::SetWindowFontScale(1.0f);
                     const char* kl = kMktKinds[MktKindIndex(w.kind)].label;
                     const ImVec2 ks = ImGui::CalcTextSize(kl);
                     const ImVec2 kp(a.x + UiPx(10.0f), b.y - UiPx(10.0f) - ks.y - UiPx(4.0f));
-                    dl->AddRectFilled(kp, ImVec2(kp.x + ks.x + UiPx(14.0f), kp.y + ks.y + UiPx(4.0f)), IM_COL32(0, 0, 0, 110), (ks.y + UiPx(4.0f)) * 0.5f);
-                    dl->AddText(ImVec2(kp.x + UiPx(7.0f), kp.y + UiPx(2.0f)), IM_COL32(255, 255, 255, 230), kl);
+                    dl->AddRectFilled(kp, ImVec2(kp.x + ks.x + UiPx(14.0f), kp.y + ks.y + UiPx(4.0f)), okaytheme::Shade(110), (ks.y + UiPx(4.0f)) * 0.5f);
+                    dl->AddText(ImVec2(kp.x + UiPx(7.0f), kp.y + UiPx(2.0f)), okaytheme::OnColorU32(0.902f), kl);
                 };
                 auto heartBtn = [&](const char* id, const okay::WorkshopItem& w, ImVec2 p, float d) {
                     const bool wished = IsWishlisted(w.id);
                     ImGui::SetCursorScreenPos(p);
-                    if (RoundIconButton(id, wished ? kRibStarOn : kRibStar, d, IM_COL32(15, 17, 22, 170), IM_COL32(15, 17, 22, 230), IM_COL32_WHITE,
+                    if (RoundIconButton(id, wished ? kRibStarOn : kRibStar, d, okaytheme::U32(okaytheme::kDeep, 0.667f), okaytheme::U32(okaytheme::kDeep, 0.902f), IM_COL32_WHITE,
                                         wished ? "Saved (click to remove)" : "Save for later")) { ToggleWishlist(w.id); SavePrefs(); }
                 };
 
                 // ---- The filter rail: search, categories, rating, sort, price (beside the grid, or in a popup on narrow pages) ----
                 auto drawRail = [&](float rw) {
                     if (focusSearch) { ImGui::SetKeyboardFocusHere(); focusSearch = false; }
-                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), rw, 0, mktBtnH);
+                    const bool besidePill = mp.railShown;   // the fold button (beside the grid only; the popup closes on a click outside)
+                    const float fd = UiPx(28.0f);
+                    SearchPill("##mktsearch", "Search the marketplace", wSearch, sizeof(marketFilter), besidePill ? rw - fd - UiPx(8.0f) : rw, 0, mktBtnH);
+                    if (besidePill) {
+                        ImGui::SameLine(0, UiPx(8.0f));
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (mktBtnH - fd) * 0.5f);
+                        if (PanelToggle("##mktfold", true, "the filters", fd, okaytheme::Ink(18), cDim, cText)) { g_mktRailFolded = true; SavePrefs(); }
+                    }
                     ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
-                    std::vector<int> counts((std::size_t)kMktKindN, 0);
-                    for (const auto& w : wCache) counts[(std::size_t)MktKindIndex(w.kind)]++;
+                    std::vector<int> counts;
+                    const int allN = MktVisibleCounts(wCache, meName, mktStaff, counts);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const float rowH = lh + UiPx(14.0f);
                     auto railRow = [&](const char* id, const char* label, int count, ImU32 dot, bool on) {
                         const ImVec2 p = ImGui::GetCursorScreenPos();
                         const bool click = ImGui::InvisibleButton(id, ImVec2(rw, rowH));
                         const bool hov = ImGui::IsItemHovered();
-                        if (on || hov) dl->AddRectFilled(p, ImVec2(p.x + rw, p.y + rowH), on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)) : IM_COL32(255, 255, 255, 12), UiPx(8.0f));
+                        if (on || hov) dl->AddRectFilled(p, ImVec2(p.x + rw, p.y + rowH), on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.22f)) : okaytheme::Ink(12), UiPx(8.0f));
                         float tx = p.x + UiPx(12.0f);
                         if (dot) { dl->AddCircleFilled(ImVec2(tx + UiPx(4.0f), p.y + rowH * 0.5f), UiPx(5.0f), dot, 14); tx += UiPx(18.0f); }
                         dl->AddText(ImVec2(tx, p.y + (rowH - lh) * 0.5f), on || hov ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.82f), label);
@@ -17901,7 +18576,7 @@ int main(int argc, char** argv) {
                     };
                     SectionLabel("CATEGORIES", -1);
                     ImGui::Dummy(ImVec2(0, UiPx(2.0f)));
-                    if (railRow("##cat_all", "Browse all", (int)wCache.size(), 0, mq.kind < 0)) mq.kind = -1;
+                    if (railRow("##cat_all", "Browse all", allN, 0, mq.kind < 0)) mq.kind = -1;
                     for (int k = 0; k < kMktKindN; ++k) {
                         char id[24]; std::snprintf(id, sizeof(id), "##cat%d", k);
                         if (railRow(id, kMktKinds[k].plural, counts[(std::size_t)k], ImGui::GetColorU32(kMktKinds[k].color), mq.kind == k)) mq.kind = mq.kind == k ? -1 : k;
@@ -17930,6 +18605,7 @@ int main(int argc, char** argv) {
                 std::vector<const okay::WorkshopItem*> order;
                 for (const auto& w : wCache) {
                     const bool mine = !meName.empty() && w.author == meName;
+                    if (!PL::MarketListingVisible(w.status, mine, mktStaff)) continue;   // in review / not approved: the seller and staff only
                     if (PL::MarketMatches(mq, MktKindIndex(w.kind), avgOf(w.id), IsWishlisted(w.id), mine, mlo(w.title + " " + w.description + " " + w.author)))
                         order.push_back(&w);
                 }
@@ -17946,6 +18622,91 @@ int main(int argc, char** argv) {
                     drawRail(ImGui::GetContentRegionAvail().x - UiPx(4.0f));
                     ImGui::EndChild();
                     ImGui::SetCursorScreenPos(ImVec2(bodyO.x + mp.grid.x, bodyO.y));
+                } else if (mp.iconRail && !detailItem) {   // folded: an icon rail (the same rail icons as Forums and Servers)
+                    static int mktPop = -1;   // 0 search, 1 rating, 2 sort: the popover open beside the rail
+                    const std::vector<PL::MarketRail> ent = PL::MarketRailEntries(kMktKindN);
+                    std::vector<bool> div;
+                    for (auto e : ent) div.push_back(e == PL::MarketRail::Divider);
+                    const float railW = mp.rail.w, S = UiPx(38.0f);
+                    std::vector<int> counts;
+                    const int allN = MktVisibleCounts(wCache, meName, mktStaff, counts);
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::BeginChild("##mktrailicons", ImVec2(railW, bodyH), false);
+                    const ImVec2 r0 = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(r0.x + (railW - UiPx(28.0f)) * 0.5f, r0.y + UiPx(8.0f)));
+                    if (PanelToggle("##mktunfold", false, "the filters", UiPx(28.0f), okaytheme::Ink(18), cDim, cText)) { g_mktRailFolded = false; SavePrefs(); }
+                    const std::vector<PL::Rect> rs = PL::LayoutIconRail(div, railW, UiPx(46.0f), S, UiPx(6.0f), UiPx(6.0f));
+                    int cat = 0;
+                    ImVec2 popAt;
+                    for (std::size_t i = 0; i < ent.size(); ++i) {
+                        const ImVec2 at(r0.x + rs[i].x, r0.y + rs[i].y);
+                        if (ent[i] == PL::MarketRail::Divider) { DrawRailDivider(at, ImVec2(at.x + rs[i].w, at.y + rs[i].h)); continue; }
+                        RailIcon it;
+                        ImGui::PushID((int)i);
+                        bool hit = false;
+                        switch (ent[i]) {
+                        case PL::MarketRail::Search:
+                            it.navIcon = kIcoSearch; it.tip = wSearch[0] ? std::string("Search: ") + wSearch : std::string("Search the marketplace");
+                            it.selected = wSearch[0] != 0; hit = DrawRailIcon("##rs", it, at, S, r0.x);
+                            if (hit) { mktPop = 0; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        case PL::MarketRail::All: {
+                            char t[48]; std::snprintf(t, sizeof(t), "Browse all  (%d)", allN);
+                            it.navIcon = 7; it.tip = t; it.selected = mq.kind < 0; it.count = allN;
+                            if (DrawRailIcon("##ra", it, at, S, r0.x)) mq.kind = -1;
+                            break;
+                        }
+                        case PL::MarketRail::Category: {
+                            const int k = cat++;
+                            char t[64]; std::snprintf(t, sizeof(t), "%s  (%d)", kMktKinds[k].plural, counts[(std::size_t)k]);
+                            it.tip = t; it.initials = std::string(1, kMktKinds[k].plural[0] == '2' ? '2' : kMktKinds[k].plural[0]);
+                            if (std::strcmp(kMktKinds[k].key, "sprite") == 0) it.initials = "2D";
+                            if (std::strcmp(kMktKinds[k].key, "model") == 0) it.initials = "3D";
+                            const ImVec4 kc = kMktKinds[k].color;
+                            it.fill = ImGui::GetColorU32(ImVec4(kc.x * 0.7f, kc.y * 0.7f, kc.z * 0.7f, 1.0f));
+                            it.selected = mq.kind == k; it.count = counts[(std::size_t)k];
+                            if (DrawRailIcon("##rc", it, at, S, r0.x)) mq.kind = mq.kind == k ? -1 : k;
+                            break;
+                        }
+                        case PL::MarketRail::Rating:
+                            it.navIcon = kIcoStar; it.selected = mq.minRating > 0.0f;
+                            it.tip = mq.minRating >= 4.0f ? "Rating: 4 stars and up" : mq.minRating >= 3.0f ? "Rating: 3 stars and up" : "Rating: any";
+                            if (DrawRailIcon("##rr", it, at, S, r0.x)) { mktPop = 1; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        case PL::MarketRail::Sort:
+                            it.navIcon = kIcoSort; it.tip = wSort == 1 ? "Sort: Popular" : wSort == 2 ? "Sort: Top rated" : "Sort: Newest";
+                            if (DrawRailIcon("##ro", it, at, S, r0.x)) { mktPop = 2; popAt = ImVec2(at.x + S + UiPx(12.0f), at.y); }
+                            break;
+                        default: break;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    if (mktPop >= 0) { ImGui::SetNextWindowPos(popAt); ImGui::OpenPopup("##mktrailpop"); }
+                    ImGui::SetNextWindowSize(ImVec2(UiPx(280.0f), 0));
+                    if (ImGui::BeginPopup("##mktrailpop")) {
+                        static int shown = 0;
+                        if (mktPop >= 0) { shown = mktPop; mktPop = -1; if (shown == 0) ImGui::SetKeyboardFocusHere(); }
+                        if (shown == 0) {
+                            if (SearchPill("##mktsearchpop", "Search the marketplace", wSearch, sizeof(marketFilter), -1, ImGuiInputTextFlags_EnterReturnsTrue, mktBtnH))
+                                if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) ImGui::CloseCurrentPopup();
+                        } else if (shown == 1) {
+                            SectionLabel("RATING", -1);
+                            if (ImGui::Selectable("Any rating", mq.minRating <= 0.0f)) mq.minRating = 0.0f;
+                            if (ImGui::Selectable("4 stars and up", mq.minRating >= 4.0f)) mq.minRating = 4.0f;
+                            if (ImGui::Selectable("3 stars and up", mq.minRating >= 3.0f && mq.minRating < 4.0f)) mq.minRating = 3.0f;
+                        } else {
+                            SectionLabel("SORT BY", -1);
+                            if (ImGui::Selectable("Newest", wSort == 0)) wSort = 0;
+                            if (ImGui::Selectable("Popular", wSort == 1)) wSort = 1;
+                            if (ImGui::Selectable("Top rated", wSort == 2)) wSort = 2;
+                        }
+                        ImGui::EndPopup();
+                    }
+                    ImGui::SetCursorScreenPos(ImVec2(bodyO.x + mp.grid.x, bodyO.y));
                 } else if (wFiltersOpen && !detailItem) {   // narrow page: the rail opens over the grid (a popup: opaque, on top, closes on a click outside)
                     ImGui::SetNextWindowPos(ImVec2(bodyO.x, bodyO.y));
                     ImGui::SetNextWindowSize(ImVec2(std::min(UiPx(280.0f), mp.grid.w), 0));
@@ -17954,9 +18715,9 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopup("##mktfilters")) { drawRail(ImGui::GetContentRegionAvail().x); ImGui::EndPopup(); }
                 else wFiltersOpen = false;
 
-                ImGui::BeginChild("##market", ImVec2(detailItem ? 0.0f : (mp.railShown ? mp.grid.w : 0.0f), bodyH), false);
+                ImGui::BeginChild("##market", ImVec2(detailItem ? 0.0f : (mp.railShown || mp.iconRail ? mp.grid.w : 0.0f), bodyH), false);
                 const float GW = ImGui::GetContentRegionAvail().x;
-                const PL::Grid grid = PL::FitGrid(GW, UiPx(176.0f), UiPx(16.0f), 6);
+                const PL::Grid grid = PL::FitGrid(GW, PL::MarketTileMinW((int)order.size(), UiPx(176.0f)), UiPx(16.0f), 6);
                 ImGui::SetWindowFontScale(1.2f);
                 const float priceH = ImGui::GetTextLineHeight();
                 ImGui::SetWindowFontScale(1.0f);
@@ -17974,11 +18735,11 @@ int main(int argc, char** argv) {
                     const bool hov = ImGui::IsMouseHoveringRect(cp, ImVec2(cp.x + tw, cp.y + tileH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
                     const float lift = hov ? UiPx(2.0f) : 0.0f;   // the tile rises a little under the mouse
                     const ImVec2 a(cp.x, cp.y - lift), b(cp.x + tw, cp.y + tileH - lift);
-                    if (hov) dl->AddRectFilled(ImVec2(a.x + 2, a.y + 6), ImVec2(b.x - 2, b.y + 6), IM_COL32(0, 0, 0, 70), UiPx(14.0f));
+                    if (hov) dl->AddRectFilled(ImVec2(a.x + 2, a.y + 6), ImVec2(b.x - 2, b.y + 6), okaytheme::Shade(70), UiPx(14.0f));
                     CardBackground(dl, a, b, hov);
                     drawPicture(dl, a, ImVec2(b.x, a.y + T.picture.h), w, UiPx(12.0f), std::max(1.6f, tw / UiPx(90.0f)));
                     dl->AddRectFilled(ImVec2(a.x, a.y + T.picture.h - UiPx(12.0f)), ImVec2(b.x, a.y + T.picture.h), ImGui::GetColorU32(okaytheme::kRaised));   // square bottom edge
-                    if (hov) dl->AddRectFilled(ImVec2(a.x, a.y + T.picture.h - UiPx(12.0f)), ImVec2(b.x, a.y + T.picture.h), IM_COL32(255, 255, 255, 7));
+                    if (hov) dl->AddRectFilled(ImVec2(a.x, a.y + T.picture.h - UiPx(12.0f)), ImVec2(b.x, a.y + T.picture.h), okaytheme::Ink(7));
                     ImGui::SetWindowFontScale(1.2f);
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + T.price.x, a.y + T.price.y), cText, "Free");
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + T.price.x + 0.7f, a.y + T.price.y), cText, "Free");
@@ -17990,19 +18751,20 @@ int main(int argc, char** argv) {
                     if (rateCount(w.id) > 0) {   // the rating on the price's line, right-aligned
                         char rs[24]; std::snprintf(rs, sizeof(rs), "%.1f stars", avgOf(w.id));
                         const ImVec2 rsz = ImGui::CalcTextSize(rs);
-                        dl->AddText(ImVec2(a.x + T.price.R() - rsz.x, a.y + T.price.y + (priceH - lh) * 0.5f), IM_COL32(240, 196, 92, 255), rs);
+                        dl->AddText(ImVec2(a.x + T.price.R() - rsz.x, a.y + T.price.y + (priceH - lh) * 0.5f), okaytheme::WarningU32(), rs);
                     }
                     char rt[48];
                     std::snprintf(rt, sizeof(rt), "%s download%s", PL::ShortCount(w.downloads).c_str(), w.downloads == 1 ? "" : "s");
                     const std::string seller = w.author.empty() ? std::string("unknown") : w.author;
                     const float rtW = ImGui::CalcTextSize(rt).x;
-                    dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(seller, std::max(UiPx(30.0f), T.meta.w - rtW - UiPx(10.0f))).c_str());
-                    dl->AddText(ImVec2(a.x + T.meta.R() - rtW, a.y + T.meta.y), cDim, rt);
-                    if (!meName.empty() && w.author == meName && w.status != "approved" && !w.status.empty()) {   // my listing's review state
+                    const PL::TileMeta tm = PL::FitTileMeta(ImGui::CalcTextSize(seller.c_str()).x, rtW, T.meta.w, UiPx(10.0f));   // the seller first
+                    dl->AddText(ImVec2(a.x + T.meta.x, a.y + T.meta.y), cDim, FitText(seller, tm.sellerW).c_str());
+                    if (tm.showDownloads) dl->AddText(ImVec2(a.x + T.meta.R() - rtW, a.y + T.meta.y), cDim, rt);
+                    if (((!meName.empty() && w.author == meName) || mktStaff) && w.status != "approved" && !w.status.empty()) {   // the review state (seller, staff)
                         const char* st = w.status == "pending" ? "In review" : "Not approved";
                         const ImVec2 ss = ImGui::CalcTextSize(st);
                         const ImVec2 sp(a.x + UiPx(10.0f), a.y + UiPx(10.0f));
-                        dl->AddRectFilled(sp, ImVec2(sp.x + ss.x + UiPx(14.0f), sp.y + ss.y + UiPx(4.0f)), w.status == "pending" ? IM_COL32(150, 110, 30, 230) : IM_COL32(150, 50, 50, 230), (ss.y + UiPx(4.0f)) * 0.5f);
+                        dl->AddRectFilled(sp, ImVec2(sp.x + ss.x + UiPx(14.0f), sp.y + ss.y + UiPx(4.0f)), w.status == "pending" ? okaytheme::WarningFillU32(0.902f) : okaytheme::DangerFillU32(0.902f), (ss.y + UiPx(4.0f)) * 0.5f);
                         dl->AddText(ImVec2(sp.x + UiPx(7.0f), sp.y + UiPx(2.0f)), IM_COL32_WHITE, st);
                     }
                     heartBtn("##heart", w, ImVec2(a.x + T.heart.x, a.y + T.heart.y), heartD);
@@ -18014,9 +18776,12 @@ int main(int argc, char** argv) {
                 if (detailItem) {   // ---- The item page ----
                     const okay::WorkshopItem& w = *detailItem;
                     if (dvReviewsFor != w.id) { dvReviewsFor = w.id; dvReviews = ws.Reviews(w.id); }
-                    if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) mq.Back();
+                    if (ImGui::Button("\xE2\x80\xB9  Back", ImVec2(FitButtonW("\xE2\x80\xB9  Back"), mktBtnH)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        mq.Back();
+                        if (mqFromShowcase) { mqFromShowcase = false; tab = 2; }
+                    }
                     ImGui::Dummy(ImVec2(0, UiPx(10.0f)));
-                    const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f));
+                    const PL::MarketDetail D = PL::LayoutMarketDetail(GW, UiPx(28.0f), UiPx(320.0f), UiPx(200.0f));
                     const ImVec2 o = ImGui::GetCursorScreenPos();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     drawPicture(dl, ImVec2(o.x + D.picture.x, o.y + D.picture.y), ImVec2(o.x + D.picture.R(), o.y + D.picture.B()), w, UiPx(14.0f), 4.0f);
@@ -18027,7 +18792,7 @@ int main(int argc, char** argv) {
                     ImGui::SetWindowFontScale(1.45f);
                     ImGui::TextWrapped("%s", w.title.empty() ? "Untitled" : w.title.c_str());
                     ImGui::SetWindowFontScale(1.3f);
-                    ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.62f, 1.0f), "Free");
+                    ImGui::TextColored(okaytheme::Current().success, "Free");
                     ImGui::SetWindowFontScale(1.0f);
                     {   // category chip, rating, downloads
                         const MktKind& mk = kMktKinds[MktKindIndex(w.kind)];
@@ -18036,7 +18801,7 @@ int main(int argc, char** argv) {
                         dl->AddRectFilled(p, ImVec2(p.x + ks.x + UiPx(16.0f), p.y + lh + UiPx(6.0f)), ImGui::GetColorU32(ImVec4(mk.color.x, mk.color.y, mk.color.z, 0.28f)), (lh + UiPx(6.0f)) * 0.5f);
                         dl->AddText(ImVec2(p.x + UiPx(8.0f), p.y + UiPx(3.0f)), cText, mk.label);
                         const float sx = p.x + ks.x + UiPx(28.0f);
-                        const float s5 = DrawStars(dl, ImVec2(sx, p.y + (lh + UiPx(6.0f) - UiPx(12.0f)) * 0.5f), UiPx(12.0f), avgOf(w.id), IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
+                        const float s5 = DrawStars(dl, ImVec2(sx, p.y + (lh + UiPx(6.0f) - UiPx(12.0f)) * 0.5f), UiPx(12.0f), avgOf(w.id), okaytheme::WarningFillU32(), okaytheme::Ink(46));
                         char rt[64];
                         if (rateCount(w.id) > 0) std::snprintf(rt, sizeof(rt), "%.1f (%ld)  \xC2\xB7  %s downloads", avgOf(w.id), rateCount(w.id), PL::ShortCount(w.downloads).c_str());
                         else std::snprintf(rt, sizeof(rt), "No ratings yet  \xC2\xB7  %s downloads", PL::ShortCount(w.downloads).c_str());
@@ -18067,8 +18832,8 @@ int main(int argc, char** argv) {
                             if (signedIn) OpenReport(okayrep::Target::MarketItem, std::to_string(w.id), w.title); else needSignIn("report a listing");
                         }
                     }
-                    if (mine && w.status == "pending") ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "In review: only you can see it until a moderator approves it.");
-                    if (mine && w.status == "rejected") ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "Not approved%s%s", w.reviewNote.empty() ? "" : ": ", w.reviewNote.c_str());
+                    if (mine && w.status == "pending") ImGui::TextColored(okaytheme::Current().warning, "In review: only you can see it until a moderator approves it.");
+                    if (mine && w.status == "rejected") ImGui::TextColored(okaytheme::Current().danger, "Not approved%s%s", w.reviewNote.empty() ? "" : ": ", w.reviewNote.c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::EndGroup();
                     const float infoBottom = ImGui::GetItemRectMax().y;
@@ -18138,7 +18903,7 @@ int main(int argc, char** argv) {
                         for (std::size_t i = 0; i < dvReviews.size() && i < 20; ++i) {
                             const auto& rev = dvReviews[i];
                             const ImVec2 rp = ImGui::GetCursorScreenPos();
-                            DrawStars(ImGui::GetWindowDrawList(), ImVec2(rp.x, rp.y + UiPx(3.0f)), UiPx(10.0f), (float)rev.rating, IM_COL32(240, 196, 92, 255), IM_COL32(255, 255, 255, 46));
+                            DrawStars(ImGui::GetWindowDrawList(), ImVec2(rp.x, rp.y + UiPx(3.0f)), UiPx(10.0f), (float)rev.rating, okaytheme::WarningFillU32(), okaytheme::Ink(46));
                             ImGui::Dummy(ImVec2(UiPx(70.0f), lh)); ImGui::SameLine();
                             ImGui::Text("%s%s", rev.reviewer.empty() ? "someone" : rev.reviewer.c_str(), rev.mine ? "  (you)" : "");
                             if (!rev.body.empty()) ImGui::TextWrapped("%s", rev.body.c_str());
@@ -18147,18 +18912,8 @@ int main(int argc, char** argv) {
                     }
                     endBlock();
                 } else if (!wLoaded) {   // ---- Loading: placeholder tiles ----
-                    const ImVec2 g0 = ImGui::GetCursorScreenPos();
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    for (int i = 0; i < grid.cols * 2; ++i) {
-                        const PL::Rect c = PL::GridCell(grid, i, tileH);
-                        const ImVec2 a(g0.x + c.x, g0.y + c.y);
-                        dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), UiPx(12.0f));
-                        SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + tl.picture.h), UiPx(12.0f));
-                        SkeletonBlock(dl, ImVec2(a.x + tl.price.x, a.y + tl.price.y), ImVec2(a.x + tl.price.x + c.w * 0.3f, a.y + tl.price.B()), 4.0f);
-                        SkeletonBlock(dl, ImVec2(a.x + tl.title.x, a.y + tl.title.y + 2), ImVec2(a.x + tl.title.x + c.w * 0.75f, a.y + tl.title.y + lh), 4.0f);
-                        SkeletonBlock(dl, ImVec2(a.x + tl.meta.x, a.y + tl.meta.y + 2), ImVec2(a.x + tl.meta.x + c.w * 0.5f, a.y + tl.meta.B() - 2), 4.0f);
-                    }
-                    ImGui::Dummy(ImVec2(GW, PL::GridHeight(grid, grid.cols * 2, tileH)));
+                    SkeletonGrid(grid, tileH, tl.picture.h, UiPx(12.0f),
+                                 {{tl.price.x, tl.price.y, 0.3f, tl.price.h}, {tl.title.x, tl.title.y + 2, 0.75f, lh - 2}, {tl.meta.x, tl.meta.y + 2, 0.5f, tl.meta.h - 4}});
                 } else if (wFailed && wCache.empty()) {   // ---- Offline / server error ----
                     EmptyState(kIcoAlert, "Couldn't reach the marketplace", "Check your internet connection, then try again. Your downloads and saved items are safe.", UiPx(30.0f));
                     const float bw = FitButtonW("Try again", UiPx(140.0f));
@@ -18169,8 +18924,8 @@ int main(int argc, char** argv) {
                     if (wFailed) {   // a refresh failed but the last list is still here: a gentle banner
                         const ImVec2 bp = ImGui::GetCursorScreenPos();
                         const float bh = mktBtnH + UiPx(12.0f);
-                        ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x + GW, bp.y + bh), IM_COL32(120, 90, 30, 70), UiPx(10.0f));
-                        ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x + UiPx(14.0f), bp.y + (bh - lh) * 0.5f), IM_COL32(242, 200, 110, 255),
+                        ImGui::GetWindowDrawList()->AddRectFilled(bp, ImVec2(bp.x + GW, bp.y + bh), okaytheme::WarningFillU32(0.275f), UiPx(10.0f));
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(bp.x + UiPx(14.0f), bp.y + (bh - lh) * 0.5f), okaytheme::WarningU32(),
                                                             FitText("Couldn't refresh the marketplace. Showing the last list.", GW - UiPx(150.0f)).c_str());
                         ImGui::SetCursorScreenPos(ImVec2(bp.x + GW - FitButtonW("Try again") - UiPx(8.0f), bp.y + UiPx(6.0f)));
                         if (ImGui::Button("Try again", ImVec2(FitButtonW("Try again"), mktBtnH))) wNextRefresh = 0;
@@ -18180,7 +18935,8 @@ int main(int argc, char** argv) {
                     // Today's picks: the top-rated listings, on the plain Browse view only.
                     if (mq.view == 0 && mq.kind < 0 && mq.needle.empty() && mq.minRating <= 0.0f && wSort == 0) {
                         std::vector<const okay::WorkshopItem*> top;
-                        for (const auto& w : wCache) if (avgOf(w.id) > 0.0f) top.push_back(&w);
+                        for (const auto& w : wCache) if (avgOf(w.id) > 0.0f && PL::MarketFeaturable(w.status)) top.push_back(&w);   // approved only
+                        if (!PL::ShowTodaysPicks((int)top.size(), (int)order.size(), grid.cols)) top.clear();   // too few: it would only repeat the grid
                         std::stable_sort(top.begin(), top.end(), [&](const okay::WorkshopItem* a, const okay::WorkshopItem* b) { return avgOf(a->id) > avgOf(b->id); });
                         if ((int)top.size() > grid.cols) top.resize((std::size_t)grid.cols);
                         if (!top.empty()) {
@@ -18233,6 +18989,19 @@ int main(int argc, char** argv) {
                         }
                         ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + PL::GridHeight(grid, (int)order.size(), tileH)));
                         ImGui::Dummy(ImVec2(GW, UiPx(16.0f)));
+                        if (mq.view == 0 && order.size() < 6 && mq.needle.empty() && mq.kind < 0) {   // a nearly empty marketplace: invite sellers
+                            const ImVec2 cp = ImGui::GetCursorScreenPos();
+                            const float ch = UiPx(84.0f), bw = FitButtonW("Sell an item", UiPx(140.0f));
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            dl->AddRect(cp, ImVec2(cp.x + GW, cp.y + ch), okaytheme::Ink(40), UiPx(12.0f), 0, 1.5f);
+                            dl->AddText(ImVec2(cp.x + UiPx(20.0f), cp.y + UiPx(18.0f)), cText, "Be the first to sell something");
+                            dl->AddText(ImVec2(cp.x + UiPx(20.0f), cp.y + UiPx(18.0f) + lh + UiPx(4.0f)), cDim,
+                                        FitText("Share a game, a model pack, textures or sounds. Everything is free for now.", GW - bw - UiPx(60.0f)).c_str());
+                            ImGui::SetCursorScreenPos(ImVec2(cp.x + GW - UiPx(20.0f) - bw, cp.y + (ch - mktBtnH) * 0.5f));
+                            if (PrimaryButton("Sell an item##cta", ImVec2(bw, mktBtnH))) { if (signedIn) wShowPublish = true; else needSignIn("sell on the marketplace"); }
+                            ImGui::SetCursorScreenPos(ImVec2(cp.x, cp.y + ch + UiPx(16.0f)));
+                            ImGui::Dummy(ImVec2(0, 0));
+                        }
                     }
                 }
                 ImGui::EndChild();
@@ -18258,7 +19027,7 @@ int main(int argc, char** argv) {
                 const bool hostedHere = std::string(edUrl).find("/storage/v1/object/public/workshop/") != std::string::npos;
                 if (!edFile.empty()) ImGui::TextUnformatted(fs::path(edFile).filename().string().c_str());
                 else if (hostedHere) ImGui::TextDisabled("Keeping the current file");
-                else ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.40f, 1), "This listing uses an outside link \xE2\x80\x94 upload the file to keep it listed");
+                else ImGui::TextColored(okaytheme::Current().warning, "This listing uses an outside link \xE2\x80\x94 upload the file to keep it listed");
                 ImGui::TextDisabled("Changing the title, description or file sends it back for review.");
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::BeginDisabled(g_mktPublishing || (!hostedHere && edFile.empty()));
@@ -18272,8 +19041,8 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(100, 32))) ImGui::CloseCurrentPopup();
-                if (!edErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(32.0f)))) ImGui::CloseCurrentPopup();
+                if (!edErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                       ImGui::TextWrapped("%s", edErr.c_str()); ImGui::PopStyleColor(); }
                 ImGui::EndPopup();
             }
@@ -18286,14 +19055,14 @@ int main(int argc, char** argv) {
                 ImGui::TextWrapped("You're about to open a download for \"%s\" by %s.",
                                    getTitle.c_str(), getAuthor.empty() ? "unknown" : getAuthor.c_str());
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().warning);
                 ImGui::TextWrapped("Community uploads aren't vetted by OkaySpace. Only download and run "
                                    "games from people you trust.");
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0, 2));
                 ImGui::TextDisabled("%s", getUrl.c_str());
                 ImGui::Dummy(ImVec2(0, 6));
-                if (PrimaryButton("Download", ImVec2(150, 34))) {
+                if (PrimaryButton("Download", ImVec2(okl::FitButtonW("Download", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) {
                     StartDownload(getUrl, getTitle, getKind, getAuthor, std::to_string(getId));
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
@@ -18303,14 +19072,14 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Download to the launcher's Downloads tab (best for direct file links)");
                 ImGui::SameLine();
-                if (ImGui::Button("Open in browser", ImVec2(150, 34))) {
+                if (ImGui::Button("Open in browser", ImVec2(okl::FitButtonW("Open in browser", okl::UiPx(150.0f)), okl::UiPx(34.0f)))) {
                     OpenExternal(getUrl);
                     okay::Workshop(account).NoteDownload(getId, getDl);
                     wNextRefresh = 0;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(90, 34))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(34.0f)))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
 
@@ -18335,7 +19104,7 @@ int main(int argc, char** argv) {
                 float avg = cnt > 0 ? (float)sum / (float)cnt : 0.0f;
                 ImVec2 ap = ImGui::GetCursorScreenPos(); ap.y += 2;
                 float aw = DrawStars(ImGui::GetWindowDrawList(), ap, 13.0f, avg,
-                                     IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
+                                     okaytheme::WarningFillU32(), okaytheme::Ink(46));
                 ImGui::Dummy(ImVec2(aw, 17)); ImGui::SameLine(0, 8);
                 if (cnt > 0) ImGui::TextDisabled("%.1f out of 5  -  %ld review%s", avg, cnt, cnt==1?"":"s");
                 else         ImGui::TextDisabled("No reviews yet");
@@ -18345,7 +19114,7 @@ int main(int argc, char** argv) {
                 ImGui::TextUnformatted("Your rating:");
                 ImVec2 sp = ImGui::GetCursorScreenPos();
                 float sw = DrawStars(ImGui::GetWindowDrawList(), sp, 22.0f, (float)rvStars,
-                                     IM_COL32(240,196,92,255), IM_COL32(255,255,255,55));
+                                     okaytheme::WarningFillU32(), okaytheme::Ink(55));
                 float stepw = sw / 5.0f;
                 for (int s = 0; s < 5; ++s) {
                     ImGui::SetCursorScreenPos(ImVec2(sp.x + s * stepw, sp.y));
@@ -18357,7 +19126,7 @@ int main(int argc, char** argv) {
                 ImGui::Dummy(ImVec2(0, 30));
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextMultiline("##rvbody", rvBody, sizeof(rvBody), ImVec2(-1, 70));
-                if (ImGui::Button("Submit review", ImVec2(140, 0))) {
+                if (ImGui::Button("Submit review", ImVec2(okl::FitButtonW("Submit review", okl::UiPx(140.0f)), 0))) {
                     if (ws.SubmitReview(rvItem, rvStars, rvBody, &rvErr)) {
                         Toast("Review posted", 1);
                         rvList = ws.Reviews(rvItem);
@@ -18368,14 +19137,14 @@ int main(int argc, char** argv) {
                 bool haveMine = false; for (const auto& rev : rvList) if (rev.mine) haveMine = true;
                 if (haveMine) {
                     ImGui::SameLine();
-                    if (ImGui::Button("Delete mine", ImVec2(120, 0))) {
+                    if (ImGui::Button("Delete mine", ImVec2(okl::FitButtonW("Delete mine", okl::UiPx(120.0f)), 0))) {
                         ws.RemoveMyReview(rvItem);
                         rvStars = 5; rvBody[0] = '\0';
                         rvList = ws.Reviews(rvItem);
                         wRatings = ws.Ratings(); wNextRefresh = okay::platform::TicksMs32() + 15000;
                     }
                 }
-                if (!rvErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));
+                if (!rvErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                       ImGui::TextWrapped("%s", rvErr.c_str()); ImGui::PopStyleColor(); }
                 ImGui::Separator();
 
@@ -18387,7 +19156,7 @@ int main(int argc, char** argv) {
                                       ImVec2(0, rev.body.empty() ? 40 : 64), true);
                     ImVec2 rp = ImGui::GetCursorScreenPos(); rp.y += 2;
                     DrawStars(ImGui::GetWindowDrawList(), rp, 10.0f, (float)rev.rating,
-                              IM_COL32(240,196,92,255), IM_COL32(255,255,255,46));
+                              okaytheme::WarningFillU32(), okaytheme::Ink(46));
                     ImGui::Dummy(ImVec2(68, 13)); ImGui::SameLine();
                     ImGui::Text("%s%s", rev.reviewer.empty() ? "someone" : rev.reviewer.c_str(),
                                 rev.mine ? "  (you)" : "");
@@ -18396,7 +19165,7 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
                 ImGui::EndChild();
-                if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
             }   // end marketplace
@@ -18509,7 +19278,7 @@ int main(int argc, char** argv) {
 
                 const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+                const ImVec4 accLt = okaytheme::AccentText(kAccent);
                 const ImVec4 colBg = okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f);
                 const float colH = ImGui::GetContentRegionAvail().y - PageFooterH();   // leave the page footer clear
                 const float availW = ImGui::GetContentRegionAvail().x;
@@ -18528,55 +19297,45 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kSunken);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 12));
+                bool svPaneToggle = TakePanelShortcut();   // Ctrl+B on this page folds the channel list
                 ImGui::BeginChild("##svrail", ImVec2(72, colH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
                 ImGui::PopStyleVar();
+                if (!svList.empty()) {   // fold / unfold the channel list, at the top of the rail
+                    ImGui::SetCursorPosX((72.0f - 28.0f) * 0.5f);
+                    if (PanelToggle("##svfold", !g_svChannelsFolded, "the channels", 28.0f, okaytheme::Ink(18), cDim, cText)) svPaneToggle = true;
+                    const ImVec2 lp = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x + 16.0f, lp.y + 5.0f), ImVec2(lp.x + 72.0f - 16.0f, lp.y + 5.0f), okaytheme::Ink(22), 1.0f);
+                    ImGui::Dummy(ImVec2(0, 10));
+                }
                 {
-                    ImDrawList* d = ImGui::GetWindowDrawList();
                     const float S = 44.0f;
+                    // The same icon rail as Forums' folded sections (okl::DrawRailIcon).
+                    const float railX = ImGui::GetWindowPos().x;
                     for (const auto& s : svList) {
                         const bool sel = (s.id == svSel);
                         ImGui::PushID((int)s.id);
                         ImVec2 rp = ImGui::GetCursorScreenPos();
-                        ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
-                        ImGui::SetCursorScreenPos(ip);
-                        if (ImGui::InvisibleButton("##srv", ImVec2(S, S)) && !sel) {
+                        RailIcon it;
+                        it.tip = s.name; it.initials = initials(s.name); it.selected = sel;
+                        const ImVec4 sc = NameColor(s.name);
+                        it.fill = ImGui::GetColorU32(sel ? kAccentDim : ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1));
+                        if (DrawRailIcon("##srv", it, ImVec2(rp.x + (72.0f - S) * 0.5f, rp.y), S, railX) && !sel) {
                             svSel = s.id; svSelName = s.name; svChan = 0; svNextChan = 0; svMsgs.clear(); svEditId = 0;
                             if (!kSvDemo) { svChannels.clear(); svMembers.clear(); }
                             else svChan = 11;
                         }
-                        const bool hov = ImGui::IsItemHovered();
-                        ImVec4 sc = NameColor(s.name);
-                        ImU32 fill = ImGui::GetColorU32(sel ? kAccentDim : ImVec4(sc.x * 0.55f, sc.y * 0.55f, sc.z * 0.55f, 1));
-                        // Selected/hovered icons morph from a circle to a rounded square.
-                        d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), fill, (sel || hov) ? 14.0f : S * 0.5f);
-                        std::string ini = initials(s.name);
-                        ImVec2 ts = ImGui::CalcTextSize(ini.c_str());
-                        d->AddText(ImVec2(ip.x + (S - ts.x) * 0.5f, ip.y + (S - ts.y) * 0.5f), IM_COL32(245, 246, 250, 255), ini.c_str());
-                        if (sel || hov) {   // left pill
-                            float ph = sel ? 36.0f : 18.0f;
-                            d->AddRectFilled(ImVec2(rp.x, ip.y + (S - ph) * 0.5f), ImVec2(rp.x + 4, ip.y + (S + ph) * 0.5f), IM_COL32(240, 243, 250, 255), 2.0f);
-                        }
-                        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", s.name.c_str()); }
-                        ImGui::SetCursorScreenPos(ImVec2(rp.x, ip.y + S + 8));
+                        ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + S + 8));
                         ImGui::Dummy(ImVec2(0, 0));
                         ImGui::PopID();
                     }
                     if (!svList.empty()) {
                         ImVec2 lp = ImGui::GetCursorScreenPos();
-                        d->AddLine(ImVec2(lp.x + 22, lp.y), ImVec2(lp.x + 50, lp.y), IM_COL32(255, 255, 255, 22), 2.0f);
+                        DrawRailDivider(ImVec2(lp.x + 22, lp.y - 3), ImVec2(lp.x + 50, lp.y + 3));
                         ImGui::Dummy(ImVec2(0, 8));
                     }
                     ImVec2 rp = ImGui::GetCursorScreenPos();
-                    ImVec2 ip(rp.x + (72.0f - S) * 0.5f, rp.y);
-                    ImGui::SetCursorScreenPos(ip);
-                    if (ImGui::InvisibleButton("##svadd", ImVec2(S, S))) { svAddOpen = true; svErr.clear(); }
-                    const bool ah = ImGui::IsItemHovered();
-                    d->AddRectFilled(ip, ImVec2(ip.x + S, ip.y + S), ah ? IM_COL32(46, 150, 86, 255) : ImGui::GetColorU32(okaytheme::kControl), ah ? 14.0f : S * 0.5f);
-                    ImU32 pc = ah ? IM_COL32_WHITE : IM_COL32(76, 200, 110, 255);
-                    ImVec2 c(ip.x + S * 0.5f, ip.y + S * 0.5f);
-                    d->AddLine(ImVec2(c.x - 7, c.y), ImVec2(c.x + 7, c.y), pc, 2.2f);
-                    d->AddLine(ImVec2(c.x, c.y - 7), ImVec2(c.x, c.y + 7), pc, 2.2f);
-                    if (ah) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("Create or join a server"); }
+                    RailIcon add; add.tip = "Create or join a server"; add.plus = true;
+                    if (DrawRailIcon("##svadd", add, ImVec2(rp.x + (72.0f - S) * 0.5f, rp.y), S, railX)) { svAddOpen = true; svErr.clear(); }
                 }
                 ImGui::EndChild();
                 ImGui::PopStyleVar();
@@ -18589,7 +19348,7 @@ int main(int argc, char** argv) {
                     float aw = ImGui::GetContentRegionAvail().x;
                     ImGui::Dummy(ImVec2(0, colH * 0.22f));
                     ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 34);
-                    ImGui::GetWindowDrawList()->AddCircleFilled(c, 34.0f, IM_COL32(255, 255, 255, 12), 40);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(c, 34.0f, okaytheme::Ink(12), 40);
                     DrawNavIcon(ImGui::GetWindowDrawList(), 8, c, cDim);
                     ImGui::Dummy(ImVec2(0, 80));
                     auto centered = [&](const char* s, bool dim) {
@@ -18601,16 +19360,18 @@ int main(int argc, char** argv) {
                     centered("Create one for your team, or join with an invite code.", true);
                     ImGui::Dummy(ImVec2(0, 10));
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (aw - 300.0f) * 0.5f));
-                    if (PrimaryButton("Create a server", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    if (PrimaryButton("Create a server", ImVec2(okl::FitButtonW("Create a server", okl::UiPx(146.0f)), okl::UiPx(36.0f)))) { svAddOpen = true; svErr.clear(); }
                     ImGui::SameLine(0, 8);
-                    if (ImGui::Button("Join with code", ImVec2(146, 36))) { svAddOpen = true; svErr.clear(); }
+                    if (ImGui::Button("Join with code", ImVec2(okl::FitButtonW("Join with code", okl::UiPx(146.0f)), okl::UiPx(36.0f)))) { svAddOpen = true; svErr.clear(); }
                     ImGui::EndChild();
                 } else {
-                    // ---- Pane 2: server header + channels ------------------------------
+                    // ---- Pane 2: server header + channels (folds away: g_svChannelsFolded, PanelToggle, Ctrl+B; on a narrow
+                    //      page it opens over the chat instead, okay::launcherlayout::LayoutSidePanel) ----------------
+                    auto drawChannelPane = [&](float paneH) {
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, colBg);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-                    ImGui::BeginChild("##svchan", ImVec2(224, colH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    ImGui::BeginChild("##svchan", ImVec2(224, paneH), ImGuiChildFlags_AlwaysUseWindowPadding);
                     ImGui::PopStyleVar();
                     {
                         ImDrawList* d = ImGui::GetWindowDrawList();
@@ -18619,7 +19380,7 @@ int main(int argc, char** argv) {
                         float hw = ImGui::GetContentRegionAvail().x, hh = 38.0f;
                         if (ImGui::InvisibleButton("##svhead", ImVec2(hw, hh))) ImGui::OpenPopup("##svmenu");
                         bool hh2 = ImGui::IsItemHovered();
-                        if (hh2) d->AddRectFilled(hp, ImVec2(hp.x + hw, hp.y + hh), IM_COL32(255, 255, 255, 12), 8.0f);
+                        if (hh2) d->AddRectFilled(hp, ImVec2(hp.x + hw, hp.y + hh), okaytheme::Ink(12), 8.0f);
                         d->AddText(ImVec2(hp.x + 10, hp.y + (hh - ImGui::GetTextLineHeight()) * 0.5f), cText,
                                    FitText(svSelName, hw - 40).c_str());
                         float vx = hp.x + hw - 16, vy = hp.y + hh * 0.5f;
@@ -18637,7 +19398,7 @@ int main(int argc, char** argv) {
                             ImGui::MenuItem("Show members", nullptr, &svShowMembers);
                             if (!svIAmOwner) {
                                 ImGui::Separator();
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                                ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger);
                                 if (ImGui::MenuItem("Report server\xE2\x80\xA6")) OpenReport(okayrep::Target::Server, std::to_string(svSel), svSelName);
                                 if (ImGui::MenuItem("Leave server")) {
                                     if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
@@ -18647,7 +19408,7 @@ int main(int argc, char** argv) {
                             ImGui::EndPopup();
                         }
                         ImVec2 lp = ImGui::GetCursorScreenPos();
-                        d->AddLine(ImVec2(lp.x, lp.y + 2), ImVec2(lp.x + hw, lp.y + 2), IM_COL32(255, 255, 255, 16), 1.0f);
+                        d->AddLine(ImVec2(lp.x, lp.y + 2), ImVec2(lp.x + hw, lp.y + 2), okaytheme::Ink(16), 1.0f);
                         ImGui::Dummy(ImVec2(0, 10));
                         // "TEXT CHANNELS" + add button.
                         ImVec2 sp = ImGui::GetCursorScreenPos();
@@ -18686,7 +19447,7 @@ int main(int argc, char** argv) {
                                 if (!kSvDemo) svMsgs.clear();
                             }
                             bool hov = ImGui::IsItemHovered();
-                            if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                            if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? okaytheme::Ink(24) : okaytheme::Ink(11), 7.0f);
                             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             const float ty = rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f;
                             d->AddText(ImVec2(rp.x + 10, ty), sel ? cText : cDim, "#");
@@ -18722,9 +19483,9 @@ int main(int argc, char** argv) {
                             }
                             const bool hov = ImGui::IsItemHovered();
                             if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!inHere) ImGui::SetTooltip("Join voice"); }
-                            if (inHere || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), inHere ? IM_COL32(255, 255, 255, 20) : IM_COL32(255, 255, 255, 11), 7.0f);
+                            if (inHere || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), inHere ? okaytheme::Ink(20) : okaytheme::Ink(11), 7.0f);
                             const float ty = rp.y + (rh - ImGui::GetTextLineHeight()) * 0.5f;
-                            DrawSpeakerGlyph(d, ImVec2(rp.x + 16, rp.y + rh * 0.5f), 16.0f, inHere ? IM_COL32(67, 181, 129, 255) : cDim);
+                            DrawSpeakerGlyph(d, ImVec2(rp.x + 16, rp.y + rh * 0.5f), 16.0f, inHere ? okaytheme::SuccessFillU32() : cDim);
                             d->AddText(ImVec2(rp.x + 30, ty), (inHere || hov) ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.72f), "Lounge");
                             if (inHere) {   // who's in the room with me
                                 auto row = [&](const std::string& nm, bool speaking, bool muted) {
@@ -18733,7 +19494,7 @@ int main(int argc, char** argv) {
                                     VoiceAvatar(av, nm, 22.0f, speaking, muted);
                                     ImGui::SameLine(0, 8);
                                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2);
-                                    ImGui::TextColored(speaking ? ImVec4(0.9f, 0.95f, 1.0f, 1.0f) : ImVec4(0.65f, 0.69f, 0.77f, 1.0f), "%s", nm.c_str());
+                                    ImGui::TextColored(speaking ? okaytheme::kText : okaytheme::kText, "%s", nm.c_str());
                                 };
                                 row(g_voiceMe, g_voice.SelfSpeaking(), g_voice.Muted() || g_voice.Deafened());
                                 for (const auto& pv : g_voice.Peers()) row(pv.name, pv.speaking, pv.muted || pv.deafened);
@@ -18743,10 +19504,25 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                     ImGui::PopStyleVar();
                     ImGui::PopStyleColor();
-                    ImGui::SameLine(0, 10);
+                    };
+                    static bool svPaneOverlay = false;
+                    const okay::launcherlayout::SidePanel svPane = okay::launcherlayout::LayoutSidePanel(availW - 82.0f, 224.0f, 10.0f, 560.0f, g_svChannelsFolded, svPaneOverlay);
+                    if (svPaneToggle) {   // the button at the top of the server rail, or Ctrl+B
+                        if (availW - 82.0f < 560.0f) svPaneOverlay = !svPaneOverlay;
+                        else { g_svChannelsFolded = !g_svChannelsFolded; SavePrefs(); }
+                    }
+                    if (svPane.shown) { drawChannelPane(colH); ImGui::SameLine(0, 10); }
+                    if (svPane.overlay) {   // narrow page: over the chat (a popup: opaque, on top, closes on a click outside)
+                        ImGui::SetNextWindowPos(ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y));
+                        ImGui::OpenPopup("##svchanpop");
+                    }
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                    if (ImGui::BeginPopup("##svchanpop")) { drawChannelPane(std::min(colH, 520.0f)); ImGui::EndPopup(); }
+                    else svPaneOverlay = false;
+                    ImGui::PopStyleVar();
 
                     // ---- Pane 3: channel chat (+ members on wide windows) ----------------
-                    const float leftUsed = 72 + 10 + 224 + 10;
+                    const float leftUsed = 72 + 10 + (svPane.shown ? 224 + 10 : 0);
                     if (svThreadRoot && std::none_of(svMsgs.begin(), svMsgs.end(), [&](const okay::ChannelMessage& x) { return x.id == svThreadRoot; }))
                         svThreadRoot = 0;   // root scrolled out / deleted / switched channel
                     const bool showMem = (svShowMembers || svThreadRoot) && (availW - leftUsed) > (svThreadRoot ? 520.0f : 620.0f);
@@ -18810,7 +19586,7 @@ int main(int argc, char** argv) {
                                 if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) closeIdx = (int)i;
                                 if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("#%s  \xC2\xB7  %s", t.chanName.c_str(), t.srvName.c_str()); }
                                 td->AddRectFilled(p, ImVec2(p.x + tw, p.y + tabH),
-                                                  active ? IM_COL32(255, 255, 255, 26) : hov ? IM_COL32(255, 255, 255, 15) : IM_COL32(255, 255, 255, 7), 8.0f);
+                                                  active ? okaytheme::Ink(26) : hov ? okaytheme::Ink(15) : okaytheme::Ink(7), 8.0f);
                                 if (active) td->AddRectFilled(ImVec2(p.x + 10, p.y + tabH - 2.5f), ImVec2(p.x + tw - 10, p.y + tabH),
                                                               ImGui::GetColorU32(kAccent), 1.5f);
                                 // Server badge: its colour + initial.
@@ -18832,7 +19608,7 @@ int main(int argc, char** argv) {
                                 if (xh) ImGui::SetTooltip("Close  (Ctrl+W)");
                                 if (active || hov || xh) {
                                     ImVec2 xc(xp.x + closeW * 0.5f, xp.y + closeW * 0.5f);
-                                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, IM_COL32(255, 255, 255, 30), 16);
+                                    if (xh) td->AddCircleFilled(xc, closeW * 0.5f, okaytheme::Ink(30), 16);
                                     td->AddLine(ImVec2(xc.x - 3.5f, xc.y - 3.5f), ImVec2(xc.x + 3.5f, xc.y + 3.5f), xh ? cText : cDim, 1.5f);
                                     td->AddLine(ImVec2(xc.x + 3.5f, xc.y - 3.5f), ImVec2(xc.x - 3.5f, xc.y + 3.5f), xh ? cText : cDim, 1.5f);
                                 }
@@ -18879,12 +19655,12 @@ int main(int argc, char** argv) {
                         if (ImGui::InvisibleButton("##memtoggle", ImVec2(30, 30))) svShowMembers = !svShowMembers;
                         bool mh = ImGui::IsItemHovered();
                         if (mh || svShowMembers) d->AddRectFilled(ImVec2(hp.x + hw - 32, hp.y - 4), ImVec2(hp.x + hw - 2, hp.y + 26),
-                                                                  mh ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 10), 8.0f);
+                                                                  mh ? okaytheme::Ink(22) : okaytheme::Ink(10), 8.0f);
                         DrawNavIcon(d, 6, ImVec2(hp.x + hw - 17, hp.y + 11), svShowMembers ? cText : cDim);
                         if (mh) ImGui::SetTooltip(svShowMembers ? "Hide members" : "Show members");
                         ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 30));
                         ImVec2 lp = ImGui::GetCursorScreenPos();
-                        d->AddLine(lp, ImVec2(lp.x + hw, lp.y), IM_COL32(255, 255, 255, 16), 1.0f);
+                        d->AddLine(lp, ImVec2(lp.x + hw, lp.y), okaytheme::Ink(16), 1.0f);
                         ImGui::Dummy(ImVec2(0, 6));
                     }
                     if (svChan == 0) {
@@ -18913,9 +19689,9 @@ int main(int argc, char** argv) {
                                 const bool ph = ImGui::IsItemHovered();
                                 if (ph) { ImGui::SetTooltip(liked ? "Unlike" : "Like"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
                                 ImDrawList* d = ImGui::GetWindowDrawList();
-                                d->AddRectFilled(hp2, ImVec2(hp2.x + pw, hp2.y + 20), liked ? IM_COL32(232, 72, 92, ph ? 60 : 42) : IM_COL32(255, 255, 255, ph ? 26 : 14), 10.0f);
-                                if (liked) d->AddRect(hp2, ImVec2(hp2.x + pw, hp2.y + 20), IM_COL32(232, 72, 92, 150), 10.0f, 0, 1.0f);
-                                DrawHeart(d, ImVec2(hp2.x + 11, hp2.y + 10), 5.5f, liked ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                                d->AddRectFilled(hp2, ImVec2(hp2.x + pw, hp2.y + 20), liked ? okaytheme::DangerFillU32(((ph ? 60 : 42) / 255.0f)) : okaytheme::Ink(ph ? 26 : 14), 10.0f);
+                                if (liked) d->AddRect(hp2, ImVec2(hp2.x + pw, hp2.y + 20), okaytheme::DangerFillU32(0.588f), 10.0f, 0, 1.0f);
+                                DrawHeart(d, ImVec2(hp2.x + 11, hp2.y + 10), 5.5f, liked ? okaytheme::DangerFillU32() : ImGui::GetColorU32(ImGuiCol_TextDisabled));
                                 d->AddText(ImVec2(hp2.x + 20, hp2.y + 10 - ImGui::GetTextLineHeight() * 0.5f), cText, cnt.c_str());
                                 any = true;
                             }
@@ -18929,7 +19705,7 @@ int main(int argc, char** argv) {
                                 const bool th = ImGui::IsItemHovered();
                                 if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                                 ImDrawList* d = ImGui::GetWindowDrawList();
-                                if (th || svThreadRoot == m.id) d->AddRectFilled(ImVec2(tp.x - 4, tp.y), ImVec2(tp.x + 26 + lw + 10 + aw, tp.y + 20), IM_COL32(255, 255, 255, 14), 6.0f);
+                                if (th || svThreadRoot == m.id) d->AddRectFilled(ImVec2(tp.x - 4, tp.y), ImVec2(tp.x + 26 + lw + 10 + aw, tp.y + 20), okaytheme::Ink(14), 6.0f);
                                 DrawThreadIcon(d, ImVec2(tp.x + 9, tp.y + 10), ImGui::GetColorU32(accLt));
                                 d->AddText(ImVec2(tp.x + 22, tp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), ImGui::GetColorU32(accLt), lbl);
                                 d->AddText(ImVec2(tp.x + 22 + lw + 10, tp.y + 10 - ImGui::GetTextLineHeight() * 0.5f), cDim, ago.c_str());
@@ -19032,7 +19808,7 @@ int main(int argc, char** argv) {
                                 ImGui::SetCursorScreenPos(top);
                             }
                             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
-                            ImGui::PushStyleColor(ImGuiCol_ChildBg, mine ? kAccentDim : ImVec4(0.204f, 0.235f, 0.306f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, mine ? kAccentDim : okaytheme::kControl);
                             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(svPadX, svPadY));
                             ImGui::BeginChild("##svbub", ImVec2(useW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
@@ -19052,7 +19828,7 @@ int main(int argc, char** argv) {
                             {   // time (+ edited) tucked bottom-right, small + dim
                                 const float mw = ImGui::CalcTextSize(meta.c_str()).x, room = ImGui::GetContentRegionAvail().x;
                                 if (mw < room) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (room - mw));
-                                ImGui::PushStyleColor(ImGuiCol_Text, mine ? ImVec4(0.82f, 0.88f, 1.0f, 0.60f) : ImVec4(0.60f, 0.66f, 0.76f, 0.70f));
+                                ImGui::PushStyleColor(ImGuiCol_Text, mine ? okaytheme::WithAlpha(okaytheme::Current().info, 0.6f) : okaytheme::WithAlpha(okaytheme::Current().info, 0.7f));
                                 ImGui::TextUnformatted(meta.c_str());
                                 ImGui::PopStyleColor();
                             }
@@ -19226,12 +20002,12 @@ int main(int argc, char** argv) {
                             ImGui::SetCursorScreenPos(ImVec2(hp.x + pw - 24, hp.y - 2));
                             if (ImGui::InvisibleButton("##thrx", ImVec2(24, 24))) svThreadRoot = 0;
                             const bool xh = ImGui::IsItemHovered();
-                            if (xh) { d->AddRectFilled(ImVec2(hp.x + pw - 24, hp.y - 2), ImVec2(hp.x + pw, hp.y + 22), IM_COL32(255, 255, 255, 22), 6.0f); ImGui::SetTooltip("Close thread"); }
+                            if (xh) { d->AddRectFilled(ImVec2(hp.x + pw - 24, hp.y - 2), ImVec2(hp.x + pw, hp.y + 22), okaytheme::Ink(22), 6.0f); ImGui::SetTooltip("Close thread"); }
                             const ImVec2 xc(hp.x + pw - 12, hp.y + 10);
                             d->AddLine(ImVec2(xc.x - 4, xc.y - 4), ImVec2(xc.x + 4, xc.y + 4), xh ? cText : cDim, 1.5f);
                             d->AddLine(ImVec2(xc.x + 4, xc.y - 4), ImVec2(xc.x - 4, xc.y + 4), xh ? cText : cDim, 1.5f);
                             ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 28));
-                            d->AddLine(ImVec2(hp.x, hp.y + 26), ImVec2(hp.x + pw, hp.y + 26), IM_COL32(255, 255, 255, 16), 1.0f);
+                            d->AddLine(ImVec2(hp.x, hp.y + 26), ImVec2(hp.x + pw, hp.y + 26), okaytheme::Ink(16), 1.0f);
                             ImGui::Dummy(ImVec2(0, 2));
                             const float tComposerH = ImGui::GetTextLineHeight() + 16.0f + 10.0f;
                             ImGui::BeginChild("##thrscroll", ImVec2(0, ImGui::GetContentRegionAvail().y - tComposerH), false);
@@ -19252,7 +20028,7 @@ int main(int argc, char** argv) {
                                     ImVec2 lp = ImGui::GetCursorScreenPos();
                                     if (ImGui::InvisibleButton("tl", ImVec2(lc > 0 ? 40.0f : 20.0f, 18))) svToggleLike(m.id);
                                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(liked ? "Unlike" : "Like");
-                                    DrawHeart(ImGui::GetWindowDrawList(), ImVec2(lp.x + 9, lp.y + 9), 5.5f, liked ? IM_COL32(232, 72, 92, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                                    DrawHeart(ImGui::GetWindowDrawList(), ImVec2(lp.x + 9, lp.y + 9), 5.5f, liked ? okaytheme::DangerFillU32() : ImGui::GetColorU32(ImGuiCol_TextDisabled));
                                     if (lc > 0) ImGui::GetWindowDrawList()->AddText(ImVec2(lp.x + 19, lp.y + 9 - ImGui::GetTextLineHeight() * 0.5f), cDim, std::to_string(lc).c_str());
                                     ImGui::PopID();
                                 }
@@ -19269,7 +20045,7 @@ int main(int argc, char** argv) {
                                 ImGui::TextDisabled("%s", rl);
                                 ImGui::SameLine();
                                 ImVec2 lp = ImGui::GetCursorScreenPos();
-                                ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x, sp.y + ImGui::GetTextLineHeight() * 0.5f), ImVec2(sp.x + ImGui::GetContentRegionAvail().x + (lp.x - sp.x), sp.y + ImGui::GetTextLineHeight() * 0.5f), IM_COL32(255, 255, 255, 16));
+                                ImGui::GetWindowDrawList()->AddLine(ImVec2(lp.x, sp.y + ImGui::GetTextLineHeight() * 0.5f), ImVec2(sp.x + ImGui::GetContentRegionAvail().x + (lp.x - sp.x), sp.y + ImGui::GetTextLineHeight() * 0.5f), okaytheme::Ink(16));
                                 ImGui::NewLine();
                                 ImGui::Dummy(ImVec2(0, 4));
                                 for (const auto& x : svMsgs) {
@@ -19285,7 +20061,7 @@ int main(int argc, char** argv) {
                                     okay::ChannelMessage pm; pm.author = svMe; pm.when = 0;
                                     thrRow(pm, ParseSvBody(o.body).text, o.state == -1 ? 0.9f : 0.55f);
                                     if (o.state == -1) {
-                                        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f), "Not sent"); ImGui::SameLine();
+                                        ImGui::TextColored(okaytheme::Current().danger, "Not sent"); ImGui::SameLine();
                                         ImGui::PushID((int)o.localId);
                                         if (ImGui::SmallButton("Retry")) OutboxRetry(o.localId);
                                         ImGui::SameLine(); if (ImGui::SmallButton("Discard")) OutboxDiscard(o.localId);
@@ -19329,12 +20105,12 @@ int main(int argc, char** argv) {
                             const bool memActs = !kSvDemo && !m.uid.empty() && ModHasActions(svActor, memRole, memSelf);
                             if (memActs && ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##memmenu");
                             if (ImGui::IsMouseHoveringRect(mp, ImVec2(mp.x + rw, mp.y + 40)))
-                                d->AddRectFilled(mp, ImVec2(mp.x + rw, mp.y + 40), IM_COL32(255, 255, 255, 10), 8.0f);
+                                d->AddRectFilled(mp, ImVec2(mp.x + rw, mp.y + 40), okaytheme::Ink(10), 8.0f);
                             ImGui::SetCursorScreenPos(ImVec2(mp.x + 4, mp.y + 5));
                             DrawAvatar(m.avatar, nm, 30.0f);
                             ImVec2 pd(mp.x + 4 + 26, mp.y + 5 + 26);
                             d->AddCircleFilled(pd, 6.0f, ImGui::GetColorU32(colBg), 12);
-                            d->AddCircleFilled(pd, 4.0f, m.online ? IM_COL32(76, 200, 110, 255) : IM_COL32(110, 118, 130, 255), 12);
+                            d->AddCircleFilled(pd, 4.0f, m.online ? okaytheme::SuccessFillU32() : okaytheme::TextDimU32(), 12);
                             ImU32 tc = m.online ? cText : ImGui::GetColorU32(ImGuiCol_Text, 0.45f);
                             float tx = mp.x + 44;
                             const bool seenLine = !m.online && m.lastSeen > 0;   // "2h ago" under offline names
@@ -19348,12 +20124,12 @@ int main(int argc, char** argv) {
                             if (m.role == "owner") {   // crown-ish gold star after the name
                                 float nx = tx + std::min(ImGui::CalcTextSize(nm.c_str()).x, rw - 66) + 10;
                                 const float sy = nameY + ImGui::GetTextLineHeight() * 0.5f;
-                                DrawStar(d, ImVec2(nx, sy), 5.5f, IM_COL32(250, 200, 70, 255));
+                                DrawStar(d, ImVec2(nx, sy), 5.5f, okaytheme::WarningFillU32());
                                 if (ImGui::IsMouseHoveringRect(ImVec2(nx - 6, mp.y + 14), ImVec2(nx + 6, mp.y + 26))) ImGui::SetTooltip("Server owner");
                             }
                             if (m.role == "admin") {   // admin tag after the name
                                 float nx = tx + std::min(ImGui::CalcTextSize(nm.c_str()).x, rw - 66) + 8;
-                                d->AddText(ImVec2(nx, nameY), IM_COL32(120, 170, 255, 255), "admin");
+                                d->AddText(ImVec2(nx, nameY), okaytheme::InfoU32(), "admin");
                             }
                             ModRowButton("##memmenu", ImVec2(mp.x + rw - 26, mp.y + 9), 22.0f, memActs);
                             if (memActs && ImGui::BeginPopup("##memmenu")) { ModMenuItems(mm::Scope::Server, svSel, svActor, m.uid, nm, memRole, memSelf); ImGui::EndPopup(); }
@@ -19415,7 +20191,7 @@ int main(int argc, char** argv) {
                     if ((jnBtn || jn) && svJoin[0]) {
                         if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); ImGui::CloseCurrentPopup(); }
                     }
-                    if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.5f, 0.5f, 1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
+                    if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, okaytheme::Current().danger); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::Dummy(ImVec2(0, 4));
                     if (ImGui::Button("Cancel", ImVec2(-1, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
@@ -19426,12 +20202,12 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopupModal("Rename channel", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::SetNextItemWidth(260);
                     bool go = ImGui::InputTextWithHint("##renchan", "channel name", svRenChanBuf, sizeof(svRenChanBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((PrimaryButton("Rename", ImVec2(120, 30)) || go) && svRenChanBuf[0]) {
+                    if ((PrimaryButton("Rename", ImVec2(okl::FitButtonW("Rename", okl::UiPx(120.0f)), okl::UiPx(30.0f))) || go) && svRenChanBuf[0]) {
                         if (sv.RenameChannel(svRenChanId, svRenChanBuf)) { g_srvForce = true; Toast("Channel renamed", 1); }
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(100, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
 
@@ -19442,7 +20218,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("Rename server");
                     ImGui::SetNextItemWidth(-1);
                     bool go = ImGui::InputTextWithHint("##rensrv", "server name", svRenSrvBuf, sizeof(svRenSrvBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if ((ImGui::Button("Save name", ImVec2(130, 0)) || go) && svRenSrvBuf[0]) {
+                    if ((ImGui::Button("Save name", ImVec2(okl::FitButtonW("Save name", okl::UiPx(130.0f)), 0)) || go) && svRenSrvBuf[0]) {
                         if (sv.RenameServer(svSel, svRenSrvBuf)) { svSelName = svRenSrvBuf; svNextList = 0; Toast("Server renamed", 1); }
                     }
                     ImGui::Separator();
@@ -19451,24 +20227,24 @@ int main(int argc, char** argv) {
                     ImGui::TextUnformatted(inv.c_str()); ImGui::SameLine();
                     if (ImGui::SmallButton("Copy##inv")) { ImGui::SetClipboardText(inv.c_str()); Toast("Invite code copied", 1); }
                     ImGui::Separator();
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
+                    ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
                     if (ImGui::Button("Delete this server", ImVec2(-1, 0))) ImGui::OpenPopup("Delete server?");
                     ImGui::PopStyleColor();
                     if (ImGui::BeginPopupModal("Delete server?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                         ImGui::TextWrapped("Delete \"%s\" for everyone? Its channels and messages are removed. This can't be undone.", svSelName.c_str());
                         ImGui::Dummy(ImVec2(0, 4));
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f,0.22f,0.22f,1));
-                        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                        if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(120.0f)), 0))) {
                             if (sv.DeleteServer(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Server deleted", 1); }
                             ImGui::CloseCurrentPopup(); ImGui::CloseCurrentPopup();
                         }
                         ImGui::PopStyleColor();
                         ImGui::SameLine();
-                        if (ImGui::Button("Cancel", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                         ImGui::EndPopup();
                     }
                     ImGui::Dummy(ImVec2(0, 2));
-                    if (ImGui::Button("Close", ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(100.0f)), 0))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
             }
@@ -19497,7 +20273,7 @@ int main(int argc, char** argv) {
             static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
             Uint32 tnow = okay::platform::TicksMs32();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
+            const ImVec4 accLt = okaytheme::AccentText(kAccent);
             const bool canAct = fo.Available() || kFoDemo;
             if (kFoDemo) {
                 static bool seeded = false;
@@ -19582,7 +20358,7 @@ int main(int argc, char** argv) {
                 };
                 ImGui::PushID((int)id); ImGui::PushID(kind);
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImU32 upC = IM_COL32(236, 128, 64, 255), dnC = IM_COL32(120, 140, 245, 255);
+                const ImU32 upC = okaytheme::WarningFillU32(), dnC = okaytheme::U32(kAccent);
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 const float b = 24.0f;
                 char sc[16]; std::snprintf(sc, sizeof(sc), "%ld", scores.count(id) ? scores[id] : baseScore);
@@ -19592,7 +20368,7 @@ int main(int argc, char** argv) {
                     ImGui::SetCursorScreenPos(at);
                     bool click = ImGui::InvisibleButton(bid, ImVec2(b, b)) && canAct;
                     bool h = ImGui::IsItemHovered();
-                    if (h) { dl->AddRectFilled(at, ImVec2(at.x + b, at.y + b), IM_COL32(255, 255, 255, 18), 6.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!canAct) ImGui::SetTooltip("Sign in to vote"); }
+                    if (h) { dl->AddRectFilled(at, ImVec2(at.x + b, at.y + b), okaytheme::Ink(18), 6.0f); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (!canAct) ImGui::SetTooltip("Sign in to vote"); }
                     ImVec2 c(at.x + b * 0.5f, at.y + b * 0.5f);
                     ImU32 ac = on ? col : (h ? cText : cDim);
                     if (up) dl->AddTriangleFilled(ImVec2(c.x, c.y - 5), ImVec2(c.x + 6, c.y + 3), ImVec2(c.x - 6, c.y + 3), ac);
@@ -19620,7 +20396,7 @@ int main(int argc, char** argv) {
                 float fs = ImGui::GetFontSize() * 0.82f;
                 ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, cat.c_str());
                 dl->AddRectFilled(at, ImVec2(at.x + ts.x + 14, at.y + ts.y + 6), ImGui::GetColorU32(ImVec4(nc.x, nc.y, nc.z, 0.22f)), (ts.y + 6) * 0.5f);
-                dl->AddText(ImGui::GetFont(), fs, ImVec2(at.x + 7, at.y + 3), ImGui::GetColorU32(ImVec4(nc.x * 0.4f + 0.6f, nc.y * 0.4f + 0.6f, nc.z * 0.4f + 0.6f, 1)), cat.c_str());
+                dl->AddText(ImGui::GetFont(), fs, ImVec2(at.x + 7, at.y + 3), ImGui::GetColorU32(okaytheme::ReadableOn(nc)), cat.c_str());
                 return ts.x + 14;
             };
             // Small comment-bubble glyph.
@@ -19647,7 +20423,7 @@ int main(int argc, char** argv) {
                 const ImVec2 ts = ImGui::CalcTextSize(lbl.c_str());
                 const ImVec4 c = sectionColor(x);
                 d->AddRectFilled(at, ImVec2(at.x + ts.x + 14, at.y + ts.y + 4), ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.22f)), 9.0f);
-                d->AddText(ImVec2(at.x + 7, at.y + 2), ImGui::GetColorU32(ImVec4(c.x * 0.5f + 0.5f, c.y * 0.5f + 0.5f, c.z * 0.5f + 0.5f, 1.0f)), lbl.c_str());
+                d->AddText(ImVec2(at.x + 7, at.y + 2), ImGui::GetColorU32(okaytheme::ReadableOn(c)), lbl.c_str());
                 return ts.x + 14;
             };
             auto drawPinIcon = [](ImDrawList* d, ImVec2 c, ImU32 col) {
@@ -19668,20 +20444,34 @@ int main(int argc, char** argv) {
                 const ImVec2 is = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ini);
                 d->AddText(ImGui::GetFont(), fs, ImVec2(c.x - is.x * 0.5f, c.y - is.y * 0.5f), IM_COL32_WHITE, ini);
             };
-            auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; };
-            // Left rail: Home, joined sections, all sections, create.
+            static std::map<long, long> foSecSeen;   // section -> its newest post when you last opened it (this run): newer ones get a dot
+            auto newestIn = [&](long sid) { long t = 0; for (const auto& th : ftCache) if (th.sectionId == sid) t = std::max(t, th.when); return t; };
+            auto openSectionPage = [&](long id) { foSection = id; foCat.clear(); foNewSection = -1; foSecSeen[id] = newestIn(id); };
+            // Left rail: Home, joined sections, all sections, create. It folds away (g_foSectionsFolded, PanelToggle, Ctrl+B) and opens
+            // over the list on a narrow page (okay::launcherlayout::LayoutSidePanel).
+            bool foRailToggle = TakePanelShortcut();
             auto drawSectionsRail = [&](float w, float h) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 10));
                 ImGui::BeginChild("##forail", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding);
                 ImDrawList* d = ImGui::GetWindowDrawList();
+                {   // "SECTIONS" and the fold button (PanelToggle, Ctrl+B)
+                    const ImVec2 hp = ImGui::GetCursorScreenPos();
+                    const float hw = ImGui::GetContentRegionAvail().x;
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + 8.0f, hp.y + 6.0f));
+                    SectionLabel("SECTIONS", -1);
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - 28.0f, hp.y));
+                    if (PanelToggle("##fofold", true, "the sections", 28.0f, okaytheme::Ink(18), cDim, cText)) foRailToggle = true;
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x, hp.y + 34.0f));
+                    ImGui::Dummy(ImVec2(0, 0));
+                }
                 auto row = [&](const char* id, const std::string& label, bool sel, const okay::ForumSection* x, const std::string& right) -> bool {
                     ImVec2 rp = ImGui::GetCursorScreenPos();
                     const float rw = ImGui::GetContentRegionAvail().x, rh = 34.0f;
                     const bool hit = ImGui::InvisibleButton(id, ImVec2(rw, rh));
                     const bool hov = ImGui::IsItemHovered();
-                    if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 11), 7.0f);
+                    if (sel || hov) d->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + rh), sel ? okaytheme::Ink(24) : okaytheme::Ink(11), 7.0f);
                     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     const ImVec2 ic(rp.x + 17, rp.y + rh * 0.5f);
                     if (x) sectionBadge(d, ic, 10.0f, *x);
@@ -19763,14 +20553,14 @@ int main(int argc, char** argv) {
                 ImGui::SetWindowFontScale(1.0f);
                 char meta[96]; std::snprintf(meta, sizeof(meta), "o/%s  \xC2\xB7  %ld members  \xC2\xB7  %ld posts", x->slug.c_str(), x->members, x->threads);
                 d->AddText(ImVec2(p.x + 80, p.y + 66), cDim, meta);
-                if (!x->description.empty()) d->AddText(ImVec2(p.x + 80, p.y + 84), IM_COL32(190, 198, 215, 255), FitText(x->description, w - 340).c_str());
+                if (!x->description.empty()) d->AddText(ImVec2(p.x + 80, p.y + 84), okaytheme::TextU32(), FitText(x->description, w - 340).c_str());
                 // Buttons (right).
                 float bx = p.x + w - 16;
                 const float by = p.y + 46;
                 if (canModerate(x->id)) {
                     bx -= 120;
                     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    if (ImGui::Button("Admin tools", ImVec2(120, 32))) {
+                    if (ImGui::Button("Admin tools", ImVec2(okl::FitButtonW("Admin tools", okl::UiPx(120.0f)), okl::UiPx(32.0f)))) {
                         foAdminOpen = true;
                         if (!kFoDemo) FireForumAction(new FoAction{20, "", x->id, 0, "", "", ""});
                     }
@@ -19780,8 +20570,8 @@ int main(int argc, char** argv) {
                     const bool joined = !x->myRole.empty();
                     bx -= 100;
                     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-                    if (x->banned) { ImGui::BeginDisabled(); ImGui::Button("Banned", ImVec2(100, 32)); ImGui::EndDisabled(); }
-                    else if (joined ? ImGui::Button(x->myRole == "admin" ? "Admin" : "Joined", ImVec2(100, 32)) : PrimaryButton("Join", ImVec2(100, 32))) {
+                    if (x->banned) { ImGui::BeginDisabled(); ImGui::Button("Banned", ImVec2(okl::FitButtonW("Banned", okl::UiPx(100.0f)), okl::UiPx(32.0f))); ImGui::EndDisabled(); }
+                    else if (joined ? ImGui::Button(x->myRole == "admin" ? "Admin" : "Joined", ImVec2(100, 32)) : PrimaryButton("Join", ImVec2(okl::FitButtonW("Join", okl::UiPx(100.0f)), okl::UiPx(32.0f)))) {
                         if (joined && x->myRole == "admin") Toast("You run this section \xE2\x80\x94 hand it over in Admin tools before leaving", 0);
                         else {
                             for (auto& y : foSections) if (y.id == x->id) { y.myRole = joined ? "" : "member"; y.members += joined ? -1 : 1; }
@@ -19828,7 +20618,7 @@ int main(int argc, char** argv) {
                     const bool ok = std::strlen(nm) >= 3 && slugOk;
                     ImGui::Dummy(ImVec2(0, 6));
                     ImGui::BeginDisabled(!ok);
-                    if (PrimaryButton("Create", ImVec2(110, 32))) {
+                    if (PrimaryButton("Create", ImVec2(okl::FitButtonW("Create", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) {
                         if (!kFoDemo) FireForumAction(new FoAction{5, "", 0, col, slug, nm, desc});
                         else { okay::ForumSection x; x.id = 50 + (long)foSections.size(); x.slug = slug; x.name = nm; x.description = desc; x.color = col; x.members = 1; x.myRole = "admin"; foSections.push_back(x); foSection = x.id; }
                         nm[0] = slug[0] = desc[0] = '\0'; slugEdited = false; foNext = tnow + 1500;
@@ -19836,7 +20626,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(90, 32))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(32.0f)))) ImGui::CloseCurrentPopup();
                     if (!ok && nm[0]) { ImGui::SameLine(); ImGui::TextDisabled("Link: 3-24 a-z, 0-9, _"); }
                     ImGui::EndPopup();
                 }
@@ -19868,7 +20658,7 @@ int main(int argc, char** argv) {
                                 ImGui::SameLine(0, 8); ImGui::AlignTextToFramePadding();
                                 ImGui::TextUnformatted(m.name.empty() ? m.uid.substr(0, 8).c_str() : m.name.c_str());
                                 ImGui::SameLine(0, 8);
-                                ImGui::TextColored(m.role == "admin" ? ImVec4(0.95f, 0.45f, 0.45f, 1) : m.role == "moderator" ? ImVec4(0.45f, 0.85f, 0.55f, 1) : ImVec4(0.6f, 0.64f, 0.72f, 1), "%s", m.role.c_str());
+                                ImGui::TextColored(m.role == "admin" ? okaytheme::Current().danger : m.role == "moderator" ? okaytheme::Current().success : okaytheme::kTextDim, "%s", m.role.c_str());
                                 if (m.role != "admin") {
                                     ImGui::SameLine(ImGui::GetContentRegionMax().x - 250);
                                     if (isAdmin && ImGui::SmallButton(m.role == "moderator" ? "Remove mod" : "Make mod")) {
@@ -19939,23 +20729,23 @@ int main(int argc, char** argv) {
                                 if (col == i) ImGui::GetWindowDrawList()->AddCircle(ImVec2(cp.x + 11, cp.y + 11), 12.0f, IM_COL32_WHITE, 20, 2.0f);
                             }
                             ImGui::Dummy(ImVec2(0, 4));
-                            if (PrimaryButton("Save", ImVec2(100, 30))) {
+                            if (PrimaryButton("Save", ImVec2(okl::FitButtonW("Save", okl::UiPx(100.0f)), okl::UiPx(30.0f)))) {
                                 for (auto& y : foSections) if (y.id == ax->id) { y.description = desc; y.rules = rules; y.color = col; }
                                 if (!kFoDemo) FireForumAction(new FoAction{6, "", ax->id, col, desc, rules, ""});
                             }
                             ImGui::SameLine(0, 20);
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.20f, 1.0f));
-                            if (ImGui::Button("Delete section", ImVec2(130, 30))) ImGui::OpenPopup("##delsec");
+                            ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::DangerFill());
+                            if (ImGui::Button("Delete section", ImVec2(okl::FitButtonW("Delete section", okl::UiPx(130.0f)), okl::UiPx(30.0f)))) ImGui::OpenPopup("##delsec");
                             ImGui::PopStyleColor();
                             if (ImGui::BeginPopup("##delsec")) {
                                 ImGui::TextUnformatted("Delete this section and every post in it?");
-                                if (ImGui::Button("Delete", ImVec2(100, 0))) {
+                                if (ImGui::Button("Delete", ImVec2(okl::FitButtonW("Delete", okl::UiPx(100.0f)), 0))) {
                                     if (!kFoDemo) FireForumAction(new FoAction{7, "", ax->id, 0, "", "", ""});
                                     const long gone = ax->id;
                                     foSections.erase(std::remove_if(foSections.begin(), foSections.end(), [&](const okay::ForumSection& y) { return y.id == gone; }), foSections.end());
                                     foSection = 0; ImGui::CloseCurrentPopup();
                                 }
-                                ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                                ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), 0))) ImGui::CloseCurrentPopup();
                                 ImGui::EndPopup();
                             }
                             ImGui::EndTabItem();
@@ -19963,7 +20753,7 @@ int main(int argc, char** argv) {
                         ImGui::EndTabBar();
                     }
                     ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 100, ImGui::GetWindowHeight() - 44));
-                    if (ImGui::Button("Close", ImVec2(84, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(84.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
 
@@ -19976,9 +20766,9 @@ int main(int argc, char** argv) {
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputTextWithHint("##staffwho", "Player username", who, sizeof(who));
                     ImGui::BeginDisabled(!who[0]);
-                    if (ImGui::Button("Verify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 1, who, "", ""}); else Toast("Verified", 1); }
+                    if (ImGui::Button("Verify", ImVec2(okl::FitButtonW("Verify", okl::UiPx(100.0f)), 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 1, who, "", ""}); else Toast("Verified", 1); }
                     ImGui::SameLine();
-                    if (ImGui::Button("Unverify", ImVec2(100, 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 0, who, "", ""}); }
+                    if (ImGui::Button("Unverify", ImVec2(okl::FitButtonW("Unverify", okl::UiPx(100.0f)), 0))) { if (!kFoDemo) FireForumAction(new FoAction{17, "", 0, 0, who, "", ""}); }
                     ImGui::Separator();
                     ImGui::TextDisabled("Badges");
                     static const char* kBadges[] = {"developer", "moderator", "beta", "partner"};
@@ -19993,7 +20783,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndDisabled();
                     ImGui::Dummy(ImVec2(0, 6));
-                    if (ImGui::Button("Close", ImVec2(90, 30))) ImGui::CloseCurrentPopup();
+                    if (ImGui::Button("Close", ImVec2(okl::FitButtonW("Close", okl::UiPx(90.0f)), okl::UiPx(30.0f)))) ImGui::CloseCurrentPopup();
                     ImGui::EndPopup();
                 }
             };
@@ -20001,10 +20791,82 @@ int main(int argc, char** argv) {
             if (openThread == 0) {
                 // Sections rail (left) on wide windows; the list lives beside it.
                 const float foAvailY = ImGui::GetContentRegionAvail().y - PageFooterH();
-                const bool showRail = foSecSup && ImGui::GetContentRegionAvail().x > 820.0f;
+                static bool foRailOverlay = false;
+                const float foW = ImGui::GetContentRegionAvail().x;
+                const okay::launcherlayout::SidePanel foPanel = okay::launcherlayout::LayoutSidePanel(foW, 220.0f, 14.0f, 820.0f, g_foSectionsFolded, foRailOverlay);
+                const bool showRail = foSecSup && foPanel.shown;
                 if (showRail) { drawSectionsRail(220.0f, foAvailY); ImGui::SameLine(0, 14); }
+                else if (foSecSup) {   // folded (or a narrow page): an icon rail (okay::launcherlayout::ForumRailEntries, DrawRailIcon)
+                    namespace PL = okay::launcherlayout;
+                    std::vector<const okay::ForumSection*> joined;
+                    for (const auto& x : foSections) if (!x.myRole.empty()) joined.push_back(&x);
+                    const std::vector<PL::ForumRail> ent = PL::ForumRailEntries((int)joined.size(), canAct, foStaff);
+                    const float railW = UiPx(60.0f), S = UiPx(40.0f);
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+                    ImGui::BeginChild("##forailthin", ImVec2(railW, foAvailY), false, ImGuiWindowFlags_NoScrollbar);
+                    const ImVec2 r0 = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImVec2(r0.x + (railW - UiPx(28.0f)) * 0.5f, r0.y + UiPx(8.0f)));
+                    if (PanelToggle("##founfold", false, "the sections", UiPx(28.0f), okaytheme::Ink(18), cDim, cText)) foRailToggle = true;
+                    std::vector<bool> div;
+                    for (PL::ForumRail e : ent) div.push_back(e == PL::ForumRail::Divider);
+                    const std::vector<PL::Rect> rs = PL::LayoutIconRail(div, railW, UiPx(48.0f), S, UiPx(8.0f), UiPx(6.0f));
+                    std::size_t js = 0;
+                    for (std::size_t i = 0; i < ent.size(); ++i) {
+                        const ImVec2 at(r0.x + rs[i].x, r0.y + rs[i].y);
+                        if (ent[i] == PL::ForumRail::Divider) { DrawRailDivider(at, ImVec2(at.x + rs[i].w, at.y + rs[i].h)); continue; }
+                        RailIcon it;
+                        ImGui::PushID((int)i);
+                        switch (ent[i]) {
+                        case PL::ForumRail::AllPosts: it.tip = "All posts"; it.navIcon = 9; it.selected = foSection == 0; break;
+                        case PL::ForumRail::Section: {
+                            const okay::ForumSection& x = *joined[js++];
+                            it.tip = x.name + "  (o/" + x.slug + ")";
+                            it.initials = std::string(1, x.name.empty() ? '?' : (char)std::toupper((unsigned char)x.name[0]));
+                            it.fill = ImGui::GetColorU32(sectionColor(x));
+                            it.selected = foSection == x.id;
+                            {   // new posts since you last opened it (first sight: remembered, no dot)
+                                const long newest = newestIn(x.id);
+                                auto seen = foSecSeen.find(x.id);
+                                if (seen == foSecSeen.end()) foSecSeen[x.id] = newest;
+                                else it.dot = foSection != x.id && newest > seen->second;
+                            }
+                            if (DrawRailIcon("##sec", it, at, S, r0.x)) openSectionPage(x.id);
+                            ImGui::PopID();
+                            continue;
+                        }
+                        case PL::ForumRail::Discover: it.tip = "Discover sections"; it.navIcon = kIcoGlobe; break;
+                        case PL::ForumRail::Create: it.tip = "Create a section"; it.plus = true; break;
+                        case PL::ForumRail::Staff: it.tip = "Staff tools"; it.navIcon = kIcoShield; break;
+                        default: break;
+                        }
+                        if (DrawRailIcon("##ri", it, at, S, r0.x)) {
+                            if (ent[i] == PL::ForumRail::AllPosts) openSectionPage(0);
+                            else if (ent[i] == PL::ForumRail::Discover) foRailToggle = true;   // the full list shows every section
+                            else if (ent[i] == PL::ForumRail::Create) foCreateOpen = true;
+                            else if (ent[i] == PL::ForumRail::Staff) foStaffOpen = true;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 14);
+                }
+                if (foRailToggle && foSecSup) {
+                    if (foW < 820.0f) foRailOverlay = !foRailOverlay;
+                    else { g_foSectionsFolded = !g_foSectionsFolded; SavePrefs(); }
+                }
+                if (foPanel.overlay && foSecSup) {   // narrow page: the sections open over the list (a popup: opaque, on top)
+                    ImGui::SetNextWindowPos(ImGui::GetCursorScreenPos());
+                    ImGui::OpenPopup("##forailpop");
+                }
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+                if (ImGui::BeginPopup("##forailpop")) { drawSectionsRail(220.0f, std::min(foAvailY, 520.0f)); ImGui::EndPopup(); }
+                else foRailOverlay = false;
+                ImGui::PopStyleVar();
                 ImGui::BeginChild("##fomain", ImVec2(0, foAvailY), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                if (!showRail && foSecSup) drawSectionsStrip();
+                if (!showRail && foSecSup && foW < 820.0f) drawSectionsStrip();   // (narrow pages; a folded rail has the icons)
                 if (foSection != 0) drawSectionHeader();
                 // ---- Toolbar: categories (left), sort + search + New post (right) ----
                 std::vector<std::string> cats;
@@ -20020,7 +20882,7 @@ int main(int argc, char** argv) {
                     const char* sorts[] = {"Hot", "New", "Top"};
                     float segW = 0; for (auto* s2 : sorts) segW += ImGui::CalcTextSize(s2).x + 24;
                     float sx = right - 120 - 12 - segW;
-                    dl->AddRectFilled(ImVec2(sx - 3, cp.y), ImVec2(sx + segW + 3, cp.y + ch), IM_COL32(255, 255, 255, 10), ch * 0.5f);
+                    dl->AddRectFilled(ImVec2(sx - 3, cp.y), ImVec2(sx + segW + 3, cp.y + ch), okaytheme::Ink(10), ch * 0.5f);
                     for (int k = 0; k < 3; ++k) {
                         float w = ImGui::CalcTextSize(sorts[k]).x + 24;
                         ImGui::SetCursorScreenPos(ImVec2(sx, cp.y));
@@ -20046,7 +20908,7 @@ int main(int argc, char** argv) {
                         ImGui::PopID();
                         bool on = foCat == value;
                         dl->AddRectFilled(ImVec2(x, cp.y), ImVec2(x + cw, cp.y + ch),
-                                          on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? IM_COL32(255, 255, 255, 22) : IM_COL32(255, 255, 255, 9)), ch * 0.5f);
+                                          on ? ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.24f)) : (h ? okaytheme::Ink(22) : okaytheme::Ink(9)), ch * 0.5f);
                         dl->AddText(ImVec2(x + 12, cp.y + (ch - ts.y) * 0.5f), on ? ImGui::GetColorU32(accLt) : (h ? cText : cDim), label.c_str());
                         if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         x += cw + 6;
@@ -20094,7 +20956,7 @@ int main(int argc, char** argv) {
                         ImGui::InputTextMultiline("##nb", newBody, sizeof(newBody), ImVec2(-1, 90));
                         ImGui::PopStyleVar(2);
                         ImGui::BeginDisabled(!newThread[0]);
-                        if (PrimaryButton("Post", ImVec2(110, 32))) {
+                        if (PrimaryButton("Post", ImVec2(okl::FitButtonW("Post", okl::UiPx(110.0f)), okl::UiPx(32.0f)))) {
                             // Fire the post off-thread; optimistically close the form.
                             const long toSec = foNewSection >= 0 ? foNewSection : foSection;
                             if (!kFoDemo) FireForumAction(new FoAction{2, "", toSec, 0, newThread, newBody, newCat});
@@ -20107,8 +20969,8 @@ int main(int argc, char** argv) {
                         }
                         ImGui::EndDisabled();
                         ImGui::SameLine();
-                        if (ImGui::Button("Cancel", ImVec2(90, 32))) foShowNew = false;
-                        if (!foErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1), "%s", foErr.c_str()); }
+                        if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), okl::UiPx(32.0f)))) foShowNew = false;
+                        if (!foErr.empty()) { ImGui::SameLine(); ImGui::TextColored(okaytheme::Current().danger, "%s", foErr.c_str()); }
                     }
                     ImGui::EndChild();
                     ImGui::PopStyleVar(2);
@@ -20155,7 +21017,7 @@ int main(int argc, char** argv) {
                     ImGui::SetNextItemAllowOverlap();
                     const bool open = ImGui::InvisibleButton("##trow", ImVec2(w, h));
                     const bool hov = ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + w, rp.y + h)) && ImGui::IsWindowHovered();
-                    dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + h), ImGui::GetColorU32(hov ? okaytheme::Mix(okaytheme::kRaised, ImVec4(1, 1, 1, 1), 0.04f) : okaytheme::kRaised), 12.0f);
+                    dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + h), ImGui::GetColorU32(hov ? okaytheme::Mix(okaytheme::kRaised, okaytheme::Current().onColor, 0.04f) : okaytheme::kRaised), 12.0f);
                     // Vote column.
                     ImGui::SetCursorScreenPos(ImVec2(rp.x + 10, rp.y + (h - 62) * 0.5f));
                     voteWidget("thread", t.id, thScores, thMy, false);
@@ -20169,8 +21031,8 @@ int main(int argc, char** argv) {
                     const float cpw = catPill(dl, ImVec2(tx + pw, y), t.category);
                     pw += cpw > 0 ? cpw : 0;
                     float flagW = 0;
-                    if (t.pinned && foSection != 0) { drawPinIcon(dl, ImVec2(tx + pw + 10, y + 9), IM_COL32(67, 181, 129, 255)); flagW += 20; }
-                    if (t.locked) { drawLockIcon(dl, ImVec2(tx + pw + flagW + 10, y + 9), IM_COL32(240, 200, 90, 255)); flagW += 20; }
+                    if (t.pinned && foSection != 0) { drawPinIcon(dl, ImVec2(tx + pw + 10, y + 9), okaytheme::SuccessFillU32()); flagW += 20; }
+                    if (t.locked) { drawLockIcon(dl, ImVec2(tx + pw + flagW + 10, y + 9), okaytheme::WarningFillU32()); flagW += 20; }
                     pw += flagW;
                     ImGui::SetWindowFontScale(1.06f);
                     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx + (pw > 0 ? pw + 8 : 0), y), cText, FitText(t.title, maxW - pw - 8).c_str());
@@ -20204,7 +21066,7 @@ int main(int argc, char** argv) {
                     float aw = ImGui::GetContentRegionAvail().x;
                     ImGui::Dummy(ImVec2(0, 30));
                     ImVec2 c(ImGui::GetCursorScreenPos().x + aw * 0.5f, ImGui::GetCursorScreenPos().y + 30);
-                    dl->AddCircleFilled(c, 30.0f, IM_COL32(255, 255, 255, 12), 40);
+                    dl->AddCircleFilled(c, 30.0f, okaytheme::Ink(12), 40);
                     DrawNavIcon(dl, 9, c, cDim);
                     ImGui::Dummy(ImVec2(0, 70));
                     auto centered = [&](const char* s, bool dim) {
@@ -20249,7 +21111,7 @@ int main(int argc, char** argv) {
                     ImVec2 bs = ImGui::CalcTextSize(bl);
                     if (ImGui::InvisibleButton("##foback", ImVec2(bs.x + 38, bs.y + 12))) { openThread = 0; if (!kFoDemo) fpCache.clear(); }
                     bool h = ImGui::IsItemHovered();
-                    dl->AddRectFilled(bp, ImVec2(bp.x + bs.x + 38, bp.y + bs.y + 12), h ? IM_COL32(255, 255, 255, 24) : IM_COL32(255, 255, 255, 10), (bs.y + 12) * 0.5f);
+                    dl->AddRectFilled(bp, ImVec2(bp.x + bs.x + 38, bp.y + bs.y + 12), h ? okaytheme::Ink(24) : okaytheme::Ink(10), (bs.y + 12) * 0.5f);
                     dl->AddLine(ImVec2(bp.x + 18, bp.y + 7), ImVec2(bp.x + 13, bp.y + 6 + bs.y * 0.5f), cText, 1.6f);
                     dl->AddLine(ImVec2(bp.x + 13, bp.y + 6 + bs.y * 0.5f), ImVec2(bp.x + 18, bp.y + 5 + bs.y), cText, 1.6f);
                     dl->AddText(ImVec2(bp.x + 26, bp.y + 6), cText, bl);
@@ -20284,19 +21146,19 @@ int main(int argc, char** argv) {
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) OpenPublicProfile("", openAuthor, openAuthor);
                     }
                     if (!openBody.empty()) { ImGui::Dummy(ImVec2(0, 4)); RenderChatBody(openBody, ImGui::GetContentRegionAvail().x - 8); }
-                    if (openLocked) { ImGui::Dummy(ImVec2(0, 2)); ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.40f, 1.0f), "Locked \xE2\x80\x94 no new comments"); }
+                    if (openLocked) { ImGui::Dummy(ImVec2(0, 2)); ImGui::TextColored(okaytheme::Current().warning, "Locked \xE2\x80\x94 no new comments"); }
                     {   // report this post (anyone but its author)
                         const std::string meNow = kFoDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER")) : account.CurrentSession().username;
                         if (openAuthor.empty() || openAuthor != meNow) {
                             ImGui::Dummy(ImVec2(0, 4));
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                            ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::InkV(0.05f));
                             if (ImGui::SmallButton("Report post")) OpenReport(okayrep::Target::ForumThread, std::to_string(openThread), openTitle);
                             ImGui::PopStyleColor();
                         }
                     }
                     if (canModerate(openSection)) {   // moderator tools for this post
                         ImGui::Dummy(ImVec2(0, 4));
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.07f));
+                        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::InkV(0.07f));
                         if (ImGui::SmallButton(openPinned ? "Unpin" : "Pin")) { openPinned = !openPinned; for (auto& t : ftCache) if (t.id == openThread) t.pinned = openPinned;
                             if (!kFoDemo) FireForumAction(new FoAction{8, "", openThread, openPinned ? 1 : 0, "", "", ""}); }
                         ImGui::SameLine();
@@ -20314,12 +21176,12 @@ int main(int argc, char** argv) {
                         ImGui::PopStyleColor();
                         if (ImGui::BeginPopup("##rmthread")) {
                             ImGui::TextUnformatted("Remove this post and its comments?");
-                            if (ImGui::Button("Remove", ImVec2(110, 0))) {
+                            if (ImGui::Button("Remove", ImVec2(okl::FitButtonW("Remove", okl::UiPx(110.0f)), 0))) {
                                 if (!kFoDemo) FireForumAction(new FoAction{10, "", openThread, 0, "", "", ""});
                                 ftCache.erase(std::remove_if(ftCache.begin(), ftCache.end(), [&](const okay::ForumThread& t) { return t.id == openThread; }), ftCache.end());
                                 openThread = 0; ImGui::CloseCurrentPopup();
                             }
-                            ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+                            ImGui::SameLine(); if (ImGui::Button("Cancel", ImVec2(okl::FitButtonW("Cancel", okl::UiPx(90.0f)), 0))) ImGui::CloseCurrentPopup();
                             ImGui::EndPopup();
                         }
                     }
@@ -20353,13 +21215,13 @@ int main(int argc, char** argv) {
                     voteWidget("post", p.id, poScores, poMy, true);
                     if (!mine) {
                         ImGui::SameLine(0, 12);
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::InkV(0.05f));
                         if (ImGui::SmallButton("Report")) OpenReport(okayrep::Target::ForumPost, std::to_string(p.id), "a comment by " + (p.author.empty() ? std::string("unknown") : p.author));
                         ImGui::PopStyleColor();
                     }
                     if (canModerate(openSection) || mine) {
                         ImGui::SameLine(0, 12);
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                        ImGui::PushStyleColor(ImGuiCol_Button, okaytheme::InkV(0.05f));
                         if (ImGui::SmallButton("Remove")) {
                             if (!kFoDemo) FireForumAction(new FoAction{11, "", p.id, 0, "", "", ""});
                             fpNext = tnow + 800;
@@ -20387,7 +21249,7 @@ int main(int argc, char** argv) {
                                                    bannedHere ? "You're banned from this section" : "Add a comment\xE2\x80\xA6",
                                                    replyBuf, sizeof(replyBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 ImGui::SameLine(0, 8);
-                bool post = PrimaryButton("Comment", ImVec2(100, ImGui::GetFrameHeight()));
+                bool post = PrimaryButton("Comment", ImVec2(okl::FitButtonW("Comment", okl::UiPx(100.0f)), ImGui::GetFrameHeight()));
                 ImGui::EndDisabled();
                 ImGui::PopStyleVar(2);
                 if ((post || rp) && replyBuf[0]) {
@@ -20402,6 +21264,19 @@ int main(int argc, char** argv) {
             }
         } else if (tab == 10) {                           // ---- Downloads ----
             sectionHeader("Downloads", "Games you download from the marketplace land here.");
+            {   // dev screenshot hook: sample downloads in every state
+                static bool seeded = false;
+                if (!seeded && kUiDemoUser && std::getenv("OKAY_UI_DEMO_DL")) {
+                    seeded = true;
+                    auto add = [](const char* t, const char* dest, long long rec, long long tot, int st) {
+                        auto d = std::make_shared<DlItem>(); d->id = g_dlNextId++; d->title = t; d->dest = dest; d->received = rec; d->total = tot; d->status = st;
+                        okay::thr::LockMutex(g_dlMutex); g_dls.push_back(d); okay::thr::UnlockMutex(g_dlMutex); };
+                    add("Orbit Hopper", "orbit_hopper.zip", 13000000, 36700000, 1);
+                    add("Crystal Caverns (level)", "crystal_caverns.zip", 8200000, 8200000, 2);
+                    add("Low-poly Trees Pack", "trees.zip", 0, 52000000, 0);
+                    add("Retro Sound Effects", "retro_sfx.zip", 1200000, 9800000, 3);
+                }
+            }
             fs::path ddir = fs::path(g_exeDir) / "downloads";
             if (FitButton("Open downloads folder", 0.0f)) {
                 std::error_code ec; fs::create_directories(ddir, ec);
@@ -20447,55 +21322,70 @@ int main(int argc, char** argv) {
                 else std::snprintf(out, sizeof(out), "%.2f GB", b/(1024.0*1024*1024));
                 return std::string(out);
             };
+            // One card per download: the title and its state on the first line, a thin progress bar, then
+            // "12.4 MB of 35.0 MB" and the actions on the right.
             for (auto& d : snap) {
                 long long rec, tot; int stt; std::string title, dest;
                 okay::thr::LockMutex(g_dlMutex);
                 rec = d->received; tot = d->total; stt = d->status; title = d->title; dest = d->dest;
                 okay::thr::UnlockMutex(g_dlMutex);
                 ImGui::PushID(d->id);
-                ImGui::BeginChild("##dlrow", ImVec2(0, 80), true);
-                HoverRing();
-                ImGui::TextUnformatted(title.c_str());
-                const char* stTxt = stt==0?"Queued":stt==1?"Downloading":stt==2?"Completed":stt==3?"Failed":"Canceled";
-                ImVec4 stCol = stt==2?ImVec4(0.55f,0.9f,0.6f,1):stt==3?ImVec4(0.9f,0.45f,0.45f,1)
-                             : stt==4?ImVec4(0.75f,0.7f,0.5f,1):ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-                // Progress bar.
-                float frac = (tot > 0) ? (float)rec / (float)tot : (stt==2?1.0f:0.0f);
-                if (frac > 1.0f) frac = 1.0f;
-                char overlay[64];
-                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", humanBytes(rec).c_str(), humanBytes(tot).c_str());
-                else         std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
-                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), overlay);
-                ImGui::SameLine();
-                ImGui::TextColored(stCol, "%s", stTxt);
-                // Actions.
-                if (stt == 0 || stt == 1) {
-                    if (ImGui::SmallButton("Cancel")) { okay::thr::LockMutex(g_dlMutex); d->cancelReq = true; okay::thr::UnlockMutex(g_dlMutex); }
-                } else {
-                    if (stt == 2) {
-                        if (ImGui::SmallButton("Open folder")) OpenExternal(ddir.string());
-                        bool isZip = dest.size() > 4 &&
-                            (dest.substr(dest.size()-4) == ".zip" || dest.substr(dest.size()-4) == ".ZIP");
-                        if (isZip) {
-                            ImGui::SameLine();
-                            if (ImGui::SmallButton("Install to Community")) {
-                                fs::path sub = CommunityDir() /
-                                    fs::path(dest).stem();
-                                if (ExtractZip(dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
-                                else Toast("Couldn't extract the archive", 2);
-                            }
-                        }
-                        ImGui::SameLine();
-                    }
-                    if (ImGui::SmallButton("Remove")) {
+                const float lh = ImGui::GetTextLineHeight(), pad = UiPx(16.0f), btnH = ImGui::GetFrameHeight();
+                const float W = ImGui::GetContentRegionAvail().x, cardH = pad + lh + UiPx(10.0f) + UiPx(6.0f) + UiPx(10.0f) + btnH + pad;
+                const ImVec2 a0 = ImGui::GetCursorScreenPos(), a1(a0.x + W, a0.y + cardH);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                CardBackground(dl, a0, a1, ImGui::IsMouseHoveringRect(a0, a1) && ImGui::IsWindowHovered());
+                const char* stTxt = stt == 0 ? "Queued" : stt == 1 ? "Downloading" : stt == 2 ? "Completed" : stt == 3 ? "Failed" : "Canceled";
+                const ImU32 stCol = stt == 2 ? okaytheme::SuccessU32() : stt == 3 ? okaytheme::DangerU32() : stt == 4 ? okaytheme::WarningU32()
+                                  : stt == 1 ? ImGui::GetColorU32(okaytheme::AccentText(kAccent)) : okaytheme::TextDimU32();
+                const ImU32 barCol = stt == 2 ? okaytheme::SuccessFillU32() : stt == 3 ? okaytheme::DangerFillU32() : stt == 4 ? okaytheme::WarningFillU32()
+                                   : ImGui::GetColorU32(kAccent);
+                float frac = (tot > 0) ? (float)rec / (float)tot : (stt == 2 ? 1.0f : 0.0f);
+                frac = std::clamp(frac, 0.0f, 1.0f);
+                const ImVec2 stS = ImGui::CalcTextSize(stTxt);
+                dl->AddText(ImVec2(a0.x + pad, a0.y + pad), okaytheme::TextU32(), FitText(title, W - 3 * pad - stS.x).c_str());
+                dl->AddText(ImVec2(a1.x - pad - stS.x, a0.y + pad), stCol, stTxt);
+                const float by = a0.y + pad + lh + UiPx(10.0f), bh = UiPx(6.0f);
+                dl->AddRectFilled(ImVec2(a0.x + pad, by), ImVec2(a1.x - pad, by + bh), okaytheme::Ink(22), bh * 0.5f);
+                if (frac > 0.0f) dl->AddRectFilled(ImVec2(a0.x + pad, by), ImVec2(a0.x + pad + (W - 2 * pad) * frac, by + bh), barCol, bh * 0.5f);
+                char sizes[96];
+                if (tot > 0) std::snprintf(sizes, sizeof(sizes), "%s of %s  (%d%%)", humanBytes(rec).c_str(), humanBytes(tot).c_str(), (int)(frac * 100.0f));
+                else std::snprintf(sizes, sizeof(sizes), "%s", humanBytes(rec).c_str());
+                const float ly = by + bh + UiPx(10.0f);
+                dl->AddText(ImVec2(a0.x + pad, ly + (btnH - lh) * 0.5f), okaytheme::TextDimU32(), sizes);
+                // Actions, right-aligned.
+                std::vector<const char*> acts;
+                const bool isZip = dest.size() > 4 && (dest.substr(dest.size() - 4) == ".zip" || dest.substr(dest.size() - 4) == ".ZIP");
+                if (stt == 0 || stt == 1) acts.push_back("Cancel");
+                else {
+                    if (stt == 2) { acts.push_back("Open folder"); if (isZip) acts.push_back("Install to Community"); }
+                    acts.push_back("Remove");
+                }
+                float x = a1.x - pad;
+                for (int k = (int)acts.size() - 1; k >= 0; --k) {
+                    const float bw = FitButtonW(acts[(std::size_t)k], UiPx(80.0f));
+                    x -= bw;
+                    ImGui::SetCursorScreenPos(ImVec2(x, ly));
+                    const bool hit = std::strcmp(acts[(std::size_t)k], "Install to Community") == 0 ? PrimaryButton(acts[(std::size_t)k], ImVec2(bw, btnH))
+                                                                                                    : ImGui::Button(acts[(std::size_t)k], ImVec2(bw, btnH));
+                    x -= UiPx(8.0f);
+                    if (!hit) continue;
+                    const std::string what = acts[(std::size_t)k];
+                    if (what == "Cancel") { okay::thr::LockMutex(g_dlMutex); d->cancelReq = true; okay::thr::UnlockMutex(g_dlMutex); }
+                    else if (what == "Open folder") OpenExternal(ddir.string());
+                    else if (what == "Install to Community") {
+                        fs::path sub = CommunityDir() / fs::path(dest).stem();
+                        if (ExtractZip(dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
+                        else Toast("Couldn't extract the archive", 2);
+                    } else if (what == "Remove") {
                         okay::thr::LockMutex(g_dlMutex);
                         for (auto it = g_dls.begin(); it != g_dls.end(); ++it)
                             if ((*it)->id == d->id) { if ((*it)->th) okay::thr::WaitThread((*it)->th, nullptr); g_dls.erase(it); break; }
                         okay::thr::UnlockMutex(g_dlMutex);
                     }
                 }
-                ImGui::EndChild();
+                ImGui::SetCursorScreenPos(ImVec2(a0.x, a1.y + UiPx(12.0f)));
+                ImGui::Dummy(ImVec2(0, 0));
                 ImGui::PopID();
             }
             ImGui::EndChild();
@@ -20521,8 +21411,8 @@ int main(int argc, char** argv) {
             DrawAdminPage(account);
         }
 
-        // ---- Footer (pinned to the bottom of the content panel) ----
-        {
+        // ---- Footer (pinned to the bottom of the content panel; the welcome screen shows the version itself) ----
+        if (gateOpen) {
             float fy = ImGui::GetWindowHeight() - (PageFooterH() - 8.0f);   // the pages leave PageFooterH() free for it
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();
@@ -20532,6 +21422,7 @@ int main(int argc, char** argv) {
         ImGui::EndChild();
         ImGui::End();
         focusSearch = false;   // Ctrl+F is consumed the frame it's pressed
+        if (TakePanelShortcut()) { g_navCollapsed = !g_navCollapsed; SavePrefs(); }   // Ctrl+B no page took: the launcher sidebar
 
         // ---- Floating Chat window (DMs), unless it has its own OS window ----
         if (!g_chatSeparate) DrawChatWindow(account);   // (the same view ChatHostFrame draws in the chat's own window)
@@ -20573,6 +21464,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!g_staySignedIn) accountPtr->Logout();   // "Stay signed in" was unticked: the next start asks again
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
     { int w = 0, h = 0; lw::GetSize(window, &w, &h);

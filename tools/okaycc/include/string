@@ -9,6 +9,10 @@
 namespace std {
 class string {
 public:
+    typedef char value_type;
+    typedef char *iterator;
+    typedef const char *const_iterator;
+    typedef unsigned long size_type;
     string() : p_(nullptr), n_(0), cap_(0) { release(grow(0)); }
     string(const char *s) : p_(nullptr), n_(0), cap_(0) {
         unsigned long n = s ? strlen(s) : 0;

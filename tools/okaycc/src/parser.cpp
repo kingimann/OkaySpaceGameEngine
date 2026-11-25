@@ -711,8 +711,23 @@ private:
             if (ti && ti + 1 < toks_.size() && isP(toks_[ti + 1], "<")) i_ = ti;  // std::vector<int>
         }
         if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) &&
-            (!findTypedef(cur().text) || nextIs("<")))
-            return instantiateClass(cur().text);
+            (!findTypedef(cur().text) || nextIs("<"))) {
+            auto inst = instantiateClass(cur().text);
+            // X<T>::name: a member type of the instance ([temp.res] p2, [class.qual]):
+            // std::vector<int>::iterator, std::map<K, V>::const_iterator.
+            while (inst && inst->kind == Type::Kind::Struct && isP("::") && i_ + 1 < toks_.size() &&
+                   toks_[i_ + 1].kind == Tok::Ident) {
+                std::string q = inst->tag + "::" + toks_[i_ + 1].text;
+                auto mt = memberTypes_.find(q);
+                auto st = structs_.find(q);
+                if (mt != memberTypes_.end() && mt->second) inst = cloneType(*mt->second);
+                else if (st != structs_.end() && st->second) inst = cloneType(*st->second);
+                else break;
+                advance();
+                advance();
+            }
+            return inst;
+        }
         if (!atEnd() && cur().kind == Tok::Ident && nextIs("::")) {
             std::size_t qend = 0;
             if (const Type* qt = qualTypeAt(i_, qend)) {
@@ -4062,7 +4077,15 @@ private:
             // A static local object: a real global plus a guard flag. The local name is a reference
             // to the global; the constructor runs the first time control passes the declaration and
             // the destructor runs at program end (if it was built).
-            if (decl->init) err("a static local object cannot have an initializer");
+            // static T x = e; and static T x{a, b}; ([stmt.dcl] p3): built the first time through,
+            // by the constructor the initializer chooses.
+            std::unique_ptr<Expr> copyInit;
+            if (decl->init && decl->init->kind == Expr::Kind::Brace) {
+                for (auto& k : decl->init->kids) ctorArgs.push_back(std::move(k));
+                decl->init.reset();
+            } else if (decl->init) {
+                copyInit = std::move(decl->init);
+            }
             std::string tag = decl->type->tag;
             int n = newN_++;
             std::string gname = "__sl" + std::to_string(n) + "_" + name;
@@ -4093,8 +4116,14 @@ private:
             out.push_back(declStmt(std::move(refDecl)));
             auto thenB = sBlock(p);
             thenB->stmts.push_back(sExpr(eAssign(eName(guard, p), eInt(1, p), p), p));
-            if (classOf(tag)->needCtor)
+            if (copyInit) {
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eAddr(eName(gname, p), p));
+                a.push_back(std::move(copyInit));
+                thenB->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
+            } else if (classOf(tag)->needCtor || !ctorArgs.empty()) {
                 thenB->stmts.push_back(sExpr(ctorCall(tag, eAddr(eName(gname, p), p), std::move(ctorArgs), p), p));
+            }
             auto notG = std::make_unique<Expr>();
             notG->kind = Expr::Kind::Unary;
             notG->text = "!";

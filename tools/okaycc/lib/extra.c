@@ -30,9 +30,9 @@ int atoi(char *s) {
     i = 0;
     n = 0;
     neg = 0;
-    while (s[i] == ' ') i = i + 1;
-    if (s[i] == '-') {
-        neg = 1;
+    while (s[i] == ' ' || (s[i] >= 9 && s[i] <= 13)) i = i + 1; /* as strtol (7.22.1.2): any white space, a sign */
+    if (s[i] == '-' || s[i] == '+') {
+        neg = s[i] == '-';
         i = i + 1;
     }
     while (s[i] >= '0' && s[i] <= '9') {

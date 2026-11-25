@@ -56,10 +56,12 @@ enum class errc {
     is_a_directory = 21,
     invalid_argument = 22,
     no_space_on_device = 28,
+    result_out_of_range = 34,
     read_only_file_system = 30,
     filename_too_long = 36,
     directory_not_empty = 39,
-    not_supported = 95
+    not_supported = 95,
+    value_too_large = 75
 };
 class error_code {
 public:

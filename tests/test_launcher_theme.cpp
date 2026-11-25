@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <string>
 #include <vector>
@@ -80,5 +81,59 @@ int main() {
     }
     CHECK(files > 10);
     CHECK(bad == 0);
+
+    // ---- The time, "edited" and the ticks on MY chat bubble are readable in every theme ----
+    // Owner bug 2026-11-25: on Light, "15:09 · edited ✓✓" on my blue bubble could not be read (it was the theme's info blue at
+    // 60% over the blue bubble). The bubble fills are the ones people can pick: every accent preset's dim colour (the default
+    // bubble, launcher/LauncherShared.hpp) and every chat theme colour (launcher/main.cpp), read from the source.
+    auto readBlock = [](const fs::path& file, const char* marker, int perLine) {
+        std::vector<ImVec4> out;
+        std::ifstream in(file);
+        std::string line; bool on = false;
+        const std::regex v(R"(ImVec4\(\s*([0-9.]+)f?\s*,\s*([0-9.]+)f?\s*,\s*([0-9.]+)f?\s*,\s*([0-9.]+)f?\s*\))");
+        while (std::getline(in, line)) {
+            if (line.find(marker) != std::string::npos) { on = true; continue; }
+            if (!on) continue;
+            if (line.find("theme-allow-end") != std::string::npos) break;
+            int k = 0;
+            for (std::sregex_iterator it(line.begin(), line.end(), v), end; it != end; ++it, ++k)
+                if (perLine == 0 || k == perLine - 1)
+                    out.push_back(ImVec4(std::stof((*it)[1]), std::stof((*it)[2]), std::stof((*it)[3]), 1.0f));
+        }
+        return out;
+    };
+    const fs::path src(OKAY_SOURCE_DIR);
+    std::vector<ImVec4> fills = readBlock(src / "launcher/LauncherShared.hpp", "theme-allow-begin: the accent colours people pick", 2);
+    const std::size_t nAccents = fills.size();
+    for (const ImVec4& c : readBlock(src / "launcher/main.cpp", "theme-allow-begin: the chat bubble colours people pick", 0)) fills.push_back(c);
+    CHECK(nAccents == 7);
+    CHECK(fills.size() == nAccents + 8);
+    auto over = [](const ImVec4& fg, const ImVec4& bg) { return T::Mix(ImVec4(bg.x, bg.y, bg.z, 1), ImVec4(fg.x, fg.y, fg.z, 1), fg.w); };
+    const ImVec4 defaultBubble = fills.empty() ? ImVec4(0, 0, 0, 1) : fills[0];   // "Classic", the default accent
+    int lowFills = 0;
+    for (const T::Palette& P : pals) {
+        T::SetPalette(P);
+        const ImVec4 oldMeta = T::WithAlpha(P.info, 0.6f);   // what the bubble's time used before the fix
+        const ImVec4 meta = T::OnFillSoft(defaultBubble);
+        std::printf("  %-8s my-bubble time: before %.2f:1, after %.2f:1 (alpha %.2f)\n", P.name,
+                    T::Contrast(over(oldMeta, defaultBubble), defaultBubble), T::Contrast(over(meta, defaultBubble), defaultBubble), meta.w);
+        CHECK(T::Contrast(over(meta, defaultBubble), defaultBubble) >= 4.5f);
+        for (const ImVec4& f : fills) {
+            const ImVec4 m = T::OnFillSoft(f);
+            CHECK(m.x == P.onColor.x && m.y == P.onColor.y && m.z == P.onColor.z);
+            CHECK(m.w >= 0.72f && m.w <= 1.0f);
+            if (T::Contrast(P.onColor, f) >= 4.5f) CHECK(T::Contrast(over(m, f), f) >= 4.5f);
+            else { CHECK(m.w == 1.0f); ++lowFills; }   // a fill too light for 4.5:1 white: as readable as the body text
+        }
+    }
+    std::printf("  (%d theme x fill pairs where even full white is under 4.5:1; those keep full white)\n", lowFills);
+    T::SetPalette(pals[0]);
+    // The chat code asks for that colour: no bubble time is drawn in the info blue any more.
+    {
+        std::ifstream in(src / "launcher/main.cpp");
+        const std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(all.find("WithAlpha(okaytheme::Current().info, 0.6f)") == std::string::npos);
+        CHECK(all.find("OnFillSoft(") != std::string::npos);
+    }
     TEST_MAIN_RESULT();
 }

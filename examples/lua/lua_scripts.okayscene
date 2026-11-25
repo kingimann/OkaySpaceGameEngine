@@ -1,0 +1,152 @@
+okayscene 3
+name "Lua scripts"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Sun"
+  guid "395b2c78849fea013675dde3420a4995"
+  active 1
+  parent -1
+  transform 0 0 0 0.39287746 -0.23644297 0.1052712 0.88241714 1 1 1
+  light 1 1 1 1 0.35 1.1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Main Camera"
+  guid "f4cb11412523e977038bc17174955eac"
+  active 1
+  parent -1
+  transform 0 7 14 -0.2334454 0 0 0.9723699 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 2 "Ground"
+  guid "c9709f4d87131b429b04694e0388a4a0"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 40 1 40
+  mesh "Cube" 0.5882353 0.6039216 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Spinner"
+  guid "2bbe794b1e73ea640e20324e4b691750"
+  active 1
+  parent -1
+  transform -4 1 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.8235294 0.3137255 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "lua" "-- Spinner: turns around Y. \"speed\" is a setting you can change in the Inspector.
+local Spinner = {
+    speed = 90,   -- degrees per second
+}
+
+function Spinner:Update(dt)
+    self.transform:Rotate(0, self.speed * dt, 0)
+end
+
+return Spinner
+" "" 0
+end
+gameobject 4 "Player"
+  guid "ad906ec160036263e79f33020404afbf"
+  active 1
+  parent -1
+  transform 0 0.5 2 0 0 0 1 1 1 1
+  mesh "Sphere" 0.27450982 0.5882353 0.8235294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "lua" "-- Player: W A S D (or a controller stick) move the ball; Space jumps it up and down.
+local Player = {
+    speed = 6,
+    jumpHeight = 2,
+}
+
+function Player:Start()
+    self.home = self.transform.position
+    self.hop = 0
+    Debug.Log(\"Lua player ready on \" .. self.gameObject.name)
+end
+
+function Player:Update(dt)
+    local move = Vector3.new(Input.GetAxis(\"Horizontal\"), 0, Input.GetAxis(\"Vertical\"))
+    self.transform:Translate(move * (self.speed * dt))
+    if Input.GetKeyDown(\"space\") and self.hop <= 0 then self.hop = 1 end
+    if self.hop > 0 then
+        self.hop = math.max(0, self.hop - dt * 2)
+        local p = self.transform.position
+        p.y = self.home.y + math.sin(self.hop * math.pi) * self.jumpHeight
+        self.transform.position = p
+    end
+end
+
+return Player
+" "" 0
+end
+gameobject 5 "Bobber"
+  guid "219726f8b6aa50340b6f0c7ab0b46ea0"
+  active 1
+  parent -1
+  transform 4 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.3137255 0.7058824 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "lua" "-- Bobber: a coroutine moves the cube up, waits, and moves it down again, forever.
+local Bobber = { height = 1.5, seconds = 1 }
+
+-- yields until t seconds have passed; returns the time it waited
+local function wait(t)
+    local waited = coroutine.yield()
+    while waited < t do waited = waited + coroutine.yield() end
+    return waited
+end
+
+function Bobber:Start()
+    local start = self.transform.position
+    self.job = coroutine.wrap(function()
+        while true do
+            local t = 0
+            while t < self.seconds do
+                t = t + wait(0)
+                local k = math.min(t / self.seconds, 1)
+                self.transform.position = start + Vector3.up * (k * self.height)
+            end
+            wait(0.5)
+            self.transform.position = start
+            wait(0.5)
+        end
+    end)
+end
+
+function Bobber:Update(dt)
+    self.job(dt)
+end
+
+return Bobber
+" "" 0
+end
+gameobject 6 "Label"
+  guid "1a3d496e369a51bfe03e037c937e49df"
+  active 1
+  parent -1
+  transform -7 5 -2 0 0 0 1 1 1 1
+  text "LUA SCRIPTS: red spins, blue moves with W A S D and jumps with Space, green bobs (a coroutine)" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 318 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
+end
+gameobject 7 "Rules"
+  guid "f2909e96eb8a498fd7d79babf6170ee5"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "lua" "-- Rules: no mesh, only settings. Change them in the Inspector; Start prints them to the Console.
+local Rules = {
+    title = \"Lua demo\",
+    lives = 3,
+    startPosition = Vector3.new(0, 0.5, 2),
+    hardMode = false,
+}
+
+function Rules:Start()
+    print(string.format(\"%s: %d lives, start at %s, hard mode %s\",
+        self.title, self.lives, tostring(self.startPosition), tostring(self.hardMode)))
+end
+
+return Rules
+" "" 0
+end

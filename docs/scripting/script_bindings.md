@@ -73,6 +73,14 @@ does not bind a method when any of these holds (`DENY_*` there; `--audit` counts
    `Terrain.ExportHeightmap` / `ImportHeightmap`, `VehicleController.ToFile` / `LoadPresetText` / `SavePresetText`,
    `ScriptComponent.SetPath`, `VisualScriptComponent.SetPath`).
 
+The generator also writes these four lists into `ScriptBindingsGenerated.cpp` (`GeneratedDenyRules()`), and
+`scriptbind::IsDeniedClass` / `IsDeniedMethod` apply them (same word split as the generator, `NameWords`). A language
+that reaches another table as well uses them, so that table is no way around the rules: Lua drops every typed-table
+(`Script/EngineApi`) type and method they deny (`UIFilePicker`, `UIHotReload`, `Animator:SetCharacterModel(path)`,
+`UIBreadcrumbs:SetPath(path)`, ...; test `lua_script` part 18). The C# API is generated from this table only, so it
+has the same exclusions. Not done yet: the typed language (C#-style OkayScript) and the visual-script Engine API
+nodes still reach those `EngineApi` members; they can call the same two functions.
+
 The rules are on the safe side: some harmless methods are dropped too (`Transform.Find(path)` names a child, not a
 file). Argument checks in the generated conversion (B2): an enum argument must be one of its values (the range read
 from the enum's declaration; a bit-flag enum any combination), and a whole-number parameter whose name is count- or

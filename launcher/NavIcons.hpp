@@ -9,7 +9,7 @@
 namespace okl {
 
 // Icon ids past the launcher tabs (0..10), and the round chat-ribbon buttons.
-enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19 };
+enum { kIcoBell = 11, kIcoChat = 12, kIcoPanel = 13, kIcoRefresh = 14, kIcoShield = 15, kIcoSpark = 16, kIcoBulb = 17, kIcoGlobe = 18, kIcoAlert = 19, kIcoTerminal = 20 };
 enum { kRibChat, kRibPlay, kRibCheck, kRibClose, kRibMore, kRibStar, kRibStarOn };   // kRibStar: an outline star, kRibStarOn: a filled gold one
 
 void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col);   // line icon `id` centred at c

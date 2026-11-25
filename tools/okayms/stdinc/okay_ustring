@@ -1,0 +1,138 @@
+// okay-ms own standard library: std::u16string, std::u32string and std::wstring, written from ISO/IEC 14882
+// [basic.string] for character types other than char. Own minimal version: one class template over a std::vector of
+// the code units that always ends in a zero unit; the operations the engine's text code uses (build, append, index,
+// compare, substr, find, rfind, iterate). No traits or allocator arguments, no streams, no wide literals (L"..." is not
+// read by okay-ms yet). Included by <string>.
+#pragma once
+#include <cstddef>
+#include <type_traits>
+#include <vector>
+namespace std {
+template <typename C>
+class basic_ustring__ {
+    vector<C> units_;  // the code units and a zero after them
+
+    static size_t length_of(const C* s) {
+        size_t n = 0;
+        while (s[n] != 0) ++n;
+        return n;
+    }
+
+public:
+    typedef C value_type;
+    typedef size_t size_type;
+    typedef C* iterator;
+    typedef const C* const_iterator;
+    static const size_t npos = (size_t)-1;
+
+    basic_ustring__() { units_.push_back((C)0); }
+    basic_ustring__(const C* s) { assign(s, length_of(s)); }
+    basic_ustring__(const C* s, size_t n) { assign(s, n); }
+    basic_ustring__(size_t n, C c) {
+        units_.assign(n, c);
+        units_.push_back((C)0);
+    }
+    basic_ustring__(const basic_ustring__& o) : units_(o.units_) {}
+    template <typename It>
+    basic_ustring__(It first, It last) {
+        if constexpr (is_arithmetic<It>::value) {
+            units_.assign((size_t)first, (C)last);
+        } else {
+            for (; first != last; ++first) units_.push_back((C)*first);
+        }
+        units_.push_back((C)0);
+    }
+    basic_ustring__& operator=(const basic_ustring__& o) {
+        units_ = o.units_;
+        return *this;
+    }
+    basic_ustring__& assign(const C* s, size_t n) {
+        units_.clear();
+        for (size_t i = 0; i < n; ++i) units_.push_back(s[i]);
+        units_.push_back((C)0);
+        return *this;
+    }
+
+    size_t size() const { return units_.size() - 1; }
+    size_t length() const { return units_.size() - 1; }
+    bool empty() const { return units_.size() == 1; }
+    const C* data() const { return units_.data(); }
+    C* data() { return units_.data(); }
+    const C* c_str() const { return units_.data(); }
+    C* begin() { return units_.data(); }
+    C* end() { return units_.data() + size(); }
+    const C* begin() const { return units_.data(); }
+    const C* end() const { return units_.data() + size(); }
+    C& operator[](size_t i) { return units_[i]; }
+    const C& operator[](size_t i) const { return units_[i]; }
+    C& back() { return units_[size() - 1]; }
+    void reserve(size_t n) { units_.reserve(n + 1); }
+    void clear() {
+        units_.clear();
+        units_.push_back((C)0);
+    }
+    void push_back(C c) {
+        units_.back() = c;
+        units_.push_back((C)0);
+    }
+    void pop_back() {
+        units_.pop_back();
+        units_.back() = (C)0;
+    }
+    void resize(size_t n, C c) {
+        units_.pop_back();
+        units_.resize(n, c);
+        units_.push_back((C)0);
+    }
+    void resize(size_t n) { resize(n, (C)0); }
+    basic_ustring__& append(const C* s, size_t n) {
+        units_.pop_back();
+        for (size_t i = 0; i < n; ++i) units_.push_back(s[i]);
+        units_.push_back((C)0);
+        return *this;
+    }
+    basic_ustring__& append(const basic_ustring__& o) { return append(o.data(), o.size()); }
+    basic_ustring__& operator+=(C c) {
+        push_back(c);
+        return *this;
+    }
+    basic_ustring__& operator+=(const basic_ustring__& o) { return append(o.data(), o.size()); }
+    basic_ustring__& operator+=(const C* s) { return append(s, length_of(s)); }
+    basic_ustring__ substr(size_t pos, size_t n) const {
+        if (pos > size()) pos = size();
+        if (n > size() - pos) n = size() - pos;
+        return basic_ustring__(data() + pos, n);
+    }
+    basic_ustring__ substr(size_t pos) const { return substr(pos, npos); }
+    size_t find(C c, size_t pos = 0) const {
+        for (size_t i = pos; i < size(); ++i)
+            if (units_[i] == c) return i;
+        return npos;
+    }
+    size_t rfind(C c, size_t pos = npos) const {
+        if (size() == 0) return npos;
+        size_t i = (pos < size()) ? pos : size() - 1;
+        for (;; --i) {
+            if (units_[i] == c) return i;
+            if (i == 0) return npos;
+        }
+    }
+    int compare(const basic_ustring__& o) const {
+        const size_t n = size() < o.size() ? size() : o.size();
+        for (size_t i = 0; i < n; ++i)
+            if (units_[i] != o.units_[i]) return units_[i] < o.units_[i] ? -1 : 1;
+        return size() == o.size() ? 0 : (size() < o.size() ? -1 : 1);
+    }
+    bool operator==(const basic_ustring__& o) const { return compare(o) == 0; }
+    bool operator!=(const basic_ustring__& o) const { return compare(o) != 0; }
+    bool operator<(const basic_ustring__& o) const { return compare(o) < 0; }
+    basic_ustring__ operator+(const basic_ustring__& o) const {
+        basic_ustring__ r(*this);
+        r.append(o);
+        return r;
+    }
+};
+typedef basic_ustring__<char16_t> u16string;
+typedef basic_ustring__<char32_t> u32string;
+typedef basic_ustring__<wchar_t> wstring;
+}  // namespace std

@@ -1,0 +1,37 @@
+// <array> for okay-cc (ISO/IEC 14882 [array]). Our own header: an aggregate holding T __e[N], so
+// std::array<int, 3> a = {1, 2, 3}; initializes the elements ([dcl.init.aggr], brace elision).
+// Iterators are pointers. N = 0 is a zero-length array (a GNU extension okay-cc accepts).
+#pragma once
+#include <cstddef>
+namespace std {
+template <typename T, unsigned long N>
+struct array {
+    T __e[N];
+    unsigned long size() const { return N; }
+    unsigned long max_size() const { return N; }
+    bool empty() const { return N == 0; }
+    T *data() { return __e; }
+    T *begin() { return __e; }
+    T *end() { return __e + N; }
+    T &operator[](unsigned long i) { return __e[i]; }
+    T &at(unsigned long i) { return __e[i]; }
+    T &front() { return __e[0]; }
+    T &back() { return __e[N - 1]; }
+    void fill(const T &v) {
+        for (unsigned long i = 0; i < N; ++i) __e[i] = v;
+    }
+    void swap(array<T, N> &o) {
+        for (unsigned long i = 0; i < N; ++i) {
+            T t = __e[i];
+            __e[i] = o.__e[i];
+            o.__e[i] = t;
+        }
+    }
+    bool operator==(const array<T, N> &o) const {
+        for (unsigned long i = 0; i < N; ++i)
+            if (!(__e[i] == o.__e[i])) return false;
+        return true;
+    }
+    bool operator!=(const array<T, N> &o) const { return !(*this == o); }
+};
+}  // namespace std

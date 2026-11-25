@@ -564,6 +564,18 @@ def render(model):
     L.append("")
     L.append("} // namespace")
     L.append("")
+    # The DENY_* rules as data, so Lua's and the typed-language table apply the same rules (ScriptBindings.hpp).
+    def strs(items):
+        return "{" + ", ".join(f'"{x}"' for x in sorted(items)) + "}"
+    L.append("const DenyRules& GeneratedDenyRules() {")
+    L.append("    static const DenyRules r{")
+    L.append(f"        {strs(DENY_CLASSES)},")
+    L.append(f"        {strs(DENY_METHODS)},")
+    L.append(f"        {strs(DENY_PARAM_WORDS)},")
+    L.append(f"        {strs(DENY_NAME_WORDS)}}};")
+    L.append("    return r;")
+    L.append("}")
+    L.append("")
     L.append("void RegisterGeneratedBindings() {")
     for c in model:
         L.append(f"    Bind{c['name']}();")

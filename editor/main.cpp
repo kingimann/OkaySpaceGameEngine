@@ -783,6 +783,7 @@ int main(int argc, char** argv) {
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
+#include "okay/Lua/LuaScriptVM.hpp"          // Lua scripts: colours, checks and autocomplete (our own interpreter)
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -2826,7 +2827,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "cs" : "okayscript";
+    std::string lang = okay::ScriptLanguageForExtension(ext);
     auto sc = std::make_unique<okay::ScriptComponent>(lang);
     std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
     okay::ScriptComponent* raw = sc.get();
@@ -4129,10 +4130,10 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay") {
+    if (ext == ".okay" || ext == ".lua") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
-        auto* nsc = go->AddComponent<okay::ScriptComponent>("okayscript");
+        auto* nsc = go->AddComponent<okay::ScriptComponent>(okay::ScriptLanguageForExtension(ext));
         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
         if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
         SetCodeBuffer(nsc, nsc->Source());
@@ -10773,77 +10774,45 @@ static void DrawLookSections(EditorState& ed) {
     auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
 
     if (ImGui::CollapsingHeader("Post-processing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Drawn by OkayUI only (okayuiscreens::DrawPostProcess, editor/OkayPanels.cpp); the scene's values go in and come back here.
         // Look presets fill sky / fog / post / weather in one go; Reset puts them back.
+        okaypanels::PostValues v;
+        v.filmic = rs.tonemap; v.exposure = post.exposure; v.tonemap = post.tonemap;
+        v.bloom = post.bloom; v.bloomThreshold = post.bloomThreshold; v.bloomIntensity = post.bloomIntensity;
+        v.bloomRadius = post.bloomRadius; v.bloomSoftness = post.bloomSoftness;
+        v.grading = post.grading; v.temperature = post.temperature; v.tint = post.tint; v.saturation = post.saturation; v.contrast = post.contrast;
+        const auto in3 = [](float* d, const Vec3& s3) { d[0] = s3.x; d[1] = s3.y; d[2] = s3.z; };
+        in3(v.lift, post.lift); in3(v.gamma, post.gamma); in3(v.gain, post.gain);
+        v.vignette = rs.vignette; v.vignetteSmooth = post.vignetteSmooth;
+        v.fxaa = post.fxaa; v.ssao = post.ssao; v.ssaoRadius = post.ssaoRadius; v.ssaoIntensity = post.ssaoIntensity; v.ssaoPower = post.ssaoPower;
+        v.dof = post.dof; v.dofFocus = post.dofFocus; v.dofRange = post.dofRange;
+        okaypanels::PostProcessModel pm;
+        pm.v = &v;
         int presetCount = 0;
         const char* const* presets = okay::LookPresetNames(presetCount);
-        if (ImGui::BeginCombo("Look Preset", "Choose...")) {
-            for (int i = 0; i < presetCount; ++i)
-                if (ImGui::Selectable(presets[i])) ApplyLookPresetToScene(ed, presets[i]);
-            ImGui::EndCombo();
+        for (int i = 0; i < presetCount; ++i) pm.presets.push_back(presets[i]);
+        pm.chainActive = okay::PostActive(rs);
+        const auto gap = [](okay::RenderFeature f) { const char* n = okay::FeatureGapNote(f); return std::string(n ? n : ""); };
+        pm.vignetteNote = gap(okay::RenderFeature::VignetteSmoothness);
+        pm.ssaoNote = gap(okay::RenderFeature::SceneSsao);
+        pm.dofNote = gap(okay::RenderFeature::DepthOfField);
+        okaypanels::PostProcessIntent pin;
+        oked::DrawPostProcessOkayUI(pm, pin);
+        if (pin.changed) {
+            rs.tonemap = v.filmic; post.exposure = v.exposure; post.tonemap = v.tonemap;
+            post.bloom = v.bloom; post.bloomThreshold = v.bloomThreshold; post.bloomIntensity = v.bloomIntensity;
+            post.bloomRadius = v.bloomRadius; post.bloomSoftness = v.bloomSoftness;
+            post.grading = v.grading; post.temperature = v.temperature; post.tint = v.tint; post.saturation = v.saturation; post.contrast = v.contrast;
+            post.lift = Vec3{v.lift[0], v.lift[1], v.lift[2]};
+            post.gamma = Vec3{v.gamma[0], v.gamma[1], v.gamma[2]};
+            post.gain = Vec3{v.gain[0], v.gain[1], v.gain[2]};
+            rs.vignette = v.vignette; post.vignetteSmooth = v.vignetteSmooth;
+            post.fxaa = v.fxaa; post.ssao = v.ssao; post.ssaoRadius = v.ssaoRadius; post.ssaoIntensity = v.ssaoIntensity; post.ssaoPower = v.ssaoPower;
+            post.dof = v.dof; post.dofFocus = v.dofFocus; post.dofRange = v.dofRange;
+            ed.dirty = true;
         }
-        tip("Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).");
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##look")) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
-        tip("Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.");
-        ImGui::TextDisabled(okay::PostActive(rs) ? "GPU post chain: on" : "GPU post chain: off (the frame is untouched)");
-
-        if (ImGui::Checkbox("Filmic Rendering (linear lighting + tonemap)", &rs.tonemap)) ed.dirty = true;
-        tip("Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).");
-        if (ImGui::SliderFloat("Exposure", &post.exposure, 0.1f, 4.0f, "%.2f")) ed.dirty = true;
-        {
-            const char* curves[] = {"None", "ACES", "Filmic"};
-            if (ImGui::Combo("Tonemap", &post.tonemap, curves, 3)) ed.dirty = true;
-            tip("How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.");
-        }
-        if (ImGui::Checkbox("Bloom", &post.bloom)) ed.dirty = true;
-        if (post.bloom) {
-            if (ImGui::SliderFloat("Threshold##bloom", &post.bloomThreshold, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
-            if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Softness##bloom", &post.bloomSoftness, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.");
-        }
-        if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
-        if (post.grading) {
-            if (ImGui::SliderFloat("Temperature", &post.temperature, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Cool (blue) to warm (orange).");
-            if (ImGui::SliderFloat("Tint", &post.tint, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Saturation", &post.saturation, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Contrast", &post.contrast, 0.5f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat3("Lift", &post.lift.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Raises or lowers the blacks, per channel.");
-            if (ImGui::SliderFloat3("Gamma", &post.gamma.x, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Brightens or darkens the mid-tones, per channel.");
-            if (ImGui::SliderFloat3("Gain", &post.gain.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Scales the whites, per channel.");
-        }
-        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
-        if (rs.vignette > 0.0f) {
-            if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
-            DrawRendererNote(okay::RenderFeature::VignetteSmoothness);
-        }
-        if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
-        if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::SceneSsao);
-        if (post.ssao) {
-            if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
-            tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
-        }
-        if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::DepthOfField);
-        if (post.dof) {
-            if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            tip("How far either side of the focus distance stays sharp.");
-        }
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Linear lighting is not drawn on Direct3D 12 or the software renderer. Exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12. The vignette amount is drawn on every renderer. The software renderer also has its own switches under Rendering below; the scene settings here take effect there too.");
-        ImGui::PopTextWrapPos();
+        if (pin.preset >= 0 && pin.preset < presetCount) ApplyLookPresetToScene(ed, presets[pin.preset]);
+        if (pin.reset) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
     }
 
     if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -11445,12 +11414,19 @@ void DrawShortcutsWindow() {
 }
 
 // One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
+// The colouring follows the script's language (switched with the language picker).
 static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWidget>> g_codeEditors;
+static std::unordered_map<okay::ScriptComponent*, std::string> g_codeEditorLang;
 static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
+    if (it != g_codeEditors.end() && g_codeEditorLang[sc] != sc->Language()) {
+        g_codeEditorLang[sc] = sc->Language();
+        it->second->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
+    }
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
-        te->SetLanguage(OkayScriptLanguageWords());
+        g_codeEditorLang[sc] = sc->Language();
+        te->SetLanguage(sc->Language() == okay::LuaScriptVM::kLanguage ? LuaLanguageWords() : OkayScriptLanguageWords());
         te->SetPalette(OkayScriptPalette());
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
@@ -11500,6 +11476,12 @@ static std::string FormatOkayScript(const std::string& src) {
         ls = le + 1;
     }
     return out;
+}
+
+// Format Document for the script's language: Lua re-indents by its blocks (LuaScriptVM::Format).
+static std::string FormatScriptFor(const okay::ScriptComponent* sc, const std::string& src) {
+    if (sc && sc->Language() == okay::LuaScriptVM::kLanguage) return okay::LuaScriptVM::Format(src);
+    return FormatOkayScript(src);
 }
 
 // Rename every use of identifier `from` in code to `to`: comments and strings
@@ -11557,13 +11539,27 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    fs::path p = dir / (stem + ".okay");
+    // The language (every backend this build runs): its file extension and starter script.
+    static int langIdx = 0;
+    static const std::vector<std::string> langs = okay::AvailableScriptLanguages();
+    if (langIdx < 0 || langIdx >= (int)langs.size()) langIdx = 0;
+    const std::string lang = langs.empty() ? std::string("okayscript") : langs[(std::size_t)langIdx];
+    const std::string ext = "." + extide::ExtFor(lang);
+    fs::path p = dir / (stem + ext);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::TextDisabled("Assets/Scripts/%s.okay", stem.c_str());
+    if (langs.size() > 1) {
+        std::vector<std::string> labels;
+        for (const auto& l : langs) labels.push_back(l == "okayscript" ? "OkayScript (.okay)" : l == "lua" ? "Lua (.lua)" : l);
+        std::vector<const char*> items;
+        for (const auto& l : labels) items.push_back(l.c_str());
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("Language", &langIdx, items.data(), (int)items.size());
+    }
+    ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), ext.c_str());
     std::error_code ec;
     const bool exists = fs::exists(p, ec);
     if (exists) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists - it will be opened.");
@@ -11575,7 +11571,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     if (create) {
         fs::create_directories(dir, ec);
-        if (!exists) std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        if (!exists) std::ofstream(p) << extide::StarterScriptNamed(lang, stem);
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());
@@ -11960,7 +11956,7 @@ void DrawScriptEditor(EditorState& ed) {
             doSave();
         if (s_tbFormat) {          // re-indent by brace depth
             s_tbFormat = false;
-            caret.replaceAll = FormatOkayScript(buf.data());   // applied via callback / leftover path
+            caret.replaceAll = FormatScriptFor(sc, buf.data());   // applied via callback / leftover path
             ed.dirty = true; ConsoleLog("Formatted script");
         }
 
@@ -11991,7 +11987,7 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Format Document", "Ctrl+Alt+L")) { caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }
+                if (ImGui::MenuItem("Format Document", "Ctrl+Alt+L")) { caret.replaceAll = FormatScriptFor(sc, buf.data()); ed.dirty = true; }
                 if (ImGui::MenuItem("Toggle Comment", "Ctrl+/")) caret.toggleComment = true;
                 if (ImGui::MenuItem("Find / Replace", "Ctrl+F")) s_showFind = true;
                 ImGui::Separator();
@@ -12180,7 +12176,7 @@ void DrawScriptEditor(EditorState& ed) {
             // check typing AltGr characters (ł, @, {…) would silently reformat.
             if (kio.KeyAlt && !kio.KeyShift && kio.InputQueueCharacters.Size == 0 &&
                 ImGui::IsKeyPressed(ImGuiKey_L, false)) {
-                caret.replaceAll = FormatOkayScript(buf.data());
+                caret.replaceAll = FormatScriptFor(sc, buf.data());
                 ed.dirty = true;
             }
         }
@@ -12721,7 +12717,7 @@ void DrawScriptEditor(EditorState& ed) {
             std::vector<Cmd> cmds = {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
-                {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
+                {"Format Document", [&]{ caret.replaceAll = FormatScriptFor(sc, buf.data()); ed.dirty = true; }},
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
@@ -12866,11 +12862,15 @@ void DrawScriptEditor(EditorState& ed) {
                         }
                     }
                 }
-                if (sc->Language() == okay::NextScriptVM::kLanguage) {
-                    // The new language's own checker: every error and "does nothing"
-                    // warning comes from the compiler that runs the script.
+                if (sc->Language() == okay::NextScriptVM::kLanguage || sc->Language() == okay::LuaScriptVM::kLanguage) {
+                    // The language's own checker: every error and warning comes from the compiler that runs
+                    // the script (the new language: "does nothing" warnings; Lua: syntax errors with line and
+                    // column, engine names that do not exist and misspelled handlers).
                     static okay::NextScriptVM s_nextCheck;
-                    for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
+                    static okay::LuaScriptVM s_luaCheck;
+                    okay::IScriptVM& checker = sc->Language() == okay::LuaScriptVM::kLanguage
+                        ? static_cast<okay::IScriptVM&>(s_luaCheck) : static_cast<okay::IScriptVM&>(s_nextCheck);
+                    for (auto& d : checker.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
                         else s_warns.push_back({d.line, d.message, {}, {}, d.column});
                     }
@@ -13610,8 +13610,18 @@ void DrawScriptEditor(EditorState& ed) {
                 recvExpr.assign(t + es, t + (ws - 1));
             }
             std::vector<std::string> csMembers;
-            const std::vector<std::string>* membersP = &ScriptMembers(receiver);
-            if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
+            const bool luaScript = sc->Language() == okay::LuaScriptVM::kLanguage;
+            if (luaScript && ws > 0 && t[ws - 1] == ':') {   // obj:Method in Lua
+                int rs = ws - 1; while (rs > 0 && (isWord(t[rs - 1]) || t[rs - 1] == '.')) --rs;
+                receiver.assign(t + rs, t + (ws - 1));
+                recvExpr = receiver;
+            }
+            static const std::vector<std::string> s_noMembers;
+            const std::vector<std::string>* membersP = luaScript ? &s_noMembers : &ScriptMembers(receiver);
+            if (luaScript) {
+                if (!recvExpr.empty()) csMembers = okay::LuaScriptVM::CompletionMembers(recvExpr);
+                membersP = &csMembers;
+            } else if (membersP->empty() || recvExpr.find('.') != std::string::npos || recvExpr.find('<') != std::string::npos) {
                 csMembers = CsMembersFor(std::string(t), recvExpr);
                 if (!csMembers.empty()) membersP = &csMembers;
             }
@@ -13698,7 +13708,11 @@ void DrawScriptEditor(EditorState& ed) {
                 struct Hit { const std::string* w; bool fuzzy; int score; };
                 std::vector<Hit> exact, ci, fuzz;
                 std::vector<std::string> combined;
-                if (!memberMode) { combined = ScriptCompletions(); AddBufferIdentifiers(buf.data(), combined); }
+                if (!memberMode) {
+                    static const std::vector<std::string> s_luaWords = okay::LuaScriptVM::CompletionNames();
+                    combined = sc->Language() == okay::LuaScriptVM::kLanguage ? s_luaWords : ScriptCompletions();
+                    AddBufferIdentifiers(buf.data(), combined);
+                }
                 const std::vector<std::string>& pool = memberMode ? members : combined;
                 for (const auto& w : pool) {
                     if (w.size() < prefix.size()) continue;
@@ -16365,26 +16379,17 @@ void DrawProjectSettings(EditorState& ed) {
             static std::string modulesNote;
             if (okaymod::DrawModulesSettings(g_project.modules, ed.scene(), modulesNote)) SaveProjectSettings();
         }
-        if (ImGui::CollapsingHeader("Loading screen")) {
-            ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
-            const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
-            ImGui::SetNextItemWidth(360);
-            ImGui::InputTextWithHint("##pssplashlogo", "Logo image (PNG) — blank = built-in cube",
-                                     g_project.splashLogo, sizeof(g_project.splashLogo));
-            ImGui::SameLine();
-            if (oked::TipButton("Browse...", "...##pssplash")) {
+        if (ImGui::CollapsingHeader("Loading screen")) {   // drawn by OkayUI only (editor/OkayPanels.cpp); edited in place
+            okaypanels::LoadingScreenModel lm;
+            lm.logo = g_project.splashLogo; lm.logoSize = sizeof(g_project.splashLogo);
+            lm.accentOverride = &g_project.splashAccentOverride; lm.accent = g_project.splashAccent;
+            lm.bgTop = g_project.splashBgTop; lm.bgBottom = g_project.splashBgBot; lm.showBar = &g_project.splashShowBar;
+            okaypanels::LoadingScreenIntent lin;
+            oked::DrawLoadingScreenOkayUI(lm, lin);
+            if (lin.browse) {
+                const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
                 PickOpenInto("Choose the splash logo", "", pngFilt, g_project.splashLogo, sizeof(g_project.splashLogo));
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Clear##pssplash")) g_project.splashLogo[0] = '\0';
-            ImGui::Checkbox("Custom splash accent##ps", &g_project.splashAccentOverride);
-            if (g_project.splashAccentOverride) {
-                ImGui::SameLine(); ImGui::SetNextItemWidth(220);
-                ImGui::ColorEdit3("##pssplashaccent", g_project.splashAccent);
-            }
-            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background top##ps", g_project.splashBgTop);
-            ImGui::SetNextItemWidth(220); ImGui::ColorEdit3("Background bottom##ps", g_project.splashBgBot);
-            ImGui::Checkbox("Show progress bar##ps", &g_project.splashShowBar);
         }
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
@@ -27110,12 +27115,33 @@ static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCo
     return true;
 }
 
+// The Inspector settings of a script: `public` fields for OkayScript; the fields of the
+// returned table for Lua (LuaScriptVM::Settings runs the chunk once per source text).
+static std::vector<ScriptField> ScriptFieldsFor(ScriptComponent* sc, const std::string& src) {
+    if (sc->Language() != okay::LuaScriptVM::kLanguage) return ParseScriptFields(src);
+    static std::unordered_map<std::size_t, std::vector<ScriptField>> s_cache;
+    const std::size_t h = std::hash<std::string>{}(src);
+    auto it = s_cache.find(h);
+    if (it != s_cache.end()) return it->second;
+    if (s_cache.size() > 64) s_cache.clear();
+    std::vector<ScriptField> out;
+    for (const auto& st : okay::LuaScriptVM::Settings(src)) {
+        ScriptField f;
+        f.name = st.name;
+        f.type = st.type;
+        f.def = st.defaultText;
+        out.push_back(f);
+    }
+    s_cache[h] = out;
+    return out;
+}
+
 static bool DrawScriptWithOkayUI(EditorState& ed, ScriptComponent* sc) {
     using namespace okaypanels;
     InspFieldList L;
     const int kOpen = L.SmallButton("Open in Script Editor");
     const char* liveBuf = PeekCodeBuffer(sc);
-    const std::vector<ScriptField> fields = ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+    const std::vector<ScriptField> fields = ScriptFieldsFor(sc, liveBuf ? std::string(liveBuf) : sc->Source());
     struct Var {   // one variable's rows and the values they edit
         std::string cur, text;
         bool overridden = false, b = false, isVec = false, isNum = false, isObj = false;
@@ -37055,7 +37081,7 @@ void DrawInspector(EditorState& ed) {
             // vars appear as you type), else the last-compiled source.
             const char* liveBuf = PeekCodeBuffer(sc);
             std::vector<ScriptField> fields =
-                ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+                ScriptFieldsFor(sc, liveBuf ? std::string(liveBuf) : sc->Source());
             if (fields.empty()) {
                 ImGui::TextDisabled("No public variables. Declare top-level vars,");
                 ImGui::TextDisabled("e.g.  public float speed = 5;");
@@ -54701,11 +54727,21 @@ int main(int argc, char** argv) {
                 g_showScriptEditor = true; g_scriptDockReq = 1;
                 if (sn[0] == '2') g_seNewReq = true;
             }
-            if (std::getenv("OKAY_UI_SCRIPT") && s_focusFrames == 42)
+            // OKAY_UI_SCRIPT=open: the selection's own script; =lua: a Lua starter script; =luaerr: a Lua
+            // script with a syntax error and a misspelled engine name (the checks, in screenshots).
+            if (const char* us = std::getenv("OKAY_UI_SCRIPT"); us && s_focusFrames == 42)
                 if (GameObject* g = ed.selected()) {
-                    auto* scr = g->AddComponent<ScriptComponent>();
-                    std::string src = extide::StarterScriptNamed("okayscript", "Player");
-                    scr->SetSource(src); scr->LoadSource(src);
+                    const std::string mode = us;
+                    if (mode != "open") {
+                        const bool lua = mode == "lua" || mode == "luaerr";
+                        auto* scr = g->AddComponent<ScriptComponent>(lua ? "lua" : "okayscript");
+                        std::string src = extide::StarterScriptNamed(lua ? "lua" : "okayscript", "Player");
+                        if (mode == "luaerr")
+                            src = "local Player = { speed = 5 }\n\nfunction Player:Update(dt)\n"
+                                  "    if Input.GetKeyy(\"space\") then\n        self.transform:Translate(0, self.speed * dt, 0)\n"
+                                  "    end\n    local broken = = 1\nend\n\nreturn Player\n";
+                        scr->SetSource(src); scr->LoadSource(src);
+                    }
                     g_showScriptEditor = true; ImGui::SetWindowFocus("Script Editor");
                     g_scriptDockReq = 1;   // its own large window
                 }

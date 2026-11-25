@@ -386,5 +386,13 @@ int main() {
         CHECK(!RefreshStamp((td.path / "nope").string(), shown));       // a folder that is not there is "no stamp" too
     }
 
+    {   // WithV: exactly one "v" (the launcher showed "What's new in vv2.903.6": the news version already had one)
+        CHECK(WithV("2.903.6") == "v2.903.6");
+        CHECK(WithV("v2.903.6") == "v2.903.6");
+        CHECK(WithV("vv2.903.6") == "v2.903.6");
+        CHECK(WithV(" V2.903.8.7 ") == "v2.903.8.7");   // a test build keeps its four numbers
+        CHECK(WithV("") == "");
+        CHECK(WithV(WithV("2.1")) == "v2.1");
+    }
     TEST_MAIN_RESULT();
 }

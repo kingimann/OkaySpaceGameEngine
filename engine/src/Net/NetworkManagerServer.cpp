@@ -732,7 +732,12 @@ void NetworkManager::ServerTick(float dt) {
             }
         }
     }
-    if (m_relayLost) { Stop(); return; }   // the relay refused this host (RelayError())
+    if (m_relayLost) {   // the relay refused this host (RelayError())
+        if (RetryOnlineCode()) return;   // HostOnline's made-up code was taken: another one
+        NoteRelayError();
+        Stop();
+        return;
+    }
     for (auto it = m_pendingJoins.begin(); it != m_pendingJoins.end();)   // key exchanges never finished
         it = (it->second.age += dt) > kPendingJoinTtl ? m_pendingJoins.erase(it) : std::next(it);
 

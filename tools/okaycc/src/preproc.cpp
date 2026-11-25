@@ -401,6 +401,9 @@ public:
                 out.push_back(std::move(t));
                 continue;
             }
+            // The step limit guards one expansion and its rescans, not the whole file: a token
+            // read straight from the source starts a new count.
+            if (!t.fromExpansion) steps_ = 0;
             Token e = expandToken(std::move(t));
             if (e.kind == Tok::End || e.kind == Tok::Placemarker) continue;
             if (e.kind == Tok::Newline) {
@@ -823,6 +826,7 @@ private:
             if (p.kind == Tok::Newline || p.kind == Tok::End) break;
             toks.push_back(std::move(p));
         }
+        steps_ = 0;  // a directive line is one expansion
         std::vector<Token> exp = expandList(std::move(toks));
         if (exp.size() == 1 && exp[0].kind == Tok::StringLit) {
             std::string header = exp[0].rawInside.empty() ? exp[0].decoded : exp[0].rawInside;
@@ -897,6 +901,7 @@ private:
 
     bool evalIf(std::vector<Token> line, bool& value) {
         line = resolveDefined(std::move(line));
+        steps_ = 0;  // a directive line is one expansion
         line = expandList(std::move(line));
         for (Token& t : line) {
             if (!t.isName()) continue;

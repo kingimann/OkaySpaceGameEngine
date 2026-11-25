@@ -1024,7 +1024,13 @@ private:
                              f.type->kind != Type::Kind::Union && f.type->kind != Type::Kind::Array)
                         v = mk(Expr::Kind::Int);
                     ++i;
-                    if (v) addE(eAssign(eArrow(eAddr(eName(tmp, pos), pos), f.name, pos), std::move(v), pos));
+                    if (v) {
+                        // tmp.field = v: a plain member, so a class field's operator= is found
+                        // (name = "text" for a std::string field).
+                        auto field = eArrow(eName(tmp, pos), f.name, pos);
+                        field->text = ".";
+                        addE(eAssign(std::move(field), std::move(v), pos));
+                    }
                 }
             if (i < args.size()) err("too many initializers");
             if (!seq) seq = mk(Expr::Kind::Int);
@@ -4737,6 +4743,10 @@ private:
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::For;
         s->line = cur().line;
+        // An init-statement that is more than one statement (two declarators, or an object whose
+        // construction is a statement of its own) goes in a block around the loop: [stmt.for] p1
+        // defines the for statement as { init-statement while (condition) { ... } }.
+        std::vector<std::unique_ptr<Stmt>> outer;
         advance();
         expectP("(", "(");
         if (eatP(";")) {
@@ -4745,12 +4755,7 @@ private:
             std::vector<std::unique_ptr<Stmt>> decls;
             parseDeclInto(decls, true);
             if (decls.size() == 1) s->init = std::move(decls[0]);
-            else {
-                auto block = std::make_unique<Stmt>();
-                block->kind = Stmt::Kind::Block;
-                block->stmts = std::move(decls);
-                s->init = std::move(block);
-            }
+            else outer = std::move(decls);  // "for (int i = 0, n = 4; ...)", "for (It it = f(); ...)"
         } else {
             auto st = std::make_unique<Stmt>();
             st->kind = Stmt::Kind::Expr;
@@ -4769,7 +4774,13 @@ private:
         s->body = parseStmt();
         loopBases_.pop_back();
         brkBases_.pop_back();
-        return s;
+        if (outer.empty()) return s;
+        auto block = std::make_unique<Stmt>();
+        block->kind = Stmt::Kind::Block;
+        block->line = s->line;
+        block->stmts = std::move(outer);
+        block->stmts.push_back(std::move(s));
+        return block;
     }
 
     std::unique_ptr<Stmt> parseSwitch() {

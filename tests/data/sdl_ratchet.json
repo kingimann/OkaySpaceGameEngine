@@ -2,20 +2,20 @@
  "about": "SDL calls and SDL words per file (scripts/sdl_inventory.py; tests, tools and the sdl2 backend not counted). --ratchet fails when a file rises above its numbers; the baseline may only go down (--update-ratchet).",
  "totals": {
   "launcher": {
-   "calls": 25,
-   "words": 325
+   "calls": 13,
+   "words": 286
   },
   "editor": {
-   "calls": 34,
-   "words": 193
+   "calls": 23,
+   "words": 177
   },
   "player": {
    "calls": 0,
-   "words": 197
+   "words": 1
   },
   "shared": {
-   "calls": 26,
-   "words": 194
+   "calls": 10,
+   "words": 136
   },
   "engine": {
    "calls": 0,
@@ -141,8 +141,8 @@
    }
   },
   "editor/main.cpp": {
-   "calls": 25,
-   "words": 142,
+   "calls": 14,
+   "words": 126,
    "by_word": {
     "#include<SDL.h>": 1,
     "#include<backends/imgui_impl_sdl2.h>": 1,
@@ -156,30 +156,16 @@
     "ImGui_ImplSDLRenderer2_RenderDrawData": 1,
     "ImGui_ImplSDLRenderer2_Shutdown": 1,
     "ImGui_ImplSDLRenderer2_UpdateTexture": 1,
-    "SDL_BUTTON": 4,
-    "SDL_BUTTON_LEFT": 1,
-    "SDL_BUTTON_MIDDLE": 1,
-    "SDL_BUTTON_RIGHT": 2,
-    "SDL_Color": 2,
     "SDL_Event": 1,
-    "SDL_FIRSTEVENT": 1,
-    "SDL_GetCPUCount": 1,
-    "SDL_GetCurrentVideoDriver": 1,
-    "SDL_GetError": 1,
-    "SDL_GetSystemRAM": 1,
     "SDL_HINT_RENDER_DRIVER": 3,
-    "SDL_HasEvents": 1,
-    "SDL_LASTEVENT": 1,
-    "SDL_MAIN_HANDLED": 1,
+    "SDL_MAIN_HANDLED": 4,
     "SDL_MAJOR_VERSION": 2,
     "SDL_MINOR_VERSION": 2,
     "SDL_PATCHLEVEL": 2,
-    "SDL_PumpEvents": 1,
     "SDL_QueryTexture": 1,
     "SDL_RenderGetD3D11Device": 1,
     "SDL_Renderer": 4,
     "SDL_SetHint": 3,
-    "SDL_SetMainReady": 1,
     "SDL_Texture": 65,
     "SDL_Window": 6,
     "Uint32": 9,
@@ -281,16 +267,12 @@
    }
   },
   "launcher/main.cpp": {
-   "calls": 25,
-   "words": 251,
+   "calls": 13,
+   "words": 212,
    "by_word": {
     "#include<SDL.h>": 1,
     "#include<imgui_impl_sdl2.h>": 1,
     "#include<imgui_impl_sdlrenderer2.h>": 1,
-    "AUDIO_F32SYS": 2,
-    "AUDIO_S16LSB": 1,
-    "AUDIO_S16MSB": 2,
-    "AUDIO_S16SYS": 3,
     "ImGui_ImplSDL2_InitForSDLRenderer": 2,
     "ImGui_ImplSDL2_NewFrame": 2,
     "ImGui_ImplSDL2_ProcessEvent": 1,
@@ -299,36 +281,22 @@
     "ImGui_ImplSDLRenderer2_NewFrame": 2,
     "ImGui_ImplSDLRenderer2_RenderDrawData": 2,
     "ImGui_ImplSDLRenderer2_Shutdown": 1,
-    "SDL_AUDIO_BITSIZE": 3,
-    "SDL_AUDIO_ISBIGENDIAN": 2,
-    "SDL_AUDIO_ISFLOAT": 1,
-    "SDL_AUDIO_ISSIGNED": 2,
-    "SDL_AudioFormat": 1,
-    "SDL_AudioSpec": 2,
-    "SDL_BUTTON": 2,
-    "SDL_BUTTON_LEFT": 1,
-    "SDL_BUTTON_RIGHT": 1,
-    "SDL_Color": 2,
     "SDL_DROPBEGIN": 1,
     "SDL_DROPCOMPLETE": 1,
     "SDL_Event": 3,
     "SDL_MAIN_HANDLED": 1,
     "SDL_Rect": 3,
     "SDL_Renderer": 5,
-    "SDL_SetMainReady": 1,
-    "SDL_Swap16": 1,
     "SDL_TEXTEDITING": 1,
     "SDL_Texture": 21,
     "SDL_WINDOWEVENT": 1,
     "SDL_WINDOWPOS_CENTERED": 2,
     "SDL_Window": 7,
-    "Sint16": 21,
-    "Sint32": 1,
-    "Sint8": 1,
-    "Uint16": 3,
-    "Uint32": 126,
+    "Sint16": 18,
+    "Uint16": 2,
+    "Uint32": 122,
     "Uint64": 1,
-    "Uint8": 9
+    "Uint8": 7
    }
   },
   "okayui/include/okay/UI/OkayUI.hpp": {
@@ -597,21 +565,9 @@
   },
   "player/main.cpp": {
    "calls": 0,
-   "words": 197,
+   "words": 1,
    "by_word": {
-    "#include<SDL.h>": 1,
-    "SDL_Color": 38,
-    "SDL_FPoint": 3,
-    "SDL_FRect": 1,
-    "SDL_MAIN_HANDLED": 1,
-    "SDL_Point": 5,
-    "SDL_Rect": 45,
-    "SDL_Renderer": 1,
-    "SDL_Vertex": 4,
-    "SDL_Window": 1,
-    "Uint32": 10,
-    "Uint64": 4,
-    "Uint8": 83
+    "SDL_Renderer": 1
    }
   },
   "shared/OkayScriptUIBridge.hpp": {
@@ -716,62 +672,11 @@
     "SDL_Texture": 11
    }
   },
-  "shared/SdlDisplays.cpp": {
-   "calls": 16,
-   "words": 28,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "SDL_DisplayMode": 4,
-    "SDL_GetClosestDisplayMode": 1,
-    "SDL_GetCurrentDisplayMode": 1,
-    "SDL_GetDisplayBounds": 1,
-    "SDL_GetDisplayMode": 1,
-    "SDL_GetDisplayName": 1,
-    "SDL_GetNumDisplayModes": 1,
-    "SDL_GetNumVideoDisplays": 1,
-    "SDL_MAIN_HANDLED": 2,
-    "SDL_Rect": 1,
-    "SDL_SetWindowBordered": 1,
-    "SDL_SetWindowDisplayMode": 2,
-    "SDL_SetWindowFullscreen": 3,
-    "SDL_SetWindowPosition": 1,
-    "SDL_SetWindowSize": 1,
-    "SDL_TRUE": 1,
-    "SDL_WINDOW_FULLSCREEN": 1,
-    "SDL_WINDOW_FULLSCREEN_DESKTOP": 1,
-    "SDL_Window": 1,
-    "SDL_zero": 1
-   }
-  },
-  "shared/SdlDisplays.hpp": {
+  "shared/Splash.hpp": {
    "calls": 0,
    "words": 2,
    "by_word": {
-    "SDL_Window": 2
-   }
-  },
-  "shared/Splash.hpp": {
-   "calls": 0,
-   "words": 24,
-   "by_word": {
-    "#include<SDL.h>": 1,
-    "SDL_Color": 6,
-    "SDL_FPoint": 6,
-    "SDL_FRect": 2,
-    "SDL_MAIN_HANDLED": 2,
-    "SDL_Renderer": 2,
-    "SDL_Vertex": 4,
-    "Uint8": 1
-   }
-  },
-  "shared/WavPlayback.hpp": {
-   "calls": 0,
-   "words": 6,
-   "by_word": {
-    "AUDIO_F32SYS": 1,
-    "AUDIO_S16SYS": 1,
-    "SDL_AudioSpec": 2,
-    "Uint8": 2
+    "SDL_Renderer": 2
    }
   }
  }

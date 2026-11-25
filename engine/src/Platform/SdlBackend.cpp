@@ -67,6 +67,19 @@ public:
     void Minimize() override { SDL_MinimizeWindow(m_win); }
     void Restore() override { SDL_RestoreWindow(m_win); }
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
+    bool SetBordered(bool on) override { SDL_SetWindowBordered(m_win, on ? SDL_TRUE : SDL_FALSE); return true; }
+    bool SetFullscreenMode(const DisplayMode& m, int displayIndex) override {
+        if (m.w <= 0 || m.h <= 0) return SDL_SetWindowFullscreen(m_win, SDL_WINDOW_FULLSCREEN) == 0;   // the window's own mode
+        SDL_DisplayMode request;
+        SDL_zero(request);
+        request.w = m.w;
+        request.h = m.h;
+        request.refresh_rate = m.refreshHz > 0 ? m.refreshHz : 0;
+        SDL_DisplayMode closest;
+        if (SDL_GetClosestDisplayMode(displayIndex >= 0 ? displayIndex : 0, &request, &closest)) SDL_SetWindowDisplayMode(m_win, &closest);
+        else SDL_SetWindowDisplayMode(m_win, &request);
+        return SDL_SetWindowFullscreen(m_win, SDL_WINDOW_FULLSCREEN) == 0;
+    }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
     bool HasMouseFocus() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MOUSE_FOCUS) != 0; }
@@ -290,6 +303,7 @@ public:
         return false;
     }
     void PumpEvents() override { SDL_PumpEvents(); }
+    bool HasPendingEvents() override { return SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) == SDL_TRUE; }
     void ReportUnmappedEvents(bool on) override { m_reportUnmapped = on; }
     bool PushEvent(const Event& r) override {
         SDL_Event e;
@@ -413,6 +427,16 @@ public:
         o.refreshHz = (SDL_GetCurrentDisplayMode(i, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
         o.primary = (i == 0);   // SDL lists the primary display first
         return true;
+    }
+    std::vector<DisplayMode> DisplayModes(int i) override {
+        std::vector<DisplayMode> out;
+        if (i < 0 || i >= SDL_GetNumVideoDisplays()) return out;
+        SDL_DisplayMode dm;
+        if (SDL_GetCurrentDisplayMode(i, &dm) == 0 && dm.w > 0 && dm.h > 0) out.push_back({dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0});
+        const int n = SDL_GetNumDisplayModes(i);
+        for (int k = 0; k < n; ++k)
+            if (SDL_GetDisplayMode(i, k, &dm) == 0 && dm.w > 0 && dm.h > 0) out.push_back({dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0});
+        return out;
     }
     bool SetPerMonitorDpiAware() override {
 #ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24

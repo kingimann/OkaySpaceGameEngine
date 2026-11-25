@@ -40,6 +40,9 @@ public:
     virtual bool SetCursorShape(CursorShape shape) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
+    /// Monitors (RandR 1.5; the X screen without it), primary first, and the video modes of one, current first.
+    virtual std::vector<DisplayInfo> Displays() = 0;
+    virtual std::vector<DisplayMode> DisplayModes(int index) = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.
     virtual bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) = 0;
 };

@@ -54,6 +54,7 @@ public:
         if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
         return false;
     }
+    bool HasPendingEvents() override { return !m_pending.empty(); }   // PumpEvents moved what the X server had into m_pending
     void PumpEvents() override {
         Event e;
         while (m_x11 && m_x11->PollEvent(e)) m_pending.push_back(std::move(e));
@@ -92,6 +93,16 @@ public:
     }
     bool SupportsRelativeMouseState() override { return true; }
     Key KeyForChar(char c) override { return m_x11 ? m_x11->KeyForChar(c) : Backend::KeyForChar(c); }
+
+    int DisplayCount() override { return m_x11 ? (int)m_x11->Displays().size() : 0; }
+    bool DisplayAt(int i, DisplayInfo& o) override {
+        if (!m_x11) return false;
+        const std::vector<DisplayInfo> v = m_x11->Displays();
+        if (i < 0 || i >= (int)v.size()) return false;
+        o = v[(size_t)i];
+        return true;
+    }
+    std::vector<DisplayMode> DisplayModes(int i) override { return m_x11 ? m_x11->DisplayModes(i) : std::vector<DisplayMode>(); }
 
     bool SetClipboardText(const std::string& t) override { return m_x11 && m_x11->SetClipboardText(t); }
     std::string GetClipboardText() override { return m_x11 ? m_x11->GetClipboardText() : std::string(); }

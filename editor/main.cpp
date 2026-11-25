@@ -7,6 +7,11 @@
 // Run with --selftest to exercise the (headless) editor logic without opening a
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
+// Before any header that may pull in SDL.h: SDL must not #define main to SDL_main (shared/Splash.hpp used to do this
+// first; it no longer includes SDL).
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #include "EditorState.hpp"
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
@@ -119,7 +124,7 @@
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
-#include "SdlDisplays.hpp"             // monitor list and display modes, shared with the player (SDL, not the platform seam)
+#include "PlatformDisplays.hpp"        // monitor list and display modes through okay::platform, shared with the player
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -766,8 +771,10 @@ int main(int argc, char** argv) {
 #else
 
 // Take control of the program entry point ourselves so SDL doesn't #define
-// `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
+// `main` to SDL_main (which would also rewrite identifiers like `cam->main`). (Also defined at the top of this file.)
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
@@ -6123,13 +6130,13 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
-// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL (cores, RAM), the platform layer (refresh rate)
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from the platform layer (cores, RAM, refresh rate)
 // and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
-    h.cpuCores = SDL_GetCPUCount();
-    h.ramMB = SDL_GetSystemRAM();
+    h.cpuCores = okay::platform::CpuCount();
+    h.ramMB = okay::platform::SystemRamMB();
     okay::platform::DisplayInfo di;   // the first (primary) display's refresh rate, through the platform layer
     if (okay::platform::Backend* pb = okay::platform::Default(); pb && pb->DisplayAt(0, di)) h.displayHz = di.refreshHz;
     return h;
@@ -53173,7 +53180,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
+    // (SDL_MAIN_HANDLED: the sdl2 backend's Init calls SDL_SetMainReady before SDL_Init, so the app does not.)
     // Windows 11 / high-DPI: declare the process per-monitor-DPI-aware BEFORE init so
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
@@ -53239,7 +53246,7 @@ int main(int argc, char** argv) {
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
     if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
-    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
+    if (!renderer) { std::cerr << "CreateRenderer failed: " << sdlSeam->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
@@ -53271,9 +53278,9 @@ int main(int argc, char** argv) {
         ImVec4 acc = AccentCol(1.0f);
         if (g_project.splashAccentOverride) { st.ar = g_project.splashAccent[0]; st.ag = g_project.splashAccent[1]; st.ab = g_project.splashAccent[2]; }
         else { st.ar = acc.x; st.ag = acc.y; st.ab = acc.z; }
-        auto C = [](const float* c) -> SDL_Color {
+        auto C = [](const float* c) -> okay::ui2d::RGBA {
             auto u = [](float v){ return (Uint8)((!(v > 0) ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };   // nan counts as 0 (a nan cast is undefined)
-            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+            return okay::ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(g_project.splashBgTop); st.bgBottom = C(g_project.splashBgBot);
         st.logo = g_editorSplashLogo; st.showProgress = g_project.splashShowBar;
         return st;
@@ -53492,7 +53499,7 @@ int main(int argc, char** argv) {
     if (g_multiWindow) {
         if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else {
-            const char* drv = sdlSeam->Kind() == okay::platform::BackendKind::Sdl2 ? SDL_GetCurrentVideoDriver() : "own";
+            const char* drv = sdlSeam->Name();   // the platform backend ("sdl2" or "own")
             const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
                                     "' cannot open extra windows here, so panels stay inside the editor window.";
             std::printf("[okay] %s\n", msg.c_str());
@@ -53783,8 +53790,8 @@ int main(int argc, char** argv) {
         {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
             static Uint64 s_lastInput = okay::platform::PerfCounter();
             g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
-            SDL_PumpEvents();
-            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
+            sdlSeam->PumpEvents();
+            if (sdlSeam->HasPendingEvents()) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         okay::Prof().Begin("Editor.Events");   // reading the window system's events (closed after the loop; nothing leaves it early)
         okay::platform::Event e;
@@ -54096,9 +54103,9 @@ int main(int argc, char** argv) {
                     s_gameVMouse.y += (float)dyp;
                 }
                 unsigned mask = 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
@@ -54230,7 +54237,7 @@ int main(int argc, char** argv) {
                 // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
                 // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
                 const bool held = OkayUIInputOn() && !keys && !io.WantTextInput;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys || held);
                 if (OkayUIInputOn()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
@@ -54270,14 +54277,14 @@ int main(int argc, char** argv) {
                 static bool s_monitors = false;
                 if (!s_monitors && window) {
                     s_monitors = true;
-                    okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+                    okay::DisplaySettings::SetMonitors(okay::platformdisplay::ListMonitors(sdlSeam));
                 }
                 okay::DisplaySettings::TickTrial(dt);
                 static int s_dispGen = 0;
                 const int gen = okay::DisplaySettings::Generation();
                 if (gen != s_dispGen) {
                     s_dispGen = gen;
-                    if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
+                    if (window) okay::platformdisplay::Apply(winSeam.get(), okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
                     if (renderer) okay::pb::SetVSync(renderer, g_vsync);
                     okay::DisplaySettings::ApplyQuality();

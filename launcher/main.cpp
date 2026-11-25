@@ -135,6 +135,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "CoverArtAvatars.hpp"  // game cover art, avatar textures
 #include "NavIcons.hpp"         // the sidebar's line icons, round icon buttons, stars
 #include "okay/Core/Random.hpp"   // the welcome screen's star field
+#include "UpdateView.hpp"       // what the Software Update dialog shows for the updater's state (tested headless)
 #include "SignInGate.hpp"       // what the window may show before and after signing in (tested headless)
 #include "AuthForm.hpp"         // the welcome screen's fields, checks and plain-words errors (tested headless)
 #include "PageLayout.hpp"       // where the page toolbar, chips, card grids and listing cards go (tested headless)
@@ -1254,6 +1255,64 @@ static void StartupUpdateBegin() {
     g_suLastCheckEpoch = now; SaveLastStartupCheck();   // (only that one line of launcher.cfg: SavePrefs this early could write back a default)
 }
 
+// The OkaySpace mark: a ringed planet, `L` pixels across, centred at c.
+static void DrawLogoMark(ImDrawList* ld, ImVec2 c, float L) {
+    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 32);
+    ld->AddCircleFilled(ImVec2(c.x - L * 0.07f, c.y - L * 0.07f), L * 0.30f, IM_COL32(255, 255, 255, 40), 32);
+    ImVec2 ring[32];
+    for (int k = 0; k < 32; ++k) {
+        const float a = k * (6.2831853f / 32), rx = L * 0.46f, ry = L * 0.16f, rot = -0.5f;
+        const float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+        ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
+    }
+    ld->AddPolyline(ring, 32, IM_COL32(220, 232, 255, 235), ImDrawFlags_Closed, std::max(1.8f, L * 0.03f));
+}
+
+// The start-up screen's look, shared by "Checking for updates" and "Signing you in": the whole window, the logo and the name in
+// the middle, a slim bar (progress 0..1, or < 0 for a moving one) with one plain status line, the version small at the bottom.
+// Returns true when its optional button (`button`, e.g. "Skip") was pressed.
+static bool DrawLoadingScreen(const char* status, float progress, const char* button) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, okaytheme::kDeep);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##loadingscreen", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 c(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.42f);
+    DrawLogoMark(dl, c, UiPx(84.0f));
+    ImGui::SetWindowFontScale(1.6f);
+    const ImVec2 ns = ImGui::CalcTextSize("OkaySpace");
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(c.x - ns.x * 0.5f, c.y + UiPx(52.0f)), ImGui::GetColorU32(ImGuiCol_Text), "OkaySpace");
+    ImGui::SetWindowFontScale(1.0f);
+    const float bw = std::min(UiPx(280.0f), vp->Size.x - UiPx(80.0f)), bh = UiPx(4.0f);
+    const ImVec2 bp(c.x - bw * 0.5f, c.y + UiPx(52.0f) + ns.y + UiPx(26.0f));
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + bh), IM_COL32(255, 255, 255, 22), bh * 0.5f);
+    if (progress >= 0.0f) dl->AddRectFilled(bp, ImVec2(bp.x + bw * std::min(1.0f, progress), bp.y + bh), ImGui::GetColorU32(kAccent), bh * 0.5f);
+    else {
+        const float t = (float)std::fmod(ImGui::GetTime() * 0.7, 1.0), seg = bw * 0.35f, x0 = bp.x + (bw + seg) * t - seg;
+        dl->PushClipRect(bp, ImVec2(bp.x + bw, bp.y + bh), true);
+        dl->AddRectFilled(ImVec2(x0, bp.y), ImVec2(x0 + seg, bp.y + bh), ImGui::GetColorU32(kAccent), bh * 0.5f);
+        dl->PopClipRect();
+    }
+    const ImVec2 ss = ImGui::CalcTextSize(status);
+    dl->AddText(ImVec2(c.x - ss.x * 0.5f, bp.y + bh + UiPx(14.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), status);
+    bool pressed = false;
+    if (button && *button) {
+        const float w = FitButtonW(button, UiPx(90.0f));
+        ImGui::SetCursorScreenPos(ImVec2(c.x - w * 0.5f, bp.y + bh + UiPx(14.0f) + ss.y + UiPx(18.0f)));
+        pressed = ImGui::Button(button, ImVec2(w, 0));
+    }
+    char ver[64]; std::snprintf(ver, sizeof(ver), "v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
+    const ImVec2 vs = ImGui::CalcTextSize(ver);
+    dl->AddText(ImVec2(c.x - vs.x * 0.5f, vp->Pos.y + vp->Size.y - vs.y - UiPx(18.0f)), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.7f), ver);
+    ImGui::End();
+    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+    return pressed;
+}
+
 // Once per frame, last thing before the toasts: decides what the person sees and draws the panel. Sets g_suLocked while an install runs.
 static void StartupUpdateFrame() {
     using namespace okay::startupupdate;
@@ -1284,27 +1343,7 @@ static void StartupUpdateFrame() {
     if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
     g_suLocked = v.locked;
     if (!v.visible) return;
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
-    ImGui::SetNextWindowBgAlpha(1.0f);
-    ImGui::SetNextWindowFocus();
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::Begin("##startupupdate", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
-    const float w = 360.0f, h = 128.0f;
-    ImGui::SetCursorPos(ImVec2((vp->Size.x - w) * 0.5f, (vp->Size.y - h) * 0.5f));
-    ImGui::BeginChild("##suCard", ImVec2(w, h), true);
-    ImGui::TextUnformatted("OkaySpace");
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextUnformatted(v.text.c_str());
-    float frac = v.progress;
-    if (frac < 0.0f) frac = -1.0f * (float)ImGui::GetTime();   // ImGui's moving bar for "unknown"
-    ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
-    if (v.canSkip) { ImGui::Dummy(ImVec2(0, 6)); if (ImGui::Button("Skip", ImVec2(80, 26))) g_suSkipped = true; }
-    ImGui::EndChild();
-    ImGui::End();
-    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+    if (DrawLoadingScreen(v.text.c_str(), v.progress, v.canSkip ? "Skip" : nullptr)) g_suSkipped = true;
 }
 
 // ---- Periodic "is a newer version out?" check -------------------------------
@@ -11413,18 +11452,6 @@ static void StartSessionCheck(okay::account::AccountService& acct) {
     if (acct.IsLoggedIn() && acct.IsOnline() && StartAuthJob(acct, 5, "", "", "")) g_signinCheck = -1;
 }
 
-// The OkaySpace mark: a ringed planet, `L` pixels across, centred at c.
-static void DrawLogoMark(ImDrawList* ld, ImVec2 c, float L) {
-    ld->AddCircleFilled(c, L * 0.30f, ImGui::GetColorU32(kAccent), 32);
-    ld->AddCircleFilled(ImVec2(c.x - L * 0.07f, c.y - L * 0.07f), L * 0.30f, IM_COL32(255, 255, 255, 40), 32);
-    ImVec2 ring[32];
-    for (int k = 0; k < 32; ++k) {
-        const float a = k * (6.2831853f / 32), rx = L * 0.46f, ry = L * 0.16f, rot = -0.5f;
-        const float ex = std::cos(a) * rx, ey = std::sin(a) * ry;
-        ring[k] = ImVec2(c.x + ex * std::cos(rot) - ey * std::sin(rot), c.y + ex * std::sin(rot) + ey * std::cos(rot));
-    }
-    ld->AddPolyline(ring, 32, IM_COL32(220, 232, 255, 235), ImDrawFlags_Closed, std::max(1.8f, L * 0.03f));
-}
 
 // The left art panel at the wide sizes: a calm gradient, a few planets and a dust of stars (generated, no images).
 static void DrawWelcomeArt(ImDrawList* dl, ImVec2 a, ImVec2 b) {
@@ -12478,161 +12505,180 @@ int main(int argc, char** argv) {
         }
 
         // ---- Software Update dialog ----------------------------------------
-        // A real update window: version from -> to, stepped progress, a live
-        // download bar in MB, elapsed time and the changelog. Opened by the
-        // "Check for updates" button (StartUpdateCheck sets g_upModalOpen).
+        // What it shows comes from okay::updateview::Evaluate (launcher/UpdateView.hpp, tests/test_update_view.cpp): the
+        // version and its notes, Install now / Later, the download with MB, speed and time left, the check and the install,
+        // Ready to restart, a failure in plain words with Details, Up to date with when it was checked. The update logic is
+        // unchanged (RunUpdateCheck); only its state is read here.
+        { static bool s_demoUp = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW") != nullptr; if (s_demoUp) { g_upModalOpen = true; s_demoUp = false; } }
         if (g_upModalOpen && !ImGui::IsPopupOpen("Software Update"))
             ImGui::OpenPopup("Software Update");
         {
-            ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-            ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
-            if (ImGui::BeginPopupModal("Software Update", nullptr,
-                    ImGuiWindowFlags_NoSavedSettings)) {
-                UpState us = GetState();
-                bool busy = (us == Up_Checking || us == Up_Downloading);
-                std::string fromV, toV; GetUpVers(fromV, toV);
+            namespace UV = okay::updateview;
+            const UpState us = GetState();
+            std::string fromV, toV; GetUpVers(fromV, toV);
+            static Uint32 s_stepTicks = 0; static int s_stepWas = -1; static long long s_lastChecked = 0;
+            const int stepIdx = okay::thr::AtomicGet(&g_upStepIdx), stepTot = okay::thr::AtomicGet(&g_upStepTotal);
+            if (stepIdx != s_stepWas || us != Up_Downloading) { s_stepWas = stepIdx; s_stepTicks = okay::platform::TicksMs32(); }
+            if (us == Up_UpToDate && s_lastChecked == 0) s_lastChecked = (long long)std::time(nullptr);
+            if (us == Up_Checking) s_lastChecked = 0;
+            UV::Inputs ui;
+            ui.fromVersion = fromV.empty() ? std::string(OKAY_ENGINE_VERSION) : fromV;
+            ui.toVersion = toV.empty() ? g_upAvailable : toV;
+            ui.testTag = GetUpTag();
+            if (ui.testTag.empty() && !g_upAvailableTitle.empty()) ui.testTag = g_upAvailableTitle;
+            ui.step = GetUpStep(); ui.stepIndex = stepIdx; ui.stepCount = stepTot;
+            ui.bytesNow = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
+            ui.bytesTotal = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
+            ui.secondsInStep = (double)(Uint32)(okay::platform::TicksMs32() - s_stepTicks) / 1000.0;
+            ui.error = GetUpMsg();
+            ui.lastCheckedUnix = s_lastChecked; ui.nowUnix = (long long)std::time(nullptr);
+            ui.restartNeeded = g_upRelaunchNeeded;
+            ui.phase = us == Up_Checking ? UV::Phase::Checking
+                     : us == Up_Downloading ? (GetUpMsg().rfind("Installing", 0) == 0 ? UV::Phase::Verifying : UV::Phase::Downloading)
+                     : us == Up_Updated ? UV::Phase::Ready
+                     : us == Up_Failed ? UV::Phase::Failed
+                     : !g_upAvailable.empty() ? UV::Phase::Available
+                     : us == Up_UpToDate ? UV::Phase::UpToDate : UV::Phase::Idle;
+            if (const char* d = std::getenv("OKAY_UI_DEMO_UPDATE_VIEW")) {   // dev screenshot hook: available downloading verifying ready failed uptodate checking
+                const std::string s = d;
+                ui.fromVersion = "2.903.9"; ui.toVersion = "2.904.0";
+                ui.phase = s == "available" ? UV::Phase::Available : s == "downloading" ? UV::Phase::Downloading : s == "verifying" ? UV::Phase::Verifying
+                         : s == "ready" ? UV::Phase::Ready : s == "failed" ? UV::Phase::Failed : s == "uptodate" ? UV::Phase::UpToDate : UV::Phase::Checking;
+                ui.step = "Downloading editor (OkayEngine)"; ui.stepIndex = 1; ui.stepCount = 3;
+                ui.bytesNow = 13002342; ui.bytesTotal = 36700160; ui.secondsInStep = 4.0;
+                ui.error = "Update refused. versions.json has no SHA-256 for OkayEngine.exe (HTTP 200, schema 3).";
+                ui.restartNeeded = true; ui.lastCheckedUnix = ui.nowUnix - 300;
+            }
+            const UV::View v = UV::Evaluate(ui);
+            std::string notes = GetUpChangelog();
+            if (std::getenv("OKAY_UI_DEMO_UPDATE_VIEW") && notes.empty())
+                notes = "Launcher: the Marketplace is a shop now, with an item page\nLauncher: sign in before using the launcher\nEditor: faster scene loading for big projects\nFixed: the notifications list no longer draws over What's New\n";
+            const bool showNotes = !notes.empty() && (v.error.empty());
+            const ImGuiViewport* vpU = ImGui::GetMainViewport();
+            const float lh = ImGui::GetTextLineHeight(), padX = UiPx(24.0f), btnH = ImGui::GetFrameHeight() + UiPx(12.0f);
+            const float b1 = v.primary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.primary), UiPx(110.0f)) : 0.0f;
+            const float b2 = v.secondary != UV::Button::None ? FitButtonW(UV::ButtonLabel(v.secondary), UiPx(90.0f)) : 0.0f;
+            const float fixedH = UiPx(260.0f) + (v.error.empty() ? 0.0f : lh * 3);
+            const UV::DialogBox box = UV::LayoutDialog(vpU->WorkSize.x, vpU->WorkSize.y, UiPx(560.0f), UiPx(20.0f), fixedH, showNotes,
+                                                       UiPx(80.0f), UiPx(320.0f), b1, b2, UiPx(8.0f), padX);
+            ImGui::SetNextWindowPos(vpU->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(box.w, 0), ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padX, UiPx(22.0f)));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiPx(14.0f));
+            const bool open = ImGui::BeginPopupModal("Software Update", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::PopStyleVar(2);
+            if (open) {
+                const float cw = box.w - 2 * padX;
                 ImDrawList* mdl = ImGui::GetWindowDrawList();
-
-                // Header: a small accent cube glyph + title + sub-line.
-                ImVec2 hp = ImGui::GetCursorScreenPos();
-                float cs = 20.0f, cx0 = hp.x + cs * 0.5f, cy0 = hp.y + cs * 0.6f;
-                ImU32 acol = ImGui::GetColorU32(kAccent);
-                mdl->AddQuadFilled(ImVec2(cx0, cy0 - 9), ImVec2(cx0 + 10, cy0 - 3),
-                                   ImVec2(cx0, cy0 + 3), ImVec2(cx0 - 10, cy0 - 3), acol);
-                mdl->AddQuadFilled(ImVec2(cx0 - 10, cy0 - 3), ImVec2(cx0, cy0 + 3),
-                                   ImVec2(cx0, cy0 + 13), ImVec2(cx0 - 10, cy0 + 7),
-                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.55f,kAccent.y*0.55f,kAccent.z*0.55f,1)));
-                mdl->AddQuadFilled(ImVec2(cx0, cy0 + 3), ImVec2(cx0 + 10, cy0 - 3),
-                                   ImVec2(cx0 + 10, cy0 + 7), ImVec2(cx0, cy0 + 13),
-                                   ImGui::GetColorU32(ImVec4(kAccent.x*0.78f,kAccent.y*0.78f,kAccent.z*0.78f,1)));
-                ImGui::SetCursorScreenPos(ImVec2(hp.x + cs + 12, hp.y));
-                ImGui::BeginGroup();
-                ImGui::TextUnformatted(
-                    us == Up_Updated  ? "Update installed" :
-                    us == Up_Failed   ? "Update failed" :
-                    us == Up_UpToDate ? "You're up to date" :
-                    us == Up_Downloading ? "Downloading update" : "Checking for updates");
-                if (!fromV.empty()) {
-                    if (!toV.empty() && toV != fromV)
-                        ImGui::TextDisabled("v%s  \xC2\xBB  v%s", fromV.c_str(), toV.c_str());   // » (arrows aren't in Roboto)
-                    else
-                        ImGui::TextDisabled("Installed: v%s", fromV.c_str());
+                const bool busyU = ui.phase == UV::Phase::Checking || ui.phase == UV::Phase::Downloading || ui.phase == UV::Phase::Verifying;
+                // Header: the logo mark (spinning ring while busy), the title and the line under it.
+                {
+                    const ImVec2 hp = ImGui::GetCursorScreenPos();
+                    const float L = UiPx(44.0f);
+                    DrawLogoMark(mdl, ImVec2(hp.x + L * 0.5f, hp.y + L * 0.5f), L);
+                    if (busyU) { const float a0 = (float)ImGui::GetTime() * 5.0f; mdl->PathArcTo(ImVec2(hp.x + L * 0.5f, hp.y + L * 0.5f), L * 0.56f, a0, a0 + 2.2f, 24); mdl->PathStroke(ImGui::GetColorU32(kAccent), 0, 2.2f); }
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + L + UiPx(14.0f), hp.y));
+                    ImGui::BeginGroup();
+                    ImGui::SetWindowFontScale(1.3f);
+                    ImGui::TextUnformatted(v.title.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                    if (!v.sub.empty()) { ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw - L - UiPx(14.0f)); ImGui::TextDisabled("%s", v.sub.c_str()); ImGui::PopTextWrapPos(); }
+                    if (!v.checked.empty()) ImGui::TextDisabled("%s", v.checked.c_str());
+                    ImGui::EndGroup();
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x, std::max(ImGui::GetCursorScreenPos().y, hp.y + L) + UiPx(12.0f)));
+                    ImGui::Dummy(ImVec2(cw, 0));
                 }
-                if (const std::string tag = GetUpTag(); !tag.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%s", tag.c_str());   // test build / the way back
-                ImGui::EndGroup();
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::Separator();
-                ImGui::Dummy(ImVec2(0, 4));
-
-                // Current step label + animated spinner while busy.
-                if (busy) {
-                    ImVec2 sp = ImGui::GetCursorScreenPos();
-                    float rad = 7.0f; ImVec2 ctr(sp.x + rad + 1, sp.y + rad + 2);
-                    float a0 = (float)ImGui::GetTime() * 6.0f;
-                    mdl->PathArcTo(ctr, rad, a0, a0 + 4.6f, 20);
-                    mdl->PathStroke(acol, 0, 2.6f);
-                    ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
+                // Progress: the file being downloaded, then all of it.
+                auto bar = [&](float f, float h) {
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    mdl->AddRectFilled(p, ImVec2(p.x + cw, p.y + h), IM_COL32(255, 255, 255, 18), h * 0.5f);
+                    if (f >= 0.0f) { if (f > 0.0f) mdl->AddRectFilled(p, ImVec2(p.x + std::max(h, cw * f), p.y + h), ImGui::GetColorU32(kAccent), h * 0.5f); }
+                    else {   // moving: the size is not known yet
+                        const float t = (float)std::fmod(ImGui::GetTime() * 0.8, 1.0), seg = cw * 0.3f;
+                        const float x0 = p.x + (cw + seg) * t - seg;
+                        mdl->PushClipRect(p, ImVec2(p.x + cw, p.y + h), true);
+                        mdl->AddRectFilled(ImVec2(x0, p.y), ImVec2(x0 + seg, p.y + h), ImGui::GetColorU32(kAccent), h * 0.5f);
+                        mdl->PopClipRect();
+                    }
+                    ImGui::Dummy(ImVec2(cw, h));
+                };
+                if (!v.stepLine.empty()) ImGui::TextUnformatted(v.stepLine.c_str());
+                if (v.file != -1.0f) { bar(v.file >= 0.0f ? v.file : -1.0f, UiPx(10.0f)); }
+                if (!v.bytesLine.empty() || !v.speedLine.empty()) {
+                    const std::string right = v.speedLine + (v.etaLine.empty() ? "" : "  \xC2\xB7  " + v.etaLine);
+                    ImGui::TextDisabled("%s", v.bytesLine.c_str());
+                    if (!right.empty()) { ImGui::SameLine(); ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x + cw - ImGui::CalcTextSize(right.c_str()).x); ImGui::TextDisabled("%s", right.c_str()); }
                 }
-                ImGui::TextUnformatted(GetUpStep().c_str());
-                if (us == Up_Failed) {   // the reason and what to do, in full (the sidebar note only has room for the start of it)
-                    const std::string why = GetUpMsg();
-                    if (!why.empty()) {
-                        ImGui::Dummy(ImVec2(0, 2));
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1.0f), "%s", why.c_str());
+                if (v.overall >= 0.0f && ui.phase == UV::Phase::Downloading) {
+                    ImGui::Dummy(ImVec2(0, UiPx(4.0f)));
+                    ImGui::TextDisabled("All of the update");
+                    bar(v.overall, UiPx(6.0f));
+                }
+                // A failure: in plain words, with the updater's own text under Details.
+                if (!v.error.empty()) {
+                    const ImVec2 ep = ImGui::GetCursorScreenPos();
+                    const float th = ImGui::CalcTextSize(v.error.c_str(), nullptr, false, cw - UiPx(24.0f)).y;
+                    mdl->AddRectFilled(ep, ImVec2(ep.x + cw, ep.y + th + UiPx(20.0f)), IM_COL32(150, 50, 50, 60), UiPx(10.0f));
+                    mdl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(ep.x + UiPx(12.0f), ep.y + UiPx(10.0f)), IM_COL32(255, 175, 168, 255), v.error.c_str(), nullptr, cw - UiPx(24.0f));
+                    ImGui::Dummy(ImVec2(cw, th + UiPx(20.0f)));
+                    if (!v.details.empty() && ImGui::TreeNode("Details")) {
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw - UiPx(20.0f));
+                        ImGui::TextDisabled("%s", v.details.c_str());
                         ImGui::PopTextWrapPos();
-                        ImGui::Dummy(ImVec2(0, 2));
+                        if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(v.details.c_str());
+                        ImGui::TreePop();
                     }
                 }
-
-                // Overall step progress (engine / player / launcher).
-                int si = okay::thr::AtomicGet(&g_upStepIdx), stt = okay::thr::AtomicGet(&g_upStepTotal);
-                if (stt > 0 && us == Up_Downloading) {
-                    float sf = (float)si / (float)stt;
-                    ImGui::ProgressBar(sf, ImVec2(-FLT_MIN, 6.0f), "");
-                }
-
-                // Live download bar for the current file (MB + %).
-                long long bn = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
-                long long bt = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
-                if (us == Up_Downloading) {
-                    char ov[64];
-                    double mbN = (double)bn / (1024.0 * 1024.0);
-                    if (bt > 0) {
-                        double mbT = (double)bt / (1024.0 * 1024.0);
-                        float f = (float)bn / (float)bt; if (f > 1) f = 1;
-                        std::snprintf(ov, sizeof(ov), "%.1f / %.1f MB  (%.0f%%)", mbN, mbT, f * 100.0f);
-                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
-                    } else {
-                        // Unknown size: indeterminate sweep + MB-so-far readout.
-                        float t = (float)ImGui::GetTime();
-                        float f = 0.5f + 0.5f * std::sin(t * 2.2f);
-                        std::snprintf(ov, sizeof(ov), "%.1f MB", mbN);
-                        ImGui::ProgressBar(f, ImVec2(-FLT_MIN, 18.0f), ov);
-                    }
-                }
-
-                // Elapsed time.
-                int startMs = okay::thr::AtomicGet(&g_upStartMs);
-                if (startMs && us != Up_Idle) {
-                    int el = ((int)okay::platform::TicksMs32() - startMs) / 1000; if (el < 0) el = 0;
-                    ImGui::TextDisabled("Elapsed: %d:%02d", el / 60, el % 60);
-                }
-
-                // Changelog / what's-new.
-                std::string cl = GetUpChangelog();
-                if (!cl.empty() && us != Up_Failed) {   // (a failure needs the room for its reason and the Retry button)
-                    ImGui::Dummy(ImVec2(0, 4));
-                    ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
-                                        toV.empty() ? "" : toV.c_str());
-                    ImGui::BeginChild("##upchangelog", ImVec2(0, 120), true);
-                    // One bullet per line.
-                    std::size_t s0 = 0;
-                    while (s0 < cl.size()) {
-                        std::size_t e0 = cl.find('\n', s0);
-                        std::string ln = cl.substr(s0, e0 == std::string::npos ? std::string::npos : e0 - s0);
-                        if (!ln.empty()) {
-                            ImGui::TextColored(kAccent, "\xE2\x80\xA2"); ImGui::SameLine();
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(ln.c_str());
-                            ImGui::PopTextWrapPos();
+                // What's new in that version: every note, wrapped, in a scroll area.
+                if (showNotes) {
+                    ImGui::Dummy(ImVec2(0, UiPx(8.0f)));
+                    SectionLabel(ui.toVersion.empty() ? "WHAT'S NEW" : ("WHAT'S NEW IN " + okayver::WithV(ui.toVersion)).c_str(), -1);
+                    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kSunken);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiPx(10.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(UiPx(14.0f), UiPx(10.0f)));
+                    ImGui::BeginChild("##upnotes", ImVec2(cw, box.notesH), ImGuiChildFlags_AlwaysUseWindowPadding);
+                    for (std::size_t s0 = 0; s0 < notes.size();) {
+                        std::size_t e0 = notes.find('\n', s0); if (e0 == std::string::npos) e0 = notes.size();
+                        if (e0 > s0) {
+                            ImGui::Bullet(); ImGui::SameLine();
+                            ImGui::BeginGroup();
+                            ImGui::TextWrapped("%s", notes.substr(s0, e0 - s0).c_str());
+                            ImGui::EndGroup();
                         }
-                        if (e0 == std::string::npos) break; s0 = e0 + 1;
+                        s0 = e0 + 1;
                     }
                     ImGui::EndChild();
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor();
                 }
-
-                ImGui::Dummy(ImVec2(0, 8));
-                // Action buttons depend on state.
-                if (us == Up_Updated && g_upRelaunchNeeded) {
-                    if (ImGui::Button("Restart now", ImVec2(140, 34))) {
+                // Buttons, right-aligned (stacked on a very narrow dialog).
+                ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
+                auto act = [&](UV::Button b) {
+                    switch (b) {
+                    case UV::Button::InstallNow: StartUpdateCheck(true); break;
+                    case UV::Button::TryAgain: case UV::Button::CheckAgain: StartUpdateCheck(); break;
+                    case UV::Button::RestartNow:
                         if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; }
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
+                    case UV::Button::Close:
+                        if (us == Up_Failed) g_upGoBack = false;   // a failed way back is not tried again by the next ordinary check
+                        g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;
+                    default: g_upModalOpen = false; ImGui::CloseCurrentPopup(); break;   // Later, Hide, Restart later
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Later", ImVec2(110, 34))) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                } else if (us == Up_Failed) {
-                    if (ImGui::Button("Retry", ImVec2(130, 34))) StartUpdateCheck();
-                    ImGui::SameLine();
-                    if (ImGui::Button("Close", ImVec2(110, 34))) {
-                        g_upGoBack = false;   // a failed way back is not tried again by the next ordinary check
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                } else if (busy) {
-                    if (ImGui::Button("Hide", ImVec2(110, 34))) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Keep updating in the background");
-                } else {   // UpToDate / Idle
-                    if (ImGui::Button("Close", ImVec2(130, 34)) ||
-                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                        g_upModalOpen = false; ImGui::CloseCurrentPopup();
-                    }
+                };
+                const float rowX = ImGui::GetCursorPosX();
+                if (!box.stackButtons) ImGui::SetCursorPosX(rowX + cw - b1 - (b2 > 0 ? b2 + UiPx(8.0f) : 0.0f));
+                if (v.secondary != UV::Button::None) {
+                    if (ImGui::Button(UV::ButtonLabel(v.secondary), ImVec2(box.stackButtons ? cw : b2, btnH))) act(v.secondary);
+                    if (!box.stackButtons) ImGui::SameLine(0, UiPx(8.0f));
                 }
+                if (v.primary != UV::Button::None) {
+                    const bool prim = v.primary != UV::Button::Hide && v.primary != UV::Button::Close;
+                    if (prim ? PrimaryButton(UV::ButtonLabel(v.primary), ImVec2(box.stackButtons ? cw : b1, btnH))
+                             : ImGui::Button(UV::ButtonLabel(v.primary), ImVec2(box.stackButtons ? cw : b1, btnH))) act(v.primary);
+                    if (v.primary == UV::Button::Hide && ImGui::IsItemHovered()) ImGui::SetTooltip("Keep updating in the background");
+                }
+                if (!busyU && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_upModalOpen = false; ImGui::CloseCurrentPopup(); }
                 ImGui::EndPopup();
             }
         }
@@ -13198,7 +13244,10 @@ int main(int argc, char** argv) {
         DrawAcBanBanner();
         DrawReportPopup();
         if (!gateOpen) {   // ---- Signed out, checking, or blocked: the welcome screen and nothing else ----
-            DrawWelcomeScreen(account, gateState, running);
+            if (gateState == okay::signingate::State::Checking) {   // the start-up look while the saved session is checked
+                DrawWelcomeScreen(account, gateState, running);      // (keeps handling the check's answer)
+                DrawLoadingScreen("Signing you in", -1.0f, nullptr);
+            } else DrawWelcomeScreen(account, gateState, running);
         } else if (g_pfOpen) {
             PfPageOut po = DrawPublicProfilePage(account, tab);
             if (po.gotoTab >= 0) {

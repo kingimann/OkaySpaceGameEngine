@@ -4249,6 +4249,11 @@ add_executable(test_signin_gate test_signin_gate.cpp)
 target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_features(test_signin_gate PRIVATE cxx_std_17)
 add_test(NAME signin_gate COMMAND test_signin_gate)
+# The launcher's Software Update dialog as a view of the updater's state (launcher/UpdateView.hpp). Std only.
+add_executable(test_update_view test_update_view.cpp)
+target_include_directories(test_update_view PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_update_view PRIVATE cxx_std_17)
+add_test(NAME update_view COMMAND test_update_view)
 
 # The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
 add_executable(test_editor_perf test_editor_perf.cpp)

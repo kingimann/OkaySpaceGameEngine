@@ -64,4 +64,12 @@ inline Phase AfterSignIn(const okay::account::Result& r, std::string& message) {
     return Phase::NeedSignIn;
 }
 
+/// The launcher and the editor share session.txt. When it changes (the player signed in, or out, in the launcher) while the
+/// window asks to sign in or cannot reach the server, and nothing is on its way to the server, the editor reads it again
+/// and checks the new sign-in, so a launcher sign-in opens the editor without a restart. While a check or a sign-in runs,
+/// or once the editor is open, a change is left alone (the next check reads the file anyway: AccountService::CheckSession).
+inline bool RecheckWhenSessionFileChanges(Phase p, bool jobRunning) {
+    return !jobRunning && (p == Phase::NeedSignIn || p == Phase::Unreachable);
+}
+
 }  // namespace oked::signin

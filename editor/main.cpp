@@ -52836,8 +52836,10 @@ bool SignInAllowsProjects() { return oked::signin::ProjectsAllowed(g_signin); }
 static void StartSessionCheck() {
     if (StartSignInJob(SignInJob::Check)) g_signin = oked::signin::Phase::Checking;
 }
+static long long g_signinStamp = -1;   // session.txt's stamp when the gate last read it (AccountService::SessionFileStamp)
 static void StartSignInGate() {
     const bool bypass = oked::signin::BypassRequested(std::getenv("OKAY_TEST_NO_SIGNIN"));
+    g_signinStamp = okay::Account::Get().SessionFileStamp();
     g_signin = oked::signin::Start(bypass, !bypass && okay::Account::Get().IsLoggedIn());
     if (bypass) ConsoleLog("Sign-in check is off (OKAY_TEST_NO_SIGNIN=1: tests and CI only).", 1);
     if (g_signin == oked::signin::Phase::Checking) StartSessionCheck();
@@ -52857,6 +52859,20 @@ static void DrawSignInGate() {
         delete j;
     }
     if (oked::signin::ProjectsAllowed(g_signin)) return;
+    {   // A sign-in (or sign-out) in the launcher rewrites session.txt: look once a second, and check the new sign-in.
+        static double s_nextPoll = 0.0;
+        const double now = ImGui::GetTime();
+        if (now >= s_nextPoll) {
+            s_nextPoll = now + 1.0;
+            okay::account::AccountService& a = okay::Account::Get();
+            const long long st = a.SessionFileStamp();
+            if (st != g_signinStamp && oked::signin::RecheckWhenSessionFileChanges(g_signin, g_signinJob != nullptr)) {
+                g_signinStamp = st;
+                a.SyncSessionFromDisk();
+                if (a.IsLoggedIn()) StartSessionCheck();
+            }
+        }
+    }
     static char email[256] = "", pass[256] = "";
     const char* title = "Sign in to OkaySpace###SignInGate";
     if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
@@ -52877,7 +52893,12 @@ static void DrawSignInGate() {
         if (ImGui::Button("Sign in with another account", ImVec2(0, 30))) { acct.Logout(); g_signinMsg.clear(); g_signin = Phase::NeedSignIn; }
     } else {
         ImGui::TextWrapped("Sign in with your OkaySpace account to use the editor.");
-        if (!g_signinMsg.empty()) { ImGui::Dummy(ImVec2(0, 4)); ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f), "%s", g_signinMsg.c_str()); }
+        if (!g_signinMsg.empty()) {   // wrapped: a "not reached" message carries a second line with the reason (AccountService)
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.55f, 0.50f, 1.0f));
+            ImGui::TextWrapped("%s", g_signinMsg.c_str());
+            ImGui::PopStyleColor();
+        }
         ImGui::Dummy(ImVec2(0, 6));
         const bool busy = g_signin == Phase::SigningIn;
         ImGui::BeginDisabled(busy);

@@ -12375,7 +12375,7 @@ int main(int argc, char** argv) {
     // Fall back to values baked into the build. Ignore an empty or junk server
     // file (e.g. a stale "Use local (clear)" leftover from an old build) that
     // would otherwise knock the launcher offline — only an http(s) URL counts.
-    if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
+    serverUrl = acct::detail::ChooseServerUrl(serverUrl, OKAY_DEFAULT_ACCOUNT_URL);   // (okay::Account::Get does the same)
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
     if (serverUrl.empty())
         std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "

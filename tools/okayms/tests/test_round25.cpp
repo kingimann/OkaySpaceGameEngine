@@ -26,8 +26,8 @@ const okayms_test::ProgramRun kRunRandom{"r25", {"bcrypt.dll:BCryptGenRandom"}};
 static const char* kAlloc = okayms_test::bump_alloc();
 
 // the compiler fixes of this round (1): class template members made inside the body of their argument's class, c ? a : b of constants, a pack deduced from box<T...> after an explicit argument, sizeof through a reference, T& patterns, f(true) and f('a') deduction, ns::Empty(), static_cast<H*>(p)->~H()
-static void test_fixes(Tally& tally) {
-    std::printf("test_fixes\n");
+static void r25_fixes(Tally& tally) {
+    std::printf("r25_fixes\n");
     okayms_test::run_both(kRun, tally, "fixes", std::string(kAlloc) + R"OKMS(
 #include <string>
 #include <type_traits>
@@ -83,8 +83,8 @@ int entry(void) {
 }
 
 // the compiler fixes of this round (2): ::ns::Type, reference members, a by-value class parameter made by a converting constructor, calling a static std::function member, std::function from nullptr, # and ## in macros, digit separators, c ? a : b in a for-init
-static void test_fixes2(Tally& tally) {
-    std::printf("test_fixes2\n");
+static void r25_fixes2(Tally& tally) {
+    std::printf("r25_fixes2\n");
     okayms_test::run_both(kRun, tally, "fixes2", std::string(kAlloc) + R"OKMS(
 #include <functional>
 #include <string>
@@ -140,8 +140,8 @@ int entry(void) {
 }
 
 // <variant>: index, holds_alternative, get_if, get, converting construction and assignment, copies, destruction of the held object, monostate, variant_size
-static void test_variant(Tally& tally) {
-    std::printf("test_variant\n");
+static void r25_variant(Tally& tally) {
+    std::printf("r25_variant\n");
     okayms_test::run_both(kRun, tally, "variant", std::string(kAlloc) + R"OKMS(
 #include <string>
 #include <variant>
@@ -185,8 +185,8 @@ int entry(void) {
 }
 
 // <tuple>: construction, get<I>, make_tuple, comparison, tuple keys of a std::map, tuple_size
-static void test_tuple(Tally& tally) {
-    std::printf("test_tuple\n");
+static void r25_tuple(Tally& tally) {
+    std::printf("r25_tuple\n");
     okayms_test::run_both(kRun, tally, "tuple", std::string(kAlloc) + R"OKMS(
 #include <map>
 #include <string>
@@ -222,8 +222,8 @@ int entry(void) {
 }
 
 // <exception> <stdexcept> <new>: what() through a base reference, derived classes, exception_ptr
-static void test_exception(Tally& tally) {
-    std::printf("test_exception\n");
+static void r25_exception(Tally& tally) {
+    std::printf("r25_exception\n");
     okayms_test::run_both(kRun, tally, "exception", std::string(kAlloc) + R"OKMS(
 #include <exception>
 #include <new>
@@ -252,8 +252,8 @@ int entry(void) {
 }
 
 // <clocale>: localeconv and setlocale of the C locale
-static void test_clocale(Tally& tally) {
-    std::printf("test_clocale\n");
+static void r25_clocale(Tally& tally) {
+    std::printf("r25_clocale\n");
     okayms_test::run_both(kRun, tally, "clocale", std::string(kAlloc) + R"OKMS(
 #include <clocale>
 static bool is_c(const char* s) { return s != 0 && s[0] == 'C' && s[1] == 0; }
@@ -269,8 +269,8 @@ int entry(void) {
 }
 
 // <iterator>: next, prev, distance, begin, end, size, back_inserter, istreambuf_iterator; range constructors and assign of string and vector
-static void test_iterator(Tally& tally) {
-    std::printf("test_iterator\n");
+static void r25_iterator(Tally& tally) {
+    std::printf("r25_iterator\n");
     okayms_test::run_both(kRun, tally, "iterator", std::string(kAlloc) + R"OKMS(
 #include <iterator>
 #include <map>
@@ -314,8 +314,8 @@ int entry(void) {
 }
 
 // <string_view>: find, rfind, substr, compare, remove_prefix/suffix, find_first_of..., to and from std::string
-static void test_string_view(Tally& tally) {
-    std::printf("test_string_view\n");
+static void r25_string_view(Tally& tally) {
+    std::printf("r25_string_view\n");
     okayms_test::run_both(kRun, tally, "string_view", std::string(kAlloc) + R"OKMS(
 #include <string>
 #include <string_view>
@@ -341,8 +341,8 @@ int entry(void) {
 }
 
 // char16_t, char32_t and std::u16string / std::u32string
-static void test_u16string(Tally& tally) {
-    std::printf("test_u16string\n");
+static void r25_u16string(Tally& tally) {
+    std::printf("r25_u16string\n");
     okayms_test::run_both(kRun, tally, "u16string", std::string(kAlloc) + R"OKMS(
 #include <string>
 static std::u16string to16(const char* s) { std::u16string out; out.reserve(4); while (*s) { out += (char16_t)(unsigned char)*s; ++s; } return out; }
@@ -366,8 +366,8 @@ int entry(void) {
 }
 
 // static C x = f(); and C g = f(); for a class returned in memory (both wrote a stack slot or failed before)
-static void test_static_sret(Tally& tally) {
-    std::printf("test_static_sret\n");
+static void r25_static_sret(Tally& tally) {
+    std::printf("r25_static_sret\n");
     okayms_test::run_both(kRun, tally, "static_sret", std::string(kAlloc) + R"OKMS(
 #include <string>
 struct P { long long a, b, c; P() : a(0), b(0), c(0) {} P(long long x) : a(x), b(x), c(x) {} P(const P& o) : a(o.a), b(o.b), c(o.c + 1000) {} ~P() { a = -1; } };
@@ -389,8 +389,8 @@ int entry(void) {
 }
 
 // thread_local globals, static locals and a per-thread first-use guard, in one thread
-static void test_thread_local(Tally& tally) {
-    std::printf("test_thread_local\n");
+static void r25_thread_local(Tally& tally) {
+    std::printf("r25_thread_local\n");
     okayms_test::run_both(kRun, tally, "thread_local", std::string(kAlloc) + R"OKMS(
 static thread_local int counter = 5;
 thread_local double scale = 2.5;
@@ -414,8 +414,8 @@ int entry(void) {
 }
 
 // thread_local in two threads (CreateThread): each thread has its own copy, a new thread starts from the initial value
-static void test_thread_local_threads(Tally& tally) {
-    std::printf("test_thread_local_threads\n");
+static void r25_thread_local_threads(Tally& tally) {
+    std::printf("r25_thread_local_threads\n");
     okayms_test::run_both(kRunThreads, tally, "thread_local_threads", std::string(kAlloc) + R"OKMS(
 extern "C" __declspec(dllimport) void* CreateThread(void* attrs, unsigned long long stack, unsigned long (*start)(void*), void* param, unsigned flags, unsigned* id);
 extern "C" __declspec(dllimport) unsigned WaitForSingleObject(void* handle, unsigned ms);
@@ -443,8 +443,8 @@ int entry(void) {
 }
 
 // thread_local std::vector and std::string static locals with a dynamic initializer in two threads
-static void test_thread_local_objects(Tally& tally) {
-    std::printf("test_thread_local_objects\n");
+static void r25_thread_local_objects(Tally& tally) {
+    std::printf("r25_thread_local_objects\n");
     okayms_test::run_both(kRunThreads, tally, "thread_local_objects", std::string(kAlloc) + R"OKMS(
 #include <string>
 #include <vector>
@@ -473,8 +473,8 @@ int entry(void) {
 }
 
 // <random> (mt19937 and mt19937_64 10000th values of [rand.predef], distributions in range), <queue>, <optional>, <cerrno>
-static void test_random_queue_optional(Tally& tally) {
-    std::printf("test_random_queue_optional\n");
+static void r25_random_queue_optional(Tally& tally) {
+    std::printf("r25_random_queue_optional\n");
     okayms_test::run_both(kRunRandom, tally, "random_queue_optional", std::string(kAlloc) + R"OKMS(
 #include <cerrno>
 #include <optional>
@@ -524,8 +524,8 @@ int entry(void) {
 }
 
 // std::atomic_flag and ATOMIC_FLAG_INIT
-static void test_atomic_flag(Tally& tally) {
-    std::printf("test_atomic_flag\n");
+static void r25_atomic_flag(Tally& tally) {
+    std::printf("r25_atomic_flag\n");
     okayms_test::run_both(kRun, tally, "atomic_flag", std::string(kAlloc) + R"OKMS(
 #include <atomic>
 static std::atomic_flag& F() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
@@ -543,20 +543,20 @@ int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
     Tally tally;
-    test_fixes(tally);
-    test_fixes2(tally);
-    test_variant(tally);
-    test_tuple(tally);
-    test_exception(tally);
-    test_clocale(tally);
-    test_iterator(tally);
-    test_string_view(tally);
-    test_u16string(tally);
-    test_static_sret(tally);
-    test_thread_local(tally);
-    test_thread_local_threads(tally);
-    test_thread_local_objects(tally);
-    test_random_queue_optional(tally);
-    test_atomic_flag(tally);
+    r25_fixes(tally);
+    r25_fixes2(tally);
+    r25_variant(tally);
+    r25_tuple(tally);
+    r25_exception(tally);
+    r25_clocale(tally);
+    r25_iterator(tally);
+    r25_string_view(tally);
+    r25_u16string(tally);
+    r25_static_sret(tally);
+    r25_thread_local(tally);
+    r25_thread_local_threads(tally);
+    r25_thread_local_objects(tally);
+    r25_random_queue_optional(tally);
+    r25_atomic_flag(tally);
     return tally.finish(15);
 }

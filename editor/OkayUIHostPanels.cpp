@@ -8,6 +8,15 @@
 #undef OKAY_HAVE_OKAYUI   // the panel sources must take their Dear ImGui API path (compiled against OkayUI): never the hosted-in-ImGui OkayUI path
 #define OKAYUI_STABLE_PANEL_TITLES 1   // ConsolePanel.cpp: no error counts in the window title (the dock layout keys windows by title)
 
+// ProjectPanelUI.cpp draws its import settings with the OkayUI screen okayuiscreens::DrawImportSettings, a name the macro below renames
+// for this copy: the renamed name forwards to the screen (defined before the macro, so it reaches the real one).
+#include "OkayUIEditorPanels.hpp"
+namespace okayuiscreens {
+inline ImportSettingsResult DrawImportSettings_WM(okaypanels::ImportSettingsModel& m, okaypanels::ImportSettingsState& st, float x, float y, float w, float h) {
+    return DrawImportSettings(m, st, x, y, w, h);
+}
+} // namespace okayuiscreens
+
 // ---- the names the panel sources define, renamed for this copy: from here on, so the declarations in the editor headers (with their default arguments) are renamed too ----
 #define ConsoleLog ConsoleLog_WM
 #define DrawConsole DrawConsole_WM
@@ -34,6 +43,12 @@
 #define AccentToggleButton AccentToggleButton_WM
 #define AccentCol AccentCol_WM
 #define TipButton TipButton_WM
+#define ToggleChip ToggleChip_WM
+#define ToggleChipWidth ToggleChipWidth_WM
+#define StateButton StateButton_WM
+#define BeginDropdown BeginDropdown_WM
+#define PushClearTabColors PushClearTabColors_WM
+#define PopClearTabColors PopClearTabColors_WM
 #define SceneBuildSync SceneBuildSync_WM
 #define DrawSceneManager DrawSceneManager_WM
 #define DrawDialogs DrawDialogs_WM
@@ -114,6 +129,12 @@
 #undef AccentToggleButton
 #undef AccentCol
 #undef TipButton
+#undef ToggleChip
+#undef ToggleChipWidth
+#undef StateButton
+#undef BeginDropdown
+#undef PushClearTabColors
+#undef PopClearTabColors
 #undef SceneBuildSync
 #undef DrawSceneManager
 #undef DrawDialogs

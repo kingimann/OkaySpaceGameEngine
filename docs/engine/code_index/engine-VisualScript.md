@@ -2,7 +2,7 @@
 
 # Code index: engine-VisualScript
 
-Back to the [code index](../code_index.md). 32 headers, 628 names.
+Back to the [code index](../code_index.md). 32 headers, 630 names.
 
 ## `engine/include/okay/VisualScript/ActionGraph.hpp`
 
@@ -113,38 +113,40 @@ Back to the [code index](../code_index.md). 32 headers, 628 names.
 - `NetMatchStartedNode` struct, line 851: True once the match has started for this peer's room.
 - `NetAllReadyNode` struct, line 855: Host only: true when every client in the room is ready.
 - `NetHostOrJoinNode` struct, line 861: ---- The easy layer (NetworkManagerEvents.cpp): players, events, the clock --
-- `NetSendEventNode` struct, line 872: Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
-- `NetEventSenderNode` struct, line 883: Who sent the network event being handled (a player id; 0 = the host).
-- `NetPlayerCountNode` struct, line 890: Players in the game, this one included.
-- `NetPlayerIdAtNode` struct, line 894: The id of player number in0 (0 = the first, in id order); -1 past the end.
-- `NetPlayerNameNode` struct, line 905: The name of the player with id in0.
-- `NetLastErrorNode` struct, line 915
-- `NetTimeNode` struct, line 918
-- `NetPingNode` struct, line 921
-- `VsSyncId` function, line 925: This object's network id: its Network Sync's (blank = the object's name); "" without one.
-- `NetIsMineNode` struct, line 930: Does this player drive this object now? (True offline or without a Network Sync.)
-- `NetIsPredictedNode` struct, line 937: Is this object the local player that this client predicts (authoritative movement)?
-- `NetGiveOwnershipNode` struct, line 941: Host: give this object to player in0. A client: ask the host for it.
-- `NetRequestOwnershipNode` struct, line 954
-- `NetOwnerNode` struct, line 965: Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
-- `NetSimulateNode` struct, line 969: Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
-- `NetStatsNode` struct, line 981: Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
-- `NetShowStatsNode` struct, line 996: Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
-- `NetMigratingNode` struct, line 1004: Is Migrating: between the host leaving and the new host taking over (host migration).
-- `SteamNameNode` struct, line 1009: ---- Steam ------------------------------------------------------------
-- `SteamUnlockedNode` struct, line 1012
-- `SteamGetStatNode` struct, line 1017
-- `SteamUnlockNode` struct, line 1022
-- `SteamSetStatNode` struct, line 1028
-- `SteamStoreNode` struct, line 1034
-- `SteamLeaderboardNode` struct, line 1038
-- `PlaySoundNode` struct, line 1047: ---- Audio ------------------------------------------------------------
-- `AddForceNode` struct, line 1058: ---- Physics (sibling Rigidbody2D) ------------------------------------
-- `AddImpulseNode` struct, line 1068
-- `SetVelocityNode` struct, line 1078
-- `VelAxisNode` struct, line 1088
-- `RaycastNode` struct, line 1101: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
-- `EaseNode` struct, line 1112: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
+- `NetHostOnlineNode` struct, line 873: Host Online: host over the internet through the relay under a short room code (in0, empty = make one up);
+- `NetJoinCodeNode` struct, line 883: Join By Code: join the online game with room code in0, through the relay.
+- `NetSendEventNode` struct, line 892: Send Network Event <name>: runs "On Network Event <name>" on every player (this one too). in0 = data.
+- `NetEventSenderNode` struct, line 903: Who sent the network event being handled (a player id; 0 = the host).
+- `NetPlayerCountNode` struct, line 910: Players in the game, this one included.
+- `NetPlayerIdAtNode` struct, line 914: The id of player number in0 (0 = the first, in id order); -1 past the end.
+- `NetPlayerNameNode` struct, line 925: The name of the player with id in0.
+- `NetLastErrorNode` struct, line 935
+- `NetTimeNode` struct, line 938
+- `NetPingNode` struct, line 941
+- `VsSyncId` function, line 945: This object's network id: its Network Sync's (blank = the object's name); "" without one.
+- `NetIsMineNode` struct, line 950: Does this player drive this object now? (True offline or without a Network Sync.)
+- `NetIsPredictedNode` struct, line 957: Is this object the local player that this client predicts (authoritative movement)?
+- `NetGiveOwnershipNode` struct, line 961: Host: give this object to player in0. A client: ask the host for it.
+- `NetRequestOwnershipNode` struct, line 974
+- `NetOwnerNode` struct, line 985: Who holds this object after a handoff (-1 = never handed: its Network Sync decides).
+- `NetSimulateNode` struct, line 989: Simulate Bad Network: in0 latency ms, in1 jitter ms, in2 loss % (all 0 = off). For testing on one PC.
+- `NetStatsNode` struct, line 1001: Network Stats: out0 ping (ms), out1 loss (%), out2 bytes in / s, out3 bytes out / s.
+- `NetShowStatsNode` struct, line 1016: Show Network Stats: the in-game overlay (ping, loss, bandwidth, players) on (in0 true) or off.
+- `NetMigratingNode` struct, line 1024: Is Migrating: between the host leaving and the new host taking over (host migration).
+- `SteamNameNode` struct, line 1029: ---- Steam ------------------------------------------------------------
+- `SteamUnlockedNode` struct, line 1032
+- `SteamGetStatNode` struct, line 1037
+- `SteamUnlockNode` struct, line 1042
+- `SteamSetStatNode` struct, line 1048
+- `SteamStoreNode` struct, line 1054
+- `SteamLeaderboardNode` struct, line 1058
+- `PlaySoundNode` struct, line 1067: ---- Audio ------------------------------------------------------------
+- `AddForceNode` struct, line 1078: ---- Physics (sibling Rigidbody2D) ------------------------------------
+- `AddImpulseNode` struct, line 1088
+- `SetVelocityNode` struct, line 1098
+- `VelAxisNode` struct, line 1108
+- `RaycastNode` struct, line 1121: Cast a 2D ray (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist]) -> did it hit?
+- `EaseNode` struct, line 1132: ---- Tween / easing (shape a 0..1 t for smooth motion) ----------------
 
 ## `engine/include/okay/VisualScript/NodesActions.hpp`
 

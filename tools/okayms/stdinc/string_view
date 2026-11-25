@@ -1,0 +1,4 @@
+// okay-ms own standard header: <string_view> ([string.view.synop]). std::string_view is defined in <string>, before
+// std::string, so that a string can be built from one; this header only includes it.
+#pragma once
+#include <string>

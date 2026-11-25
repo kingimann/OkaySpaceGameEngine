@@ -511,6 +511,10 @@ NetworkManager::NetStats NetworkManager::Stats() const {
     st.bytesOutPerSec = m_bytesOutRate;
     st.players = (int)Players().size();
     st.networkTime = NetworkTime();
+    st.directPeers = DirectPeers();
+    st.relayedPeers = RelayedPeers();
+    st.direct = DirectToHost();
+    st.relayed = m_relay && st.relayedPeers > 0;
     return st;
 }
 
@@ -526,11 +530,22 @@ std::vector<std::string> NetworkManager::StatsLines() const {
     out.emplace_back(b);
     std::snprintf(b, sizeof b, "In %.1f KB/s   Out %.1f KB/s", st.bytesInPerSec / 1024.0f, st.bytesOutPerSec / 1024.0f);
     out.emplace_back(b);
+    if (m_relay && m_mode == Mode::Server)   // direct or relayed: how traffic gets there
+        std::snprintf(b, sizeof b, "Path: %s (%d direct, %d via relay %s)%s%s", PathText().c_str(), st.directPeers,
+                      st.relayedPeers, m_relayEp.ToString().c_str(), m_relayCode.empty() ? "" : ", code ", m_relayCode.c_str());
+    else if (m_relay)
+        std::snprintf(b, sizeof b, "Path: %s via relay %s%s%s", PathText().c_str(), m_relayEp.ToString().c_str(),
+                      m_relayCode.empty() ? "" : ", code ", m_relayCode.c_str());
+    else
+        std::snprintf(b, sizeof b, "Path: %s", PathText().c_str());
+    out.emplace_back(b);
     if (m_mode == Mode::Server)
         for (const auto& [ep, c] : m_clients) {
             float rtt = 0.0f, loss = 0.0f;
             PeerLink(c.id, rtt, loss);
-            std::snprintf(b, sizeof b, "  %u %s: %.0f ms, %.1f %% loss", c.id, c.name.substr(0, 24).c_str(), rtt, loss);
+            const DirectPath* d = m_relay ? DirectFor(ep.address) : nullptr;
+            const char* path = !m_relay ? "" : (d && d->open && !d->failed) ? ", direct" : ", relayed";
+            std::snprintf(b, sizeof b, "  %u %s: %.0f ms, %.1f %% loss%s", c.id, c.name.substr(0, 24).c_str(), rtt, loss, path);
             out.emplace_back(b);
         }
     if (m_rollback->Running()) {

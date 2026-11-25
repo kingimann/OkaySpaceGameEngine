@@ -17,35 +17,7 @@ update public.profiles set last_seen = now(), playing = 'Space Game', session_co
   status = 'busy', favorite_game = 'Chess', location = 'Mars'
   where username = 'alice';
 
-create schema if not exists t;
-create or replace function t.ok(name text, cond boolean, why text default '') returns void language plpgsql as $$
-begin
-  if cond then raise warning 'PASS %', name; else raise warning 'FAIL %: %', name, why; end if;
-end $$;
-create or replace function t.as_user(uid text) returns void language plpgsql as $$
-begin
-  perform set_config('request.jwt.claims', json_build_object('sub', uid, 'role', 'authenticated')::text, false);
-end $$;
-create or replace function t.as_anon() returns void language plpgsql as $$
-begin
-  perform set_config('request.jwt.claims', json_build_object('role', 'anon')::text, false);
-end $$;
-create or replace function t.as_service() returns void language plpgsql as $$
-begin
-  perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, false);
-end $$;
--- Run a statement: 'ok' or '<sqlstate>:<message>'.
-create or replace function t.try(q text) returns text language plpgsql as $$
-begin execute q; return 'ok'; exception when others then return sqlstate || ':' || sqlerrm; end $$;
--- First column of the first row as text ('<none>' if no rows, 'ERR:..' on error).
-create or replace function t.val(q text) returns text language plpgsql as $$
-declare v text;
-begin execute 'select (' || q || ')::text' into v; return coalesce(v, '<null>');
-exception when no_data_found then return '<none>'; when others then return 'ERR:' || sqlstate; end $$;
-create or replace function t.cnt(q text) returns bigint language plpgsql as $$
-declare v bigint;
-begin execute 'select count(*) from (' || q || ') x' into v; return v; end $$;
-grant usage on schema t to public; grant execute on all functions in schema t to public;
+\ir test_helpers.sql
 
 \set A '00000000-0000-0000-0000-0000000000a1'
 \set B '00000000-0000-0000-0000-0000000000b2'

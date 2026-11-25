@@ -3,11 +3,131 @@
 // exceptions (an index is not checked), iterators are pointers, no wide strings. Storage comes from the global
 // malloc and free (see <cstdlib>). The functions found by the engine headers are here: construct, copy, assign,
 // append, +, ==, <, [], size, c_str, substr, find, rfind, erase, insert, compare, push_back, clear, resize, to_string.
+// std::string_view is defined here too (see below).
 #pragma once
 #include <cstddef>
 #include <cstdlib>
 #include <utility>
 namespace std {
+class string;
+// std::string_view ([string.view]): a pointer and a length naming characters it does not own. It is here, before string,
+// so that string can be built from one and compared with one; <string_view> includes this header.
+class string_view {
+    const char* data_;
+    size_t size_;
+
+    static size_t length_of__(const char* s) {
+        size_t n = 0;
+        while (s[n] != 0) ++n;
+        return n;
+    }
+
+public:
+    typedef char value_type;
+    typedef size_t size_type;
+    typedef const char* iterator;
+    typedef const char* const_iterator;
+    static const size_t npos = (size_t)-1;
+
+    string_view() : data_(""), size_(0) {}
+    string_view(const char* s) : data_(s), size_(length_of__(s)) {}
+    string_view(const char* s, size_t n) : data_(s), size_(n) {}
+    string_view(const string& s);  // defined after string
+
+    size_t size() const { return size_; }
+    size_t length() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    const char* data() const { return data_; }
+    const char* begin() const { return data_; }
+    const char* end() const { return data_ + size_; }
+    const char& operator[](size_t i) const { return data_[i]; }
+    const char& front() const { return data_[0]; }
+    const char& back() const { return data_[size_ - 1]; }
+    void remove_prefix(size_t n) {
+        data_ += n;
+        size_ -= n;
+    }
+    void remove_suffix(size_t n) { size_ -= n; }
+    string_view substr(size_t pos, size_t n) const {
+        if (pos > size_) pos = size_;
+        if (n > size_ - pos) n = size_ - pos;
+        return string_view(data_ + pos, n);
+    }
+    string_view substr(size_t pos) const { return substr(pos, npos); }
+    int compare(string_view o) const {
+        const size_t n = size_ < o.size_ ? size_ : o.size_;
+        for (size_t i = 0; i < n; ++i) {
+            const unsigned char a = (unsigned char)data_[i];
+            const unsigned char b = (unsigned char)o.data_[i];
+            if (a != b) return a < b ? -1 : 1;
+        }
+        return size_ == o.size_ ? 0 : (size_ < o.size_ ? -1 : 1);
+    }
+    bool starts_with(string_view p) const { return size_ >= p.size_ && substr(0, p.size_).compare(p) == 0; }
+    bool starts_with(char c) const { return size_ > 0 && data_[0] == c; }
+    bool ends_with(string_view p) const { return size_ >= p.size_ && substr(size_ - p.size_).compare(p) == 0; }
+    bool ends_with(char c) const { return size_ > 0 && data_[size_ - 1] == c; }
+    size_t find(char c, size_t pos = 0) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (data_[i] == c) return i;
+        return npos;
+    }
+    size_t find(string_view p, size_t pos = 0) const {
+        if (p.size_ > size_) return npos;
+        for (size_t i = pos; i + p.size_ <= size_; ++i)
+            if (substr(i, p.size_).compare(p) == 0) return i;
+        return npos;
+    }
+    size_t rfind(char c, size_t pos = npos) const {
+        if (size_ == 0) return npos;
+        size_t i = (pos < size_) ? pos : size_ - 1;
+        for (;; --i) {
+            if (data_[i] == c) return i;
+            if (i == 0) return npos;
+        }
+    }
+    size_t rfind(string_view p, size_t pos = npos) const {
+        if (p.size_ > size_) return npos;
+        size_t i = size_ - p.size_;
+        if (pos < i) i = pos;
+        for (;; --i) {
+            if (substr(i, p.size_).compare(p) == 0) return i;
+            if (i == 0) return npos;
+        }
+    }
+    size_t find_first_of(string_view set, size_t pos = 0) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (set.find(data_[i]) != npos) return i;
+        return npos;
+    }
+    size_t find_first_of(char c, size_t pos = 0) const { return find(c, pos); }
+    size_t find_first_not_of(string_view set, size_t pos = 0) const {
+        for (size_t i = pos; i < size_; ++i)
+            if (set.find(data_[i]) == npos) return i;
+        return npos;
+    }
+    size_t find_last_of(string_view set, size_t pos = npos) const {
+        if (size_ == 0) return npos;
+        for (size_t i = (pos < size_) ? pos : size_ - 1;; --i) {
+            if (set.find(data_[i]) != npos) return i;
+            if (i == 0) return npos;
+        }
+    }
+    size_t find_last_not_of(string_view set, size_t pos = npos) const {
+        if (size_ == 0) return npos;
+        for (size_t i = (pos < size_) ? pos : size_ - 1;; --i) {
+            if (set.find(data_[i]) == npos) return i;
+            if (i == 0) return npos;
+        }
+    }
+};
+inline bool operator==(string_view a, string_view b) { return a.compare(b) == 0; }
+inline bool operator!=(string_view a, string_view b) { return a.compare(b) != 0; }
+inline bool operator<(string_view a, string_view b) { return a.compare(b) < 0; }
+inline bool operator>(string_view a, string_view b) { return a.compare(b) > 0; }
+inline bool operator<=(string_view a, string_view b) { return a.compare(b) <= 0; }
+inline bool operator>=(string_view a, string_view b) { return a.compare(b) >= 0; }
+
 class string {
     char* data_;
     size_t size_;
@@ -47,6 +167,16 @@ public:
         data_[n] = 0;
     }
     string(const string& other) : data_(0), size_(0), cap_(0) { assign(other.data_, other.size_); }
+    // A part of another string: from pos, at most n characters ([string.cons] 3; pos past the end gives an empty string
+    // here instead of throwing out_of_range).
+    string(const string& other, size_t pos, size_t n = npos) : data_(0), size_(0), cap_(0) { assign(other, pos, n); }
+    explicit string(string_view v) : data_(0), size_(0), cap_(0) { assign(v.data(), v.size()); }
+    // The characters of [first, last) for any input iterator ([string.cons] 12), e.g. istreambuf_iterator.
+    template <typename It>
+    string(It first, It last) : data_(0), size_(0), cap_(0) {
+        reserve_exact(0);
+        for (; first != last; ++first) push_back(*first);
+    }
     string(string&& other) : data_(other.data_), size_(other.size_), cap_(other.cap_) {
         other.data_ = 0;
         other.size_ = 0;
@@ -105,6 +235,20 @@ public:
     }
     string& assign(const char* s) { return assign(s, length_of(s)); }
     string& assign(const string& other) { return assign(other.data_, other.size_); }
+    string& assign(const string& other, size_t pos, size_t n = npos) {
+        if (pos > other.size_) pos = other.size_;
+        if (n > other.size_ - pos) n = other.size_ - pos;
+        if (this == &other) {
+            string part(other.data_ + pos, n);
+            return assign(part.data_, part.size_);
+        }
+        return assign(other.data_ + pos, n);
+    }
+    template <typename It>
+    string& assign(It first, It last) {
+        string t(first, last);
+        return assign(t.data_, t.size_);
+    }
 
     size_t size() const { return size_; }
     size_t length() const { return size_; }
@@ -170,6 +314,7 @@ public:
     }
     string& append(const char* s) { return append(s, length_of(s)); }
     string& append(const string& other) { return append(other.data_, other.size_); }
+    string& append(string_view v) { return append(v.data(), v.size()); }
     string& append(size_t n, char c) {
         reserve_exact(size_ + n);
         for (size_t i = 0; i < n; ++i) data_[size_ + i] = c;
@@ -179,6 +324,8 @@ public:
     }
     string& operator+=(const string& other) { return append(other.data_, other.size_); }
     string& operator+=(const char* s) { return append(s, length_of(s)); }
+    string& operator+=(string_view v) { return append(v.data(), v.size()); }
+    string& operator=(string_view v) { return assign(v.data(), v.size()); }
     string& operator+=(char c) {
         push_back(c);
         return *this;
@@ -288,6 +435,8 @@ public:
     }
 };
 
+inline string_view::string_view(const string& s) : data_(s.data()), size_(s.size()) {}
+
 inline string operator+(const string& a, const string& b) {
     string r(a);
     r.append(b);
@@ -343,3 +492,4 @@ inline string to_string(long long v) {
 inline string to_string(int v) { return to_string((long long)v); }
 inline string to_string(unsigned v) { return to_string((unsigned long long)v); }
 }
+#include <okay_ustring>

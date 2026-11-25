@@ -23,6 +23,7 @@ struct Rig {
     ImGuiContext* ctx = nullptr;
     Rig() {
         ctx = ImGui::CreateContext();
+        ImGui::SetCurrentContext(ctx);   // (a second rig is set up in its own context)
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr; io.LogFilename = nullptr;
         io.DisplaySize = ImVec2(1920.0f, 1200.0f);
@@ -312,6 +313,47 @@ int main() {
         CHECK(!CoveredAt("Inspector", 1450.0f, 900.0f, 200.0f, 200.0f));
         popup();
     });
+
+    // The launcher (owner's screenshot, v2.903.8.7): a full-screen root window that is never brought to the front, its page in a
+    // child window, and the Notifications flyout, a top-level window opened later beside the sidebar. The What's New page is
+    // drawn by OkayUI after ImGui, so it painted its release rows over the flyout. The page must count as covered where the
+    // flyout lies over it, and not elsewhere, from every frame the flyout is open, even after the page was clicked (focused).
+    {
+        Rig lr;
+        ImGuiContext* const editorCtx = rig.ctx;
+        ImGui::SetCurrentContext(lr.ctx);
+        bool flyout = false;
+        bool coveredUnder = false, coveredBeside = false;
+        auto launcherFrame = [&] {
+            ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(vp->WorkPos); ImGui::SetNextWindowSize(vp->WorkSize);
+            ImGui::Begin("##launcher", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+            ImGui::SetCursorScreenPos(ImVec2(232.0f, 0.0f));
+            ImGui::BeginChild("content", ImVec2(0, 0));
+            coveredUnder = okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), 260.0f, 600.0f, 400.0f, 300.0f);
+            coveredBeside = okayuihost::CoveredInImGui(ImGui::GetCurrentWindow(), 1300.0f, 100.0f, 400.0f, 300.0f);
+            ImGui::InvisibleButton("##page", ImVec2(1600.0f, 1100.0f));
+            ImGui::EndChild();
+            ImGui::End();
+            if (flyout) Window("##notifpanel", 242.0f, 500.0f, 480.0f, 640.0f);
+        };
+        for (int i = 0; i < 3; ++i) lr.Frame(launcherFrame);
+        CHECK(!coveredUnder); CHECK(!coveredBeside);
+        flyout = true;
+        for (int i = 0; i < 2; ++i) lr.Frame(launcherFrame);
+        CHECK(coveredUnder);      // the page under the flyout gives way
+        CHECK(!coveredBeside);    // the rest of the page stays OkayUI
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMouseButtonEvent(0, true);  lr.Frame(launcherFrame, ImVec2(1500.0f, 200.0f));   // a click on the page: it gets the focus
+        io.AddMouseButtonEvent(0, false); lr.Frame(launcherFrame, ImVec2(1500.0f, 200.0f));
+        lr.Frame(launcherFrame);
+        CHECK(coveredUnder);      // still behind the flyout (the root window never comes to the front)
+        flyout = false;
+        for (int i = 0; i < 2; ++i) lr.Frame(launcherFrame);
+        CHECK(!coveredUnder);
+        ImGui::SetCurrentContext(editorCtx);
+    }
 
     TEST_MAIN_RESULT();
 }

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <new>
+#include <type_traits>
 #include <utility>
 namespace std {
 template <typename T>
@@ -47,6 +48,12 @@ public:
         other.data_ = 0;
         other.size_ = 0;
         other.cap_ = 0;
+    }
+    // The elements of [first, last) for any input iterator ([sequence.reqmts] 4); two numbers are a count and a value
+    // (the standard asks the same of an argument that is not an iterator).
+    template <typename It>
+    vector(It first, It last) : data_(0), size_(0), cap_(0) {
+        assign(first, last);
     }
     vector(initializer_list<T> list) : data_(0), size_(0), cap_(0) {
         grow_to(list.size());
@@ -170,6 +177,15 @@ public:
         clear();
         resize(n, value);
     }
+    template <typename It>
+    void assign(It first, It last) {
+        clear();
+        if constexpr (is_arithmetic<It>::value) {
+            resize((size_t)first, (T)last);
+        } else {
+            for (; first != last; ++first) push_back(*first);
+        }
+    }
     T* insert(T* pos, const T& value) {
         const size_t at = (size_t)(pos - data_);
         T copy(value);
@@ -194,6 +210,12 @@ public:
         for (size_t i = size_; i > at; --i) data_[i - 1 + n] = data_[i - 1];
         for (size_t k = 0; k < n; ++k) data_[at + k] = first[k];
         size_ += n;
+        return data_ + at;
+    }
+    T* insert(T* pos, initializer_list<T> list) { return insert(pos, list.begin(), list.end()); }
+    T* insert(T* pos, size_t n, const T& value) {
+        const size_t at = (size_t)(pos - data_);
+        for (size_t k = 0; k < n; ++k) insert(data_ + at + k, value);
         return data_ + at;
     }
     T* erase(T* pos) {

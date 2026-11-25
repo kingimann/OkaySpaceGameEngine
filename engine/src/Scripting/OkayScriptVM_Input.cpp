@@ -8,7 +8,7 @@ void OkayScriptVM::Impl::RegisterInputBuiltins(BuiltinCtx& c) {
         // the shared table (Scripting/ScriptApiCore.cpp). Here: action_x / action_y for Move / Look,
         // rumble(low, high, s), rebind("interact", "key:f").
         auto actName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
-        // A second argument names the controller (0..3) for an action marked per player.
+        // A second argument names the controller (0..7) for an action marked per player.
         auto playerOf = [](std::vector<Value>& a) { return a.size() > 1 ? SafeInt(a[1].AsFloat()) : -1; };
         b["action_x"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).x}; };
         b["action_y"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).y}; };
@@ -138,7 +138,7 @@ void OkayScriptVM::Impl::RegisterInputBuiltins(BuiltinCtx& c) {
             return Value{std::string(buf)};
         };
         // Typed actions and local players (the .okayinput system): ia_use_default() / ia_load("Assets/my.okayinput"), ia_join("keyboard" |
-        // "pad0".."pad3" | "any"), then read by name: ia_x / ia_y / ia_z / ia_value, ia_down, ia_pressed, ia_released, and the phases
+        // "pad0".."pad7" | "any"), then read by name: ia_x / ia_y / ia_z / ia_value, ia_down, ia_pressed, ia_released, and the phases
         // ia_started / ia_performed / ia_canceled, ia_progress ("hold to confirm" 0..1), ia_phase, ia_event (one "Jump:performed" per call).
         // The last argument of each is the player (0 = first, default). ia_map("UI", true) switches an action map, ia_scheme() names
         // the active control scheme, ia_rebind(action, binding, part, "key:j") changes one input (ia_conflicts lists clashes), ia_save() keeps it.

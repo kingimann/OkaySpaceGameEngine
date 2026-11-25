@@ -44,6 +44,11 @@ bool Gen::gen_addr(const Node& node) {
                 last_type.is_ref = false;
                 return true;
             }
+            if (local->is_static && is_tls(local->symbol)) {
+                tls_addr(local->symbol);
+                last_type = local->type;
+                return true;
+            }
             if (local->is_static) {
                 b(0x48);
                 b(0x8D);
@@ -61,6 +66,11 @@ bool Gen::gen_addr(const Node& node) {
             return true;
         }
         if (Global* global = find_global(node.text)) {
+            if (global->tls) {
+                tls_addr(global->name);
+                last_type = global->type;
+                return true;
+            }
             b(0x48);
             b(0x8D);
             b(0x05);
@@ -75,7 +85,6 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::StringLit) {
         if (!gen_expr(node)) return false;
         last_type.pointers = 1;
-        last_type.base = 2;
         last_type.array_len = -1;
         return true;
     }

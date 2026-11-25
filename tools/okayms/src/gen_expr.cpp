@@ -48,6 +48,7 @@ bool Gen::gen_expr(const Node& node) {
         last_type = Type{};
         last_type.pointers = 1;
         last_type.base = 2;
+        if (node.type.pointers == 1 && (node.type.base == 4 || node.type.base == 1)) last_type = node.type;  // L"..." and U"..."
         return true;
     }
     if (node.kind == Node::Name) {
@@ -67,6 +68,12 @@ bool Gen::gen_expr(const Node& node) {
                 mov_eax_from(local->reg);
                 last_type = local->type;
                 promote(&last_type);
+                return true;
+            }
+            if (local->is_static && !local->type.is_array() && is_tls(local->symbol)) {
+                tls_load(local->symbol, local->type);
+                last_type = local->type;
+                if (!is_fp_t(local->type)) promote(&last_type);
                 return true;
             }
             if (local->is_static) {
@@ -126,6 +133,12 @@ bool Gen::gen_expr(const Node& node) {
                 if (!gen_addr(node)) return false;
                 last_type = element_type(global->type);
                 last_type.pointers += 1;
+                return true;
+            }
+            if (global->tls) {
+                tls_load(global->name, global->type);
+                last_type = global->type;
+                if (!is_fp_t(global->type)) promote(&last_type);
                 return true;
             }
             const int size = size_of(global->type);
@@ -562,7 +575,8 @@ bool Gen::gen_expr(const Node& node) {
             return true;
         }
         if (node.kids[0].kind == Node::Name) {
-            if (Local* local = find_local(node.kids[0].text)) {
+            Local* local = find_local(node.kids[0].text);
+            if (local != nullptr && !local->is_static) {
                 const bool big = local->type.base == 3 && local->type.pointers == 0 && !fits_register(local->type);
                 if (big && node.kids[1].kind == Node::Call) {
                     sret_dest_set = true;
@@ -592,7 +606,10 @@ bool Gen::gen_expr(const Node& node) {
         if (node.kids[0].kind == Node::Field || node.kids[0].kind == Node::Index ||
             (node.kids[0].kind == Node::Unary && node.kids[0].op == TStar) ||
             (node.kids[0].kind == Node::Name && find_local(node.kids[0].text) != nullptr &&
-             find_local(node.kids[0].text)->type.is_ref)) {
+             (find_local(node.kids[0].text)->type.is_ref || find_local(node.kids[0].text)->is_static)) ||
+            // a static local or a global (static C x = f(); C g = f();): written through its address, not a stack slot
+            (node.kids[0].kind == Node::Name && find_local(node.kids[0].text) == nullptr &&
+             find_global(node.kids[0].text) != nullptr)) {
             // A big struct stored into a member, an element or through a pointer: the bytes are copied, or the
             // callee writes the result straight there. The address is worked out first; when the target turns
             // out to be something else, the code is dropped and the general path below runs.

@@ -2,7 +2,7 @@
 
 # Code index: engine-Scripting
 
-Back to the [code index](../code_index.md). 7 headers, 68 names.
+Back to the [code index](../code_index.md). 7 headers, 75 names.
 
 ## `engine/include/okay/Scripting/NextScriptVM.hpp`
 
@@ -49,23 +49,29 @@ Back to the [code index](../code_index.md). 7 headers, 68 names.
 - `Result` enum, line 102: ---- Use --------------------------------------------------------------------------------------------------------
 - `GetMember` function, line 105: 'handle.name': a registered property of the component's class, or 'gameObject' (its object), 'enabled'.
 - `SetMember` function, line 107: 'handle.name = v' through the PropertyRegistry (validated, clamped, change hook fired).
-- `PropertyToScript` function, line 119: ---- Property values <-> script values (one conversion for OkayScript and visual scripts) ---------------------
-- `ScriptToProperty` function, line 121: A script value in the type 'desc' wants, or false with 'error' ("Light.intensity wants a number, got text").
-- `ArgError` struct, line 126: ---- Helpers the generated code uses ----------------------------------------------------------------------------
-- `ArgInt` function, line 127
-- `ArgIntIn` function, line 129: A whole number in [lo, hi] (an enum's values, the range of the C++ type), else ArgError for argument idx.
-- `ArgCount` function, line 131: A count or an index: -1 .. max (so one call cannot make the engine allocate gigabytes), else ArgError.
-- `ArgVec2` function, line 132
-- `ArgVec4` function, line 133
-- `ArgQuat` function, line 134
-- `ArgColor` function, line 135
-- `ArgObject` function, line 136
-- `RetVec2` function, line 137
-- `RetVec4` function, line 138
-- `RetQuat` function, line 139
-- `RetColor` function, line 140
-- `RetObject` function, line 141
-- `RetComponent` function, line 142
+- `DenyRules` struct, line 120: ---- What scripts must never reach (the generator's DENY_* rules, for other tables) --------------------------------
+- `GeneratedDenyRules` function, line 127: Defined in ScriptBindingsGenerated.cpp.
+- `NameWords` function, line 129: The lower-case words of a name, as the generator splits them: "filePath" -> file, path; "HTTPServer" -> http, server.
+- `IsDeniedClass` function, line 131: True when the generator would not bind any method of class 'cls'.
+- `DenyParam` struct, line 133: One parameter as the rules see it: is it text, and its name.
+- `IsDeniedMethod` function, line 135: True when the generator would not bind 'cls.method' with these parameters (any one rule is enough).
+- `PropertyToScript` function, line 140: ---- Property values <-> script values (one conversion for OkayScript and visual scripts) ---------------------
+- `ScriptToProperty` function, line 142: A script value in the type 'desc' wants, or false with 'error' ("Light.intensity wants a number, got text").
+- `ArgError` struct, line 147: ---- Helpers the generated code uses ----------------------------------------------------------------------------
+- `ArgInt` function, line 148
+- `ArgIntIn` function, line 150: A whole number in [lo, hi] (an enum's values, the range of the C++ type), else ArgError for argument idx.
+- `ArgCount` function, line 152: A count or an index: -1 .. max (so one call cannot make the engine allocate gigabytes), else ArgError.
+- `ArgVec2` function, line 153
+- `ArgVec4` function, line 154
+- `ArgQuat` function, line 155
+- `ArgColor` function, line 156
+- `ArgObject` function, line 157
+- `RetVec2` function, line 158
+- `RetVec4` function, line 159
+- `RetQuat` function, line 160
+- `RetColor` function, line 161
+- `RetObject` function, line 162
+- `RetComponent` function, line 163
 
 ## `engine/include/okay/Scripting/ScriptUI.hpp`
 
@@ -85,9 +91,10 @@ Back to the [code index](../code_index.md). 7 headers, 68 names.
 - `ScriptHost` struct, line 18: The engine-side context a script can see and manipulate. Every script VM
 - `ScriptDiagnostic` struct, line 29: One problem found by ValidateAll — a 1-based source line, a human-readable
 - `IScriptVM` class, line 37: Abstract scripting backend. Load source once, then drive Start/Update.
-- `AvailableScriptLanguages` function, line 111: Names of the script backends in this build: "okayscript" (our own VM).
-- `CreateScriptVM` function, line 114: Create a VM for the given language, or nullptr if unsupported in this build.
-- `RemovedScriptLanguageMessage` function, line 120: Old scenes and projects may still name the removed third-party backends
+- `AvailableScriptLanguages` function, line 112: Names of the script backends in this build: "okayscript" (our own VM) and "lua"
+- `CreateScriptVM` function, line 115: Create a VM for the given language, or nullptr if unsupported in this build.
+- `RemovedScriptLanguageMessage` function, line 121: Old scenes and projects may still name the removed third-party Mono backend
+- `ScriptLanguageForExtension` function, line 126: The language id for a script file's extension (".lua" -> "lua", ".cs" -> "cs",
 
 ## `engine/include/okay/Scripting/StarterScripts.hpp`
 

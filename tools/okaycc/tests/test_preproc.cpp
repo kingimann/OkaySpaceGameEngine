@@ -200,6 +200,26 @@ int main() {
         }
     }
 
+    {
+        // A long file (more than 100,000 tokens) is not a long macro expansion: the step limit
+        // guards one expansion, not the whole translation unit (round 20; large engine headers hit it).
+        std::string src = "#define ONE 1\n";
+        std::string want;
+        for (int i = 0; i < 30000; ++i) {
+            src += "int a = ONE ;\n";
+            want += "int a = 1 ;\n";
+        }
+        check("long file", src, want, nullptr);
+        // A runaway expansion is still stopped: each level doubles the tokens.
+        std::string bomb = "#define A0 x x\n";
+        for (int i = 1; i <= 20; ++i) {
+            bomb += "#define A" + std::to_string(i) + " A" + std::to_string(i - 1) + " A" +
+                    std::to_string(i - 1) + "\n";
+        }
+        bomb += "A20\n";
+        check("expansion bomb", bomb, "", "macro expansion is too long");
+    }
+
     okaycc_test::gPass += gOk;
     std::printf("preproc: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);
     return okaycc_test::gFail == 0 ? 0 : 1;

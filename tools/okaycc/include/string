@@ -3,6 +3,7 @@
 #pragma once
 #include <cstddef>
 #include <cstring>
+#include <functional>
 namespace std {
 class string {
 public:
@@ -38,6 +39,15 @@ public:
         for (unsigned long i = 0; i < o.n_; ++i) p_[i] = o.p_[i];
         n_ = o.n_;
         p_[n_] = 0;
+        return *this;
+    }
+    string &operator=(const char *s) {
+        string t(s);  // s may point into this string
+        return *this = t;
+    }
+    string &operator=(char c) {
+        char one[1] = {c};
+        assignChars(one, 1);
         return *this;
     }
     unsigned long size() const { return n_; }
@@ -240,4 +250,17 @@ inline string operator+(char a, const string &b) {
 }
 inline bool operator==(const char *a, const string &b) { return b == a; }
 inline bool operator!=(const char *a, const string &b) { return b != a; }
+// hash<string> ([basic.string.hash]): FNV-1a over the characters (Fowler, Noll and Vo; offset basis
+// 14695981039346656037, prime 1099511628211), our own choice of string hash.
+template <>
+struct hash<string> {
+    unsigned long operator()(const string &s) const {
+        unsigned long h = 14695981039346656037UL;
+        for (unsigned long i = 0; i < s.size(); ++i) {
+            h ^= (unsigned char)s[i];
+            h *= 1099511628211UL;
+        }
+        return h;
+    }
+};
 }  // namespace std

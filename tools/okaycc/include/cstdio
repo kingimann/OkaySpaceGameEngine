@@ -1,0 +1,92 @@
+// <cstdio> for okay-cc (ISO/IEC 14882 [cstdio.syn], ISO C 7.21). Our own header: the functions of
+// lib/printf.c (the formatting, snprintf), lib/stdio.c (files on Linux system calls) and lib/extra.c
+// (puts). Not declared yet: the scanf family, tmpfile, setvbuf, fgetpos and fsetpos.
+#pragma once
+#include <stdarg.h>
+#define EOF (-1)
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+#define BUFSIZ 4096
+#define FILENAME_MAX 4096
+extern "C" {
+typedef struct __okay_file FILE;
+typedef long fpos_t;
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+int printf(const char *fmt, ...);
+int vprintf(const char *fmt, va_list ap);
+int snprintf(char *buf, unsigned long n, const char *fmt, ...);
+int vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap);
+int sprintf(char *buf, const char *fmt, ...);
+int vsprintf(char *buf, const char *fmt, va_list ap);
+int fprintf(FILE *f, const char *fmt, ...);
+int vfprintf(FILE *f, const char *fmt, va_list ap);
+FILE *fopen(const char *path, const char *mode);
+int fclose(FILE *f);
+unsigned long fread(void *p, unsigned long size, unsigned long count, FILE *f);
+unsigned long fwrite(const void *p, unsigned long size, unsigned long count, FILE *f);
+int fgetc(FILE *f);
+int getc(FILE *f);
+int getchar(void);
+int ungetc(int c, FILE *f);
+char *fgets(char *s, int n, FILE *f);
+int fputc(int c, FILE *f);
+int putc(int c, FILE *f);
+int putchar(int c);
+int fputs(const char *s, FILE *f);
+int puts(const char *s);
+int fflush(FILE *f);
+int fseek(FILE *f, long off, int whence);
+long ftell(FILE *f);
+void rewind(FILE *f);
+int feof(FILE *f);
+int ferror(FILE *f);
+void clearerr(FILE *f);
+int fileno(FILE *f);
+int remove(const char *path);
+int rename(const char *from, const char *to);
+}
+namespace std {
+typedef ::FILE FILE;
+typedef long fpos_t;
+typedef unsigned long size_t;
+extern "C" {
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+int printf(const char *fmt, ...);
+int vprintf(const char *fmt, va_list ap);
+int snprintf(char *buf, unsigned long n, const char *fmt, ...);
+int vsnprintf(char *buf, unsigned long n, const char *fmt, va_list ap);
+int sprintf(char *buf, const char *fmt, ...);
+int vsprintf(char *buf, const char *fmt, va_list ap);
+int fprintf(FILE *f, const char *fmt, ...);
+int vfprintf(FILE *f, const char *fmt, va_list ap);
+FILE *fopen(const char *path, const char *mode);
+int fclose(FILE *f);
+unsigned long fread(void *p, unsigned long size, unsigned long count, FILE *f);
+unsigned long fwrite(const void *p, unsigned long size, unsigned long count, FILE *f);
+int fgetc(FILE *f);
+int getc(FILE *f);
+int getchar(void);
+int ungetc(int c, FILE *f);
+char *fgets(char *s, int n, FILE *f);
+int fputc(int c, FILE *f);
+int putc(int c, FILE *f);
+int putchar(int c);
+int fputs(const char *s, FILE *f);
+int puts(const char *s);
+int fflush(FILE *f);
+int fseek(FILE *f, long off, int whence);
+long ftell(FILE *f);
+void rewind(FILE *f);
+int feof(FILE *f);
+int ferror(FILE *f);
+void clearerr(FILE *f);
+int fileno(FILE *f);
+int remove(const char *path);
+int rename(const char *from, const char *to);
+}
+}  // namespace std

@@ -104,6 +104,8 @@ HMENU BuildHMenu(const std::vector<MenuItem>& items) {
             AppendMenuW(m, flags | MF_POPUP, (UINT_PTR)sub, MenuLabel(it.label).c_str());   // destroyed with its parent
         } else {
             AppendMenuW(m, flags, (UINT_PTR)(UINT)it.id, MenuLabel(it.label).c_str());
+            // One-of-several choices (the Status submenu): a round bullet instead of a tick on the chosen one.
+            if (it.radio && it.checked) CheckMenuRadioItem(m, (UINT)it.id, (UINT)it.id, (UINT)it.id, MF_BYCOMMAND);
         }
         if (it.isDefault && it.id != kIdNone) SetMenuDefaultItem(m, (UINT)it.id, FALSE);
     }

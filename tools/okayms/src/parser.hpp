@@ -2863,6 +2863,29 @@ struct Parser {
 
     int struct_nest = 0;
     std::vector<std::pair<int, size_t>> deferred_bodies{};
+    // Classes whose body is being read: not complete yet ([class.mem] 7).
+    std::vector<int> open_structs{};
+    // The member bodies of a class template instance made inside the body of a class that one of its arguments names
+    // (std::vector<path> in a member declaration of path): they are compiled when the outermost class is complete
+    // ([temp.inst] 3, [temp.point]), with the instance's template arguments bound again. Before, they were compiled at
+    // once, while the argument had no members and no size (a copy of a path was a plain memory copy, its destructor
+    // was never called).
+    bool names_open_struct(const std::vector<TArg>& args) const {
+        for (const TArg& a : args) {
+            if (a.is_value) continue;
+            if (a.is_pack) {
+                for (const Type& t : a.pack)
+                    if (t.base == 3 && t.pointers == 0 &&
+                        std::find(open_structs.begin(), open_structs.end(), t.struct_id) != open_structs.end())
+                        return true;
+                continue;
+            }
+            if (a.type.base == 3 && a.type.pointers == 0 &&
+                std::find(open_structs.begin(), open_structs.end(), a.type.struct_id) != open_structs.end())
+                return true;
+        }
+        return false;
+    }
     bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
         struct NestGuard {
             int& n;
@@ -2914,6 +2937,20 @@ struct Parser {
             structs.push_back(def);
             self = static_cast<int>(structs.size()) - 1;
         }
+        struct OpenGuard {
+            std::vector<int>& open;
+            int id;
+            void close() {
+                for (size_t k = open.size(); k-- > 0;)
+                    if (open[k] == id) {
+                        open.erase(open.begin() + static_cast<std::ptrdiff_t>(k));
+                        break;
+                    }
+                id = -2;
+            }
+            ~OpenGuard() { close(); }
+        } open_guard{open_structs, self};
+        open_structs.push_back(self);
         if (!expect(TLBrace, "'{'")) return false;
         char access = is_class ? 'A' : 'Q';
         // typedef and using names of this class are visible to the members after them.
@@ -3424,6 +3461,7 @@ struct Parser {
         }
         structs[static_cast<size_t>(self)] = def;
         *out_id = self;
+        open_guard.close();  // complete now: its member bodies may make instances that need it
         // Member function bodies are compiled now that the class is complete,
         // so a body may use members declared after it. A nested class is complete before its enclosing class is, and
         // its bodies may use the enclosing class's members declared later ([class.mem] complete-class context), so
@@ -3432,6 +3470,18 @@ struct Parser {
             for (size_t mi = 0; mi < def.methods.size(); ++mi)
                 if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
                     deferred_bodies.push_back({self, mi});
+        } else if (!inst_base_name.empty() && names_open_struct(inst_args)) {
+            DeferredInst d;
+            d.sid = self;
+            for (size_t mi = 0; mi < def.methods.size(); ++mi)
+                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self) d.methods.push_back(mi);
+            d.name = inst_base_name;
+            d.td = inst_td;
+            d.args = inst_args;
+            d.bind_args = inst_spec_args;
+            d.primary = inst_primary;
+            d.spec_key = inst_spec_key;
+            deferred_insts.push_back(std::move(d));
         } else {
             for (size_t mi = 0; mi < def.methods.size(); ++mi) {
                 if (def.methods[mi].body_at == 0 || def.methods[mi].owner != self) continue;
@@ -3453,6 +3503,12 @@ struct Parser {
                     deferred_bodies.clear();
                     for (const auto& item : batch)
                         if (!define_method(item.first, item.second)) return false;
+                }
+                while (!deferred_insts.empty()) {
+                    const std::vector<DeferredInst> batch = std::move(deferred_insts);
+                    deferred_insts.clear();
+                    for (const DeferredInst& d : batch)
+                        if (!define_deferred_inst(d)) return false;
                 }
             }
         }
@@ -4044,6 +4100,66 @@ struct Parser {
     std::map<std::pair<std::string, std::string>, OolMemberTmpl> ool_member_tmpls{};
     std::map<std::pair<int, std::string>, MemberTmpl> member_tmpls{};
     TDecl inst_td{};
+    struct DeferredInst {
+        int sid = -1;
+        std::vector<size_t> methods;
+        std::string name;
+        TDecl td;
+        std::vector<TArg> args, bind_args;
+        bool primary = true;
+        std::string spec_key;
+    };
+    std::vector<DeferredInst> deferred_insts{};
+    bool define_deferred_inst(const DeferredInst& d) {
+        const auto saved = bind_params(d.td, d.bind_args);
+        const std::string saved_base = inst_base_name;
+        const std::vector<TArg> saved_inst_args = inst_args;
+        const bool saved_primary = inst_primary;
+        const std::string saved_spec_key = inst_spec_key;
+        const std::vector<TArg> saved_spec_args = inst_spec_args;
+        const TDecl saved_inst_td = inst_td;
+        inst_base_name = d.name;
+        inst_args = d.args;
+        inst_primary = d.primary;
+        inst_spec_key = d.spec_key;
+        inst_spec_args = d.bind_args;
+        inst_td = d.td;
+        // The injected class name and the member typedefs, as they were inside the class body.
+        std::vector<std::pair<std::string, std::pair<bool, Type>>> shadowed;
+        auto put = [&](const std::string& n, const Type& t) {
+            auto old = typedefs.find(n);
+            shadowed.push_back({n, {old != typedefs.end(), old != typedefs.end() ? old->second : Type{}}});
+            typedefs[n] = t;
+        };
+        Type self;
+        self.base = 3;
+        self.struct_id = d.sid;
+        put(d.name, self);
+        const std::map<std::string, Type> tds = structs[static_cast<size_t>(d.sid)].tdefs;
+        for (const auto& td : tds) put(td.first, td.second);
+        for (size_t mi : d.methods) {
+            if (structs[static_cast<size_t>(d.sid)].methods[mi].body_at == 0) continue;
+            const size_t pre_before = stmt_pre.size();
+            const size_t temps_before = stmt_temps.size();
+            if (define_method(d.sid, mi)) continue;
+            unusable_members[structs[static_cast<size_t>(d.sid)].methods[mi].qname] = error;
+            error.clear();
+            stmt_pre.resize(std::min(stmt_pre.size(), pre_before));
+            stmt_temps.resize(std::min(stmt_temps.size(), temps_before));
+        }
+        for (size_t k = shadowed.size(); k-- > 0;) {
+            if (shadowed[k].second.first) typedefs[shadowed[k].first] = shadowed[k].second.second;
+            else typedefs.erase(shadowed[k].first);
+        }
+        inst_base_name = saved_base;
+        inst_args = saved_inst_args;
+        inst_primary = saved_primary;
+        inst_spec_key = saved_spec_key;
+        inst_spec_args = saved_spec_args;
+        inst_td = saved_inst_td;
+        unbind_params(saved);
+        return true;
+    }
     std::vector<TPat> tpats{};
     std::map<std::string, std::vector<ClassSpec>> class_specs{};
     std::map<std::string, std::vector<OolDef>> ool_defs{};
@@ -4193,6 +4309,8 @@ struct Parser {
         if (!expect(TGt, "'>'")) return false;
         for (; idx < td.params.size(); ++idx) {
             if (td.params[idx].is_pack) {
+                // f<X>(box) with f's pack not written: it is deduced from the call ([temp.arg.explicit] 4).
+                if (partial) break;
                 TArg empty;
                 empty.is_pack = true;
                 out->push_back(std::move(empty));
@@ -4361,6 +4479,25 @@ struct Parser {
             if (idx >= args->size()) return false;
             if ((*got)[idx]) return (*args)[idx].is_value && (*args)[idx].value == act.value;
             (*args)[idx] = act;
+            (*got)[idx] = true;
+            return true;
+        }
+        if (pat.type.tpat < 0 && pat.type.base >= 100 && pat.type.pointers == 0 && !pat.type.is_array()) {
+            // A specialization pattern T, T& or T&& against a template argument: T& takes only an lvalue reference
+            // and T&& only an rvalue reference, and T itself is the argument without that reference
+            // ([temp.class.spec.match], [temp.deduct.type] 8). Before, T& matched int as well (is_reference<int>
+            // was true).
+            if (pat.type.is_ref && (!act.type.is_ref || pat.type.rref != act.type.rref)) return false;
+            Type bound = act.type;
+            if (pat.type.is_ref) {
+                bound.is_ref = false;
+                bound.rref = false;
+            }
+            const size_t idx = static_cast<size_t>(pat.type.base - 100);
+            if (idx >= args->size()) return false;
+            if ((*got)[idx]) return !(*args)[idx].is_value && arg_key((*args)[idx]) == cxx_type(bound, &structs);
+            (*args)[idx].is_value = false;
+            (*args)[idx].type = bound;
             (*got)[idx] = true;
             return true;
         }
@@ -4914,7 +5051,9 @@ struct Parser {
         at = paren + 1;
         Declarator pd;
         pat_values = &values;
+        pat_rest_ok = true;  // a parameter of type Box<T...> deduces the pack T ([temp.deduct.type] 9)
         const bool ok = parse_param_list(&pd);
+        pat_rest_ok = false;
         pat_values = nullptr;
         td.proto = pd.params;
         at = was_at;
@@ -4976,7 +5115,9 @@ struct Parser {
         at = paren + 1;
         Declarator pd;
         pat_values = &values;
+        pat_rest_ok = true;
         const bool ok = parse_param_list(&pd);
+        pat_rest_ok = false;
         pat_values = nullptr;
         mt.td.proto = pd.params;
         at = was_at;
@@ -5247,6 +5388,12 @@ struct Parser {
             if (!static_type(call_args[i], &at_type)) {
                 error = "cannot deduce template arguments of " + name;
                 return false;
+            }
+            if (call_args[i].kind == Node::IntLit && call_args[i].text == "bool") {
+                at_type = bool_type();  // f(true) deduces T = bool ([lex.bool])
+            } else if (call_args[i].kind == Node::IntLit && call_args[i].text == "char") {
+                at_type = Type{};  // f('a') deduces T = char ([lex.ccon])
+                at_type.base = 2;
             }
             if (at_type.is_array()) {
                 at_type = peel_array(at_type);

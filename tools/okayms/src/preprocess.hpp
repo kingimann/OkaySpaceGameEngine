@@ -497,7 +497,7 @@ struct Preprocessor {
 
     std::string run(const std::string& raw_text, const std::string& dir, int file = 0) {
         const std::string text = splice_lines(raw_text);
-        if (depth > 16) {
+        if (depth > 256) {  // [implimits] suggests 256 nested includes; engine include chains are deeper than 16
             error = "include nesting is too deep";
             return "";
         }

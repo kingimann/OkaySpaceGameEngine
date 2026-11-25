@@ -932,6 +932,10 @@ bool Parser::parse_unary(Node* out) {
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
             if (!parse_brackets(&ty)) return false;
+            if (ty.is_ref) {  // sizeof(T&) is the size of T ([expr.sizeof] 2)
+                ty.is_ref = false;
+                ty.rref = false;
+            }
             bytes = size_of(ty);
         } else {
             Node inner;
@@ -941,7 +945,10 @@ bool Parser::parse_unary(Node* out) {
                     for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
                         const Local& local = (*cur_locals)[static_cast<size_t>(i)];
                         if (local.name == inner.text && scope_visible(local.scope)) {
-                            bytes = size_of(local.type);
+                            Type lt = local.type;  // a reference names the object it refers to ([expr.sizeof] 2)
+                            lt.is_ref = false;
+                            lt.rref = false;
+                            bytes = size_of(lt);
                             break;
                         }
                     }
@@ -959,7 +966,11 @@ bool Parser::parse_unary(Node* out) {
             if (bytes == 0) {
                 // sizeof of any other expression: the size of its type, if the parser can tell it.
                 Type et;
-                if (static_type(inner, &et)) bytes = size_of(et);
+                if (static_type(inner, &et)) {
+                    et.is_ref = false;
+                    et.rref = false;
+                    bytes = size_of(et);
+                }
             }
             if (bytes == 0) {
                 error = "sizeof needs a type or a name";
@@ -1176,8 +1187,9 @@ bool Parser::parse_unary(Node* out) {
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) is_function = true;
             if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
-                (class_name_text(suffix) || (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
-                name = suffix;
+                (class_name_text(suffix) || (typedefs.count(suffix) == 0 && find_struct(suffix) >= 0) ||
+                 (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
+                name = suffix;  // also std::monostate(): a class with no members or constructors ([expr.type.conv] 2)
         }
         const size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
@@ -1756,17 +1768,29 @@ bool Parser::parse_postfix(Node* out) {
                 // p->~T() and o.~T(): an explicit destructor call ([class.dtor]); for a type without a destructor
                 // (a scalar, a plain struct) it does nothing ([expr.prim.id.dtor]).
                 next();
+                const std::string dtor_name = cur().text;
                 next();
                 if (!expect(TLParen, "'('") || !expect(TRParen, "')'")) return false;
                 Type ot;
                 Node call_expr;
                 call_expr.kind = Node::IntLit;
                 call_expr.type.base = 1;
-                if (static_type(*out, &ot) && ot.base == 3 && ot.struct_id >= 0 && ot.pointers == (op == TArrow ? 1 : 0) &&
-                    class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)])) {
+                int dsid = -1;
+                if (static_type(*out, &ot) && ot.base == 3 && ot.struct_id >= 0 && ot.pointers == (op == TArrow ? 1 : 0)) {
+                    dsid = ot.struct_id;
+                } else {
+                    // The object's type is not known here (static_cast<H*>(p)->~H()): the name after ~ says the class.
+                    auto dtd = typedefs.find(dtor_name);
+                    if (dtd != typedefs.end()) {
+                        if (dtd->second.base == 3 && dtd->second.pointers == 0) dsid = dtd->second.struct_id;
+                    } else {
+                        dsid = find_struct(dtor_name);
+                    }
+                }
+                if (dsid >= 0 && class_needs_dtor(structs[static_cast<size_t>(dsid)])) {
                     Node self = op == TArrow ? std::move(*out) : node_addr(std::move(*out));
                     Node stmt;
-                    if (!special_call(ot.struct_id, "<dtor>", std::move(self), {}, &stmt)) return false;
+                    if (!special_call(dsid, "<dtor>", std::move(self), {}, &stmt)) return false;
                     call_expr = std::move(stmt.kids[0]);
                 }
                 *out = std::move(call_expr);
@@ -1898,6 +1922,19 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     *out = node_name(hidden.name);
                     continue;
                 }
+            }
+            if (tern.kids[0].kind == Node::IntLit && tern.kids[0].type.base < 5 && mid.kind == Node::IntLit &&
+                els.kind == Node::IntLit && mid.type.base < 5 && els.type.base < 5 && mid.type.pointers == 0 &&
+                els.type.pointers == 0) {
+                // c ? a : b with integer constants is a constant ([expr.cond] 7, [expr.const]): the chosen operand
+                // in the common type of both (a static member such as `value = same ? 0 : 1 + next::value`).
+                const bool both_bool = mid.type.is_bool && els.type.is_bool;
+                const Type common = both_bool ? mid.type : const_common(mid.type, els.type);
+                Node chosen = tern.kids[0].number != 0 ? std::move(mid) : std::move(els);
+                chosen.number = const_norm(chosen.number, common);
+                chosen.type = common;
+                *out = std::move(chosen);
+                continue;
             }
             tern.kids.push_back(std::move(mid));
             tern.kids.push_back(std::move(els));

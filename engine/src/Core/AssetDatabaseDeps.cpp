@@ -1,5 +1,6 @@
 // AssetDatabase: reference extractors and the dependency graph.
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Render/TexturePath.hpp"
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/DataPack.hpp"
@@ -106,6 +107,107 @@ void ForEachLine(const std::string& text, F f) {
     }
 }
 
+// Extensions the dependency graph treats as a file reference. `.mtl` is a Wavefront material
+// library (not its own asset kind) and is the usual companion of an `.obj`.
+bool DepExtension(const std::string& ext) {
+    if (ext == "mtl") return true;
+    return !ext.empty() && AssetTypeFromExtension(ext) != AssetType::Other;
+}
+
+bool HostilePath(const std::string& path) {
+    if (path.size() > 260) return true;
+    std::string s = path;
+    for (char& c : s) if (c == '\\') c = '/';
+    return texture_path_detail::Screen(s, nullptr) == texture_path_detail::Kind::Refused;
+}
+
+void ConsiderPath(const std::string& text, std::size_t begin, std::size_t end, std::vector<FoundRef>& out) {
+    while (begin < end && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    if (end <= begin || end - begin < 5 || end - begin > 260) return;
+    const std::string path = text.substr(begin, end - begin);
+    if (HostilePath(path) || !DepExtension(AssetExtension(path))) return;
+    FoundRef r;
+    r.path = path;
+    r.begin = begin;
+    r.end = end;
+    r.quoted = begin > 0 && text[begin - 1] == '"';
+    out.push_back(std::move(r));
+}
+
+bool IsNumberToken(const std::string& t) {
+    if (t.empty()) return false;
+    std::size_t i = (t[0] == '+' || t[0] == '-') ? 1 : 0;
+    if (i >= t.size()) return false;
+    bool dot = false, digit = false;
+    for (; i < t.size(); ++i) {
+        if (t[i] == '.') { if (dot) return false; dot = true; }
+        else if (std::isdigit(static_cast<unsigned char>(t[i]))) digit = true;
+        else return false;
+    }
+    return digit;
+}
+
+bool IsMapOrLibWord(const std::string& word) {
+    if (word == "mtllib") return true;
+    static const char* kWords[] = {
+        "map_ka", "map_kd", "map_ks", "map_ns", "map_d", "map_bump", "map_ke", "map_pr", "map_pm", "map_refl",
+        "bump", "disp", "decal", "refl", "norm"
+    };
+    for (const char* s : kWords) if (word == s) return true;
+    return false;
+}
+
+// A Wavefront `mtllib` or `map_*` line. The file name is whatever is left after the options
+// (`-s 1 1 1`, `-bm 0.5`, ...), and it may contain spaces. Several names that each end in a
+// known extension ("mtllib a.mtl b.mtl") are separate files. Returns true when this line is
+// one of those statements or a comment, so the caller does not scan it again.
+bool TakeModelLine(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
+    std::size_t i = lb;
+    while (i < le && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    if (i >= le) return false;
+    if (le - lb < 4096 && (text[i] == '#' || text[i] == ';')) return true;
+    std::size_t w = i;
+    while (w < le && !std::isspace(static_cast<unsigned char>(text[w]))) ++w;
+    if (!IsMapOrLibWord(Lower(text.substr(i, w - i)))) return false;
+    std::size_t p = w;
+    auto skipSpace = [&]() { while (p < le && std::isspace(static_cast<unsigned char>(text[p]))) ++p; };
+    skipSpace();
+    while (p < le && text[p] == '-') {
+        while (p < le && !std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+        skipSpace();
+        while (p < le && text[p] != '-') {
+            std::size_t q = p;
+            while (q < le && !std::isspace(static_cast<unsigned char>(text[q]))) ++q;
+            if (!IsNumberToken(text.substr(p, q - p))) break;
+            p = q;
+            skipSpace();
+        }
+    }
+    if (p >= le) return true;
+    std::size_t end = le;
+    while (end > p && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    struct Span { std::size_t a, b; };
+    std::vector<Span> toks;
+    for (std::size_t a = p; a < end; ) {
+        while (a < end && std::isspace(static_cast<unsigned char>(text[a]))) ++a;
+        if (a >= end) break;
+        std::size_t b = a;
+        while (b < end && !std::isspace(static_cast<unsigned char>(text[b]))) ++b;
+        toks.push_back({a, b});
+        a = b;
+    }
+    bool each = toks.size() > 1;
+    for (const Span& s : toks)
+        if (!DepExtension(AssetExtension(text.substr(s.a, s.b - s.a)))) each = false;
+    if (each) {
+        for (const Span& s : toks) ConsiderPath(text, s.a, s.b, out);
+    } else {
+        ConsiderPath(text, p, end, out);
+    }
+    return true;
+}
+
 } // namespace
 
 std::vector<FoundRef> ExtractSceneRefs(const std::string& text) {
@@ -174,6 +276,56 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text) {
     return out;
 }
 
+// An ASCII FBX texture line: `RelativeFilename: "..."`, `FileName: "..."` or `Filename: "..."`.
+// The span is the text inside the quotes, so a rename rewrites only the path.
+void TakeFbxTextLine(const std::string& text, std::size_t lb, std::size_t le, std::vector<FoundRef>& out) {
+    std::size_t i = lb;
+    while (i < le && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    std::size_t colon = i;
+    while (colon < le && text[colon] != ':' && !std::isspace(static_cast<unsigned char>(text[colon]))) ++colon;
+    if (colon >= le || text[colon] != ':') return;
+    const std::string key = Lower(text.substr(i, colon - i));
+    if (key != "relativefilename" && key != "filename") return;
+    const std::size_t q1 = text.find('"', colon);
+    if (q1 == std::string::npos || q1 >= le) return;
+    const std::size_t q2 = text.find('"', q1 + 1);
+    if (q2 == std::string::npos || q2 >= le) return;
+    ConsiderPath(text, q1 + 1, q2, out);
+}
+
+// Collada image sources: `<init_from>path</init_from>` (1.4) and `<init_from><ref>path</ref></init_from>` (1.5).
+void TakeColladaImages(const std::string& text, std::vector<FoundRef>& out) {
+    static const std::string kOpen = "<init_from>", kClose = "</init_from>", kRef = "<ref>", kRefEnd = "</ref>";
+    for (std::size_t at = text.find(kOpen); at != std::string::npos && out.size() < 4096; at = text.find(kOpen, at)) {
+        std::size_t b = at + kOpen.size();
+        const std::size_t e = text.find(kClose, b);
+        if (e == std::string::npos) break;
+        std::size_t inner = e;
+        std::size_t r = b;
+        while (r < e && std::isspace(static_cast<unsigned char>(text[r]))) ++r;
+        if (text.compare(r, kRef.size(), kRef) == 0) {
+            b = r + kRef.size();
+            const std::size_t re = text.find(kRefEnd, b);
+            if (re != std::string::npos && re < e) inner = re;
+        }
+        if (inner > b && text.find('<', b) >= inner) ConsiderPath(text, b, inner, out);
+        at = e + kClose.size();
+    }
+}
+
+std::vector<FoundRef> ExtractModelRefs(const std::string& text) {
+    std::vector<FoundRef> out;
+    // A binary model (a binary .fbx) has a NUL. Its strings carry their lengths, so a path of a
+    // different length cannot be spliced in: it is neither listed nor rewritten.
+    if (text.find('\0') != std::string::npos) return out;
+    ForEachLine(text, [&](std::size_t lb, std::size_t le) {
+        if (!TakeModelLine(text, lb, le, out)) TakeFbxTextLine(text, lb, le, out);
+    });
+    TakeColladaImages(text, out);
+    if (out.size() > 4096) out.resize(4096);
+    return out;
+}
+
 // --- Extractor registry -------------------------------------------------------------------------
 
 void AssetDatabase::RegisterDefaultExtractors() {
@@ -188,6 +340,9 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
                                "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
+    // Text models use the same extractor the project panel rewrites with. A binary .fbx gives
+    // no references (ExtractModelRefs refuses text with a NUL), so a rename never edits it.
+    RegisterExtractor("model", {"obj", "mtl", "dae", "fbx"}, wrap(&ExtractModelRefs));
 }
 
 void AssetDatabase::RegisterExtractor(const std::string& name, const std::vector<std::string>& extensions, RefExtractor extractor) {

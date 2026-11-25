@@ -8,6 +8,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <iterator>
 #include "okay/Core/TolerantNumbers.hpp"
+#include "okay/Core/AssetDatabase.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -255,7 +256,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
             << " " << sr->sortOrder
             << " " << (sr->flipX ? 1 : 0) << " " << (sr->flipY ? 1 : 0)
             << " " << sr->sortingLayer
-            << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
+            << " " << (int)sr->texFilter;
+        {
+            // A named field at the end. Putting "guid <id>" in the middle shifted the
+            // positional fields PrefabTools compares (uv, sort, flips).
+            const std::string gid = SceneAssetGuid(sr->texture);
+            if (!gid.empty()) out << " guid=" << gid;
+        }
+        out << "\n";
     }
     for (auto* cam : go->GetComponents<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "

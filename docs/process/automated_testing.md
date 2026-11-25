@@ -288,6 +288,21 @@ still runs on pull requests and on main under the same name. To check it, see `d
   5 minutes) recompiled in every CI and release build. Now only the tiny file recompiles and the stamp stays exact (no
   `CCACHE_SLOPPINESS`). The PR check prints `ccache -s` and the slowest
   build steps. `workflow_dispatch` with `pr_check_only` runs just this job on a branch.
+* **The Ubuntu test job runs in three shards, 2026-11-24.** The one job took about 125 minutes, 114 of them compiling (the ~1000
+  test programs plus the engine on 4 cores). Now `build-and-test` is a matrix of three jobs, "Build & test (Ubuntu 1/3)" to "3/3",
+  each configured with `-DOKAY_TEST_SHARD=K/3` (`cmake/OkayTestShard.cmake`), and a small gate job keeps the old name
+  "Build & test (Ubuntu)" (`needs` the three, green only if all are), so the release gate (`scripts/fast_release.py`) and the
+  rules that name it still work. How a test gets its shard: an MD5 hash of the test program it runs (first word of COMMAND, or the
+  first `$<TARGET_FILE:x>`), else of the test's name, modulo 3; so all the tests of one program share a shard and each program is
+  compiled once. Test programs that no kept test runs are taken out of `all` (`EXCLUDE_FROM_ALL`); the engine, tools and libraries
+  are always built. Each shard still compiles the whole engine, so the expected time is the engine plus a third of the tests, not
+  a third of the old time. With `OKAY_TEST_SHARD` empty (the default, and every other build) nothing changes: the test list, the
+  test properties and `build.ninja` were compared with main's. Each shard job runs `tests/scripts/check_test_shards.py build` after
+  Configure: its tests are exactly its share of `okay_test_shard.json` (every test with its shard), and every program a test runs is
+  made by `all`. Locally, `check_test_shards.py --full <unsharded> <shard1> <shard2> <shard3>` also checks every test is in exactly
+  one shard (1099 tests: 367 / 366 / 366; 353 / 333 / 350 test programs). Caches: `ccache-ubuntu-ci-s<K>-<sha>`, falling back to
+  `ccache-ubuntu-ci-` (the old unsharded cache), 1G each instead of one 2G. Unverified until a real run on GitHub. The tests do not
+  use DEPENDS or FIXTURES; if one is added, both tests must run the same program or the check reports it.
 * **Tests run four at a time:** `ctest -j4 --timeout 300`. Before this the 805 tests ran one by one. A scan of `tests/` found no
   two tests that write the same file or listen on the same port (temp folders are unique, servers use port 0, the few fixed
   ports are each used by one test). Tests that time a real operation against a tight limit are marked `RUN_SERIAL` at the end
@@ -321,8 +336,6 @@ still runs on pull requests and on main under the same name. To check it, see `d
 
 * **Build tests at -O2:** the release programs are built at -O3, tests would then run different code than players get, and the
   6 ms physics timing test would get less headroom. Not worth the fidelity loss.
-* **Sharding the Ubuntu job into 2 or 3 jobs:** would need a map from test to test program for each shard, and each shard rebuilds
-  the engine. Not safe to do blind. If wanted later: keep `Build & test (Ubuntu)` as a gate job that `needs` the shards.
 * **Folding the 6 Windows tests into the dist tree** (`windows-cross`): the dist tree is the release script's build (tests off, Assimp
   on, libsodium required). Turning tests on there would change the release build script. The second tree is kept.
 * **Unity or shared object libraries for the tests:** changes how every test compiles; not safe without a measured CI run.

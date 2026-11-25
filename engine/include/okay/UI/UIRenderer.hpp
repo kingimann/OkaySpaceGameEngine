@@ -81,6 +81,10 @@ float UITextW(const std::string& text, float px);
 /// Same measurement for an explicit font (nullptr = the scene UI font). Uses the
 /// TrueType face baked at the on-screen pixel size when one is in use.
 float UIMeasureText(TtfFont* font, const std::string& text, float px);
+/// Where the caret is drawn on one line of text (no '\n') drawn by DrawUIText at x = 0, when it sits before
+/// byte `caretByte` of `line`: the width of what is drawn to its left. Right-to-left text is drawn in visual
+/// order, so this is not the width of the first `caretByte` bytes there (nullptr font = the scene UI font).
+float UICaretX(TtfFont* font, const std::string& line, std::size_t caretByte, float px);
 /// A clickable [url=...] run of rich text as it was last drawn: the rectangle (in the space the UI was drawn in, the same as
 /// the mouse position when the canvas is not scaled) and the link's target.
 struct RichLinkRect { float x = 0, y = 0, w = 0, h = 0; std::string target; };

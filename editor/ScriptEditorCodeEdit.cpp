@@ -14,6 +14,7 @@ ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
     ed_.SetLanguage(language_);
     ed_.SetTabSize(4);
     ed_.SetLineSpacing(1.55f);          // what the script editor sets
+    ed_.SetFolding(true);               // the fold column in the gutter, Ctrl+Shift+[ and ]
     seenVersion_ = ed_.Version();
 }
 
@@ -123,6 +124,16 @@ void ScriptEditorCodeEdit::SetLanguage(const LanguageWords& w) {
     l.blockStart = w.blockEnd.empty() ? std::string() : w.blockStart;
     l.blockEnd = w.blockEnd;
     l.callBeforeKnown = true;            // the script editor's order: print( is a call
+    l.blockOpenWords = w.blockOpenWords; l.blockCloseWords = w.blockCloseWords; l.dedentWords = w.dedentWords;
+    l.foldByIndent = w.foldByIndent;
+    // A language with Lua's comments and no block words of its own gets Lua's (folding by `end`, the indent after `then`,
+    // `end` dedenting): the words of LuaLanguageWords need no second copy of them.
+    const bool luaComments = std::find(w.lineComments.begin(), w.lineComments.end(), "--") != w.lineComments.end();
+    if (luaComments && l.blockOpenWords.empty()) {
+        const LanguageWords lw = LuaBlockWords();
+        l.blockOpenWords = lw.blockOpenWords; l.blockCloseWords = lw.blockCloseWords; l.dedentWords = lw.dedentWords;
+        l.foldByIndent = true;
+    }
     language_ = l;
     if (w.docs.empty()) ed_.SetHoverInfo(nullptr);
     else {
@@ -133,6 +144,15 @@ void ScriptEditorCodeEdit::SetLanguage(const LanguageWords& w) {
         });
     }
     if (colorize_) { ed_.SetLanguage(language_); if (!userTypes_.empty()) ed_.SetUserTypes(userTypes_); }
+}
+
+LanguageWords LuaBlockWords() {
+    LanguageWords w;
+    w.blockOpenWords = {"function", "do", "then", "repeat", "else"};
+    w.blockCloseWords = {"end", "until", "elseif", "else"};
+    w.dedentWords = {"end", "else", "elseif", "until"};
+    w.foldByIndent = true;
+    return w;
 }
 
 void ScriptEditorCodeEdit::SetPaletteColors(const unsigned* c, int count) {
@@ -148,6 +168,13 @@ void ScriptEditorCodeEdit::SetPaletteColors(const unsigned* c, int count) {
     p.errorLine = c[15]; p.breakpointLine = c[16];
     p.lineNumber = c[17]; p.lineNumberCurrent = c[17];
     p.currentLine = c[18]; p.currentLineInactive = c[19]; p.currentLineEdge = c[20];
+    // drawn from the colours above: the other places of the word at the caret (the selection, fainter), the indent guides and
+    // the fold marks (the line numbers, fainter), the whitespace marks (the comments, fainter)
+    auto alpha = [](unsigned col, unsigned a) { return (col & 0x00FFFFFFu) | (a << 24); };
+    p.wordMatch = alpha(c[14], std::min(0x60u, (c[14] >> 24) / 2 + 0x18u));
+    p.indentGuide = alpha(c[17], 0x38u);
+    p.whitespace = alpha(c[10], 0x70u);
+    p.fold = c[17];
     ed_.SetPalette(p);
 }
 

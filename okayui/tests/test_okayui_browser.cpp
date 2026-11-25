@@ -1,7 +1,9 @@
 // Browser: the OkayUI view of a tab (okayui/screens/BrowserView.hpp), driven headless like the other screens: a page is
 // drawn and compared with a golden image (headings, a paragraph with bold and a link, both kinds of list, a rule, a table,
 // a bordered box, the placeholder of an embedded game), a link is hovered and clicked, the toolbar buttons report, and the
-// loading and error states draw.
+// loading and error states draw. Step 2: the browser program's toolbar (an address field, Go, no "Open in browser" or
+// "Close"), and an embedded game's box with the host's Play button and state line (golden), a click on Play, and a box the
+// host says cannot play (no button).
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "BrowserView.hpp"
@@ -90,6 +92,80 @@ int main() {
     CHECK(!sawBack);
     for (float x = 4; x < 120 && !sawBack; x += 6) sim.Click(x, 12, ui);
     CHECK(sawBack);
+
+    // ---- step 2: the browser program's view ----
+    {
+        br::BrowserTab tab2;
+        CHECK(tab2.Open("https://games.test/index.html"));
+        tab2.TakeFetches();
+        tab2.DeliverPage("https://games.test/index.html", true, 200,
+            "<html><head><title>Games</title><style>body { margin: 10px; background: #eef1f6 }</style></head><body>"
+            "<h2>Space Run</h2><okay-game src='space.okaypack.gz' width=300 height=120></okay-game>"
+            "<p>A video: <video src='a.webm' width=120 height=40></video></p></body></html>");
+        S::AddressField field;
+        S::BrowserViewOptions opt;
+        opt.address = &field;
+        opt.hostButtons = false;
+        int asked = 0;
+        bool running = false;
+        opt.embedState = [&](const br::DrawCmd& c) {
+            ++asked;
+            S::EmbedState st;
+            if (c.tag == "okay-game") { st.playable = true; st.busy = running; st.title = "Space Run"; st.status = running ? "Running in its own window" : "Runs natively with the OkaySpace player"; }
+            return st;
+        };
+        Sim sim2(480, 320);
+        S::BrowserViewResult r2;
+        int plays = -1;
+        std::string navigated;
+        auto ui2 = [&] {
+            r2 = S::DrawBrowserView(tab2, 0, 0, 480, 320, S::BrowserImageFn(), opt);
+            if (r2.playEmbed >= 0) plays = r2.playEmbed;
+            if (!r2.navigate.empty()) navigated = r2.navigate;
+            CHECK(!r2.openInSystemBrowser && !r2.close);
+        };
+        sim2.Frames(3, ui2);
+        CHECK(std::string(field.text) == "https://games.test/index.html");   // the field shows the tab's address
+        CHECK(asked > 0);
+        {
+            std::string why;
+            const bool same = MatchesGolden("browser_game", sim2.Draw(28, 30, 36), &why);
+            if (!same) std::cerr << "  golden browser_game: " << why << "\n";
+            CHECK(same);
+        }
+        // Play: the button is in the middle of the game's box.
+        const br::LayoutResult& pg = tab2.Layout(r2.page.w, S::OkayUIMeasure());
+        int gameCmd = -1, videoCmd = -1;
+        for (int ei : pg.embeds) {
+            if (pg.cmds[(std::size_t)ei].tag == "okay-game") gameCmd = ei;
+            if (pg.cmds[(std::size_t)ei].tag == "video") videoCmd = ei;
+        }
+        CHECK(gameCmd >= 0 && videoCmd >= 0);
+        if (gameCmd >= 0 && videoCmd >= 0) {
+            const UI::Rect b = S::EmbedPlayButton(pg.cmds[(std::size_t)gameCmd]);
+            sim2.Click(r2.page.x + b.x + b.w * 0.5f, r2.pageTop + b.y + b.h * 0.5f, ui2);
+            CHECK(plays == gameCmd);
+            // Busy: a click does nothing.
+            plays = -1;
+            running = true;
+            sim2.Click(r2.page.x + b.x + b.w * 0.5f, r2.pageTop + b.y + b.h * 0.5f, ui2);
+            CHECK(plays == -1);
+            // The video's box has no button: a click there plays nothing.
+            const br::DrawCmd& v = pg.cmds[(std::size_t)videoCmd];
+            sim2.Click(r2.page.x + v.x + v.w * 0.5f, r2.pageTop + v.y + v.h * 0.5f, ui2);
+            CHECK(plays == -1);
+        }
+        // The address field: type an address and press Enter.
+        sim2.Click(200, 12, ui2);
+        sim2.Hold(UI::KeyId_Ctrl, false);
+        sim2.Press(Key_SelectAll);
+        sim2.Frame(ui2);
+        sim2.Type("https://other.test/x.html");
+        sim2.Frame(ui2);
+        sim2.Press(Key_Enter);
+        sim2.Frame(ui2);
+        CHECK(navigated == "https://other.test/x.html");
+    }
 
     UI::UseLauncherLook(false);
     TEST_MAIN_RESULT();

@@ -312,6 +312,13 @@ if(OKAY_BUILD_EDITOR)
     endif()
 endif()
 
+# ---- Browser program --------------------------------------------------
+# Our own browser (system "Browser", docs/platform/browser_plan.md): pages with our page engine and OkaySpace web games
+# run natively by the player. On whenever OkayUI is built (it returns quietly otherwise).
+if(NOT EMSCRIPTEN)
+    add_subdirectory(browser)
+endif()
+
 # ---- Standalone game player ------------------------------------------
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)

@@ -39,8 +39,9 @@ target_include_directories(okay_physcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_compile_features(okay_physcore PUBLIC cxx_std_17)
 add_library(okay::physcore ALIAS okay_physcore)
 
-# Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation). Standard library
-# only, so the launcher, a future browser program and the tests link it without the rest of the engine
+# Browser: our own web browser's page engine (HTML reader, CSS, layout, addresses, one tab's navigation, web game packs).
+# Standard library and header-only engine helpers (Core/Inflate, Core/Json, Core/PathSafety) only, so the launcher, the
+# browser program (browser/) and the tests link it without the rest of the engine
 # (docs/feature_map/17-launcher-platform.md 17.18).
 add_library(okay_browser STATIC
     src/Browser/Url.cpp
@@ -48,6 +49,8 @@ add_library(okay_browser STATIC
     src/Browser/Css.cpp
     src/Browser/Layout.cpp
     src/Browser/Browser.cpp
+    src/Browser/GamePack.cpp     # step 2: the web game pack reader (the native twin of platform/web/okay_web.js)
+    src/Browser/GameLaunch.cpp   # step 2: which page elements run a game, per-site folders, the player's command line
 )
 target_include_directories(okay_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(okay_browser PUBLIC cxx_std_17)

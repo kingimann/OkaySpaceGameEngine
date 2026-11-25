@@ -12788,6 +12788,14 @@ int main(int argc, char** argv) {
         }
         ChatHostSync();
         if (g_raiseMainReq) { g_raiseMainReq = false; RestoreLauncher(window); }   // (a game asked us to come forward: out of the tray too)
+        {   // "Close the editor first" started waiting (tray Exit, an update): a hidden or minimized launcher never draws it
+            static bool s_pendingBefore = false;
+            const bool pendingNow = g_afterEditor != 0;
+            if (okaytray::ShowForPendingDialog(pendingNow, s_pendingBefore,
+                    g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))))
+                RestoreLauncher(window);
+            s_pendingBefore = pendingNow;
+        }
         // Hidden in the tray, hidden or minimized: nothing to draw, so idle slowly (TrayLogic.hpp IdleDelayMs). The
         // pumps above (updates, downloads, friends, chat, voice, notifications) still run every pass.
         if (g_tray->Hidden() || okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
@@ -17087,7 +17095,11 @@ int main(int argc, char** argv) {
                         if (!altExe.empty()) {
                             rowDivider();
                             settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
-                                if (ImGui::Button("Restart", ImVec2(okl::FitButtonW("Restart", okl::UiPx(130.0f)), okl::UiPx(30.0f))) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                                if (ImGui::Button("Restart", ImVec2(okl::FitButtonW("Restart", okl::UiPx(130.0f)), okl::UiPx(30.0f))) && !UpdateBlocksLaunch()) {
+                                    // The editor closes when the launcher that started it goes (editor/LauncherWatch.hpp), so it is closed first.
+                                    if (EditorRunning()) Toast("Close the editor first: it closes with this launcher.", 2);
+                                    else if (SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                                }
                             });
                         }
                     }

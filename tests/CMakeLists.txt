@@ -1423,6 +1423,14 @@ target_include_directories(test_editor_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/e
 target_compile_definitions(test_editor_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME editor_signin_gate COMMAND test_editor_signin_gate)
 
+# The editor closes when the launcher that started it has gone (editor/LauncherWatch.hpp): once a second, one close
+# request through the quit prompt, not repeated after Cancel; plus source checks of the editor and launcher wiring.
+add_executable(test_editor_launcher_watch test_editor_launcher_watch.cpp)
+target_compile_features(test_editor_launcher_watch PRIVATE cxx_std_17)
+target_include_directories(test_editor_launcher_watch PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_editor_launcher_watch PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME editor_launcher_watch COMMAND test_editor_launcher_watch)
+
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
 add_executable(test_sha256_unify test_sha256_unify.cpp)

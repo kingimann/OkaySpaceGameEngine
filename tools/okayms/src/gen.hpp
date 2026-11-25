@@ -160,6 +160,7 @@ struct Gen {
     bool gen_addr(const Node& node);
     int size_of(const Type& type) const;
     bool fits_register(const Type& type) const;
+    bool bytes_copyable(int sid) const;
     Global* find_global(const std::string& name);
     // thread_local variables ([basic.stc.thread]), Microsoft x64 TLS: the address of `sym` in this thread's copy is
     // ThreadLocalStoragePointer[_tls_index] (the TEB's TLS array is at gs:[0x58]) plus sym's offset in the .tls section

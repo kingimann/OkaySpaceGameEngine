@@ -120,6 +120,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release/release_channels.md "Test builds")
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
+#include "CommandLineUI.hpp"   // Create > Command line: run okay inside the launcher, and "Open command line"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
 #ifdef OKAY_ENABLE_TEST_HOOKS
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
@@ -11016,6 +11017,27 @@ static const okayversionsui::Host& VersionsHost() {
     return h;
 }
 
+// What the Command line page needs: the okay program in Tools, the projects for its picker, the mono font and the look.
+static const okaylcli::Host& CommandLineHost() {
+    static okaylcli::Host h;
+    static Uint32 builtAt = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (!h.toast) h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
+    if (builtAt == 0 || now - builtAt > 2000) {
+        builtAt = now;
+        h.okayExe = FindExe({"okay.exe", "okay"});
+        h.toolsDir = h.okayExe.empty() ? std::string() : fs::path(h.okayExe).parent_path().string();
+        h.projects.clear();
+        const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);
+        for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects))
+            h.projects.push_back({lp.name, okayproj::SceneRoot(lp.scene).string()});
+    }
+    h.mono = g_fontMono;
+    h.accent = kAccent;
+    h.cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    return h;
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -11308,7 +11330,7 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 15 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab <= 16 && g_lastTab != 11) ? g_lastTab : 0;
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
@@ -11521,6 +11543,7 @@ int main(int argc, char** argv) {
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
             okayversionsui::Tick(VersionsHost());   // collects a finished download / version-list job
+            okaylcli::Tick();   // reads a running okay command's output (Command line page)
         }
 
         // Periodic update check — runs while open AND while minimized (this block
@@ -12448,6 +12471,7 @@ int main(int argc, char** argv) {
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
         if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
+        if (navRow("##navcli", "Command line", kIcoTerminal, tab == 16 && !g_pfOpen, 0, 0)) { tab = 16; ClosePublicProfile(); }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
         if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed)) {
@@ -12908,7 +12932,7 @@ int main(int argc, char** argv) {
                 }
                 const float iconD = 32.0f;
                 const float sortW = 118.0f;
-                const float toolsBeside = sortW + iconD * 2.0f + 8.0f + 8.0f + 6.0f;
+                const float toolsBeside = sortW + iconD * 3.0f + 8.0f + 8.0f + 6.0f + 6.0f;
                 ImGui::SameLine(0, 12);
                 float lineLeft = ImGui::GetContentRegionAvail().x;
                 float searchW = lineLeft - toolsBeside;
@@ -12932,6 +12956,10 @@ int main(int argc, char** argv) {
                                     g_gitBusy ? "Git is working" : "Clone with Git"))
                     ImGui::OpenPopup("##clonegh");
                 ImGui::EndDisabled();
+                ImGui::SameLine(0, 6);
+                if (RoundIconButton("##projclipage", kIcoTerminal, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                                    "Command line: run okay on a project, here in the launcher"))
+                    tab = 16;
             }
             {
                 static char ghUrl[300] = "";
@@ -13048,7 +13076,7 @@ int main(int argc, char** argv) {
                     if (pr.ready) when += "  \xC2\xB7  " + (pr.ver.empty() ? std::string("version unknown") : badge.version);
                     if (pr.extra) when += "  \xC2\xB7  elsewhere";
                     const float tx = wp.x + 16 + 64 + 14;
-                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 250.0f);
+                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 292.0f);
                     {
                         const float nameFs = ImGui::GetFontSize() * 1.08f;
                         float pillW = 0.0f;
@@ -13067,7 +13095,7 @@ int main(int argc, char** argv) {
                     dl->AddText(ImVec2(tx, wp.y + 40), crDim, FitText(root.string(), textRight - tx).c_str());
                     dl->AddText(ImVec2(tx, wp.y + 62), crDim, FitText(when, textRight - tx).c_str());
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
-                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - 246, (cardH - 34) * 0.5f));
+                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - 288, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
                     if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
@@ -13075,6 +13103,12 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("Remove", ImVec2(88, 34))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
                     ImGui::SameLine(0, 8);
                     if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
+                    ImGui::SameLine(0, 8);
+                    ImGui::BeginDisabled(pr.missing);
+                    if (RoundIconButton("##projcli", kIcoTerminal, 34.0f, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                                        "Open command line: a terminal in this project's folder where okay works"))
+                        okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
+                    ImGui::EndDisabled();
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
                         if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                         {   // Open with an editor of another version (the Versions page installs them)
@@ -13094,6 +13128,8 @@ int main(int argc, char** argv) {
                         }
                         if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
                         ImGui::Separator();
+                        if (ImGui::MenuItem("Open command line", nullptr, false, !pr.missing)) okaylcli::OpenTerminalFor(CommandLineHost(), root.string(), pr.name);
+                        if (ImGui::MenuItem("Command line in the launcher", nullptr, false, !pr.missing)) { okaylcli::SetProject(root.string(), pr.name); tab = 16; g_lastTab = 16; }
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
                             OpenExternal(fs::path(pr.scene).parent_path().parent_path().string());
                         if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(pr.scene.c_str());
@@ -20055,6 +20091,9 @@ int main(int argc, char** argv) {
         } else if (tab == 15) {                           // ---- Versions ----
             sectionHeader("Versions", "Keep other versions of the editor next to this one, so every project can open with the version it was made with.");
             okayversionsui::DrawPage(VersionsHost());
+        } else if (tab == 16) {                           // ---- Command line ----
+            sectionHeader("Command line", "Run okay, the engine's command line, on a project: check scenes, build, save versions and more.");
+            okaylcli::DrawPage(CommandLineHost());
         } else if (tab == 11) {                           // ---- Admin ----
             DrawAdminPage(account);
         }
@@ -20128,6 +20167,7 @@ int main(int argc, char** argv) {
     if (g_upThread) { okay::thr::WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { okay::thr::DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     okayversionsui::Shutdown();   // cancels a running version download and joins its thread
+    okaylcli::Shutdown();         // ends a command still running on the Command line page
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
         okay::thr::LockMutex(g_dlMutex);

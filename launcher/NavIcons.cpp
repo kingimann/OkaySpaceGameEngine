@@ -91,6 +91,13 @@ void DrawNavIcon(ImDrawList* d, int id, ImVec2 c, ImU32 col) {
         d->PathLineTo(ImVec2(c.x + r, c.y + r));    d->PathLineTo(ImVec2(c.x + r, c.y + 2.2f));
         d->PathStroke(col, 0, t);
         break;
+    case kIcoTerminal: {   // Command line: a rounded window with a ">" prompt and a cursor line
+        d->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), col, 2.0f, 0, t);
+        d->PathLineTo(ImVec2(c.x - r * 0.55f, c.y - r * 0.35f)); d->PathLineTo(ImVec2(c.x - r * 0.15f, c.y));
+        d->PathLineTo(ImVec2(c.x - r * 0.55f, c.y + r * 0.35f)); d->PathStroke(col, 0, t);
+        d->AddLine(ImVec2(c.x + r * 0.05f, c.y + r * 0.38f), ImVec2(c.x + r * 0.55f, c.y + r * 0.38f), col, t);
+        break;
+    }
     case kIcoAlert: {   // Crash reports: a warning triangle with "!"
         d->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y + r * 0.85f), ImVec2(c.x - r, c.y + r * 0.85f), col, t);
         d->AddLine(ImVec2(c.x, c.y - 2.6f), ImVec2(c.x, c.y + 2.0f), col, t);

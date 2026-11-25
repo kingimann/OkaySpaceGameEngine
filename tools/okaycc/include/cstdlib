@@ -1,5 +1,6 @@
 // <cstdlib> for okay-cc (ISO/IEC 14882 [cstdlib.syn], ISO C 7.22). Our own header: the memory and
-// number functions of lib/alloc.c, lib/exit.c and lib/str.c, and abs for the integer types.
+// number functions of lib/alloc.c, lib/exit.c, lib/str.c and lib/extra.c (atoi, atol, the strtol
+// family), and abs for the integer types. strtod is not done.
 #pragma once
 extern "C" {
 void *malloc(unsigned long n);
@@ -8,6 +9,11 @@ void *realloc(void *p, unsigned long n);
 void free(void *p);
 void exit(int code);
 int atoi(const char *s);
+long atol(const char *s);
+long strtol(const char *s, char **end, int base);
+unsigned long strtoul(const char *s, char **end, int base);
+long long strtoll(const char *s, char **end, int base);
+unsigned long long strtoull(const char *s, char **end, int base);
 }
 namespace std {
 extern "C" {
@@ -17,6 +23,11 @@ void *realloc(void *p, unsigned long n);
 void free(void *p);
 void exit(int code);
 int atoi(const char *s);
+long atol(const char *s);
+long strtol(const char *s, char **end, int base);
+unsigned long strtoul(const char *s, char **end, int base);
+long long strtoll(const char *s, char **end, int base);
+unsigned long long strtoull(const char *s, char **end, int base);
 }
 typedef unsigned long size_t;
 inline int abs(int x) { return x < 0 ? -x : x; }

@@ -1,4 +1,5 @@
-// <functional> for okay-cc (ISO/IEC 14882 [comparisons]). Our own header: the comparison objects.
+// <functional> for okay-cc (ISO/IEC 14882 [comparisons], [unord.hash]). Our own header: the comparison
+// objects and std::hash.
 #pragma once
 namespace std {
 template <typename T>
@@ -6,7 +7,37 @@ struct less {
     bool operator()(const T &a, const T &b) const { return a < b; }
 };
 template <typename T>
+struct equal_to {
+    bool operator()(const T &a, const T &b) const { return a == b; }
+};
+template <typename T>
 struct greater {
     bool operator()(const T &a, const T &b) const { return b < a; }
+};
+// std::hash ([unord.hash]): integers, enums and pointers hash to their value (as libstdc++ does for
+// integers; the value of a hash is unspecified). <string> adds hash<string>.
+template <typename T>
+struct hash {
+    unsigned long operator()(T v) const { return (unsigned long)v; }
+};
+template <typename T>
+struct hash<T *> {
+    unsigned long operator()(T *p) const { return (unsigned long)p; }
+};
+template <>
+struct hash<float> {
+    unsigned long operator()(float v) const {
+        if (v == 0.0f) return 0;  // +0 and -0 are equal, so they hash alike
+        unsigned int bits = *(unsigned int *)&v;
+        return (unsigned long)bits * 0x9E3779B97F4A7C15UL;
+    }
+};
+template <>
+struct hash<double> {
+    unsigned long operator()(double v) const {
+        if (v == 0.0) return 0;
+        unsigned long bits = *(unsigned long *)&v;
+        return bits * 0x9E3779B97F4A7C15UL;
+    }
 };
 }  // namespace std

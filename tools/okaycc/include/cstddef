@@ -4,6 +4,8 @@ namespace std {
 typedef unsigned long size_t;
 typedef long ptrdiff_t;
 typedef long max_align_t;
+// nullptr is still the integer constant 0 to okay-cc's checker, so nullptr_t is int for now.
+typedef int nullptr_t;
 }  // namespace std
 #ifndef NULL
 #define NULL 0

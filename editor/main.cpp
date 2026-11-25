@@ -31399,45 +31399,6 @@ static bool DrawTopDownControllerWithOkayUI(EditorState& ed, TopDownController* 
     return true;
 }
 
-// Ragdoll, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
-static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*& toRemove) {
-    using namespace okaypanels;
-    InspFieldList L;
-    L.rows.reserve(19);
-    L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
-    if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
-        L.Note("This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.", false, true);
-    L.Section("Triggers");
-    L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
-    L.TipLookup();
-    L.Drag("Death Push##rd", &rd->deathImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
-    L.TipLookup();
-    L.Check("Hit Reactions##rd", &rd->hitReactions);
-    L.TipLookup();
-    L.Drag("Hit Push##rd", &rd->hitImpulse, 1, 0.05f, 0.0f, 20.0f, "%.2f m/s");
-    L.TipLookup();
-    L.Drag("Recover Time##rd", &rd->hitRecover, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
-    L.TipLookup();
-    L.Section("Simulation");
-    L.Drag("Gravity##rd", &rd->gravity, 1, 0.05f, 0.0f, 50.0f);
-    L.TipLookup();
-    L.Slider("Damping##rd", &rd->damping, 0.0f, 0.5f);
-    L.TipLookup();
-    L.Slider("Friction##rd", &rd->friction, 0.0f, 1.0f);
-    L.TipLookup();
-    L.Drag("Skin Radius##rd", &rd->radius, 1, 0.005f, 0.0f, 0.5f);
-    L.TipLookup();
-    L.SliderInt("Iterations##rd", &rd->iterations, 1, 30);
-    L.TipLookup();
-    L.Drag("Max Speed##rd", &rd->maxSpeed, 1, 0.5f, 1.0f, 200.0f, "%.1f m/s");
-    L.TipLookup();
-    const int kRemove = L.SmallButton("Remove##rd");
-    if (!DrawRowsOkayUI(rd, "##okayui_ragdoll", L)) return false;
-    if (L.AnyChanged()) ed.dirty = true;
-    if (L[kRemove].clicked) toRemove = rd;
-    return true;
-}
-
 // Top Down Shooter Controller, written from its Dear ImGui body in DrawInspector (stage 9: section 22).
 static bool DrawTopDownShooterControllerWithOkayUI(EditorState& ed, TopDownShooterController* sh, okay::Component*& toRemove) {
     using namespace okaypanels;
@@ -40493,38 +40454,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
-    if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
-        if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIInspector() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
-            if (rd->gameObject && rd->gameObject->GetComponent<ActiveRagdoll>())
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "This object also has an Active Ragdoll: it takes over at Play and switches this Ragdoll off.");
-            SectionHeader("Triggers");
-            if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
-            oked::FieldTip("Ragdoll On Death##rd");
-            if (ImGui::DragFloat("Death Push##rd", &rd->deathImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
-            oked::FieldTip("Death Push##rd");
-            if (ImGui::Checkbox("Hit Reactions##rd", &rd->hitReactions)) ed.dirty = true;
-            oked::FieldTip("Hit Reactions##rd");
-            if (ImGui::DragFloat("Hit Push##rd", &rd->hitImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
-            oked::FieldTip("Hit Push##rd");
-            if (ImGui::DragFloat("Recover Time##rd", &rd->hitRecover, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
-            oked::FieldTip("Recover Time##rd");
-            SectionHeader("Simulation");
-            if (ImGui::DragFloat("Gravity##rd", &rd->gravity, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
-            oked::FieldTip("Gravity##rd");
-            if (ImGui::SliderFloat("Damping##rd", &rd->damping, 0.0f, 0.5f)) ed.dirty = true;
-            oked::FieldTip("Damping##rd");
-            if (ImGui::SliderFloat("Friction##rd", &rd->friction, 0.0f, 1.0f)) ed.dirty = true;
-            oked::FieldTip("Friction##rd");
-            if (ImGui::DragFloat("Skin Radius##rd", &rd->radius, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
-            oked::FieldTip("Skin Radius##rd");
-            if (ImGui::SliderInt("Iterations##rd", &rd->iterations, 1, 30)) ed.dirty = true;
-            oked::FieldTip("Iterations##rd");
-            if (ImGui::DragFloat("Max Speed##rd", &rd->maxSpeed, 0.5f, 1.0f, 200.0f, "%.1f m/s")) ed.dirty = true;
-            oked::FieldTip("Max Speed##rd");
-            if (ImGui::SmallButton("Remove##rd")) toRemove = rd;
-        }
-    }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
         if (CompHeader("Top Down Shooter Controller", sh, &toRemove) && !(UseOkayUIInspector() && DrawTopDownShooterControllerWithOkayUI(ed, sh, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
@@ -44932,8 +44861,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ActiveRagdoll>(), "Active Ragdoll (balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<ActiveRagdoll>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (limp on death, balance, stumble, fall, get up)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }

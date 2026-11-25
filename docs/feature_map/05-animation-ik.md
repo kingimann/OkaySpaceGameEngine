@@ -168,23 +168,24 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Ask me like:** "make the guard look at the player only within 10 m"; "add recoil to the pistol"
 
 ### 5.8 Ragdolls and hit reactions
-- **System:** Ragdolls - Makes a character go limp when it dies or flinch when it is hit.
-  Home: `engine/include/okay/Components/Ragdoll.hpp`. Entry: `engine/include/okay/Components/Ragdoll.hpp`. Also called: Ragdoll, ActiveRagdoll, hit reactions.
-- **What:** A humanoid goes limp on death or flinches on a hit that does not kill it. The ragdoll is a particle simulation over the 15 humanoid bones, not rigid bodies and joints.
+- **System:** Ragdolls - Makes a character go limp when it dies, react physically when it is pushed or hit, keep its balance, fall and get up.
+  Home: `engine/include/okay/Components/Ragdoll.hpp`. Entry: `engine/include/okay/Components/Ragdoll.hpp`. Also called: Ragdoll, ActiveRagdoll, Active Ragdoll, dynamic character, hit reactions.
+- **What:** One Ragdoll component (since claude/ragdoll-core-1; before there were a Verlet-particle `Ragdoll` and an `ActiveRagdoll` with a solver of its own). One physics-core body and collider per humanoid bone in the scene's physics world, one core ConeTwist or Hinge joint per joint whose orientation drive is the muscle (`dyn::CoreRagdoll` behind `dyn::RagdollPhysics`), and the controller `dyn::DynamicCharacter` on top (balance, stepping, falling, get-up).
 - **Parts:**
-  - 5.8.1 Verlet ragdoll - `Components/Ragdoll` - particles per bone plus tips, distance constraints, torso brace, elbow and knee minimum reach, ray collisions against 3D colliders and terrain, 60 Hz after animation and IK (order 900)
-  - 5.8.2 Death and revive - `Components/Ragdoll` - ragdollOnDeath from a HealthStat death, push away from the hit, animators, IK and controllers switched off while limp and restored after
-  - 5.8.3 Physical hit reactions - `Components/Ragdoll` - hitReactions shove the struck part which springs back over Recover Time
-  - 5.8.4 Script and C++ calls - `Components/Ragdoll` - `ragdoll()`, `ragdoll(0)`, `ragdoll_push`, `is_ragdoll()`, Activate, Deactivate, Hit, IsActive, IsSettled
-- **Code:** `Components/Ragdoll`
-- **API:** `Ragdoll`; scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`
-- **Editor:** Add Component > Ragdoll (death + hit reactions); Ragdoll inspector
-- **Docs:** `docs/physics/physics.md`
-- **Tests:** `ragdoll`
-- **Status:** Works - ragdoll test covers limp, landing in one piece, standing up, falling away from a hit and flinching
-- **Open:** no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12
-- **Related:** 5.12, 5.6, 11.7, 6.2
-- **Words:** ragdoll, limp, death, hit reaction, flinch, Verlet, Ragdoll component, Death Push, Recover Time
+  - 5.8.1 Bodies on the physics core - `Animation/RagdollPhysics` (`CoreRagdoll`) - capsules, box chest, pelvis and feet; limbs meet the world, dynamic bodies and each other (limbs overlapping in the build pose never collide); pins and the get-up helper are core joints to the world
+  - 5.8.2 Death and revive - `Components/Ragdoll` - limpOnDeath from a HealthStat death, push away from the hit, revive gets up (a respawn comes back standing)
+  - 5.8.3 Physical hit reactions and balance - `Animation/DynamicCharacter` - hits soften the struck part, pushes are caught with steps, too strong a push falls (brace, protect head, grab)
+  - 5.8.4 Script and C++ calls - `Components/Ragdoll` - `ragdoll()`, `ragdoll(0)`, `ragdoll_push`, `is_ragdoll()`, `active_ragdoll(...)`, `active_ragdoll_push/shoot/explode/state`; Activate, Deactivate, IsActive, IsSettled, Push, PushAt, Hit, Shoot, Explode, Trigger, SetMode
+  - 5.8.5 Old scenes - `Scene/SceneSerializerParse` - the old Verlet `ragdoll` record (limp on death and hit reactions carry over) and the `activeragdoll` record (the record name of Ragdoll) load into the one component; both on one object make one; `compoff "ActiveRagdoll"` names the Ragdoll
+- **Code:** `Components/Ragdoll`, `Components/RagdollShared`, `Animation/DynamicCharacter`, `Animation/RagdollPhysics`, `Animation/CoreRagdoll`
+- **API:** `Ragdoll` (`ActiveRagdoll` is an alias); scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`, `active_ragdoll(...)`
+- **Editor:** Add Component > Ragdoll; the inspector is the generic property one
+- **Docs:** `docs/gameplay/active_ragdoll.md`
+- **Tests:** `ragdoll`, `active_ragdoll`, `ragdoll_collisions`
+- **Status:** Works in the unit tests (see `docs/gameplay/active_ragdoll.md` for what was measured); never run on Windows or seen in the editor window
+- **Open:** no walking while physical; get-up uses a helper force; stairs, slopes and imported rigs untested; ragdoll poses are not sent over the network; no cloth, spring-bone or secondary motion exists; animated hit and death clips are separate, see 5.12
+- **Related:** 5.12, 5.6, 11.7, 6.2, 6.3
+- **Words:** ragdoll, limp, death, hit reaction, flinch, active ragdoll, dynamic character, balance, stumble, get up, Ragdoll component
 - **Seen as:** character falls apart or flops; tumbles through the floor; does not get back up after a revive; body twitches on a hit
 - **Ask me like:** "add a heavy ragdoll preset"; "keep the head from clipping the ground"
 

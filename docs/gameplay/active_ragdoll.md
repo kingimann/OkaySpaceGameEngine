@@ -13,10 +13,10 @@
 
 | Part | File | Job |
 |---|---|---|
-| Physics layer | `engine/include/okay/Animation/RagdollPhysics.hpp`, `engine/src/Animation/RagdollPhysics.cpp` | `RagdollPhysics` (the thin interface the controller uses) and `XpbdRagdoll` (our solver) |
+| Physics layer | `engine/include/okay/Animation/RagdollPhysics.hpp`, `engine/src/Animation/CoreRagdoll.cpp` | `RagdollPhysics` (the thin interface the controller uses) and `CoreRagdoll` (its bodies and joints on the physics core) |
 | Controller and behaviours | `engine/include/okay/Animation/DynamicCharacter.hpp`, `engine/src/Animation/DynamicCharacter.cpp` | states, drives, balance, the six behaviour modules |
-| Component | `engine/include/okay/Components/ActiveRagdoll.hpp`, `engine/src/Components/ActiveRagdoll.cpp` | bones, scene rays, HealthStat, controllers, root |
-| Tests | `tests/test_active_ragdoll.cpp` (suite `active_ragdoll`) | balance, push thresholds, recovery time, get-up, hostile input, determinism, the scene component, the example scene |
+| Component | `engine/include/okay/Components/Ragdoll.hpp`, `engine/src/Components/Ragdoll.cpp` (`ActiveRagdoll.hpp` is the old name, an alias) | bones, the scene's physics world, scene rays, HealthStat, controllers, root |
+| Tests | `tests/test_active_ragdoll.cpp` (suite `active_ragdoll`), `tests/test_ragdoll.cpp` (`ragdoll`), `tests/test_ragdoll_collisions.cpp` (`ragdoll_collisions`) | balance, push thresholds, recovery time, get-up, following the pose, hostile input, determinism, the scene component, the example scene; limp falls, the world, joint limits, old scenes; limbs against crates and each other |
 | Example | `examples/active_ragdoll/active_ragdoll.okayscene` | push, shoot, blast, knock off a ledge, watch it get up |
 
 ## How it works
@@ -25,14 +25,20 @@
 fractions in Winter's table (below); capsule sizes are a fraction of the body height. The feet
 have four contact spheres each (heel and toe, both sides) so standing has a real support polygon.
 
-**Solver (`XpbdRagdoll`).** Each 1/60 s frame is cut into 12 substeps. Each substep predicts the
-poses, runs one pass of corrections (joint drives, swing and twist limits, hinges for knees and
-elbows, the joint points meeting, pins, helpers, contacts with friction), derives velocities from
-the pose change and then runs a velocity pass (drive damping, joint friction, resting contacts).
-A drive is an angular correction toward the target with compliance 1 / stiffness, which acts as
-the P of a PD controller; the velocity pass gives the D, scaled to a damping ratio. Contacts use
-one ray per sphere per frame (the surface plane is kept for the substeps). Non-finite states are
-caught and the bodies go back to their last good pose (`Resets()` counts it).
+**Physics (`CoreRagdoll`, since claude/ragdoll-core-1).** Each bone is a body of the physics core
+(`okay::phys::World`, docs/physics/physics_core.md) with one collider: a capsule, a box for the chest and the
+pelvis (as wide as the shoulders and hips) and for each foot (sole to ankle). In a scene the bodies live in the
+scene's own physics world as a guest (`Physics3D::JoinEngineWorld`), so the core's solver moves them together
+with everything else: limbs collide with static and dynamic bodies and with each other (limbs that overlap in
+the build pose, such as a hand on a thigh, never collide with each other; neither do a limb and the object's own
+colliders). Each joint is a core joint: ConeTwist (a swing cone and a twist limit about the child's long axis)
+or a Hinge with limits for knees and elbows, with both joint frames placed so the angles are 0 in the build pose.
+The muscle is the core joint's own orientation drive. Pins (grab) and the get-up helper are core SixDof joints to
+the world with springs. The controller runs in the scene's `FixedUpdate` (before each physics step) and reads
+contacts after it; outside a scene (unit tests) the ragdoll steps a world of its own. Animated, the bodies are
+kinematic and have no colliders. Each foot is three times its table weight (taken from the chest): a 1 kg foot
+under a 70 kg body did not settle on the ground with one solver step per frame. The old XpbdRagdoll (a second
+rigid-body and joint solver of the ragdoll's own) and the Verlet-particle Ragdoll were deleted in the same change.
 
 **Drives (pose tracking).** Each joint's target is the animation's relative rotation of that bone.
 Stiffness is `stiffnessPerKg x mass the joint carries x region strength` (spine, neck, arms, legs,
@@ -105,31 +111,16 @@ visual-script node `Fn.<name>` (Character Actions > Stances & Ragdoll). C++: `Ac
 - On the blocky Character a push from the front of 30 N s can already need several steps (its foot
   has a short heel); the example's J and L pushes are 30 N s.
 
-## The physics seam and the plan for the physics core
+## The physics seam
 
 The controller only uses `dyn::RagdollPhysics`: add bodies and joints, `SetDrive(joint, JointDrive)`,
-impulses, forces, a pin, a helper spring, `Step`, poses and contact flags. `JointDrive` is field for
-field the drive of the scene physics' Ball / ConeTwist `Joint3D` on branch `claude2/own-physics-engine`
-(`useDrive`, `driveTarget` = the turn from the build pose, `driveStiffness`, `driveDamping`,
-`driveFrequency`, `driveDampingRatio`, `driveMaxTorque`), so the two speak the same language.
-
-**`XpbdRagdoll` is a second rigid-body and joint solver, a copy, and it will be deleted.** The engine is
-getting one physics path: the new core's joints become the only joint solver (branch
-`claude2/physics-no-classic`). Nothing new is built on `XpbdRagdoll`. The next step, once that branch lands:
-1. Write `CoreRagdollPhysics : RagdollPhysics`: one `Rigidbody3D` + `CapsuleCollider3D` per bone on hidden
-   child objects, one ConeTwist `Joint3D` per joint (knees and elbows Hinge), `SetDrive` copying
-   `JointDrive` into the joint's drive fields (`driveTarget = target.ToEuler()`), contacts from the bodies'
-   collision callbacks.
-2. Switch `DynamicCharacter` to it (one line: `m_phys.reset(new CoreRagdollPhysics(scene))`) and run
-   `active_ragdoll` on it.
-3. Delete `XpbdRagdoll` (and `SimpleWorld`, which only feeds it in the unit tests; those tests move to a
-   scene).
-4. What it needs from the core: drives that honour the max torque including damping, a hinge with
-   limits, collision filtering between neighbouring limbs, an impulse at a point, per-body contact
-   flags with normals, a world-anchored soft spring (get-up helper) and a soft point pin (grab),
-   bit-identical stepping.
-
-Tracked in `docs/status/UNFINISHED.md` ("ActiveRagdoll on the physics core joints").
+impulses, forces, a pin, a helper spring, `SetActive`, `Step`, poses and contact flags. `CoreRagdoll` is its one
+implementation: `SetDrive` writes the core joint's drive fields (`drive`, `driveTarget` turned into the joint's
+frame, `driveStiffness`, `driveDamping` from the damping ratio and the two limbs' inertia, `driveMaxTorque`),
+joint friction is extra drive damping, and a body's sphere probes ("is the heel on the ground?") are matched to
+the contact points of its collider. The core gained two small things for it: `World::SetBodiesCollide` (a pair
+that never collides) and `Physics3D::EngineGuest` (engine code with bodies of its own in the scene's world, which
+decides what its colliders pass through).
 
 ## Control, respawn and multiplayer
 
@@ -149,22 +140,24 @@ Tracked in `docs/status/UNFINISHED.md` ("ActiveRagdoll on the physics core joint
   shown on this machine from the pushes and hits it gets here, so two machines can show a slightly
   different fall. Ragdoll poses are not sent over the network (not done).
 
-## One ragdoll per body, shared parts
+## One ragdoll, shared parts
 
-`Components/RagdollShared` holds what `Ragdoll` and `ActiveRagdoll` share: finding the 15 bones
-(`FindBones`), the one list of components that drive a body (`DriverKind`: animation and IK, or
-movement controllers and Rigidbody3D) with `SwitchOff` / `SwitchBackOn`, and `HealthWatch` (death,
-revive and hits from a HealthStat). A limp `Ragdoll` switches off both kinds on the whole body; the
-`ActiveRagdoll` switches off movement only, because its muscles follow the animation. Since this
-change a limp `Ragdoll` also switches off Click To Move, Free Roam, 2.5D platformer, Top Down and
-both shooter controllers (before, only `IPlayerSim` controllers and NPCs; a Click To Move controller
-kept steering a limp body; a controller with a follow camera also stops moving that camera while the
-body is limp). If an object has both, the ActiveRagdoll takes over at Start: it switches
-the Ragdoll off and logs it, and the Ragdoll's Inspector says so; switching the ActiveRagdoll off (or
-removing it) switches the Ragdoll back on. Both components cast through `ragdoll::CastIgnoringSelf`
-(one nearest-hit `Physics3D::Raycast` under an `IgnoreHierarchy`), and the ray tests against boxes and
-body capsules use `LocalShape3D::Ray` (Physics/ShapeKernel3D). The leg IK uses the shared
-`Math/TwoBoneIK` solve and the twist limit the shared `Math/JointLimit` `TwistAbout`.
+There is one Ragdoll component. Until claude/ragdoll-core-1 there were two: a Verlet-particle `Ragdoll` (limp on
+death, flinch on hits) and the `ActiveRagdoll`; if an object had both, the ActiveRagdoll switched the other off.
+Old scenes load into the one component: the `activeragdoll` record (Ragdoll's record name, from its property
+entry) as it was, and the old `ragdoll` record with its limp-on-death and hit-reaction switches (its particle
+settings mean nothing on the core and are dropped; it stays animated until it dies, no stumbling). Both records on
+one object make one Ragdoll with the `activeragdoll` settings. `compoff` and `comporder` lines naming
+`ActiveRagdoll` name the Ragdoll. The old Verlet calls stay: `Activate` goes limp (as on death), `Deactivate`
+stands straight back up in the animation, `IsActive` is "limp or lying down"; scripts `ragdoll()`, `ragdoll(0)`,
+`ragdoll_push(vx, vy, vz)` (a push of that speed on 0.3 of the body's mass) and `is_ragdoll()`.
+
+`Components/RagdollShared` holds the helpers: finding the 15 bones (`FindBones`), the one list of components that
+drive a body (`DriverKind`: animation and IK, or movement controllers and Rigidbody3D) with `SwitchOff` /
+`SwitchBackOn`, and `HealthWatch` (death, revive and hits from a HealthStat). The Ragdoll switches off movement
+only while physical, because its muscles follow the animation. Rays (grab, get-up floor) go through
+`ragdoll::CastIgnoringSelf` (one nearest-hit `Physics3D::Raycast` under an `IgnoreHierarchy`). The leg IK uses the
+shared `Math/TwoBoneIK` solve.
 
 ## Sources
 
@@ -188,8 +181,6 @@ body capsules use `LocalShape3D::Ray` (Physics/ShapeKernel3D). The leg IK uses t
 
 ## What is not done
 
-- Limbs do not collide with each other or with other dynamic bodies (only with static scene
-  colliders and terrain through rays); waits for the physics seam above.
 - No walking while physical: the character stands still while it stumbles (the controller is
   off), then takes over again.
 - Getting up uses a helper force; a fully physical get-up is research work.

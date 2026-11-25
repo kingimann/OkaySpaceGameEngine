@@ -1,331 +1,353 @@
+// Ragdoll - see the header. Connects dyn::DynamicCharacter to a scene.
 #include "okay/Components/Ragdoll.hpp"
-#include "okay/Components/DeathLock.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/NetworkObject.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Core/Log.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
+#include <cctype>
 #include <cmath>
 
 namespace okay {
 
 namespace {
-constexpr float kStep = 1.0f / 60.0f;
-constexpr int   kMaxSteps = 4;
 using namespace humanoid;
 
-// The particle a bone's direction is measured from (-1 for the hips).
-constexpr int kParentBone[BoneCount] = {
-    -1, Hips, Torso,
-    Torso, LUpperArm, LForeArm,
-    Torso, RUpperArm, RForeArm,
-    Hips, LThigh, LShin,
-    Hips, RThigh, RShin,
-};
-// The bone a bone points at; -1 means a tip particle past its end.
-constexpr int kChildBone[BoneCount] = {
-    Torso, Head, -1,
-    LForeArm, LHand, -1,
-    RForeArm, RHand, -1,
-    LShin, LFoot, -1,
-    RShin, RFoot, -1,
+bool ArFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+} // namespace
+
+// This component as a guest of the scene's physics world: the limbs are bodies in that world and pass through
+// the object's own colliders (the character's capsule, its hit boxes).
+struct Ragdoll::WorldGuest : Physics3D::EngineGuest {
+    const Ragdoll* owner = nullptr;
+    Physics3D* physics = nullptr;         // the scene physics whose world holds the bodies (nullptr: not joined)
+    std::weak_ptr<void> alive;            // expires when that world is destroyed (the scene was cleared)
+
+    bool Joined() const { return physics && !alive.expired(); }
+    bool GuestCollides(const Collider3D* other) const override {
+        const GameObject* self = owner ? owner->gameObject : nullptr;
+        if (!other || !other->gameObject || !self) return true;
+        for (const Transform* t = other->gameObject->transform; t; t = t->Parent())
+            if (t->gameObject == self) return false;
+        return true;
+    }
 };
 
-} // namespace
+Ragdoll::Ragdoll() : m_guest(new WorldGuest()) { m_guest->owner = this; }
+
+Ragdoll::~Ragdoll() { LeaveWorld(); }
+
+void Ragdoll::LeaveWorld() {
+    if (m_guest->Joined()) {
+        m_dc.UseWorld(nullptr, {}, 0);   // (destroys its bodies in the scene's world)
+        m_guest->physics->LeaveEngineWorld(m_guest.get());
+    }
+    m_guest->physics = nullptr;
+    m_guest->alive.reset();
+    m_built = false;
+}
+
+bool Ragdoll::SceneWorld::Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const {
+    // One nearest-hit query per cast (it was RaycastAll: a scan and a sort per sphere).
+    return owner && ragdoll::CastIgnoringSelf(owner->gameObject, from, to, point, normal);
+}
+
+void Ragdoll::ApplyTuning() {
+    dyn::Tuning& t = m_dc.tuning;
+    t.strength = strength; t.armStrength = armStrength; t.legStrength = legStrength;
+    t.spineStrength = spineStrength; t.neckStrength = neckStrength;
+    t.balanceForce = balanceForce; t.maxStep = maxStep; t.maxSteps = maxSteps; t.fallAngle = fallAngle;
+    t.balanceHelp = balanceHelp; t.uprightHelp = uprightHelp;
+    t.stumble = stumble; t.brace = brace; t.protectHead = protectHead; t.grab = grab; t.autoGetUp = autoGetUp;
+    t.getUpDelay = getUpDelay; t.getUpTime = getUpTime; t.blendTime = blendTime; t.helperForce = helperForce;
+    const int m = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+    if ((int)m_dc.mode != m) m_dc.SetMode((dyn::RagdollMode)m);
+}
 
 bool Ragdoll::Build() {
     m_built = false;
-    m_p.clear(); m_links.clear(); m_childOf.clear(); m_restDir.clear();
-    m_restSide.clear(); m_sideOf.clear();
-    for (int& i : m_boneParticle) i = -1;
-    if (!gameObject) return false;
-
+    for (Transform*& b : m_bones) b = nullptr;
+    if (!gameObject || !gameObject->transform) return false;
+    m_world.owner = this;
     Transform* bones[BoneCount] = {};
     if (!ragdoll::FindBones(gameObject, bones)) return false;
+    Character* ch = gameObject->GetComponent<Character>();
 
-    for (int b = 0; b < BoneCount; ++b) {
-        m_boneParticle[b] = (int)m_p.size();
-        Particle p; p.bone = bones[b]; p.pos = p.prev = bones[b]->Position();
-        m_p.push_back(p);
+    dyn::RigInput rig;
+    for (int b = 0; b < BoneCount; ++b) { rig.pos[b] = bones[b]->Position(); rig.rot[b] = bones[b]->Rotation(); }
+    // Facing: the blocky body's shoes stick out forward of the ankle; an
+    // imported rig faces its root's forward.
+    Vec3 fwd = gameObject->transform->Forward();
+    if (ch) {
+        for (int foot : {LFoot, RFoot}) {
+            auto* mr = bones[foot]->gameObject ? bones[foot]->gameObject->GetComponent<MeshRenderer>() : nullptr;
+            if (!mr || mr->mesh.vertices.empty()) continue;
+            Vec3 c;
+            for (const Vec3& v : mr->mesh.vertices) c += v;
+            c = c * (1.0f / (float)mr->mesh.vertices.size());
+            Vec3 w = bones[foot]->Rotation() * Vec3::Scale(c, bones[foot]->LossyScale());
+            w.y = 0.0f;
+            if (w.Magnitude() > 0.01f) { fwd = w.Normalized(); break; }
+        }
     }
-    const Vec3 up = (m_p[Torso].pos - m_p[Hips].pos).Normalized();
-    const float torsoLen = Vec3::Distance(m_p[Torso].pos, m_p[Hips].pos);
-    const Vec3 fwd = gameObject->transform ? gameObject->transform->Forward() : Vec3::Forward;
-
-    // Tips past the head, hands and feet, kept as a bone-local offset.
-    m_childOf.assign(BoneCount, -1);
-    for (int b = 0; b < BoneCount; ++b) {
-        if (kChildBone[b] >= 0) { m_childOf[b] = kChildBone[b]; continue; }
-        const Vec3 from = m_p[kParentBone[b]].pos, at = m_p[b].pos;
-        Vec3 off;
-        if (b == Head)                 off = up * (0.6f * torsoLen);
-        else if (b == LFoot || b == RFoot) off = fwd * (0.45f * Vec3::Distance(from, at));
-        else                           off = (at - from).Normalized() * (0.4f * Vec3::Distance(from, at));
-        Particle tip; tip.bone = bones[b];
-        tip.offset = bones[b]->Rotation().Inverse() * off;
-        tip.pos = tip.prev = at + off;
-        m_childOf[b] = (int)m_p.size();
-        m_p.push_back(tip);
+    rig.forward = fwd;
+    const float rootY = gameObject->transform->Position().y;
+    const float footY = std::fmin(rig.pos[LFoot].y, rig.pos[RFoot].y);
+    rig.groundY = (footY - rootY) >= -0.05f && (footY - rootY) < 0.3f ? rootY : footY - 0.08f;
+    rig.mass = mass;
+    m_rootAboveGround = rootY - rig.groundY;
+    // The bodies live in the scene's physics world, so they meet everything in it.
+    LeaveWorld();
+    if (Scene* sc = gameObject->scene()) {
+        m_guest->physics = &sc->physics3D();
+        phys::World* world = m_guest->physics->JoinEngineWorld(m_guest.get(), m_guest->alive);
+        m_dc.UseWorld(world, m_guest->alive, Physics3D::GuestUser(m_guest.get()));
     }
-
-    auto link = [&](int a, int b, bool minOnly = false, float scale = 1.0f) {
-        m_links.push_back({a, b, Vec3::Distance(m_p[a].pos, m_p[b].pos) * scale, minOnly});
-    };
+    ApplyTuning();
+    if (!m_dc.Build(rig)) return false;
     for (int b = 0; b < BoneCount; ++b) {
-        if (kParentBone[b] >= 0) link(kParentBone[b], b);
-        if (kChildBone[b] < 0) link(b, m_childOf[b]);
+        m_bones[b] = bones[b];
+        m_animLocalPos[b] = bones[b]->localPosition;
+        m_animLocalRot[b] = bones[b]->localRotation;
     }
-    // A rigid torso: hips, chest, shoulders and thighs braced together.
-    const int box[] = {Hips, Torso, LUpperArm, RUpperArm, LThigh, RThigh};
-    for (int i = 0; i < 6; ++i)
-        for (int j = i + 1; j < 6; ++j)
-            if (!(box[i] == Hips && box[j] == Torso)) link(box[i], box[j]);
-    // A stiff neck, and the hand / foot tips held to their limb.
-    link(Head, LUpperArm); link(Head, RUpperArm);
-    link(m_childOf[Head], Torso);
-    link(m_childOf[LHand], LForeArm); link(m_childOf[RHand], RForeArm);
-    link(m_childOf[LFoot], LShin);    link(m_childOf[RFoot], RShin);
-    // Elbows and knees bend but don't fold flat.
-    link(LUpperArm, LHand, true, 0.45f); link(RUpperArm, RHand, true, 0.45f);
-    link(LThigh, LFoot, true, 0.6f);     link(RThigh, RFoot, true, 0.6f);
-    link(m_childOf[Head], Hips, true, 0.85f);
-
-    // Twist references for the hips (thighs) and chest (shoulders).
-    m_sideOf.assign(BoneCount * 2, -1);
-    m_sideOf[Hips * 2] = LThigh;  m_sideOf[Hips * 2 + 1] = RThigh;
-    m_sideOf[Torso * 2] = LUpperArm; m_sideOf[Torso * 2 + 1] = RUpperArm;
-    m_sideOf[Head * 2] = LUpperArm;  m_sideOf[Head * 2 + 1] = RUpperArm;
-    m_restDir.assign(BoneCount, Vec3::Up);
-    m_restSide.assign(BoneCount, Vec3::Right);
-    for (int b = 0; b < BoneCount; ++b) {
-        const Quat inv = bones[b]->Rotation().Inverse();
-        m_restDir[b] = inv * (m_p[m_childOf[b]].pos - m_p[b].pos).Normalized();
-        if (m_sideOf[b * 2] >= 0)
-            m_restSide[b] = inv * (m_p[m_sideOf[b * 2 + 1]].pos - m_p[m_sideOf[b * 2]].pos).Normalized();
-    }
+    m_wrote = false;
     m_built = true;
+    m_lastState = m_dc.State();
     return true;
-}
-
-void Ragdoll::CapturePose() {
-    m_rest.clear();
-    std::vector<Transform*> all;
-    for (const Particle& p : m_p) if (p.bone && p.offset.SqrMagnitude() == 0.0f) all.push_back(p.bone);
-    for (Transform* t : all) m_rest.push_back({t, t->localPosition, t->localRotation});
-}
-
-void Ragdoll::SampleBones(bool keepVelocity) {
-    for (Particle& p : m_p) {
-        if (!p.bone) continue;
-        const Vec3 now = p.bone->Position() + p.bone->Rotation() * p.offset;
-        p.prev = keepVelocity ? p.pos : now;
-        p.pos = now;
-    }
-}
-
-void Ragdoll::Collide(Particle& p, const Vec3& from) {
-    p.contact = false;
-    // Cast a little below the move too, so a body resting on a floor keeps its contact.
-    Vec3 d = p.pos - from;
-    float len = d.Magnitude();
-    d = len > 1e-6f ? d * (1.0f / len) : Vec3::Down;
-    Vec3 point, normal;
-    if (!ragdoll::CastIgnoringSelf(gameObject, from, from + d * (len + radius * 1.5f), point, normal)) return;
-    p.contact = true;
-    p.planePoint = point;
-    p.planeNormal = normal;
-}
-
-void Ragdoll::Push(Particle& p) const {
-    if (!p.contact) return;
-    const float depth = radius - Vec3::Dot(p.pos - p.planePoint, p.planeNormal);
-    if (depth > 0.0f) p.pos = p.pos + p.planeNormal * depth;
-}
-
-void Ragdoll::Rub(Particle& p) const {
-    if (!p.contact || Vec3::Dot(p.pos - p.planePoint, p.planeNormal) > radius * 1.5f) return;
-    // Stop the speed into the surface and scrub the slide; slow slides stick.
-    const Vec3 v = p.pos - p.prev;
-    const Vec3 vn = p.planeNormal * Vec3::Dot(v, p.planeNormal);
-    Vec3 vt = v - vn;
-    vt = vt.Magnitude() < 0.05f * kStep ? Vec3::Zero : vt * (1.0f - Mathf::Clamp01(friction));
-    p.prev = p.pos - vt - (Vec3::Dot(v, p.planeNormal) > 0.0f ? vn : Vec3::Zero);
-}
-
-void Ragdoll::Step(float h, float gravityScale) {
-    const Vec3 g{0.0f, -gravity * gravityScale * h * h, 0.0f};
-    const float keep = 1.0f - Mathf::Clamp01(damping);
-    const float vmax = maxSpeed * h;
-    std::vector<Vec3> start(m_p.size());
-    for (std::size_t i = 0; i < m_p.size(); ++i) {
-        Particle& p = m_p[i];
-        start[i] = p.pos;
-        const Vec3 v = Vec3::ClampMagnitude((p.pos - p.prev) * keep, vmax);
-        p.prev = p.pos;
-        p.pos = p.pos + v + g;
-    }
-    for (std::size_t i = 0; i < m_p.size(); ++i) Collide(m_p[i], start[i]);
-    for (int it = 0; it < Mathf::Max(1, iterations); ++it) {
-        for (const Link& l : m_links) {
-            Particle& a = m_p[l.a];
-            Particle& b = m_p[l.b];
-            const Vec3 d = b.pos - a.pos;
-            const float dist = d.Magnitude();
-            if (dist < 1e-6f || (l.minOnly && dist >= l.len)) continue;
-            const Vec3 fix = d * (0.5f * (dist - l.len) / dist);
-            a.pos = a.pos + fix;
-            b.pos = b.pos - fix;
-        }
-        for (Particle& p : m_p) Push(p);
-    }
-    for (Particle& p : m_p) Rub(p);
-}
-
-void Ragdoll::PoseBones() {
-    for (int b = 0; b < BoneCount; ++b) {
-        Transform* t = m_p[b].bone;
-        if (!t) continue;
-        const Vec3 target = m_p[m_childOf[b]].pos - m_p[b].pos;
-        if (target.SqrMagnitude() < 1e-10f) continue;
-        Quat q = t->Rotation();
-        q = (Quat::FromToRotation(q * m_restDir[b], target) * q).Normalized();
-        if (m_sideOf[b * 2] >= 0) {
-            const Vec3 axis = target.Normalized();
-            const Vec3 have = Vec3::ProjectOnPlane(q * m_restSide[b], axis);
-            const Vec3 want = Vec3::ProjectOnPlane(m_p[m_sideOf[b * 2 + 1]].pos - m_p[m_sideOf[b * 2]].pos, axis);
-            if (have.SqrMagnitude() > 1e-8f && want.SqrMagnitude() > 1e-8f)
-                q = (Quat::FromToRotation(have, want) * q).Normalized();
-        }
-        t->SetRotation(q);
-        t->SetPosition(m_p[b].pos);
-    }
-}
-
-void Ragdoll::SetDriven(bool limp) {
-    // Animation, IK and movement on the body and below it go off while limp.
-    if (limp) { m_switched.clear(); ragdoll::SwitchOff(gameObject, this, ragdoll::kAllDrivers, true, m_switched); }
-    else ragdoll::SwitchBackOn(m_switched);
-}
-
-bool Ragdoll::Activate() {
-    if (m_active) return true;
-    if (!m_built && !Build()) return false;
-    if (!m_hadPrev) SampleBones(false);
-    else {
-        // Bones moved by last frame's animation: keep that motion, rescaled to one step.
-        const float scale = m_lastDt > 1e-5f ? kStep / m_lastDt : 1.0f;
-        for (Particle& p : m_p) p.prev = p.pos - (p.pos - p.prev) * scale;
-    }
-    CapturePose();
-    SetDriven(true);
-    m_active = true;
-    m_react = 0.0f;
-    m_accum = 0.0f;
-    return true;
-}
-
-void Ragdoll::Deactivate() {
-    if (!m_active) return;
-    m_active = false;
-    for (const Pose& r : m_rest) { r.t->localPosition = r.lpos; r.t->localRotation = r.lrot; }
-    SetDriven(false);
-    m_hadPrev = false;
-}
-
-int Ragdoll::Nearest(const Vec3& point) const {
-    int best = -1; float bd = 1e30f;
-    for (int i = 0; i < (int)m_p.size(); ++i) {
-        const float d = (m_p[i].pos - point).SqrMagnitude();
-        if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-}
-
-void Ragdoll::Hit(const Vec3& point, const Vec3& velocity) {
-    if (!m_built && !Build()) return;
-    if (!m_active) {
-        if (!hitReactions) return;
-        if (m_react <= 0.0f) SampleBones(false);
-        m_react = Mathf::Max(0.01f, hitRecover);
-    }
-    const int i = Nearest(point);
-    if (i < 0) return;
-    // The struck particle takes the full push, its neighbours half.
-    m_p[i].prev = m_p[i].prev - velocity * kStep;
-    for (const Link& l : m_links) {
-        if (l.minOnly) continue;
-        const int o = l.a == i ? l.b : (l.b == i ? l.a : -1);
-        if (o >= 0) m_p[o].prev = m_p[o].prev - velocity * (0.5f * kStep);
-    }
-}
-
-bool Ragdoll::IsSettled(float speed) const {
-    const float lim = speed * kStep;
-    for (const Particle& p : m_p)
-        if ((p.pos - p.prev).SqrMagnitude() > lim * lim) return false;
-    return true;
-}
-
-void Ragdoll::WatchHealth() {
-    if (!gameObject) return;
-    auto* hp = gameObject->GetComponent<HealthStat>();
-    Vec3 from;
-    bool hasFrom = false;
-    const ragdoll::HealthWatch::Event e = m_watch.Poll(gameObject, nullptr, &from, &hasFrom);
-    if (e == ragdoll::HealthWatch::Died && ragdollOnDeath && Activate()) {
-        Vec3 away = hasFrom ? Vec3::ProjectOnPlane(m_p[Hips].pos - from, Vec3::Up) : Vec3::Zero;
-        if (away.SqrMagnitude() < 1e-6f)
-            away = gameObject->transform ? gameObject->transform->Forward() * -1.0f : Vec3::Back;
-        away = away.Normalized();
-        for (Particle& p : m_p) p.prev = p.prev - away * (0.3f * deathImpulse * kStep);
-        Hit(m_p[Torso].pos, away * deathImpulse);
-    } else if (e == ragdoll::HealthWatch::Revived && m_active) {
-        Deactivate();
-    } else if (e == ragdoll::HealthWatch::Hurt && hp && !m_active) {
-        int at = Torso;
-        Vec3 dir = gameObject->transform ? gameObject->transform->Forward() * -1.0f : Vec3::Back;
-        if (hasFrom && m_built) {
-            at = Nearest(from);
-            dir = (m_p[at].pos - from).Normalized();
-        }
-        if (m_built || Build()) Hit(m_p[at].pos, dir * hitImpulse);
-    }
 }
 
 void Ragdoll::Start() {
     Build();
     m_watch.Begin(gameObject);
-    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr) hp->keepBodyOnDeath = ragdollOnDeath;
+    if (auto* hp = gameObject ? gameObject->GetComponent<HealthStat>() : nullptr)
+        if (limpOnDeath) hp->keepBodyOnDeath = true;
+    if (gameObject && gameObject->transform) m_lastRoot = gameObject->transform->Position();
 }
 
-void Ragdoll::Update(float) { WatchHealth(); }
+void Ragdoll::OnEnable() {}
+
+void Ragdoll::OnDisable() {
+    if (m_built && m_dc.State() != dyn::CharState::Animated) m_dc.SnapToAnimation();   // nothing drives the bodies now: they leave the world
+    if (m_handedOver) HandOver(false);
+}
+
+bool Ragdoll::Remote() const {
+    auto* no = gameObject ? gameObject->GetComponent<NetworkObject>() : nullptr;
+    return no && !no->IsLocallyOwned();
+}
+
+bool Ragdoll::IsDown() const {
+    const dyn::CharState s = m_dc.State();
+    return s == dyn::CharState::Down || s == dyn::CharState::GettingUp || s == dyn::CharState::Dead
+        || s == dyn::CharState::Falling;
+}
+
+void Ragdoll::HandOver(bool physical) {
+    if ((!handOverControl || Remote()) && physical) return;
+    if (physical == m_handedOver) return;
+    // Movement only: the animation keeps running, it is what the muscles follow.
+    if (physical) { m_switched.clear(); ragdoll::SwitchOff(gameObject, this, ragdoll::kMovement, false, m_switched); }
+    else ragdoll::SwitchBackOn(m_switched);
+    m_handedOver = physical;
+}
+
+void Ragdoll::ReadAnimation(Vec3* pos, Quat* rot) {
+    // A bone the animation did not touch since our write still holds our pose:
+    // put its last animated value back so the pose does not feed on itself.
+    for (int b = 0; b < BoneCount; ++b) {
+        Transform* t = m_bones[b];
+        if (m_wrote && t->localPosition == m_wroteLocalPos[b] && Quat::Dot(t->localRotation, m_wroteLocalRot[b]) > 0.9999999f) {
+            t->localPosition = m_animLocalPos[b];
+            t->localRotation = m_animLocalRot[b];
+        } else {
+            m_animLocalPos[b] = t->localPosition;
+            m_animLocalRot[b] = t->localRotation;
+        }
+    }
+    for (int b = 0; b < BoneCount; ++b) { pos[b] = m_bones[b]->Position(); rot[b] = m_bones[b]->Rotation(); }
+}
+
+void Ragdoll::WritePose() {
+    // Parents first (the enum order), rotations only below the hips so bone
+    // lengths stay exact; the hips also take the position.
+    for (int b = 0; b < BoneCount; ++b) {
+        Vec3 p; Quat q;
+        m_dc.BonePose(b, p, q);
+        if (b == Hips) m_bones[b]->SetPosition(p);
+        m_bones[b]->SetRotation(q);
+    }
+    for (int b = 0; b < BoneCount; ++b) {
+        m_wroteLocalPos[b] = m_bones[b]->localPosition;
+        m_wroteLocalRot[b] = m_bones[b]->localRotation;
+    }
+    m_wrote = true;
+}
+
+void Ragdoll::FixedUpdate(float step) {
+    if (!m_built) return;
+    if (m_guest->physics && m_guest->alive.expired()) { m_built = false; return; }   // the scene dropped its world
+    m_dc.ControlStep(step);
+}
 
 void Ragdoll::LateUpdate(float dt) {
-    if (!m_built || dt <= 0.0f) return;
-    m_lastDt = dt;
-    if (!m_active && m_react <= 0.0f) {
-        // Track the animated bones so a ragdoll keeps the body's motion.
-        SampleBones(m_hadPrev);
-        m_hadPrev = true;
-        return;
-    }
-    if (!m_active) {
-        // Flinch: simulate without gravity, then spring back to the animation.
-        std::vector<Vec3> anim(m_p.size());
-        for (std::size_t i = 0; i < m_p.size(); ++i)
-            anim[i] = m_p[i].bone->Position() + m_p[i].bone->Rotation() * m_p[i].offset;
-        m_react -= dt;
-        const float t = Mathf::Clamp01(1.0f - m_react / Mathf::Max(0.01f, hitRecover));
-        Step(Mathf::Min(dt, kStep), 0.0f);
-        const float pull = 0.2f + 0.8f * t;
-        for (std::size_t i = 0; i < m_p.size(); ++i) {
-            const Vec3 moved = Vec3::Lerp(m_p[i].pos, anim[i], pull);
-            m_p[i].prev = m_p[i].prev + (moved - m_p[i].pos);
-            m_p[i].pos = moved;
+    if (!m_built || dt <= 0.0f || !std::isfinite(dt)) return;
+    ApplyTuning();
+    WatchHealth();
+    Transform* root = gameObject->transform;
+    // A copy another peer owns: the network places its root and runs its
+    // controllers; the body is still shown physically, the root is never written.
+    const bool remote = Remote();
+    Vec3 delta, fwd;
+    float ground = 0.0f;
+    if (remote && m_dc.RootMoveWanted(delta, fwd, &ground)) m_dc.RootMoved();
+    if (!remote && m_dc.RootMoveWanted(delta, fwd, &ground)) {
+        // Put the root under the body (on the ground it stands on now) before
+        // the animation is read again.
+        if (ArFinite(delta)) {
+            Vec3 p = root->Position() + delta;
+            if (std::isfinite(ground)) p.y = ground + m_rootAboveGround;
+            root->SetPosition(p);
         }
-        m_p[Hips].pos = m_p[Hips].prev = anim[Hips];
-        if (m_react <= 0.0f) { m_react = 0.0f; m_hadPrev = false; return; }
-        PoseBones();
-        return;
+        const Vec3 have = m_dc.AnimForward();
+        const float ang = std::atan2(Vec3::Dot(Vec3::Cross(have, fwd), Vec3::Up), Vec3::Dot(have, fwd));
+        if (std::isfinite(ang) && std::fabs(ang) > 1e-4f) {
+            const Vec3 pivot = m_bones[Hips]->Position();
+            const Quat yaw = Quat::AngleAxis(ang * Mathf::Rad2Deg, Vec3::Up);
+            const Vec3 off = root->Position() - pivot;
+            root->SetRotation((yaw * root->Rotation()).Normalized());
+            root->SetPosition(Vec3{pivot.x, root->Position().y, pivot.z} + yaw * Vec3{off.x, 0.0f, off.z});
+        }
+        m_dc.RootMoved();
     }
-    m_accum = Mathf::Min(m_accum + dt, kStep * kMaxSteps);
-    while (m_accum >= kStep) { Step(kStep, 1.0f); m_accum -= kStep; }
-    PoseBones();
+    Vec3 pos[BoneCount]; Quat rot[BoneCount];
+    ReadAnimation(pos, rot);
+    m_dc.SetAnimationPose(pos, rot);
+    // With no scene world the character steps a world of its own; in a scene FixedUpdate does the control steps.
+    if (m_guest->physics) m_dc.BeginFrame(dt, &m_world);
+    else m_dc.Tick(dt, &m_world);
+    const dyn::CharState s = m_dc.State();
+    if (s != m_lastState) {
+        const dyn::CharState was = m_lastState;
+        m_lastState = s;
+        if (onStateChanged) onStateChanged(was, s);
+    }
+    // Reactive: the controller is off whenever the body is physical. Powered: the body is always
+    // physical, so the controller stays on while it only balances and goes off once it is down.
+    const bool down = s == dyn::CharState::Falling || s == dyn::CharState::Down || s == dyn::CharState::GettingUp
+        || s == dyn::CharState::Dead;
+    const bool physical = s != dyn::CharState::Animated && s != dyn::CharState::Blending;
+    HandOver(m_dc.mode == dyn::RagdollMode::Powered ? down : physical);
+    if (!remote && rootFollows && (s == dyn::CharState::Down || s == dyn::CharState::GettingUp || s == dyn::CharState::Dead)) {
+        // Keep the object (camera targets, name tags) over the body; the
+        // physics pose is written in world space below, so it does not move.
+        const Vec3 hips = m_dc.Body(Hips).position;
+        const Vec3 r = root->Position();
+        if (ArFinite(hips)) root->SetPosition(Vec3{hips.x, r.y, hips.z});
+    }
+    if (m_dc.PhysicsWeight() > 0.0f) WritePose();
+    else m_wrote = false;
+    m_lastRoot = root->Position();
+}
+
+void Ragdoll::WatchHealth() {
+    float dmg = 0.0f;
+    Vec3 from;
+    bool hasFrom = false;
+    const ragdoll::HealthWatch::Event e = m_watch.Poll(gameObject, &dmg, &from, &hasFrom);
+    if (e == ragdoll::HealthWatch::Died && limpOnDeath) {
+        if (hasFrom) {
+            const Vec3 chest = m_dc.Body(Torso).position;
+            Vec3 away = chest - from;
+            away.y = 0.0f;
+            if (away.SqrMagnitude() > 1e-6f) m_dc.Push(chest, away.Normalized() * (0.6f * mass));
+        }
+        m_dc.Die();
+    } else if (e == ragdoll::HealthWatch::Revived && m_dc.Dead()) {
+        // A respawn moved the object (HealthStat::Respawn): come back there, standing, like
+        // the Ragdoll does. A revive in place gets up from the floor.
+        const Vec3 now = gameObject->transform->Position();
+        if (Vec3::Distance(now, m_lastRoot) > 0.5f) m_dc.SnapToAnimation();
+        else m_dc.Revive();
+    } else if (e == ragdoll::HealthWatch::Hurt && reactToDamage) {
+        Vec3 at = m_dc.Body(Torso).position;
+        Vec3 dir = gameObject->transform->Forward() * -1.0f;
+        if (hasFrom) {
+            Vec3 hit;
+            Vec3 d = at - from;
+            if (d.SqrMagnitude() > 1e-8f) {
+                d = d.Normalized();
+                if (m_dc.Raycast(from, d, 1000.0f, &hit) >= 0) at = hit;
+                dir = d;
+            }
+        }
+        const float imp = std::fmin(dmg * damageImpulse, 4.0f * mass);
+        m_dc.Hit(at, dir * imp);
+    }
+}
+
+void Ragdoll::Push(const Vec3& impulse) {
+    if (!m_built) return;
+    m_dc.Push(m_dc.Body(Torso).position, impulse);
+}
+
+void Ragdoll::PushAt(const Vec3& point, const Vec3& impulse) { if (m_built) m_dc.Push(point, impulse); }
+void Ragdoll::Hit(const Vec3& point, const Vec3& impulse) { if (m_built) m_dc.Hit(point, impulse); }
+
+bool Ragdoll::Shoot(const Vec3& origin, const Vec3& direction, float power, float maxDistance) {
+    if (!m_built) return false;
+    Vec3 hit;
+    if (m_dc.Raycast(origin, direction, maxDistance, &hit) < 0) return false;
+    m_dc.Shot(hit, direction, power);
+    return true;
+}
+
+void Ragdoll::Explode(const Vec3& centre, float force, float radius) {
+    if (m_built) m_dc.Explosion(centre, force, radius);
+}
+
+bool Ragdoll::Activate() {
+    if (!m_built) return false;
+    m_dc.Die();
+    return true;
+}
+
+void Ragdoll::Deactivate() {
+    if (m_built && m_dc.State() != dyn::CharState::Animated) m_dc.SnapToAnimation();
+}
+
+bool Ragdoll::IsSettled(float speed) const {
+    if (!m_built || !IsPhysical()) return true;
+    for (int b = 0; b < dyn::kBones; ++b) {
+        const dyn::BodyState st = m_dc.Body(b);
+        if (st.velocity.Magnitude() > speed) return false;
+    }
+    return true;
+}
+
+void Ragdoll::SetMode(int m) {
+    mode = m < 0 ? 0 : (m > 2 ? 2 : m);
+    if (m_built) m_dc.SetMode((dyn::RagdollMode)mode);
+}
+
+bool Ragdoll::Trigger(const std::string& raw) {
+    if (!m_built) return false;
+    std::string n;
+    for (char c : raw) if (c != ' ' && c != '_' && c != '-') n += (char)std::tolower((unsigned char)c);
+    if (n == "knockdown" || n == "fall" || n == "trip") { m_dc.Knockdown(); return true; }
+    if (n == "getup" || n == "standup") { m_dc.GetUp(); return true; }
+    if (n == "die" || n == "kill") { m_dc.Die(); return true; }
+    if (n == "revive") { m_dc.Revive(); return true; }
+    if (n == "limp" || n == "ragdoll") { SetMode(2); return true; }
+    if (n == "powered" || n == "active") { SetMode(1); return true; }
+    if (n == "reactive" || n == "animated") { SetMode(0); return true; }
+    if (n == "stumble" || n == "push") { Push(Vec3::Scale(gameObject->transform->Forward(), Vec3{1, 0, 1}) * (-0.8f * mass)); return true; }
+    return false;
 }
 
 } // namespace okay

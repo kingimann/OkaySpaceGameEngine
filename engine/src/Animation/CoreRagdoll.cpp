@@ -552,5 +552,31 @@ float CoreRagdoll::JointGap(int joint) const {
     return phys::Len(m->world->GetTransform(d.bodyA).Apply(d.frameA.p) - m->world->GetTransform(d.bodyB).Apply(d.frameB.p));
 }
 
+float CoreRagdoll::JointLimitExcess(int joint) const {
+    if (joint < 0 || joint >= (int)m->joints.size() || !m->Live()) return 0.0f;
+    const phys::JointDef& d = m->world->GetJoint(m->joints[(std::size_t)joint].id);
+    const phys::Q ra = phys::NormalizeQ(m->world->GetRotation(d.bodyA) * d.frameA.q);
+    const phys::Q rb = phys::NormalizeQ(m->world->GetRotation(d.bodyB) * d.frameB.q);
+    const phys::Q rel = phys::NormalizeQ(phys::Conj(ra) * rb);
+    // The swing / twist split of the core's joint (Physics/Core/Joint.cpp): twist about X first, the rest is swing.
+    phys::Q qt{rel.x, 0.0f, 0.0f, rel.w};
+    float twist = Mathf::PI;
+    const float l = std::sqrt(qt.x * qt.x + qt.w * qt.w);
+    if (l > 1e-9f) {
+        qt = phys::Q{qt.x / l, 0.0f, 0.0f, qt.w / l};
+        if (qt.w < 0.0f) qt = phys::Q{-qt.x, 0.0f, 0.0f, -qt.w};
+        twist = 2.0f * std::atan2(qt.x, qt.w);
+    } else {
+        qt = phys::Q{};
+    }
+    const phys::V3 sw = phys::ToRotationVector(phys::NormalizeQ(rel * phys::Conj(qt)));
+    const float swing = std::sqrt(sw.y * sw.y + sw.z * sw.z);
+    const phys::JointAxis& tw = d.angular[0];
+    float out = Mathf::Max(0.0f, Mathf::Max(tw.lower - twist, twist - tw.upper));
+    if (d.type == phys::JointType::Hinge) out = Mathf::Max(out, swing);
+    else out = Mathf::Max(out, swing - Mathf::Max(d.swingSpan1, d.swingSpan2));
+    return out;
+}
+
 } // namespace dyn
 } // namespace okay

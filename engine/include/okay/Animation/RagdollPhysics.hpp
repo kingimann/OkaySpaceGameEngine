@@ -6,22 +6,15 @@
 // The controller (DynamicCharacter) only talks to the abstract RagdollPhysics
 // below: add bodies and joints, set a joint's drive (target rotation, stiffness,
 // damping), push bodies, pin a hand to the world, step, read poses and contacts.
-// Today the one implementation is XpbdRagdoll: a small articulated rigid-body
-// solver of our own, written from the published method of
-//   M. Mueller, M. Macklin, N. Chentanez, S. Jeschke, T.-Y. Kim,
-//   "Detailed Rigid Body Simulation with Extended Position Based Dynamics",
-//   Computer Graphics Forum (SCA) 2020
-// (substepping, one positional pass per substep, positional and angular
-// corrections with generalized inverse masses, compliance = 1 / stiffness,
-// velocity pass for damping), plus the swing / twist split of a joint rotation
-// that is standard in the robotics and animation literature.
-// XpbdRagdoll is a stop-gap and a copy of what the physics core does: once the
-// core's Ball / ConeTwist Joint3D drives land (claude2/physics-no-classic), a
-// backend on them replaces it and XpbdRagdoll is deleted (docs/status/UNFINISHED.md).
-// Build nothing new on it.
+// The one implementation is CoreRagdoll: one physics-core body and collider per
+// bone and one core joint per joint (okay::phys::World, docs/physics/physics_core.md),
+// in the scene's own physics world, so limbs meet everything in it. (Until
+// 2026-11-25 there was also XpbdRagdoll, a second rigid-body and joint solver of
+// the ragdoll's own; it was deleted when the ragdoll moved onto the core.)
 //
-// The world is reached only through ContactWorld::Cast (a segment query), so
-// the layer has no Scene dependency and runs in plain unit tests.
+// The controller's ray questions (grab, get-up floor) go through
+// ContactWorld::Cast (a segment query), so it has no Scene dependency and runs
+// in plain unit tests; the bodies themselves collide in the core world.
 // ---------------------------------------------------------------------------
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -39,17 +32,6 @@ class ContactWorld {
 public:
     virtual ~ContactWorld() = default;
     virtual bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const = 0;
-};
-
-/// A flat ground at `groundY` plus optional axis-aligned boxes (a ledge, a
-/// wall). Used by the unit tests (the component always asks the scene).
-class SimpleWorld : public ContactWorld {
-public:
-    struct Box { Vec3 min, max; };
-    float groundY = 0.0f;
-    bool  hasGround = true;
-    std::vector<Box> boxes;
-    bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const override;
 };
 
 struct ContactSphere { Vec3 local; float radius = 0.05f; };
@@ -144,90 +126,6 @@ public:
     virtual int   Resets() const = 0;
 };
 
-/// Our own solver (see the header comment for the method).
-class XpbdRagdoll : public RagdollPhysics {
-public:
-    Vec3  gravity{0.0f, -9.81f, 0.0f};
-    int   substeps = 12;
-    float maxSpeed = 40.0f;          // m/s cap per body
-    float maxSpin = 60.0f;           // rad/s cap per body
-
-    void  Clear() override;
-    int   AddBody(const BodyDesc& d) override;
-    int   AddJoint(const JointDesc& d) override;
-    int   BodyCount() const override { return (int)m_bodies.size(); }
-    int   JointCount() const override { return (int)m_joints.size(); }
-    void  SetDrive(int joint, const JointDrive& drive) override;
-    void  SetJointFriction(float perSecond) override { m_jointFriction = perSecond < 0.0f ? 0.0f : perSecond; }
-    void  SetState(int body, const BodyState& s) override;
-    BodyState State(int body) const override;
-    float Mass(int body) const override;
-    void  ApplyImpulse(int body, const Vec3& impulse, const Vec3& atPoint) override;
-    void  AddForce(int body, const Vec3& force) override;
-    void  AddTorque(int body, const Vec3& torque) override;
-    void  SetPin(int body, const Vec3& localPoint, const Vec3& worldPoint, float stiffness) override;
-    void  ClearPin(int body) override;
-    void  SetHelper(int body, const Vec3& pos, float posStiffness, const Quat& rot, float rotStiffness,
-                    float damping) override;
-    void  ClearHelpers() override;
-    void  SetActive(bool) override {}
-    void  Step(float dt, const ContactWorld* world) override;
-    bool  BodyTouching(int body) const override;
-    int   SphereCount(int body) const override;
-    bool  SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal, Vec3* point) const override;
-    int   Resets() const override { return m_resets; }
-
-    /// Joint geometry for tests: the gap between the two anchor points (m).
-    float JointGap(int joint) const;
-
-private:
-    struct Sphere {
-        Vec3 local; float radius;
-        bool touching = false, hasPlane = false;
-        Vec3 planePoint, planeNormal;
-    };
-    struct Body {
-        Vec3 x, v, w; Quat q;
-        Vec3 px; Quat pq;               // pose at the start of the substep
-        float invMass = 1.0f, mass = 1.0f;
-        Vec3 invI;                      // inverse principal inertia, body frame
-        float friction = 0.7f;
-        Vec3 force, torque;
-        std::vector<Sphere> spheres;
-        bool pinned = false; Vec3 pinLocal, pinWorld; float pinK = 0.0f;
-        Vec3 helpX; Quat helpQ; float helpXK = 0.0f, helpQK = 0.0f, helpDamp = 0.0f;
-        BodyState good;                 // last finite state
-    };
-    struct Joint {
-        int p, c;
-        Vec3 rp, rc;                    // anchors in the parent / child frames
-        Quat rest;                      // child frame in parent frame at build
-        Vec3 axisInParent;              // child +Y in the parent frame at build
-        bool hinge; float swing, twist;
-        Vec3 hingeP, hingeC;            // hinge axis in each frame
-        Vec3 refP;                      // child +Y at build, for the hinge angle, parent frame
-        float hingeMin, hingeMax;
-        JointDrive drive;
-    };
-
-    Vec3 InvIWorld(const Body& b, const Vec3& v) const;
-    float GenInvMass(const Body* b, const Vec3& r, const Vec3& n) const;
-    float GenInvInertia(const Body* b, const Vec3& n) const;
-    void  Positional(Body* a, const Vec3& ra, Body* b, const Vec3& rb, const Vec3& delta, float alpha, float h);
-    void  Angular(Body* a, Body* b, const Vec3& rot, float alpha, float h, float maxTorque = 0.0f);
-    void  AngularVelocity(Body* a, Body* b, const Vec3& dw);
-    void  FindContacts(float dt, const ContactWorld* world);
-    void  SolveJoint(Joint& j, float h);
-    float DriveStiffness(const Joint& j, const Body* P, const Body* C) const;
-    void  SolveContacts(float h);
-    void  Sanitise();
-
-    std::vector<Body> m_bodies;
-    std::vector<Joint> m_joints;
-    float m_jointFriction = 0.0f;
-    int m_resets = 0;
-};
-
 /// The ragdoll's bodies on the physics core (okay::phys::World): one core body and collider per bone, one core
 /// joint per joint with its orientation drive as the muscle. The core's solver moves them together with everything
 /// else in that world, so limbs collide with dynamic bodies and with each other.
@@ -286,6 +184,9 @@ public:
 
     /// The gap between the two anchor points of a joint (m), for tests.
     float JointGap(int joint) const;
+    /// How far a joint is past its limits now (radians, 0 = inside), measured the way the core's joint measures it
+    /// (twist about the joint's X axis, then the swing; a hinge's swing is all error), for tests.
+    float JointLimitExcess(int joint) const;
 
 private:
     struct Impl;

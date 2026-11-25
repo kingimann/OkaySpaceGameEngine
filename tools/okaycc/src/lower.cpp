@@ -829,7 +829,7 @@ private:
         else if (init->kind == Expr::Kind::Unary && init->text == "-" && !init->kids.empty() && init->kids[0] &&
                  init->kids[0]->kind == Expr::Kind::Int)
             val = -static_cast<std::int64_t>(init->kids[0]->ival);
-        else {
+        else if (!constInt(*init, val)) {  // (char)27, static_cast<char>('A' + 2): integer constant expressions
             err(init->line, init->col, "global initializer is not supported");
             return;
         }

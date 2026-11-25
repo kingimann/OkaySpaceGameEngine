@@ -111,6 +111,11 @@ public:
         r.append(o);
         return r;
     }
+    string operator+(char c) const {  // ([string.op.plus]) s + 'c'
+        string r = *this;
+        r.push_back(c);
+        return r;
+    }
     string &operator+=(const string &o) { return append(o); }
     string &operator+=(string_view v) { return append(v.data(), v.size()); }
     string &append(string_view v) { return append(v.data(), v.size()); }
@@ -138,6 +143,10 @@ public:
         if (pos > n_) pos = n_;
         if (n > n_ - pos) n = n_ - pos;
         return string(p_ + pos, n);
+    }
+    string &append(unsigned long n, char c) {  // [string.append] n copies of c
+        for (unsigned long i = 0; i < n; ++i) push_back(c);
+        return *this;
     }
     string &append(const char *s, unsigned long n) {
         char *old = grow(n_ + n);
@@ -174,6 +183,12 @@ public:
         for (unsigned long i = pos; i + n <= n_; ++i) p_[i] = p_[i + n];
         n_ -= n;
         return *this;
+    }
+    // [string.erase] erase(first, last): the characters in [first, last); returns where they were.
+    char *erase(char *first, char *last) {
+        unsigned long pos = (unsigned long)(first - p_);
+        erase(pos, (unsigned long)(last - first));
+        return p_ + pos;
     }
     string &insert(unsigned long pos, const char *s) {
         string tail = substr(pos);

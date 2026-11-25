@@ -395,6 +395,16 @@ private:
             if (captureName(e)) return checkExprBody(e);
             if (method_ && scopeOf(e.text) <= 0) {  // a parameter or local hides a member ([basic.scope.block])
                 const Type* st = canonOf(method_);
+                if (st && !anonHolder(st, e.text).empty()) {
+                    // a member of an anonymous union member: this->name (the Member case finds it)
+                    std::string nm = e.text;
+                    e.kind = Expr::Kind::Member;
+                    e.text = "->";
+                    e.kids.clear();
+                    e.kids.push_back(mkName("this", e));
+                    e.kids.push_back(mkName(nm, e));
+                    return checkExprBody(e);
+                }
                 if (st) {
                     const bool viaBase = !viaOtherBase(st, e.text, false).empty();
                     for (const Param& f : st->params) {
@@ -690,6 +700,10 @@ private:
                 e.kids.push_back(std::move(cond));
                 return checkExprBody(e);
             }
+            if (a.type && b.type && a.type->kind == Type::Kind::Struct && sameType(*a.type, *b.type) && quiet_) {
+                r.type = cloneType(*a.type);  // (a probe: the real check names the temporary, above)
+                return r;
+            }
             if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
                 r.type = prim(Type::Kind::Int);
                 return r;
@@ -736,6 +750,12 @@ private:
                 ET from = decay(copyET(aCls ? b : a));
                 if (from.type && convertingTemp(*e.kids[other], *from.type, aCls ? *a.type : *b.type))
                     return checkExprBody(e);
+            }
+            if (a.type && b.type && quiet_ && (a.type->kind == Type::Kind::Struct) != (b.type->kind == Type::Kind::Struct)) {
+                // A probe leaves the tree as it is: the result is an object of the class (the real
+                // check converts the other branch, above).
+                r.type = cloneType(a.type->kind == Type::Kind::Struct ? *a.type : *b.type);
+                return r;
             }
             err(e.line, e.col, "branches of '?:' do not have a common type");
             return bad(e.line, e.col);
@@ -858,11 +878,43 @@ private:
                 e.text = q;
                 return checkExpr(e);
             }
+            if (std::string holder = anonHolder(st, fname); !holder.empty()) {
+                // obj.i with i a member of an anonymous union member: obj.__anonN.i ([class.union.anon]).
+                auto inner = mkE(Expr::Kind::Member, e);
+                inner->text = e.text;
+                inner->kids.push_back(std::move(e.kids[0]));
+                inner->kids.push_back(mkName(holder, e));
+                e.kids[0] = std::move(inner);
+                e.text = ".";
+                return checkExpr(e);
+            }
             err(e.line, e.col, "struct has no field '" + fname + "'");
             return bad(e.line, e.col);
         }
         case Expr::Kind::Cast: {
             if (!need(0) || !e.ty) return bad(e.line, e.col);
+            if (e.ty->kind == Type::Kind::Reference && e.ty->rref && e.ty->inner &&
+                e.ty->inner->kind == Type::Kind::Struct && !e.ty->inner->tag.empty()) {
+                // static_cast<T &&>(x) of an object of class T: x as an xvalue ([expr.static.cast]
+                // p3), written *&x with ival 5 as std::move's result is.
+                ++quiet_;
+                ET p = checkExpr(*e.kids[0]);
+                --quiet_;
+                const Type* pt = p.type.get();
+                if (pt && pt->kind == Type::Kind::Reference && pt->inner) pt = pt->inner.get();
+                const Type* want = canonOf(e.ty->inner.get());
+                const Type* have = pt && pt->kind == Type::Kind::Struct ? canonOf(pt) : nullptr;
+                if (!p.bad && (p.lvalue || p.xvalue) && want && have && want->tag == have->tag) {
+                    auto addr = eUnary("&", std::move(e.kids[0]), e);
+                    e.kind = Expr::Kind::Unary;
+                    e.text = "*";
+                    e.ival = 5;
+                    e.ty.reset();
+                    e.kids.clear();
+                    e.kids.push_back(std::move(addr));
+                    return checkExpr(e);
+                }
+            }
             ET refProbe;
             if (e.ty->kind == Type::Kind::Reference && !e.ty->rref && e.ty->inner &&
                 e.ty->inner->kind == Type::Kind::Struct) {
@@ -1322,6 +1374,18 @@ private:
             if (p.name == n) return p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function;
         return false;
     }
+    // The hidden name of the anonymous union or struct member (__anonN) of class st that has a
+    // member called name, or "" ([class.union.anon] p1).
+    static std::string anonHolder(const Type* st, const std::string& name) {
+        if (!st) return "";
+        for (const Param& f : st->params) {
+            if (f.name.compare(0, 6, "__anon") != 0 || !f.type || !f.mangled.empty()) continue;
+            for (const Param& q : f.type->params)
+                if (q.name == name || (q.name.compare(0, 6, "__anon") == 0 && !anonHolder(f.type.get(), name).empty()))
+                    return f.name;
+        }
+        return "";
+    }
     // f().m, f().a.b: a member (through '.') of a call result. The checker makes it a member of a
     // hidden object, (hidden = f(), hidden.m): an lvalue to the end of the full expression.
     static bool memberOfCall(const Expr& e) {
@@ -1397,7 +1461,7 @@ private:
               (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index)))
             return false;  // (*s.begin(), -f(), Name() += x, ++Counter(): operators on a call result)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
-            lhs.kind != Expr::Kind::Unary && !memberOfCall(lhs) &&
+            lhs.kind != Expr::Kind::Unary && lhs.kind != Expr::Kind::Cond && !memberOfCall(lhs) &&
             !((lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index) &&
               (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
                e.kind == Expr::Kind::Post)))
@@ -1444,7 +1508,8 @@ private:
         // (typeid(x) became *(const type_info *)... when the probe checked it: a dereference too.)
         const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || subobjectOfTemp(lhs) ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
-                              (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast));
+                              (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast ||
+                               lhs.kids[0]->kind == Expr::Kind::Cond));  // *(c ? &x : &y)
         if (!simple && !(found && probe.lvalue && refCall)) {
             // (A call that returns a reference to an object, *f() inside, is an lvalue: the member
             // call below is made on it directly.)
@@ -1565,8 +1630,8 @@ private:
             if (!simpleOperand(k) && k.kind != Expr::Kind::Int && k.kind != Expr::Kind::Float &&
                 k.kind != Expr::Kind::Char && k.kind != Expr::Kind::String && k.kind != Expr::Kind::Call &&
                 k.kind != Expr::Kind::Bin && k.kind != Expr::Kind::Comma && k.kind != Expr::Kind::Unary &&
-                k.kind != Expr::Kind::Cast && k.kind != Expr::Kind::Member)
-                return false;  // (f().name + x: a member of a call result too)
+                k.kind != Expr::Kind::Cast && k.kind != Expr::Kind::Member && k.kind != Expr::Kind::Cond)
+                return false;  // (f().name + x: a member of a call result too; "k" + (c ? s : t))
             ++quiet_;
             ET t = checkExpr(k);
             --quiet_;
@@ -4800,6 +4865,7 @@ private:
         block.stmts = std::move(out);
     }
 
+    std::set<std::string> voidRv_;  // hidden return values (__rvN) of a void call: dropped
     void checkStmt(Stmt& s) {
         // Kept results (memo_) are only for the statement being checked.
         if (s.kind != Stmt::Kind::Block) {
@@ -4823,6 +4889,7 @@ private:
                 err(s.line, s.col, "return outside a function");
                 break;
             }
+            if (s.expr && s.expr->kind == Expr::Kind::Name && voidRv_.count(s.expr->text)) s.expr.reset();
             if (isAuto(ret_) && curFn_ && curFn_->type) {
                 // A deduced return type ([dcl.spec.auto]): the type of the first return.
                 ET v;
@@ -5077,6 +5144,21 @@ private:
             if (loops_ == 0) err(s.line, s.col, "continue is not inside a loop");
             break;
         case Stmt::Kind::Decl:
+            if (s.decl && s.decl->init && s.decl->type && s.decl->name.compare(0, 4, "__rv") == 0 &&
+                hasDecltype(s.decl->type.get()))
+                resolveDecltype(s.decl->type);
+            if (s.decl && s.decl->init && s.decl->type && s.decl->type->kind == Type::Kind::Void &&
+                s.decl->name.compare(0, 4, "__rv") == 0) {
+                // return f(); with locals to destroy, in a function whose return type turned out
+                // to be void (auto g() -> decltype(f())): f() is a statement and the return
+                // has no value ([stmt.return] p2).
+                voidRv_.insert(s.decl->name);
+                s.kind = Stmt::Kind::Expr;
+                s.expr = std::move(s.decl->init);
+                s.decl.reset();
+                checkStmt(s);
+                break;
+            }
             if (s.decl) checkVar(*s.decl);
             break;
         case Stmt::Kind::Case:

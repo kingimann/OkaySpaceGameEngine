@@ -1811,6 +1811,25 @@ private:
             }
         }
         otherVptrStores(*T, tag, body->stmts, p);
+        // A member of an anonymous union or struct member (union { bool b; int64_t i; }; .. : i(0)),
+        // [class.union.anon] p1: its members are members of the class. It is assigned here.
+        for (std::size_t k = 0; k < d.inits.size();) {
+            MemInit& m = d.inits[k];
+            bool inAnon = false;
+            for (auto& f : ownFields(*T)) {
+                if (f.first.compare(0, 6, "__anon") != 0 || !f.second || f.second->tag.size() ||
+                    (f.second->kind != Type::Kind::Union && f.second->kind != Type::Kind::Struct))
+                    continue;
+                for (const Param& q : f.second->params)
+                    if (q.name == m.name) inAnon = true;
+            }
+            if (!inAnon || m.args.size() != 1) {
+                ++k;
+                continue;
+            }
+            body->stmts.push_back(sExpr(eAssign(eArrow(eName("this", p), m.name, p), std::move(m.args[0]), p), p));
+            d.inits.erase(d.inits.begin() + static_cast<std::ptrdiff_t>(k));
+        }
         for (MemInit& m : d.inits) {
             bool ok = (B && (m.name == shortName(T->base) || m.name == T->base));
             for (auto& f : ownFields(*T))
@@ -2534,7 +2553,7 @@ private:
             tplShort = shortName(tag);
             tag += "__local" + std::to_string(localClassN_++);
         }
-        if (tag.empty() && !isUnion && bodyDepth_ > 0 && isP("{") && [&] {
+        if (tag.empty() && !isUnion && (bodyDepth_ > 0 || !classStack_.empty()) && isP("{") && [&] {
                 // only one with a declarator after its body (an anonymous member, struct { .. };,
                 // keeps its members in the enclosing class)
                 int braces = 0;
@@ -2547,7 +2566,7 @@ private:
                 return false;
             }()) {
             // An unnamed class defined in a C++ function (struct { T &r; } cv{x}; in
-            // Render/Mesh.hpp): a hidden name, so it is a class like any other and a braced
+            // Render/Mesh.hpp) or class (struct { int a; } s{1}; a member): a hidden name, so it is a class like any other and a braced
             // initializer initializes its members ([dcl.init.aggr]). (In C, unnamed structs keep
             // the C rules.)
             const std::string& f = at.file;
@@ -2800,6 +2819,7 @@ private:
             implicitTags_.insert(shortTag);
         }
         while (!atEnd() && !isP("}")) {
+            if (isKw("using") && inheritCtors(cx, *t)) continue;
             if (isKw("using")) {
                 parseUsing();
                 continue;
@@ -2955,6 +2975,18 @@ private:
                     // enum E { ... }; as a member: only its names
                     enumDef_ = false;
                     advance();
+                    continue;
+                }
+                if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";") &&
+                    base->tag.empty() && !base->params.empty()) {
+                    // An anonymous union or struct member, union { bool b; int64_t i; }; ([class.union.anon]
+                    // p1, C11 6.7.2.1 p13): a member with a hidden name, whose members the checker finds
+                    // as members of the class.
+                    advance();
+                    Param anon;
+                    anon.name = "__anon" + std::to_string(newN_++);
+                    anon.type = std::move(base);
+                    t->params.push_back(std::move(anon));
                     continue;
                 }
                 if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
@@ -5377,6 +5409,63 @@ private:
         // 'new T(args)' in an initializer declares a hidden pointer: it goes first in the constructor.
         for (auto& st : preStmts_) cd.pre.push_back(std::move(st));
         preStmts_.clear();
+    }
+
+    // using B::B; in a class whose base is B: B's constructors are constructors of this class too
+    // ([namespace.udecl] p3, [class.inhctor.init]). Each becomes C(params) : B(params) {}, with B's
+    // default arguments; B's copy and move constructors are not inherited ([over.match.funcs] p8).
+    bool inheritCtors(ClassCtx& cx, Type& T) {
+        if (T.base.empty()) return false;
+        std::size_t j = i_ + 1;
+        std::string q;
+        while (j + 1 < toks_.size() && toks_[j].kind == Tok::Ident && isP(toks_[j + 1], "::")) {
+            q += (q.empty() ? "" : "::") + toks_[j].text;
+            j += 2;
+        }
+        if (q.empty() || j + 1 >= toks_.size() || toks_[j].kind != Tok::Ident || !isP(toks_[j + 1], ";")) return false;
+        if (classPrefix(q) != T.base || toks_[j].text != shortName(T.base)) return false;
+        const Type* B = classOf(T.base);
+        if (!B) return false;
+        i_ = j + 2;
+        Pos p = here();
+        for (const Param& bc : B->params) {
+            if (bc.name != "<ctor>" || !bc.type || bc.type->params.empty() || deletedFns_.count(bc.mangled)) continue;
+            const Type* a0 = bc.type->params[0].type.get();
+            if (bc.type->params.size() == 1 && a0 && a0->kind == Type::Kind::Reference && a0->inner &&
+                a0->inner->tag == T.base)
+                continue;
+            auto fnT = cloneType(*bc.type, true);
+            CtorDef cd;
+            cd.pos = p;
+            MemInit mi;
+            mi.name = shortName(T.base);
+            for (std::size_t k = 0; k < fnT->params.size(); ++k) {
+                Param& prm = fnT->params[k];
+                prm.name = "__ia" + std::to_string(k);
+                std::unique_ptr<Expr> arg = eName(prm.name, p);
+                // (a T&& parameter is passed on as an xvalue, as std::forward would)
+                if (prm.type && prm.type->kind == Type::Kind::Reference && prm.type->rref) arg = eXvalue(std::move(arg), p);
+                mi.args.push_back(std::move(arg));
+                cd.params.push_back(std::move(prm));
+            }
+            cd.inits.push_back(std::move(mi));
+            cd.body = sBlock(p);
+            cd.hasBody = true;
+            Param cp;
+            cp.name = "<ctor>";
+            auto fn = fnTypeOf(cd.params);
+            cp.mangled = mangleSpecial(cx.tag, "C1", *fn);
+            cp.type = std::move(fn);
+            bool dup = false;  // a constructor the class declares itself hides the inherited one
+            for (const Param& q2 : T.params)
+                if (q2.name == "<ctor>" && q2.mangled == cp.mangled) dup = true;
+            if (dup) continue;
+            T.params.push_back(std::move(cp));
+            cx.ctors.push_back(std::move(cd));
+            userCtors_.insert(cx.tag);
+        }
+        cx.cxx = true;
+        return true;
     }
 
     // "S::S(...) : init { }" and "S::~S() { }" written outside the class.

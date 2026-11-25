@@ -20,6 +20,10 @@ public:
     map(initializer_list<value_type> il) {
         for (const value_type *p = il.begin(); p != il.end(); ++p) __t.insertValue(*p);
     }
+    template <typename It>
+    map(It first, It last) {  // ([associative.reqmts], [unord.req]) a range
+        for (; first != last; ++first) insert(*first);
+    }
     map<K, V, C> &operator=(const map<K, V, C> &o) {
         if (this != &o) {
             __t.clear();

@@ -145,6 +145,14 @@ template <class T> struct is_trivial : integral_constant<bool, __okay_is_trivial
 template <class T> struct is_default_constructible : integral_constant<bool, __okay_is_default_constructible(T)> {};
 template <class T> struct is_trivially_default_constructible : integral_constant<bool, __okay_is_default_constructible(T) && __okay_is_trivially_copyable(T)> {};
 
+// is_invocable ([meta.rel]): okay-cc's builtin counts the arguments a callable takes (a lambda,
+// a class with operator(), a function); the argument types are not compared.
+// Up to four arguments; __okay_no_arg fills the places not given.
+struct __okay_no_arg;
+template <class F, class A1 = __okay_no_arg, class A2 = __okay_no_arg, class A3 = __okay_no_arg, class A4 = __okay_no_arg>
+struct is_invocable : integral_constant<bool, __okay_is_invocable(F, A1, A2, A3, A4)> {};
+template <class F, class A1 = __okay_no_arg, class A2 = __okay_no_arg, class A3 = __okay_no_arg, class A4 = __okay_no_arg>
+inline constexpr bool is_invocable_v = __okay_is_invocable(F, A1, A2, A3, A4);
 template <class T, class U> inline constexpr bool is_same_v = is_same<T, U>::value;
 template <class B, class D> inline constexpr bool is_base_of_v = is_base_of<B, D>::value;
 template <class T> inline constexpr bool is_void_v = is_void<T>::value;

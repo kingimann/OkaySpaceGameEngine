@@ -27,7 +27,8 @@ static void own_switches_real_table_is_sane() {
         CHECK(!Has(seen, i.id));
         seen.push_back(i.id);
     }
-    CHECK(Find("http", Items()) != nullptr);
+    CHECK(Find("http", Items()) == nullptr);   // our own web client is the only one now (no curl): no switch, an old off=http line is ignored
+    CHECK(JoinIds(Parse("off=http\n", Items())) == JoinIds(Parse("", Items())));
     CHECK(Find("wav", Items()) == nullptr);   // our own WAV reader is the only one now: no switch (an old off=wav line is ignored)
     CHECK(JoinIds(Parse("off=wav\n", Items())) == JoinIds(Parse("", Items())));
     {   // the OkayUI Inspector item: on unless turned off, sets OKAY_UI_INSPECTOR=1, hidden where OkayUI is not built in
@@ -159,7 +160,7 @@ static void own_switches_default_reaches_the_okayui_gates() {
     DropEnv(AppliedVar());
     Context ctx; ctx.windows = true; ctx.okayUi = true;
     auto got = Apply(Parse("", Items()), Items(), ctx);
-    CHECK(JoinIds(got) == "okayui,inspector,ownrender");                        // http and platform are not offered on Windows
+    CHECK(JoinIds(got) == "okayui,inspector,ownrender");                        // platform is not offered on Windows
     CHECK(Get("OKAY_OWN_HTTP") == nullptr && Get("OKAY_PLATFORM_BACKEND") == nullptr);
     CHECK(okayuibackend::Resolve(Get("OKAY_UI_BACKEND"), "", okayuibackend::DevMode(Get("OKAY_DEV")), true) == okayuibackend::Backend::OkayUI);
     CHECK(okayuibackend::InspectorOn(okayuibackend::Backend::OkayUI, Get("OKAY_DEV"), Get("OKAY_UI_INSPECTOR")));

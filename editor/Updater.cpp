@@ -5,7 +5,7 @@
 #include "MainShared.hpp"            // SysNoWindow (main.cpp)
 #include "AppRestart.hpp"            // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"           // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/release/updater.md)
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for the update download: WinHTTP / our own client first, curl only as its last fallback
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam for the update download: WinHTTP / our own client
 
 namespace oked {
 
@@ -54,36 +54,15 @@ std::string BustCache(const std::string& url) {
     return url + sep + "okaycb=" + std::to_string(now) + "_" + std::to_string(counter++);
 }
 
-// Download a URL to a file: the HTTP seam first (WinHTTP on Windows, our own client on Linux when on, curl only as
-// its last fallback), then PowerShell / wget when nothing could fetch it. A clear refusal (a 404, a full disk) is
-// final, so an error page is never cached as a binary. No-cache headers + a unique query string defeat the CDN cache.
-// The checksum list is still REQUIRED by the caller (UpdaterCore.hpp); this only fetches bytes.
+// Download a URL to a file through the HTTP seam (NativeFetch.hpp: WinHTTP on Windows, our own client on Linux; no
+// outside program). A refusal (a 404, a full disk, no answer) is final, so an error page is never cached as a binary.
+// No-cache headers + a unique query string defeat the CDN cache. The checksum list is still REQUIRED by the caller
+// (UpdaterCore.hpp); this only fetches bytes.
 bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
-    std::string u = BustCache(url);
-    const std::string out = okay::restart::Utf8(outPath);
     okay::http::OwnDownloadSpec sp;
     sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;   // a drop resumes with Range
-    sp.stallSeconds = 0;
-    const okay::http::OwnDownloadResult r = okay::http::FetchToFile(u, outPath, sp);
-    if (r.outcome == okay::http::OwnOutcome::Ok) return true;
-    if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
-#if defined(_WIN32)
-    auto psQuote = [](const std::string& s) {
-        std::string o; o.reserve(s.size());
-        for (char c : s) { if (c == '\'') o += "''"; else o += c; }
-        return o;
-    };
-    const std::string script =
-        "try { Invoke-WebRequest -Headers @{'Cache-Control'='no-cache'} "
-        "-UseBasicParsing -Uri '" + psQuote(u) + "' -OutFile '" + psQuote(out) +
-        "' } catch { exit 1 }";
-    const std::vector<std::string> pw = {"powershell", "-NoProfile", "-Command", script};
-    return okay::restart::RunAndWait(pw) == 0 && fs::exists(outPath);
-#else
-    const std::vector<std::string> wget = {"wget", "-q", "--no-cache", "-O", out, u};
-    return okay::restart::RunAndWait(wget) == 0 && fs::exists(outPath);
-#endif
+    return okay::http::FetchToFile(BustCache(url), outPath, sp).outcome == okay::http::OwnOutcome::Ok;
 }
 
 // The releases bucket: the only place updates come from. OKAY_UPDATE_SERVER overrides the

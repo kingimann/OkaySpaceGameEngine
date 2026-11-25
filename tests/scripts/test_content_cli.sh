@@ -65,7 +65,7 @@ if command -v python3 >/dev/null 2>&1; then
     for _ in $(seq 1 50); do [ -s "$T/port" ] && break; sleep 0.1; done
     PORT="$(cat "$T/port" 2>/dev/null)"
     if [ -n "$PORT" ]; then
-        out="$(OKAY_OWN_HTTP=1 "$TOOL" sync "http://127.0.0.1:$PORT/" "$T/c4" --game cli --keys "$pub" 2>&1)"; rc=$?
+        out="$("$TOOL" sync "http://127.0.0.1:$PORT/" "$T/c4" --game cli --keys "$pub" 2>&1)"; rc=$?
         if [[ "$out" == *"no built-in HTTP client"* ]]; then echo "note: http step skipped (tool built without the own HTTP client)"
         elif [ $rc -ne 0 ] || [[ "$out" != *"status=updated"*"retries=1"* ]]; then bad "http sync (with a cut download) failed: $out"
         else cmp -s "$T/pub/audio/hit.wav" "$T/c4/trees/1/audio/hit.wav" || bad "http file differs after resume"; fi

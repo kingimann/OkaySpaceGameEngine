@@ -7,17 +7,13 @@
 // per request (which cost a few hundred ms each and made the launcher slow to
 // fill in on startup). Thread-safe: every worker can call Request concurrently.
 //
-// Elsewhere (and if WinHTTP can't reach the server, e.g. an odd proxy setup)
-// Request returns reached=false and the HTTP seam (NativeFetch.hpp) falls back
-// to curl, which only CurlFallback.hpp may start.
-//
-// Linux and other POSIX systems can OPT IN to our own HTTP/1.1 client
-// (OwnHttp.hpp / OwnHttpNet.hpp, docs/platform/own_http.md): build with
-// -DOKAY_OWN_HTTP=ON and set the environment variable OKAY_OWN_HTTP=1. TLS then
-// comes from the system OpenSSL, loaded at run time. If libssl cannot be loaded,
-// the certificate does not verify, or anything else goes wrong before a response
-// arrives, reached stays false and the spawned curl path runs as before. It is off
-// by default; the curl path remains the default and the fallback.
+// Linux and other POSIX systems use our own HTTP/1.1 client (OwnHttp.hpp /
+// OwnHttpNet.hpp, docs/platform/own_http.md), built in with -DOKAY_OWN_HTTP=ON
+// (the default). TLS comes from the system OpenSSL, loaded at run time. No
+// program starts the external curl program any more (tests/check_no_curl.cmake):
+// when the native client gives no answer, the call fails with its reason.
+// Apple builds are parked (CLAUDE.md rule 14) and have no client: every call
+// there fails with NoClientReason().
 // ---------------------------------------------------------------------------
 #include <atomic>
 #include <cstdint>
@@ -40,7 +36,7 @@
 #if defined(OKAY_HTTP_WINHTTP)
 #  include <windows.h>
 #  include <winhttp.h>
-#elif defined(OKAY_OWN_HTTP) && !defined(__APPLE__)
+#elif defined(OKAY_OWN_HTTP) && !defined(__APPLE__) && !defined(__EMSCRIPTEN__)   // (a web page has no sockets of its own)
 #  include "okay/Platform/OwnHttpNet.hpp"
 #  define OKAY_OWN_HTTP_ACTIVE 1
 #endif
@@ -51,15 +47,15 @@ struct Result {
     bool        reached = false;   ///< got an HTTP response (any status)
     long        status = 0;
     std::string body;              ///< response body (empty when written to outFile)
-    std::string error;             ///< own client only: why no response was obtained (for logs)
+    std::string error;             ///< why no response was obtained (for logs)
     /// Only meaningful when reached is false: the request may have reached the server (the own client wrote request bytes to an
-    /// open connection; WinHTTP: ANY failure after WinHttpSendRequest succeeded, including a failed body read). Callers must NOT send a POST, PUT, PATCH or DELETE again by
-    /// another route (the curl fallback) then; a GET or HEAD may be repeated. A clean "not reached" (DNS failure,
+    /// open connection; WinHTTP: ANY failure after WinHttpSendRequest succeeded, including a failed body read). Callers must NOT send a POST, PUT, PATCH or DELETE again
+    /// then (for example in a retry loop); a GET or HEAD may be repeated. A clean "not reached" (DNS failure,
     /// connection refused, TLS refused, bad URL) leaves this false.
     bool        maybeSent = false;
 };
 
-/// A header line with every CR, LF and NUL taken out (the curl fallback's CurlCfgQuote does the same), so a value that came
+/// A header line with every CR, LF and NUL taken out, so a value that came
 /// from outside can never end its line and start a second header. Used on the WinHTTP path and by the seam (NativeFetch.hpp)
 /// before the own client sees the lines.
 inline std::string CleanHeaderLine(const std::string& h) {
@@ -122,36 +118,29 @@ inline HINTERNET Session() {
 } // namespace detail
 #endif
 
-/// True where the native client exists: Windows (WinHTTP), or POSIX built with
-/// OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1. The curl path is used otherwise.
+/// True where the native client exists: Windows (WinHTTP), or POSIX built with OKAY_OWN_HTTP (our own client, always on;
+/// there is no run-time switch and no curl to switch back to). False elsewhere (Apple, UWP and web builds): calls fail.
 inline bool NativeAvailable() {
 #if defined(OKAY_HTTP_WINHTTP)
-    return detail::Session() != nullptr && !std::getenv("OKAY_HTTP_CURL");
+    return detail::Session() != nullptr;
 #elif defined(OKAY_OWN_HTTP_ACTIVE)
-    const char* on = std::getenv("OKAY_OWN_HTTP");
-#if defined(OKAY_OWN_HTTP_DEFAULT_ON)   // -DOKAY_OWN_STACK=ON (dogfood build): on unless OKAY_OWN_HTTP=0 (or anything but 1)
-    const bool want = on ? (on[0] == '1' && on[1] == '\0') : true;
-#else
-    const bool want = on && on[0] == '1' && on[1] == '\0';
-#endif
-    return want && !std::getenv("OKAY_HTTP_CURL");
+    return true;
 #else
     return false;
 #endif
 }
 
-/// The no-re-send decision, kept here so it can be tested. After a failed native call, may the caller try the same
-/// request again through curl? A success never needs it. A clean not-reached (maybeSent false) always may. If the
-/// request may have reached the server, only GET and HEAD may be repeated; POST, PUT, PATCH, DELETE (and any other
-/// method) must not, or the action could happen twice.
-inline bool ShouldFallBackToCurl(const std::string& method, const Result& nativeResult) {
-    if (nativeResult.reached) return false;
-    if (!nativeResult.maybeSent) return true;
-    return method == "GET" || method == "HEAD";
+/// Why a call failed on a build with no native client (the error text of Request, RequestEx and the seam).
+inline const char* NoClientReason() {
+#if defined(OKAY_HTTP_WINHTTP)
+    return "no-client: WinHTTP could not be opened";
+#else
+    return "no-client: this build has no HTTP client (Windows: WinHTTP; Linux: our own client, -DOKAY_OWN_HTTP=ON; Apple, UWP and web builds have none)";
+#endif
 }
 
 /// Extra controls for downloads (the own client on Linux, WinHTTP on Windows; elsewhere RequestEx returns
-/// reached=false with an error and callers use the curl fallback). All fields optional.
+/// reached=false with NoClientReason()). All fields optional.
 struct RequestOptions {
     /// Called as the body arrives: bytes so far (counting from the resume offset) and the complete size when
     /// known (0 when not). Return false to cancel.
@@ -313,14 +302,14 @@ struct WinWatch {
 /// call is blocked on a silent server the watcher above checks cancel and the whole-call limit (totalMs) about every
 /// 50 ms. Cookies are WinHTTP's own per-session handling; acceptGzip is ignored (no Accept-Encoding is sent, so bodies
 /// come as is). A 407 (a proxy that wants a password; WinHTTP does not answer that challenge) is not an answer: reached
-/// stays false and maybeSent false (the proxy did not pass the request on), so the seam can try curl, which may know how.
+/// stays false and maybeSent false (the proxy did not pass the request on); error starts with "proxy-auth".
 /// Header lines lose any CR/LF (CleanHeaderLine). `bodyFile` is a UTF-8 path; a body file that cannot be read fails the
 /// call before anything is sent.
 inline ExResult WinRequestEx(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
                              const std::string& body, const std::string& bodyFile, const std::filesystem::path& outFile,
                              const RequestOptions& ro) {
     ExResult r;
-    if (!NativeAvailable()) { r.error = "winhttp unavailable"; return r; }
+    if (!NativeAvailable()) { r.error = NoClientReason(); return r; }
     HINTERNET ses = Session();
     std::wstring wurl = Widen(url);
     URL_COMPONENTS uc; ZeroMemory(&uc, sizeof(uc)); uc.dwStructSize = sizeof(uc);
@@ -392,7 +381,7 @@ inline ExResult WinRequestEx(const std::string& method, const std::string& url, 
                                  payload.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)payload.data(),
                                  (DWORD)payload.size(), (DWORD)payload.size(), 0);
     DWORD e = ok ? 0 : GetLastError();
-    if (watch.Unblock()) return stopped(true);   // (bytes may have gone out: never re-send a POST by curl)
+    if (watch.Unblock()) return stopped(true);   // (bytes may have gone out: never re-send a POST)
     if (!ok) return done((e == ERROR_WINHTTP_TIMEOUT ? "timeout: winhttp error " : "connect: winhttp error ") + std::to_string((unsigned long)e), false);
     if (!watch.Block()) return stopped(true);
     ok = WinHttpReceiveResponse(req, nullptr);
@@ -499,7 +488,7 @@ inline Result Request(const std::string& method, const std::string& url,
                       bool followRedirects = true) {
     Result r;
 #if defined(OKAY_HTTP_WINHTTP)
-    if (!detail::Session()) return r;
+    if (!detail::Session()) { r.error = NoClientReason(); return r; }
     RequestOptions ro;
     if (timeoutMs > 0) {
         ro.totalMs = timeoutMs;
@@ -552,6 +541,7 @@ inline Result Request(const std::string& method, const std::string& url,
     }
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)timeoutMs; (void)followRedirects;
+    r.error = NoClientReason();
 #endif
     return r;
 }
@@ -650,7 +640,7 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
                              outFile.empty() ? std::filesystem::path() : std::filesystem::u8path(outFile), ro);
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)ro;
-    r.error = "RequestEx needs a native client (WinHTTP on Windows, OKAY_OWN_HTTP elsewhere)";
+    r.error = NoClientReason();
 #endif
     return r;
 }

@@ -142,6 +142,23 @@ public:
         release(old);
         return *this;
     }
+    // [string.assign]: the contents replaced.
+    string &assign(const char *s, unsigned long n) {
+        string t(s, n);  // s may point into this string
+        swap(t);
+        return *this;
+    }
+    string &assign(const char *s) { return assign(s, strlen(s)); }
+    string &assign(const string &o) { return assign(o.p_, o.n_); }
+    string &assign(const string &o, unsigned long pos, unsigned long n = npos) {
+        if (pos > o.n_) pos = o.n_;
+        return assign(o.p_ + pos, o.n_ - pos < n ? o.n_ - pos : n);
+    }
+    string &assign(unsigned long n, char c) {
+        string t(n, c);
+        swap(t);
+        return *this;
+    }
     string &erase(unsigned long pos = 0, unsigned long n = npos) {
         if (pos > n_) pos = n_;
         if (n > n_ - pos) n = n_ - pos;
@@ -187,6 +204,30 @@ public:
             if (i == 0) return npos;
         }
     }
+    unsigned long rfind(const string &s, unsigned long pos = npos) const { return rfind(s.c_str(), pos); }
+    unsigned long find_first_of(const string &set, unsigned long pos = 0) const { return scan(set.c_str(), pos, true, true); }
+    unsigned long find_first_of(char c, unsigned long pos = 0) const { return find(c, pos); }
+    unsigned long find_last_of(const string &set, unsigned long pos = npos) const { return scan(set.c_str(), pos, false, true); }
+    unsigned long find_last_of(char c, unsigned long pos = npos) const { return rfind(c, pos); }
+    unsigned long find_first_not_of(const string &set, unsigned long pos = 0) const { return scan(set.c_str(), pos, true, false); }
+    unsigned long find_last_not_of(const string &set, unsigned long pos = npos) const { return scan(set.c_str(), pos, false, false); }
+    // [string.compare]: the part [pos, pos + len) against s; by bytes, then the shorter first.
+    int compareN(unsigned long pos, unsigned long len, const char *s, unsigned long m) const {
+        if (pos > n_) pos = n_;
+        unsigned long r = n_ - pos < len ? n_ - pos : len;
+        unsigned long k = r < m ? r : m;
+        for (unsigned long i = 0; i < k; ++i)
+            if (p_[pos + i] != s[i]) return (unsigned char)p_[pos + i] < (unsigned char)s[i] ? -1 : 1;
+        return r < m ? -1 : (r > m ? 1 : 0);
+    }
+    int compare(unsigned long pos, unsigned long len, const string &o) const { return compareN(pos, len, o.p_, o.n_); }
+    int compare(unsigned long pos, unsigned long len, const char *s) const { return compareN(pos, len, s, strlen(s)); }
+    int compare(unsigned long pos, unsigned long len, const string &o, unsigned long pos2, unsigned long len2 = npos) const {
+        if (pos2 > o.n_) pos2 = o.n_;
+        unsigned long m = o.n_ - pos2 < len2 ? o.n_ - pos2 : len2;
+        return compareN(pos, len, o.p_ + pos2, m);
+    }
+    int compare(unsigned long pos, unsigned long len, const char *s, unsigned long m) const { return compareN(pos, len, s, m); }
     unsigned long find_first_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, true); }
     unsigned long find_first_not_of(const char *set, unsigned long pos = 0) const { return scan(set, pos, true, false); }
     unsigned long find_first_not_of(char c, unsigned long pos = 0) const {
@@ -205,9 +246,23 @@ public:
     bool operator==(const string &o) const { return strcmp(p_, o.p_) == 0; }
     bool operator!=(const string &o) const { return strcmp(p_, o.p_) != 0; }
     bool operator<(const string &o) const { return strcmp(p_, o.p_) < 0; }
+    bool operator>(const string &o) const { return strcmp(p_, o.p_) > 0; }
+    bool operator<=(const string &o) const { return strcmp(p_, o.p_) <= 0; }
+    bool operator>=(const string &o) const { return strcmp(p_, o.p_) >= 0; }
     const char *data() const { return p_; }
     int compare(const string &o) const { return strcmp(p_, o.p_); }
 
+    void swap(string &o) {  // [string.swap]: the buffers change hands
+        char *p = p_;
+        p_ = o.p_;
+        o.p_ = p;
+        unsigned long n = n_;
+        n_ = o.n_;
+        o.n_ = n;
+        unsigned long c = cap_;
+        cap_ = o.cap_;
+        o.cap_ = c;
+    }
 private:
     void assignChars(const char *s, unsigned long n) {
         release(grow(n));
@@ -357,3 +412,4 @@ inline double stod(const string &s, unsigned long *idx = nullptr) {
 }
 inline float stof(const string &s, unsigned long *idx = nullptr) { return (float)stod(s, idx); }
 }  // namespace std
+#include <__wstring>

@@ -460,6 +460,22 @@ void TestReportModules(const fs::path& tmp) {
 
 } // namespace
 
+void TestManifestVersionNear(const fs::path& tmp) {
+    RUN_SUITE("the game's version beside a scene (join links)");
+    std::error_code ec;
+    const fs::path data = tmp / "vn" / "Arena_Data";
+    fs::create_directories(data / "scenes", ec);
+    bp::BuildManifest m; m.game = "Arena"; m.version = "1.4.2";
+    { std::ofstream f(data / "build.json", std::ios::binary); f << bp::ManifestToJson(m); }
+    const std::string scene = (data / "scenes" / "game.okayscene").string();
+    CHECK(bp::ManifestVersionNear("", scene) == "1.4.2");              // one folder up from the scene
+    CHECK(bp::ManifestVersionNear(data.string(), "") == "1.4.2");      // the data folder itself
+    CHECK(bp::ManifestVersionNear("", (tmp / "nowhere" / "x.okayscene").string()).empty());
+    CHECK(bp::ManifestVersionNear("", "").empty());
+    { std::ofstream f(data / "build.json", std::ios::binary); f << "not json"; }
+    CHECK(bp::ManifestVersionNear("", scene).empty());                 // a damaged file gives no version
+}
+
 int main() {
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path(ec) / ("okay_build_pipeline_" + std::to_string((long long)std::time(nullptr)));
@@ -470,6 +486,7 @@ int main() {
     TestWalk(tmp);
     TestKinds();
     TestManifest();
+    TestManifestVersionNear(tmp);
     TestReport();
     TestReportModules(tmp);
     TestZip(tmp);

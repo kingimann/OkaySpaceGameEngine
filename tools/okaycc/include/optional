@@ -1,0 +1,174 @@
+// <optional> for okay-cc (ISO/IEC 14882 [optional]). Our own header. An optional<T> holds a flag and
+// raw storage for one T (aligned for double); the value is built there with placement new and
+// destroyed with its destructor. emplace takes up to three arguments here.
+#pragma once
+#include <exception>
+#include <new>
+#include <utility>
+namespace std {
+struct nullopt_t {
+    explicit nullopt_t(int) {}
+};
+static const nullopt_t nullopt(0);
+struct in_place_t {};
+static const in_place_t in_place = {};
+
+class bad_optional_access : public exception {
+public:
+    const char *what() const { return "bad optional access"; }
+};
+
+template <typename T>
+class optional {
+public:
+    typedef T value_type;
+    bool __has;
+    double __s[sizeof(T) / sizeof(double) + 1];
+
+    optional() : __has(false) {}
+    optional(nullopt_t) : __has(false) {}
+    optional(const optional<T> &o) : __has(false) {
+        if (o.__has) __make(*o);
+    }
+    optional(optional<T> &&o) : __has(false) {
+        if (o.__has) {
+            new ((void *)__s) T(std::move(*o));
+            __has = true;
+        }
+    }
+    template <typename U>
+    optional(const U &u) : __has(false) {
+        __make(u);
+    }
+    ~optional() { reset(); }
+    optional<T> &operator=(nullopt_t) {
+        reset();
+        return *this;
+    }
+    optional<T> &operator=(const optional<T> &o) {
+        if (this == &o) return *this;
+        if (!o.__has) reset();
+        else if (__has) **this = *o;
+        else __make(*o);
+        return *this;
+    }
+    optional<T> &operator=(optional<T> &&o) {
+        if (this == &o) return *this;
+        if (!o.__has) {
+            reset();
+        } else if (__has) {
+            **this = std::move(*o);
+        } else {
+            new ((void *)__s) T(std::move(*o));
+            __has = true;
+        }
+        return *this;
+    }
+    template <typename U>
+    optional<T> &operator=(const U &u) {
+        if (__has) **this = u;
+        else __make(u);
+        return *this;
+    }
+    T &emplace() {
+        reset();
+        new ((void *)__s) T();
+        __has = true;
+        return **this;
+    }
+    template <typename A1>
+    T &emplace(const A1 &a1) {
+        reset();
+        new ((void *)__s) T(a1);
+        __has = true;
+        return **this;
+    }
+    template <typename A1, typename A2>
+    T &emplace(const A1 &a1, const A2 &a2) {
+        reset();
+        new ((void *)__s) T(a1, a2);
+        __has = true;
+        return **this;
+    }
+    template <typename A1, typename A2, typename A3>
+    T &emplace(const A1 &a1, const A2 &a2, const A3 &a3) {
+        reset();
+        new ((void *)__s) T(a1, a2, a3);
+        __has = true;
+        return **this;
+    }
+    void reset() {
+        if (__has) {
+            __has = false;
+            ((T *)(void *)__s)->~T();
+        }
+    }
+    bool has_value() const { return __has; }
+    explicit operator bool() const { return __has; }
+    T &operator*() { return *(T *)(void *)__s; }
+    const T &operator*() const { return *(const T *)(const void *)__s; }
+    T *operator->() { return (T *)(void *)__s; }
+    const T *operator->() const { return (const T *)(const void *)__s; }
+    T &value() {
+        if (!__has) throw bad_optional_access();
+        return **this;
+    }
+    const T &value() const {
+        if (!__has) throw bad_optional_access();
+        return **this;
+    }
+    template <typename U>
+    T value_or(const U &d) const {
+        if (__has) return **this;
+        return T(d);
+    }
+    void swap(optional<T> &o) {
+        optional<T> t(std::move(o));
+        o = std::move(*this);
+        *this = std::move(t);
+    }
+
+    template <typename U>
+    void __make(const U &u) {
+        new ((void *)__s) T(u);
+        __has = true;
+    }
+};
+
+template <typename T>
+optional<T> make_optional(const T &v) {
+    return optional<T>(v);
+}
+// [optional.relops], [optional.nullops], [optional.comp.with.t]: an empty optional is less than
+// any value and equal only to another empty one.
+template <typename T>
+bool operator==(const optional<T> &a, const optional<T> &b) {
+    if (a.has_value() != b.has_value()) return false;
+    return !a.has_value() || *a == *b;
+}
+template <typename T>
+bool operator!=(const optional<T> &a, const optional<T> &b) {
+    return !(a == b);
+}
+template <typename T>
+bool operator<(const optional<T> &a, const optional<T> &b) {
+    if (!b.has_value()) return false;
+    return !a.has_value() || *a < *b;
+}
+template <typename T>
+bool operator==(const optional<T> &a, nullopt_t) {
+    return !a.has_value();
+}
+template <typename T>
+bool operator!=(const optional<T> &a, nullopt_t) {
+    return a.has_value();
+}
+template <typename T>
+bool operator==(const optional<T> &a, const T &v) {
+    return a.has_value() && *a == v;
+}
+template <typename T>
+bool operator!=(const optional<T> &a, const T &v) {
+    return !(a == v);
+}
+}  // namespace std

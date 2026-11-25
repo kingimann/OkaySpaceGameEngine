@@ -4,7 +4,7 @@
 #include <ctime>
 
 #include "AppRestart.hpp"   // Utf8, QuoteWindowsArg, the posix_spawn headers
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client first, curl only as the last fallback
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: WinHTTP / our own client
 
 // (No std::thread / std::mutex here: the launcher is built with the MinGW win32 thread model. A native sleep is all this file needs.)
 
@@ -103,14 +103,13 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
     fs::remove(dest, ec);
-    // The HTTP seam (NativeFetch.hpp): WinHTTP on Windows, our own client on Linux when it is on, curl only as the last
-    // fallback. The file goes to a temporary "<dest>.<...>.part" first and is renamed when complete; a dropped connection
+    // The HTTP seam (NativeFetch.hpp): WinHTTP on Windows, our own client on Linux (an https -> http redirect is always
+    // refused). The file goes to a temporary "<dest>.<...>.part" first and is renamed when complete; a dropped connection
     // is resumed with Range (two more tries, with backoff). The caller still checks the SHA-256 against versions.json.
     okay::http::OwnDownloadSpec sp;
     sp.userAgent = "OkaySpace-Launcher";
     sp.maxBytes = maxBytes;
     sp.maxRedirects = 5;
-    sp.httpsOnlyRedirects = true;
     sp.connectMs = 20000;
     sp.ioMs = 60000;
     sp.totalMs = 6 * 60 * 60 * 1000;
@@ -125,8 +124,8 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
     case okay::http::OwnOutcome::DiskFull: out.status = DownloadStatus::DiskFull; out.error = "The disk is full."; break;
     case okay::http::OwnOutcome::ChecksumMismatch: out.error = "The download is damaged (its checksum is wrong)."; break;
     case okay::http::OwnOutcome::HttpError:
-        out.error = r.status >= 400 || r.viaCurl ? "The download failed (the server does not have that file)."
-                                                 : "The download failed (the server answered " + std::to_string(r.status) + ").";
+        out.error = r.status >= 400 ? "The download failed (the server does not have that file)."
+                                    : "The download failed (the server answered " + std::to_string(r.status) + ").";
         break;
     case okay::http::OwnOutcome::NotHandled:
         out.error = "The download failed (" + (r.error.empty() ? std::string("no answer from the server") : r.error) + ").";

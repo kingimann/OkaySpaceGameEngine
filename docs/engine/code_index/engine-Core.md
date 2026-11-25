@@ -2,7 +2,7 @@
 
 # Code index: engine-Core
 
-Back to the [code index](../code_index.md). 80 headers, 504 names.
+Back to the [code index](../code_index.md). 80 headers, 505 names.
 
 ## `engine/include/okay/Core/AccessibilitySettings.hpp`
 
@@ -111,18 +111,19 @@ Back to the [code index](../code_index.md). 80 headers, 504 names.
 - `ManifestToJson` function, line 134
 - `ParseManifestJson` function, line 135
 - `ManifestSummary` function, line 137: A short text for logs and '--build-info': "Game 1.2.0 (build 7), engine 2.852.0, 2026-11-12, windows, 3 scenes".
-- `HashText` function, line 138
-- `HashHex` function, line 139
-- `UtcNowIso` function, line 140
-- `ReportFile` struct, line 144
-- `ExcludedFile` struct, line 145
-- `Report` struct, line 146
-- `HumanBytes` function, line 184
-- `ZipStats` struct, line 194
-- `WriteZip` function, line 198: Pack every file under 'rootDir' into 'zipPath' (paths relative to rootDir, '/' separators, sorted, so the
-- `ZipInput` struct, line 201: One file for WriteZipEntries: its name inside the archive ('/' separators) and either its bytes ('data') or, when
-- `ZipEntry` struct, line 208
-- `ReadZipDirectory` function, line 210: The central directory of a zip (what 'unzip -l' lists).
+- `ManifestVersionNear` function, line 140: The game's own version from a build.json: the one in 'dataDir' (when not ""), else the first found in 'scenePath''s
+- `HashText` function, line 141
+- `HashHex` function, line 142
+- `UtcNowIso` function, line 143
+- `ReportFile` struct, line 147
+- `ExcludedFile` struct, line 148
+- `Report` struct, line 149
+- `HumanBytes` function, line 187
+- `ZipStats` struct, line 197
+- `WriteZip` function, line 201: Pack every file under 'rootDir' into 'zipPath' (paths relative to rootDir, '/' separators, sorted, so the
+- `ZipInput` struct, line 204: One file for WriteZipEntries: its name inside the archive ('/' separators) and either its bytes ('data') or, when
+- `ZipEntry` struct, line 211
+- `ReadZipDirectory` function, line 213: The central directory of a zip (what 'unzip -l' lists).
 
 ## `engine/include/okay/Core/Clipboard.hpp`
 

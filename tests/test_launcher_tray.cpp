@@ -375,8 +375,33 @@ static void TestOneChatView() {
     CHECK(src.find("if (!g_chatSeparate) DrawChatWindow(account);") != std::string::npos);
 }
 
+// Owner bug 2026-11-25 ("if i quit the launcher from the tray, the editor doesnt close"): Exit OkaySpace in the tray
+// menu with the editor open raised "Close the editor first" in a launcher hidden in the tray, which draws nothing, so
+// the dialog never showed and the launcher kept running. Now the window comes back once when such a dialog starts.
+static void TestTrayExitWithEditor() {
+    Settings on;
+    FakeShell sh; TrayController t(&sh, true); t.settings = on; t.Sync();
+    CHECK(t.OnClose(CloseSource::WindowX) == CloseAction::HideToTray && t.Hidden());
+    sh.next = kIdExit;
+    MenuState st;
+    const Effect fx = t.OnIconEvent(IconEvent::ShowMenu, st);
+    CHECK(fx.quit && !fx.show);   // Exit itself does not show the window...
+    // ...so the launcher's quit (editor open: g_afterEditor = 1) must bring it back for the dialog.
+    CHECK(ShowForPendingDialog(true, false, t.Hidden()));
+    t.Restore();
+    CHECK(Drawing(t, sh));
+    CHECK(!ShowForPendingDialog(true, true, true));     // only on the edge: minimizing it again while it waits is allowed
+    CHECK(!ShowForPendingDialog(true, false, false));   // already on screen: nothing to do
+    CHECK(!ShowForPendingDialog(false, false, true));   // nothing waiting: the tray stays as it is
+    CHECK(!ShowForPendingDialog(false, true, true));
+    const std::string src = [] { std::ifstream f(OKAY_LAUNCHER_MAIN); std::stringstream ss; ss << f.rdbuf(); return ss.str(); }();
+    CHECK(src.find("auto quitLauncher = [&]() { if (EditorRunning()) g_afterEditor = 1; else running = false; };") != std::string::npos);
+    CHECK(src.find("okaytray::ShowForPendingDialog(") != std::string::npos);
+}
+
 int main() {
     TestDecisions();
+    TestTrayExitWithEditor();
     TestMenu();
     TestIconMessages();
     TestController();

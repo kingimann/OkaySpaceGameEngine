@@ -4,7 +4,7 @@
 >
 > **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
 >
-> **Last checked:** 2026-11-24 (rounds 12 and 13 below measured against CMake; the older rounds were not re-checked).
+> **Last checked:** 2026-11-25 (rounds 12 to 14 below measured against CMake; the older rounds were not re-checked).
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
@@ -506,4 +506,64 @@ Written from the documented behaviour of each CMake command and from RFC 1321 (M
   - `okay-player --help` printed its usage (rc 0); `--build-info` said `build.json is missing` (rc 1, expected outside an exported game).
   - The launcher has no headless mode. With `SDL_VIDEODRIVER=dummy` it started its UI and kept running, but did not stop on SIGTERM and had to be killed. Whether CMake's launcher behaves the same was not checked.
 - **Not compared:** the linked files byte for byte (CMake did not build them here), Release and `-g` builds, and Windows.
+
+## Round 14 on claude/okaybuild-14: Release and Debug flags, the MinGW cross build, POST_BUILD (2026-11-25)
+Written from the CMake language documentation (used as a specification: configure_file, add_custom_command, project, the
+CMAKE_<LANG>_FLAGS_<CONFIG> and CMAKE_<KIND>_LINKER_FLAGS variables, toolchain files, WIN32/MINGW/CMAKE_CROSSCOMPILING,
+config-mode find_package, FindPython3), the Ninja manual (behaviour only) and the GCC, GNU ld and windres command-line
+documentation. Expected command lines in the tests were taken by running real CMake and `ninja -t commands` on the same small
+projects. No CMake, Ninja, Meson or make code was read or used (rule 19a). No cryptography was added.
+- **Found first: `okay-build cmake .` no longer worked on main.** `okayscript/CMakeLists.txt` (added 2026-11-24) walks a link
+  closure with `continue()`, `list(POP_FRONT)` and `get_target_property(LINK_LIBRARIES / INTERFACE_LINK_LIBRARIES /
+  ALIASED_TARGET)`. The reader knew none of them, so the loop never ended (stopped after minutes). Added all three, kept
+  `$<LINK_ONLY:x>` as text (a link item spelled so is linked as `x`). The tree reads again in about 4 s; the generated
+  `okayscript_link_closure.txt` is byte-identical to CMake's.
+- **Release, RelWithDebInfo, Debug and the CI ASan options.** The build type's flags were added to the target flags and never to
+  the link line, and `-DCMAKE_CXX_FLAGS...`/`-DCMAKE_EXE_LINKER_FLAGS` were ignored (the ASan job sets both). New toolchain keys
+  `c_flags`, `cxx_flags` (first on every C / C++ compile), `link_lead`, `exe_link_flags`, `shared_link_flags` (before the
+  objects on a link); `okay-build cmake` fills them from `CMAKE_<LANG>_FLAGS` + `_<CONFIG>` and the linker-flag variables
+  (GNU defaults when not given). Source file properties now belong to the folder that set them (only that folder's targets see
+  them; `set_source_files_properties` replaces), and `get_source_file_property` works. This fixed two real differences in
+  the ASan configuration: `engine/` gave `Image.cpp` `-w` everywhere, and `platform/xbox_uwp` gave `ModelImport.cpp` in the
+  engine library its test-only define `OKAY_PREFER_OWN_READERS_DEFAULT`.
+- **Measured (Linux, g++ 13.3, against CMake's `compile_commands.json` on the same tree, default options):** Release,
+  RelWithDebInfo and Debug each 1,640 of 1,640 sources identical (1,870 compile commands; `compare_cmake_commands.py` now
+  compares every command of a source built by several targets, not only the first). The CI ASan configuration
+  (Debug, `-g1 -gz`, sanitizers, Xbox test on): 1,637 of 1,637 identical apart from the build-folder path in
+  `OKAY_TEST_TMP_DIR`. `test_math`'s link line now starts `-O3 -DNDEBUG` like CMake's.
+- **MinGW cross build** (`okay-build cmake . --opt CMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake`). The reader runs
+  the toolchain file first, sets `WIN32`, `MINGW`, `CMAKE_CROSSCOMPILING`, `.exe`/`.obj`, takes the compilers, `ar` and
+  `windres` from it, runs `configure_file` (`@VAR@`, `${VAR}`, `@ONLY`, `#cmakedefine`), and `project(VERSION)` now sets the
+  `_MAJOR/_MINOR/_PATCH` parts. okay-build compiles `.rc` files with `windres -O coff -D... -I dir file out.res`, adds
+  `-mwindows` for WIN32 programs (`win32_executable = on`), CMake's import-library words and the Windows standard libraries
+  (`exe_import_lib`, `std_libs`). The toolchain file's configure-time copy of `libwinpthread.a` (copy, `ar d version.o`,
+  `ranlib`, all on a build-folder file) becomes one manifest action that the links wait for; `execute_process` now honours
+  `OUTPUT_STRIP_TRAILING_WHITESPACE` (without it the copy was skipped and `-lwinpthread` used). Packages for a Windows target
+  are looked for only under `CMAKE_PREFIX_PATH`/`CMAKE_FIND_ROOT_PATH` (their config file is run), never the host's SDL2.
+  Measured with the release script's options (tests off; launcher, player, editor on; Release) against CMake's MinGW
+  configure: **498 of 498 compile commands identical**; the 3 windres lines identical apart from build paths; the 3 generated
+  `.rc` files, `modules_enabled.cpp`, `ui_library_data.cpp` and `okayscript_link_closure.txt` byte-identical; `okay.exe`'s
+  link line has the same words, with libraries in dependency order instead of CMake's listed order (as in round 13).
+  `okayscript.exe` built by okay-build and by CMake+Ninja: same size, `.text` identical, 3 bytes differ (PE time stamp and
+  checksum).
+- **POST_BUILD.** `add_custom_command(TARGET t POST_BUILD COMMAND ...)` becomes `post_build` lines (and `post_build_dir`) on the
+  target. The build runs them after the link in the target's build folder, again whenever the program is linked again, never
+  from the cache. `$<TARGET_FILE_DIR:t>` works. A step that would run `cmake` is not written (counted as not understood).
+  `find_package(Python3 COMPONENTS Interpreter)` finds `python3` on PATH, so the player's `module_sizes.py` step is planned and
+  the 4 Python tests are written: **1,129 of 1,129 test names equal CMake's** (was 1,125).
+- **Tests:** `test_okaybuild.cpp` gains `testLoopControlAndLinkProperties`, `testConfigurationFlags`,
+  `testSourcePropertiesPerFolder`, `testMingwToolchainFile` (it builds `app.exe` with a resource and checks `.rsrc`, the GUI
+  subsystem and the winpthread copy without `version.o`) and `testPostBuild`. Run against the tool from main: 30 of their 30
+  checks fail; with this round: all pass. Whole suite (`tools/okaybuild/build.sh`): 497 checks pass, 7 fail; the 7 are the
+  known ones that need wine (5) or libsodium (2: the old native manifest links `-lsodium`), as in earlier rounds.
+- **A finding outside okay-build (not changed here):** `okayscript.exe` from the MinGW build (CMake's as well as ours) imports
+  `libstdc++-6.dll`, although `okayscript/CMakeLists.txt` links it `-static` to need no MinGW runtime DLLs. The toolchain
+  file's `-Wl,...,-Bdynamic` comes before `-static` on the link line.
+- **Not done / unverified:** nothing was run on Windows (the `.exe` files were checked with objdump only; wine here cannot start
+  them); no SDL2 MinGW package is on this machine, so the MinGW launcher, editor and player were not configured by either tool
+  and their link lines are not compared; the config-package path was tested with a small package we wrote, not SDL2's real
+  one. CMake gives an imported target's include folders as `-isystem`, okay-build as `-I`, and okay-build adds `-std=gnu++17`
+  when a project sets no standard (CMake adds none); neither matters on this tree. The player's POST_BUILD step was planned,
+  not run (no full player build this round). MSVC and `.rc` with MSVC are not read. Static libraries are made with `ar rcs`
+  (CMake: `ar qc` then `ranlib`; same archive). The asset pipeline design (item 4) was not started.
 

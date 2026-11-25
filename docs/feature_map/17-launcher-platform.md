@@ -57,7 +57,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **API:** `okay::Account::Get`, `Login`, `Logout`, `Token`, `IsLoggedIn`, `AccountService::Register`, `Login`, `Api`, `CloudSave`, `LeaderboardTop`, scripts `account_login`, `account_register`, `account_logout`, `account_is_logged_in`, `account_token`, `account_get`, `account_post`
 - **Editor:** the sign-in gate window when the editor starts without a confirmed session (17.2.9); the account page itself is the launcher's Account tab; the player and game scripts use the same service
 - **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/account_data.md`
-- **Tests:** `account`, `account_script`, `account_data`, `delete_account_function`, `signin_gate`
+- **Tests:** `account`, `account_script`, `account_data`, `delete_account_function`, `editor_signin_gate`
 - **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI. Export and delete: client logic and the function logic are unit-tested with fakes; the function is not deployed or run against a live project (owner steps in `docs/online/account_data.md`)
 - **Open:** the default Supabase project URL and publishable key are hardcoded in `CMakeLists.txt` (old map: remove them; the release workflow deliberately no longer overrides them); on Linux `AccountService` still uses curl unless `OKAY_OWN_HTTP=1` (our client is opt-in there)
 - **Related:** 17.9, 17.11, 42.4, 41.6

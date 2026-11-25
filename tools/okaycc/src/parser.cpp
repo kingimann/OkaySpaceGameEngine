@@ -1889,8 +1889,18 @@ private:
             }
             auto it = structs_.find(tag);
             if (it == structs_.end() || !it->second) {
-                err("unknown struct '" + tag + "'");
-                return ty(Type::Kind::Int);
+                // An elaborated type specifier that names no class yet declares one
+                // ([dcl.type.elab], [basic.scope.pdecl]): `class P;` or `struct P *p`. The class is
+                // incomplete until its definition; uses by pointer or reference need only the tag
+                // (the checker finds the finished class by tag). In C++ the name is also a type name.
+                auto inc = ty(isUnion ? Type::Kind::Union : Type::Kind::Struct);
+                inc->tag = tag;
+                structs_[tag] = cloneType(*inc);
+                const std::string& f = at.file;
+                bool cSource = f.size() >= 2 && (f.compare(f.size() - 2, 2, ".c") == 0 || f.compare(f.size() - 2, 2, ".h") == 0);
+                if (!isUnion && (isClass || !ns_.empty() || !cSource) && !findTypedef(shortName(tag)))
+                    addTypedef(shortName(tag), cloneType(*inc));
+                return inc;
             }
             return cloneType(*it->second);
         }
@@ -1988,7 +1998,7 @@ private:
             bool isStaticMember = false;
             for (;;) {
                 if (eatKw("static")) isStaticMember = true;
-                else if (eatKw("inline") || eatKw("constexpr") || eatKw("explicit")) {
+                else if (eatKw("inline") || eatKw("constexpr") || eatKw("explicit") || eatKw("mutable")) {
                 } else break;
             }
             bool isVirtual = false;
@@ -4478,7 +4488,9 @@ private:
         if (!isAssignOp()) return e;
         Token op = cur();
         advance();
-        auto r = parseAssign();
+        // x = {a, b}: a braced list on the right of = ([expr.ass] p9); the checker makes it an
+        // object of the left side's class, or the one value of a scalar.
+        auto r = op.text == "=" && isP("{") ? parseInitializer() : parseAssign();
         auto a = ex(Expr::Kind::Assign, op);
         a->text = op.text;
         a->kids.push_back(std::move(e));

@@ -1094,6 +1094,9 @@ private:
             auto d = eUnary("*", std::move(lv), cond);
             e.kids[0] = std::move(d);
         }
+        if (e.kind == Expr::Kind::Assign && e.text == "=" && e.kids.size() == 2 && e.kids[0] && e.kids[1] &&
+            e.kids[1]->kind == Expr::Kind::Brace)
+            braceAssign(e);
         rewriteOperator(e);
         ET r = checkExprBody(e);
         if (r.type) e.checked = cloneType(*r.type);
@@ -1601,6 +1604,28 @@ private:
     // a temporary T. A constructor whose parameter count matches takes the values; otherwise the
     // class is an aggregate: its implicit constructor (default member initializers) runs if it has
     // one, then each value goes to the next field, and without one the other fields are zero.
+    // x = {a, b} ([expr.ass] p9): for a class, x = T{a, b} (a temporary made from the list, then
+    // the class's assignment); for a scalar, x = {} is x = 0 and x = {v} is x = v.
+    void braceAssign(Expr& e) {
+        ++quiet_;
+        ET lhs = checkExpr(*e.kids[0]);
+        --quiet_;
+        if (lhs.bad || !lhs.type) return;
+        Expr& b = *e.kids[1];
+        if (lhs.type->kind == Type::Kind::Struct) {
+            braceToTemp(b, *lhs.type);
+            return;
+        }
+        if (b.kids.size() > 1) return;  // the checker reports the list
+        if (b.kids.empty()) {
+            auto zero = mkE(Expr::Kind::Int, b);
+            zero->ival = 0;
+            e.kids[1] = std::move(zero);
+        } else {
+            e.kids[1] = std::move(b.kids[0]);
+        }
+    }
+
     void braceToTemp(Expr& b, const Type& want) {
         const Type* T = canonOf(&want);
         if (!T || T->tag.empty()) return;

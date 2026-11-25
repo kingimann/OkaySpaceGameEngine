@@ -12,7 +12,7 @@
 
 namespace okaytheme {
 
-// ---- The palette: every colour the launcher draws comes from these named tokens ------------------------------------------
+// ---- The palette: every colour the launcher draws comes from these named colours ------------------------------------------
 // Three themes (Slate, the default; Midnight; Light) define every token; the editor uses Slate. Page code never writes an RGB
 // value: it asks for a token (surfaces, text, status colours) or for Ink/Shade (a see-through tint over a surface: white on the
 // dark themes, black on Light). tests/test_launcher_theme.cpp checks the text contrast of every theme and that no page has a

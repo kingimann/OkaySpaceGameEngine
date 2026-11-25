@@ -1,6 +1,8 @@
 // The scene text reader: ParseStep reads a slice of a document into a scene, one record at a time. Moved unchanged from
 // SceneSerializer.cpp (docs/engine/modularization_plan.md, section 3.1, S1).
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -41,8 +43,6 @@
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/SequencePlayer.hpp"
-#include "okay/Components/VehicleController.hpp"
-#include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/Buoyancy.hpp"
 #include "okay/Components/BoatController.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -62,7 +62,6 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/Equipment.hpp"
-#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
@@ -208,7 +207,6 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
-#include "okay/Components/Crosshair.hpp"
 #include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
@@ -526,6 +524,22 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             bool sawEnd = false;
             std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
             std::vector<std::string> compOrder;                  // `comporder`: type keys in the saved component order
+            // Step over the rest of the record `field` and keep its text on the object, as it was read; the next
+            // save writes it back (WriteComponents), so this build does not drop what it cannot use.
+            auto keepRecord = [&]() {
+                const std::string rest = ReadRecordLine(in);
+                if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
+                    go->unknownRecords.push_back(field + rest);
+            };
+            // A record that a module reads (its register.cpp), at this place in the chain. With the module off, or
+            // on with no reader registered, the record is kept like one of a newer build: a scene saved by a
+            // build without the module still has it when the module is back.
+            auto moduleRecord = [&](const char* module) {
+                auto entry = ModuleRegistry::Get().IsEnabled(module) ? ComponentSerializerRegistry::Find(field) : nullptr;
+                if (entry && entry->read) { entry->read(*go, in); return; }
+                warn("kept '" + field + "' on object " + std::to_string(idx) + " unread (module '" + module + "' is off or has no reader)");
+                keepRecord();
+            };
             int nFpFeel = 0, nTpFeel = 0, nFpStance = 0, nTpStance = 0;
             int nCc3dSt = 0, nTpsSt = 0, nTdSt = 0, nCtmSt = 0, nNpcSt = 0;
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
@@ -2045,35 +2059,11 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 }
                 if (!fieldDone) { fieldDone = true;
                 if (field == "vehicle") {
-                    auto* v = go->AddComponent<VehicleController>();
-                    in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
-                       >> v->drag >> v->turnSpeed >> v->grip >> v->handbrakeGrip
-                       >> v->groundCheckDistance;
-                    int fc = 0; in >> fc; v->followCamera = (fc != 0);
-                    in >> v->camDistance >> v->camHeight >> v->camLerp;
-                    int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                    moduleRecord("vehicles");
                 } else if (field == "vehicletune") {
-                    auto* v = LastOf(go->GetComponents<VehicleController>());
-                    std::string rest; std::getline(in, rest);
-                    if (v) v->FromLine(rest);
-                    if (v) {   // wheel spacing travels in the same line
-                        std::istringstream ts(rest); std::string tok;
-                        while (ts >> tok) {
-                            if (tok.rfind("wheelBase=", 0) == 0) v->wheelBase = (float)std::atof(tok.c_str() + 10);
-                            else if (tok.rfind("trackWidth=", 0) == 0) v->trackWidth = (float)std::atof(tok.c_str() + 11);
-                        }
-                    }
+                    moduleRecord("vehicles");
                 } else if (field == "vehiclesusp") {
-                    auto* v = LastOf(go->GetComponents<VehicleController>());
-                    int on = 0; in >> on;
-                    float rh, ss, sd, st, wb, tw, bl, mt, ts;
-                    in >> rh >> ss >> sd >> st >> wb >> tw >> bl >> mt >> ts;
-                    if (v) {
-                        v->suspension = (on != 0);
-                        v->rideHeight = rh; v->springStrength = ss; v->springDamping = sd;
-                        v->suspensionTravel = st; v->wheelBase = wb; v->trackWidth = tw;
-                        v->bodyLean = bl; v->maxTilt = mt; v->tiltSmooth = ts;
-                    }
+                    moduleRecord("vehicles");
                 } else if (field == "blockbuilder") {
                     auto* bb = go->AddComponent<BlockBuilder>();
                     in >> bb->blockSize >> bb->reach
@@ -2467,25 +2457,9 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;
                     if (in.peek() == '"') ni->saveDir = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
-                    auto* v2 = go->AddComponent<VehicleController2D>();
-                    in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce
-                       >> v2->drag >> v2->turnSpeed >> v2->grip >> v2->handbrakeGrip;
-                    int sv = 0; in >> sv; v2->sideView = (sv != 0);
-                    int hk = 32; in >> hk; v2->handbrakeKey = (char)hk;
+                    moduleRecord("vehicles");
                 } else if (field == "survival") {
-                    auto* sv = go->AddComponent<SurvivalStats>();
-                    in >> sv->maxHealth >> sv->armor >> sv->regenWhenFed >> sv->regenDelay
-                       >> sv->maxHunger >> sv->hungerDrain >> sv->starveDamage
-                       >> sv->maxThirst >> sv->thirstDrain >> sv->dehydrateDamage
-                       >> sv->maxStamina >> sv->staminaRegen >> sv->sprintCost >> sv->sprintDrainMult
-                       >> sv->maxOxygen >> sv->oxygenDrain >> sv->oxygenRefill >> sv->drownDamage
-                       >> sv->maxWarmth >> sv->coldDrain >> sv->warmRegen >> sv->freezeDamage;
-                    int pp = 1, pb = 1, sm = 1; in >> pp >> pb >> sm;
-                    sv->publishPrefs = (pp != 0); sv->publishBars = (pb != 0); sv->sendMessages = (sm != 0);
-                    in >> std::ws;   // optional mitigation fields (added later)
-                    if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') {
-                        int gd = 0; in >> sv->resistance >> gd >> sv->invincibleTime; sv->godMode = (gd != 0);
-                    }
+                    moduleRecord("survival");
                 } else if (field == "stat_health") {
                     auto* c = go->AddComponent<HealthStat>();
                     in >> c->maxHealth >> c->armor >> c->regenPerSecond >> c->regenDelay >> c->lowThreshold;
@@ -4818,32 +4792,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (in.peek() == '"') bl->label = ReadQuoted(in);   // v4: label
                     }
                 } else if (field == "crosshair") {
-                    auto* cr = go->AddComponent<Crosshair>();
-                    Color c, dc, oc; int sl = 1, dt = 0, ol = 1, an = 0;
-                    in >> cr->position.x >> cr->position.y >> cr->size.x >> cr->size.y
-                       >> c.r >> c.g >> c.b >> c.a
-                       >> cr->thickness >> cr->gap >> cr->length
-                       >> sl >> dt >> cr->dotSize
-                       >> dc.r >> dc.g >> dc.b >> dc.a
-                       >> ol >> oc.r >> oc.g >> oc.b >> oc.a >> an;
-                    cr->color = c; cr->dotColor = dc; cr->outlineColor = oc;
-                    cr->showLines = (sl != 0); cr->dot = (dt != 0); cr->outline = (ol != 0);
-                    cr->anchor = (UIAnchor)an;
-                    in >> std::ws;   // optional style block (appended later)
-                    int cpk = in.peek();
-                    if (std::isdigit(cpk) || cpk == '-' || cpk == '.') {
-                        int lu = 1, ld = 1, ll = 1, lr = 1, ci = 0; Color qc;
-                        in >> lu >> ld >> ll >> lr >> cr->spread
-                           >> ci >> cr->circleRadius >> cr->circleThickness
-                           >> qc.r >> qc.g >> qc.b >> qc.a;
-                        cr->lineUp = (lu != 0); cr->lineDown = (ld != 0);
-                        cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
-                        cr->circle = (ci != 0); cr->circleColor = qc;
-                    }
-                    in >> std::ws; // grok/ui-hud: optional spread recovery
-                    int rpk = in.peek();
-                    if (std::isdigit(rpk) || rpk == '-' || rpk == '.')
-                        in >> cr->spreadRecover >> cr->spreadMax;
+                    moduleRecord("weapons");
                 } else if (field == "uislotgrid") {
                     auto* sg = go->AddComponent<UISlotGrid>();
                     int an = 0; std::size_t n = 0;
@@ -5409,9 +5358,7 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // A newer build's field: one record per line, so step over it. Its text is kept on the object and
                     // written back by the next save, so an older build does not drop what a newer one stored.
                     warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
-                    const std::string rest = ReadRecordLine(in);
-                    if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
-                        go->unknownRecords.push_back(field + rest);
+                    keepRecord();
                 }
                 }
             }
@@ -5424,11 +5371,17 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             // not there (an older or newer build's) is ignored.
             for (const auto& [key, occ] : compOff) {
                 int seen = 0;
+                bool found = false;
                 for (const auto& c : go->Components())
                     if (c.get() != static_cast<Component*>(go->transform) && ComponentSerializerRegistry::TypeKey(*c) == key && seen++ == occ) {
                         c->enabled = false;
+                        found = true;
                         break;
                     }
+                // The flag may belong to a record that was kept unread above (its module is off): keep it with them,
+                // written as WriteDisabledComponents writes it, so the component comes back switched off.
+                if (!found && !go->unknownRecords.empty() && go->unknownRecords.size() < kMaxUnknownRecords)
+                    go->unknownRecords.push_back("compoff " + Quote(key) + " " + std::to_string(occ));
             }
             if (!compOrder.empty()) ApplyComponentOrder(*go, compOrder);   // after the flags: they were counted in the writer's order
             // Every saved type keeps every instance (AllowsMultiple). A type that opts

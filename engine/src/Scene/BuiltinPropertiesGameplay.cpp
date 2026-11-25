@@ -18,8 +18,8 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
-#include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
@@ -1126,27 +1126,6 @@ void RegisterJoint3D() {
     b.Commit();
 }
 
-// DayNightCycle
-void RegisterDayNightCycle() {
-    PropertyBuilder<DayNightCycle> b("DayNightCycle", "daynight", "Environment");
-    b.AddFloat("dayLengthSeconds", &DayNightCycle::dayLengthSeconds).Range(0, kBig, 1).Tooltip("Real seconds for a full 24h day")
-     .AddFloat("time", &DayNightCycle::time).Range(0, 24, 0.1).Tooltip("Current time of day, hours [0,24)")
-     .AddBool("paused", &DayNightCycle::paused)
-     .AddBool("controlSun", &DayNightCycle::controlSun).Tooltip("Drive the sun Light (intensity/color/ambient)")
-     .AddBool("rotateSun", &DayNightCycle::rotateSun).Tooltip("Rotate the sun Light's transform across the sky")
-     .AddBool("controlSky", &DayNightCycle::controlSky).Tooltip("Drive the main camera's background color")
-     .AddFloat("dayIntensity", &DayNightCycle::dayIntensity).Range(0, 1000, 0.05)
-     .AddFloat("nightIntensity", &DayNightCycle::nightIntensity).Range(0, 1000, 0.05)
-     .AddFloat("dayAmbient", &DayNightCycle::dayAmbient).Range(0, 1, 0.01)
-     .AddFloat("nightAmbient", &DayNightCycle::nightAmbient).Range(0, 1, 0.01)
-     .AddColor("dayLight", &DayNightCycle::dayLight).Range(0, 1, 0.01).Tooltip("Midday white")
-     .AddColor("nightLight", &DayNightCycle::nightLight).Range(0, 1, 0.01).Tooltip("Cool moonlight")
-     .AddColor("skyDay", &DayNightCycle::skyDay).Range(0, 1, 0.01).Tooltip("Clear blue")
-     .AddColor("skyHorizon", &DayNightCycle::skyHorizon).Range(0, 1, 0.01).Tooltip("Sunrise/sunset orange")
-     .AddColor("skyNight", &DayNightCycle::skyNight).Range(0, 1, 0.01).Tooltip("Deep night");
-    b.Commit();
-}
-
 // Water
 void RegisterWater() {
     PropertyBuilder<Water> b("Water", "water", "Environment");
@@ -1585,7 +1564,9 @@ void RegisterGameplayProperties() {
     RegisterFlashlight();
     RegisterJoint2D();
     RegisterJoint3D();
-    RegisterDayNightCycle();
+    // DayNightCycle's fields are registered by the sky_weather module (its register.cpp).
+    // Asking for the module list runs that hook, and every other module hook.
+    ModuleRegistry::Get();
     RegisterWater();
     RegisterBuoyancy();
     RegisterBoatController();

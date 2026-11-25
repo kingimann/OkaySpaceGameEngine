@@ -90,6 +90,8 @@ struct steady_clock {
         const long long rest = counter % frequency;
         return time_point<steady_clock, nanoseconds>(nanoseconds(whole * 1000000000LL + rest * 1000000000LL / frequency));
     }
+    // [time.clock.steady]: the clock's own time_point type (last in the class, after the uses of the template).
+    typedef time_point<steady_clock, nanoseconds> time_point;
 };
 struct system_clock {
     typedef nanoseconds duration;
@@ -108,6 +110,7 @@ struct system_clock {
     static time_point<system_clock, nanoseconds> from_time_t(time_t t) {
         return time_point<system_clock, nanoseconds>(nanoseconds((long long)t * 1000000000LL));
     }
+    typedef time_point<system_clock, nanoseconds> time_point;
 };
 typedef steady_clock high_resolution_clock;
 }

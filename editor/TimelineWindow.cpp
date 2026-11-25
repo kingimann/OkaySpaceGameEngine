@@ -1496,4 +1496,17 @@ void DrawTimeline(EditorState& ed) {
     ImGui::End();
 }
 
+void TimelineUnsavedTitles(std::vector<std::string>& titles) {
+    const State& s = S();
+    if (s.dirty) titles.push_back("Timeline: " + (s.path.empty() ? std::string("Untitled") : s.path));
+}
+bool TimelineSaveForQuit(EditorState& ed, std::string& why) {
+    State& s = S();
+    if (!s.dirty) return true;
+    if (s.path.empty()) { why = "The timeline sequence has no file yet: save it from the Timeline window first."; return false; }
+    if (WriteSequence(ed, s.path)) return true;
+    why = "Couldn't save " + s.path;
+    return false;
+}
+
 } // namespace oked

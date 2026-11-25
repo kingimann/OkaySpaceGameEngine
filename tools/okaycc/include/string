@@ -357,3 +357,4 @@ inline double stod(const string &s, unsigned long *idx = nullptr) {
 }
 inline float stof(const string &s, unsigned long *idx = nullptr) { return (float)stod(s, idx); }
 }  // namespace std
+#include <__wstring>

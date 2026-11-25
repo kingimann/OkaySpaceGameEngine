@@ -1,9 +1,16 @@
 // <exception> for okay-cc (ISO/IEC 14882 [support.exception]). Our own header: std::exception and
 // the classes thrown by the language itself. The exceptions themselves are okay-cc's own model
-// (lib/eh.c, see the plan), not the Itanium one; exception_ptr, nested_exception and
-// uncaught_exceptions are not done.
+// (lib/eh.c, see the plan), not the Itanium one. exception_ptr ([propagation]) is a reference to a
+// shared block of lib/eh.c that owns the thrown object. nested_exception and uncaught_exceptions
+// are not done.
 #pragma once
-extern "C" void abort(void);
+extern "C" {
+void abort(void);
+long *__okay_eh_capture(void);
+void __okay_eh_retain(long *b);
+void __okay_eh_release(long *b);
+void __okay_eh_rethrow_ptr(long *b);
+}
 namespace std {
 class exception {
 public:
@@ -30,4 +37,37 @@ public:
     const char *what() const { return "bad_function_call"; }
 };
 inline void terminate() { abort(); }
+
+class exception_ptr {
+public:
+    long *__b;
+    exception_ptr() : __b(nullptr) {}
+    exception_ptr(const exception_ptr &o) : __b(o.__b) { __okay_eh_retain(__b); }
+    ~exception_ptr() { __okay_eh_release(__b); }
+    exception_ptr &operator=(const exception_ptr &o) {
+        __okay_eh_retain(o.__b);
+        __okay_eh_release(__b);
+        __b = o.__b;
+        return *this;
+    }
+    explicit operator bool() const { return __b != nullptr; }
+    bool operator==(const exception_ptr &o) const { return __b == o.__b; }
+    bool operator!=(const exception_ptr &o) const { return __b != o.__b; }
+};
+// The exception being handled, or a null exception_ptr outside a handler.
+inline exception_ptr current_exception() {
+    exception_ptr p;
+    p.__b = __okay_eh_capture();
+    return p;
+}
+inline void rethrow_exception(exception_ptr p) { __okay_eh_rethrow_ptr(p.__b); }
+template <typename E>
+exception_ptr make_exception_ptr(E e) {
+    try {
+        throw e;
+    } catch (...) {
+        return std::current_exception();
+    }
+    return exception_ptr();
+}
 }  // namespace std

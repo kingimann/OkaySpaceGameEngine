@@ -49,6 +49,18 @@ public:
     Tu parseTu() {
         Tu tu;
         if (tscopes_.empty()) tscopes_.emplace_back();
+        // char16_t, char32_t and wchar_t ([basic.fundamental] p8-p9; ISO C 7.28 and 7.19 give
+        // the same names as typedefs): kept as the unsigned 16-bit and 32-bit integers and the
+        // signed 32-bit int of System V x86-64. They are not distinct types for overloading or
+        // mangling here.
+        auto wideChar = [&](const char* name, Type::Kind k, bool uns) {
+            auto w = ty(k);
+            w->unsign = uns;
+            tscopes_.front()[name] = std::move(w);
+        };
+        wideChar("char16_t", Type::Kind::Short, true);
+        wideChar("char32_t", Type::Kind::Int, true);
+        wideChar("wchar_t", Type::Kind::Int, false);
         eh_ = forceExceptions();
         for (const Token& t : toks_)
             if (t.kind == Tok::Keyword && (t.text == "try" || t.text == "throw")) eh_ = true;
@@ -260,7 +272,18 @@ private:
             isKwTok(t, "typedef") || isKwTok(t, "constexpr") || isKwTok(t, "inline") || isKwTok(t, "auto") ||
             isKwTok(t, "typename"))
             return true;
-        if (t.kind == Tok::Ident && ctmpl_.count(t.text)) return true;
+        if (t.kind == Tok::Ident && ctmpl_.count(t.text)) {
+            // A class template's name starts a type when its arguments follow. Followed by '=',
+            // ';', '.' and the like it is a variable or member of that name (a member 'duration'
+            // beside std::chrono::duration, [basic.scope.class]).
+            const bool inStream = &t >= toks_.data() && &t + 1 < toks_.data() + toks_.size();
+            if (!inStream) return true;
+            const Token& n = *(&t + 1);
+            if (!(isP(n, "=") || isP(n, ";") || isP(n, ".") || isP(n, "->") || isP(n, "[") || isP(n, "+=") ||
+                  isP(n, "-=") || isP(n, "*=") || isP(n, "/=") || isP(n, "++") || isP(n, "--") || isP(n, ")") ||
+                  isP(n, ",")))
+                return true;
+        }
         if (t.kind == Tok::Ident && aliasTmpl_.count(t.text) && &t >= toks_.data() &&
             &t + 1 < toks_.data() + toks_.size() && isP(*(&t + 1), "<"))
             return true;
@@ -386,7 +409,7 @@ private:
         if (atEnd() || cur().kind != Tok::Keyword) return false;
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") && !isKw("try") && !isKw("throw") &&
                !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto") &&
-               !isKw("new") && !isKw("delete");
+               !isKw("new") && !isKw("delete") && !isKw("this");  // this->x = v; starts an expression
     }
     bool eatP(const char* s) {
         if (!isP(s)) return false;
@@ -2350,7 +2373,7 @@ private:
                 fieldType = apply(std::move(base), d.mods);
             }
             if (isStaticMember && !tag.empty() && !isUnion) {
-                staticMember(tag, d, std::move(fieldType));
+                staticMember(tag, d, std::move(fieldType), fieldBase.get());
                 continue;
             }
             if (fieldType && fieldType->kind == Type::Kind::Function && !tag.empty() && !isUnion) {
@@ -3068,7 +3091,7 @@ private:
         for (auto& k : e.kids)
             if (k) boundConsts(*k);
     }
-    void staticMember(const std::string& tag, Parsed& d, std::unique_ptr<Type> type) {
+    void staticMember(const std::string& tag, Parsed& d, std::unique_ptr<Type> type, const Type* base = nullptr) {
         if (!type || d.name.empty()) {
             syncSemi();
             return;
@@ -3156,6 +3179,13 @@ private:
                 }
                 decl->init = std::move(lit);
             }
+        }
+        if (base && eatP(",")) {
+            // static constexpr float a = 1, b = 2;: more static members of the same type.
+            beforeDecls_.push_back(std::move(decl));
+            Parsed d2 = parseDeclarator(true);
+            staticMember(tag, d2, apply(cloneType(*base), d2.mods), base);
+            return;
         }
         expectP(";", ";");
         // Before the function being parsed: a class template instance made inside a function body
@@ -6424,7 +6454,8 @@ private:
         while (!atEnd()) {
             if (eatP("[")) {
                 Token at = cur();
-                auto idx = parseExpr();
+                // m[{a, b}]: a braced list as the subscript ([expr.sub] p1), given to operator[].
+                auto idx = isP("{") ? parseInitializer() : parseExpr();
                 expectP("]", "]");
                 auto n = ex(Expr::Kind::Index, at);
                 n->kids.push_back(std::move(e));

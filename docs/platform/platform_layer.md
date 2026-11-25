@@ -82,7 +82,7 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 | events | 30 | 18 | 24 -> 0 | 0 | 0 | 0 | 13 | HAVE (quit, window close/focus/resize, keys, text, mouse, wheel, file drop, controller hot-plug). Added: touch (`FingerDown/Motion/Up`, sdl2 only) and `wheelFlipped`. IME composition is HAVE on own Win32 (`Win32Ime.hpp`: preedit, caret, commit, cancel, focus loss, clause ranges in the model and in `Event::clauses` (empty on sdl2); own X11 has no IME, `XIMPreeditNothing`). GAP: `SDL_RENDER_*_RESET` (D3D11 device loss), Windows `SDL_SysWMEvent` |
 | keyboard, text input, mouse state | 75 | 2 | 58 -> 0 | 0 | 16 -> 1 | 1 | 20 | HAVE. Added: `RelativeMouseState`, `ModState`, `KeyForChar` (layout-aware), `IsCursorShown`. `Input/SdlKeys.hpp` is replaced by `Input/PlatformKeys.hpp` |
 | timers | 1 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE, moved in stage 1 |
-| audio device | 1 | 12 | 1 -> 0 | 0 | 0 | 0 | 0 | HAVE (queue and callback, playback and capture). GAP: `SDL_LoadWAV` and the format macros (launcher) |
+| audio device | 1 | 12 | 1 -> 0 | 0 | 0 | 0 | 0 | HAVE (queue and callback, playback and capture). `SDL_LoadWAV` was deleted on 2026-11-23 (#1187): our own WAV decoder is the only WAV reader |
 | game controller | 2 | 0 | 2 -> 0 | 0 | 0 | 0 | 0 | HAVE. The editor's remaining 2 words are its `SDL_CONTROLLERDEVICEADDED/REMOVED` event checks |
 | clipboard | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE; the apps use ImGui's clipboard, nothing calls ours yet |
 | cursors (system cursor shapes) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE (round 10: `CursorShape` / `Backend::SetCursorShape` on the SDL2, own X11 and own Win32 backends; tables in `Platform/CursorMap.hpp`, tested in `platform_xdnd`; Win32 part unrun on Windows) |

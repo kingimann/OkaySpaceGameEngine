@@ -1,8 +1,8 @@
 # 13. Scripting
 
 Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, the Script component that runs them, and the Script Editor.
-Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
-Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet.
+Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `engine/src/Lua/*` and `engine/include/okay/Lua/*` (our own Lua interpreter, about 6.9k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
+Two OkayScript languages exist side by side: id `okayscript` (the default; since #1217 and #1234 it runs on the standalone `okayscript/` library as bytecode, 13.8) and `okayscript-next` (typed, `class Name : Behaviour`, its own checker and tree-walking interpreter in `engine/src/Script/`). OkayScript stays our own language (owner, 2026-11-23, rule 24c); C# and Lua are planned as alternatives next to it, not replacements, and neither is on main yet.
 
 ## 13. Scripting
 
@@ -24,15 +24,15 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting.md` (the old `SCRIPTING.md` named in the earlier map no longer exists)
 - **Tests:** `scripting`, `scriptapi`, `script_semantics`, `script_lang2`, `script_lang3`, `script_events`, `script_arrays`, `script_maps`, `script_debug`, `script_paths`, `okayscript_csharp`, `csharp_style_script`
 - **Status:** Works - default language, used by every sample and by editor plugins; broad test coverage across syntax and builtins
-- **Open:** possible doc conflict: `docs/scripting/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; one 10.5k-line file (splitting is listed in 19.4); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
+- **Open:** possible doc conflict: `docs/scripting/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; `OkayScriptVM.cpp` was split into topic files (`OkayScriptVM_*.cpp`, #1185, about 9.5k lines in all); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
 - **Related:** 13.2, 13.4, 13.5, 13.7, 19.4
-- **Words:** OkayScript, okayscript, script language, start update, function, variable, coroutine, yield, lambda, LINQ, C# style, event handler, lifecycle, VM, Lua-like
+- **Words:** OkayScript, okayscript, script language, start update, function, variable, coroutine, yield, lambda, LINQ, C# style, event handler, lifecycle, VM
 - **Seen as:** a script does nothing or errors at runtime; "unknown function"; a field does not show in the Inspector; Start or Update never runs; a pasted C# script is accepted but has no effect; a coroutine stops early
 - **Ask me like:** "work on 13.1.3, coroutine bugs"; "script says unknown function, which part is that"
 
 ### 13.2 C#-style language core
-- **System:** Typed OkayScript - The newer C#-style typed script language and the table of engine calls it can use - duplicate of OkayScript (two engine binding tables; a merge is planned on branch `claude2/lua-csharp-merge`, no PR yet)
-  Home: `engine/src/Script/`, `engine/include/okay/Scripting/NextScriptVM.hpp`. Entry: `engine/include/okay/Scripting/NextScriptVM.hpp`. Also called: NextScript, NextScriptVM, C#-style script, typed script, EngineApi. Fix: PR #1159 (`claude2/one-script-api`) makes one binding table; then `NextScriptVM` gets a plain name.
+- **System:** Typed OkayScript - The newer C#-style typed script language and the table of engine calls it can use - a second language next to OkayScript; the two share one command table for the commands moved so far (#1159, 13.6.4), the rest of the typed table is still its own
+  Home: `engine/src/Script/`, `engine/include/okay/Scripting/NextScriptVM.hpp`. Entry: `engine/include/okay/Scripting/NextScriptVM.hpp`. Also called: NextScript, NextScriptVM, C#-style script, typed script, EngineApi. PR #1159 (merged) started one shared command table; `NextScriptVM` is still to get a plain name (rule 19e).
 - **What:** The typed OkayScript (`okayscript-next`): a script is `class Name : Behaviour`, source goes through lexer, parser, checker (every name resolved, every type known) and only then the interpreter, so a script either runs or says why not, with line and column.
 - **Parts:**
   - 13.2.1 Lexer - `engine/src/Script/Lexer.cpp` - tokens with line and column, `$"..."` nesting, keywords
@@ -47,28 +47,33 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Docs:** `docs/scripting/scripting.md` (partly describes both languages), `docs/engine_api.md`
 - **Tests:** `okayscript_next`, `okayscript_next_csharp`
 - **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas; not on main: try/catch, coroutines, events, inheritance and interfaces
-- **Open:** in flight (branches, no PR, 2026-10-26): claude/csharp-p1-events, -inheritance, -try, -coroutines, -getcomponent, claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
+- **Open:** the branches once listed here (claude/csharp-p1-events, -inheritance, -try, -coroutines, -getcomponent, claude/next-event-args, 2026-10-26) were never merged; `AvailableScriptLanguages()` still lists only `okayscript`, so New Script cannot pick `okayscript-next` (checked 2026-11-24); it is not meant to replace OkayScript any more (rule 24c)
 - **Related:** 13.1, 13.6, 13.5, 14.7
 - **Words:** okayscript-next, typed OkayScript, new OkayScript, class Behaviour, checker, interpreter, C# parity, lambdas, LINQ, statics, NextScriptVM
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
-### 13.3 Removed Lua and C# (Mono) backends
-- **System:** OkayScript
-- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
+### 13.3 Lua scripts (our own interpreter) and the removed C# (Mono) backend
+- **System:** Lua scripting - Lua 5.4 scripts on game objects, run by our own interpreter okay::lua Home: `engine/src/Lua/`, `engine/include/okay/Lua/` Entry: `engine/include/okay/Lua/Lua.hpp` Doc: `docs/scripting/lua.md` Also called: okay::lua, LuaScriptVM, .lua
+- **What:** `.lua` scripts (language `lua`) run on okay::lua, our own Lua 5.4 interpreter written from the Lua 5.4 Reference Manual (no Lua C source, no port). A script returns a table: its fields are Inspector settings and `Start`, `Update(dt)`, `OnTriggerEnter(other)` and the other lifecycle names run by name (old `function update(dt)` scripts work too). The engine API is the typed-language binding table (13.6), the same one the C#-style language and the visual-script Engine API nodes use. The third-party Lua and Mono backends stay removed; a scene naming `csharp` or `cs` still loads and says "no longer supported".
 - **Parts:**
-  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
-- **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
-- **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
-- **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
-- **Docs:** `docs/scripting/scripting.md`
-- **Tests:** `script_removed_langs`
-- **Status:** Works
-- **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
-- **Related:** 13.4, 13.5
-- **Words:** Lua, C#, Mono, mcs, csharp, lua backend, removed language, language not supported, old project, script language dropdown
-- **Seen as:** a Lua or C# script does nothing; the Console says the script language is no longer supported; an old scene loads but its script is silent
-- **Ask me like:** "why does my old Lua script not run"
+  - 13.3.1 Compiler - `engine/src/Lua/LuaCompiler.cpp` - lexer, one-pass parser and code generator to our own stack bytecode (manual sections 3 and 9): locals, `<const>` and `<close>`, multiple assignment and results, varargs, closures and upvalues, numeric and generic for, goto and labels, integer and float literals, string escapes, long strings and comments; syntax errors with line and column, several per check
+  - 13.3.2 Runtime - `engine/src/Lua/LuaState.cpp`, `engine/include/okay/Lua/Lua.hpp`, `engine/src/Lua/LuaCode.hpp` - values, tables (array part + hash part), metatables and metamethods, weak tables with ephemeron keys, `__gc` finalizers for tables (also run by `State::Close`, the manual's lua_close), integer/float arithmetic rules, mark and sweep collector, coroutines without threads (an explicit frame stack: pcall, xpcall, Lua metamethods, method lookups through a Lua `__index`, `__concat` chains and `__close` on block exit, break and return run as loop frames, so coroutines yield inside them), errors with chunk:line, instruction budget and memory limit (endless loops stop; pcall can not catch the stop)
+  - 13.3.3 Libraries - `engine/src/Lua/LuaLibBase.cpp`, `LuaLibString.cpp`, `LuaLibTable.cpp`, `LuaLibUtf8.cpp` - sandboxed base, coroutine, string (with patterns, format, pack/unpack/packsize), table, utf8, math (random numbers from `okay::Random`) and a safe os (clock, time, date, difftime); no io, os.execute, require, loadlib or debug
+  - 13.3.4 Engine glue - `engine/src/Lua/LuaScriptVM.cpp`, `engine/include/okay/Lua/LuaScriptVM.hpp` - `IScriptVM` for `lua`: engine objects as userdata (an object id, so a destroyed object is an error, not a crash), Vector3 with operators, static types as global tables (Input, Time, Debug, Mathf, GameObject, Vector3, ...), `GetComponent("Rigidbody")`, `Destroy(obj)`, events get the other GameObject, Inspector settings from the returned table, per-callback budget. Two binding tables, no Lua copy: the typed table (13.6) first, then the generated binding layer `Scripting/ScriptBindings` (#1234, the one OkayScript uses) for every other component (`GetComponent("Light").intensity = 2`, `l:FlickerFactor()`) and for members the typed table lacks (`GetComponent("Rigidbody"):InvMass()`); its component handles are re-resolved on every use, so a removed component is an error, not a crash
+  - 13.3.5 Script Editor support - `editor/main.cpp` (`CodeEditorFor`, `FormatScriptFor`, `ScriptFieldsFor`, New Script language box), `editor/ScriptAssist.cpp` (`LuaLanguageWords`) - Lua colours and hover docs in the Script Editor widget, New Script / language picker gives the Lua template (`StarterScriptSource("lua")`), errors with line and column, warnings for engine names that do not exist and misspelled handlers (`LuaScriptVM::Lint`), autocomplete of Lua words and the bound API including `obj:` members, Format Document by Lua blocks, Inspector settings from the returned table; `.lua` files open and attach as Lua (`ScriptLanguageForExtension`); dev screenshot hook `OKAY_UI_SCRIPT=open|lua|luaerr`
+  - 13.3.6 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `csharp` and `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+- **Code:** `engine/src/Lua/*`, `engine/include/okay/Lua/*`, `Scripting/ScriptVM`, `Components/ScriptComponent`
+- **API:** `CreateScriptVM("lua")`, `ScriptLanguageForExtension(".lua")`, `LuaScriptVM` (`kLanguage`, `SetBudget`, `CompletionNames`, `CompletionMembers`, `CompletionDoc`, `Lint`, `Settings`, `Format`), `okay::lua::State` (Load, PCallHost, DoString, CheckSyntax, SetBudget, memoryLimit, Close), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()` (`okayscript`, `lua`)
+- **Editor:** Script Editor language picker and New Script offer Lua; `.lua` files open in the Script Editor with Lua colours; Inspector shows the script table's fields; example scene `examples/lua/lua_scripts.okayscene`
+- **Docs:** `docs/scripting/lua.md` (supported language and library, binding rules, what each file was written from), `docs/scripting/scripting.md`
+- **Tests:** `lua_core` (standalone: conformance script `tests/lua/conformance.lua` written from the manual, five whole programs in `tests/lua/programs/` with recorded output (classes, text and patterns, coroutines, errors with lines, numbers/tables/utf8/goto/os), also under a collection at every safe point, syntax errors, budget, memory limit, host API, `Close` finalizers, mutation fuzz; clean under ASan and UBSan), `lua_script` (game scripts driving GameObjects, the generated bindings, the sandbox, the generator's file and network rules on the typed table too, `.lua` by extension), `script_removed_langs`, `starter_script`, `examples_work`
+- **Status:** Partial - the Lua 5.4 language and the base, string (patterns, format, pack), table, math, coroutine, utf8 and safe os libraries work and are tested on Linux; not in Lua: finalizers for engine userdata and at game-script teardown (the State is freed without them), yielding across a callback a library function calls (`table.sort`'s comparator, `string.gsub`'s function, `__tostring`, `__pairs`: the reference interpreter refuses these too), binary chunks; the Script Editor has no Lua debugger
+- **Open:** a Lua visual-script node (UNFINISHED "text-script nodes"); the generated layer does not reach static systems or methods with output references or lists (see #1234); the editor and Windows builds are unverified
+- **Related:** 13.4, 13.5, 13.6, 14.7
+- **Words:** Lua, lua script, .lua, okay::lua, Lua 5.4, coroutine, metatable, pcall, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown
+- **Seen as:** a Lua script errors with "script:12: ..."; a Lua script stops with "instruction budget exceeded"; a Lua setting is missing in the Inspector; an old C# script does nothing and the Console says the language is no longer supported
+- **Ask me like:** "work on 13.3.2, add weak tables to Lua"; "why does my Lua script say yield across a C-call boundary"
 
 ### 13.4 Script components and script UI
 - **System:** OkayScript
@@ -105,7 +110,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.5.8 External IDE - `editor/main.cpp` (`namespace extide` ~3359-3432) - Open in External IDE, Live Sync of outside edits, conflict banner
   - 13.5.9 Insert menu - `editor/main.cpp` - C# snippets, Behaviour Template, API Command picker
   - 13.5.10 Scripting Reference window - `editor/ScriptAssist.cpp` (`DrawScriptDocs`) - the function reference inside the editor (Help > Scripting Reference)
-- **Code:** `editor/main.cpp`, `editor/ScriptText.hpp`, `editor/ScriptAssist.*`, `editor/ScriptAssistBindings.*`, `okayui/src/OkayUICodeEdit.cpp`
+- **Code:** `editor/main.cpp`, `editor/ScriptText.hpp`, `editor/ScriptEditorCodeEdit.*`, `editor/ScriptEditorWidget.hpp`, `editor/ScriptAssist.*`, `editor/ScriptAssistBindings.*`, `okayui/src/OkayUICodeEdit.cpp` (`editor/vendor/` was deleted on 2026-11-23)
 - **API:** menu File / Edit / View / Go / Insert / Help inside the Script Editor; shortcuts Ctrl+F, Ctrl+Shift+F, Ctrl+/, Ctrl+D (next match), Ctrl+Shift+D (duplicate lines), Alt+Up/Down, Ctrl+Shift+[ / ] (fold), Ctrl+Alt+[ / ] (fold all), Ctrl+click and Alt+drag (carets)
 - **Editor:** View > Editors & Tools > Script Editor; Help > Scripting Reference; Layout preset "Scripting"
 - **Docs:** `docs/editor/editor.md` (Script Editor), `docs/scripting/scripting.md`
@@ -125,13 +130,14 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.6.2 IK and Animator script tools - `Script/AnimIkTools` - shared by OkayScript builtins and the typed API so one IK kind name means the same everywhere (foot, look, aim, hand_l, hand_r, full)
   - 13.6.3 Generated reference - `docs/engine_api.md` - regenerate with `OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` from the build folder; the `vs_types` test fails while it is stale
   - 13.6.4 Shared script-function table - `Scripting/ScriptApiRegistry`, `engine/src/Scripting/ScriptApiCore.cpp` - one entry per engine function that OkayScript (by snake_case name) and the typed language (as Type.Member, so also the Engine API nodes) both read; first batch: keys, actions, forces, whole-game saves, audio groups, time ([guide](../scripting/script_api_registry.md))
-- **Code:** `engine/src/Script/EngineApi.cpp`, `Scripting/ScriptApiRegistry`, `Scripting/ScriptApiCore.cpp`, `Script/AnimIkTools`, `VisualScript/VsApi`
+  - 13.6.5 Generated component bindings (OkayScript) - `Scripting/ScriptBindings`, `engine/src/Scripting/ScriptBindingsGenerated.cpp`, `scripts/gen_script_bindings.py` - since #1234 every component class (303) is reachable with `GetComponent("Name")`, about 2,200 of its public methods are generated from our own headers and every `PropertyRegistry` property can be read and set; scripts hold handles, never pointers, so a destroyed object reads as null; still out of reach: static engine systems, `GameObject`'s own methods, methods with container, callback or struct types (`docs/scripting/script_bindings.md`)
+- **Code:** `engine/src/Script/EngineApi.cpp`, `Scripting/ScriptApiRegistry`, `Scripting/ScriptApiCore.cpp`, `Scripting/ScriptBindings`, `Script/AnimIkTools`, `VisualScript/VsApi`
 - **API:** `OKAY_WRITE_API_DOCS=1`, `VsApiReference()`, `ParseIkKind`
 - **Editor:** Script Editor autocomplete list; visual-script palette "Engine API" nodes (14.7)
 - **Docs:** `docs/engine_api.md` (generated, do not edit by hand)
-- **Tests:** `vs_types` (checks the generated page), `script_api_parity` (every shared entry from both languages), `okayscript_next`, `vs_acceptance` (Engine API nodes end to end), `api_expand` (script API additions, exercised with an animation clip)
+- **Tests:** `vs_types` (checks the generated page), `script_bindings`, `script_bindings_generated` (the generated file matches the headers), `script_bindings_rules`, `script_api_parity` (every shared entry from both languages), `okayscript_next`, `vs_acceptance` (Engine API nodes end to end), `api_expand` (script API additions, exercised with an animation clip)
 - **Status:** Works - the page is generated from the table and guarded by a test
-- **Open:** animation and IK script tools are Grok's area (5.6, 5.7): do not edit them here
+- **Open:** the typed language's table (`EngineApi.cpp`) and the generated OkayScript bindings are still two tables; Grok no longer writes code (rule 24d, #1221), so the animation and IK script tools (5.6, 5.7) are no longer reserved for it
 - **Related:** 13.2, 14.7, 5.6
 - **Words:** engine API, binding table, EngineApi, ScriptApiRegistry, shared script table, add_torque, API reference, autocomplete list, IK script tools, generated docs, engine_api.md
 - **Seen as:** a member autocompletes but fails to run; engine_api.md differs from the code; an API node is missing from the palette
@@ -149,7 +155,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.7.6 Physics queries and events - `Scripting/OkayScriptVM` - raycasts, overlaps, layers, trigger and collision handlers
   - 13.7.7 Camera, effects, tilemap, navmesh, music, particles - `Scripting/OkayScriptVM` - camera and post-processing calls, tilemap edits, nav_path_*, music_*
   - 13.7.8 Multiplayer, Steam and accounts - `Scripting/OkayScriptVM` - net_* messaging, steam_* achievements and stats, account_* sign-in
-  - 13.7.9 Character animation - `Scripting/OkayScriptVM`, `Script/AnimIkTools` - play and query clips on a Character or Model Animator (Grok area)
+  - 13.7.9 Character animation - `Scripting/OkayScriptVM`, `Script/AnimIkTools` - play and query clips on a Character or Model Animator
 - **Code:** `Scripting/OkayScriptVM`, `Script/AnimIkTools`
 - **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting/scripting.md`
 - **Editor:** Help > Scripting Reference; Script Editor autocomplete; Insert > API Command

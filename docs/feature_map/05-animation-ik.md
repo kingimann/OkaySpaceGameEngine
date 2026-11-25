@@ -2,7 +2,7 @@
 
 Keyframe clips, the Animator state machine and its two editor windows, playing imported model clips with locomotion, the built-in humanoid motion and retargeting, root motion and skinning, the whole IK family (foot, limb, chain, look-at, aim, full body), ragdolls, object holding, built-in action clips and sprite animation.
 About 35 headers under `Components/` and `Animation/` (`ModelAnimator` 1,800 lines and `AnimStateMachine` 1,100 are header-only), `Animation/HumanoidActions.cpp` (2,180 lines), the 2,900-line `editor/AnimatorWindow.cpp` and the Animation tab inside `editor/main.cpp`.
-Grok's sessions own the open animation work: PR #554 (animation integration, in flight; #548-#551 were closed as duplicates and #535-#537, #539, #563 are already on main). Document only; ask before touching.
+PR #554 (animation integration) merged on 2026-11-10; #548-#551 were closed as duplicates and #535-#537, #539, #563 are on main. Grok no longer writes code (rule 24d, 2026-11-24), so this area is no longer reserved for it.
 
 ## 5. Animation & IK
 
@@ -71,7 +71,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Docs:** `docs/gameplay/animation.md` (Imported model animations, Mixed animation, Air states, Crouch and prone, Which components do I edit)
 - **Tests:** `mixamo_locomotion`, `strafe_blend`, `clip_graph`, `anim_playback`, `imported_glitches`, `rig_sweep`, `footik_drift`
 - **Status:** Works - mixamo_locomotion (580 lines), strafe_blend and clip_graph cover slots, stride matching and strafe blends; strafe clips landed in #537
-- **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": fixed 2026-11-22 (#422 finding 8): the keyframe clip player (class `Animator`, scene token `animator`, both unchanged) is shown as "Clip Player" in the Inspector, Add Component and the timeline panel; the state machine keeps "Animator"; each visual-script component id is checked where its nodes look at run time and its fix-it adds what makes the node work: the "Animator" API nodes get a state graph (on the object or under it), the Anim* nodes find one on the object, a child or a parent, and Play Clip asks for a Character or a Model Animator and its button adds a Character, which plays its built-in animations at once (`editor/AnimComponentNames.hpp`, `anim_component_names` test; the button was wrong before this: it added the clip player, then for a while the state graph, neither of which Play Clip uses)
+- **Open:** (merged with #554 on 2026-11-10, recheck before relying on it) the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": fixed 2026-11-22 (#422 finding 8): the keyframe clip player (class `Animator`, scene token `animator`, both unchanged) is shown as "Clip Player" in the Inspector, Add Component and the timeline panel; the state machine keeps "Animator"; each visual-script component id is checked where its nodes look at run time and its fix-it adds what makes the node work: the "Animator" API nodes get a state graph (on the object or under it), the Anim* nodes find one on the object, a child or a parent, and Play Clip asks for a Character or a Model Animator and its button adds a Character, which plays its built-in animations at once (`editor/AnimComponentNames.hpp`, `anim_component_names` test; the button was wrong before this: it added the clip player, then for a while the state graph, neither of which Play Clip uses)
 - **Related:** 5.1, 5.4, 4.2, 3.7
 - **Words:** Model Animator, ModelAnimator, locomotion, idle fallback, idle walk run, stride match, strafe, backpedal, Mixamo clips, crossfade, blend time, slots, Fix animations
 - **Seen as:** walking animation feels off, feet slide or the wrong speed; walk-only file has no idle; the model stays upright while the collider crouches; jump plays when stepping off a curb; imported character is in a T-pose
@@ -274,18 +274,18 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 
 ### 5.13 Player animation setup
 - **System:** Animation
-- **What:** In flight, not on main: a controller-panel status read-out ("what animation and IK does this player have") and one repeatable step that adds Foot IK, Look-At and the default Animator only where missing, then re-runs the animation fix without touching weights, chains or custom graphs.
+- **What:** On main since #554 (2026-11-10): a controller-panel status read-out ("what animation and IK does this player have") and one repeatable step that adds Foot IK, Look-At and the default Animator only where missing, then re-runs the animation fix without touching weights, chains or custom graphs.
 - **Parts:**
-  - 5.13.1 Inspect and wire - Animation/PlayerSetup (on branch `grok/anim-integrate` only) - InspectPlayerAnimation and WirePlayerAnimation
-  - 5.13.2 Head and walk stability tests - tests head_stability, player_setup and destroy_unstarted (on the same branch only)
+  - 5.13.1 Inspect and wire - `Animation/PlayerSetup` (`engine/src/Animation/PlayerSetup.cpp`, called from `editor/main.cpp`) - InspectPlayerAnimation and WirePlayerAnimation
+  - 5.13.2 Head and walk stability tests - tests head_stability, player_setup and destroy_unstarted (on main; `player_setup` is in `tests/CMakeLists.txt`)
   - 5.13.3 Play-mode cursor fix - editor change in #554: Esc releases the cursor even when the key is already up, Ctrl+P still stops Play
 - **Code:** -
-- **API:** `InspectPlayerAnimation`, `WirePlayerAnimation`, `PlayerAnimStatus` (in flight)
-- **Editor:** controller panel "setup status" (in flight)
-- **Docs:** `docs/gameplay/animation.md` additions on the branch only
+- **API:** `InspectPlayerAnimation`, `WirePlayerAnimation`, `PlayerAnimStatus`
+- **Editor:** controller panel "setup status"
+- **Docs:** `docs/gameplay/animation.md`
 - **Tests:** -
-- **Status:** In flight - PR #554 "Integrate owned animation and IK work", head on `grok/anim-integrate` (Grok's sessions); not on main
-- **Open:** per the PR body: head and walk jitter are not fixed; Play-cursor retest on the box; its body lists the `localization` test (missing font) as the one failing ctest in its run; do not edit, ask first
+- **Status:** Partial - merged with PR #554 "Integrate owned animation and IK work" on 2026-11-10
+- **Open:** per the PR body: head and walk jitter are not fixed; Play-cursor retest on the box; its body lists the `localization` test (missing font) as the one failing ctest in its run
 - **Related:** 3.7, 5.3, 5.7, 4.1
 - **Words:** PlayerSetup, wire animation, setup status, Play cursor, head stability, jitter
 - **Seen as:** the player has no foot IK or Animator until set up by hand; the head or body jitters while walking; Esc does not release the mouse in Play

@@ -139,6 +139,7 @@ add_library(okay_engine
     src/Net/NetworkManagerEvents.cpp
     src/Net/Net.cpp
     src/Net/NetworkManagerMigration.cpp
+    src/Net/NetworkManagerOnline.cpp
     src/Net/Rollback.cpp
     src/Net/NetworkManagerAuthority.cpp
     src/Net/NetworkManagerServer.cpp
@@ -209,6 +210,13 @@ add_library(okay_engine
     src/Script/EngineApi_Ui.cpp
     src/Script/EngineApi_Core.cpp
     src/Script/NextScriptVM.cpp
+    src/Lua/LuaCompiler.cpp
+    src/Lua/LuaState.cpp
+    src/Lua/LuaLibBase.cpp
+    src/Lua/LuaLibString.cpp
+    src/Lua/LuaLibTable.cpp
+    src/Lua/LuaLibUtf8.cpp
+    src/Lua/LuaScriptVM.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp

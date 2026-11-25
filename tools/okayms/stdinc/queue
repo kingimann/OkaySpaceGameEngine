@@ -1,0 +1,75 @@
+// okay-ms own standard header: <queue>, written from ISO/IEC 14882 [queue] and [priority.queue]. queue is first in,
+// first out over a deque; priority_queue keeps a binary heap in a vector, ordered by Compare, so top() is the greatest
+// element (by default; std::greater gives the smallest). Own heap code: an element moves up past its parent while the
+// parent is "less", and down toward its greater child.
+#pragma once
+#include <cstddef>
+#include <deque>
+#include <functional>
+#include <utility>
+#include <vector>
+namespace std {
+template <typename T, typename Container = deque<T> >
+class queue {
+public:
+    Container c;
+    typedef T value_type;
+    typedef size_t size_type;
+    queue() {}
+    bool empty() const { return c.empty(); }
+    size_t size() const { return c.size(); }
+    T& front() { return c.front(); }
+    const T& front() const { return c.front(); }
+    T& back() { return c.back(); }
+    const T& back() const { return c.back(); }
+    void push(const T& v) { c.push_back(v); }
+    template <typename... A>
+    void emplace(A&&... a) { c.push_back(T(a...)); }
+    void pop() { c.pop_front(); }
+};
+
+template <typename T, typename Container = vector<T>, typename Compare = less<T> >
+class priority_queue {
+public:
+    Container c;
+    Compare comp;
+    typedef T value_type;
+    typedef size_t size_type;
+    priority_queue() {}
+    bool empty() const { return c.empty(); }
+    size_t size() const { return c.size(); }
+    const T& top() const { return c.front(); }
+    void push(const T& v) {
+        c.push_back(v);
+        size_t i = c.size() - 1;
+        while (i > 0) {
+            const size_t parent = (i - 1) / 2;
+            if (!comp(c[parent], c[i])) break;
+            T t = c[parent];
+            c[parent] = c[i];
+            c[i] = t;
+            i = parent;
+        }
+    }
+    template <typename... A>
+    void emplace(A&&... a) { push(T(a...)); }
+    void pop() {
+        const size_t n = c.size() - 1;
+        c[0] = c[n];
+        c.pop_back();
+        size_t i = 0;
+        for (;;) {
+            const size_t l = 2 * i + 1;
+            const size_t r = l + 1;
+            size_t big = i;
+            if (l < n && comp(c[big], c[l])) big = l;
+            if (r < n && comp(c[big], c[r])) big = r;
+            if (big == i) break;
+            T t = c[big];
+            c[big] = c[i];
+            c[i] = t;
+            i = big;
+        }
+    }
+};
+}  // namespace std

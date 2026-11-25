@@ -44,6 +44,8 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
+    bool tls = false;
 };
 
 // The names of the enumerations read so far (Type::enum_id indexes it).
@@ -207,6 +209,7 @@ struct StructDef {
     // A lambda's closure class: the captured variables kept by reference. The field holds the address; a use of
     // the name reads through it.
     std::set<std::string> ref_caps;
+    std::set<std::string> ref_members;  // `T& name;` members: also in ref_caps (the field holds an address)
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
@@ -231,6 +234,9 @@ struct Global {
     // A virtual table: the type information object of its class, whose address is in the slot just before the first
     // function (the table pointer of an object points at the first function). Empty for none.
     std::string rtti;
+    // thread_local ([basic.stc.thread]): kept in the .tls$ section, one copy per thread made by the Windows loader from
+    // the image's TLS template; reached through the thread's TLS array (gs:[0x58]) and _tls_index.
+    bool tls = false;
 };
 
 inline Type peel_array(const Type& type) {
@@ -327,6 +333,18 @@ struct LineSource {
 struct Gen;
 
 // preprocess.cpp
+// A ' at i of s is a digit separator (50'000'000, 0x7F'FF; [lex.icon] 1, [lex.ppnumber]), not the start of a character
+// literal: it stands between two hex digits inside a number that starts with a decimal digit.
+inline bool is_digit_separator(const std::string& s, size_t i) {
+    if (i == 0 || i + 1 >= s.size() || s[i] != '\'') return false;
+    if (!std::isxdigit(static_cast<unsigned char>(s[i - 1])) || !std::isxdigit(static_cast<unsigned char>(s[i + 1])))
+        return false;
+    size_t start = i;
+    while (start > 0 && (std::isalnum(static_cast<unsigned char>(s[start - 1])) || s[start - 1] == '\'' ||
+                         s[start - 1] == '_'))
+        --start;
+    return std::isdigit(static_cast<unsigned char>(s[start])) != 0;
+}
 std::string strip_comments(const std::string& in);
 bool read_file(const std::string& path, std::string* text);
 

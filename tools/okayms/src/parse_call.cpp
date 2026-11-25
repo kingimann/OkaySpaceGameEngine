@@ -242,7 +242,7 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
     int method_owner = cls;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && find_method(cls, name, args.size(), &args) == nullptr) {
+        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && !has_viable_method(cls, name, args)) {
             if (!instantiate_member(cls, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
@@ -317,7 +317,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     int method_owner = sid;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && find_method(sid, name, args.size(), &args) == nullptr) {
+        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && !has_viable_method(sid, name, args)) {
             if (!instantiate_member(sid, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
@@ -625,7 +625,9 @@ bool Parser::operator_call(Node* object, std::vector<Node> args, bool* done) {
     Type t;
     if (!class_object_type(*object, &t)) return true;
     const Method* m = find_method(t.struct_id, "operator()", args.size(), &args, t.is_const || t.pconst ? 1 : 0);
-    if (m == nullptr) return true;
+    int tmpl_owner = -1;
+    // template <class G> T operator()(G& g) (a distribution of <random>): a member template call ([temp.mem]).
+    if (m == nullptr && find_member_tmpl(t.struct_id, "operator()", &tmpl_owner) == nullptr) return true;
     Node result;
     if (!method_call(&result, std::move(*object), false, "operator()", {}, &args)) return false;
     *object = std::move(result);

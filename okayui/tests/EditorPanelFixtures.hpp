@@ -127,7 +127,11 @@ struct ImportData {
     explicit ImportData(int kind = ImportModel) {
         edit.kind = kind;
         if (kind == ImportModel) { edit.scale = 0.01f; edit.normals = 1; edit.smoothingAngle = 60.0f; edit.importAnimations = true; }
-        if (kind == ImportTexture) edit.maxSize = 1024;
+        if (kind == ImportTexture) {   // an anisotropic, compressed colour picture, loaded
+            edit.maxSize = 1024; edit.filter = 2; edit.anisotropy = 8; edit.mipmaps = true; edit.mipFilter = 1;
+            edit.compress = true; edit.compression = 0;
+            model.loadedNote = "Loaded: 1024 x 1024, 11 mip levels, 1.33 MB, 1 handle";
+        }
         if (kind == ImportAudio) { edit.loadMode = 1; edit.forceMono = false; }
         model.edit = &edit; model.original = edit;
     }
@@ -168,6 +172,21 @@ struct RenderingData {
     RenderingSettingsModel model;
     RenderingData() { model.ambient = &ambient; model.skybox = &skybox; }
     RenderingData(const RenderingData&) = delete;
+};
+
+// The loading screen with a logo and the custom accent on (every row).
+struct LoadingData {
+    char logo[260] = "Assets/Textures/Logo.png";
+    bool accentOverride = true, showBar = true;
+    float accent[3] = {0.235f, 0.475f, 0.800f};
+    float bgTop[3] = {0.094f, 0.094f, 0.106f}, bgBottom[3] = {0.051f, 0.051f, 0.059f};
+    LoadingScreenModel model;
+    LoadingData() {
+        model.logo = logo; model.logoSize = sizeof logo;
+        model.accentOverride = &accentOverride; model.accent = accent;
+        model.bgTop = bgTop; model.bgBottom = bgBottom; model.showBar = &showBar;
+    }
+    LoadingData(const LoadingData&) = delete;
 };
 
 } // namespace panelfix

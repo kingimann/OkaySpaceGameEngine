@@ -4,6 +4,7 @@
 //
 //   Net::Use(scene);                      // once: the scene the game plays in
 //   Net::Host();                          // or Net::Join("192.168.1.20"), or Net::HostOrJoin()
+//   Net::HostOnline();                    // over the internet: friends Net::JoinCode(Net::RoomCode())
 //   Net::OnPlayerJoined([](uint32_t id, const std::string& name) { ... });
 //   Net::On("hit", [](uint32_t from, const std::string& data) { ... });
 //   Net::Send("hit", "10");               // runs on every player, this one too
@@ -46,6 +47,13 @@ public:
     static bool Join(const std::string& address);
     /// Host if the port is free on this computer, else join the game hosted on it.
     static bool HostOrJoin(std::uint16_t port = NetworkManager::kDefaultPort);
+    /// Host over the internet through the relay under a short room code (made up when empty). False with
+    /// LastError() if it could not start; RoomCode() is the code to give friends.
+    static bool HostOnline(const std::string& code = "");
+    /// Join an online game by its room code ("K7Q29X"). Returns at once, like Join.
+    static bool JoinCode(const std::string& code);
+    /// The room code of this online game ("" when not online).
+    static std::string RoomCode();
     /// Leave the game. The host leaving hands the game to another player (host migration), or ends it.
     static void Leave();
 

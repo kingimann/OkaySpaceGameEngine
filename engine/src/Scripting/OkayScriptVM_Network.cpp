@@ -130,6 +130,26 @@ void OkayScriptVM::Impl::RegisterNetworkBuiltins(BuiltinCtx& c) {
                 if (s.responded) return Value{n->StartClient(s.host, s.port)};
             return Value{false};
         };
+        // Online play through the relay by a short room code: net.host_online() -> the code to give
+        // friends ("" and net.error() when it could not start); net.join_code("K7Q29X") -> true while it tries.
+        b["net.host_online"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n || !n->HostOnline(a.empty() ? std::string() : a[0].AsString())) return Value{std::string()};
+            return Value{n->RoomCode()};
+        };
+        b["net.join_code"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            return Value{n && n->JoinCode(a.empty() ? std::string() : a[0].AsString())};
+        };
+        b["net.relay"] = [this](std::vector<Value>& a) {   // ("host:port") sets the relay online play uses; returns it
+            NetworkManager* n = EnsureNet();
+            if (!n) return Value{std::string()};
+            if (!a.empty()) n->relayServer = a[0].AsString();
+            return Value{n->OnlineRelay()};
+        };
+        b["net.room_code"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->RoomCode() : std::string()}; };
+        // How this player's traffic travels: "direct", "direct (punched)", "relayed", "relayed (trying direct)", "" offline.
+        b["net.path"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? n->PathText() : std::string()}; };
         b["net.leave"] = [this](std::vector<Value>&) { if (NetworkManager* n = Net()) n->Stop(); return Value{}; };
         b["net.is_host"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n && n->IsServer()}; };
         b["net.connected"] = [this](std::vector<Value>&) {

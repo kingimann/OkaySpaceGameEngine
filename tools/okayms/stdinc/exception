@@ -1,0 +1,63 @@
+// okay-ms own standard header: <exception>, written from ISO/IEC 14882 [support.exception]. The base class of the
+// library's exceptions with its virtual what(), bad_exception, terminate handlers, uncaught_exceptions and
+// exception_ptr. okay-ms's exceptions are its own frame-list scheme (tools/okayms/runtime/eh.c), so:
+// - bad_alloc is here, not in <new> (see below): include <exception> or <stdexcept> to name it.
+// - exception_ptr is a handle the runtime would fill; current_exception(), rethrow_exception(), terminate(),
+//   set_terminate(), get_terminate() and uncaught_exceptions() are declared here and not defined by the runtime yet,
+//   so a program that calls one links only against a library that defines it. make_exception_ptr is not here.
+#pragma once
+#include <cstddef>
+#include <cstdlib>  // free, for the deleting destructor of the virtual ~exception
+namespace std {
+
+class exception {
+public:
+    exception() noexcept {}
+    exception(const exception&) noexcept {}
+    exception& operator=(const exception&) noexcept { return *this; }
+    virtual ~exception() {}
+    virtual const char* what() const noexcept { return "std::exception"; }
+};
+
+class bad_exception : public exception {
+public:
+    const char* what() const noexcept { return "std::bad_exception"; }
+};
+
+// bad_alloc and bad_array_new_length ([bad.alloc], [new.badlength]) belong to <new>; they are here so that <new>, which
+// every container includes, does not bring a class with virtual functions into every file (okay-ms compiles a header's
+// inline functions into each object, and the deleting destructor needs free). okay-ms's `new` does not throw them.
+class bad_alloc : public exception {
+public:
+    bad_alloc() noexcept {}
+    const char* what() const noexcept { return "std::bad_alloc"; }
+};
+class bad_array_new_length : public bad_alloc {
+public:
+    const char* what() const noexcept { return "std::bad_array_new_length"; }
+};
+
+typedef void (*terminate_handler)();
+terminate_handler set_terminate(terminate_handler f) noexcept;
+terminate_handler get_terminate() noexcept;
+[[noreturn]] void terminate() noexcept;
+int uncaught_exceptions() noexcept;
+
+// A shared handle on an exception object ([propagation]); empty when it holds none.
+class exception_ptr {
+public:
+    void* object__;
+    exception_ptr() noexcept : object__(0) {}
+    exception_ptr(const exception_ptr& o) noexcept : object__(o.object__) {}
+    exception_ptr& operator=(const exception_ptr& o) noexcept {
+        object__ = o.object__;
+        return *this;
+    }
+    explicit operator bool() const noexcept { return object__ != 0; }
+    bool operator==(const exception_ptr& o) const noexcept { return object__ == o.object__; }
+    bool operator!=(const exception_ptr& o) const noexcept { return object__ != o.object__; }
+};
+exception_ptr current_exception() noexcept;
+[[noreturn]] void rethrow_exception(exception_ptr p);
+
+}  // namespace std

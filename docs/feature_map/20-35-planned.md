@@ -1150,7 +1150,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/gameplay/animation.md`
 - **Tests:** `make_playable`, `humanoid_bones`, `character_model_setup`, `humanoid_retarget`
 - **Status:** Partial - auto-binding works with rigid nearest-bone weights; no smooth skin weights and no bone placement UI.
-- **Exists today:** Rigid binding for unrigged meshes and name-based mapping for rigged ones. Animation and IK pieces are in Grok's area 5; do not edit them from here.
+- **Exists today:** Rigid binding for unrigged meshes and name-based mapping for rigged ones. Animation and IK pieces are in area 5.
 - **Work packages:**
   1. M - Smooth skin weights (blend between the two nearest bones) for auto-rigged meshes. Depends on: nothing.
   2. M - Joint placement UI: drag the 15 joints over the model before binding. Depends on: package 1.

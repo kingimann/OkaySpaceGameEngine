@@ -2,7 +2,7 @@
 
 # Code index: engine-Net
 
-Back to the [code index](../code_index.md). 33 headers, 153 names.
+Back to the [code index](../code_index.md). 33 headers, 166 names.
 
 ## `engine/include/okay/Net/AntiCheat.hpp`
 
@@ -109,7 +109,7 @@ Back to the [code index](../code_index.md). 33 headers, 153 names.
 
 ## `engine/include/okay/Net/Net.hpp`
 
-- `Net` class, line 31
+- `Net` class, line 32
 
 ## `engine/include/okay/Net/NetBackend.hpp`
 
@@ -170,19 +170,27 @@ Back to the [code index](../code_index.md). 33 headers, 153 names.
 
 - `SimSettings` struct, line 25
 - `Simulator` function, line 33
-- `SimulatorActive` function, line 36: True when enabled and at least one knob would change a datagram.
-- `SimulatorOverflows` function, line 39: Datagrams dropped because a socket had too many waiting (not simulated loss).
-- `ResetSimulator` function, line 42: Drop any datagrams still waiting. Settings stay as they are.
-- `PumpSimulator` function, line 48: Send due outbound datagrams. Call once a frame.
-- `HoldDatagram` function, line 52: When the simulator is active, take the datagram (send later, send now, or
-- `TakeDatagram` function, line 58: A datagram for the game to read, or the same codes as UdpSocket::RecvFrom
-- `ObjectKey` function, line 62: Row name for a custom message: the synced object id when the channel
-- `NoteObject` function, line 64
-- `NoteWire` function, line 65
-- `ProfileAdvance` function, line 66
-- `TrafficRow` struct, line 68
-- `TrafficSample` struct, line 74
-- `Traffic` function, line 80
+- `NatType` enum, line 41: ---- NAT model -----------------------------------------------------------------------------------------
+- `SetSimulatedNat` function, line 50: Put 'inside' behind a router of this kind (None takes it away). Its old mappings go.
+- `SimulatedNat` function, line 51
+- `RebindSimulatedNat` function, line 53: The router makes new mappings (a NAT rebinding): the public ports change and the old ones lead nowhere.
+- `SimulatedNatPort` function, line 55: The public port 'inside' reaches 'to' from (0 while it has sent nothing there).
+- `SimulatedNatDrops` function, line 57: Datagrams the routers turned away (unsolicited, or sent to a private address).
+- `ClearSimulatedNats` function, line 59: Take every socket out from behind its router.
+- `SendThroughNat` function, line 62: Send through 'socket''s router when it has one (true), else do nothing (false). Raw sends that skip the
+- `SimulatorActive` function, line 65: True when enabled and at least one knob would change a datagram.
+- `SimulatorOverflows` function, line 68: Datagrams dropped because a socket had too many waiting (not simulated loss).
+- `ResetSimulator` function, line 71: Drop any datagrams still waiting. Settings stay as they are.
+- `PumpSimulator` function, line 77: Send due outbound datagrams. Call once a frame.
+- `HoldDatagram` function, line 81: When the simulator is active, take the datagram (send later, send now, or
+- `TakeDatagram` function, line 87: A datagram for the game to read, or the same codes as UdpSocket::RecvFrom
+- `ObjectKey` function, line 91: Row name for a custom message: the synced object id when the channel
+- `NoteObject` function, line 93
+- `NoteWire` function, line 94
+- `ProfileAdvance` function, line 95
+- `TrafficRow` struct, line 97
+- `TrafficSample` struct, line 103
+- `Traffic` function, line 109
 
 ## `engine/include/okay/Net/NetTransport.hpp`
 
@@ -192,7 +200,7 @@ Back to the [code index](../code_index.md). 33 headers, 153 names.
 
 ## `engine/include/okay/Net/NetworkManager.hpp`
 
-- `NetworkManager` class, line 39: Authoritative-relay multiplayer over UDP. One peer runs as the server; the
+- `NetworkManager` class, line 41: Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 
 ## `engine/include/okay/Net/Packet.hpp`
 
@@ -209,19 +217,24 @@ Back to the [code index](../code_index.md). 33 headers, 153 names.
 ## `engine/include/okay/Net/RelayHello.hpp`
 
 - `RelayHelloParams` struct, line 19: The one place a relay hello is built and a relay welcome is checked, shared
-- `BuildRelayHello` function, line 40: A hello datagram: [tag][role][u32 length + code][version][u64 key][cookie]
-- `RelayWelcomeInfo` struct, line 57: What a welcome datagram says, once checked against the hello's nonce.
+- `BuildRelayHello` function, line 41: A hello datagram: [tag][role][u32 length + code][version][u64 key][cookie]
+- `RelayWelcomeInfo` struct, line 59: What a welcome datagram says, once checked against the hello's nonce.
+- `RelayPeerAddrInfo` struct, line 100: A RelayPeerAddr frame, once checked against the hello's nonce (a forged one is dropped).
+- `ParseRelayPeerAddr` function, line 106
+- `BuildRelayDirectAllow` function, line 122: A RelayDirectAllow frame (host to relay): the host's key, then the slots it lets the relay pass addresses on for.
+- `BuildRelayPunch` function, line 134: A punch datagram (peer to peer): [tag][kind][u64 token][u32 sender's slot].
 
 ## `engine/include/okay/Net/RelayProtocol.hpp`
 
 - `RelayTag` enum, line 13: Relay (TURN-style) framing that lets two peers behind NATs reach each other
-- `RelayRefusal` enum, line 33: Why the relay turned a hello away (RelayRefused).
-- `RelayRole` enum, line 61: Roles a peer announces in RelayHello. The first host to register a code owns
+- `RelayHelloFlag` enum, line 46: Hello flags (version 5, one byte after the nonce).
+- `RelayRefusal` enum, line 57: Why the relay turned a hello away (RelayRefused).
+- `RelayRole` enum, line 106: Roles a peer announces in RelayHello. The first host to register a code owns
 
 ## `engine/include/okay/Net/RelayServer.hpp`
 
-- `RelayLogSafe` function, line 49: A small TURN-style relay so two peers behind NATs can play together without
-- `RelayServer` class, line 51
+- `RelayLogSafe` function, line 55: A small TURN-style relay so two peers behind NATs can play together without
+- `RelayServer` class, line 57
 
 ## `engine/include/okay/Net/Rollback.hpp`
 

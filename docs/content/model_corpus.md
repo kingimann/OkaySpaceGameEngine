@@ -264,7 +264,7 @@ Same corpus, same Assimp v5.4.3 sources, rebuilt with the OFF, SMD, MD5, MS3D, A
 - Windows was a MinGW build under wine, not Windows itself and not MSVC; macOS and the web were not run.
 - The Assimp used for the numbers was built from the same v5.4.3 sources with the FBX, COLLADA, 3DS and BVH importers (first runs), with the glTF, OBJ, STL and PLY importers (pre-flip verification) and, for batch C, with the MD2, MD3, IRRMESH, B3D and X importers, and for batch D with the AC, OGRE, XGL, IRR and NFF importers (plus X, IRRMESH and OBJ for the scenes that name those files).
 - Many files in the corpus are tiny test cases or deliberately broken files, not production assets; the glTF files are sample models and a few generators' outputs, not the kind of files users export from their tools (the OBJ, PLY and STL files include a few exporter files). Real-world glTF from other tools is covered only by the repository's own rig fixtures (`tests/assets/rigs`).
-- The release note for the dropped formats, the default flips and the deletion of Assimp and ufbx have not been done; they wait for the owner (`docs/status/own_code_roadmap.md`).
+- Since this was written: the default flips happened on 2026-11-17 (owner approval) and ufbx was deleted on 2026-11-23. The release note for the dropped formats and the deletion of Assimp have not been done; they wait for the owner (`docs/status/own_code_roadmap.md`).
 
 ## Flip readiness (pre-flip verification, not an approval)
 

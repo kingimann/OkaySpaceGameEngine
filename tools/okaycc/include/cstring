@@ -1,14 +1,27 @@
-// <cstring> for okay-cc: the string functions of lib/str.c and lib/mem.c in namespace std
-// (ISO/IEC 14882 [cstring.syn], ISO C 7.24). Our own header; gcc keeps its own.
+// <cstring> for okay-cc: the string functions of lib/str.c, lib/mem.c and lib/extra.c, in namespace
+// std and at file scope (ISO/IEC 14882 [cstring.syn], ISO C 7.24). Our own header; gcc keeps its own.
 #pragma once
+#define OKAYCC_CSTRING_DECLS                                                                         \
+    unsigned long strlen(const char *s);                                                             \
+    int strcmp(const char *a, const char *b);                                                        \
+    char *strcpy(char *dst, const char *src);                                                        \
+    char *strcat(char *dst, const char *src);                                                        \
+    void *memcpy(void *dst, const void *src, unsigned long n);                                       \
+    void *memset(void *dst, int c, unsigned long n);                                                 \
+    int memcmp(const void *a, const void *b, unsigned long n);                                       \
+    void *memmove(void *dst, const void *src, unsigned long n);                                      \
+    const void *memchr(const void *s, int c, unsigned long n);                                       \
+    int strncmp(const char *a, const char *b, unsigned long n);                                      \
+    const char *strchr(const char *s, int c);                                                        \
+    const char *strrchr(const char *s, int c);                                                       \
+    const char *strstr(const char *a, const char *b);
+extern "C" {
+OKAYCC_CSTRING_DECLS
+}
 namespace std {
 typedef unsigned long size_t;
 extern "C" {
-size_t strlen(const char *s);
-int strcmp(const char *a, const char *b);
-char *strcpy(char *dst, const char *src);
-char *strcat(char *dst, const char *src);
-void *memcpy(void *dst, const void *src, size_t n);
-void *memset(void *dst, int c, size_t n);
+OKAYCC_CSTRING_DECLS
 }
 }  // namespace std
+#undef OKAYCC_CSTRING_DECLS

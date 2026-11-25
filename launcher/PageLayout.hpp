@@ -1,0 +1,287 @@
+// PageLayout.hpp - where the launcher's page pieces go: the page toolbar, wrapping chip rows, card grids and the
+// listing card used by the Marketplace and Community pages (and the rows of the Notifications panel).
+// Our own code, written for this launcher from plain box-layout arithmetic. Pure maths, no ImGui, so the layouts are
+// tested headless (tests/test_launcher_page_layout.cpp): text fits its button, nothing overlaps, nothing leaves its card,
+// at the small window size and at UI scale 1.5.
+#pragma once
+#include "../editor/EditorLayoutMath.hpp"   // okay::edlayout::Rc, Overlaps, Inside: the one rectangle test, shared with the editor (std only)
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace okay::launcherlayout {
+
+/// A box by its top-left corner and size (what ImGui hands out); the tests go through the editor's Rc.
+struct Rect {
+    float x = 0, y = 0, w = 0, h = 0;
+    float R() const { return x + w; }
+    float B() const { return y + h; }
+    okay::edlayout::Rc Rc() const { return okay::edlayout::MakeRc(x, y, w, h); }
+};
+
+/// Do two rectangles share some area (touching edges do not count)?
+inline bool Overlaps(const Rect& a, const Rect& b) { return okay::edlayout::Overlaps(a.Rc(), b.Rc()); }
+/// Is `in` inside `out` (`out` grown by half a pixel, for sums of fractional widths)?
+inline bool Inside(const Rect& in, const Rect& out) {
+    return okay::edlayout::Inside(okay::edlayout::MakeRc(out.x - 0.5f, out.y - 0.5f, out.w + 1.0f, out.h + 1.0f), in.Rc());
+}
+
+/// The width of a button whose label is `textW` wide: the label plus padding on both sides, never under `minW`.
+inline float ButtonW(float textW, float padX, float minW) { return std::max(minW, std::ceil(textW + 2.0f * padX)); }
+
+/// A grid of equal cards: as many columns of at least `minCardW` as fit in `availW` (1..maxCols), the cards share
+/// the width exactly (whole pixels).
+struct Grid { int cols = 1; float cardW = 0; float gap = 0; };
+inline Grid FitGrid(float availW, float minCardW, float gap, int maxCols) {
+    Grid g; g.gap = gap;
+    g.cols = std::clamp((int)std::floor((availW + gap) / (minCardW + gap)), 1, std::max(1, maxCols));
+    g.cardW = std::max(1.0f, std::floor((availW - (g.cols - 1) * gap) / g.cols));
+    return g;
+}
+/// Card `i` of a grid whose top-left is (0, 0) and whose cards are `cardH` high.
+inline Rect GridCell(const Grid& g, int i, float cardH) {
+    return Rect{(i % g.cols) * (g.cardW + g.gap), (float)(i / g.cols) * (cardH + g.gap), g.cardW, cardH};
+}
+inline float GridHeight(const Grid& g, int n, float cardH) {
+    if (n <= 0) return 0.0f;
+    const int rows = (n + g.cols - 1) / g.cols;
+    return rows * cardH + (rows - 1) * g.gap;
+}
+
+/// Items of the given widths laid left to right from (0, 0), wrapping onto a new row when the next one would pass
+/// `availW` (an item wider than the whole row gets a row to itself and is narrowed to fit).
+inline std::vector<Rect> Flow(const std::vector<float>& widths, float itemH, float availW, float gapX, float gapY) {
+    std::vector<Rect> out;
+    float x = 0, y = 0;
+    for (float w : widths) {
+        w = std::min(w, availW);
+        if (x > 0 && x + w > availW + 0.01f) { x = 0; y += itemH + gapY; }
+        out.push_back(Rect{x, y, w, itemH});
+        x += w + gapX;
+    }
+    return out;
+}
+inline float FlowHeight(const std::vector<Rect>& r) {
+    float b = 0;
+    for (const Rect& q : r) b = std::max(b, q.B());
+    return b;
+}
+
+/// A page toolbar: a search field that takes the spare width (at least `searchMinW`) and buttons after it. When the
+/// field and every button fit on one row they share it (buttons on the right); otherwise the search field gets the
+/// first row to itself and the buttons wrap below it, left-aligned.
+struct Toolbar { Rect search; std::vector<Rect> buttons; float height = 0; bool stacked = false; };
+inline Toolbar LayoutToolbar(float availW, float searchMinW, float searchMaxW, const std::vector<float>& buttonW, float h, float gap) {
+    Toolbar t;
+    float bw = 0;
+    for (float w : buttonW) bw += w + gap;
+    if (searchMinW + bw <= availW) {
+        const float sw = std::min(std::max(searchMinW, availW - bw), searchMaxW > 0 ? searchMaxW : availW);
+        t.search = Rect{0, 0, sw, h};
+        float x = availW;
+        for (std::size_t i = buttonW.size(); i-- > 0;) { x -= buttonW[i]; t.buttons.insert(t.buttons.begin(), Rect{x, 0, buttonW[i], h}); x -= gap; }
+        t.height = h;
+        return t;
+    }
+    t.stacked = true;
+    t.search = Rect{0, 0, availW, h};
+    t.buttons = Flow(buttonW, h, availW, gap, gap);
+    t.height = h + gap + FlowHeight(t.buttons);   // (before the buttons move under the search field)
+    for (Rect& r : t.buttons) r.y += h + gap;
+    return t;
+}
+
+/// The listing card (Marketplace, Community library): an icon tile at the top left, the text column beside it and a
+/// row of actions along the bottom. `textLinesH` is the height the text column needs.
+struct ListCard { Rect card, icon, text, actions; };
+inline ListCard LayoutListCard(float cardW, float pad, float icon, float textLinesH, float actionH) {
+    ListCard c;
+    const float top = std::max(icon, textLinesH);
+    c.icon = Rect{pad, pad, icon, icon};
+    c.text = Rect{pad + icon + pad * 0.85f, pad, std::max(0.0f, cardW - (pad + icon + pad * 0.85f) - pad), textLinesH};
+    c.actions = Rect{pad, pad + top + pad * 0.85f, std::max(0.0f, cardW - 2 * pad), actionH};
+    c.card = Rect{0, 0, cardW, c.actions.B() + pad};
+    return c;
+}
+
+/// Buttons along a card's action row: the first one (the main action) takes the spare width, the rest keep theirs,
+/// right-aligned. Returns rects relative to the row.
+inline std::vector<Rect> LayoutActionRow(float rowW, float h, float mainMinW, const std::vector<float>& restW, float gap) {
+    float rest = 0;
+    for (float w : restW) rest += w + gap;
+    std::vector<Rect> out;
+    out.push_back(Rect{0, 0, std::max(mainMinW, rowW - rest), h});
+    float x = out[0].R() + gap;
+    for (float w : restW) { out.push_back(Rect{x, 0, w, h}); x += w + gap; }
+    return out;
+}
+
+/// A flyout panel (Notifications) beside the sidebar: `navW` wide sidebar, the window's work area `areaW` x `areaH`.
+/// It keeps a margin on every side, is `prefW` wide and `prefH` high when there is room, and never leaves the window.
+inline Rect FlyoutRect(float areaW, float areaH, float navW, float prefW, float prefH, float minW, float minH, float margin) {
+    Rect r;
+    r.w = std::clamp(areaW - navW - 2 * margin, std::min(minW, areaW - navW - 2 * margin), prefW);
+    r.h = std::clamp(areaH - 2 * margin, std::min(minH, areaH - 2 * margin), prefH);
+    r.x = navW + margin;
+    r.y = areaH - margin - r.h;
+    return r;
+}
+
+/// A card's header: something on the left that can wrap (at least `leftMinW` wide) and a fixed group on the right
+/// (`rightW`). Side by side when both fit, the left part taking the spare width; otherwise the right group goes on its own
+/// row under the left part, and the left part gets the whole width. Rects from the card's inner top-left; `leftH` and
+/// `rightH` are their heights (the left one after wrapping to the width it is given, so call twice: once for the width).
+struct HeaderSplit { bool sameRow = true; float leftW = 0; Rect left, right; float height = 0; };
+inline HeaderSplit SplitHeader(float availW, float leftMinW, float rightW, float gap) {
+    HeaderSplit h;
+    h.sameRow = leftMinW + gap + rightW <= availW;
+    h.leftW = h.sameRow ? availW - gap - rightW : availW;
+    return h;
+}
+inline void PlaceHeader(HeaderSplit& h, float availW, float leftH, float rightW, float rightH, float gap) {
+    if (h.sameRow) {
+        const float rowH = std::max(leftH, rightH);
+        h.left = Rect{0, (rowH - leftH) * 0.5f, h.leftW, leftH};
+        h.right = Rect{availW - rightW, (rowH - rightH) * 0.5f, rightW, rightH};
+        h.height = rowH;
+    } else {
+        h.left = Rect{0, 0, h.leftW, leftH};
+        h.right = Rect{0, leftH + gap, std::min(rightW, availW), rightH};
+        h.height = h.right.B();
+    }
+}
+
+// ---- The Marketplace (a browse-and-shop page: a filter rail, a grid of item tiles, an item page) ----------------------------
+/// Where the filter rail and the grid go. Below `railMinPageW` the rail folds into a "Filters" button (it then opens over the
+/// grid). The grid has 3 to 6 columns of tiles at least `tileMinW` wide (fewer than 3 only when even 3 do not fit).
+struct MarketPage { bool railShown = true; Rect rail, grid; Grid tiles; };
+inline MarketPage LayoutMarketPage(float availW, float railW, float gap, float tileMinW, float tileGap, float railMinPageW) {
+    MarketPage m;
+    m.railShown = availW >= railMinPageW;
+    m.rail = m.railShown ? Rect{0, 0, railW, 0} : Rect{};
+    const float gx = m.railShown ? railW + gap : 0.0f;
+    m.grid = Rect{gx, 0, std::max(1.0f, availW - gx), 0};
+    m.tiles = FitGrid(m.grid.w, tileMinW, tileGap, 6);
+    return m;
+}
+/// One item tile: a 4:3 picture, the price in bold, the title on up to two lines, then "seller  ·  1.5k downloads"; the heart
+/// sits in the picture's top-right corner.
+struct MarketTile { Rect tile, picture, heart, price, title, meta; };
+inline MarketTile LayoutMarketTile(float tileW, float lineH, float priceH, float pad, float heartD) {
+    MarketTile t;
+    t.picture = Rect{0, 0, tileW, std::floor(tileW * 0.75f)};
+    t.heart = Rect{tileW - pad * 0.6f - heartD, pad * 0.6f, heartD, heartD};
+    t.price = Rect{pad, t.picture.B() + pad * 0.7f, std::max(0.0f, tileW - 2 * pad), priceH};
+    t.title = Rect{pad, t.price.B() + pad * 0.25f, std::max(0.0f, tileW - 2 * pad), 2 * lineH};
+    t.meta = Rect{pad, t.title.B() + pad * 0.3f, std::max(0.0f, tileW - 2 * pad), lineH};
+    t.tile = Rect{0, 0, tileW, t.meta.B() + pad};
+    return t;
+}
+/// The item page: the picture and the details side by side on a wide page, the picture over the details on a narrow one.
+struct MarketDetail { bool twoColumns = true; Rect picture, info; };
+inline MarketDetail LayoutMarketDetail(float availW, float gap, float minInfoW) {
+    MarketDetail d;
+    const float picW = std::floor(availW * 0.55f);
+    d.twoColumns = availW - picW - gap >= minInfoW;
+    if (d.twoColumns) { d.picture = Rect{0, 0, picW, std::floor(picW * 0.75f)}; d.info = Rect{picW + gap, 0, availW - picW - gap, 0}; }
+    else { d.picture = Rect{0, 0, availW, std::floor(availW * 0.5f)}; d.info = Rect{0, d.picture.B() + gap, availW, 0}; }
+    return d;
+}
+/// What the Marketplace shows: which view (0 Browse, 1 Your listings, 2 Saved), a category (-1 all), a minimum average
+/// rating, the search text (lower case), and the item page that is open (0 none; Back closes it, the list is kept).
+struct MarketQuery {
+    int view = 0, kind = -1;
+    float minRating = 0.0f;
+    std::string needle;
+    long detail = 0;
+    void Open(long id) { detail = id; }
+    void Back() { detail = 0; }
+};
+/// Does one listing pass the query? `haystack` is its title, description and seller in lower case.
+inline bool MarketMatches(const MarketQuery& q, int kind, float avgRating, bool wished, bool mine, const std::string& haystack) {
+    if (q.view == 1 && !mine) return false;
+    if (q.view == 2 && !wished) return false;
+    if (q.kind >= 0 && kind != q.kind) return false;
+    if (q.minRating > 0.0f && avgRating < q.minRating) return false;
+    if (!q.needle.empty() && haystack.find(q.needle) == std::string::npos) return false;
+    return true;
+}
+/// "980", "1.5k", "12k", "1.2M": short enough for a tile.
+inline std::string ShortCount(long n) {
+    char b[24];
+    if (n >= 1000000) std::snprintf(b, sizeof(b), "%.1fM", n / 1000000.0);
+    else if (n >= 10000) std::snprintf(b, sizeof(b), "%ldk", n / 1000);
+    else if (n >= 1000) std::snprintf(b, sizeof(b), "%.1fk", n / 1000.0);
+    else std::snprintf(b, sizeof(b), "%ld", n);
+    return b;
+}
+
+/// The Notifications page's filter chips: 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System. `kind` is the
+/// notification's kind (0 system, 1 friend, 2 message, 3 update).
+inline bool NotifMatches(int filter, int kind, bool unread) {
+    static const int kFilterKind[] = {-1, -1, 1, 2, 3, 0};
+    if (filter == 1) return unread;
+    if (filter >= 2 && filter <= 5) return kind == kFilterKind[filter];
+    return true;
+}
+/// The empty state's title: signed out with nothing at all, "all caught up" (nothing, or nothing unread), or a filter
+/// that matches nothing.
+inline const char* NotifEmptyTitle(bool signedOut, int total, int filter) {
+    if (signedOut && total == 0) return "You're signed out";
+    if (total == 0 || filter == 1) return "You're all caught up";
+    return "Nothing here";
+}
+
+/// Release notes (the What's New page): how many lines one release keeps (FetchSupabaseNews), how long one line may be,
+/// and how many a long list shows before "Show all".
+inline constexpr int kNotesMaxLines = 60;
+inline constexpr std::size_t kNotesMaxLineBytes = 400;
+inline constexpr int kNotesCollapsed = 15;
+struct NotesView { int shown = 0; bool toggle = false; };
+inline NotesView NotesShown(int lines, bool expanded) {
+    NotesView v;
+    v.toggle = lines > kNotesCollapsed + 2;   // two more lines are not worth a button
+    v.shown = (!v.toggle || expanded) ? lines : kNotesCollapsed;
+    return v;
+}
+/// The bullets of a notes list stacked from (0, 0) in a column `width` wide: `lineH[i]` is note i's wrapped height.
+/// `viewH` is the scroll area's height; the result says whether it scrolls.
+struct NotesLayout { std::vector<Rect> bullets; Rect toggle; float height = 0; bool scrolls = false; };
+inline NotesLayout LayoutNotes(const std::vector<float>& lineH, float width, float gap, float toggleH, bool expanded, float viewH) {
+    NotesLayout n;
+    const NotesView v = NotesShown((int)lineH.size(), expanded);
+    float y = 0;
+    for (int i = 0; i < v.shown; ++i) { n.bullets.push_back(Rect{0, y, width, lineH[(std::size_t)i]}); y += lineH[(std::size_t)i] + gap; }
+    if (v.toggle) { n.toggle = Rect{0, y, std::min(width, 160.0f), toggleH}; y += toggleH + gap; }
+    n.height = y;
+    n.scrolls = n.height > viewH;
+    return n;
+}
+
+/// What the What's New page's "Test builds" section shows.
+enum class TestBuildsView { Off, Loading, Failed, Empty, List };
+/// `on`: "Get test builds" is switched on; `devState`: 0 not read yet, 1 read, 2 could not be read; `n`: test builds listed.
+inline TestBuildsView TestBuildsViewOf(bool on, int devState, std::size_t n) {
+    if (!on) return TestBuildsView::Off;
+    if (devState == 0) return TestBuildsView::Loading;
+    if (devState == 2) return TestBuildsView::Failed;
+    return n == 0 ? TestBuildsView::Empty : TestBuildsView::List;
+}
+/// One test build's row: the version (and an "Installed" pill) on the left and the date on the right of the first line,
+/// the note (wrapped, `noteH` high) under it, then the branch. Rects from the row's top-left.
+struct BuildRow { Rect row, version, pill, date, note, branch; };
+inline BuildRow LayoutBuildRow(float width, float pad, float lineH, float versionW, float pillW, float dateW, float noteH) {
+    BuildRow b;
+    b.version = Rect{pad, pad, std::min(versionW, std::max(0.0f, width - 2 * pad - dateW - pillW - 2 * pad)), lineH};
+    b.pill = Rect{b.version.R() + (pillW > 0 ? pad * 0.6f : 0.0f), pad, pillW, lineH};
+    b.date = Rect{std::max(b.pill.R() + pad * 0.6f, width - pad - dateW), pad, dateW, lineH};
+    b.note = Rect{pad, b.version.B() + pad * 0.4f, std::max(0.0f, width - 2 * pad), noteH};
+    b.branch = Rect{pad, b.note.B() + pad * 0.4f, std::max(0.0f, width - 2 * pad), lineH};
+    b.row = Rect{0, 0, width, b.branch.B() + pad};
+    return b;
+}
+
+}  // namespace okay::launcherlayout

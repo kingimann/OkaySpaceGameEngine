@@ -1,0 +1,27 @@
+// <cctype> for okay-cc (ISO/IEC 14882 [cctype.syn], ISO C 7.4): the character classes of the "C"
+// locale, from lib/str.c. Our own header; gcc keeps its own. Declared in std and at file scope.
+#pragma once
+#define OKAYCC_CTYPE_DECLS                                                                           \
+    int isdigit(int c);                                                                              \
+    int isupper(int c);                                                                              \
+    int islower(int c);                                                                              \
+    int isalpha(int c);                                                                              \
+    int isalnum(int c);                                                                              \
+    int isxdigit(int c);                                                                             \
+    int isspace(int c);                                                                              \
+    int isblank(int c);                                                                              \
+    int iscntrl(int c);                                                                              \
+    int isprint(int c);                                                                              \
+    int isgraph(int c);                                                                              \
+    int ispunct(int c);                                                                              \
+    int toupper(int c);                                                                              \
+    int tolower(int c);
+extern "C" {
+OKAYCC_CTYPE_DECLS
+}
+namespace std {
+extern "C" {
+OKAYCC_CTYPE_DECLS
+}
+}  // namespace std
+#undef OKAYCC_CTYPE_DECLS

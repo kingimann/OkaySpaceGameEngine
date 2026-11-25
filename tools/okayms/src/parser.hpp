@@ -627,6 +627,8 @@ struct Parser {
                     if (global_qual && !out.empty() && out.back().kind == TColonColon) out.pop_back();
                     if (tokens[i].inl) tokens[k].inl = true;  // `inline std::uint32_t f()`: the mark moves to the type name
                     tokens[k].nsq = true;
+                    tokens[k].qual.clear();
+                    for (size_t q = i; q < k; q += 2) tokens[k].qual += (tokens[k].qual.empty() ? "" : "::") + tokens[q].text;
                     i = k - 1;  // the leading namespace names and their '::' are dropped
                     continue;
                 }
@@ -1255,6 +1257,31 @@ struct Parser {
         }
         const int in_method = search_up(cur_class);
         if (in_method >= 0) return in_method;
+        // At namespace scope ([namespace.qual], [basic.lookup.unqual]): the namespace written in front of the name
+        // (okay::crypto::Sha256, also as a suffix: crypto::Sha256), else the namespace being read or the nearest one
+        // around it.
+        const std::string qual = at < tokens.size() && tokens[at].text == name ? tokens[at].qual : std::string();
+        auto ns_match = [](const std::string& ns, const std::string& q) {
+            return ns == q || (ns.size() > q.size() && ns.compare(ns.size() - q.size(), q.size(), q) == 0 &&
+                               ns.compare(ns.size() - q.size() - 2, 2, "::") == 0);
+        };
+        if (!qual.empty())
+            for (size_t i = 0; i < structs.size(); ++i)
+                if (structs[i].name == name && structs[i].parent < 0 && ns_match(structs[i].ns, qual)) return static_cast<int>(i);
+        int best = -1;
+        size_t best_len = 0;
+        for (size_t i = 0; i < structs.size(); ++i) {
+            if (structs[i].name != name || structs[i].parent >= 0) continue;
+            const std::string& ns = structs[i].ns;
+            const bool encloses = ns.empty() || current_ns == ns ||
+                                  (current_ns.size() > ns.size() && current_ns.compare(0, ns.size(), ns) == 0 &&
+                                   current_ns.compare(ns.size(), 2, "::") == 0);
+            if (encloses && (best < 0 || ns.size() > best_len)) {
+                best = static_cast<int>(i);
+                best_len = ns.size();
+            }
+        }
+        if (best >= 0) return best;
         const int top = nested_in(-1);
         return top >= 0 ? top : first;
     }
@@ -1484,6 +1511,7 @@ struct Parser {
                         StructDef fwd;
                         fwd.name = name;
                         fwd.incomplete = true;
+                        fwd.ns = current_ns;
                         if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
                         fwd.cxx = true;
                         fwd.is_class = as_class;
@@ -1529,6 +1557,7 @@ struct Parser {
                 StructDef fwd;
                 fwd.name = name;
                 fwd.incomplete = true;
+                fwd.ns = current_ns;
                 if (!open_structs.empty()) fwd.parent = open_structs.back();  // class X; inside a class
                 fwd.cxx = true;
                 fwd.is_class = as_class;
@@ -2209,6 +2238,8 @@ struct Parser {
         if (i + 3 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
             (find_struct(tokens[i + 2].text) >= 0 || typedefs.count(tokens[i + 2].text) > 0) && tokens[i + 3].kind != TLParen)
             return true;  // S::Nested names a nested class, enumeration or typedef of a plain struct
+        if (i >= 1 && tokens[i - 1].kind == TLt && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen)
+            return true;  // a function type as a template argument: std::function<S(int)> ([dcl.fct])
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
@@ -3189,7 +3220,8 @@ struct Parser {
                 def->vtable.push_back("");
             }
         }
-        m.qname = (def->parent >= 0 ? def->symname() : def->name) + "::" + m.name + "/" + std::to_string(m.params.size());
+        m.qname = (def->parent >= 0 || def->ns_dup ? def->symname() : def->name) + "::" + m.name + "/" +
+                  std::to_string(m.params.size());
         if (collide) m.qname += "~" + new_sig + (m.is_const ? "K" : "");
         if (m.name == "<ctor>")
             for (const Type& param : m.params) m.qname += param.is_ref ? "r" : "v";  // constructors overload by type
@@ -3299,6 +3331,17 @@ struct Parser {
             def.parent = open_structs.back();
             def.sym_name = name + "@" + structs[static_cast<size_t>(def.parent)].symname();
         }
+        def.ns = current_ns;
+        if (pending_sym.empty() && def.parent < 0 && name.compare(0, 6, "__anon") != 0 && name.compare(0, 5, "__lam") != 0 &&
+            !ns_mangled.empty())
+            for (const StructDef& other : structs)
+                if (other.name == name && other.parent < 0 && !other.incomplete && other.ns != current_ns) {
+                    // A second class of this name in another namespace: decorated with its namespace, as MSVC decorates
+                    // every class (V Name@ns@@), so the two have separate members and symbols.
+                    def.sym_name = name + "@" + ns_mangled;
+                    def.ns_dup = true;
+                    break;
+                }
         pending_sym.clear();
         // The instance itself is named by its template (Box<int> has the constructor Box); a class nested in it by its own name.
         const std::string ctor_name = inst_base_name.empty() || def.sym_name.empty() ? name : inst_base_name;
@@ -3323,7 +3366,8 @@ struct Parser {
         const size_t enums_from = enums_declared.size();
         int self = -1;
         for (size_t k = 0; k < structs.size(); ++k)
-            if (structs[k].incomplete && structs[k].name == name && (structs[k].parent == def.parent || def.parent < 0))
+            if (structs[k].incomplete && structs[k].name == name && (structs[k].parent == def.parent || def.parent < 0) &&
+                (structs[k].ns == def.ns || def.parent >= 0))
                 self = static_cast<int>(k);
         if (self >= 0) {
             structs[static_cast<size_t>(self)] = def;  // the definition of a class declared before
@@ -4368,7 +4412,35 @@ struct Parser {
                 }
                 if (obj_needs_ctor(field.type)) {
                     std::vector<Node> args;
-                    if (init != nullptr) args = std::move(init->args);
+                    std::vector<Node> after;  // destructors of the list's element temporaries, after the constructor
+                    Type list_type;
+                    const size_t brace = field.init_at < 0 ? 0 : static_cast<size_t>(field.init_at) - (field.init_aggr ? 0 : 1);
+                    if (init == nullptr && field.init_at >= 0 && (field.init_braced || field.init_aggr) &&
+                        tokens[brace].kind == TLBrace && tokens[brace + 1].kind != TRBrace &&
+                        has_init_list_ctor(field.type.struct_id, &list_type)) {
+                        // std::vector<std::string> options{"a", "b"}; as a default member initializer: the constructor
+                        // that takes an initializer_list ([over.match.list], [class.base.init] 9).
+                        const size_t saved_at = at;
+                        std::vector<Node> keep_pre = std::move(stmt_pre);
+                        std::vector<Temp> keep_temps = std::move(stmt_temps);
+                        stmt_pre.clear();
+                        stmt_temps.clear();
+                        at = brace;
+                        Node list;
+                        const bool ok = init_list_temp(list_type, &list);
+                        at = saved_at;
+                        for (Node& n : stmt_pre) pre.push_back(std::move(n));
+                        for (size_t ti = stmt_temps.size(); ok && ti-- > 0;) {
+                            Node dt;
+                            if (!special_call(stmt_temps[ti].sid, "<dtor>", node_addr(node_name(stmt_temps[ti].name)), {}, &dt))
+                                return false;
+                            after.push_back(std::move(dt));
+                        }
+                        stmt_pre = std::move(keep_pre);
+                        stmt_temps = std::move(keep_temps);
+                        if (!ok) return false;
+                        args.push_back(std::move(list));
+                    } else if (init != nullptr) args = std::move(init->args);
                     else if (field.init_at >= 0) {
                         // A default member initializer of a class member: `T x{a, b};` or `T x = e;`.
                         const size_t saved_at = at;
@@ -4406,6 +4478,7 @@ struct Parser {
                                       std::move(args), &call))
                         return false;
                     pre.push_back(std::move(call));
+                    for (Node& n : after) pre.push_back(std::move(n));
                     if (eh_ && obj_needs_dtor(field.type)) {
                         eh_push_object(&pre, node_addr(node_this_field(field.name)), field.type.struct_id, 0, locals);
                         ++eh_held;

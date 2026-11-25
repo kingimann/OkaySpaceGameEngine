@@ -378,7 +378,7 @@ int main() {
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
         Report("import-audio", imPic, okPic, Timing{});
     }
-    kH = 960; bh = kH - 2 * kPadY;
+    kH = 1120; bh = kH - 2 * kPadY;
     {   // a texture with every row (Kind, Anisotropic, Mip filter, compression, what is loaded, the tools): the picture, and the same clicks
         panelfix::ImportData imD(P::ImportTexture), okD(P::ImportTexture);
         ImGuiRig im; OkayRig ok; Raster ras;

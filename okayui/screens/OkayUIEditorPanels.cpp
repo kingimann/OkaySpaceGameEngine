@@ -3649,7 +3649,14 @@ LoadingScreenResult DrawLoadingScreen(LoadingScreenModel& m, float x, float y, f
         FieldColors fields_;
         UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
-        UI::TextDisabled(kLoadingScreenNote);
+        {   // two lines of one text item (OkayUI's TextDisabled draws one line: split at the line break, no spacing between the lines)
+            const std::string note = kLoadingScreenNote;
+            std::size_t a = 0;
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{g_metrics.itemSpacing.x, 0.0f});
+            for (std::size_t b; (b = note.find('\n', a)) != std::string::npos; a = b + 1) UI::TextDisabled(note.substr(a, b - a).c_str());
+            UI::PopStyleVar();
+            UI::TextDisabled(note.substr(a).c_str());
+        }
         if (m.logo && m.logoSize > 0) {
             m.logo[m.logoSize - 1] = '\0';
             UI::SetNextItemWidth(360.0f);
@@ -3660,7 +3667,9 @@ LoadingScreenResult DrawLoadingScreen(LoadingScreenModel& m, float x, float y, f
             res.browse = UI::GetItemRect();
             if (UI::IsItemHovered()) UI::SetTooltip("%s", "Browse...");
             UI::SameLine();
-            if (LineButton("Clear##pssplash")) { if (m.logo[0]) res.intent.changed = true; m.logo[0] = '\0'; }
+            UI::PushID("pssplash");   // LineButton measures its whole label: the id goes on the stack, not after "##"
+            if (LineButton("Clear")) { if (m.logo[0]) res.intent.changed = true; m.logo[0] = '\0'; }
+            UI::PopID();
             res.clear = UI::GetItemRect();
         }
         // a colour row 220 pixels wide (Dear ImGui's SetNextItemWidth(220) before ColorEdit3)

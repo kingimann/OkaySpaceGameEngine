@@ -2693,7 +2693,13 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
 
-    const bool insideBox = hitOverlay(x, y, boxW, h) && inClip();
+    // An open list of another combo (last frame's overlays) lying over this box takes the press: without this, a combo under a long
+    // list grabbed the click meant for the list's row (the import settings' "Largest side" list over "Kind" and "Filter").
+    bool underList = false;
+    for (int i = 0; g_popupTop == 0 && i < g_ovPrevN && !underList; ++i)   // (inside a popup body the popup rules hold)
+        if (pointIn(g_in.mouseX, g_in.mouseY, g_ovPrev[i].x, g_ovPrev[i].y, g_ovPrev[i].w, g_ovPrev[i].h) &&
+            !(g_ovPrev[i].x == x && g_ovPrev[i].y == y + h)) underList = true;   // (not this combo's own list)
+    const bool insideBox = hitOverlay(x, y, boxW, h) && inClip() && !underList;
     g_lastId = id; if (insideBox) g_hot = id;
     if (g_active == id) { if (g_released) { if (insideBox) *open = !*open; g_active = 0; } }
     else if (insideBox && g_pressed) g_active = id;

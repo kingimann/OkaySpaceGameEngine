@@ -3279,6 +3279,10 @@ and both bodies now carry what main's panel has:
 - **A bug fixed on the way:** main's texture section had two lists labelled "Filter" in one window (the import filter and the tool's),
   so they shared one Dear ImGui id. The tool's is "Filter##ddstool" in both bodies now.
 
+- **An OkayUI bug the tests found:** a combo box under another combo's open list took the press meant for the list's row (the
+  "Largest side" list over "Kind" and "Filter": 512 could not be picked). `Combo` now leaves a press over last frame's open lists
+  alone, outside popup bodies (`okayui/src/OkayUI.cpp`).
+
 The Loading screen port is new: the logo path with its hint, "..." (Browse..., the host opens the file dialog), Clear, Custom splash
 accent with its colour, the two background colours (220 pixels wide, the Inspector's colour row) and Show progress bar.
 
@@ -3292,6 +3296,13 @@ Loading screen's Browse and logo field). `okayui_editor_panels`: the new rules, 
 Anisotropy, Compress hiding Format, Mipmaps hiding Mip filter, the tool's boxes and Generate), the Loading screen (golden, Browse, Clear,
 typing a path, the accent box, missing pointers). `okayui_editor_panels_imgui`: the texture and Loading screen pictures and the same
 clicks in both versions, and their section heights.
+
+Results (Debug, headless): `okayui_panels_imgui` 140 checks, the hosted Post-processing and import pictures 0.000% different from the
+old hosting; `okayui_editor_panels` 294 checks; `okayui_editor_panels_imgui` 68 checks, against Dear ImGui: import (model) 3.82%,
+import-texture 6.36%, import-audio 3.87%, post 4.22%, loading screen 4.01% clearly different pixels (the limit is 12%), the same
+section heights. Goldens made again and looked at: `editorpanels_import`, `editorpanels_import_fail`, `editorpanels_import_texture`,
+the new `editorpanels_loadingscreen`, and `port_project_import_texture` / `_audio` / `_audio_edited` (the port test now shows the
+OkayUI screen).
 
 **Not done.** The Hierarchy: its OkayUI port is older than main's panel (main draws a recursive tree with search, scene groups, rename,
 menus and drag and drop straight from the scene) and the editor host that filled its model is gone, so wiring it is a larger job of its

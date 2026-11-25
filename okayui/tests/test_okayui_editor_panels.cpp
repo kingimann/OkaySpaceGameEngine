@@ -1035,7 +1035,7 @@ int main() {
         P::ImportSettingsModel none;
         P::ImportSettingsState st0;
         P::ImportSettingsIntent seen;
-        auto r = MakeRig(560, 960, [&](float x, float y, float w, float h) {
+        auto r = MakeRig(560, 1120, [&](float x, float y, float w, float h) {
             rt = S::DrawImportSettings(t.model, t.state, x, y, w, h);
             if (rt.intent.generate) seen.generate = true;
             if (rt.intent.changed) seen.changed = true;
@@ -1043,7 +1043,7 @@ int main() {
         r.Frames(2);
         CHECK(rt.sizeCombo.w > 0 && rt.kindCombo.w > 0 && rt.filterCombo.w > 0 && rt.anisoCombo.w > 0 && rt.wrapCombo.w > 0 && rt.mipmaps.w > 0);
         CHECK(rt.mipFilterCombo.w > 0 && rt.compress.w > 0 && rt.formatCombo.w > 0 && rt.generate.w > 0 && rt.ddsCutout.w > 0);
-        CHECK(rt.contentHeight > 700.0f && rt.contentHeight < 940.0f && UI::DroppedGeometry() == 0);
+        CHECK(rt.contentHeight > 800.0f && rt.contentHeight < 1100.0f && UI::DroppedGeometry() == 0);
         CHECK(rt.filterCombo.w >= 160.0f && rt.kindCombo.w > rt.wrapCombo.w);   // as wide as the longest choice
         Check("editorpanels_import_texture", r.Draw());
         r.Click(UI::Rect{rt.sizeCombo.x, rt.sizeCombo.y, 60.0f, rt.sizeCombo.h});

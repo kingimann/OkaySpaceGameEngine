@@ -1309,12 +1309,12 @@ int main() {
         // Test builds next to releases.
         using namespace okaytestlists;
         const std::string e1 = std::string(64, 'a');
-        const Index rel = ParseIndex(List({Entry("2.903.8", "2026-11-24", true, Files(e1), ",\"channel\":\"latest\""),
-                                           Entry("2.903.7", "2026-11-23", true, Files(e1)),
-                                           Entry("2.903.5", "2026-11-21", false, Files(e1))}, "2.903.8"));
-        const Index dev = ParseIndex(List({Entry("2.903.8.112", "2026-11-25", true, Files(e1, false), ",\"branch\":\"claude/x\""),
-                                           Entry("2.903.8.114", "2026-11-25", true, Files(e1), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
-                                           Entry("2.903.8.113", "2026-11-25", false, Files(e1))}), IndexKind::TestBuilds);
+        const Index rel = ParseIndex(List({ListEntry("2.903.8", "2026-11-24", true, Files(e1), ",\"channel\":\"latest\""),
+                                           ListEntry("2.903.7", "2026-11-23", true, Files(e1)),
+                                           ListEntry("2.903.5", "2026-11-21", false, Files(e1))}, "2.903.8"));
+        const Index dev = ParseIndex(List({ListEntry("2.903.8.112", "2026-11-25", true, Files(e1, false), ",\"branch\":\"claude/x\""),
+                                           ListEntry("2.903.8.114", "2026-11-25", true, Files(e1), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
+                                           ListEntry("2.903.8.113", "2026-11-25", false, Files(e1))}), IndexKind::TestBuilds);
         CHECK(rel.ok && rel.versions.size() == 3 && dev.ok && dev.versions.size() == 3);
 
         std::vector<AvailableRow> rows = AvailableRows(rel, Index{}, "2.903.8", {});        // test builds off: releases only, as before

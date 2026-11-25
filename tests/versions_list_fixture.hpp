@@ -13,7 +13,7 @@ inline std::string Files(const std::string& sha, bool editorSha = true, unsigned
            "},\"OkaySpacePlayer.exe\":{\"size\":500,\"sha256\":\"" + sha + "\"},\"OkaySpace.exe\":{\"size\":300,\"sha256\":\"" + sha + "\"}}";
 }
 /// One entry. `extra` is put in as it is (",\"channel\":\"latest\"", ",\"branch\":\"claude/x\"").
-inline std::string Entry(const std::string& version, const std::string& date, bool inBucket, const std::string& files, const std::string& extra = "") {
+inline std::string ListEntry(const std::string& version, const std::string& date, bool inBucket, const std::string& files, const std::string& extra = "") {
     return "{\"version\":\"" + version + "\",\"date\":\"" + date + "\",\"inBucket\":" + (inBucket ? "true" : "false") + extra + ",\"files\":" + files + "}";
 }
 /// The whole list: schema 1, `head` ("" = none) as "latest", the entries.

@@ -53,14 +53,14 @@ static int ShotRun(const std::string& out) {
     std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
     using namespace okaytestlists;
     const std::string sha(64, 'a');
-    const std::string rel = List({Entry("2.903.8", "2026-11-24", true, Files(sha, true, 61000000), ",\"channel\":\"latest\""),
-                                  Entry("2.903.7", "2026-11-23", true, Files(sha, true, 61000000)),
-                                  Entry("2.903.6", "2026-11-22", true, Files(sha, true, 61000000)),
-                                  Entry("2.903.5", "2026-11-21", false, Files(sha, true, 61000000))}, "2.903.8");
-    const std::string dev = List({Entry("2.903.8.115", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
-                                  Entry("2.903.8.114", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/work\",\"sha\":\"1234567abc\""),
-                                  Entry("2.903.8.113", "2026-11-24", true, Files(sha, true, 61000000), ",\"branch\":\"claude2/work\""),
-                                  Entry("2.903.8.112", "2026-11-24", false, Files(sha, true, 61000000), ",\"branch\":\"claude3/work\"")});
+    const std::string rel = List({ListEntry("2.903.8", "2026-11-24", true, Files(sha, true, 61000000), ",\"channel\":\"latest\""),
+                                  ListEntry("2.903.7", "2026-11-23", true, Files(sha, true, 61000000)),
+                                  ListEntry("2.903.6", "2026-11-22", true, Files(sha, true, 61000000)),
+                                  ListEntry("2.903.5", "2026-11-21", false, Files(sha, true, 61000000))}, "2.903.8");
+    const std::string dev = List({ListEntry("2.903.8.115", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\""),
+                                  ListEntry("2.903.8.114", "2026-11-25", true, Files(sha, true, 61000000), ",\"branch\":\"claude/work\",\"sha\":\"1234567abc\""),
+                                  ListEntry("2.903.8.113", "2026-11-24", true, Files(sha, true, 61000000), ",\"branch\":\"claude2/work\""),
+                                  ListEntry("2.903.8.112", "2026-11-24", false, Files(sha, true, 61000000), ",\"branch\":\"claude3/work\"")});
     okayversionsui::Host host;
     host.launcherDir = dir; host.currentVersion = "2.903.8.114"; host.launcherVersion = "2.903.8.114"; host.sources.trustedKeys = "";
     host.sources.bucketBase = "https://example.invalid/storage/v1/object/public/releases/";

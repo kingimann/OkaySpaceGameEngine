@@ -2362,6 +2362,21 @@ set_target_properties(tool PROPERTIES WIN32_EXECUTABLE FALSE)
           && lineWith(o, "-c " + root + "/main.cpp").find("main.cpp.obj") != string::npos, "WIN32, MINGW and CMAKE_CROSSCOMPILING are set; objects end in .obj", o);
     string res = lineWith(o, "ver.rc ");
     check(res.find("x86_64-w64-mingw32-windres -O coff -DON_WINDOWS -I " + root + "/inc " + root + "/build/ctest/ver.rc .okaybuild/obj/app/_bin/ver.rc.res") != string::npos, "the resource is compiled with windres: -O coff, definitions, -I folders, the file, the .res", res);
+    { // round 19: the resource compile is in compile_commands.json, as CMake lists it, with "output" on every entry as CMake writes it
+      string co = sh("-f build.okay compdb", &rc); string db = readFile(gRoot / "compile_commands.json");
+      check(rc == 0 && db.find("\"x86_64-w64-mingw32-windres\", \"-O\", \"coff\"") != string::npos && db.find("\"output\": \".okaybuild/obj/app/_bin/ver.rc.res\"") != string::npos
+            && db.find("\"output\": \".okaybuild/obj/app/main.cpp.obj\"") != string::npos, "compdb lists the windres compile, and each entry names its output", db + co); }
+    { // round 19: with compile_order = cmake the windres line is laid out as CMake's Ninja files do (taken from real CMake 3.28 on this
+      // project): the target's definitions sorted, the source's own sorted, then the source's folders, the target's, its SYSTEM folders (-I)
+      write("rco/CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(mw C CXX RC)\nadd_compile_definitions(ON_WINDOWS)\nadd_executable(app WIN32 main.cpp ver.rc)\n"
+            "target_compile_definitions(app PRIVATE ZED APP_X)\ntarget_include_directories(app PRIVATE inc)\ntarget_include_directories(app SYSTEM PRIVATE inc2)\n"
+            "set_source_files_properties(ver.rc PROPERTIES COMPILE_DEFINITIONS \"FILE_B;FILE_A\" INCLUDE_DIRECTORIES \"${CMAKE_SOURCE_DIR}/inc2\")\n");
+      write("rco/main.cpp", "int main(){return 0;}\n"); write("rco/ver.rc", "1 VERSIONINFO BEGIN END\n"); write("rco/inc/a.h", "\n"); write("rco/inc2/b.h", "\n");
+      string d = (gRoot / "rco").string();
+      capture("cd '" + d + "' && " + gTool + " cmake . -o b.okay --opt CMAKE_TOOLCHAIN_FILE=../tc.cmake 2>&1", &rc);
+      string ro = capture("cd '" + d + "' && " + gTool + " -f b.okay --dry-run -v 2>&1", &rc);
+      check(lineWith(ro, "ver.rc ").find("windres -O coff -DAPP_X -DON_WINDOWS -DZED -DFILE_A -DFILE_B -I " + d + "/inc2 -I " + d + "/inc -I " + d + "/inc2 " + d + "/ver.rc ") != string::npos,
+            "the windres line is in CMake's order: sorted definitions, the source's own, then the source's, target's and SYSTEM folders", ro); }
     string link = lineWith(o, " -o build/app.exe");
     check(link.find("x86_64-w64-mingw32-g++ -O3 -DNDEBUG -static-libgcc -static-libstdc++ -mwindows .okaybuild/obj/app/main.cpp.obj .okaybuild/obj/app/_bin/ver.rc.res -o build/app.exe -Wl,--out-implib,build/libapp.dll.a -Wl,--major-image-version,0,--minor-image-version,0 build/libutil.a -lws2_32 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32") != string::npos,
           "the program's link line is CMake's: flags, linker flags, -mwindows, objects, import library, libraries, Windows standard libraries", link);
@@ -2933,7 +2948,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "r19") { testMsvcExternalIncludes(); testWindowsHost(); printf("okaybuild tests (round 19 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
+        if (string(only) == "r19") { testMsvcExternalIncludes(); testMingwToolchainFile(); testWindowsHost(); printf("okaybuild tests (round 19 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "r18") { testCmakeCompileOrder(); testCompareRebuildsScript(); testScriptRunsItself(); printf("okaybuild tests (round 18 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "r17") { testMissingHeader(); testExecutePipelines(); testCtestEndStates(); testWindowsHost(); printf("okaybuild tests (round 17 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }

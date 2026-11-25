@@ -914,20 +914,41 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + (isRc ? string(".res") : m.tc.obj)); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
             for (auto& pf : t.fileDepends) if (pf.first == sRaw) a.inputs.push_back(resolve("", fixBin(pf.second)));
+            // CMake's order of definitions and include folders (see Toolchain::cmakeOrder), for a compile and for windres: the target's
+            // definitions sorted without repeats (the toolchain's -D words, the account definitions, count as the target's), the source's own
+            // sorted, then the source's folders, the target's, its system folders; a repeat is dropped inside each list but not between them
+            auto cmakeOrderWords = [&](const std::function<void(const string&)>& def, const std::function<void(const string&, bool)>& inc) {
+                std::set<string> defs, fileDefs;
+                for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) defs.insert(f);
+                for (auto& d : t.defines) defs.insert("-D" + fixBin(d));
+                for (auto& pf : t.fileDefines) if (pf.first == sRaw) fileDefs.insert("-D" + fixBin(pf.second));
+                for (auto& d : defs) def(d);
+                for (auto& d : fileDefs) def(d);
+                vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                vector<string> seen, seenFile;
+                auto once = [&](vector<string>& in, const string& i) { if (std::find(in.begin(), in.end(), i) != in.end()) return false; in.push_back(i); return true; };
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw && once(seenFile, pf.second)) inc(pf.second, false);
+                for (auto& i : incs) if (once(seen, i)) inc(i, false);
+                for (auto& i : t.systemIncludes) if (once(seen, i)) inc(i, true);
+            };
             if (isRc) { // a Windows resource script: windres -O coff <definitions> -I <folder>... <file> <out>.res (no dependency file)
                 if (m.tc.rc.empty() || m.tc.msvc) throw Fail("target '" + t.name + "': " + s + " is a resource script, and the toolchain has no rc (GNU windres) set");
                 a.kind = "RC"; a.depfile.clear(); a.argv = {m.tc.rc, "-O", "coff"};
                 string root = fs::current_path().generic_string();
                 auto absOf = [&](const string& p) { return (!m.tc.pathMap || p.empty() || p[0] == '/' || (p.size() > 1 && p[1] == ':')) ? p : root + "/" + p; };
-                for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) a.argv.push_back(f); // the account definitions and other toolchain -D words
-                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
                 auto inc = [&](const string& i) { a.argv.push_back("-I"); a.argv.push_back(absOf(fixBin(i))); };
-                for (auto& i : t.includes) inc(i);
-                for (auto& i : t.exportIncludes) inc(i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
-                for (auto& i : t.systemIncludes) inc(i); // windres has no system folders
-                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
+                if (m.tc.cmakeOrder) cmakeOrderWords([&](const string& d) { a.argv.push_back(d); }, [&](const string& i, bool) { inc(i); }); // windres has no system folders: -I
+                else {
+                    for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) a.argv.push_back(f); // the account definitions and other toolchain -D words
+                    for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) a.argv.push_back("-D" + fixBin(pf.second));
+                    for (auto& i : t.includes) inc(i);
+                    for (auto& i : t.exportIncludes) inc(i);
+                    for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) inc(i);
+                    for (auto& i : t.systemIncludes) inc(i);
+                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw) inc(pf.second);
+                }
                 a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
                 objs.push_back(a.output); objActs.push_back(add(a)); continue;
             }
@@ -985,19 +1006,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 };
                 vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
-                if (m.tc.cmakeOrder) { // CMake's order (see Toolchain::cmakeOrder); the toolchain's -D words (account defines) count as the target's
-                    std::set<string> defs, fileDefs; vector<string> fileIncs;
-                    for (auto& f : m.tc.flags) if (f.rfind("-D", 0) == 0) defs.insert(f);
-                    for (auto& d : t.defines) defs.insert("-D" + fixBin(d));
-                    for (auto& pf : t.fileDefines) if (pf.first == sRaw) fileDefs.insert("-D" + fixBin(pf.second));
-                    for (auto& d : defs) a.argv.push_back(d);
-                    for (auto& d : fileDefs) a.argv.push_back(d);
-                    // the source's own folders first, then the target's; CMake drops a repeat inside each list but not between them
-                    vector<string> seen, seenFile;
-                    auto once = [&](vector<string>& in, const string& i) { if (std::find(in.begin(), in.end(), i) != in.end()) return false; in.push_back(i); return true; };
-                    for (auto& pf : t.fileIncludes) if (pf.first == sRaw && once(seenFile, pf.second)) a.argv.push_back("-I" + pf.second);
-                    for (auto& i : incs) if (once(seen, i)) a.argv.push_back("-I" + i);
-                    for (auto& i : t.systemIncludes) if (once(seen, i)) { a.argv.push_back("-isystem"); a.argv.push_back(i); }
+                if (m.tc.cmakeOrder) { // CMake's order (see cmakeOrderWords above)
+                    cmakeOrderWords([&](const string& d) { a.argv.push_back(d); },
+                                    [&](const string& i, bool sys) { if (sys) { a.argv.push_back("-isystem"); a.argv.push_back(i); } else a.argv.push_back("-I" + i); });
                     flagWords(true);
                 } else {
                     flagWords(false);
@@ -3553,10 +3564,10 @@ static void writeCompdb(const Manifest& m, const vector<string>& want) {
     Graph g = plan(m, want); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
     int n = 0;
     for (auto& a : g.acts) {
-        if (a.kind == "CC") {
+        if (a.kind == "CC" || a.kind == "RC") { // a resource compile is listed too, as CMake lists it; "output" as CMake writes it
             f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
             for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(redact(a.argv[i])) << "\""; }
-            f << "]}"; first = false; ++n;
+            f << "], \"output\": \"" << jsonEsc(a.output) << "\"}"; first = false; ++n;
         } else {
             string file; if (!importedCompile(a, file)) continue;
             string where = a.dir.empty() ? dir : a.dir;

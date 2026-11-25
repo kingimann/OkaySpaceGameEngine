@@ -255,6 +255,106 @@ void CheckMarketShop(float winW) {
     CHECK(d.info.R() <= W + 0.5f && d.picture.R() <= W + 0.5f);
 }
 
+// The Community showcase: the feed of big cards and the rail (top creators, friends playing) only at the wide sizes; the rail
+// never covers the feed, the feed keeps two cards a row beside it, and the tabs and the "Share your creation" box fit.
+void CheckShowcase(float winW) {
+    const float W = PageW(winW);
+    const L::Showcase sc = L::LayoutShowcase(W, Px(300.0f), Px(20.0f), Px(280.0f), Px(28.0f), Px(1240.0f));
+    CHECK(sc.feed.R() <= W + 0.5f);
+    if (sc.railShown) {
+        CHECK(!L::Overlaps(L::Rect{0, 0, sc.feed.w, 100}, L::Rect{sc.rail.x, 0, sc.rail.w, 100}));
+        CHECK(sc.rail.R() <= W + 0.5f);
+        CHECK(L::FitGrid(sc.feed.w, Px(300.0f), Px(20.0f), 3).cols >= 2);
+    }
+    if (winW >= 1920 && g_scale == 1.0f) CHECK(sc.railShown);   // the rail at the wide size
+    if (winW <= 960) CHECK(!sc.railShown);                       // never at the small one
+    const L::Grid g = L::FitGrid(sc.feed.w, Px(300.0f), Px(20.0f), 3);
+    CHECK(g.cols >= 1 && g.cols <= 3);
+    CHECK(g.cardW >= Px(300.0f) - 0.5f || g.cols == 1);
+    if (winW >= 1280 && g_scale == 1.0f) CHECK(g.cols >= 2);
+    for (int i = 0; i + 1 < 6; ++i) CHECK(!L::Overlaps(L::GridCell(g, i, Px(360.0f)), L::GridCell(g, i + 1, Px(360.0f))));
+    CheckChips(sc.feed.w, {"Featured", "New", "Popular", "Following", "Your creations"});
+    // The share box: the text on the left, the library pick and Share on the right (or under the text when narrow).
+    const float shareW = L::ButtonW(TextW("Share"), Px(14.0f), Px(100.0f)), btnH = LineH() + Px(14.0f);
+    const L::ShareBox b = L::LayoutShareBox(sc.feed.w, Px(16.0f), TextW("Showcase your game or level") * 1.15f, LineH() * 1.15f, LineH(),
+                                            Px(260.0f), shareW, btnH, Px(10.0f));
+    const L::Rect box{0, 0, sc.feed.w, b.h};
+    CHECK(NoOverlaps({b.title, b.sub, b.combo, b.share}));
+    for (const auto& r : {b.title, b.sub, b.combo, b.share}) CHECK(L::Inside(r, box));
+    CHECK(b.combo.w >= Px(120.0f));
+    if (winW >= 1280 && g_scale == 1.0f) CHECK(!b.stacked);
+}
+
+// A folded side panel is an icon rail: Forums' folded sections give one icon per item (All posts, each joined section,
+// Discover, Create, Staff tools) and never an empty rail; the icons sit inside the rail, one under another, never overlapping.
+void CheckIconRail(float winW, float winH) {
+    for (int joined : {0, 1, 4}) for (bool create : {false, true}) for (bool staff : {false, true}) {
+        const auto ent = L::ForumRailEntries(joined, create, staff);
+        int icons = 0, sections = 0;
+        bool sawDiv = false;
+        std::vector<bool> div;
+        for (auto e : ent) {
+            div.push_back(e == L::ForumRail::Divider);
+            if (e == L::ForumRail::Divider) sawDiv = true; else ++icons;
+            if (e == L::ForumRail::Section) ++sections;
+        }
+        CHECK(icons == 1 + joined + 1 + (create ? 1 : 0) + (staff ? 1 : 0));   // one icon per item
+        CHECK(icons >= 2 && sawDiv);                                          // never an empty rail
+        CHECK(sections == joined);
+        CHECK(ent.front() == L::ForumRail::AllPosts);
+        const float railW = Px(60.0f), d = Px(40.0f);
+        const auto rs = L::LayoutIconRail(div, railW, Px(48.0f), d, Px(8.0f), Px(6.0f));
+        CHECK(rs.size() == ent.size());
+        for (std::size_t i = 0; i < rs.size(); ++i) {
+            CHECK(rs[i].x >= 0 && rs[i].R() <= railW + 0.5f);
+            if (i) CHECK(rs[i].y >= rs[i - 1].B());
+        }
+        if (joined <= 4) CHECK(rs.back().B() <= winH - Px(200.0f) || g_scale > 1.0f || winH < 700);   // fits the page at the normal sizes
+    }
+    (void)winW;
+}
+
+// The Marketplace: the filter rail folds to an icon rail (one icon per entry: search, all, each category, rating, sort; the grid
+// gets the room), Today's picks and Featured show approved listings only, never just repeat a short grid, and the seller's name
+// gets the whole line before it is shortened.
+void CheckMarketFold(float winW) {
+    const float W = PageW(winW);
+    const L::MarketPage open = L::LayoutMarketPage(W, Px(236.0f), Px(24.0f), Px(176.0f), Px(16.0f), Px(760.0f), false, Px(60.0f));
+    const L::MarketPage fold = L::LayoutMarketPage(W, Px(236.0f), Px(24.0f), Px(176.0f), Px(16.0f), Px(760.0f), true, Px(60.0f));
+    if (open.railShown) {
+        CHECK(fold.iconRail && !fold.railShown);
+        CHECK(fold.grid.w > open.grid.w);                    // folded: a wider grid
+        CHECK(fold.tiles.cols >= open.tiles.cols);
+        CHECK(fold.grid.x >= fold.rail.R());                  // the rail never covers the grid
+    } else CHECK(!fold.iconRail);                            // narrow pages: the Filters overlay, no rail
+    const auto ent = L::MarketRailEntries(9);
+    int icons = 0, cats = 0; std::vector<bool> div;
+    for (auto e : ent) { div.push_back(e == L::MarketRail::Divider); if (e != L::MarketRail::Divider) ++icons; if (e == L::MarketRail::Category) ++cats; }
+    CHECK(cats == 9 && icons == 9 + 4);
+    const auto rs = L::LayoutIconRail(div, Px(60.0f), Px(46.0f), Px(38.0f), Px(6.0f), Px(6.0f));
+    CHECK(rs.size() == ent.size());
+    for (std::size_t i = 1; i < rs.size(); ++i) CHECK(rs[i].y >= rs[i - 1].B());
+    // Approved only in the picks; unapproved listings are the seller's and staff's.
+    CHECK(L::MarketFeaturable("approved") && L::MarketFeaturable(""));
+    CHECK(!L::MarketFeaturable("pending") && !L::MarketFeaturable("rejected"));
+    CHECK(L::MarketListingVisible("approved", false, false));
+    CHECK(!L::MarketListingVisible("rejected", false, false) && L::MarketListingVisible("rejected", true, false) && L::MarketListingVisible("pending", false, true));
+    // No Today's picks with one item (it would show the same tile twice), nor when the grid is one row.
+    CHECK(!L::ShowTodaysPicks(1, 1, 4));
+    CHECK(!L::ShowTodaysPicks(5, 20, 4));
+    CHECK(!L::ShowTodaysPicks(8, 4, 4));
+    CHECK(L::ShowTodaysPicks(8, 20, 4));
+    // The seller's name: the whole line when the downloads do not fit beside it; shortened only past that.
+    const float lineW = Px(176.0f) - 2 * Px(12.0f);
+    const float nameW = TextW("imanfakhargomi"), dlW = TextW("0 downloads");
+    const L::TileMeta tm = L::FitTileMeta(nameW, dlW, lineW, Px(10.0f));
+    CHECK(tm.sellerW >= std::min(nameW, lineW) - 0.5f);   // never cut while the line has room for it
+    if (nameW + Px(10.0f) + dlW > lineW) CHECK(!tm.showDownloads);
+    CHECK(L::FitTileMeta(TextW("maya"), dlW, lineW, Px(10.0f)).showDownloads);
+    // A few listings: bigger tiles.
+    CHECK(L::MarketTileMinW(1, 176.0f) > L::MarketTileMinW(12, 176.0f));
+}
+
 void RunAll() {
     const float sizes[3][2] = {{960, 600}, {1280, 800}, {1920, 1080}};
     for (const auto& s : sizes) {
@@ -272,6 +372,9 @@ void RunAll() {
         CheckTestBuilds(s[0]);
         CheckAchievementsHeader(s[0]);
         CheckMarketShop(s[0]);
+        CheckShowcase(s[0]);
+        CheckIconRail(s[0], s[1]);
+        CheckMarketFold(s[0]);
     }
 }
 
@@ -298,6 +401,19 @@ int main() {
         CHECK(!t2.stacked); CHECK_NEAR(t2.buttons[1].R(), 900.0f, 1e-4); CHECK(t2.search.w <= 420.0f);
         CHECK(L::NotesShown(6, false).shown == 6 && !L::NotesShown(6, false).toggle);
         CHECK(L::NotesShown(60, false).shown == L::kNotesCollapsed && L::NotesShown(60, true).shown == 60);
+        // Foldable side panels (Servers' channels: 224 px, narrow below 560; Forums' sections: 220 px, narrow below 820).
+        for (const auto& pnl : {std::pair<float, float>{224.0f, 560.0f}, std::pair<float, float>{220.0f, 820.0f}}) {
+            const float wide = 1400.0f, narrow = pnl.second - 100.0f;
+            const L::SidePanel open = L::LayoutSidePanel(wide, pnl.first, 10.0f, pnl.second, false, false);
+            const L::SidePanel folded = L::LayoutSidePanel(wide, pnl.first, 10.0f, pnl.second, true, false);
+            CHECK(open.shown && !open.overlay); CHECK(!folded.shown && !folded.overlay);
+            CHECK(folded.contentW > open.contentW);                          // folding gives the content the panel's room
+            CHECK(std::abs(folded.contentW - open.contentW - (pnl.first + 10.0f)) < 0.01f);
+            const L::SidePanel n0 = L::LayoutSidePanel(narrow, pnl.first, 10.0f, pnl.second, false, false);
+            const L::SidePanel n1 = L::LayoutSidePanel(narrow, pnl.first, 10.0f, pnl.second, false, true);
+            CHECK(!n0.shown && !n0.overlay);                                  // narrow: starts folded
+            CHECK(!n1.shown && n1.overlay && n1.contentW == narrow);         // and opens over the content, which keeps its width
+        }
         // The Marketplace's filters, views and item page.
         {
             L::MarketQuery q;

@@ -2370,7 +2370,9 @@ private:
                     // scope around the outermost class being defined, where all class names were
                     // kept before class scopes existed.
                     addTypedef(shortTag, cloneType(*t));
-                    if (classOuter_ < tscopes_.size()) tscopes_[classOuter_][shortTag] = cloneType(*t);
+                    // (not a template instance's name: less<int> must not make "less" a type name
+                    // everywhere, where a parameter called less is called as less(a, b))
+                    if (tplShort.empty() && classOuter_ < tscopes_.size()) tscopes_[classOuter_][shortTag] = cloneType(*t);
                 }
                 readDeferred(deferred, cx);
                 if (cx.cxx) emitClassDecls(cx);
@@ -6049,6 +6051,11 @@ private:
             auto e = ex(Expr::Kind::String, cur());
             e->text = cur().decoded;
             advance();
+            // Adjacent string literals are one ([lex.phases] phase 6, ISO C 5.1.1.2): "a" "b" is "ab".
+            while (!atEnd() && cur().kind == Tok::StringLit) {
+                e->text += cur().decoded;
+                advance();
+            }
             return e;
         }
         if (eatP("(")) {

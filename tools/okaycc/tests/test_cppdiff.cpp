@@ -284,6 +284,7 @@ int main() {
         // Round 22: the streams through an object file. Its vtables (.rodata) sat between .data
         // items, and their relocations went to the wrong section: every virtual slot was null.
         diffOne("stream22.cpp (object)", "tests/progs_cpp_std/stream22.cpp", {"include"}, true);
+        engineDiff("tests/progs_cpp_engine/manifest_main.cpp", "../../engine/src/Modules/ModuleManifest.cpp");
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

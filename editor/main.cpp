@@ -11961,6 +11961,8 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
+        static bool  s_wordWrap = false, s_showWs = false;   // View > Word Wrap / Show Whitespace (the code widget's own)
+        static int   s_foldReq = 0;                          // View > Fold All (1) / Unfold All (2), applied to the code widget
         static float s_zoom = 1.25f;
         {   // Density sets the starting code size; picking another step resets the zoom to that step's size
             static int s_zoomDensity = -1;
@@ -11998,6 +12000,10 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::MenuItem("Syntax Colors", nullptr, &s_highlight);
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
+                ImGui::MenuItem("Word Wrap", nullptr, &s_wordWrap);
+                ImGui::MenuItem("Show Whitespace", nullptr, &s_showWs);
+                if (ImGui::MenuItem("Fold All", "Ctrl+Alt+[")) s_foldReq = 1;
+                if (ImGui::MenuItem("Unfold All", "Ctrl+Alt+]")) s_foldReq = 2;
                 ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
                 oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Visual Script window
                 ImGui::Separator();
@@ -12714,6 +12720,10 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
+                {"Toggle Word Wrap", [&]{ s_wordWrap = !s_wordWrap; }},
+                {"Toggle Whitespace", [&]{ s_showWs = !s_showWs; }},
+                {"Fold All", [&]{ s_foldReq = 1; }},
+                {"Unfold All", [&]{ s_foldReq = 2; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
                 {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
                 {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
@@ -12971,33 +12981,14 @@ void DrawScriptEditor(EditorState& ed) {
         // A negative width reserves the minimap column on the right.
         const float mmW = sdm.minimapW;
         bool showMap = s_minimap && av.x > 300.0f;
-        // Bracket / quote pairing (decided before the widget eats this frame's
-        // typing): ( [ { " ' get their closer, typing a closer that's already
-        // next to the caret steps over it, and Enter between { } opens a block.
+        // Bracket / quote pairing (typing over a closer, a pair removed by Backspace, Enter between { }) is the widget's own
+        // (OkayUI::CodeEdit::SetAutoClose; it skips strings and comments and works at every caret).
         static bool s_codeFocus = false;
-        const bool s_autoPair = g_scriptAutoPair;
-        char pairOpen = 0; bool stepOver = false, braceEnter = false;
-        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
-            ImGuiIO& kio = ImGui::GetIO();
-            const std::string line = te.GetCurrentLineText();
-            const int col = te.GetCursorPosition().mColumn;
-            const char next = col < (int)line.size() ? line[col] : 0;
-            const char prev = col > 0 && col - 1 < (int)line.size() ? line[col - 1] : 0;
-            if (kio.InputQueueCharacters.Size == 1 && !kio.KeyCtrl) {
-                const ImWchar ch = kio.InputQueueCharacters[0];
-                if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
-                    kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
-                    stepOver = true;
-                } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
-                    bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
-                    if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's / x"
-                    if (ok) pairOpen = (char)ch;
-                }
-            }
-            if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) &&
-                prev == '{' && next == '}')
-                braceEnter = true;
-        }
+        te.okay().SetAutoClose(g_scriptAutoPair);
+        te.okay().SetWordWrap(s_wordWrap);
+        te.okay().SetShowWhitespace(s_showWs);
+        if (s_foldReq == 1) te.okay().Edit().FoldAll(); else if (s_foldReq == 2) te.okay().Edit().UnfoldAll();
+        s_foldReq = 0;
         // ---- Scripts sidebar on the left: only the project's scripts (plus the
         // ones that live in the scene), with a filter. It folds away to a thin
         // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
@@ -13216,25 +13207,6 @@ void DrawScriptEditor(EditorState& ed) {
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
         s_codeFocus = te.OkayHasKeyboard();
-        if (stepOver) {
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
-        }
-        if (pairOpen) {
-            const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            te.InsertTextUndoable(std::string(1, close));
-            te.SetCursorPosition(c);
-        }
-        if (braceEnter) {
-            // The widget already broke the line and indented it like the `{` line;
-            // add one level for the body and push the `}` to its own line.
-            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
-            const std::string ln = te.GetCurrentLineText();
-            std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
-            te.InsertTextUndoable("    \n" + ind);
-            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 4));
-        }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
             s_zoom = Mathf::Clamp(s_zoom + ImGui::GetIO().MouseWheel * 0.1f, 0.7f, 3.0f);
@@ -13647,9 +13619,10 @@ void DrawScriptEditor(EditorState& ed) {
                 membersP = &csMembers;
             }
             const std::vector<std::string>& members = *membersP;
-            bool memberMode = !receiver.empty() && !members.empty();
+            // (a receiver that ends in a call, GetComponent("Light")., has no plain name: its expression counts)
+            bool memberMode = (!receiver.empty() || !recvExpr.empty()) && !members.empty();
             static std::string s_acKey;
-            std::string acKey = receiver + "|" + prefix;
+            std::string acKey = recvExpr + "|" + prefix;
             if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
             if (acKeyEsc) g_acDismiss = true;
             g_acCount = 0;

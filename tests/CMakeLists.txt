@@ -478,6 +478,11 @@ add_test(NAME script_components COMMAND test_script_components)
 add_executable(test_script_bindings test_script_bindings.cpp)
 target_link_libraries(test_script_bindings PRIVATE okay::engine)
 add_test(NAME script_bindings COMMAND test_script_bindings)
+# The Script Editor's completion and hover docs read the same table (editor/ScriptAssistBindings.cpp: no Dear ImGui).
+add_executable(test_script_assist_bindings test_script_assist_bindings.cpp ${CMAKE_SOURCE_DIR}/editor/ScriptAssistBindings.cpp)
+target_include_directories(test_script_assist_bindings PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_script_assist_bindings PRIVATE okay::engine)
+add_test(NAME script_assist_bindings COMMAND test_script_assist_bindings)
 if(OKAY_PYTHON)
     # The generated script bindings (engine/src/Scripting/ScriptBindingsGenerated.cpp) match the headers.
     add_test(NAME script_bindings_generated COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_script_bindings.py --check)

@@ -357,6 +357,7 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
         SolverBody& A = sb[(std::size_t)j.a];
         SolverBody& B = sb[(std::size_t)j.b];
         if (!A.dynamic && !B.dynamic) continue;
+        const float share = std::min(std::max(d.positionCorrection, 0.0f), 1.0f);   // JointDef::positionCorrection
         auto moveLin = [&](const V3& P, const V3& rA, const V3& rB) {
             if (A.dynamic) { A.com -= Mul(A.invMassAxis, P); A.q = Integrate(A.q, (A.invI * Cross(rA, P)) * -1.0f, 1.0f); }
             if (B.dynamic) { B.com += Mul(B.invMassAxis, P); B.q = Integrate(B.q, B.invI * Cross(rB, P), 1.0f); }
@@ -365,7 +366,7 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
             JointRow r; r.angA = axis; r.angB = axis;
             const float k = RowK(A, B, r);
             if (!(k > 1e-12f)) return;
-            const float e = std::min(std::max(err, -kMaxAngularCorrection), kMaxAngularCorrection);
+            const float e = std::min(std::max(err * share, -kMaxAngularCorrection), kMaxAngularCorrection);
             const float l = -e / k;
             // With an anchor point, each body turns about that point rather than its centre of mass, so the point stays
             // joined (turning a hinged arm about its middle would push its pivot off and the point pass would turn it back)
@@ -385,7 +386,7 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
             JointRow r; r.lin = n; r.angA = Cross(rA, n); r.angB = Cross(rB, n);
             const float k = RowK(A, B, r);
             if (!(k > 1e-12f)) return;
-            const float e = std::min(std::max(err, -s.maxCorrection), s.maxCorrection);
+            const float e = std::min(std::max(err * share, -s.maxCorrection), s.maxCorrection);
             moveLin(n * (-e / k), rA, rB);
         };
 
@@ -410,7 +411,7 @@ void JointsSolvePosition(World::Impl& w, std::vector<JointSolver>& js, std::vect
                 for (int k = 0; k < 3; ++k) K.m[k][k] = A.invMassAxis[k] + B.invMassAxis[k];
                 if (A.dynamic) { const M33 S = Skew(f.rA); K = K + (S * A.invI * S) * -1.0f; }
                 if (B.dynamic) { const M33 S = Skew(f.rB); K = K + (S * B.invI * S) * -1.0f; }
-                V3 Cc = C;
+                V3 Cc = C * share;
                 const float l = Len(Cc);
                 if (l > s.maxCorrection) Cc *= s.maxCorrection / l;
                 const V3 P = (K.Inverse() * Cc) * -1.0f;

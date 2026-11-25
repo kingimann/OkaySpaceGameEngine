@@ -63,6 +63,9 @@ if(Python3_Interpreter_FOUND)
     # scripts/module_sizes.py (bytes of each module in a linked program) on a made-up linker map.
     add_test(NAME module_sizes_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_module_sizes.py
              ${PROJECT_SOURCE_DIR}/scripts/module_sizes.py)
+    # scripts/web_package.py (the web game folder: index.html, the gzip program and game pack, the itch.io zip) on a made-up build.
+    add_test(NAME web_package_script COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/tests/scripts/test_web_package.py
+             ${PROJECT_SOURCE_DIR}/scripts/web_package.py)
 endif()
 # Review fix: a record whose module is off, or has no reader, is kept by load then save (all six gated records).
 add_executable(test_module_records_kept test_module_records_kept.cpp)
@@ -1331,6 +1334,13 @@ if(NOT WIN32)
     add_test(NAME launch_file COMMAND test_launch_file)
 endif()
 
+# The web export's C++ parts: Build Settings > Web's sizes and local Run in browser server (editor/WebRun.cpp: request
+# parsing, the path rules, a real loopback GET of a 3 MB file, an idle connection) and the web player's save folder and
+# prefs timing (platform/web/WebPlayer.hpp). The loopback part runs on Linux; on Windows the pure parts run.
+add_executable(test_web_export test_web_export.cpp ${PROJECT_SOURCE_DIR}/editor/WebRun.cpp)
+target_link_libraries(test_web_export PRIVATE okay::engine)
+add_test(NAME web_export COMMAND test_web_export)
+
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
 target_link_libraries(test_import_settings_real PRIVATE okay::engine)
@@ -1400,6 +1410,14 @@ add_executable(test_account test_account.cpp)
 target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
+
+# The editor's sign-in gate (editor/SignInGate.hpp): no session blocked, a confirmed session opens, an unconfirmed one is
+# blocked (no offline grace), the test switch, and the player / exported games never gated. Header-only like test_account.
+add_executable(test_editor_signin_gate test_editor_signin_gate.cpp)
+target_compile_features(test_editor_signin_gate PRIVATE cxx_std_17)
+target_include_directories(test_editor_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_editor_signin_gate PRIVATE OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME editor_signin_gate COMMAND test_editor_signin_gate)
 
 # The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
 # RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/platform/sha256_comparison.md). Header-only: no link needed.
@@ -2858,8 +2876,8 @@ add_executable(test_timers_fifth test_timers_fifth.cpp)
 target_link_libraries(test_timers_fifth PRIVATE okay::engine)
 add_test(NAME timers_fifth COMMAND test_timers_fifth)
 
-add_executable(test_editor_tabs test_editor_tabs.cpp)
-target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_executable(test_editor_tabs test_editor_tabs.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)   # Paths: where the editor keeps its files
+target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME editor_tabs COMMAND test_editor_tabs)
 
 add_executable(test_ui_tabs test_ui_tabs.cpp)
@@ -3178,6 +3196,11 @@ add_executable(test_active_ragdoll test_active_ragdoll.cpp)
 target_link_libraries(test_active_ragdoll PRIVATE okay::engine)
 target_compile_definitions(test_active_ragdoll PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME active_ragdoll COMMAND test_active_ragdoll)
+
+# Ragdoll limbs as real bodies: stopped by and pushing dynamic crates, no limb through another limb, resting on a pile
+add_executable(test_ragdoll_collisions test_ragdoll_collisions.cpp)
+target_link_libraries(test_ragdoll_collisions PRIVATE okay::engine)
+add_test(NAME ragdoll_collisions COMMAND test_ragdoll_collisions)
 
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
@@ -5460,13 +5483,23 @@ add_test(NAME input_grok COMMAND test_input_grok)
 
 # The launcher's Command line page rules (launcher/CommandLine.cpp, no ImGui): words and the argument list (no shell), Tab
 # completion from okay's own command table, history, streaming output from a running program, Stop, and the page layout.
-add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp
+add_executable(test_launcher_cli test_launcher_cli.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
                ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
 target_compile_features(test_launcher_cli PRIVATE cxx_std_17)
 target_include_directories(test_launcher_cli PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
                            ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME launcher_cli COMMAND test_launcher_cli)
 set_tests_properties(launcher_cli PROPERTIES TIMEOUT 120)
+# The Command line page's terminal (launcher/Terminal.cpp, ShellSession in launcher/CommandLine.cpp, okaycli::Pty): the VT
+# parser against byte streams, resizing, selection and copy, the key-to-sequence mapping, and a real /bin/sh on a pseudo
+# terminal (printf, echo, the folder, Tools first on PATH, resize, Ctrl+C stopping sleep, exit). The pty part is POSIX only.
+add_executable(test_launcher_terminal test_launcher_terminal.cpp ${CMAKE_SOURCE_DIR}/launcher/CommandLine.cpp ${CMAKE_SOURCE_DIR}/launcher/Terminal.cpp
+               ${CMAKE_SOURCE_DIR}/tools/okay-cli/CommandTable.cpp ${CMAKE_SOURCE_DIR}/tools/okay-cli/Process.cpp)
+target_compile_features(test_launcher_terminal PRIVATE cxx_std_17)
+target_include_directories(test_launcher_terminal PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/tools/okay-cli
+                           ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME launcher_terminal COMMAND test_launcher_terminal)
+set_tests_properties(launcher_terminal PROPERTIES TIMEOUT 120)
 
 # The launcher's system tray (launcher/TrayLogic.hpp: X / minimize / tray menu / double-click / Explorer restart / the
 # slower loop while hidden, through a fake shell) and where its chat is drawn (launcher/ChatPlacement.hpp: in, out,

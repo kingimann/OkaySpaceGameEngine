@@ -336,4 +336,16 @@ void DrawWeaponEditor(okay::editor::EditorState& ed) {
     ImGui::End();
 }
 
+void WeaponUnsavedTitles(std::vector<std::string>& titles) {
+    if (g_dirty) titles.push_back("Weapons");
+}
+bool WeaponSaveForQuit(okay::editor::EditorState& ed, std::string& why) {
+    if (!g_dirty) return true;
+    const std::string path = BookPath(ed);
+    if (path.empty()) { why = "The weapons have no project to be saved in."; return false; }
+    if (okay::WeaponBook::Get().Save(path)) { g_dirty = false; ConsoleLog("Saved weapons to " + path); return true; }
+    why = "Couldn't save " + path;
+    return false;
+}
+
 } // namespace oked

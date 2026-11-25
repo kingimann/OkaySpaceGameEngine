@@ -33,24 +33,29 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 
 ### 18.2 Web and mobile export
 - **System:** Web, Mobile and Console Export - Runs games in a web browser, on phones, and (experimental, off by default) on an Xbox in Developer Mode.
-  Home: `platform/`. Entry: `scripts/build-web.sh`. Also called: WebGL, Emscripten, Android, iOS, Xbox, UWP.
-- **What:** Putting a game in a browser (WebAssembly through Emscripten) or on a phone. Web has a real build script and a CI job; Android and iOS are a data export plus instructions.
+  Home: `platform/`. Entry: `scripts/build-web.sh`. Also called: WebGL, Emscripten, Android, iOS, Xbox, UWP, okay_web.js, web shell, okaypack.
+- **What:** Putting a game in a browser (WebAssembly through Emscripten) or on a phone. Web has a build script, our own page and loader, browser saves, a packager with an itch.io zip, Run in browser in the editor, and a CI job that plays a test game in headless Chromium; Android and iOS are a data export plus instructions.
 - **Parts:**
-  - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
-  - 18.2.2 Emscripten player target - `player/CMakeLists.txt` - the `EMSCRIPTEN` branch uses `-sUSE_SDL=2`, memory growth and an `.html` output (see 42.6)
-  - 18.2.3 Editor export for Web and Android - `editor/BuildGame.cpp` (`builder::ExportForPlatform`) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
-  - 18.2.4 Mobile guides - `docs/platform/web_mobile.md` - Android from SDL2's project template, iOS from the Xcode template, touch arrives as mouse events
-- **Code:** `scripts/build-web.sh`, `editor/BuildGame.cpp`, `player/CMakeLists.txt`
-- **API:** `scripts/build-web.sh [scene]`, Build Settings platform Web or Android
-- **Editor:** File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
+  - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium (none for WebAssembly) into `build-web/web/okay-player.html`, `.js`, `.wasm`; `--game DIR` (or one scene file) then packs a game beside it into `build-web/site/` (`--out`), `--zip` writes an itch.io zip, `--fit fill|aspect`, `--no-compress`, `--debug`
+  - 18.2.2 Emscripten player target - `player/CMakeLists.txt` - the `EMSCRIPTEN` branch: `-sUSE_SDL=2`, memory growth, `-sENVIRONMENT=web`, IDBFS, a 1 MB stack, our shell and pre-js; release links with `-Oz` and Closure (`OKAY_WEB_CLOSURE`); the game is no longer baked in, so one player build serves every game (see 42.6)
+  - 18.2.3 Editor export for Web and Android - `editor/BuildGame.cpp` (`builder::ExportForPlatform`) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets; for Web a `build-web.sh` that calls the engine's script into `web/` and `<Name>-web.zip`
+  - 18.2.4 Mobile guides - `docs/platform/web_mobile.md` - Android from SDL2's project template, iOS from the Xcode template (the web part of that page predates 18.2.5 to 18.2.9)
+  - 18.2.5 Web page and loader - `platform/web/shell.html`, `platform/web/okay_web.js` - the loading screen (the player's own cube and colours, a progress bar from the real byte counts, errors in plain words: file://, a missing file, no WebAssembly, no WebGL, an old browser, a lost WebGL context, a crash), the program and the game pack downloaded at once and unpacked with the browser's DecompressionStream, "Click to play" until the first gesture, a full-screen button, the canvas filling the page or a fixed aspect, high-DPI through SDL's pixel ratio
+  - 18.2.6 Browser saves - `platform/web/okay_web.js`, `platform/web/WebPlayer.hpp`, `player/main.cpp` - an IndexedDB folder per game (`/okaysave/<company_title>/`, Emscripten's IDBFS) read before `main()`; every closed, renamed or deleted file there is stored 250 ms later and when the page is hidden; the player saves into it (`OKAY_WEB_SAVE_DIR`) and writes the prefs 0.5 s after the last change (`PendingWrite`, `okay_web_flush`)
+  - 18.2.7 Browser input and audio - `platform/web/okay_web.js` - no context menu on the canvas, `touch-action: none`, focus on click, every AudioContext resumed on the first click, key or touch; keyboard, mouse, pointer lock (SDL re-asks on a click), touch and the Gamepad API come through SDL's Emscripten port into the engine's input; the page cannot scroll
+  - 18.2.8 Web packager - `scripts/web_package.py` - our pack format (`OKWPACK1`, a JSON manifest, the files), gzip of the program and the pack with fixed time stamps, `index.html` with the game's config, size report, itch.io zip (index.html at its root, the .gz files stored)
+  - 18.2.9 Run in browser - `editor/WebRun.cpp`, `editor/LaunchFile.cpp` (`OpenLocalUrl`) - Build Settings > Web shows the web build's file sizes and serves `web/` on 127.0.0.1 (GET and HEAD, no listing, nothing outside the folder, polled once a frame) and opens the default browser
+- **Code:** `scripts/build-web.sh`, `scripts/web_package.py`, `platform/web/`, `editor/BuildGame.cpp`, `editor/WebRun.cpp`, `player/CMakeLists.txt`, `player/main.cpp`
+- **API:** `scripts/build-web.sh [--game DIR] [--out DIR] [--zip FILE] [--fit fill|aspect]`, `scripts/web_package.py`, Build Settings platform Web or Android, `OKAY_WEB_SAVE_DIR`, `Module.okayWeb` (stats, saveSyncs, flushSaves) in the page
+- **Editor:** File > Build Settings > Platform: Web (WebGL / WASM): web build sizes, Run in browser, Stop; Android (project)
 - **Docs:** `docs/platform/web_mobile.md`
-- **Tests:** none as ctest; the `web-build` CI job (18.3.5)
-- **Status:** Partial - web builds and is checked in CI; Android and iOS are instructions only (the export writes `assets/` and a README, not a Gradle project)
-- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build excludes the relay and OkayUI's Direct3D backend. Touch gestures and on-screen controls are fed from SDL finger events on desktop and web (`docs/engine/input.md`)
+- **Tests:** `web_export` (sizes, request parsing, path rules, a loopback GET of 3 MB, an idle connection, the save folder and prefs timing), `web_package_script`, `launch_file` (OpenLocalUrl); the `web-build` CI job (18.3.5) packs `tests/web/webtest_game` and runs `tests/scripts/test_web_player.js` in headless Chromium (first frame, key, right-click, gamepad, save and prefs after a reload, no scroll in an iframe, audio after the first click, a missing file in plain words, pixel ratio 2, resize, the full-screen button; `--measure --throttle MBIT` for load numbers)
+- **Status:** Partial - web builds, loads, saves and takes input in headless Chromium; Android and iOS are instructions only (the export writes `assets/` and a README, not a Gradle project)
+- **Open:** no networking in the browser (UDP; a WebSocket transport through the relay is the plan, not built); the 3D view is the software renderer (no WebGL 3D path); asset packs are not lazy-loaded (the whole pack comes before the game starts); the editor cannot run Emscripten itself (build-web.sh is run by hand); Run in browser and the Web page were not opened in a real editor window; no real phone, touch screen or gamepad tried; the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build excludes the relay and OkayUI's Direct3D backend
 - **Related:** 18.3, 15.7, 42.6
-- **Words:** web, WebGL, WASM, WebAssembly, Emscripten, emsdk, Android, iOS, mobile, APK, touch, okay-player.html
-- **Seen as:** the web page is blank or the game doesn't load from a file:// URL; Android export gives no APK; a feature missing on the web build (networking relay, encryption)
-- **Ask me like:** "build the web version and serve it", "how do I get this on Android?"
+- **Words:** web, WebGL, WASM, WebAssembly, Emscripten, emsdk, Android, iOS, mobile, APK, touch, okay-player.html, index.html, itch.io, IndexedDB, IDBFS, loading screen, Run in browser, okaypack
+- **Seen as:** the web page is blank or the game doesn't load from a file:// URL; saves gone after a reload; the page scrolls when pressing space; right-click opens the browser menu; no sound until a click; Android export gives no APK; a feature missing on the web build (networking relay, encryption)
+- **Ask me like:** "build the web version and serve it", "make an itch.io zip of my game", "how do I get this on Android?"
 
 ### 18.3 CI jobs
 - **System:** CI - The automatic checks GitHub runs on every change (build, tests, linters).
@@ -61,7 +66,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.3.2 Scripting and robustness tests (ASan + UBSan) - `.github/workflows/ci.yml` - Debug `-g1` with `address,undefined,float-cast-overflow`, libsodium off, 45 min limit; builds and runs 38 chosen test binaries directly, not through ctest (19.2.5)
   - 18.3.3 Cross-compile Windows build (MinGW) - `.github/workflows/ci.yml` - apt packages cached, SDL2 2.30.9 and libsodium 1.0.20 fetched, ccache; runs `scripts/build-windows-dist.sh`, builds six test exes, uploads artifact `windows-ci-build` (3 days)
   - 18.3.4 Windows export check - `.github/workflows/ci.yml` - on `windows-latest`: runs `test_vs_acceptance`, `test_vs_debug`, `test_game_fiber`, `test_polymesh`, `test_mesh_asset`, `test_poly_ops`, then `tests/export/verify.ps1` with the cross-built editor
-  - 18.3.5 WebGL build (Emscripten) - `.github/workflows/ci.yml` - emsdk 3.1.51, `bash scripts/build-web.sh`, checks the `.html` and `.wasm` exist, uploads `okayspace-webgl`
+  - 18.3.5 WebGL build (Emscripten) - `.github/workflows/ci.yml` - emsdk 3.1.51, `bash scripts/build-web.sh`, checks the `.html`, `.js` and `.wasm` exist, packs `tests/web/webtest_game` and plays it in headless Chromium (`tests/scripts/test_web_player.js`, Playwright as a test tool), uploads `okayspace-webgl`
   - 18.3.6 PR template - `.github/PULL_REQUEST_TEMPLATE.md` - summary, changes, and two ticks: warning-clean build and passing ctest
 - **Code:** `.github/workflows/ci.yml`, `.github/PULL_REQUEST_TEMPLATE.md`, `tests/export/verify.sh`, `tests/export/verify.ps1`
 - **API:** jobs `build-and-test`, `sanitizers`, `windows-cross`, `windows-export`, `web-build`; env `OKAY_SANITIZE`, `ASAN_OPTIONS`, `UBSAN_OPTIONS`

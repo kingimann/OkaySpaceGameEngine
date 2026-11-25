@@ -98,6 +98,9 @@ struct Toolchain {
     string rc; vector<string> stdLibs; bool exeImportLib = false;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
+    // Our own compilers (presets okay-cc and okay-ms): which one, and whether a program links a static library's archive
+    // (link_archives = on) or that library's objects (off: okay-ld reads no archives)
+    string compilerKind; bool linkArchives = true;
 };
 static bool applyPreset(Toolchain& c, const string& name) {
     Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.cFlags = c.cFlags; d.cxxFlags = c.cxxFlags; d.linkLead = c.linkLead; d.exeLinkFlags = c.exeLinkFlags; d.sharedLinkFlags = c.sharedLinkFlags; d.stdLibs = c.stdLibs; d.exeImportLib = c.exeImportLib; d.rc = c.rc; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
@@ -105,6 +108,9 @@ static bool applyPreset(Toolchain& c, const string& name) {
     else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
     else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
     else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
+    // our own compilers: tools/okaycc (Linux ELF; okay-ld takes objects only) and tools/okayms (Windows PE; MSVC-style words)
+    else if (name == "okay-cc") { d.cc = "okay-cc"; d.cxx = "okay-cc"; d.ld = "okay-ld"; d.compilerKind = name; d.linkArchives = false; }
+    else if (name == "okay-ms") { d.cc = "okay-cl"; d.cxx = "okay-cl"; d.ld = "okay-link"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.compilerKind = name; }
     else return false;
     d.name = name; c = d; return true;
 }
@@ -124,6 +130,7 @@ struct RawAction {
 // An importer maps a file pattern to a command line; one action per matching file (expanded when the graph is planned).
 struct ImporterDecl {
     string name, pattern, output, cmd, depfile, pool; vector<string> inputs, settings; int line = 0;
+    string tool; // tool = TARGET: the converter is a program this manifest builds; {tool} is its path, and each step waits for it
 };
 struct Target {
     string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
@@ -254,7 +261,7 @@ static Manifest parseManifest(const string& file) {
                 mode = TC; Toolchain& c = m.tc;
                 if (t.size() > 1) {
                     if (t[1] == "auto") { c.autoPick = true; c.name = "auto"; }
-                    else if (!applyPreset(c, t[1])) throw err("unknown toolchain preset '" + t[1] + "' (auto, gcc, clang, mingw, msvc)");
+                    else if (!applyPreset(c, t[1])) throw err("unknown toolchain preset '" + t[1] + "' (auto, gcc, clang, mingw, msvc, okay-cc, okay-ms)");
                 }
                 continue;
             }
@@ -355,6 +362,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
+            else if (k == "link_archives") c.linkArchives = oneFlag(v, "link_archives");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
             PoolDecl& p = m.pools.back();
@@ -381,6 +389,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "inputs") add(x.inputs);
             else if (k == "settings") add(x.settings);
+            else if (k == "tool") { if (v.size() != 1) throw err("tool takes one value (a target name)"); x.tool = v[0]; }
             else throw err("unknown importer key '" + k + "'");
         } else if (mode == BUILDFILE) {
             if (k == "inputs") add(m.buildInputs);
@@ -589,6 +598,8 @@ static string hashArgv(const vector<string>& a) { uint64_t h = 14695981039346656
 struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
     vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
+    bool scanDeps = false; vector<string> scanDirs; // our own compilers write no depfile: okay-build lists the headers (scanIncludes)
+    bool makeExec = false; // okay-ld writes the program without the execute bit
 };
 struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; vector<std::pair<string, const string*>> gens; /* generate files the planned steps need: full path, text */ vector<string> folders; /* folder lines, full paths */ };
 static string gBuildDir = ".";
@@ -623,6 +634,74 @@ static bool msvcLinkerIsCl(const string& ld) {
     string b = ld; auto p = b.find_last_of("/\\"); if (p != string::npos) b = b.substr(p + 1);
     if (b.size() > 4 && b.compare(b.size() - 4, 4, ".exe") == 0) b.resize(b.size() - 4);
     return b == "cl";
+}
+// Our own compilers take fewer words than GCC or MSVC (docs/platform/own_compiler_plan.md, own_msvc_plan.md). A word that only
+// tunes the result (optimisation level, warnings, debug information, language level, runtime-library choice) is left out when the
+// compiler has no such switch; a word that would change what is built (a define for okay-cc, a sanitizer, an unknown word) is an
+// error that names the missing feature, so the build is never silently different. Returns false to leave the word out.
+static bool okayCompilerWord(const Toolchain& tc, const string& w0, bool link, string& out) {
+    auto starts = [&](const string& w, const char* p) { return w.rfind(p, 0) == 0; };
+    auto one = [&](const string& w, std::initializer_list<const char*> l) { for (auto* x : l) if (w == x) return true; return false; };
+    auto any = [&](const string& w, std::initializer_list<const char*> l) { for (auto* x : l) if (starts(w, x)) return true; return false; };
+    // GNU words that only tune the result (both compilers): -O -g -W (not -Wl,) -w -std= -pipe -pthread -m64; -f except sanitizers
+    bool gnuTune = (starts(w0, "-O") || starts(w0, "-g") || (starts(w0, "-W") && !starts(w0, "-Wl,")) || w0 == "-w" || starts(w0, "-std=") ||
+                    one(w0, {"-pipe", "-pthread", "-m64", "-s"}) || (starts(w0, "-f") && !starts(w0, "-fsanitize") && !starts(w0, "-fprofile")));
+    if (tc.compilerKind == "okay-cc") {
+        if (!link && starts(w0, "-I") && w0.size() > 2) { out = w0; return true; }
+        if (!link && w0 == "--eh") { out = w0; return true; }
+        if (!link && starts(w0, "-D")) throw Fail("okay-cc has no -D (the word '" + w0 + "'): a define changes the program, so it cannot be left out");
+        if (gnuTune) return false;
+        throw Fail("okay-cc does not take the flag '" + w0 + "'" + (link ? " (okay-ld takes objects and -o only)" : ""));
+    }
+    string w = spellMsvc(w0, link); // okay-ms: MSVC spelling first, then okay-cl's and okay-link's own words
+    string lw = w; for (char& c : lw) c = (char)tolower((unsigned char)c);
+    if (!link) {
+        if ((starts(lw, "/i") || starts(lw, "/d")) && w.size() > 2) { out = w; return true; }
+        if (one(lw, {"/o1", "/o2", "/z7"})) { out = w; return true; }
+        if (one(lw, {"/zi", "/ox"})) { out = lw == "/zi" ? "/Z7" : "/O2"; return true; } // /Zi wants a PDB okay-cl cannot write: line records in the object instead
+        if (one(lw, {"/od", "/nologo", "/fs", "/gy", "/oi", "/gr", "/gr-", "/permissive-", "/utf-8", "/bigobj", "/md", "/mt", "/mdd", "/mtd", "/sdl", "/sdl-"}) ||
+            any(lw, {"/w", "/eh", "/std:", "/zc:", "/mp", "/ob"}) || gnuTune) return false;
+        throw Fail("okay-cl does not take the flag '" + w0 + "'");
+    }
+    if (any(lw, {"/entry:", "/subsystem:", "/libpath:", "/map:", "/export:"}) || one(lw, {"/debug", "/dll"})) { out = w; return true; }
+    if (one(lw, {"/nologo"}) || any(lw, {"/incremental", "/opt:", "/machine:", "/dynamicbase", "/nxcompat", "/manifest"}) || gnuTune) return false;
+    throw Fail("okay-link does not take the flag '" + w0 + "'");
+}
+// After a compile with one of our own compilers (they write no depfile), list the headers: every #include "x" or <x> line of the
+// source and of each header found, looked up in the including file's folder (for "x") and in the -I or /I folders, in that order.
+// #if is not followed, so the list can hold a header the compiler skipped: an extra rebuild, never a missed one. A name found in
+// none of those folders is left out, and #include MACRO is not followed. Written as a make-syntax depfile, which the gcc path reads.
+// A make-syntax depfile "OUT: header header..." (spaces, backslashes and '#' escaped), as the gcc path reads it.
+static void writeMakeDepFile(const Action& a, const vector<string>& hdrs) {
+    fs::path parent = fs::path(a.depfile).parent_path(); if (!parent.empty()) fs::create_directories(parent);
+    std::ofstream f(a.depfile, std::ios::trunc);
+    f << a.output << ":";
+    for (auto& h : hdrs) { f << ' '; for (char c : h) { if (c == ' ' || c == '\\' || c == '#') f << '\\'; f << c; } }
+    f << '\n';
+}
+static void writeScannedDepFile(const Action& a) {
+    if (!a.scanDeps || a.depfile.empty() || a.inputs.empty()) return;
+    const string src = a.inputs[0];
+    vector<string> found; std::set<string> seen; vector<string> todo = {src};
+    auto lookup = [&](const string& name, bool quoted, const string& from) -> string {
+        std::error_code ec;
+        if (quoted) { fs::path p = fs::path(from).parent_path() / name; if (fs::is_regular_file(p, ec)) return p.lexically_normal().generic_string(); }
+        for (auto& d : a.scanDirs) { fs::path p = fs::path(d) / name; if (fs::is_regular_file(p, ec)) return p.lexically_normal().generic_string(); }
+        return "";
+    };
+    while (!todo.empty()) {
+        string file = todo.back(); todo.pop_back();
+        std::ifstream in(file); string line;
+        while (std::getline(in, line)) {
+            size_t i = line.find_first_not_of(" \t"); if (i == string::npos || line[i] != '#') continue;
+            i = line.find_first_not_of(" \t", i + 1); if (i == string::npos || line.compare(i, 7, "include") != 0) continue;
+            i = line.find_first_not_of(" \t", i + 7); if (i == string::npos || (line[i] != '"' && line[i] != '<')) continue;
+            char close = line[i] == '"' ? '"' : '>'; size_t e = line.find(close, i + 1); if (e == string::npos) continue;
+            string hit = lookup(line.substr(i + 1, e - i - 1), close == '"', file);
+            if (!hit.empty() && seen.insert(hit).second) { found.push_back(hit); todo.push_back(hit); }
+        }
+    }
+    writeMakeDepFile(a, found);
 }
 // ---- importers: a file pattern -> one command per matching file
 static bool globMatch(const char* p, const char* s) { // '*' any run, '?' one character; no slashes inside a name
@@ -669,12 +748,19 @@ static string fillTemplate(string t, const std::vector<std::pair<string, string>
 static vector<RawAction> expandImporters(const Manifest& m) {
     vector<RawAction> out;
     for (auto& im : m.importers) {
-        string settings = joined(im.settings);
+        string settings = joined(im.settings), toolPath;
+        if (!im.tool.empty()) { // the program's output path, as the target's link step writes it; listing it as an input makes the step wait for it
+            const Target* t = nullptr; for (auto& x : m.targets) if (x.name == im.tool) t = &x;
+            if (!t) throw Fail("importer '" + im.name + "': tool '" + im.tool + "' is not a target of this manifest");
+            if (t->isLib) throw Fail("importer '" + im.name + "': tool '" + im.tool + "' is a library, not a program");
+            toolPath = under(m.outdir + "/" + (t->outName.empty() ? t->name : t->outName) + m.tc.exe);
+        }
         for (auto& h : importerFiles(im.pattern)) {
             fs::path in(h.path);
             vector<std::pair<string, string>> kv = {{"input", h.path}, {"name", in.filename().string()}, {"stem", in.stem().string()},
                 {"ext", in.extension().string().empty() ? "" : in.extension().string().substr(1)}, {"dir", h.relDir}};
             RawAction r; r.line = im.line; r.pool = im.pool; r.inputs = im.inputs; r.inputs.push_back(h.path);
+            if (!toolPath.empty()) r.inputs.push_back(toolPath);
             r.output = fillTemplate(im.output, kv);
             if (r.output == h.path) throw Fail("importer '" + im.name + "': output would overwrite its input " + h.path);
             fs::path op(r.output);
@@ -683,6 +769,7 @@ static vector<RawAction> expandImporters(const Manifest& m) {
             vector<std::pair<string, string>> cv;
             for (auto& x : kv) cv.push_back({x.first, x.first == "input" ? quote(x.second) : x.second});
             cv.push_back({"output", quote(partial)}); cv.push_back({"depfile", quote(r.depfile)}); cv.push_back({"settings", settings});
+            if (!toolPath.empty()) cv.push_back({"tool", quote(fs::absolute(toolPath).lexically_normal().generic_string())});
             r.cmd = fillTemplate(im.cmd, cv);
             r.partials.push_back({partial, r.output});
             r.salt = "importer " + im.name + "\nsettings " + settings;
@@ -750,7 +837,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     };
     for (auto& t : m.targets) if (col[t.name] == 0) visit(t.name);
 
-    Graph g; std::map<string, int> finalAct;
+    Graph g; std::map<string, int> finalAct; std::map<string, vector<string>> libObjs; // a static library's objects (link_archives = off)
     auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + (t.libKind == "shared" && !m.tc.msvc ? string(".so") : m.tc.libs) : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
     std::set<string> done; vector<string> order;
     std::function<void(const string&)> post = [&](const string& n) { if (!done.insert(n).second) return; for (auto& d : byName[n]->deps) post(d); order.push_back(n); };
@@ -817,7 +904,25 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back(absOf(s)); a.argv.push_back(a.output);
                 objs.push_back(a.output); objActs.push_back(add(a)); continue;
             }
-            if (m.tc.msvc) {
+            if (!m.tc.compilerKind.empty()) { // our own compilers: okay-cc --obj OUT -I... SRC, or okay-cl /c /O2 /I... /D... /FoOUT SRC
+                bool ms = m.tc.compilerKind == "okay-ms"; string w;
+                a.argv = {isC ? m.tc.cc : m.tc.cxx}; if (ms) a.argv.push_back("/c"); else { a.argv.push_back("--obj"); a.argv.push_back(a.output); }
+                auto word = [&](const string& f) { if (okayCompilerWord(m.tc, fixBin(f), false, w)) a.argv.push_back(w); };
+                for (auto& f : m.tc.flags) word(f);
+                for (auto& f : isC ? m.tc.cFlags : m.tc.cxxFlags) word(f);
+                for (auto& f : t.flags) word(f);
+                for (auto& pf : t.fileFlags) if (pf.first == sRaw) word(pf.second);
+                vector<string> incs = t.includes; for (auto& i : t.exportIncludes) incs.push_back(i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) incs.push_back(i);
+                for (auto& pf : t.fileIncludes) if (pf.first == sRaw) incs.push_back(pf.second);
+                for (auto& i : incs) a.argv.push_back((ms ? "/I" : "-I") + fixBin(i));
+                vector<string> defs = t.defines; for (auto& pf : t.fileDefines) if (pf.first == sRaw) defs.push_back(pf.second);
+                for (auto& d : defs) { if (!ms) throw Fail("target '" + t.name + "': okay-cc has no -D, and the target defines " + d); a.argv.push_back("/D" + fixBin(d)); }
+                if (ms) a.argv.push_back("/Fo" + a.output);
+                a.argv.push_back(s);
+                for (size_t i = 1; i < a.argv.size(); ++i) { const string& x = a.argv[i]; if (x.size() > 2 && (x.compare(0, 2, "-I") == 0 || x.compare(0, 2, "/I") == 0)) a.scanDirs.push_back(x.substr(2)); }
+                a.scanDeps = true;
+            } else if (m.tc.msvc) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
                 for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
@@ -860,9 +965,36 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             objs.push_back(a.output); objActs.push_back(add(a));
         }
         Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
-        if (t.isLib && t.libKind != "shared") {
+        libObjs[n] = objs;
+        if (!m.tc.compilerKind.empty() && t.libKind == "shared") throw Fail("target '" + t.name + "': " + m.tc.compilerKind + " makes no shared libraries");
+        if (!m.tc.compilerKind.empty() && !(t.isLib && t.libKind != "shared")) { // a program linked by okay-ld (-o OUT objects) or okay-link (words, objects, libs, /OUT:)
+            bool ms = m.tc.compilerKind == "okay-ms"; string w;
+            a.kind = "LD"; a.argv = {m.tc.ld}; a.makeExec = !ms;
+            if (!ms) { a.argv.push_back("-o"); a.argv.push_back(a.output); }
+            auto word = [&](const string& f) { if (okayCompilerWord(m.tc, fixBin(f), true, w)) a.argv.push_back(w); };
+            for (auto& f : m.tc.linkLead) word(f);
+            for (auto& f : m.tc.exeLinkFlags) word(f);
+            for (auto& f : m.tc.linkFlags) word(f);
+            for (auto& f : t.linkFlags) word(f);
+            if (t.win32Exe) { if (!ms) throw Fail("target '" + t.name + "': okay-cc makes no Windows programs"); a.argv.push_back("/SUBSYSTEM:WINDOWS"); }
+            for (auto& o : objs) a.argv.push_back(o);
+            vector<string> sys = t.libs;
+            for (auto& l : linkClosure(t)) {
+                const Target& lt = *byName[l]; a.deps.push_back(finalAct[l]);
+                for (auto& x : lt.libs) sys.push_back(x);
+                if (m.tc.linkArchives) {
+                    if (ms) for (auto& o : libObjs[l]) if (fs::path(o).filename().string().size() > 15)
+                        throw Fail("target '" + t.name + "': okay-link cannot read the archive " + outPath(lt) + ": its member " + fs::path(o).filename().string() +
+                                   " has a name of 16 or more characters, which GNU ar keeps in a name table okay-link misreads; set link_archives = off in the toolchain block");
+                    a.argv.push_back(outPath(lt)); a.inputs.push_back(outPath(lt));
+                } else for (auto& o : libObjs[l]) { a.argv.push_back(o); a.inputs.push_back(o); } // okay-ld reads no archives: the library's objects
+            }
+            for (auto& x : sys) { if (!ms) throw Fail("target '" + t.name + "': okay-ld links no system libraries, and the target links " + x); a.argv.push_back(x + ".lib"); }
+            for (auto& x : m.tc.stdLibs) { if (!ms) throw Fail("toolchain: okay-ld links no system libraries (std_libs " + x + ")"); a.argv.push_back(x); }
+            if (ms) a.argv.push_back("/OUT:" + a.output);
+        } else if (t.isLib && t.libKind != "shared") {
             a.kind = "AR";
-            if (m.tc.msvc) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
+            if (m.tc.msvc && m.tc.compilerKind.empty()) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
             else { a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; }
             for (auto& o : objs) a.argv.push_back(o);
         } else {
@@ -1907,11 +2039,7 @@ static void writeShowIncludesDepFile(const Action& a, const string& captured) {
         }
         i = nl + 1; if (nl == captured.size()) break;
     }
-    fs::path parent = fs::path(a.depfile).parent_path(); if (!parent.empty()) fs::create_directories(parent);
-    std::ofstream f(a.depfile, std::ios::trunc);
-    f << a.output << ":";
-    for (auto& h : hdrs) { f << ' '; for (char c : h) { if (c == ' ' || c == '\\' || c == '#') f << '\\'; f << c; } }
-    f << '\n';
+    writeMakeDepFile(a, hdrs);
 }
 static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string_view, FileSig>>& oldProduced) {
     if (!a.partials.empty()) { // importer outputs: a finished file appears all at once, a failed one leaves nothing
@@ -1922,7 +2050,8 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
         }
         if (!ok) for (auto& pth : a.outputs) { std::error_code e2; fs::remove(pth, e2); }
     }
-    if (ok) writeShowIncludesDepFile(a, out);
+    if (ok) { writeShowIncludesDepFile(a, out); writeScannedDepFile(a); }
+    if (ok && a.makeExec) { std::error_code ec; fs::permissions(a.output, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec); }
     if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + redact(joined(a.argv)) + "\n" + out; return; }
     long long ts = nowNs();
     Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
@@ -2422,7 +2551,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 long long tStep = nowNs();
                 string cacheKey, tag = "-";
                 int cr = 2;
-                if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) cr = lookupCache(a, cacheKey, out);
+                if (gUseCache && a.kind == "CC" && !hasShowIncludes(a) && !a.scanDeps) cr = lookupCache(a, cacheKey, out);
                 else if (gUseCache && a.kind == "RUN") cr = lookupImported(a, cacheKey, out);
                 if (cr != 2) {
                     if (cr < 0) { noteStep(a.kind, a.desc, nowNs() - tStep, "fail"); done(id, false, out, false); continue; }
@@ -2586,7 +2715,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                         long long tStep = nowNs();
                         string cacheKey, tag = "-"; bool cached = false;
                         int cr = 2;
-                        if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) cr = lookupCache(a, cacheKey, out);
+                        if (gUseCache && a.kind == "CC" && !hasShowIncludes(a) && !a.scanDeps) cr = lookupCache(a, cacheKey, out);
                         else if (gUseCache && a.kind == "RUN") cr = lookupImported(a, cacheKey, out);
                         if (cr != 2) {
                             if (cr < 0) { ok = false; tag = "fail"; }
@@ -3456,6 +3585,15 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
 static void resolveToolchain(Manifest& m, const string& cliName, const vector<string>& extra, const vector<string>& roots) {
     string want = !cliName.empty() ? cliName : (m.tc.autoPick ? "auto" : "");
     if (want.empty()) return;
+    if (want == "okay-cc" || want == "okay-ms") { // our own compilers are not probed: the preset's names (found on PATH) or the tools the manifest names
+        Toolchain hand = m.tc; applyPreset(m.tc, want);
+        auto kept = [&](const char* k) { return std::find(hand.setKeys.begin(), hand.setKeys.end(), k) != hand.setKeys.end(); };
+        if (kept("cc")) m.tc.cc = hand.cc;
+        if (kept("cxx")) m.tc.cxx = hand.cxx;
+        if (kept("ld")) m.tc.ld = hand.ld;
+        if (kept("ar")) m.tc.ar = hand.ar;
+        return;
+    }
     auto found = detectToolchains(extra, roots);
     const Detected* pick = nullptr;
     if (want == "auto") {
@@ -3468,7 +3606,7 @@ static void resolveToolchain(Manifest& m, const string& cliName, const vector<st
         if (!pick) throw Fail("toolchain auto: no compiler found (looked for gcc, clang, mingw and msvc; try --search DIR or --msvc-root DIR)");
     } else {
         for (auto& d : found) if (d.name == want) pick = &d;
-        if (!pick) throw Fail("unknown toolchain '" + want + "' (auto, gcc, clang, mingw, msvc)");
+        if (!pick) throw Fail("unknown toolchain '" + want + "' (auto, gcc, clang, mingw, msvc, okay-cc, okay-ms)");
         if (!pick->found) throw Fail("toolchain " + want + " was not found on this machine (see: okay-build toolchains)");
     }
     Toolchain& c = m.tc; bool autoFlag = c.autoPick;
@@ -3910,7 +4048,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest" || a == "fetch") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|fetch|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|fetch|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc|okay-cc|okay-ms] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/platform/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }

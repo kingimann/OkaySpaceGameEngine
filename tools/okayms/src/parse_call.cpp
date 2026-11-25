@@ -155,7 +155,15 @@ bool Parser::try_fold(Node* out, bool* folded) {
     }
     Node init;
     if (has_init && !parse_pack_element(init_from, init_to, static_cast<size_t>(-1), true, &init)) return false;
-    const auto combine = [op](Node a, Node b) {
+    // One step of the fold: an overloaded operator of a class (`(os << ... << args)` with a stream) is called, as it would
+    // be for the expression written out ([temp.variadic] 10, [over.match.oper]); else the built-in operator.
+    bool combine_ok = true;
+    const auto combine = [this, op, &combine_ok](Node a, Node b) {
+        bool handled = false;
+        if (op != TComma && op != TAndAnd && op != TOrOr) {
+            if (!operator_binary(op, &a, &b, &handled)) combine_ok = false;
+            if (handled) return a;
+        }
         Node bin;
         bin.kind = Node::Binary;
         bin.op = op;
@@ -182,6 +190,7 @@ bool Parser::try_fold(Node* out, bool* folded) {
         for (size_t k = elems.size() - 1; k-- > 0;) acc = combine(std::move(elems[k]), std::move(acc));
         *out = std::move(acc);
     }
+    if (!combine_ok) return false;
     at = close + 1;
     *folded = true;
     return true;

@@ -110,8 +110,16 @@ public:
 
     /// The animation's pose this frame (same layout as RigInput).
     void SetAnimationPose(const Vec3 pos[kBones], const Quat rot[kBones]);
-    /// Advance by dt (fixed 60 Hz steps inside).
+    /// Put the bodies into a world someone else steps (the scene's) instead of one of their own; see
+    /// CoreRagdoll::UseWorld. Call before Build. Then every frame is BeginFrame(dt, world) and, before each step of
+    /// that world, ControlStep(step) instead of Tick. `user` marks the bodies and colliders as this owner's.
+    void UseWorld(phys::World* world, std::weak_ptr<void> alive, std::uint64_t user);
+    /// Advance by dt (fixed 60 Hz steps inside), stepping its own world.
     void Tick(float dt, const ContactWorld* world);
+    /// The frame part of Tick: the animation's speeds and the world for ray questions.
+    void BeginFrame(float dt, const ContactWorld* world);
+    /// One control step of `h` seconds: behaviours, drives and forces for the world step that follows.
+    void ControlStep(float h);
     /// The bone pose to show: physics blended with the animation.
     void BonePose(int bone, Vec3& pos, Quat& rot) const;
     /// 0 = pure animation, 1 = pure physics.
@@ -161,6 +169,7 @@ public:
     /// Ray against the body capsules (for shots). Returns the bone or -1.
     int   Raycast(const Vec3& origin, const Vec3& dir, float maxDist, Vec3* hitPoint = nullptr) const;
     RagdollPhysics* Physics() { return m_phys.get(); }
+    CoreRagdoll* Bodies() { return m_core; }
 
     /// When the body ends up away from where the animation stands (after a
     /// stumble or a get-up), the owner moves its root by this much and turns
@@ -227,12 +236,14 @@ private:
     float RegionStrength(int bone) const;
     int  NearestBody(const Vec3& p) const;
 
+    CoreRagdoll* m_core = nullptr;      // m_phys, as what it is
     std::unique_ptr<RagdollPhysics> m_phys;
     std::unique_ptr<DynBehaviour> m_mod[6];
     const ContactWorld* m_world = nullptr;
     bool  m_built = false, m_dead = false, m_haveAnim = false;
     CharState m_state = CharState::Animated;
     float m_stateTime = 0.0f, m_clock = 0.0f, m_accum = 0.0f;
+    float m_stepH = 1.0f / 60.0f;     // the control step now running
     float m_mass = 70.0f, m_height = 1.8f, m_groundY = 0.0f, m_groundNow = 0.0f, m_footCentreH = 0.0f;
     float m_rootGround = 0.0f;
     void  TrackGround();

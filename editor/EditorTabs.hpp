@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay::edtabs {
@@ -228,6 +229,63 @@ inline bool MatchesFilter(const std::string& label, const std::string& query) {
 inline bool TabsOverflow(float idealWidth, float barWidth, int tabCount, bool shownLastFrame, float slack = 6.0f) {
     if (tabCount < 2 || barWidth <= 0.0f) return false;
     return shownLastFrame ? idealWidth > barWidth - slack : idealWidth > barWidth;
+}
+
+// ---- What the editor keeps between runs ----------------------------------------
+// The dock arrangement (the ImGui ini text, editor_layout.ini), which panels are open (one
+// "panel_<key> 0|1" line each in okay_settings.txt) and the other editor files live in ONE
+// per-user folder, never in the working folder: on Windows the working folder is whatever started
+// the launcher (a shortcut's "Start in", a file association, the update helper), so the files were
+// written somewhere different, or nowhere, from one start to the next.
+
+/// The editor's per-user folder: `overrideDir` (OKAY_EDITOR_CONFIG_DIR, for tests) when set, else
+/// `platformConfigDir` + "/editor" (okay::Paths::ConfigDirFor: %APPDATA%/OkaySpace/config on Windows,
+/// ~/.config/OkaySpace on Linux). "" only when neither is known (then the working folder, as before).
+inline std::string EditorConfigDir(const std::string& platformConfigDir, const char* overrideDir) {
+    if (overrideDir && *overrideDir) return overrideDir;
+    if (platformConfigDir.empty()) return std::string();
+    std::string d = platformConfigDir;
+    if (d.back() != '/' && d.back() != '\\') d += '/';
+    return d + "editor";
+}
+/// `name` inside `dir` ("" = the working folder).
+inline std::string EditorConfigFile(const std::string& dir, const std::string& name) {
+    if (dir.empty()) return name;
+    return (dir.back() == '/' || dir.back() == '\\') ? dir + name : dir + "/" + name;
+}
+
+/// The okay_settings.txt key that remembers whether the panel called `label` is open: "panel_" and the
+/// label's letters and digits in lower case, every other run of characters one '_' ("Scene Manager" ->
+/// "panel_scene_manager", "Items, Loot & Recipes" -> "panel_items_loot_recipes"). One word, so the file
+/// stays "key value" pairs.
+inline std::string PanelSettingKey(const std::string& label) {
+    std::string k = "panel_";
+    bool gap = false;
+    for (char ch : label) {
+        const unsigned char c = (unsigned char)ch;
+        if (std::isalnum(c)) {
+            if (gap && k.size() > 6) k += '_';
+            k += (char)std::tolower(c);
+            gap = false;
+        } else {
+            gap = true;
+        }
+    }
+    return k;
+}
+/// The panel-open lines for okay_settings.txt, one per labelled panel: "panel_<key> 1" or "... 0".
+inline std::string WritePanelOpenLines(const std::vector<std::pair<std::string, bool>>& panels) {
+    std::string out;
+    for (const auto& p : panels) out += PanelSettingKey(p.first) + (p.second ? " 1\n" : " 0\n");
+    return out;
+}
+/// One "key value" pair read from okay_settings.txt: when it is a panel line for one of `labels`, sets
+/// `index` to that panel and returns true (the caller sets the flag to value != 0).
+inline bool ReadPanelOpenLine(const std::string& key, const std::vector<std::string>& labels, int& index) {
+    if (key.rfind("panel_", 0) != 0) return false;
+    for (std::size_t i = 0; i < labels.size(); ++i)
+        if (PanelSettingKey(labels[i]) == key) { index = (int)i; return true; }
+    return false;
 }
 
 }  // namespace okay::edtabs

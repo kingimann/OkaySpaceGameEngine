@@ -405,6 +405,72 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kids.push_back(std::move(chosen));
         return true;
     }
+    if (is(TIf) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+        // if (init; cond) ([stmt.if] 3): the init statement runs first, in a scope around the whole if; its objects
+        // are destroyed after the if (as for a for-loop's declaration).
+        size_t k = at + 2;
+        int depth = 0;
+        bool has_init = false;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            const Tok kk = tokens[k].kind;
+            if (kk == TLParen || kk == TLBrace || kk == TLBrack) ++depth;
+            else if (kk == TRParen || kk == TRBrace || kk == TRBrack) {
+                if (depth == 0) break;
+                --depth;
+            } else if (kk == TSemi && depth == 0) {
+                has_init = true;
+                break;
+            }
+        }
+        if (has_init) {
+            next();
+            next();
+            push_scope();
+            dscopes.emplace_back();
+            Node init_s;
+            if (is_decl_start() && !is(TStatic)) {
+                if (!parse_stmt(&init_s, locals)) return false;
+            } else {
+                Node e;
+                if (!parse_expr(0, &e)) return false;
+                if (!expect(TSemi, "';'")) return false;
+                init_s.kind = Node::ExprStmt;
+                init_s.kids.push_back(std::move(e));
+                if (!stmt_pre.empty() || !stmt_temps.empty()) {
+                    error = "an if init statement with temporaries is not supported";
+                    return false;
+                }
+            }
+            // The condition follows the ';' and is read like the one of a plain if, up to its ')'.
+            Node if_s;
+            Node cond;
+            Node cond_decl;
+            bool cond_scoped = false;
+            if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
+            Node then_s;
+            if (!parse_stmt(&then_s, locals)) return false;
+            if_s.kind = Node::If;
+            if_s.kids.push_back(std::move(cond));
+            if_s.kids.push_back(std::move(then_s));
+            if (accept(TElse)) {
+                Node else_s;
+                if (!parse_stmt(&else_s, locals)) return false;
+                if_s.kids.push_back(std::move(else_s));
+            }
+            close_condition_scope(&if_s, std::move(cond_decl), cond_scoped);
+            *out = Node{};
+            out->kind = Node::Block;
+            out->text = "scope";
+            out->kids.push_back(std::move(init_s));
+            out->kids.push_back(std::move(if_s));
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+            return true;
+        }
+    }
     if (is(TIf)) {
         next();
         out->kind = Node::If;
@@ -691,7 +757,8 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             if (value.kind == Node::Name && !cur_ret_ref && obj_needs_dtor(cur_ret)) {
                 // return x; where x is a local object of the result class, or a temporary made for this
                 // statement: the object itself becomes the result, so its destructor does not run here.
-                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0) {
+                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0 ||
+                    value.text.compare(0, 4, "__tn") == 0) {  // __tn: the chosen value of c ? a : b
                     for (size_t ti = 0; ti < stmt_temps.size(); ++ti)
                         if (stmt_temps[ti].name == value.text) {
                             stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(ti));
@@ -1004,6 +1071,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                 has_init = false;
             }
         }
+    }
+    if (local.is_const && has_init && init.kind == Node::IntLit && init.type.base < 5 && decl.type.pointers == 0 &&
+        !decl.type.is_array() && !decl.type.is_ref && (decl.type.base == 1 || decl.type.base == 2 || decl.type.base == 4)) {
+        local.has_cval = true;
+        local.cval = init.number;
     }
     bool static_dyn = false;
     std::vector<DynLeaf> static_leaves;

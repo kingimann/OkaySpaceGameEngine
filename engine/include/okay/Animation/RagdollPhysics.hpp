@@ -6,28 +6,24 @@
 // The controller (DynamicCharacter) only talks to the abstract RagdollPhysics
 // below: add bodies and joints, set a joint's drive (target rotation, stiffness,
 // damping), push bodies, pin a hand to the world, step, read poses and contacts.
-// Today the one implementation is XpbdRagdoll: a small articulated rigid-body
-// solver of our own, written from the published method of
-//   M. Mueller, M. Macklin, N. Chentanez, S. Jeschke, T.-Y. Kim,
-//   "Detailed Rigid Body Simulation with Extended Position Based Dynamics",
-//   Computer Graphics Forum (SCA) 2020
-// (substepping, one positional pass per substep, positional and angular
-// corrections with generalized inverse masses, compliance = 1 / stiffness,
-// velocity pass for damping), plus the swing / twist split of a joint rotation
-// that is standard in the robotics and animation literature.
-// XpbdRagdoll is a stop-gap and a copy of what the physics core does: once the
-// core's Ball / ConeTwist Joint3D drives land (claude2/physics-no-classic), a
-// backend on them replaces it and XpbdRagdoll is deleted (docs/status/UNFINISHED.md).
-// Build nothing new on it.
+// The one implementation is CoreRagdoll: one physics-core body and collider per
+// bone and one core joint per joint (okay::phys::World, docs/physics/physics_core.md),
+// in the scene's own physics world, so limbs meet everything in it. (Until
+// 2026-11-25 there was also XpbdRagdoll, a second rigid-body and joint solver of
+// the ragdoll's own; it was deleted when the ragdoll moved onto the core.)
 //
-// The world is reached only through ContactWorld::Cast (a segment query), so
-// the layer has no Scene dependency and runs in plain unit tests.
+// The controller's ray questions (grab, get-up floor) go through
+// ContactWorld::Cast (a segment query), so it has no Scene dependency and runs
+// in plain unit tests; the bodies themselves collide in the core world.
 // ---------------------------------------------------------------------------
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace okay {
+namespace phys { class World; }
 namespace dyn {
 
 /// The world the ragdoll touches. Cast returns the first surface along
@@ -38,17 +34,6 @@ public:
     virtual bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const = 0;
 };
 
-/// A flat ground at `groundY` plus optional axis-aligned boxes (a ledge, a
-/// wall). Used by the unit tests (the component always asks the scene).
-class SimpleWorld : public ContactWorld {
-public:
-    struct Box { Vec3 min, max; };
-    float groundY = 0.0f;
-    bool  hasGround = true;
-    std::vector<Box> boxes;
-    bool Cast(const Vec3& from, const Vec3& to, Vec3& point, Vec3& normal) const override;
-};
-
 struct ContactSphere { Vec3 local; float radius = 0.05f; };
 
 struct BodyDesc {
@@ -57,6 +42,12 @@ struct BodyDesc {
     float mass = 1.0f;
     Vec3  inertia{0.01f, 0.01f, 0.01f};   // principal moments in the body frame (kg m^2)
     float friction = 0.7f;
+    /// The body's solid shape, in its own frame: a capsule along +Y (radius and half length of its middle part), or a
+    /// box when hasBox is set (a foot). With neither it is a ball around its spheres.
+    float capsuleRadius = 0.0f, capsuleHalf = 0.0f;
+    bool  hasBox = false;
+    Vec3  boxCentre, boxHalf;
+    /// Points of the shape the controller asks about ("is the heel on the ground?"): see SphereTouching.
     std::vector<ContactSphere> spheres;
 };
 
@@ -122,30 +113,54 @@ public:
     virtual void  SetHelper(int body, const Vec3& pos, float posStiffness, const Quat& rot, float rotStiffness,
                             float damping) = 0;
     virtual void  ClearHelpers() = 0;
+    /// Off: the bodies are placed by SetState and touch nothing (the animation shows). On: they are simulated.
+    virtual void  SetActive(bool on) = 0;
     virtual void  Step(float dt, const ContactWorld* world) = 0;
     /// Contacts after the last Step.
     virtual bool  BodyTouching(int body) const = 0;
     virtual int   SphereCount(int body) const = 0;
-    virtual bool  SphereTouching(int body, int sphere, Vec3* worldCentre = nullptr, Vec3* normal = nullptr) const = 0;
+    /// `point` is where the surface is touched.
+    virtual bool  SphereTouching(int body, int sphere, Vec3* worldCentre = nullptr, Vec3* normal = nullptr,
+                                 Vec3* point = nullptr) const = 0;
     /// Number of times a non-finite state was caught and reset.
     virtual int   Resets() const = 0;
 };
 
-/// Our own solver (see the header comment for the method).
-class XpbdRagdoll : public RagdollPhysics {
+/// The ragdoll's bodies on the physics core (okay::phys::World): one core body and collider per bone, one core
+/// joint per joint with its orientation drive as the muscle. The core's solver moves them together with everything
+/// else in that world, so limbs collide with dynamic bodies and with each other.
+class CoreRagdoll : public RagdollPhysics {
 public:
-    Vec3  gravity{0.0f, -9.81f, 0.0f};
-    int   substeps = 12;
-    float maxSpeed = 40.0f;          // m/s cap per body
-    float maxSpin = 60.0f;           // rad/s cap per body
+    CoreRagdoll();                      // in a world of its own (no scene: unit tests)
+    ~CoreRagdoll() override;
+    CoreRagdoll(const CoreRagdoll&) = delete;
+    CoreRagdoll& operator=(const CoreRagdoll&) = delete;
+
+    /// Put the bodies into `world` (the scene's) instead of our own; whoever owns that world steps it, and Step()
+    /// here only hands over the drives and forces for that step. `alive` expires when that world is destroyed
+    /// (every body is then forgotten, nothing is touched). nullptr = a world of our own again. Clears the bodies.
+    void  UseWorld(phys::World* world, std::weak_ptr<void> alive);
+    /// The world the bodies are in (ours or the scene's). In our own world the caller adds the ground.
+    phys::World* World();
+    bool  SharesWorld() const;
+    /// The shared world was stepped by its owner: what touches is read again at the next question.
+    void  ContactsChanged();
+    /// The core body of a body here (phys::kInvalidId when there is none).
+    std::uint32_t CoreBody(int body) const;
+    /// Written into ColliderDef::user and BodyDef::user of everything made here (the scene uses it to know its guests).
+    std::uint64_t colliderUser = 0;
+    int   substeps = 1;                 // core steps per Step() in our own world
+    float maxSpeed = 40.0f;             // m/s cap per body
+    float maxSpin = 60.0f;              // rad/s cap per body
+    float helperDamping = 1.0f;         // damping ratio of the helper springs (1 = no bounce for the body they hold)
 
     void  Clear() override;
     int   AddBody(const BodyDesc& d) override;
     int   AddJoint(const JointDesc& d) override;
-    int   BodyCount() const override { return (int)m_bodies.size(); }
-    int   JointCount() const override { return (int)m_joints.size(); }
+    int   BodyCount() const override;
+    int   JointCount() const override;
     void  SetDrive(int joint, const JointDrive& drive) override;
-    void  SetJointFriction(float perSecond) override { m_jointFriction = perSecond < 0.0f ? 0.0f : perSecond; }
+    void  SetJointFriction(float perSecond) override;
     void  SetState(int body, const BodyState& s) override;
     BodyState State(int body) const override;
     float Mass(int body) const override;
@@ -157,61 +172,25 @@ public:
     void  SetHelper(int body, const Vec3& pos, float posStiffness, const Quat& rot, float rotStiffness,
                     float damping) override;
     void  ClearHelpers() override;
+    void  SetActive(bool on) override;
+    bool  Active() const;
     void  Step(float dt, const ContactWorld* world) override;
+    /// Touching something that is not part of this ragdoll.
     bool  BodyTouching(int body) const override;
     int   SphereCount(int body) const override;
-    bool  SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal) const override;
-    int   Resets() const override { return m_resets; }
+    /// A sphere counts as touching when a contact point of its body is at it.
+    bool  SphereTouching(int body, int sphere, Vec3* worldCentre, Vec3* normal, Vec3* point) const override;
+    int   Resets() const override;
 
-    /// Joint geometry for tests: the gap between the two anchor points (m).
+    /// The gap between the two anchor points of a joint (m), for tests.
     float JointGap(int joint) const;
+    /// How far a joint is past its limits now (radians, 0 = inside), measured the way the core's joint measures it
+    /// (twist about the joint's X axis, then the swing; a hinge's swing is all error), for tests.
+    float JointLimitExcess(int joint) const;
 
 private:
-    struct Sphere {
-        Vec3 local; float radius;
-        bool touching = false, hasPlane = false;
-        Vec3 planePoint, planeNormal;
-    };
-    struct Body {
-        Vec3 x, v, w; Quat q;
-        Vec3 px; Quat pq;               // pose at the start of the substep
-        float invMass = 1.0f, mass = 1.0f;
-        Vec3 invI;                      // inverse principal inertia, body frame
-        float friction = 0.7f;
-        Vec3 force, torque;
-        std::vector<Sphere> spheres;
-        bool pinned = false; Vec3 pinLocal, pinWorld; float pinK = 0.0f;
-        Vec3 helpX; Quat helpQ; float helpXK = 0.0f, helpQK = 0.0f, helpDamp = 0.0f;
-        BodyState good;                 // last finite state
-    };
-    struct Joint {
-        int p, c;
-        Vec3 rp, rc;                    // anchors in the parent / child frames
-        Quat rest;                      // child frame in parent frame at build
-        Vec3 axisInParent;              // child +Y in the parent frame at build
-        bool hinge; float swing, twist;
-        Vec3 hingeP, hingeC;            // hinge axis in each frame
-        Vec3 refP;                      // child +Y at build, for the hinge angle, parent frame
-        float hingeMin, hingeMax;
-        JointDrive drive;
-    };
-
-    Vec3 InvIWorld(const Body& b, const Vec3& v) const;
-    float GenInvMass(const Body* b, const Vec3& r, const Vec3& n) const;
-    float GenInvInertia(const Body* b, const Vec3& n) const;
-    void  Positional(Body* a, const Vec3& ra, Body* b, const Vec3& rb, const Vec3& delta, float alpha, float h);
-    void  Angular(Body* a, Body* b, const Vec3& rot, float alpha, float h, float maxTorque = 0.0f);
-    void  AngularVelocity(Body* a, Body* b, const Vec3& dw);
-    void  FindContacts(float dt, const ContactWorld* world);
-    void  SolveJoint(Joint& j, float h);
-    float DriveStiffness(const Joint& j, const Body* P, const Body* C) const;
-    void  SolveContacts(float h);
-    void  Sanitise();
-
-    std::vector<Body> m_bodies;
-    std::vector<Joint> m_joints;
-    float m_jointFriction = 0.0f;
-    int m_resets = 0;
+    struct Impl;
+    std::unique_ptr<Impl> m;
 };
 
 } // namespace dyn

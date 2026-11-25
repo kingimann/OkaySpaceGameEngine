@@ -215,7 +215,7 @@ public:
         for (const auto& obj : SplitObjects(r.body)) {
             FriendEvent e;
             e.actorId = Field(obj, "actor");
-            e.actor  = Field(obj, "actor_name");
+            e.actor  = okay::account::PublicName(Field(obj, "actor_name"));
             e.kind   = Field(obj, "kind");
             e.detail = Field(obj, "detail");
             e.when   = ParseIso(Field(obj, "created_at"));
@@ -240,10 +240,7 @@ public:
                     for (auto& e : evs) if (e.actorId == id) e.actor = un;
                 }
         }
-        for (auto& e : evs) {   // never show a raw email, even when the profile lookup failed
-            const auto at = e.actor.find('@');
-            if (at != std::string::npos && at > 0) e.actor = e.actor.substr(0, at);
-        }
+        for (auto& e : evs) e.actor = okay::account::PublicName(e.actor, e.actorId);   // never a raw email, even when the profile lookup failed
     }
 
 private:
@@ -282,10 +279,10 @@ private:
     }
 
     static void SetFrom(Friend& f, const Profile& p) {
-        f.username = p.username;
+        f.username = okay::account::PublicName(p.username);
         f.playing  = p.playing;
         f.sessionCode = p.sessionCode;
-        f.display  = p.displayName.empty() ? p.username : p.displayName;
+        f.display  = okay::account::PublicName(p.displayName.empty() ? p.username : p.displayName);
         f.avatar   = p.avatar;
         f.bio      = p.bio;
         f.accent       = p.accent;

@@ -40,8 +40,8 @@ static int ModWorker(void* p) {
                     if (p2.ok) for (const auto& o : okay::Servers::SplitObjects(p2.body)) {
                         const std::string id = okay::Servers::Field(o, "id");
                         for (auto& b : r.bans) if (b.uid == id) {
-                            b.name = okay::Servers::Field(o, "display_name");
-                            if (b.name.empty()) b.name = okay::Servers::Field(o, "username");
+                            b.name = okay::account::PublicName(okay::Servers::Field(o, "display_name"));
+                            if (b.name.empty()) b.name = okay::account::PublicName(okay::Servers::Field(o, "username"));
                         }
                     }
                 }
@@ -182,13 +182,13 @@ void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) {
     if (!mm::CanSeeBans(actor) || cid <= 0) return;
     ModBanList& b = ModBansFor(sc, cid);
     if (!b.inflight && okay::platform::TicksMs32() >= b.nextAt) ModFetchBans(sc, cid);
+    if (b.loaded && b.problem.empty() && b.list.empty()) return;   // nothing to manage: no "BANNED - 0" section (owner 2026-11-25)
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::SetWindowFontScale(0.80f);
     ImGui::TextDisabled("  BANNED  \xE2\x80\x94  %d", (int)b.list.size());
     ImGui::SetWindowFontScale(1.0f);
     if (!b.problem.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextColored(ImVec4(0.96f, 0.6f, 0.45f, 1), "%s", b.problem.c_str()); ImGui::PopTextWrapPos(); return; }
     if (!b.loaded) { ImGui::TextDisabled("Loading\xE2\x80\xA6"); return; }
-    if (b.list.empty()) { ImGui::TextDisabled("Nobody is banned."); return; }
     for (const auto& e : b.list) {
         ImGui::PushID(e.uid.c_str());
         const std::string nm = e.name.empty() ? std::string("(unknown)") : e.name;

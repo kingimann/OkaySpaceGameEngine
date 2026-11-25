@@ -11202,6 +11202,22 @@ static void MarketDemoListings(const std::string& mode, std::vector<okay::Worksh
     it(44, "Crystal Caverns (level)", "jonas", "scene", "A cave level with glowing crystals and a hidden room.", 760, 17, 4);
 }
 
+// Loading placeholders for a grid of cards (the Marketplace tiles, the Community showcase): two rows of grey cards, each with
+// its picture block and text bars (`bars`: x, y, width as a share of the card, height, in card pixels). Leaves the cursor under.
+struct SkelBar { float x, y, wFrac, h; };
+static void SkeletonGrid(const okay::launcherlayout::Grid& grid, float cardH, float picH, float rounding, std::initializer_list<SkelBar> bars) {
+    const ImVec2 g0 = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < grid.cols * 2; ++i) {
+        const okay::launcherlayout::Rect c = okay::launcherlayout::GridCell(grid, i, cardH);
+        const ImVec2 a(g0.x + c.x, g0.y + c.y);
+        dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), rounding);
+        SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + picH), rounding);
+        for (const SkelBar& b : bars) SkeletonBlock(dl, ImVec2(a.x + b.x, a.y + b.y), ImVec2(a.x + b.x + c.w * b.wFrac, a.y + b.y + b.h), 4.0f);
+    }
+    ImGui::Dummy(ImVec2(grid.cols * grid.cardW + (grid.cols - 1) * grid.gap, okay::launcherlayout::GridHeight(grid, grid.cols * 2, cardH)));
+}
+
 // ---- The Community showcase (owner 2026-11-25: "its a place where users can showcase their games, levels") ----------------------
 // Published creations from the marketplace list (the same fetch, MarketListWorker), shown big: Featured, New, Popular, Following
 // (your friends' creations) and Your creations (your listings, then your library: the old Community page). A card opens the
@@ -11315,16 +11331,7 @@ static void DrawCommunityShowcase(okay::account::AccountService& account, int vi
     const float picH = std::floor(grid.cardW * 9.0f / 16.0f);
     const float cardH = picH + pad + lh * 1.25f + UiPx(10.0f) + UiPx(28.0f) + UiPx(8.0f) + 2 * lh + pad + ImGui::GetFrameHeight() + UiPx(8.0f) + pad;
     if (!loaded) {
-        const ImVec2 g0 = ImGui::GetCursorScreenPos();
-        for (int i = 0; i < grid.cols * 2; ++i) {
-            const PL::Rect c = PL::GridCell(grid, i, cardH);
-            const ImVec2 a(g0.x + c.x, g0.y + c.y);
-            dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), UiPx(14.0f));
-            SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + picH), UiPx(14.0f));
-            SkeletonBlock(dl, ImVec2(a.x + pad, a.y + picH + pad), ImVec2(a.x + c.w * 0.6f, a.y + picH + pad + lh), 4.0f);
-            SkeletonBlock(dl, ImVec2(a.x + pad, a.y + picH + pad + lh * 2.2f), ImVec2(a.x + c.w * 0.4f, a.y + picH + pad + lh * 3.0f), 4.0f);
-        }
-        ImGui::Dummy(ImVec2(FW, PL::GridHeight(grid, grid.cols * 2, cardH)));
+        SkeletonGrid(grid, cardH, picH, UiPx(14.0f), {{pad, picH + pad, 0.6f, lh}, {pad, picH + pad + lh * 2.2f, 0.4f, lh * 0.8f}});
     } else if (failed && items.empty()) {
         EmptyState(kIcoAlert, "Can't reach the OkaySpace server", "The showcase loads from the server. Check your internet connection, then try again.", UiPx(30.0f));
         const float bw = FitButtonW("Try again", UiPx(140.0f));
@@ -18669,18 +18676,8 @@ int main(int argc, char** argv) {
                     }
                     endBlock();
                 } else if (!wLoaded) {   // ---- Loading: placeholder tiles ----
-                    const ImVec2 g0 = ImGui::GetCursorScreenPos();
-                    ImDrawList* dl = ImGui::GetWindowDrawList();
-                    for (int i = 0; i < grid.cols * 2; ++i) {
-                        const PL::Rect c = PL::GridCell(grid, i, tileH);
-                        const ImVec2 a(g0.x + c.x, g0.y + c.y);
-                        dl->AddRectFilled(a, ImVec2(a.x + c.w, a.y + c.h), ImGui::GetColorU32(okaytheme::kRaised), UiPx(12.0f));
-                        SkeletonBlock(dl, a, ImVec2(a.x + c.w, a.y + tl.picture.h), UiPx(12.0f));
-                        SkeletonBlock(dl, ImVec2(a.x + tl.price.x, a.y + tl.price.y), ImVec2(a.x + tl.price.x + c.w * 0.3f, a.y + tl.price.B()), 4.0f);
-                        SkeletonBlock(dl, ImVec2(a.x + tl.title.x, a.y + tl.title.y + 2), ImVec2(a.x + tl.title.x + c.w * 0.75f, a.y + tl.title.y + lh), 4.0f);
-                        SkeletonBlock(dl, ImVec2(a.x + tl.meta.x, a.y + tl.meta.y + 2), ImVec2(a.x + tl.meta.x + c.w * 0.5f, a.y + tl.meta.B() - 2), 4.0f);
-                    }
-                    ImGui::Dummy(ImVec2(GW, PL::GridHeight(grid, grid.cols * 2, tileH)));
+                    SkeletonGrid(grid, tileH, tl.picture.h, UiPx(12.0f),
+                                 {{tl.price.x, tl.price.y, 0.3f, tl.price.h}, {tl.title.x, tl.title.y + 2, 0.75f, lh - 2}, {tl.meta.x, tl.meta.y + 2, 0.5f, tl.meta.h - 4}});
                 } else if (wFailed && wCache.empty()) {   // ---- Offline / server error ----
                     EmptyState(kIcoAlert, "Couldn't reach the marketplace", "Check your internet connection, then try again. Your downloads and saved items are safe.", UiPx(30.0f));
                     const float bw = FitButtonW("Try again", UiPx(140.0f));

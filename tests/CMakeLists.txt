@@ -4253,6 +4253,11 @@ add_executable(test_signin_gate test_signin_gate.cpp)
 target_include_directories(test_signin_gate PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_features(test_signin_gate PRIVATE cxx_std_17)
 add_test(NAME signin_gate COMMAND test_signin_gate)
+# The name shown to other people is never an email address (okay::account::PublicName, used by every platform client).
+add_executable(test_public_name test_public_name.cpp)
+target_include_directories(test_public_name PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_features(test_public_name PRIVATE cxx_std_17)
+add_test(NAME public_name COMMAND test_public_name)
 # The launcher's Software Update dialog as a view of the updater's state (launcher/UpdateView.hpp). Std only.
 add_executable(test_update_view test_update_view.cpp)
 target_include_directories(test_update_view PRIVATE ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/engine/include)

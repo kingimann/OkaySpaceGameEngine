@@ -24,14 +24,14 @@
   "okay::thr::AtomicGet": 17,
   "okay::thr::AtomicInt": 16,
   "okay::thr::AtomicSet": 28,
-  "okay::thr::CreateMutex": 60,
+  "okay::thr::CreateMutex": 64,
   "okay::thr::CreateThread": 67,
   "okay::thr::DestroyMutex": 5,
   "okay::thr::DetachThread": 59,
-  "okay::thr::LockMutex": 178,
-  "okay::thr::Mutex": 45,
+  "okay::thr::LockMutex": 190,
+  "okay::thr::Mutex": 47,
   "okay::thr::Thread": 69,
-  "okay::thr::UnlockMutex": 184,
+  "okay::thr::UnlockMutex": 196,
   "okay::thr::WaitThread": 11
  }
 }

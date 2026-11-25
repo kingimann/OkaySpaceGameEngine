@@ -7,6 +7,7 @@
 #include <SDL.h>
 #include "OkayThreads.hpp"   // okay::thr (the launcher's mutexes and threads)
 #include "okay/Net/JoinLink.hpp"            // ChatInviteInfo holds a link
+#include "JoinPlan.hpp"                     // okay::joinplan::Candidate (MpJoinProjects)
 #include "okay/Platform/Messages.hpp"      // okay::Messages (chat helpers)
 #include "okay/Platform/Friends.hpp"       // okay::Friend (the friends list)
 #include <algorithm>
@@ -145,6 +146,12 @@ bool MpCanInvite();                                             // in a joinable
 std::string MpGameTitle();                                      // the game I'm playing ("" = none)
 void MpInviteUser(const std::string& uid, const std::string& name);
 void MpJoinFriend(const std::string& sessionCode, const std::string& name);
+// For a join that opens a project in the editor (MpLaunch, shared/JoinPlan.hpp; main.cpp): your editor projects with
+// their engine_version stamps, the editor versions you have (this launcher's own and those under Versions/), and
+// opening a project's scene with one of them.
+std::vector<okay::joinplan::Candidate> MpJoinProjects();
+std::vector<std::string> MpInstalledEditors();
+bool MpOpenProjectForJoin(const std::string& editorVersion, const std::string& scene);
 void MpInviteGroup(long gid, const std::string& name);         // a whole group chat
 std::string MpMyJoin();                                        // my session's public link ("" = none)
 void MpPartyInvite(const std::string& uid, const std::string& name);
@@ -165,6 +172,9 @@ struct SchedMsg { long id = 0; std::string toUid, toName; long toGroup = 0; std:
 struct ChatFileInfo { std::string name, size, url; };
 struct ChatPollInfo { std::string question; std::vector<std::string> options; };
 struct ChatInviteInfo { std::string title; okay::JoinLink link; };
+// Who an invite card is with (the other person in a 1:1 chat): their public name, and their presence join link when the
+// friend list has been read (`peerKnown`), so a card can say the match is over or full.
+struct ChatInviteCtx { std::string peerUid, peerName; bool peerKnown = false; std::string peerLink; };
 struct ChatFwd { bool ok = false; std::string from, body; };
 struct ChatVoiceInfo { int secs = 0; std::string url; };
 struct ChatPinRef { long id = 0; long when = 0; std::string preview, who; };
@@ -206,7 +216,9 @@ bool ParseChatInvite(const std::string& body, ChatInviteInfo& out);
 bool ParseChatPoll(const std::string& body, ChatPollInfo& p);
 bool ParseChatVoice(const std::string& body, ChatVoiceInfo& out);
 void RenderChatFileCard(const ChatFileInfo& f, float width);
-void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width);
+void RenderChatInvite(const ChatInviteInfo& inv, bool mine, long when, float width, const ChatInviteCtx* ctx = nullptr);
+void OpenChatLink(const std::string& url);       // a click on a link in a message (okay::chat::ClickLink: confirm, join or refuse)
+void DrawChatLinkConfirm();                       // the "Open link?" question, in the window where the link was clicked
 void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVec4 accent);
 bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0);
 extern volatile bool g_attBusy;

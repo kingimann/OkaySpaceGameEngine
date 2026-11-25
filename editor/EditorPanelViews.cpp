@@ -555,10 +555,11 @@ PlayerSettingsIntent DrawPlayerSettingsBodyImGui(PlayerSettingsModel& m, const P
         ImGui::SetNextItemWidth(160);
         if (ImGui::InputText("Version##ps", m.version, m.versionSize)) out.changed = true;
     }
-    if (m.width && m.height) {
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Width##ps", m.width)) out.changed = true;
+    if (m.width && m.height) {   // as editor/main.cpp had it: five digits wide, no -/+ buttons
+        const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Width##ps", m.width, 0)) out.changed = true;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Height##ps", m.height)) out.changed = true;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Height##ps", m.height, 0)) out.changed = true;
     }
     return out;
 }

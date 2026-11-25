@@ -149,3 +149,15 @@ void __okay_eh_rethrow(void) {
     r[2] = 0;
     unwind();
 }
+
+/* dynamic_cast<T *>(p) for single inheritance ([expr.dynamic.cast] p5-p8): the object's type_info
+ * (from its vtable) is T's, or one of its base links leads to T's. A type_info object is three
+ * words (src/mangle.cpp makeTypeInfo): 0 unused, 1 the name, 2 the base class's type_info or 0.
+ * Types are compared by name, as each file may hold its own weak copy. Returns 1 or 0. */
+int __okay_dyncast(long *ti, long *target) {
+    while (ti) {
+        if (ti == target || strcmp((char *)ti[1], (char *)target[1]) == 0) return 1;
+        ti = (long *)ti[2];
+    }
+    return 0;
+}

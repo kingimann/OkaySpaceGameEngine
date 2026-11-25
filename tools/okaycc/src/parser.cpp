@@ -1909,9 +1909,14 @@ private:
             bound->ival = T->vslots.size() + 2;
             arr->bound = std::move(bound);
             vd->type = std::move(arr);
+            // offset-to-top, then the class's type_info object ([expr.typeid], Itanium ABI 2.9.5)
+            Type cls;
+            cls.kind = Type::Kind::Struct;
+            cls.tag = c.tag;
             vd->vt.push_back("");
-            vd->vt.push_back("");
+            vd->vt.push_back(typeInfoSym(cls));
             for (const std::string& sname : T->vslots) vd->vt.push_back(sname);
+            makeTypeInfo(cls, extras_, tiDone_, vd->line, vd->col, vd->file);
             extras_.push_back(std::move(vd));
         }
     }
@@ -2490,6 +2495,7 @@ private:
     };
     std::vector<DeferredBody>* staticDefer_ = nullptr;  // the bodies of the class being parsed
     int localClassN_ = 0;  // local classes renamed apart (parseStructType)
+    std::set<std::string> tiDone_;  // type_info objects emitted for vtables (emitClassDecls)
     void skipBraces() {
         int depth = 0;
         while (!atEnd()) {
@@ -6096,6 +6102,38 @@ private:
                 }
                 i_ = start;
             }
+        }
+        if (isKw("typeid") && nextIs("(")) {
+            // typeid(type) and typeid(expression) ([expr.typeid]): the checker picks the type_info
+            // object, from the static type or, for an object of a class with virtual functions, from
+            // its vtable.
+            Token at = cur();
+            advance();
+            advance();
+            auto e = ex(Expr::Kind::Call, at);
+            e->kids.push_back(leafName(at));
+            e->kids.back()->text = "\x01" "typeid";
+            if (isTypeKw(cur())) e->ty = parseTypeName();
+            else e->kids.push_back(parseExpr());
+            expectP(")", ")");
+            return e;
+        }
+        if (isKw("dynamic_cast") && nextIs("<")) {
+            // dynamic_cast<T *>(p) ([expr.dynamic.cast]): checked against the object's type_info chain.
+            Token at = cur();
+            advance();
+            advance();
+            auto tyName = parseTypeName();
+            closeAngle();
+            expectP("(", "(");
+            auto inner = parseExpr();
+            expectP(")", ")");
+            auto e = ex(Expr::Kind::Call, at);
+            e->kids.push_back(leafName(at));
+            e->kids.back()->text = "\x01" "dyncast";
+            e->kids.push_back(std::move(inner));
+            e->ty = std::move(tyName);
+            return e;
         }
         if ((isKw("static_cast") || isKw("reinterpret_cast") || isKw("const_cast")) && nextIs("<")) {
             // static_cast<T>(e), reinterpret_cast<T>(e), const_cast<T>(e) (ISO/IEC 14882 [expr.static.cast],

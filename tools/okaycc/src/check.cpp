@@ -36,6 +36,9 @@ public:
         for (auto& d : tu.decls)
             if (d && !d->vt.empty())
                 for (const std::string& sym : d->vt) usedFns_.insert(sym);  // a vtable uses its slots
+        for (auto& d : tu.decls)
+            if (d && (d->name.compare(0, 4, "_ZTI") == 0 || d->name.compare(0, 4, "_ZTS") == 0))
+                tiDone_.insert(d->name);  // the parser's (for vtables)
         std::vector<Decl*> waiting;
         for (auto& d : tu.decls) {
             if (!d) continue;
@@ -65,6 +68,8 @@ public:
         tu.decls = std::move(kept);
         for (auto& d : lambdaDecls_) tu.decls.push_back(std::move(d));
         lambdaDecls_.clear();
+        for (auto& d : tiDecls_) tu.decls.push_back(std::move(d));  // type_info objects typeid made
+        tiDecls_.clear();
         scopes_.pop_back();
     }
 
@@ -1067,12 +1072,13 @@ private:
         // keep the result for the check that follows, and use it only for a class with the operator.
         if (!simple && e.kind != Expr::Kind::Bin && e.kind != Expr::Kind::Index && e.kind != Expr::Kind::Unary &&
             !((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
-              (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member)))
+              (lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index)))
             return false;  // (*s.begin(), -f(), Name() += x, ++Counter(): operators on a call result)
         if (!simple && lhs.kind != Expr::Kind::Call && lhs.kind != Expr::Kind::Bin && lhs.kind != Expr::Kind::Comma &&
             lhs.kind != Expr::Kind::Unary &&
-            !(lhs.kind == Expr::Kind::Member && (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign ||
-                                                 e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post)))
+            !((lhs.kind == Expr::Kind::Member || lhs.kind == Expr::Kind::Index) &&
+              (e.kind == Expr::Kind::Index || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
+               e.kind == Expr::Kind::Post)))
             return false;  // (a member of a call result: St().cats[k] = v, St().flag = true with State &St())
         if (e.kind == Expr::Kind::Call && lhs.text.compare(0, 1, "\x01") == 0) return false;
         ++quiet_;
@@ -1120,9 +1126,10 @@ private:
                 if (!fits) found = false;
             }
         }
+        // (typeid(x) became *(const type_info *)... when the probe checked it: a dereference too.)
         const bool refCall = lhs.kind == Expr::Kind::Call || lhs.kind == Expr::Kind::Member ||
                              (lhs.kind == Expr::Kind::Unary && lhs.text == "*" && !lhs.kids.empty() && lhs.kids[0] &&
-                              lhs.kids[0]->kind == Expr::Kind::Call);
+                              (lhs.kids[0]->kind == Expr::Kind::Call || lhs.kids[0]->kind == Expr::Kind::Cast));
         if (!simple && !(found && probe.lvalue && refCall)) {
             // (A call that returns a reference to an object, *f() inside, is an lvalue: the member
             // call below is made on it directly.)
@@ -2120,8 +2127,182 @@ private:
         b.kids.push_back(mkName(tmp, b));
     }
 
+    // ---- RTTI: typeid and dynamic_cast ([expr.typeid], [expr.dynamic.cast]) ----
+    std::set<std::string> tiDone_;  // type_info objects already in the file
+    std::vector<std::unique_ptr<Decl>> tiDecls_;
+    // The type_info object of t: made (weak) if the file does not have it yet; its symbol.
+    std::string ensureTypeInfo(const Type& t, const Expr& at) {
+        std::string sym = typeInfoSym(t);
+        if (scopes_.front().count(sym)) return sym;
+        std::vector<std::unique_ptr<Decl>> made;
+        makeTypeInfo(t, made, tiDone_, at.line, at.col, at.file);
+        for (auto& d : made) {
+            Sym s;
+            s.type = cloneType(*d->type);
+            scopes_.front()[d->name] = std::move(s);
+            tiDecls_.push_back(std::move(d));
+        }
+        return sym;
+    }
+    std::unique_ptr<Type> constTypeInfoPtr() {
+        auto ti = prim(Type::Kind::Struct);
+        ti->tag = "std::type_info";
+        ti->cnst = true;
+        return ptrTo(std::move(ti));
+    }
+    // ((void **)x.__vptr)[-1]: the type_info address in the vtable of the object x (Itanium ABI 2.5.2:
+    // the word before the address point).
+    std::unique_ptr<Expr> vtableTypeInfo(std::unique_ptr<Expr> obj, const Expr& at) {
+        auto mem = mkE(Expr::Kind::Member, at);
+        mem->text = ".";
+        mem->kids.push_back(std::move(obj));
+        mem->kids.push_back(mkName("__vptr", at));
+        auto cast = mkE(Expr::Kind::Cast, at);
+        cast->ty = ptrTo(ptrTo(prim(Type::Kind::Void)));
+        cast->kids.push_back(std::move(mem));
+        auto one = mkE(Expr::Kind::Int, at);
+        one->ival = 1;
+        auto idx = mkE(Expr::Kind::Index, at);
+        idx->kids.push_back(std::move(cast));
+        idx->kids.push_back(eUnary("-", std::move(one), at));
+        return idx;
+    }
+    ET checkTypeid(Expr& e) {
+        auto ti = canonStructs().find("std::type_info");
+        if (ti == canonStructs().end() || !ti->second) {
+            err(e.line, e.col, "typeid needs <typeinfo>");
+            return bad(e.line, e.col);
+        }
+        std::unique_ptr<Expr> addr;
+        if (e.ty) {
+            addr = eUnary("&", mkName(ensureTypeInfo(*e.ty, e), e), e);
+        } else if (e.kids.size() == 2 && e.kids[1]) {
+            ET a = checkExpr(*e.kids[1]);
+            if (a.bad || !a.type) return bad(e.line, e.col);
+            const Type* t = a.type.get();
+            if (t->kind == Type::Kind::Reference && t->inner) t = t->inner.get();
+            const Type* cs = t->kind == Type::Kind::Struct ? canonOf(t) : nullptr;
+            if (cs && cs->hasVptr && a.lvalue) {
+                // An object of a class with virtual functions: its dynamic type ([expr.typeid] p3).
+                addr = vtableTypeInfo(std::move(e.kids[1]), e);
+            } else {
+                // Otherwise the static type; the operand is not evaluated ([expr.typeid] p4).
+                std::unique_ptr<Type> st = cloneType(*t);
+                if (cs) st->tag = cs->tag;
+                addr = eUnary("&", mkName(ensureTypeInfo(*st, e), e), e);
+            }
+        } else {
+            err(e.line, e.col, "typeid needs a type or an expression");
+            return bad(e.line, e.col);
+        }
+        auto cast = mkE(Expr::Kind::Cast, e);
+        cast->ty = constTypeInfoPtr();
+        cast->kids.push_back(std::move(addr));
+        e.kind = Expr::Kind::Unary;
+        e.text = "*";
+        e.ty.reset();
+        e.kids.clear();
+        e.kids.push_back(std::move(cast));
+        return checkExpr(e);
+    }
+    // dynamic_cast<C *>(p): an upcast (or to the same class) is a plain conversion; otherwise
+    // (tmp = p, tmp && __okay_dyncast(type_info of *tmp, &_ZTI<C>)) ? (C *)tmp : (C *)0 (lib/eh.c).
+    ET checkDyncast(Expr& e) {
+        if (!e.ty || e.kids.size() != 2 || !e.kids[1]) return bad(e.line, e.col);
+        const Type& T = *e.ty;
+        if (T.kind != Type::Kind::Pointer || !T.inner || T.inner->kind != Type::Kind::Struct) {
+            err(e.line, e.col, "dynamic_cast is only done to a pointer to a class");
+            return bad(e.line, e.col);
+        }
+        ET a = decay(checkExpr(*e.kids[1]));
+        if (a.bad || !a.type) return bad(e.line, e.col);
+        const Type* to = canonOf(T.inner.get());
+        const Type* from = isPtr(*a.type) && a.type->inner && a.type->inner->kind == Type::Kind::Struct
+                               ? canonOf(a.type->inner.get())
+                               : nullptr;
+        if (!to || !from) {
+            err(e.line, e.col, "dynamic_cast needs a pointer to a class");
+            return bad(e.line, e.col);
+        }
+        auto target = cloneType(T);
+        std::unique_ptr<Expr> operand = std::move(e.kids[1]);
+        e.kids.clear();
+        e.ty.reset();
+        if (to->tag == from->tag || derivedFrom(*from, *to)) {
+            e.kind = Expr::Kind::Cast;
+            e.text.clear();
+            e.ty = std::move(target);
+            e.kids.push_back(std::move(operand));
+            return checkExpr(e);
+        }
+        if (!from->hasVptr) {
+            err(e.line, e.col, "dynamic_cast of a class without virtual functions");
+            return bad(e.line, e.col);
+        }
+        Type toCls;
+        toCls.kind = Type::Kind::Struct;
+        toCls.tag = to->tag;
+        std::string sym = ensureTypeInfo(toCls, e);
+        if (!scopes_.front().count("__okay_dyncast")) {
+            auto fn = prim(Type::Kind::Function);
+            fn->inner = prim(Type::Kind::Int);
+            for (int k = 0; k < 2; ++k) {
+                Param prm;
+                prm.type = ptrTo(prim(Type::Kind::Long));
+                fn->params.push_back(std::move(prm));
+            }
+            auto d = std::make_unique<Decl>();
+            d->name = "__okay_dyncast";
+            d->line = e.line;
+            d->col = e.col;
+            d->file = e.file;
+            d->function = true;
+            d->type = cloneType(*fn);
+            Sym s;
+            s.type = std::move(fn);
+            s.func = true;
+            scopes_.front()["__okay_dyncast"] = std::move(s);
+            tiDecls_.push_back(std::move(d));
+        }
+        auto srcT = cloneType(*a.type);
+        std::string tmp = newTemp(*srcT, e, false);
+        auto deref = eUnary("*", mkName(tmp, e), e);
+        auto call = mkE(Expr::Kind::Call, e);
+        call->kids.push_back(mkName("__okay_dyncast", e));
+        auto a1 = mkE(Expr::Kind::Cast, e);
+        a1->ty = ptrTo(prim(Type::Kind::Long));
+        a1->kids.push_back(vtableTypeInfo(std::move(deref), e));
+        call->kids.push_back(std::move(a1));
+        auto a2 = mkE(Expr::Kind::Cast, e);
+        a2->ty = ptrTo(prim(Type::Kind::Long));
+        a2->kids.push_back(eUnary("&", mkName(sym, e), e));
+        call->kids.push_back(std::move(a2));
+        auto test = mkE(Expr::Kind::Bin, e);
+        test->text = "&&";
+        test->kids.push_back(mkName(tmp, e));
+        test->kids.push_back(std::move(call));
+        auto yes = mkE(Expr::Kind::Cast, e);
+        yes->ty = cloneType(*target);
+        yes->kids.push_back(mkName(tmp, e));
+        auto no = mkE(Expr::Kind::Cast, e);
+        no->ty = std::move(target);
+        no->kids.push_back(mkE(Expr::Kind::Int, e));
+        auto cond = mkE(Expr::Kind::Cond, e);
+        cond->kids.push_back(std::move(test));
+        cond->kids.push_back(std::move(yes));
+        cond->kids.push_back(std::move(no));
+        e.kind = Expr::Kind::Comma;
+        e.text.clear();
+        e.ival = 0;
+        e.kids.push_back(eAssignNode(mkName(tmp, e), std::move(operand), e));
+        e.kids.push_back(std::move(cond));
+        return checkExpr(e);
+    }
+
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "typeid") return checkTypeid(e);
+        if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "dyncast") return checkDyncast(e);
         if (e.kids[0]->kind == Expr::Kind::Name && e.kids[0]->text == "\x01" "zero:" && e.kids.size() == 2 &&
             e.kids[1]) {
             checkExpr(*e.kids[1]);  // made by braceToTemp: zero an aggregate's bytes (lowerCall)

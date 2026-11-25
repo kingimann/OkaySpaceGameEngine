@@ -322,7 +322,7 @@ struct Preprocessor {
                 ++i;
                 continue;
             }
-            if (c == '"' || c == '\'') {
+            if ((c == '"' || c == '\'') && !is_digit_separator(line, i)) {
                 in_string = true;
                 quote = c;
                 out.push_back(c);
@@ -379,7 +379,7 @@ struct Preprocessor {
                         else if (ch == arg_quote) in_arg_string = false;
                         continue;
                     }
-                    if (ch == '"' || ch == '\'') {
+                    if ((ch == '"' || ch == '\'') && !is_digit_separator(line, k)) {
                         in_arg_string = true;
                         arg_quote = ch;
                         cur_arg.push_back(ch);
@@ -442,7 +442,7 @@ struct Preprocessor {
                     bool paste_next = false;  // the word after a ## is used as written
                     for (size_t s = 0; s < body.size();) {
                         const char bc = body[s];
-                        if (bc == '"' || bc == '\'') {
+                        if ((bc == '"' || bc == '\'') && !is_digit_separator(body, s)) {
                             // a literal in the body is copied as it is
                             size_t e = s + 1;
                             while (e < body.size() && body[e] != bc) e += body[e] == '\\' ? 2 : 1;

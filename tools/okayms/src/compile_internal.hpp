@@ -333,6 +333,18 @@ struct LineSource {
 struct Gen;
 
 // preprocess.cpp
+// A ' at i of s is a digit separator (50'000'000, 0x7F'FF; [lex.icon] 1, [lex.ppnumber]), not the start of a character
+// literal: it stands between two hex digits inside a number that starts with a decimal digit.
+inline bool is_digit_separator(const std::string& s, size_t i) {
+    if (i == 0 || i + 1 >= s.size() || s[i] != '\'') return false;
+    if (!std::isxdigit(static_cast<unsigned char>(s[i - 1])) || !std::isxdigit(static_cast<unsigned char>(s[i + 1])))
+        return false;
+    size_t start = i;
+    while (start > 0 && (std::isalnum(static_cast<unsigned char>(s[start - 1])) || s[start - 1] == '\'' ||
+                         s[start - 1] == '_'))
+        --start;
+    return std::isdigit(static_cast<unsigned char>(s[start])) != 0;
+}
 std::string strip_comments(const std::string& in);
 bool read_file(const std::string& path, std::string* text);
 

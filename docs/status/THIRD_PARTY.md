@@ -11,15 +11,15 @@ services we build on, with their licences. The engine itself is proprietary (see
 
 ## Policy and goal
 
-The goal is for everything to be our own code, and for every third-party library below to be **removed**, slowly,
-one piece at a time. Our replacements are not a permanent second option: each stays off until the owner declares it
-ready and bug free (real-file corpus, tests on Windows and Linux, soak or fuzz, no known bugs, owner approval), then
-the default flips in a release the owner approves, and the library code and its CMake option are deleted one release
-later. The per-library plan, state and blockers are in [own_code_roadmap.md](own_code_roadmap.md). Until a library is
+The goal is for everything to be our own code, and for every third-party library below to be **removed**, one piece
+at a time. Our replacements are not a permanent second option and are not kept off by default (`CLAUDE.md` rule 17,
+2026-11-22): each is built, tested against the library until it gives the same or better results, made THE path, and
+the library code and its CMake option are deleted (rule 19c). Cryptography is the exception: `okay::crypto` stays off
+until an outside review (rule 18). The per-library plan, state and blockers are in [own_code_roadmap.md](own_code_roadmap.md). Until a library is
 removed it is allowed only because the replacement is not ready, and a new library must not be added when writing our
 own is possible; add one only with the same removal plan.
 
-Order: the small, easy libraries first (done), then model import (Assimp and ufbx), then the platform layer (SDL2),
+Order: the small, easy libraries first (done), then model import (ufbx deleted 2026-11-23; Assimp left), then the platform layer (SDL2),
 then the editor toolkit (Dear ImGui), and encryption (libsodium) last. For encryption, writing our own is a security
 risk, so it needs an outside review before it can be the default; see [crypto_review_package.md](../platform/crypto_review_package.md).
 Services run by other companies (Steamworks, Photon, our hosting) are not libraries and stay.
@@ -47,8 +47,8 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 
 | Library | Used for | Licence | How we get it | Replacement and state |
 |---|---|---|---|---|
-| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | System package; `SDL2.dll` is bundled in Windows builds; Emscripten port on the web | `okay::platform`: Linux/X11 done, player uses it; Win32 untested, macOS not written; editor and launcher still on SDL2 |
-| [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit | `okayui`: headless harness and gap step 1 done; editor and launcher not ported |
+| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | System package; `SDL2.dll` is bundled in Windows builds; Emscripten port on the web | `okay::platform` (`docs/platform/platform_layer.md`): the Linux/X11 backend is done and tested under Xvfb; the player's window, events, input and GL context go through the seam; the editor's and launcher's event loops and 2D drawing go through it too, with SDL2 still underneath on Windows (#1198, 2026-11-23, moved five more SDL calls behind the seam and gave the editor's Play keys and the player one shared key mapping); the launcher runs with no SDL on the own backend on Linux only; the Win32 backend compiles but has not run on real Windows (`okay-platform-selftest --ci` is wired into the Windows test workflow); macOS not written |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit | `okayui` (`docs/ui/own_ui_toolkit.md`): the editor's Crash Log, Audio Mixer and History are OkayUI only (#1192) and the script editor's code view is our own `OkayUI::CodeEdit` (#1200); other screens (What's New, Tips, Console, the Inspector preview) have OkayUI versions behind the Settings > Experimental switches, which start ticked; everything else is still Dear ImGui; nothing of this has run in a real window on Windows |
 | ~~[Assimp](https://github.com/assimp/assimp) v5.4.3~~ | Was: importing 3D model formats beyond the built-in ones | BSD 3-clause | **Deleted 2026-11-24** (`claude/no-assimp-1`): `engine/src/Render/ModelImportAssimp.cpp`, the `OKAY_USE_ASSIMP` and `OKAY_PREFER_OWN_READERS` options, the FetchContent block (and the zlib it built), `-DOKAY_USE_ASSIMP=ON` in `scripts/build-windows-dist.sh`, `AssimpAvailable()` and `ImportBackend::Assimp` | Our own readers are the only model readers, for every extension Assimp read except Nendo `.ndo` (dropped: no public description of the format and no usable sample file; `docs/content/model_readers.md`, section Nendo). A file our reader refuses fails the import with the reason. CI still fetches the Assimp v5.4.3 source tree, as **data only**, for the real-file corpus in its `test/` folder (job `model-corpus`, `docs/content/model_corpus.md`); nothing from it is compiled or shipped |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | **Deleted 2026-11-23** (`claude/third-party-2`): `engine/third_party/ufbx` and every use are gone | Our own FBX reader `okay::fbx` is the only FBX reader (the `OKAY_OWN_FBX` switch is gone too). Before the deletion it agreed with ufbx on 42 of 43 real files (the 43rd is damaged) and all fixtures; those values are now fixed expected numbers in `fbx_reader`. Not run on real Windows after the deletion |
 | [libsodium](https://libsodium.org) | Authenticated packet encryption, session tickets, host identity | ISC | System package (optional, `OKAY_USE_SODIUM`); MinGW prebuilt in CI | `okay::crypto`, off, unreviewed; needs an outside review first |

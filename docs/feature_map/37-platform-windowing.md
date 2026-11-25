@@ -111,17 +111,17 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ### 37.6 Native HTTP and the game-to-launcher link
 - **System:** Platform Layer
-- **What:** Two OS helpers: an in-process HTTPS client (WinHTTP with kept-alive connections on Windows; our own HTTP/1.1 client with the system OpenSSL loaded at run time on Linux; no curl anywhere, and no client on macOS, UWP or the web), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
+- **What:** Two OS helpers: one HTTP seam for every download and request (`Platform/NativeFetch`, #1186): WinHTTP with kept-alive connections on Windows; our own HTTP/1.1 client with the system OpenSSL loaded at run time on Linux; no curl anywhere (`claude/no-curl-1`), and no client on macOS, UWP or the web; and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
-  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` uses WinHTTP on Windows and our own client on Linux (built in with `-DOKAY_OWN_HTTP=ON`, the default; no run-time switch, `docs/platform/own_http.md`); with no client it returns `reached` false and `NoClientReason()`; `RequestEx` adds progress, cancel, resume and a size cap and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` is the one seam (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`) the launcher, editor, account layer and PlayFab call (readiness: `docs/platform/own_http.md`); thread safe
+  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` uses WinHTTP on Windows and our own client on Linux (built in with `-DOKAY_OWN_HTTP=ON`, the default; no run-time switch); with no client (macOS, UWP, web) it returns `reached` false and `NoClientReason()`; `RequestEx` (WinHTTP and our own client, since #1186) adds progress, cancel, Range resume with an `If-Range` check, a size cap and a redirect limit, and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` is the one seam every runtime caller uses (`FetchToFile`, `HeadDump`, `FetchPrefix`, `Send`; launcher downloads and size probes, link previews, the Versions page, the editor update download, `AccountService`, PlayFab); nothing starts curl, wget or PowerShell, and the `no_curl_spawn` test fails if anything does (readiness: `docs/platform/own_http.md`); thread safe
   - 37.6.2 Game and launcher link - `Platform/GameIpc` - small files in the per-user config folder keyed by process id: presence, invite request, join link, `played-with.tsv`
-- **Code:** `Platform/NativeHttp`, `Platform/GameIpc`
+- **Code:** `Platform/NativeHttp`, `Platform/NativeFetch`, `Platform/GameIpc`
 - **API:** `okay::http::Request`, `okay::http::NativeAvailable`, `GameIpc::WritePresence`, `GameIpc::TakeJoin`, `GameIpc::RequestInvite`, `GameIpc::RecordPlayedWith`
 - **Editor:** none
 - **Docs:** `docs/online/multiplayer.md`, `docs/online/accounts.md`, `docs/platform/own_http.md`, `docs/platform/own_http.md`
-- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`, `launcher_download_own`, `native_fetch`, `playfab_own`
+- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`, `launcher_download_own`, `native_fetch`, `no_curl_spawn`, `playfab_own`, `winhttp_loopback` (Windows only)
 - **Status:** Works - both headers read; the player calls GameIpc (presence, join, invite) and the launcher and AccountService use NativeHttp (call sites read); `launcher_join` covers the link
-- **Open:** macOS, UWP and the web have no HTTP client (calls fail); Windows has no second route when WinHTTP cannot answer (a proxy that wants a password); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path has no tests (the own client has)
+- **Open:** macOS, UWP and the web have no HTTP client (calls fail); Windows has no second route when WinHTTP cannot answer (a proxy that wants a password); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path is tested only by `winhttp_loopback`, which runs only on Windows
 - **Related:** 17.1, 17.3, 17.2, 16.4, 18.1
 - **Words:** NativeHttp, WinHTTP, HTTPS client, curl, GameIpc, launcher link, presence, join link, invite friends, played with, ipc folder
 - **Seen as:** launcher is slow to fill in at start; invites do not reach the running game; friends do not see what I am playing; account calls fail behind a proxy
@@ -185,7 +185,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/multiplayer.md`, `docs/online/photon.md`
 - **Tests:** `account`, `account_script`, `friends_json`, `chat_json`
 - **Status:** Works for accounts, friends and chat JSON handling (headers read in outline; covered by `account`, `account_script`, `friends_json` and `chat_json`); the remote paths need a live Supabase and are not covered by tests
-- **Open:** no tests for forums, Workshop, profiles, admin, parties or PlayFab; PlayFab and the account path have no HTTP client on macOS; ownership of these files should be settled with area 17, which lists them as 17.2-17.10
+- **Open:** no tests for forums, Workshop, profiles, admin, parties or PlayFab; PlayFab and accounts go through the HTTP seam (WinHTTP on Windows, our own client on Linux; no client on macOS); ownership of these files should be settled with area 17, which lists them as 17.2-17.10
 - **Related:** 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.9, 17.10
 - **Words:** account, sign in, Supabase, friends, party, messages, chat, servers, channels, forums, Workshop, marketplace, profile, achievements, admin, PlayFab, leaderboard, offline mode
 - **Seen as:** cannot sign in; the friends list is empty; messages do not arrive; achievements are not shared with the launcher; an admin page is empty for a normal user

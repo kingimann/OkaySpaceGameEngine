@@ -486,8 +486,7 @@ const char* HintText() {
 }
 
 const char* ShellHintText() {
-    return "Your own shell, in the project's folder, with okay on its PATH. Ctrl+C stops a command (or copies the selection), "
-           "Ctrl+V pastes, right-click for more.";
+    return "Your own shell in the project's folder; okay works here. Ctrl+C stops a command, Ctrl+V pastes, right-click for more.";
 }
 
 void SetProject(const std::string& root, const std::string& name) {
@@ -683,6 +682,7 @@ void DrawPage(const Host& host) {
     // ---- the hint ----
     Place(L.hint, origin);
     const char* hint = okayMode ? HintText() : ShellHintText();
+    if (!okayMode && ImGui::CalcTextSize(hint).x > L.hint.w) hint = "Ctrl+C stops a command, Ctrl+V pastes, right-click for more.";
     ImGui::TextDisabled("%s", hint);
     if (okayMode) {
         ImGui::SameLine(0, 6);

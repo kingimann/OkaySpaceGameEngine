@@ -70,7 +70,7 @@ inline Section Classify(const std::string& name) {
     if (name == "ImGui.NewFrame") return Section::EditorUpdate;
     if (StartsWith(name, "Editor.")) return Section::EditorUpdate;
     if (StartsWith(name, "ImGui.")) return Section::ImGuiDraw;
-    if (name == "Present") return Section::Present;
+    if (name == "Present" || StartsWith(name, "Present.")) return Section::Present;   // Present.Windows: the multi-window panels' own presents
     if (name == "Pacing.Sleep") return Section::Sleep;
     return Section::Play;
 }

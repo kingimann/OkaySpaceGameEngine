@@ -55707,6 +55707,7 @@ int main(int argc, char** argv) {
         // Multi-window panels: create/size/paint the extra OS windows (tabs
         // dragged out of the editor).
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            OKAY_PROFILE("Present.Windows");   // each extra window presents (and may wait for its vsync): timed, not "Not timed"
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }

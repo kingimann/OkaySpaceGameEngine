@@ -32,6 +32,7 @@ int main() {
     CHECK(perf::Classify("ImGui.Draw") == perf::Section::ImGuiDraw);
     CHECK(perf::Classify("ImGui.Render") == perf::Section::ImGuiDraw);
     CHECK(perf::Classify("Present") == perf::Section::Present);
+    CHECK(perf::Classify("Present.Windows") == perf::Section::Present);   // the multi-window panels' presents (were "Not timed")
     CHECK(perf::Classify("Pacing.Sleep") == perf::Section::Sleep);
     CHECK(perf::Classify("Physics3D.Step") == perf::Section::Play);
     CHECK(perf::Classify("Scripts") == perf::Section::Play);

@@ -21,7 +21,7 @@ struct UpdateInfo {
 extern bool pendingQuit;
 // Absolute path of the running executable.
 std::string SelfPath();
-// Download a URL to a file (own HTTP client when on, then curl, then a platform fallback); no-cache, cache-busting query.
+// Download a URL to a file through the HTTP seam (WinHTTP / our own client); no-cache, cache-busting query.
 bool Download(const std::string& url, const std::filesystem::path& outPath);
 // URL of a published file in the releases bucket ("sb:<ver>" = that version's folder, anything else = the newest).
 std::string RawUrl(const std::string& ref, const std::string& name);

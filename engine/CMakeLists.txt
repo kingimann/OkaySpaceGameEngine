@@ -505,16 +505,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
-# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+# Our own HTTP client, NativeHttp's client on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
 if(OKAY_OWN_STACK)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_STACK_BUILD)   # tests and the startup helper can tell a dogfood build
 endif()
 if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
-    if(OKAY_OWN_STACK)
-        # Dogfood build: own HTTP is ON unless OKAY_OWN_HTTP=0 (otherwise it needs OKAY_OWN_HTTP=1 at run time).
-        target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP_DEFAULT_ON=1)
-    endif()
     target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 

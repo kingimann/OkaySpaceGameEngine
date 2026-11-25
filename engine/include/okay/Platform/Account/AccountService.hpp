@@ -8,8 +8,7 @@
 //
 //   * Remote  — when a server URL is set, Register/Login POST JSON over HTTPS
 //               (through the HTTP seam, okay::http::Send: WinHTTP on Windows,
-//               our own client on Linux when on, curl only as the last
-//               fallback) and read back a session token. This is
+//               our own client on Linux) and read back a session token. This is
 //               the real "online account" path; point it at your auth server.
 //
 //   * Local   — when no server URL is set, accounts live in a small on-disk
@@ -49,7 +48,7 @@
 #  endif
 #endif
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
-#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: okay::http::Send (WinHTTP / our own client first, curl only as its last fallback)
+#include "okay/Platform/NativeFetch.hpp"   // the HTTP seam: okay::http::Send (WinHTTP / our own client)
 
 namespace okay::account {
 
@@ -625,11 +624,9 @@ public:
         return ApiTimed(path, method, jsonBody, extraHeader, 0);
     }
     /// Api with a time limit in seconds (0 = none, as Api). A request that is not answered in time comes back not-reached, so a caller
-    /// that must not hang (the join-time session ticket) can retry or give up. The limit is enforced by the own client (opt-in, Linux) and
-    /// by the curl path (Linux, macOS, and Windows when the native client is off). The native Windows client (WinHTTP) does not apply
-    /// it: it keeps its session timeouts, exactly as before. A request that may already have reached the server (the own client wrote it;
-    /// WinHTTP failed after the send) comes back not-reached and is NOT re-sent through curl unless it is a GET or HEAD
-    /// (okay::http::ShouldFallBackToCurl).
+    /// that must not hang (the join-time session ticket) can retry or give up. The limit is enforced by both native clients (WinHTTP on
+    /// Windows, our own client on Linux; okay::http::Request). A request that may already have reached the server comes back
+    /// not-reached with maybeSent set, and is never sent a second time.
     ApiResponse ApiTimed(const std::string& path, const std::string& method, const std::string& jsonBody,
                          const std::string& extraHeader, int timeoutSec) const {
         if (!IsOnline() || !session_.loggedIn) return {};
@@ -1186,10 +1183,8 @@ private:
     }
 
     // Perform one HTTP request through the HTTP seam (okay::http::Send, NativeFetch.hpp): WinHTTP on Windows, our own
-    // client on Linux when on, curl only as its last fallback. Secrets (the auth header, the body) reach curl through
-    // files only this user can read, never argv. Any status is an answer (no curl -f), so the server's
-    // {"error": ...} message survives. A request that may already have reached the server is never re-sent by curl
-    // unless it is a GET or HEAD.
+    // client on Linux; no outside program, so secrets (the auth header, the body) never leave this process. Any status
+    // is an answer (no curl -f), so the server's {"error": ...} message survives. A request is never sent twice.
     ApiResponse HttpRequest(const std::string& method, const std::string& url,
                             const std::string& jsonBody,
                             const std::string& authToken,

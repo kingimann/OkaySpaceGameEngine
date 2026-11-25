@@ -6,7 +6,9 @@
 # file when the source of a shipped program
 #   - has the "curl" program name as a string (narrow or wide: "curl", L"curl", "curl -...", curl.exe; lower case, so a
 #     "Curl" scene key is not counted), or
-#   - calls or includes the old curl fallback (RunCurlProcess, CurlFallback.hpp).
+#   - calls or includes the old curl fallback (RunCurlProcess, CurlFallback.hpp), or
+#   - starts another outside downloader instead (the old last resorts: "wget", PowerShell's Invoke-WebRequest /
+#     Invoke-RestMethod, bitsadmin, URLDownloadToFile).
 # Comments (// at the start of a line or after a space) are not counted. Build tooling (scripts/*.sh, CI) is not shipped
 # and not checked here.
 cmake_minimum_required(VERSION 3.16)
@@ -35,6 +37,8 @@ foreach(_f IN LISTS _files)
         set(_why "curl.exe")
     elseif(_code MATCHES "RunCurlProcess|CurlFallback\\.hpp")
         set(_why "the old curl fallback")
+    elseif(_code MATCHES "\"wget\"|\"wget -|Invoke-WebRequest|Invoke-RestMethod|[Bb]itsadmin|URLDownloadToFile")
+        set(_why "an outside downloader")
     endif()
     if(_why)
         file(RELATIVE_PATH _rel "${SOURCE_ROOT}" "${_f}")
@@ -43,7 +47,7 @@ foreach(_f IN LISTS _files)
 endforeach()
 if(_bad)
     string(REPLACE ";" "\n  " _list "${_bad}")
-    message(FATAL_ERROR "check_no_curl: shipped code still starts or names the curl program:\n  ${_list}\n"
+    message(FATAL_ERROR "check_no_curl: shipped code still starts curl or another outside downloader:\n  ${_list}\n"
         "Use okay::http::FetchToFile / HeadDump / FetchPrefix / Send (NativeFetch.hpp): WinHTTP on Windows, our own client elsewhere.")
 endif()
 message(STATUS "check_no_curl: ok")

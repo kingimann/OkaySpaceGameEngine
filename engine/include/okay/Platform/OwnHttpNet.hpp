@@ -5,7 +5,7 @@
 //
 //  - Nothing is linked against OpenSSL and no OpenSSL header is needed. If libssl
 //    (1.1.0 or newer) cannot be loaded, https requests are REFUSED (Err::Tls) and
-//    the caller falls back to the spawned curl exactly as before. There is no
+//    the call fails with that reason (no program is started instead). There is no
 //    insecure fallback and no option that turns certificate or host name checks off.
 //  - TLS 1.2 or newer, SNI, certificate chain verified against the system store or
 //    SSL_CERT_FILE / CURL_CA_BUNDLE / SSL_CERT_DIR, host name (or IP) checked with

@@ -57,7 +57,7 @@ option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with ou
 option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (switched off, .blend is not read; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http.md)" ON)
+option(OKAY_OWN_HTTP      "Our own HTTP/1.1 client (system OpenSSL loaded at run time): THE HTTP client on Linux (Windows uses WinHTTP). OFF leaves a Linux build with no HTTP client at all; no program starts curl (docs/platform/own_http.md)" ON)
 option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)
@@ -99,14 +99,14 @@ option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UW
 
 # ---- One switch to dogfood the whole own stack (docs/status/own_stack_rollout.md) -------------------------------------
 # -DOKAY_OWN_STACK=ON turns on every own backend that is safe to try in a developer or CI build: our own model readers
-# (FBX and every format that has one), our own HTTP client (Linux), our own okay::platform backend as the default (Linux),
+# (FBX and every format that has one), our own okay::platform backend as the default (Linux),
 # and OkayUI as the launcher / editor UI default. Each is still an ordinary option or run-time switch underneath and each
-# keeps its third-party fallback. It changes only the build DEFAULTS; the run-time switches (OKAY_OWN_<FMT>=0, OKAY_OWN_HTTP=0,
+# keeps its third-party fallback. It changes only the build DEFAULTS; the run-time switches (OKAY_OWN_<FMT>=0,
 # OKAY_PLATFORM_BACKEND=sdl2, OKAY_UI_BACKEND=imgui) still win. NOT turned on, ever, by this switch: our own cryptography
 # (owner rule: needs an outside review first). OKAY_OWN_STACK_CRYPTO_TEST=ON (or that variable set to 1 in the environment at
 # configure time) additionally turns on OKAY_OWN_CRYPTO, for TEST builds and the CI own-stack job only. Releases refuse both
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
-option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
+option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
 option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
@@ -120,7 +120,6 @@ if(OKAY_OWN_STACK)
     foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X FBX)
         set(OKAY_OWN_${_f} ON)
     endforeach()
-    set(OKAY_OWN_HTTP ON)   # Linux only in effect (the engine adds the define only for non-Windows, non-Apple)
     if(OKAY_OWN_STACK_CRYPTO_TEST)
         set(OKAY_OWN_CRYPTO ON)
         message(WARNING "OkaySpace: OKAY_OWN_STACK_CRYPTO_TEST=ON uses our own UNREVIEWED crypto. Test build only: do not ship it")

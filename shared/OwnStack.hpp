@@ -7,7 +7,7 @@
 //     run-time switches of every own backend that can be chosen without rebuilding (kRuntimeSettings below), each only
 //     when that variable is not already set, so a developer's own OKAY_OWN_3DS=0 still wins. Then it writes ONE line
 //     to stderr saying which parts are ours and which are third-party:
-//         [okay] stack: platform=sdl2 http=curl readers=own(fbx,dae,...) crypto=libsodium ui=imgui
+//         [okay] stack: platform=sdl2 http=own readers=own(fbx,dae,...) crypto=libsodium ui=imgui
 //  2. Describe(): the same line as a string (the editor's About popup shows it; the tests check its text).
 //
 // Cryptography is NEVER switched on here (owner rule: it needs an outside review first). It is chosen at build time only
@@ -52,13 +52,12 @@ inline const std::vector<ReaderSwitch>& Readers() {
 
 struct Setting { const char* var; const char* value; };
 
-/// Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, our HTTP client, the okay::platform backend and OkayUI.
-/// HTTP only does anything in a build with -DOKAY_OWN_HTTP=ON on Linux; the platform backend is set on Linux only (the Win32 backend
+/// Everything OKAY_OWN_STACK=1 sets (when not already set): the readers, the okay::platform backend and OkayUI (our HTTP client
+/// needs no switch: it is the only one on Linux). The platform backend is set on Linux only (the Win32 backend
 /// has never run on real Windows); OkayUI only where it is compiled in. Crypto is not here and never will be.
 inline std::vector<Setting> RuntimeSettings() {
     std::vector<Setting> s;
     for (const ReaderSwitch& r : Readers()) s.push_back({r.var, "1"});
-    s.push_back({"OKAY_OWN_HTTP", "1"});
 #if defined(__linux__)
     s.push_back({"OKAY_PLATFORM_BACKEND", "own"});
 #endif
@@ -94,14 +93,14 @@ inline int ApplyEnvironment() {
 
 struct Info {
     std::string platform;               // "sdl2" / "own"
-    std::string http;                   // "curl" / "own" / "winhttp"
+    std::string http;                   // "winhttp" / "own" / "none" (a build with no HTTP client)
     std::vector<std::string> ownReaders;   // short names of the opt-in formats read by our own reader
     std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
     std::string ui;                     // "imgui" / "okayui" / "none"
     std::string switches;               // ids turned on from the Settings screen (OwnSwitches.hpp), "" = none
 };
 
-/// Pure text: `[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui`.
+/// Pure text: `[okay] stack: platform=own http=own readers=own(fbx,dae,3ds,bvh) crypto=libsodium ui=imgui`.
 inline std::string FormatLine(const Info& i) {
     std::string readers;
     auto add = [&](const std::string& part) { if (!readers.empty()) readers += '+'; readers += part; };
@@ -141,10 +140,10 @@ inline Info Gather(const char* ui = nullptr) {
     if (!pl::IsCompiledIn(k)) k = (k == pl::BackendKind::Own) ? pl::BackendKind::Sdl2 : pl::BackendKind::Own;
     i.platform = pl::BackendName(k);
 
-#if defined(_WIN32)
-    i.http = std::getenv("OKAY_HTTP_CURL") ? "curl" : "winhttp";   // not asking NativeAvailable(): that opens the WinHTTP session
+#if defined(OKAY_HTTP_WINHTTP)
+    i.http = "winhttp";   // not asking NativeAvailable(): that opens the WinHTTP session
 #else
-    i.http = okay::http::NativeAvailable() ? "own" : "curl";
+    i.http = okay::http::NativeAvailable() ? "own" : "none";
 #endif
 
     i.ownReaders.push_back("fbx");   // the only FBX reader

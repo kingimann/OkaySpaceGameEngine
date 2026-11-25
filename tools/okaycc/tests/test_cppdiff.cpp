@@ -307,6 +307,8 @@ int main() {
         engineDiff("tests/progs_cpp_engine/manifest_main.cpp", "../../engine/src/Modules/ModuleManifest.cpp");
         // Round 23: Core/Log.hpp, the first header of about a hundred engine files.
         engineDiff("tests/progs_cpp_engine/log_main.cpp", nullptr);
+        // Round 24: Math/Quat.hpp (round 23: "cannot assign this value" in Quat::Euler).
+        engineDiff("tests/progs_cpp_engine/quat_main.cpp", nullptr);
     }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");

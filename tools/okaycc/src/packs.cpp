@@ -334,7 +334,7 @@ const char* const kPackEnd = "__okay_pack_end";
 // A copy that names a primary made by expandPrimaryClass with more arguments than it has
 // parameters (tuple<H, T...> for the longest pack): that pack length cannot occur, so the copy is
 // left out.
-bool tooLong(const std::vector<Token>& d, const std::map<std::string, std::size_t>& arity) {
+bool namesTooManyArgs(const std::vector<Token>& d, const std::map<std::string, std::size_t>& arity) {
     if (arity.empty()) return false;
     for (std::size_t k = 0; k + 1 < d.size(); ++k) {
         if (d[k].kind != Tok::Ident || !isPunct(d[k + 1], "<")) continue;
@@ -505,7 +505,7 @@ std::vector<Token> expandPacks(const std::vector<Token>& toks) {
         for (int k = most; k >= 0; --k) {
             Expander ex(packs, k);
             std::vector<Token> copy = ex.run(decl);
-            if (tooLong(copy, primaryArity)) continue;
+            if (namesTooManyArgs(copy, primaryArity)) continue;
             out.insert(out.end(), copy.begin(), copy.end());
         }
         i = end;

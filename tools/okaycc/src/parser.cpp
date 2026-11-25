@@ -5115,7 +5115,7 @@ private:
         for (;;) {
             // "T x(args);" for a class: constructor arguments, not a function declarator.
             if (classBase && !atEnd() && cur().kind == Tok::Ident && nextIs("(") && i_ + 2 < toks_.size() &&
-                !isP(toks_[i_ + 2], ")") && !isTypeKw(toks_[i_ + 2])) {
+                !isP(toks_[i_ + 2], ")") && (!isTypeKw(toks_[i_ + 2]) || typeThenValue(i_ + 2))) {
                 Parsed d;
                 d.name = cur().text;
                 d.line = cur().line;
@@ -6260,6 +6260,32 @@ private:
     std::unique_ptr<Expr> parseShift() { return parseLeft(&Parser::parseAdd, {"<<", ">>"}); }
     std::unique_ptr<Expr> parseAdd() { return parseLeft(&Parser::parseMul, {"+", "-"}); }
     std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parseCast, {"*", "/", "%"}); }
+
+    // At toks_[k] a type name (N::T, T<args>) followed by '(' and a literal or by '{': a temporary
+    // of that type, so W a(std::string("x")); declares an object, not a function
+    // ([dcl.ambig.res] p1: it cannot be a parameter declaration).
+    bool typeThenValue(std::size_t k) const {
+        while (k < toks_.size() && toks_[k].kind == Tok::Ident) {
+            ++k;
+            if (k < toks_.size() && isP(toks_[k], "<")) {
+                int depth = 0;
+                for (; k < toks_.size(); ++k) {
+                    if (isP(toks_[k], "<")) ++depth;
+                    else if (isP(toks_[k], ">") && --depth == 0) break;
+                    else if (isP(toks_[k], ">>") && (depth -= 2) <= 0) break;
+                    else if (isP(toks_[k], ";")) return false;
+                }
+                ++k;
+            }
+            if (k < toks_.size() && isP(toks_[k], "::")) ++k;
+            else break;
+        }
+        if (k + 1 >= toks_.size()) return false;
+        if (isP(toks_[k], "{")) return true;
+        if (!isP(toks_[k], "(")) return false;
+        Tok n = toks_[k + 1].kind;
+        return n == Tok::Int || n == Tok::Float || n == Tok::CharLit || n == Tok::StringLit;
+    }
 
     bool looksLikeCast() const {
         if (!isP("(")) return false;

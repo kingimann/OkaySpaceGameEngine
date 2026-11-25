@@ -1770,8 +1770,9 @@ private:
         }
     }
     void qualifyNames(Expr& e, const std::string& ns) {
-        if (e.kind == Expr::Kind::Name && !e.text.empty() && e.text[0] != '\x01' && e.text.find("::") == std::string::npos &&
-            scopeOf(e.text) < 0) {
+        // (also N::x written relative to the declaration's namespace: Vec3::Up in okay::Quat)
+        if (e.kind == Expr::Kind::Name && !e.text.empty() && e.text[0] != '\x01' && scopeOf(e.text) < 0 &&
+            (e.text.find("::") == std::string::npos || !overloads_.count(e.text))) {
             for (std::string sc = ns; !sc.empty();) {
                 if (scopes_.front().count(sc + "::" + e.text)) {
                     e.text = sc + "::" + e.text;

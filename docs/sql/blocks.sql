@@ -21,6 +21,8 @@
 --       - Calls are DMs starting "[Call] ": same, plus the separate calls_from.
 --       - Friend requests (public.friendships): refused when blocked either way
 --         or when the addressee set friend_requests = 'nobody'.
+--       - The join link (profiles.session_code) is shown only to friends who may
+--         see the presence, never to strangers (re-run this file for it).
 --       - Presence (profiles.last_seen / playing / session_code) and the
 --         private profile fields (bio, status, favorite_game, location) are
 --         hidden from blocked people and from anyone the owner's visibility
@@ -128,13 +130,20 @@ begin
   return v;
 end $$;
 
--- May p_viewer see p_owner's presence ('presence') or private profile fields ('profile')?
+-- May p_viewer see p_owner's presence ('presence'), private profile fields ('profile') or
+-- join link ('join': profiles.session_code, the link that gets you into their game)?
+-- The join link is never shown to strangers, whatever the online setting says: only to
+-- friends who may also see the presence.
 create or replace function okay_private.can_see(p_owner uuid, p_viewer uuid, p_kind text)
   returns boolean language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare v text;
 begin
   if p_viewer is not null and p_viewer = p_owner then return true; end if;
   if p_viewer is not null and okay_private.is_blocked_between(p_owner, p_viewer) then return false; end if;
+  if p_kind = 'join' then
+    return p_viewer is not null and okay_private.are_friends(p_owner, p_viewer)
+           and okay_private.can_see(p_owner, p_viewer, 'presence');
+  end if;
   v := okay_private.setting(p_owner, case p_kind when 'presence' then 'online_visibility' else 'profile_visibility' end);
   if v = 'everyone' then return true; end if;
   if v = 'friends' then return p_viewer is not null and okay_private.are_friends(p_owner, p_viewer); end if;
@@ -248,17 +257,20 @@ do $$
 declare
   sel  text;
   pub  text;
-  presence text[] := array['last_seen', 'playing', 'session_code'];
+  presence text[] := array['last_seen', 'playing'];
+  joinable text[] := array['session_code'];   -- friends only (docs/sql/chat_invites.sql uses it too)
   private_ text[] := array['bio', 'status', 'favorite_game', 'location'];
 begin
   select string_agg(
-           case when column_name = any(presence)
+           case when column_name = any(joinable)
+                  then format('case when okay_private.can_see(p.id, auth.uid(), %L) then p.%I end as %I', 'join', column_name, column_name)
+                when column_name = any(presence)
                   then format('case when okay_private.can_see(p.id, auth.uid(), %L) then p.%I end as %I', 'presence', column_name, column_name)
                 when column_name = any(private_)
                   then format('case when okay_private.can_see(p.id, auth.uid(), %L) then p.%I end as %I', 'profile', column_name, column_name)
                 else format('p.%I', column_name) end,
            ', ' order by ordinal_position),
-         string_agg(case when column_name = any(presence) or column_name = any(private_) then null
+         string_agg(case when column_name = any(presence) or column_name = any(private_) or column_name = any(joinable) then null
                          else format('%I', column_name) end, ', ' order by ordinal_position)
     into sel, pub
     from information_schema.columns

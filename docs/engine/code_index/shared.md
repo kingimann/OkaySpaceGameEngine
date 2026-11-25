@@ -2,7 +2,7 @@
 
 # Code index: shared
 
-Back to the [code index](../code_index.md). 68 headers, 1002 names.
+Back to the [code index](../code_index.md). 69 headers, 1006 names.
 
 ## `shared/AntiCheatAdminTools.hpp`
 
@@ -639,6 +639,13 @@ Back to the [code index](../code_index.md). 68 headers, 1002 names.
 - `MeshStatsText` function, line 309: The stats line: "117 verts  •  192 tris  •  UVs" ("" when there are no vertices).
 - `ColorByte` function, line 322: A colour field's channels as Dear ImGui's ColorEdit shows them: whole numbers 0 to 255.
 - `AddComponentWidth` function, line 331: The button's width: 260 pixels, centred, on a panel wider than 300; otherwise the whole width.
+
+## `shared/JoinPlan.hpp`
+
+- `Candidate` struct, line 19
+- `Action` enum, line 27
+- `Plan` struct, line 37
+- `PlanJoin` function, line 52
 
 ## `shared/LauncherDemo.hpp`
 

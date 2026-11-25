@@ -239,7 +239,7 @@ namespace sceneser {
 
 // Write a GameObject's Transform + all known components (no header/parent line). The records come in a fixed
 // order; WriteComponents adds the `comporder` record when the object's own order differs from what they load as.
-void WriteComponentRecords(std::ostream& out, GameObject* go) {
+void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumbers* localIndex) {
     Transform* t = go->transform;
     const Vec3& p = t->localPosition;
     const Quat& q = t->localRotation;
@@ -1210,6 +1210,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                     << " " << j->driveDampingRatio << " " << j->driveMaxTorque;
         }
         out << "\n";
+        if (!j->connectedGuid.empty())
+            out << "  jointlink " << Quote(j->connectedGuid) << "\n";
+        if (localIndex && go->scene()) {
+            GameObject* partner = j->Linked();
+            if (!partner && !j->connectedGuid.empty()) partner = go->scene()->FindByGuid(j->connectedGuid);
+            const auto at = partner ? localIndex->find(partner) : localIndex->end();
+            if (at != localIndex->end()) out << "  jointat " << at->second << "\n";
+        }
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)

@@ -5280,6 +5280,10 @@ target_link_libraries(test_vs_facing PRIVATE okay::engine)
 target_compile_definitions(test_vs_facing PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_facing COMMAND test_vs_facing)
 
+# Grok physics: capsule character push-out, joints linked by object, shape casts that return every hit, closest point.
+add_executable(test_physics_grok test_physics_grok.cpp)
+target_link_libraries(test_physics_grok PRIVATE okay::engine)
+add_test(NAME physics_grok COMMAND test_physics_grok)
 # Grok input, on the ActionSet path: axial dead zone, per-set press buffer, Controls rows, smooth per controller.
 add_executable(test_input_grok test_input_grok.cpp)
 target_link_libraries(test_input_grok PRIVATE okay::engine)

@@ -1582,6 +1582,15 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "jointlink") {   // the partner's guid, written after that joint
+                    const std::string g = ReadQuoted(in);
+                    auto joints = go->GetComponents<Joint3D>();
+                    if (!joints.empty() && joints.back()) { joints.back()->connectedGuid = g; joints.back()->linkedName = joints.back()->connectedBody; }
+                } else if (field == "jointat") {   // the partner is object N of this same text: it stays the partner in a copy
+                    int at = -1;
+                    in >> at;
+                    const std::size_t count = go->GetComponents<Joint3D>().size();
+                    if (at >= 0 && count > 0) S.jointLinks.push_back({go, (int)count - 1, at});
                 } else if (field == "joint2d") {
                     auto* j = go->AddComponent<Joint2D>();
                     int bk = 0, ac = 1;
@@ -5462,6 +5471,14 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             return false;
         }
     }
+    // A joint that named its partner by number inside this text now links the object made from that number.
+    for (const ParseSession::JointAt& link : S.jointLinks) {
+        auto partner = byIndex.find(link.partnerIndex);
+        const std::vector<Joint3D*> joints = link.owner->GetComponents<Joint3D>();
+        if (partner != byIndex.end() && link.jointOrdinal < (int)joints.size() && joints[(std::size_t)link.jointOrdinal])
+            joints[(std::size_t)link.jointOrdinal]->ConnectTo(partner->second);
+    }
+    S.jointLinks.clear();
     // Restore saved sibling order. Parent links append in file order, which is not the
     // order siblings had if they were reordered after creation.
     if (!siblingHints.empty()) {

@@ -1097,6 +1097,7 @@ void RegisterJoint3D() {
     PropertyBuilder<Joint3D> b("Joint3D", "joint3d", "Physics 3D");
     b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider", "Ball", "ConeTwist"}).Tooltip("Movement style")
      .AddString("connectedBody", &Joint3D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
+     .AddString("connectedGuid", &Joint3D::connectedGuid).Tooltip("Saved id of the body ConnectTo linked. Empty = use the name")
      .AddVec3("anchor", &Joint3D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
      .AddFloat("distance", &Joint3D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")
      .AddBool("autoConfigure", &Joint3D::autoConfigure).Tooltip("Set `distance`/offset from the start separation")

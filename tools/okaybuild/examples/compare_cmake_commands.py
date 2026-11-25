@@ -3,7 +3,15 @@
 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON) with the ones okay-build writes (`okay-build -f build.okay compdb`) for the same sources.
 For every source file present in both it compares the -D definitions, the -I / -isystem folders and the other flags, as sets
 (order, output paths and dependency-file options are ignored). A source compiled by several targets has every command compared. Prints how many sources match exactly and the first differences.
-usage: compare_cmake_commands.py CMAKE_COMPILE_COMMANDS.json OKAYBUILD_COMPILE_COMMANDS.json REPO_ROOT"""
+usage: compare_cmake_commands.py CMAKE_COMPILE_COMMANDS.json OKAYBUILD_COMPILE_COMMANDS.json REPO_ROOT
+       compare_cmake_commands.py --exact [--target NAME]... [--map CMAKE_BUILD_DIR=OKAYBUILD_BIN_DIR] CMAKE_COMPILE_COMMANDS.json OKAYBUILD_COMPILE_COMMANDS.json REPO_ROOT
+--exact compares each object's command word by word, in order (for a manifest with compile_order = cmake). Commands are paired by
+target and source (CMake's object path CMakeFiles/<target>.dir/..., okay-build's .okaybuild/obj/<target>/...). Left out of the
+comparison: the compiler's name, the output, the dependency-file options (-MD/-MMD/-MF/-MT), -c and the source path, and okay-build's
+-ffile-prefix-map; the account definitions are compared by name and place, not value (okay-build hides the value). --target limits
+the comparison to those targets; then the object lists must also be the same. --map spells CMake's build folder the way okay-build
+names its {bin} folder (generated sources and folders in the build tree), in source paths and in the words. Exit code 0 only when everything is the same.
+Written by us for this repository (no code from other projects). Not part of CMake, CI or releases."""
 import json, os, shlex, sys
 
 def load(path, root):
@@ -36,7 +44,66 @@ def norm(args, root):
 def rel(s, root):
     return {x.replace(root + "/", "") for x in s}
 
+def exact_words(args):
+    out, i = [], 1
+    while i < len(args):
+        a = args[i]
+        if a in ("-o", "-MF", "-MT", "-MQ", "-c"): i += 2; continue
+        if a in ("-MD", "-MMD", "-MP") or a.startswith("-ffile-prefix-map="): i += 1; continue
+        if a.startswith("-DOKAY_DEFAULT_ACCOUNT_"): a = a.split("=")[0] + "=<value>"
+        out.append(a); i += 1
+    return out
+
+def exact_load(path, ninja_style, maps=()):
+    """{(target, source): words} from a compile database; the target comes from the object path."""
+    def mapped(x):
+        for frm, to in maps:
+            x = x.replace(frm, to)
+        return x
+    out = {}
+    for e in json.load(open(path)):
+        d = e.get("directory", ".")
+        args = e.get("arguments") or shlex.split(e["command"])
+        obj = e.get("output") or (args[args.index("-o") + 1] if "-o" in args else "")
+        if ninja_style:
+            if ".dir/" not in obj: continue
+            target = obj.split(".dir/")[0].split("/")[-1]
+        else:
+            if "/obj/" not in obj: continue
+            target = obj.split("/obj/")[1].split("/")[0]
+        src = mapped(os.path.realpath(os.path.join(d, e["file"])))
+        out[(target, src)] = [mapped(w) for w in exact_words(args)]
+    return out
+
+def exact_main(argv):
+    targets, maps = [], []
+    while argv and argv[0] in ("--target", "--map"):
+        if argv[0] == "--target": targets.append(argv[1])
+        else: maps.append(tuple(os.path.realpath(x) for x in argv[1].split("=", 1)))
+        argv = argv[2:]
+    cm, ok, root = argv[0], argv[1], os.path.realpath(argv[2])
+    a, b = exact_load(cm, True, maps), exact_load(ok, False)
+    if targets:
+        a = {k: v for k, v in a.items() if k[0] in targets}; b = {k: v for k, v in b.items() if k[0] in targets}
+    both = sorted(k for k in a if k in b)
+    same = [k for k in both if a[k] == b[k]]
+    print("objects: CMake %d, okay-build %d, in both %d; identical command lines %d, different %d" % (len(a), len(b), len(both), len(same), len(both) - len(same)))
+    shown = 0
+    for k in both:
+        if a[k] == b[k] or shown >= 10: continue
+        shown += 1
+        print("DIFF %s %s" % (k[0], k[1].replace(root + "/", "")))
+        print("   CMake:      " + " ".join(a[k])); print("   okay-build: " + " ".join(b[k]))
+    only_a = sorted(set(a) - set(b)); only_b = sorted(set(b) - set(a))
+    if targets or not (only_a or only_b): print("only CMake: %d, only okay-build: %d" % (len(only_a), len(only_b)))
+    else: print("only CMake: %d, only okay-build: %d (no --target given: targets the other build did not plan are listed too)" % (len(only_a), len(only_b)))
+    for k in only_a[:5]: print("   only CMake:", k[0], k[1].replace(root + "/", ""))
+    for k in only_b[:5]: print("   only okay-build:", k[0], k[1].replace(root + "/", ""))
+    ok_all = len(same) == len(both) and (not targets or (not only_a and not only_b))
+    sys.exit(0 if ok_all else 1)
+
 def main():
+    if sys.argv[1:2] == ["--exact"]: exact_main(sys.argv[2:]); return
     cm, ok, root = sys.argv[1], sys.argv[2], os.path.realpath(sys.argv[3])
     a, b = load(cm, root), load(ok, root)
     both = [f for f in a if f in b and f.startswith(root)]

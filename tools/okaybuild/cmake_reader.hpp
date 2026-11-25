@@ -235,6 +235,8 @@ struct Target {
     // directory-wide settings captured when the target was made
     vector<string> dirIncs, dirDefs, dirOpts, dirLinkOpts;
     vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
+    vector<string> ownIncs, ownOpts; // the target's own PRIVATE and PUBLIC include folders and options, in call order (CMake's property order)
+    std::set<string> sysIncs; // include folders named with SYSTEM (here or by include_directories(SYSTEM) in its folder): written as -isystem
     vector<string> linkProp, ifLinkProp; // LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES as get_target_property reads them, in call order
     vector<vector<string>> postBuild; string postBuildDir; // add_custom_command(TARGET POST_BUILD): commands (words) and their folder
     std::map<string, string> props;
@@ -251,6 +253,7 @@ struct Options {
     std::map<string, string> fetched; // FetchContent name -> folder with the sources already on disk
     string buildType = "Release";
     bool quiet = true;
+    string selfExe; // script mode: this okay-build program (CMAKE_COMMAND; `${CMAKE_COMMAND} -P` and `-E env` in execute_process run it)
     bool script = false; // `okay-build script -P FILE` (CMake's script mode): files are written on disk, commands run, messages print
 };
 
@@ -284,6 +287,7 @@ struct Interp {
     struct FetchInfo { string git, tag, url, sha256; };
     std::map<string, FetchInfo> fetchDeclared; vector<string> fetchUsed; // FetchContent: what was declared, and what a target actually needs downloaded
     vector<string> dirDefs, dirOpts, dirIncs, dirLinkOpts;
+    std::set<string> dirSysIncs; // include_directories(SYSTEM ...) of the current folder
     string curSrc, curBin; // CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR
     vector<std::pair<string, string>> parentWrites; // PARENT_SCOPE writes seen in the running function/directory
     int depth = 0; bool returning = false, breaking = false, continuing = false; // continuing: continue() skips the rest of this loop pass
@@ -502,6 +506,17 @@ struct Interp {
         while (r.size() > 1 && r.back() == '/') r.pop_back();
         return r;
     }
+    // An include folder as CMake spells it on the compile line (seen with CMake 3.28): a relative folder is put after the current
+    // folder with a '/', repeated slashes become one and a trailing slash goes, but "." and ".." stay (".../okayui/../shared"), so
+    // two spellings of one folder are two -I words, as in CMake.
+    string incAbs(const string& p, const string& base) {
+        if (p.empty()) return base;
+        if (p.compare(0, 5, "{bin}") == 0 || (p[0] != '/' && base.compare(0, 5, "{bin}") == 0)) return abs(p, base);
+        string j = p[0] == '/' ? p : base + "/" + p, r;
+        for (char ch : j) if (!(ch == '/' && !r.empty() && r.back() == '/')) r += ch;
+        while (r.size() > 1 && r.back() == '/') r.pop_back();
+        return r;
+    }
 
     // ---- known commands (for if(COMMAND ...) and the audit) ----
     static bool knownCommand(const string& n) {
@@ -648,7 +663,7 @@ inline void Interp::sub(const string& dir) {
     string text((std::istreambuf_iterator<char>(in)), {}); inputs.insert(file);
     auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
     auto savedVars = vars; auto savedWrites = parentWrites; parentWrites.clear();
-    auto sd = dirDefs, so = dirOpts, si = dirIncs, sl = dirLinkOpts; string ss = curSrc, sb = curBin;
+    auto sd = dirDefs, so = dirOpts, si = dirIncs, sl = dirLinkOpts; auto ssys = dirSysIncs; string ss = curSrc, sb = curBin;
     string rel = fs::path(src).lexically_relative(opt.root).generic_string(); if (rel == ".") rel = "";
     curSrc = src; curBin = opt.binDir + (rel.empty() ? "" : "/" + rel);
     vars["CMAKE_CURRENT_SOURCE_DIR"] = curSrc; vars["CMAKE_CURRENT_BINARY_DIR"] = curBin; vars["CMAKE_CURRENT_LIST_FILE"] = file; vars["CMAKE_CURRENT_LIST_DIR"] = curSrc;
@@ -658,7 +673,7 @@ inline void Interp::sub(const string& dir) {
     auto writes = parentWrites;
     vars = savedVars; parentWrites = savedWrites;
     for (auto& w : writes) vars[w.first] = w.second;
-    dirDefs = sd; dirOpts = so; dirIncs = si; dirLinkOpts = sl; curSrc = ss; curBin = sb;
+    dirDefs = sd; dirOpts = so; dirIncs = si; dirLinkOpts = sl; dirSysIncs = ssys; curSrc = ss; curBin = sb;
 }
 
 inline void Interp::doSet(const Cmd& c) {
@@ -1107,7 +1122,7 @@ inline void Interp::addTarget(const Cmd& c, const vector<string>& a, bool lib) {
         if (a[k] == "EXCLUDE_FROM_ALL") { t.excluded = true; continue; }
         t.sources.push_back(abs(a[k], curSrc));
     }
-    t.dirDefs = dirDefs; t.dirOpts = dirOpts; t.dirIncs = dirIncs; t.dirLinkOpts = dirLinkOpts;
+    t.dirDefs = dirDefs; t.dirOpts = dirOpts; t.dirIncs = dirIncs; t.dirLinkOpts = dirLinkOpts; t.sysIncs = dirSysIncs;
     (void)c;
     if (targets.count(t.name)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": target '" + t.name + "' is defined twice"};
     targets[t.name] = t; order.push_back(t.name);
@@ -1123,14 +1138,20 @@ inline void Interp::doTarget(const Cmd& c, const vector<string>& a) {
         if (t->kind == "iface" && scope != "INTERFACE") { /* an interface library's own settings are all interface */ }
     };
     if (t->kind == "iface") scope = "INTERFACE";
+    bool system = false; // target_include_directories(... SYSTEM ...): CMake passes those folders with -isystem
     for (size_t k = 1; k < a.size(); ++k) {
         const string& w = a[k];
         if (w == "PRIVATE" || w == "PUBLIC" || w == "INTERFACE") { scope = w; continue; }
-        if (w == "SYSTEM" || w == "BEFORE" || w == "AFTER") continue;
+        if (w == "SYSTEM") { system = true; continue; }
+        if (w == "BEFORE" || w == "AFTER") continue;
         if (n == "target_sources") t->sources.push_back(abs(w, curSrc));
-        else if (n == "target_include_directories") into(t->incs, t->pubIncs, t->ifIncs, abs(w, curSrc));
+        else if (n == "target_include_directories") {
+            string d = incAbs(w, curSrc); into(t->incs, t->pubIncs, t->ifIncs, d);
+            if (scope != "INTERFACE" && t->kind != "iface") t->ownIncs.push_back(d);
+            if (system) t->sysIncs.insert(d);
+        }
         else if (n == "target_compile_definitions") into(t->defs, t->pubDefs, t->ifDefs, w);
-        else if (n == "target_compile_options") into(t->opts, t->pubOpts, t->ifOpts, w);
+        else if (n == "target_compile_options") { into(t->opts, t->pubOpts, t->ifOpts, w); if (scope != "INTERFACE" && t->kind != "iface") t->ownOpts.push_back(w); }
         else if (n == "target_link_options") t->linkOpts.push_back(w);
         else if (n == "target_link_libraries") {
             if (w == "debug" || w == "optimized" || w == "general") continue;
@@ -1254,7 +1275,11 @@ inline void Interp::builtin(const Cmd& c) {
     if (n == "add_compile_definitions") { for (auto& w : a) dirDefs.push_back(w); return; }
     if (n == "add_compile_options") { for (auto& w : a) dirOpts.push_back(w); return; }
     if (n == "add_link_options") { for (auto& w : a) dirLinkOpts.push_back(w); return; }
-    if (n == "include_directories") { for (auto& w : a) if (w != "SYSTEM" && w != "BEFORE" && w != "AFTER") dirIncs.push_back(abs(w, curSrc)); return; }
+    if (n == "include_directories") {
+        bool system = std::find(a.begin(), a.end(), "SYSTEM") != a.end();
+        for (auto& w : a) if (w != "SYSTEM" && w != "BEFORE" && w != "AFTER") { dirIncs.push_back(incAbs(w, curSrc)); if (system) dirSysIncs.insert(incAbs(w, curSrc)); }
+        return;
+    }
     if (n == "set_target_properties") {
         size_t p = 0; while (p < a.size() && a[p] != "PROPERTIES") ++p;
         for (size_t k = 0; k < p; ++k) { Target* t = tgt(a[k]); if (!t) continue; for (size_t q = p + 1; q + 1 < a.size(); q += 2) t->props[a[q]] = a[q + 1]; }
@@ -1493,7 +1518,17 @@ inline void Interp::scriptExecute(const Cmd& c, const vector<string>& a) {
     }
     if (req.cmds.empty()) { tally.unknown["execute_process with no command"]++; return; }
     for (auto& cmd : req.cmds) if (cmd.empty()) { tally.unknown["execute_process with no command"]++; return; }
-    for (auto& cmd : req.cmds) if (cmd[0] == get("CMAKE_COMMAND")) { tally.unknown["execute_process(cmake) in a script"]++; return; }
+    // CMake running itself: `${CMAKE_COMMAND} [-D N=V]... -P FILE [ARG]...` is `okay-build script ...` and `${CMAKE_COMMAND} -E env ...` is
+    // `okay-build tool env ...` (the same words and results); any other use of CMake stops the script as not understood
+    vector<vector<string>> runCmds = req.cmds; // what runs; COMMAND_ECHO shows the words as the script wrote them
+    for (auto& cmd : runCmds) if (cmd[0] == get("CMAKE_COMMAND") || (!opt.selfExe.empty() && cmd[0] == opt.selfExe)) {
+        size_t k = 1; while (k < cmd.size() && cmd[k].compare(0, 2, "-D") == 0) k += cmd[k] == "-D" ? 2 : 1;
+        vector<string> mapped;
+        if (!opt.selfExe.empty() && k + 1 < cmd.size() && cmd[k] == "-P") { mapped = {opt.selfExe, "script"}; mapped.insert(mapped.end(), cmd.begin() + 1, cmd.end()); }
+        else if (!opt.selfExe.empty() && cmd.size() >= 4 && cmd[1] == "-E" && cmd[2] == "env") { mapped = {opt.selfExe, "tool", "env"}; mapped.insert(mapped.end(), cmd.begin() + 3, cmd.end()); }
+        if (mapped.empty()) { tally.unknown["execute_process(cmake " + (cmd.size() > 1 ? cmd[1] : string()) + ") in a script"]++; return; }
+        cmd = mapped;
+    }
     if (!runProcess) throw ReadError{"execute_process: this okay-build cannot run commands from a script"};
     std::error_code ec; if (!req.inFile.empty() && !fs::is_regular_file(req.inFile, ec)) throw ReadError{c.file + ":" + std::to_string(c.line) + ": execute_process: INPUT_FILE " + req.inFile + " cannot be read"};
     req.merge = (!outVar.empty() && outVar == errVar) || (!outFile.empty() && outFile == errFile);
@@ -1504,6 +1539,7 @@ inline void Interp::scriptExecute(const Cmd& c, const vector<string>& a) {
         string text; for (auto& cmd : req.cmds) { for (size_t k = 0; k < cmd.size(); ++k) text += (k ? " '" : "'") + cmd[k] + "'"; text += "\n"; }
         FILE* to = echoTo == "STDOUT" ? stdout : stderr; fflush(stdout); fputs(text.c_str(), to); fflush(to);
     }
+    req.cmds = runCmds;
     ProcResult res; runProcess(req, res);
     string& out = res.out; string& err = res.err;
     auto strip = [](string& t) { while (!t.empty() && isspace((unsigned char)t.back())) t.pop_back(); };
@@ -1534,7 +1570,9 @@ template <class Runner>
 static int runCmakeScript(const string& file, const std::map<string, string>& defs, const vector<string>& argvWords, Runner runner) { // runner: see ProcRequest
     Interp in; std::error_code ec; string cwd = fs::current_path(ec).generic_string();
     in.opt.root = cwd; in.opt.binDir = cwd; in.opt.defs = defs; in.opt.script = true; in.runProcess = runner;
+    if (!argvWords.empty()) in.opt.selfExe = argvWords[0];
     in.init(); in.vars.erase("CMAKE_BUILD_TYPE"); in.cache.erase("CMAKE_BUILD_TYPE"); // a script has no build type
+    if (!in.opt.selfExe.empty()) in.vars["CMAKE_COMMAND"] = in.opt.selfExe; // CMake gives its own full path here
     string abs = fs::absolute(file, ec).lexically_normal().generic_string();
     in.vars["CMAKE_SCRIPT_MODE_FILE"] = abs; in.vars["CMAKE_ARGC"] = std::to_string(argvWords.size());
     for (size_t k = 0; k < argvWords.size(); ++k) in.vars["CMAKE_ARGV" + std::to_string(k)] = argvWords[k];
@@ -1583,7 +1621,7 @@ static string qw(const string& s) {
 static void addUnique(vector<string>& v, const string& x) { if (!x.empty() && std::find(v.begin(), v.end(), x) == v.end()) v.push_back(x); }
 static vector<string> splitSemi(const string& s) { return Interp::splitList(s); }
 
-struct Resolved { vector<string> deps, libs, linkFlags, incs, defs, opts; };
+struct Resolved { vector<string> deps, libs, linkFlags, incs, defs, opts; std::set<string> sysIncs; };
 
 static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
     Resolved r;
@@ -1605,6 +1643,7 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
             addUnique(r.deps, d->name);
             if (seen.insert(d->name).second) {
                 for (auto& x : d->pubIncs) addUnique(r.incs, x); for (auto& x : d->ifIncs) addUnique(r.incs, x);
+                for (auto& x : d->sysIncs) r.sysIncs.insert(x); // a PUBLIC or INTERFACE SYSTEM folder is a system folder for its users too
                 for (auto& x : d->pubDefs) addUnique(r.defs, x); for (auto& x : d->ifDefs) addUnique(r.defs, x);
                 for (auto& x : d->pubOpts) addUnique(r.opts, x); for (auto& x : d->ifOpts) addUnique(r.opts, x);
                 for (auto& x : d->pubLinks) { Target* e = in.tgt(x); if (e && (e->kind == "lib")) { addUnique(r.deps, e->name); item(x, false); } else if (e && (e->kind == "iface" || e->kind == "imported")) item(x, false); }
@@ -1614,7 +1653,7 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
             if (!seen.insert(d->name).second) return;
             if (d->kind == "imported") { // a package's config file describes its imported targets with properties
                 auto prop = [&](const string& k) { auto it = d->props.find(k); return it == d->props.end() ? string() : it->second; };
-                for (auto& x : splitSemi(prop("INTERFACE_INCLUDE_DIRECTORIES"))) addUnique(r.incs, x);
+                for (auto& x : splitSemi(prop("INTERFACE_INCLUDE_DIRECTORIES"))) { addUnique(r.incs, x); r.sysIncs.insert(x); }
                 for (auto& x : splitSemi(prop("INTERFACE_COMPILE_DEFINITIONS"))) addUnique(r.defs, x);
                 string file = prop("IMPORTED_IMPLIB"); if (file.empty()) file = prop("IMPORTED_LOCATION");
                 if (file.empty()) for (auto& kv : d->props) if (kv.first.rfind("IMPORTED_IMPLIB_", 0) == 0 || kv.first.rfind("IMPORTED_LOCATION_", 0) == 0) { file = kv.second; break; }
@@ -1622,6 +1661,9 @@ static Resolved resolveTarget(Interp& in, Target& t, Report& rep) {
                 for (auto& x : splitSemi(prop("INTERFACE_LINK_LIBRARIES"))) item(x, false);
             }
             for (auto& x : d->pubIncs) addUnique(r.incs, x); for (auto& x : d->ifIncs) addUnique(r.incs, x);
+            // an IMPORTED target's interface folders are system folders for its users (CMake's default, NO_SYSTEM_FROM_IMPORTED off)
+            if (d->kind == "imported") { for (auto& x : d->pubIncs) r.sysIncs.insert(x); for (auto& x : d->ifIncs) r.sysIncs.insert(x); }
+            else for (auto& x : d->sysIncs) r.sysIncs.insert(x);
             for (auto& x : d->pubDefs) addUnique(r.defs, x); for (auto& x : d->ifDefs) addUnique(r.defs, x);
             for (auto& x : d->pubOpts) addUnique(r.opts, x); for (auto& x : d->ifOpts) addUnique(r.opts, x);
             for (auto& x : d->pubLinks) item(x, false); for (auto& x : d->ifLinks) item(x, false);
@@ -1692,7 +1734,7 @@ static string emitManifest(Interp& in, Report& rep) {
     for (auto& n : in.order) { Target& t = in.targets[n]; if (t.kind == "exe" || t.kind == "lib") for (auto& d : t.dirDefs) if (isAccount(d)) account = true; }
     rep.accountDefines = account;
     if (account) out << "account_defines = on\n";
-    out << "toolchain\n  path_map = on\n";
+    out << "toolchain\n  path_map = on\n  compile_order = cmake\n";
     auto tcLine = [&](const char* k, const vector<string>& v) { if (v.empty()) return; out << "  " << k << " ="; for (auto& w : v) out << " " << qw(w); out << "\n"; };
     { // the compilers a toolchain file (or --opt) named; a Windows (MinGW) target also gets CMake's Windows file names, resource
       // compiler, standard libraries and the import library CMake writes for every program
@@ -1738,13 +1780,17 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!t.skipReason.empty()) { ++rep.skipped; rep.skippedTargets.push_back({n, t.skipReason}); continue; }
         Resolved& r = res[n]; ++rep.emitted; emitted.insert(n);
         vector<string> incs, defs, opts, linkFlags = r.linkFlags, libs = r.libs;
-        for (auto& x : t.dirIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.pubIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
-        for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
+        // CMake's order: the folder's include_directories, the target's own in call order, then what linked targets hand on; then every
+        // system folder moves behind the others (-I first, then -isystem), and a folder that is a system folder anywhere is one
+        vector<string> all, sysList;
+        for (auto& x : t.dirIncs) if (!implicitInclude(x)) addUnique(all, x); for (auto& x : t.ownIncs) if (!implicitInclude(x)) addUnique(all, x);
+        for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(all, x);
+        for (auto& x : all) { bool sys = t.sysIncs.count(x) || r.sysIncs.count(x); addUnique(sys ? sysList : incs, rootRel(x, root)); }
         for (auto& x : t.dirDefs) if (!isAccount(x)) addUnique(defs, x); for (auto& x : t.defs) addUnique(defs, x); for (auto& x : t.pubDefs) addUnique(defs, x);
         for (auto& x : r.defs) addUnique(defs, x);
         bool cxx = t.cxx17; for (auto& s : t.sources) { string e = fs::path(s).extension().string(); if (e == ".cpp" || e == ".cc" || e == ".cxx") cxx = true; }
         if (cxx) addUnique(opts, stdFlag);
-        for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.opts) addUnique(opts, x); for (auto& x : t.pubOpts) addUnique(opts, x);
+        for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.ownOpts) addUnique(opts, x);
         for (auto& x : r.opts) addUnique(opts, x);
         // LINKER:a,b is the compiler driver's -Wl,a,b; SHELL:"x y" is several words (CMake's link-option prefixes)
         auto linkWord = [&](const string& x) {
@@ -1762,7 +1808,7 @@ static string emitManifest(Interp& in, Report& rep) {
         for (auto& pc : t.postBuild) { out << "  post_build ="; for (auto& w : pc) out << " " << qw(srcWord(w, root)); out << "\n"; }
         if (!t.postBuild.empty()) out << "  post_build_dir = " << qw(srcWord(t.postBuildDir, root)) << "\n";
         if (t.kind == "exe" && in.windows()) { auto w = t.props.find("WIN32_EXECUTABLE"); if (w != t.props.end() && Interp::isTrue(w->second)) out << "  win32_executable = on\n"; }
-        line("include", incs); line("define", defs); line("flags", opts); line("link_flags", linkFlags); line("libs", libs); line("deps", r.deps);
+        line("include", incs); line("system_include", sysList); line("define", defs); line("flags", opts); line("link_flags", linkFlags); line("libs", libs); line("deps", r.deps);
         rep.defines += (int)defs.size(); rep.flags += (int)opts.size();
         for (auto& s : t.sources) {
             for (const char* prop : {"COMPILE_OPTIONS", "COMPILE_FLAGS", "COMPILE_DEFINITIONS", "INCLUDE_DIRECTORIES", "OBJECT_DEPENDS"}) {
@@ -1770,7 +1816,7 @@ static string emitManifest(Interp& in, Report& rep) {
                 for (auto& w : splitSemi(it->second)) {
                     if (w.empty()) continue; ++rep.perFile; string rs = qw(rootRel(s, root));
                     if (string(prop) == "COMPILE_DEFINITIONS") out << "  file_define = " << rs << " " << qw(w) << "\n";
-                    else if (string(prop) == "INCLUDE_DIRECTORIES") out << "  file_include = " << rs << " " << qw(rootRel(w, root)) << "\n";
+                    else if (string(prop) == "INCLUDE_DIRECTORIES") out << "  file_include = " << rs << " " << qw(rootRel(in.incAbs(w, root), root)) << "\n";
                     else if (string(prop) == "OBJECT_DEPENDS") out << "  file_depends = " << rs << " " << qw(rootRel(w, root)) << "\n";
                     else out << "  file_flag = " << rs << " " << qw(w) << "\n";
                 }

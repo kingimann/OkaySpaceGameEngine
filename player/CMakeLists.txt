@@ -23,7 +23,7 @@ if(EMSCRIPTEN)
         "-sUSE_SDL=2" "-sALLOW_MEMORY_GROWTH=1" "-sEXIT_RUNTIME=0"
         "-sENVIRONMENT=web"            # browser only: no Node.js or worker start-up code in the .js
         "-sFORCE_FILESYSTEM=1" "-lidbfs.js"   # okay_web.js writes the game pack into FS and mounts the saves on IDBFS
-        "-sSTACK_SIZE=1048576"         # 1 MB like a desktop thread's default; Emscripten's 64 KB is too small for the scene loader
+        "-sSTACK_SIZE=1048576"         # 1 MB, nearer a desktop thread's stack than Emscripten's 64 KB (deep scene and script recursion)
         "--pre-js=${_okay_web_dir}/okay_web.js"
         "--shell-file=${_okay_web_dir}/shell.html")
     # Release builds are optimised for a small download: -Oz shrinks the program at link time (wasm-opt), Closure

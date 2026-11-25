@@ -40,61 +40,90 @@ function okayReportDownloads() {
     okayStatus('Downloading', done, total);
 }
 function okayLooksGzip(bytes) { return bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b; }
-function okayGunzip(bytes) {
-    // A server that already sent the file with Content-Encoding: gzip hands us plain bytes: those are used as they are.
-    if (!okayLooksGzip(bytes)) return Promise.resolve(bytes);
-    if (typeof DecompressionStream === 'undefined')
-        return Promise.reject(new Error('This browser is too old to unpack the game files. Please update it (Chrome 80, Firefox 113, Safari 16.4 or newer).'));
-    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    return new Response(stream).arrayBuffer().then(function (b) { return new Uint8Array(b); });
-}
-function okayFetch(file, expectBytes) {
-    okayDownloads[file] = { done: 0, total: expectBytes || 0 };
+// Start a download: the response, or an error in plain words. Progress is counted by okayCounted below.
+function okayGet(file, expectBytes) {
+    okayDownloads[file] = { done: 0, total: expectBytes || 0, t0: performance.now() };
     okayReportDownloads();
-    var t0 = performance.now();
     return fetch(file).then(function (resp) {
         if (!resp.ok) throw new Error('A game file is missing on the server: ' + file + ' (the server said ' + resp.status + ').');
-        if (!expectBytes) {
-            var len = +(resp.headers.get('Content-Length') || 0);
-            okayDownloads[file].total = len;
-        }
-        if (!resp.body || !resp.body.getReader) {
-            return resp.arrayBuffer().then(function (b) { okayDownloads[file].done = b.byteLength; okayReportDownloads(); return new Uint8Array(b); });
-        }
-        var reader = resp.body.getReader(), parts = [], got = 0;
-        function pump() {
-            return reader.read().then(function (r) {
-                if (r.done) return;
-                parts.push(r.value); got += r.value.length;
-                okayDownloads[file].done = got;
-                if (okayDownloads[file].total < got) okayDownloads[file].total = got;
-                okayReportDownloads();
-                return pump();
-            });
-        }
-        return pump().then(function () {
-            var all = new Uint8Array(got), at = 0;
-            for (var i = 0; i < parts.length; ++i) { all.set(parts[i], at); at += parts[i].length; }
-            okayWeb['stats'][file] = { 'bytes': got, 'ms': Math.round(performance.now() - t0) };
-            return all;
-        });
+        if (!expectBytes) okayDownloads[file].total = +(resp.headers.get('Content-Length') || 0);
+        return resp;
     }, function (e) {
         if (location.protocol === 'file:')
             throw new Error('This game has to be opened from a web server, not straight from a folder on the disk. Use "Run in browser" in the editor, or upload the folder to a host such as itch.io.');
         throw new Error('Could not download ' + file + '. Check the internet connection and reload the page. (' + e.message + ')');
-    }).then(okayGunzip);
+    });
+}
+// The body as a stream that counts the bytes as they arrive; resolves once the first piece is in, with that piece (to
+// tell a gzip file from one the server already unpacked) and the whole stream (the first piece included).
+function okayCounted(resp, file) {
+    var reader = resp.body.getReader(), d = okayDownloads[file];
+    function note(n) {
+        d.done += n;
+        if (d.total < d.done) d.total = d.done;
+        okayReportDownloads();
+    }
+    return reader.read().then(function (first) {
+        var head = first.done ? new Uint8Array(0) : first.value;
+        note(head.length);
+        var sentHead = false;
+        var stream = new ReadableStream({
+            pull: function (ctrl) {
+                if (!sentHead) { sentHead = true; if (head.length) { ctrl.enqueue(head); return; } }
+                if (first.done) { ctrl.close(); return; }
+                return reader.read().then(function (r) {
+                    if (r.done) {
+                        okayWeb['stats'][file] = { 'bytes': d.done, 'ms': Math.round(performance.now() - d.t0) };
+                        ctrl.close();
+                        return;
+                    }
+                    note(r.value.length);
+                    ctrl.enqueue(r.value);
+                });
+            }
+        });
+        return { head: head, stream: stream };
+    });
+}
+// The whole file, unpacked when it is gzip (a server that already sent it with Content-Encoding: gzip hands over plain
+// bytes, which are used as they are).
+function okayFetch(file, expectBytes) {
+    return okayGet(file, expectBytes).then(function (resp) {
+        if (!resp.body || !resp.body.getReader)
+            return resp.arrayBuffer().then(function (b) { okayDownloads[file].done = b.byteLength; okayReportDownloads(); return new Uint8Array(b); });
+        return okayCounted(resp, file).then(function (c) {
+            var gz = okayLooksGzip(c.head);
+            if (gz && typeof DecompressionStream === 'undefined') throw okayTooOld();
+            var s = gz ? c.stream.pipeThrough(new DecompressionStream('gzip')) : c.stream;
+            return new Response(s).arrayBuffer().then(function (b) { return new Uint8Array(b); });
+        });
+    });
+}
+function okayTooOld() {
+    return new Error('This browser is too old to unpack the game files. Please update it (Chrome 80, Firefox 113, Safari 16.4 or newer).');
 }
 
 if (typeof WebAssembly !== 'object') okayFail('This browser cannot run the game: it has no WebAssembly. Please use a current Chrome, Edge, Firefox or Safari.');
 
-// The program. Without a config (a plain emcc build, as CI makes it) Emscripten's own loader is used.
+// The program. Compiled while it downloads and unpacks (instantiateStreaming over the unpacked stream), so a slow line
+// and the compile overlap; browsers without streaming compile get the whole file first. Without a config (a plain emcc
+// build, as CI makes it) Emscripten's own loader is used.
 if (okayCfg['wasm']) {
-    var okayWasmBytes = okayFetch(okayCfg['wasm'], okayCfg['wasmBytes']);
+    var okayWasmFile = okayCfg['wasm'];
+    var okayWasmResp = okayGet(okayWasmFile, okayCfg['wasmBytes']);
     Module['instantiateWasm'] = function (imports, receiveInstance) {
-        okayWasmBytes.then(function (bytes) {
-            okayStatus('Starting', 1, 1);
-            return WebAssembly.instantiate(bytes, imports);
+        okayWasmResp.then(function (resp) {
+            if (typeof WebAssembly.instantiateStreaming !== 'function' || !resp.body || !resp.body.getReader) {
+                return okayFetch(okayWasmFile, okayCfg['wasmBytes']).then(function (bytes) { return WebAssembly.instantiate(bytes, imports); });
+            }
+            return okayCounted(resp, okayWasmFile).then(function (c) {
+                var gz = okayLooksGzip(c.head);
+                if (gz && typeof DecompressionStream === 'undefined') throw okayTooOld();
+                var s = gz ? c.stream.pipeThrough(new DecompressionStream('gzip')) : c.stream;
+                return WebAssembly.instantiateStreaming(new Response(s, { headers: { 'Content-Type': 'application/wasm' } }), imports);
+            });
         }).then(function (r) {
+            okayStatus('Starting', 1, 1);
             receiveInstance(r['instance'], r['module']);
         }, function (e) {
             okayFail(e && e.message ? e.message : String(e));

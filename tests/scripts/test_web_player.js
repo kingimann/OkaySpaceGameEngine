@@ -2,14 +2,16 @@
 //
 // usage: node tests/scripts/test_web_player.js <site-dir> [--measure] [--json out.json]
 //   <site-dir>  scripts/web_package.py output for tests/web/webtest_game (index.html, okay-player.js, .wasm.gz, pack)
-//   --measure   only load the page and report download bytes and time to the first non-blank frame (any web build,
-//               ours or a plain emcc one: used for the before / after numbers)
+//   --measure   only load the page and report download bytes and the time until the test game's orange square is on
+//               screen (any web build, ours or a plain emcc one: used for the before / after numbers)
+//   --throttle MBIT  emulate a slower line (with --measure)
 //
 // Checks: the page loads with no error box; the first frame is drawn (the canvas is not one flat colour and shows the
 // test game's orange square); a Space press reaches the game script; the game's save (save()) and prefs (prefs_set())
 // survive a reload through IndexedDB; right-click reaches the game and opens no browser menu; Space and arrows do not
 // scroll a page that embeds the game in an iframe; audio contexts are running after the first click; a gamepad press
-// (a fake through the Gamepad API) reaches the game.
+// (a fake through the Gamepad API) reaches the game; a missing program file is reported in plain words; the canvas has
+// device pixels at a pixel ratio of 2 and follows a resized page; the full-screen button shows once the game runs.
 const http = require('http'), fs = require('fs'), path = require('path'), zlib = require('zlib');
 const { chromium } = require('playwright');
 
@@ -17,6 +19,8 @@ const args = process.argv.slice(2);
 const site = args.find(a => !a.startsWith('--'));
 const measureOnly = args.includes('--measure');
 const jsonOut = args.includes('--json') ? args[args.indexOf('--json') + 1] : '';
+// --throttle MBIT: a slower line (Chromium's network emulation, 40 ms round trip), for load times closer to a real host.
+const throttle = args.includes('--throttle') ? parseFloat(args[args.indexOf('--throttle') + 1]) : 0;
 if (!site || !fs.existsSync(site)) { console.error('usage: node test_web_player.js <site-dir> [--measure] [--json out.json]'); process.exit(2); }
 
 // ---- a static server (Node's own http module) with the types a host sends ----
@@ -30,6 +34,8 @@ const srv = http.createServer((req, res) => {
     return res.end('<!doctype html><body style="margin:0"><iframe id="g" src="/index.html" style="width:640px;height:360px;border:0"></iframe>' +
                    '<div style="height:4000px">long page</div></body>');
   }
+  if (u === '/broken/index.html' || u === '/broken/okay-player.js') u = u.substring(7);   // a copy whose program is missing
+  else if (u.startsWith('/broken/')) { res.writeHead(404); return res.end('not found'); }
   if (u === '/') u = '/index.html';
   const root = path.resolve(site), file = path.resolve(root, '.' + u);
   if (!file.startsWith(root + path.sep)) { res.writeHead(403); return res.end(); }
@@ -68,7 +74,7 @@ function frameInfo(png) {
   for (let i = 0; i < png.px.length; i += png.bpp) {
     const r = png.px[i], g = png.px[i + 1], b = png.px[i + 2];
     colours.add((r >> 3) << 10 | (g >> 3) << 5 | (b >> 3));
-    if (r > 180 && g > 80 && g < 180 && b < 90) ++orange;   // the test game's square: 0.95, 0.55, 0.15
+    if (r > 100 && r > g * 1.3 && g > b * 2) ++orange;   // the test game's square (0.95, 0.55, 0.15), also under the "Click to play" shade
   }
   return { colours: colours.size, orange };
 }
@@ -99,6 +105,10 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
     return null;
   };
   const shot = async () => frameInfo(readPng(await page.locator('#canvas').screenshot()));
+  if (throttle > 0) {
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 40, downloadThroughput: throttle * 125000, uploadThroughput: throttle * 125000 });
+  }
 
   // ---- load and the first frame ----
   bytesServed = 0;
@@ -109,7 +119,7 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
     const err = await page.evaluate(() => { const e = document.getElementById('okay-error'); return e && e.style.display === 'block' ? e.textContent : ''; });
     if (err) { check('page shows no error', false, err); break; }
     const hidden = await page.evaluate(() => { const l = document.getElementById('okay-loader'); return !l || l.classList.contains('hidden'); });
-    if (hidden) { info = await shot(); if (info.colours > 1) { firstFrame = Date.now() - t0; break; } }
+    if (hidden) { info = await shot(); if (measureOnly ? info.orange > 200 : info.colours > 1) { firstFrame = Date.now() - t0; break; } }
     await page.waitForTimeout(100);
   }
   const stats = await page.evaluate(() => (window.Module && Module.okayWeb) ? Module.okayWeb.stats : {});
@@ -182,6 +192,29 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
   await outer.waitForTimeout(300);
   const scrollY = await outer.evaluate(() => window.scrollY);
   check('Space and arrows do not scroll the page around the game', scrollY === 0, 'scrollY=' + scrollY);
+
+  // ---- a missing file is said in plain words on the loading screen ----
+  const bp = await ctx.newPage();
+  await bp.goto(base + '/broken/index.html');
+  const errText = await bp.waitForFunction(() => { const e = document.getElementById('okay-error'); return e && e.style.display === 'block' && e.textContent; }, null, { timeout: 60000 })
+                         .then(h => h.jsonValue()).catch(() => '');
+  check('a missing program file is reported in plain words', /missing on the server: okay-player\.wasm/.test(errText), errText || 'no error shown');
+  await bp.close();
+
+  // ---- high-DPI and resize: the canvas keeps the page's size in device pixels ----
+  const hi = await browser.newContext({ viewport: { width: 640, height: 360 }, deviceScaleFactor: 2 });
+  const hp = await hi.newPage();
+  await hp.goto(base + '/index.html');
+  await hp.waitForFunction(() => window.Module && Module.okayWeb && Module.okayWeb.stats.firstFrameMs > 0, null, { timeout: 120000 });
+  await hp.waitForTimeout(300);
+  let size = await hp.evaluate(() => ({ w: canvas.width, h: canvas.height, cw: canvas.clientWidth, ch: canvas.clientHeight, fs: getComputedStyle(document.getElementById('okay-fs')).display }));
+  check('the canvas has device pixels on a high-DPI screen', size.w === 1280 && size.h === 720, JSON.stringify(size));
+  check('the full-screen button is shown once the game runs', size.fs === 'block', size.fs);
+  await hp.setViewportSize({ width: 800, height: 500 });
+  await hp.waitForTimeout(500);
+  size = await hp.evaluate(() => ({ w: canvas.width, h: canvas.height }));
+  check('the canvas follows a resized page', size.w === 1600 && size.h === 1000, JSON.stringify(size));
+  await hi.close();
 
   if (failed || process.env.OKAY_WEB_TEST_LOG) console.log('--- page log ---\n' + logs.filter(l => process.env.OKAY_WEB_TEST_LOG || /WEBTEST|error|warn/i.test(l)).slice(-60).join('\n'));
   console.log(`${results.length - failed} passed, ${failed} failed`);

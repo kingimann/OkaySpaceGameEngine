@@ -171,7 +171,7 @@ release whatever branch it was made from (an `lts/` branch included). Shared rul
 Nothing else is written, ever: not `VERSION.txt`, `NOTES.txt`, `LTS.txt`, `versions.json` or a `v<version>/` folder at the root, and not the bucket
 itself. The publisher is its own script, `scripts/publish-supabase-dev.sh` (index: `scripts/dev_index.py`); `scripts/publish-supabase.sh` has no
 test-build code at all and refuses `CHANNEL=dev` and any version with four numbers (so a test build can never be published as a release by mistake).
-The normal publisher's pruning only looks at `v<digits>` folders at the root, so it never sees `dev/`. Only the newest `DEV_KEEP` (3) test builds stay in
+The normal publisher's pruning only looks at `v<digits>` folders at the root, so it never sees `dev/`. Only the newest `DEV_KEEP` (6) test builds stay in
 the bucket; older ones are deleted, stay in the list as "not in the bucket", and their numbers are never used again.
 
 ### What is the same and what is not
@@ -185,7 +185,7 @@ the bucket; older ones are deleted, stay in the list as "not in the bucket", and
 | Signed list | when a key exists | when a key exists (same key) |
 | Update flow (stage, verify, swap, self-check, rollback) | yes | the same flow |
 | Windows code signing | when configured | never |
-| Kept in the bucket | the newest 3 and the LTS line | the newest 3 |
+| Kept in the bucket | the newest 3 and the LTS line | the newest 6 |
 
 **Two limits to know.** (1) A test build replaces only the three programs (launcher, editor, player), like any in-app update: example scenes, templates
 files or assets that a branch adds to the zip or the installer are **not** in it, so an example that is meant to be tried from `examples\` is not there

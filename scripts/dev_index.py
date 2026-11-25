@@ -6,10 +6,10 @@ nothing here can write, read or change the list of real releases, and a real rel
 
   dev_index.py merge --version 2.876.0.17 --branch claude/walk-vs-run --sha <commit> --note "try the run speed" --date 2026-11-16 \
       --file OkayEngine.exe=PATH --file OkaySpacePlayer.exe=PATH --file OkaySpace.exe=PATH --out NEW.json \
-      [--existing OLD.json] [--bucket-versions "2.876.0.17 2.876.0.16"] [--keep 3] [--max-entries 50]
+      [--existing OLD.json] [--bucket-versions "2.876.0.17 2.876.0.16"] [--keep 6] [--max-entries 50]
   dev_index.py notes --version 2.876.0.17 --base 2.876.0 --branch ... --sha ... --note ... --out NOTES-DEV.txt
   dev_index.py summary --version 2.876.0.17 --base 2.876.0 --branch ... --sha ... --note ...        (Markdown for the job summary, on stdout)
-  dev_index.py prune-list --existing OLD.json --listing "v2.876.0.15 v2.876.0.16 versions.json DEV.txt" --version 2.876.0.17 --keep 3
+  dev_index.py prune-list --existing OLD.json --listing "v2.876.0.15 v2.876.0.16 versions.json DEV.txt" --version 2.876.0.17 --keep 6
   dev_index.py check --index BACK.json --version 2.876.0.17 --file OkayEngine.exe=PATH ...
   dev_index.py --self-test
 
@@ -37,7 +37,7 @@ import sys
 SCHEMA = 1
 BUCKET_PATH = "v{version}/{file}"
 REQUIRED_FILES = ("OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe")
-DEFAULT_KEEP = 3
+DEFAULT_KEEP = 6
 MAX_KEEP = 10
 DEFAULT_MAX_ENTRIES = 50
 MAX_BRANCH_CHARS = 80

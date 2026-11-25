@@ -465,6 +465,85 @@ std::string PickHighlight(const Index& index, const std::string& requested) {
     return {};
 }
 
+// ---- the Versions page's model ---------------------------------------------------------------------------------------------
+
+RequestBanner DescribeRequest(const std::string& requestedIn, const std::string& running, const std::vector<std::string>& installed,
+                              bool listReady, bool listOk, const std::string& highlight) {
+    RequestBanner b;
+    const std::string requested = okayver::NormalizeVersion(requestedIn);
+    if (requested.empty()) return b;
+    const std::string line = okayver::LineLabel(requested);
+    auto shown = [](const std::string& v) { return okay::testbuild::DisplayVersion(v); };
+    std::string match;
+    for (const std::string& v : installed) if (okayver::SameLine(v, requested)) { match = okayver::NormalizeVersion(v); break; }
+    const std::string cur = okayver::NormalizeVersion(running);
+    // The running editor first: a request for its own line (v2.903.x while v2.903.8.114, a test build of that line, runs) needs nothing
+    // installed. Without this the banner asked the person to install the release they were already on (owner, 2026-11-25).
+    if (!cur.empty() && okayver::SameLine(cur, requested)) {
+        b.kind = RequestBanner::Running;
+        b.text = "You're running " + shown(cur) + ", which is " + line + ", so it opens projects of that version. Nothing else has to be installed.";
+    } else if (!match.empty()) {
+        b.kind = RequestBanner::Installed;
+        b.text = line + " is already installed (" + shown(match) + "). Projects of that version can be opened with it from their Open with menu.";
+    } else if (!listReady) {
+        b.kind = RequestBanner::Looking;
+        b.text = "Looking for " + line + " in the version list\xE2\x80\xA6";
+    } else if (!highlight.empty()) {
+        b.kind = RequestBanner::Install;
+        b.text = "The editor needs " + line + " to open that project with its own version. Install " + shown(highlight) + " below.";
+    } else if (!listOk) {
+        b.kind = RequestBanner::Unreadable;
+        b.text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
+    } else {
+        b.kind = RequestBanner::NotListed;
+        b.text = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
+    }
+    return b;
+}
+
+std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
+                                        const std::vector<std::string>& installed) {
+    const std::string cur = okayver::NormalizeVersion(running);
+    std::set<std::string> have;
+    for (const std::string& v : installed) have.insert(okayver::NormalizeVersion(v));
+    std::vector<AvailableRow> rows;
+    auto add = [&](const Index& idx, bool test) {
+        if (!idx.ok) return;
+        for (const Entry& e : idx.versions) {
+            // Each list holds only its own kind of version (ParseIndex), checked again here so neither can stand in for the other.
+            if (test ? !okay::testbuild::IsTestVersion(e.version) : !okay::testbuild::IsReleaseShaped(e.version)) continue;
+            if (e.version == cur || have.count(e.version)) continue;
+            AvailableRow r;
+            r.entry = &e;
+            r.testBuild = test;
+            r.downloadable = e.inBucket;
+            const auto ed = e.files.find(IndexName(Asset::Editor));
+            r.checkable = ed != e.files.end() && ed->second.sha256.size() == 64;
+            auto part = [&](const std::string& s) { if (!s.empty()) r.detail += (r.detail.empty() ? "" : "  \xC2\xB7  ") + s; };
+            part(e.date);
+            std::uint64_t bytes = 0;
+            for (Asset a : {Asset::Editor, Asset::Player, Asset::Sdl}) {
+                const auto it = e.files.find(IndexName(a));
+                if (it != e.files.end()) bytes += it->second.size;
+            }
+            if (bytes) part("about " + HumanSize(bytes));
+            if (test) part(okay::testbuild::Title(e.branch, e.sha));
+            if (!e.inBucket) part(test ? "no longer on the download server: can't be downloaded any more"
+                                       : "older than the download server: can't be downloaded any more");
+            else part("from the OkaySpace download server");
+            if (!r.checkable) part("no checksum: can't be installed here");
+            if (!test && !idx.lts.empty() && e.version == idx.lts) part("only gets fixes");
+            rows.push_back(std::move(r));
+        }
+    };
+    add(releases, false);
+    add(testBuilds, true);
+    std::stable_sort(rows.begin(), rows.end(), [](const AvailableRow& a, const AvailableRow& b) {
+        return okayver::CompareVersions(a.entry->version, b.entry->version) > 0;
+    });
+    return rows;
+}
+
 // ---- the plan --------------------------------------------------------------------------------------------------------------
 
 std::uint64_t InstallPlan::totalBytes() const {
@@ -527,6 +606,21 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
     }
     p.ok = true;
     return p;
+}
+
+InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
+                        const fs::path& localSdl, bool requireSdl) {
+    if (!okay::testbuild::IsTestVersion(version)) return PlanInstall(releases, version, bucketBase, localSdl, requireSdl);
+    if (!testBuilds.ok) {
+        InstallPlan p;
+        p.version = okayver::NormalizeVersion(version);
+        p.error = "v" + p.version + " is a test build, and the list of test builds is not available. Switch Get test builds on to install test builds.";
+        return p;
+    }
+    std::string base = bucketBase;
+    if (!base.empty() && base.back() != '/') base += '/';
+    if (!base.empty()) base += std::string(okay::testbuild::kArea) + "/";   // <bucket>/dev/ : the test builds' files (LoadDevIndex)
+    return PlanInstall(testBuilds, version, base, localSdl, requireSdl);
 }
 
 // ---- installing ------------------------------------------------------------------------------------------------------------

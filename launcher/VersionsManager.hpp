@@ -132,6 +132,43 @@ Index LoadDevIndex(const Sources& sources, const FetchTextFn& fetch);
 /// newest listed version of the same line (the LTS head when that is of the line), else "".
 std::string PickHighlight(const Index& index, const std::string& requested);
 
+// ---- the Versions page's model (launcher/VersionsUI.cpp draws it) ---------------------------------------------------------------
+
+/// What the banner at the top of the Versions page says after a request for a version (`--versions <v>` from the editor's "Open launcher",
+/// a project's "Get more versions…", a join that needs an editor).
+struct RequestBanner {
+    enum Kind {
+        None,          ///< nothing was requested
+        Running,       ///< the running editor is of the requested line: it opens those projects, nothing to install
+        Installed,     ///< a version of that line is installed next to this one
+        Looking,       ///< the version list is still being read
+        Install,       ///< `highlight` is in the list: install it
+        Unreadable,    ///< not installed, and the list can't be read
+        NotListed,     ///< not installed, and not in the list
+    } kind = None;
+    std::string text;
+    bool Satisfied() const { return kind == Running || kind == Installed; }   ///< green: nothing to install
+};
+/// `requested` the requested version; `running` the editor a plain Open starts (a test build's four numbers count as its line: v2.903.8.114
+/// is of v2.903.x); `installed` the versions under Versions/; `listReady` the list has been read; `listOk` it could be; `highlight` the row
+/// PickHighlight chose.
+RequestBanner DescribeRequest(const std::string& requested, const std::string& running, const std::vector<std::string>& installed,
+                              bool listReady, bool listOk, const std::string& highlight);
+
+/// One row of "Available to install".
+struct AvailableRow {
+    const Entry* entry = nullptr;        ///< points into the releases or the test builds index passed in
+    bool testBuild = false;              ///< from the test builds' list (dev/versions.json)
+    bool downloadable = false;           ///< in the bucket: the Install button can be pressed (the plan still checks the checksums)
+    bool checkable = false;              ///< the editor has a SHA-256 in the list
+    std::string detail;                  ///< the grey line under the version: date, size, where from, what is missing
+};
+/// The versions that can be installed, newest first: every release of `releases` and every test build of `testBuilds` (an empty Index when
+/// "Get test builds" is off), without the running version and those already installed. A test build sorts just above the release it was
+/// made on (2.903.8 < 2.903.8.114 < 2.903.9).
+std::vector<AvailableRow> AvailableRows(const Index& releases, const Index& testBuilds, const std::string& running,
+                                        const std::vector<std::string>& installed);
+
 // ---- the one place updates come from ---------------------------------------------------------------------------------------
 // Owner decision 2026-11-20: the shipped programs never need GitHub at run time. Updates, the version list, old versions and
 // "what's new" come only from the public Supabase "releases" bucket.
@@ -176,6 +213,11 @@ struct InstallPlan {
 /// index, a fallback index (no versions.json) or a file without a SHA-256 is `ok = false` with the reason, never an install anyway.
 InstallPlan PlanInstall(const Index& index, const std::string& version, const std::string& bucketBase, const fs::path& localSdl,
                         bool requireSdl = kRequireSdl);
+/// The same for the Versions page, which lists releases and (with "Get test builds" on) test builds: a test version (four numbers) is planned
+/// only from `testBuilds` (LoadDevIndex) with its files under <bucket>/dev/, any other version only from `releases`. The checksum rules are
+/// PlanInstall's. Pass an empty Index for `testBuilds` when test builds are off: a test version is then refused.
+InstallPlan PlanInstall(const Index& releases, const Index& testBuilds, const std::string& version, const std::string& bucketBase,
+                        const fs::path& localSdl, bool requireSdl = kRequireSdl);
 
 // ---- doing it --------------------------------------------------------------------------------------------------------------
 

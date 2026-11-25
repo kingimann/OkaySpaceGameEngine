@@ -10,6 +10,7 @@
 #include "ProjectVersion.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,7 @@ float FitButtonW(const char* label, float minW) {
     return w > minW ? w : minW;
 }
 bool BeginSlateCombo(const char* label, const char* preview, int flags) { return ImGui::BeginCombo(label, preview, flags); }
+bool ToggleSwitch(const char* id, bool* v) { return ImGui::Checkbox(id, v); }   // the launcher's on/off switch (main.cpp) as a plain check box
 bool SlateCombo(const char* label, int* current, const char* itemsZeroSeparated, int popupMaxItems) {
     return ImGui::Combo(label, current, itemsZeroSeparated, popupMaxItems);
 }
@@ -43,7 +45,62 @@ static void Golden(const char* name, const Bitmap& b) {
     CHECK(ok);
 }
 
+// OKAY_SHOT_DIR set: draw the page as the owner saw it on 2026-11-25 (a test build v2.903.8.114 running, a request for a v2.903.x project, "Get test
+// builds" on, an editor left on another version) from local version lists, and save versions_*.png there. Pictures for the person, never goldens.
+static int ShotRun(const std::string& out) {
+    const fs::path dir = fs::temp_directory_path() / ("okayui_port_versions_shot_" + std::to_string((long long)getpid()));
+    std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+    const std::string sha(64, 'a');
+    auto files = [&](bool withSha) {
+        return std::string("{\"OkayEngine.exe\":{\"size\":61000000") + (withSha ? ",\"sha256\":\"" + sha + "\"" : std::string()) +
+               "},\"OkaySpacePlayer.exe\":{\"size\":38000000,\"sha256\":\"" + sha + "\"},\"OkaySpace.exe\":{\"size\":29000000,\"sha256\":\"" + sha + "\"}}";
+    };
+    const std::string rel = "{\"schema\":1,\"latest\":\"2.903.8\",\"versions\":["
+        "{\"version\":\"2.903.8\",\"channel\":\"latest\",\"date\":\"2026-11-24\",\"inBucket\":true,\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.7\",\"date\":\"2026-11-23\",\"inBucket\":true,\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.6\",\"date\":\"2026-11-22\",\"inBucket\":true,\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.5\",\"date\":\"2026-11-21\",\"inBucket\":false,\"files\":" + files(true) + "}]}";
+    const std::string dev = "{\"schema\":1,\"versions\":["
+        "{\"version\":\"2.903.8.115\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/launcher-fix\",\"sha\":\"abcdef1234\",\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.8.114\",\"date\":\"2026-11-25\",\"inBucket\":true,\"branch\":\"claude/work\",\"sha\":\"1234567abc\",\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.8.113\",\"date\":\"2026-11-24\",\"inBucket\":true,\"branch\":\"claude2/work\",\"files\":" + files(true) + "},"
+        "{\"version\":\"2.903.8.112\",\"date\":\"2026-11-24\",\"inBucket\":false,\"branch\":\"claude3/work\",\"files\":" + files(true) + "}]}";
+    okayversionsui::Host host;
+    host.launcherDir = dir; host.currentVersion = "2.903.8.114"; host.launcherVersion = "2.903.8.114"; host.sources.trustedKeys = "";
+    host.sources.bucketBase = "https://example.invalid/storage/v1/object/public/releases/";
+    host.toast = [](const std::string&, int) {}; host.openFolder = [](const std::string&) {}; host.savePrefs = [] {}; host.startUpdate = [] {}; host.channelChanged = [] {};
+    host.fetchText = [&](const std::string& url, std::string& body) {
+        if (url == host.sources.bucketBase + "versions.json") { body = rel; return true; }
+        if (url == host.sources.bucketBase + "dev/versions.json") { body = dev; return true; }
+        return false;
+    };
+    okayversions::GlobalSettings().testBuilds = true;
+    okayversionsui::RequestPage("2.903.8.114");
+    Reset(); UI::UseLauncherLook(true);
+    Sim s(900, 1100);
+    auto ui = [&] {
+        okayversionsui::Tick(host);
+        UI::SetNextWindowPos({10, 10}, UI::Cond_Always); UI::SetNextWindowSize({880, 1080}, UI::Cond_Always);
+        if (UI::Begin("Versions", nullptr, UI::Window_NoMove | UI::Window_NoResize)) okayversionsui::DrawPage(host);
+        UI::End();
+    };
+    for (int i = 0; i < 2000 && !okayversionsui::IndexLoaded(); ++i) { SDL_Delay(5); s.Frame(ui); }
+    for (int i = 0; i < 60; ++i) s.Frame(ui);
+    bool ok = WritePng(out + "/versions_banner_and_test_builds.png", s.Draw(24, 26, 32));
+    host.programsNote = "This launcher is v2.903.8.115 (test build), but the editor is still v2.903.8.114 (test build): the last update didn't replace it. "
+                        "Close the editor and use Repair (Versions page) to download v2.903.8.115 (test build) again; your projects are not touched.";
+    host.currentVersion = "2.903.8.115"; host.launcherVersion = "2.903.8.115"; host.repair = [] {};
+    for (int i = 0; i < 30; ++i) s.Frame(ui);
+    ok = WritePng(out + "/versions_editor_left_behind.png", s.Draw(24, 26, 32)) && ok;
+    okayversionsui::Shutdown();
+    UI::UseLauncherLook(false);
+    fs::remove_all(dir, ec);
+    std::printf("shots %s in %s\n", ok ? "written" : "NOT written", out.c_str());
+    return ok ? 0 : 1;
+}
+
 int main() {
+    if (const char* shots = std::getenv("OKAY_SHOT_DIR"); shots && *shots) return ShotRun(shots);
     RUN_SUITE("port probe: launcher Versions page run headless");
     // Hermetic: nothing of the machine may reach the picture. A fixed wall clock (time() above), UTC, the C locale, a private home and working folder, and no
     // network at all: the version lookup is the offline stub below, which every URL reaches and none answers (docs/ui/own_ui_toolkit.md 6.17).

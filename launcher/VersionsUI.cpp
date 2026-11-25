@@ -19,6 +19,8 @@
 #include "NavIcons.hpp"   // okl::SlateCombo: the launcher's one dropdown look
 #include "OkayTheme.hpp"   // the theme palette's colours
 
+namespace okl { bool ToggleSwitch(const char* id, bool* v); }   // the launcher's on/off switch (main.cpp; declared in LauncherShared.hpp)
+
 namespace okayversionsui {
 namespace {
 
@@ -32,11 +34,13 @@ struct IndexJob {
     std::atomic<bool> done{false};
     Sources sources;
     FetchTextFn fetch;
-    Index result;
+    bool wantTestBuilds = false;                       // "Get test builds" was on when the job started: also read dev/versions.json
+    Index result, testBuilds;
 };
 int IndexWorker(void* p) {
     IndexJob* j = static_cast<IndexJob*>(p);
     j->result = LoadIndex(j->sources, j->fetch);
+    if (j->wantTestBuilds) j->testBuilds = LoadDevIndex(j->sources, j->fetch);   // never read while the switch is off
     j->done = true;
     return 0;
 }
@@ -83,7 +87,9 @@ int InstallWorker(void* p) {
 struct State {
     std::unique_ptr<IndexJob> indexJob;
     Index index;
+    Index testBuilds;                                   // the test builds' list (empty while "Get test builds" is off)
     bool haveIndex = false;
+    std::string running;                                // the editor a plain Open starts (Host::currentVersion, taken by Tick)
     Uint32 indexAt = 0;
     std::string requested;                              // --versions <version> (normalized)
     std::string highlight;                              // the row to point at
@@ -193,7 +199,9 @@ void ResolveHighlight() {
     State& st = S();
     st.highlight.clear();
     if (st.requested.empty()) return;
-    if (st.haveIndex && st.index.ok) st.highlight = PickHighlight(st.index, st.requested);
+    if (okayver::SameLine(okayver::NormalizeVersion(st.running), st.requested)) return;   // the running editor is of that line: no row to point at
+    if (st.haveIndex && okay::testbuild::IsTestVersion(st.requested) && st.testBuilds.ok && st.testBuilds.Find(st.requested)) st.highlight = st.requested;
+    if (st.highlight.empty() && st.haveIndex && st.index.ok) st.highlight = PickHighlight(st.index, st.requested);
     for (const Installed& i : st.installed)                                      // an installed one of that line counts too
         if (st.highlight.empty() && okayver::SameLine(i.version, st.requested)) st.highlight = i.version;
     st.scrollToHighlight = !st.highlight.empty();
@@ -205,6 +213,7 @@ void StartIndex(const Host& h) {
     st.indexJob = std::make_unique<IndexJob>();
     st.indexJob->sources = h.sources;
     st.indexJob->fetch = h.fetchText;
+    st.indexJob->wantTestBuilds = GlobalSettings().testBuilds;
     st.indexJob->th = okay::thr::CreateThread(IndexWorker, "okay-versions-index", st.indexJob.get());
     if (!st.indexJob->th) st.indexJob.reset();
 }
@@ -227,7 +236,7 @@ void StartJob(const Host& h, const InstallPlan& plan) {
 void BeginInstall(const Host& h, const std::string& version) {
     State& st = S();
     if (st.job || !st.haveIndex) return;
-    const InstallPlan plan = PlanInstall(st.index, version, h.sources.bucketBase, FindCurrentInstall(h.launcherDir).sdl);
+    const InstallPlan plan = PlanInstall(st.index, st.testBuilds, version, h.sources.bucketBase, FindCurrentInstall(h.launcherDir).sdl);   // a test build from dev/
     if (!plan.ok) {
         st.notes[version] = {plan.error, 2};
         Toast(h, plan.error, 2);
@@ -254,15 +263,10 @@ RemoveGuards MakeGuards(const Host& h) {
 void DrawRequestBanner(const Host& h) {
     State& st = S();
     if (st.requested.empty()) return;
-    const std::string line = okayver::LineLabel(st.requested);
-    std::string text, installedMatch;
-    ImU32 col = kAmber;
-    for (const Installed& i : st.installed) if (okayver::SameLine(i.version, st.requested)) { installedMatch = i.version; break; }
-    if (!installedMatch.empty()) { text = line + " is already installed (" + V(installedMatch) + "). Projects of that version can be opened with it from their Open with menu."; col = kGreen; }
-    else if (!st.haveIndex || st.indexJob) text = "Looking for " + line + " in the version list\xE2\x80\xA6";
-    else if (!st.highlight.empty()) text = "The editor needs " + line + " to open that project with its own version. Install " + V(st.highlight) + " below.";
-    else if (!st.index.ok) text = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
-    else text = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
+    const RequestBanner b = DescribeRequest(st.requested, h.currentVersion, st.installedVersions, st.haveIndex && !st.indexJob,
+                                            st.index.ok, st.highlight);
+    const std::string& text = b.text;
+    const ImU32 col = b.Satisfied() ? kGreen : kAmber;
     const ImVec4 base = col == kGreen ? okaytheme::SuccessFill() : okaytheme::WarningFill();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(base.x, base.y, base.z, 0.14f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
@@ -278,7 +282,6 @@ void DrawRequestBanner(const Host& h) {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 10));
-    (void)h;
 }
 
 void DrawThisVersion(const Host& h) {
@@ -305,7 +308,8 @@ void DrawThisVersion(const Host& h) {
     }
     std::string sub;
     const std::string launcher = okayver::NormalizeVersion(h.launcherVersion);
-    if (launcher.empty() || cur.empty() || launcher == cur) sub = "The launcher, the editor and the player are all this version.";
+    if (!h.programsNote.empty()) sub = "The editor or the player is not this version: see below.";   // (said in full under the row, with Repair)
+    else if (launcher.empty() || cur.empty() || launcher == cur) sub = "The launcher, the editor and the player are all this version.";
     else sub = "The editor and player are " + V(cur) + "; this launcher window is still " + V(launcher) + " until you restart it.";
     DrawTextAt(dl, ImVec2(p0.x, p0.y + titleH + okl::UiPx(6.0f)), Fit(sub, textW).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
 
@@ -322,6 +326,14 @@ void DrawThisVersion(const Host& h) {
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + rowH));
     ImGui::Dummy(ImVec2(W, 0));
 
+    // The editor or the player is another version than this launcher (an update that left one behind): say so, and offer to download them again.
+    if (!h.programsNote.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "%s", h.programsNote.c_str());
+        ImGui::PopTextWrapPos();
+        if (h.repair && AccentButton(h, "Repair", ImVec2(okl::FitButtonW("Repair", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) h.repair();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
     // How complete the version list is.
     if (st.indexJob && !st.haveIndex) ImGui::TextDisabled("Looking up the version list\xE2\x80\xA6");
     else if (st.haveIndex && !st.index.ok) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kRed), "%s", st.index.error.c_str());
@@ -371,6 +383,20 @@ void DrawChannel(const Host& h) {
                             "installed next to it (in Versions) and you can use it as your default editor: it opens projects that have no version yet, "
                             "or whenever you pick it from a project's Open with menu.");
     }
+    ImGui::PopTextWrapPos();
+
+    // "Get test builds" (the same setting as Settings > Behavior, off by default): test builds then show in Available to install, to install side by side.
+    ImGui::Dummy(ImVec2(0, 6));
+    if (okl::ToggleSwitch("##vertestbuilds", &set.testBuilds)) {
+        if (h.testBuildsChanged) h.testBuildsChanged(); else if (h.savePrefs) h.savePrefs();
+        st.testBuilds = Index{};
+        StartIndex(h);   // read the lists again, with or without the test builds
+    }
+    ImGui::SameLine(0, 10);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Get test builds");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Test builds are made for testing before a release and can be broken. Only the newest %d are kept on the download server.", okay::testbuild::kKept);
     ImGui::PopTextWrapPos();
 
     if (set.channel == Channel::Lts && st.haveIndex) {
@@ -553,15 +579,6 @@ void DrawInstalled(const Host& h) {
     CardEnd();
 }
 
-std::uint64_t ListedSize(const Entry& e) {
-    std::uint64_t n = 0;
-    for (Asset a : {Asset::Editor, Asset::Player, Asset::Sdl}) {
-        const auto it = e.files.find(IndexName(a));
-        if (it != e.files.end()) n += it->second.size;
-    }
-    return n;
-}
-
 void DrawAvailable(const Host& h) {
     State& st = S();
     Settings& set = GlobalSettings();
@@ -576,34 +593,28 @@ void DrawAvailable(const Host& h) {
         if (ImGui::Button("Try again", ImVec2(okl::FitButtonW("Try again", okl::UiPx(120.0f)), okl::UiPx(30.0f)))) StartIndex(h);
         ImGui::EndDisabled();
     } else {
-        const std::string cur = okayver::NormalizeVersion(h.currentVersion);
-        std::vector<const Entry*> rows;
-        for (const Entry& e : st.index.versions) {
-            if (e.version == cur) continue;
-            bool have = false;
-            for (const Installed& in : st.installed) if (in.version == e.version) have = true;
-            if (!have) rows.push_back(&e);
-        }
+        // Releases and, with "Get test builds" on, the test builds (marked "(test build)" by V()), newest first: VersionsManager's AvailableRows.
+        const std::vector<AvailableRow> rows = AvailableRows(st.index, st.testBuilds, h.currentVersion, st.installedVersions);
         if (rows.empty()) ImGui::TextDisabled("Every version in the list is installed or is the one you're running.");
+        if (set.testBuilds && st.haveIndex && !st.indexJob && !st.testBuilds.ok && !st.testBuilds.error.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "Test builds: %s", st.testBuilds.error.c_str());
+            ImGui::PopTextWrapPos();
+        }
         const std::size_t limit = st.showAllAvailable ? rows.size() : std::min<std::size_t>(rows.size(), 8);
         for (std::size_t i = 0; i < limit; ++i) {
-            const Entry& e = *rows[i];
+            const Entry& e = *rows[i].entry;
             ImGui::PushID(e.version.c_str());
             const bool mine = st.job && st.job->version == e.version;
             const auto note = st.notes.find(e.version);
             const bool hasNote = note != st.notes.end() && !mine;
             Row r = RowBegin(hasNote ? 84.0f : 58.0f);
             if (e.version == st.highlight) RowHighlight(h, r);
-            const bool lts = e.version == st.index.lts, latest = e.version == st.index.latest;
+            const bool test = rows[i].testBuild;
+            const bool lts = !test && e.version == st.index.lts, latest = !test && e.version == st.index.latest;
             RowTitle(h, r, e.version, latest, lts, false);
             const float rightW = mine ? 330.0f : 130.0f;
-            std::string sub = e.date.empty() ? std::string() : e.date;
-            const std::uint64_t listed = ListedSize(e);
-            if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
-            const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
-            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "older than the download server: can't be downloaded any more");
-            if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
-            if (lts) sub += "  \xC2\xB7  only gets fixes";
+            std::string sub = rows[i].detail;
             if (mine) {
                 std::string file;
                 okay::thr::LockMutex(st.job->mu);
@@ -628,7 +639,7 @@ void DrawAvailable(const Host& h) {
                 ImGui::EndDisabled();
             } else {
                 ImGui::SetCursorScreenPos(ImVec2(r.p0.x + r.width - 120.0f, r.p0.y + 14));
-                ImGui::BeginDisabled(st.job != nullptr || !e.inBucket);   // (a version that is not in the bucket has nowhere to come from: GitHub is never used)
+                ImGui::BeginDisabled(st.job != nullptr || !rows[i].downloadable);   // (a version that is not in the bucket has nowhere to come from: GitHub is never used)
                 if (AccentButton(h, "Install", ImVec2(120, 30))) BeginInstall(h, e.version);
                 ImGui::EndDisabled();
             }
@@ -716,9 +727,11 @@ void InvalidateInstalled() { S().installedDirty = true; }
 void Tick(const Host& h) {
     State& st = S();
     if (!st.staleCleaned) { st.staleCleaned = true; CleanStale(h.launcherDir); }
+    st.running = h.currentVersion;
     if (st.indexJob && st.indexJob->done) {
         okay::thr::WaitThread(st.indexJob->th, nullptr);
         st.index = std::move(st.indexJob->result);
+        st.testBuilds = GlobalSettings().testBuilds ? std::move(st.indexJob->testBuilds) : Index{};   // (switched off while it ran: nothing offered)
         st.indexJob.reset();
         st.haveIndex = true;
         st.indexAt = okay::platform::TicksMs32();

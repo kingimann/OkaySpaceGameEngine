@@ -7,8 +7,9 @@
 // copies of the pattern (with each pack name P renamed P__pk<j>), sizeof...(P) becomes k, and a
 // fold expression is written out with explicit parentheses. The copies are ordinary function
 // templates of one name, which the parser already keeps as overloads and the checker chooses
-// between by argument count and deduction ([temp.over]). Class templates with a pack are left as
-// they are (not supported yet).
+// between by argument count and deduction ([temp.over]). A class template partial specialization
+// with a pack is copied the same way, each copy a partial specialization of its own arity; a primary
+// class template with a pack is left as it is (not supported yet).
 #include "packs.hpp"
 
 #include <set>
@@ -306,7 +307,13 @@ std::vector<Token> expandPacks(const std::vector<Token>& toks) {
             if (isPunct(toks[k], "...") && toks[k + 1].kind == Tok::Ident) packs.insert(toks[k + 1].text);
         bool isClass = gt && gt + 1 < toks.size() &&
                        (isWord(toks[gt + 1], "class") || isWord(toks[gt + 1], "struct") || isWord(toks[gt + 1], "union"));
-        if (packs.empty() || isClass || gt == 0) {
+        // A class template partial specialization with a pack (function<R(A...)>,
+        // [temp.spec.partial]) is copied per pack length like a function template: each copy is
+        // an ordinary partial specialization of its own arity. A primary class template with a
+        // pack (tuple<T...>) is not done: there can be only one primary template of a name.
+        bool isPartial = isClass && gt + 3 < toks.size() && toks[gt + 2].kind == Tok::Ident &&
+                         isPunct(toks[gt + 3], "<");
+        if (packs.empty() || (isClass && !isPartial) || gt == 0) {
             out.push_back(toks[i++]);
             continue;
         }

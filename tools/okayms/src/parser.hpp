@@ -2168,6 +2168,7 @@ struct Parser {
     // for (declaration : range): a ':' before any ';' at the top level of the parentheses ([stmt.ranged]).
     bool range_for_ahead() const {
         int depth = 0;
+        int questions = 0;  // the ':' of c ? a : b in the init is not the range's ([stmt.ranged])
         for (size_t i = at; i < tokens.size() && tokens[i].kind != TEnd; ++i) {
             const Tok k = tokens[i].kind;
             if (k == TLParen || k == TLBrack || k == TLBrace) ++depth;
@@ -2175,7 +2176,11 @@ struct Parser {
                 if (depth == 0) return false;
                 --depth;
             } else if (depth == 0 && k == TSemi) return false;
-            else if (depth == 0 && k == TColon) return true;
+            else if (depth == 0 && k == TQuestion) ++questions;
+            else if (depth == 0 && k == TColon) {
+                if (questions == 0) return true;
+                --questions;
+            }
         }
         return false;
     }
@@ -2691,13 +2696,10 @@ struct Parser {
                 if (!ok) return false;
                 arg = std::move(made);
             }
-            if (pt.is_ref) {
-                // The name of a function is not an object: a reference to a function pointer is bound to a temporary
-                // holding its address.
-                const bool object = (arg.kind == Node::Name && !names_function(arg.text)) || arg.kind == Node::Field ||
-                                    arg.kind == Node::Index || (arg.kind == Node::Unary && arg.op == TStar);
+            {
                 Type from;
-                if (cur_locals != nullptr && pt.base == 3 && pt.pointers == 0 && !pt.is_array() && pt.struct_id >= 0 &&
+                if (cur_locals != nullptr && (pt.is_ref || !wants_copy(pt, arg)) && pt.base == 3 && pt.pointers == 0 &&
+                    !pt.is_array() && pt.struct_id >= 0 &&
                     class_needs_ctor(structs[static_cast<size_t>(pt.struct_id)]) && static_type(arg, &from) &&
                     !(from.base == 3 && from.pointers == 0 && !from.is_array() &&
                       (from.struct_id == pt.struct_id || derives_from(from.struct_id, pt.struct_id) ||
@@ -2730,9 +2732,15 @@ struct Parser {
                     stmt_pre.push_back(std::move(call));
                     if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
                         stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
-                    arg = node_addr(node_name(hidden.name));
+                    arg = pt.is_ref ? node_addr(node_name(hidden.name)) : node_name(hidden.name);
                     continue;
                 }
+            }
+            if (pt.is_ref) {
+                // The name of a function is not an object: a reference to a function pointer is bound to a temporary
+                // holding its address.
+                const bool object = (arg.kind == Node::Name && !names_function(arg.text)) || arg.kind == Node::Field ||
+                                    arg.kind == Node::Index || (arg.kind == Node::Unary && arg.op == TStar);
                 if (!object && cur_locals != nullptr) {
                     // A reference bound to a temporary: the value goes into a hidden local first.
                     Type held = pt;

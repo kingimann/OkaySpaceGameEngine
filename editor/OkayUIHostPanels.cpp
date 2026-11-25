@@ -43,6 +43,12 @@ inline ImportSettingsResult DrawImportSettings_WM(okaypanels::ImportSettingsMode
 #define AccentToggleButton AccentToggleButton_WM
 #define AccentCol AccentCol_WM
 #define TipButton TipButton_WM
+#define ToggleChip ToggleChip_WM
+#define ToggleChipWidth ToggleChipWidth_WM
+#define StateButton StateButton_WM
+#define BeginDropdown BeginDropdown_WM
+#define PushClearTabColors PushClearTabColors_WM
+#define PopClearTabColors PopClearTabColors_WM
 #define SceneBuildSync SceneBuildSync_WM
 #define DrawSceneManager DrawSceneManager_WM
 #define DrawDialogs DrawDialogs_WM
@@ -123,6 +129,12 @@ inline ImportSettingsResult DrawImportSettings_WM(okaypanels::ImportSettingsMode
 #undef AccentToggleButton
 #undef AccentCol
 #undef TipButton
+#undef ToggleChip
+#undef ToggleChipWidth
+#undef StateButton
+#undef BeginDropdown
+#undef PushClearTabColors
+#undef PopClearTabColors
 #undef SceneBuildSync
 #undef DrawSceneManager
 #undef DrawDialogs

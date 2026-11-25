@@ -1,0 +1,21 @@
+// okay-ms own library header: the kernel32 functions that <mutex>, <thread> and <condition_variable> are built on,
+// declared from Microsoft's public Win32 API documentation (slim reader/writer locks, condition variables, threads).
+// An SRWLOCK and a CONDITION_VARIABLE are one pointer that starts as zero (SRWLOCK_INIT, CONDITION_VARIABLE_INIT).
+// Windows types are spelled with their x64 sizes: DWORD and BOOL are 32 bits, HANDLE and SIZE_T 64.
+#pragma once
+extern "C" {
+__declspec(dllimport) void AcquireSRWLockExclusive(void** lock);
+__declspec(dllimport) void ReleaseSRWLockExclusive(void** lock);
+__declspec(dllimport) unsigned char TryAcquireSRWLockExclusive(void** lock);
+__declspec(dllimport) int SleepConditionVariableSRW(void** cv, void** lock, unsigned ms, unsigned flags);
+__declspec(dllimport) void WakeConditionVariable(void** cv);
+__declspec(dllimport) void WakeAllConditionVariable(void** cv);
+__declspec(dllimport) void* CreateThread(void* attrs, unsigned long long stack, unsigned (*start)(void*), void* param,
+                                         unsigned flags, unsigned* id);
+__declspec(dllimport) unsigned WaitForSingleObject(void* handle, unsigned ms);
+__declspec(dllimport) int CloseHandle(void* handle);
+__declspec(dllimport) unsigned GetCurrentThreadId(void);
+__declspec(dllimport) void Sleep(unsigned ms);
+__declspec(dllimport) int SwitchToThread(void);
+__declspec(dllimport) void GetSystemInfo(void* info);
+}

@@ -2,7 +2,7 @@
 
 # Code index: engine-Platform
 
-Back to the [code index](../code_index.md). 29 headers, 231 names.
+Back to the [code index](../code_index.md). 29 headers, 234 names.
 
 ## `engine/include/okay/Platform/Account/Account.hpp`
 
@@ -25,13 +25,14 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 
 ## `engine/include/okay/Platform/Account/AccountService.hpp`
 
-- `Session` struct, line 349: The currently signed-in player. 'loggedIn' is false when nobody is signed
-- `Result` struct, line 358: Result of a register/login attempt. On failure 'error' carries a short,
-- `ApiResponse` struct, line 368: Result of an authenticated request to the account server (see Api). 'ok' is
-- `ScoreEntry` struct, line 377: One row of a server leaderboard: the player's name, their score, and their
-- `Provider` enum, line 389: Which backend signs players in.
-- `AccountService` class, line 395: A client-side account service. Construct it with a config directory (where a
-- `DefaultConfigDir` function, line 1220: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
+- `PublicName` function, line 63: The name shown to OTHER people for an account: never an email address. Names come from the server as free text
+- `Session` struct, line 365: The currently signed-in player. 'loggedIn' is false when nobody is signed
+- `Result` struct, line 374: Result of a register/login attempt. On failure 'error' carries a short,
+- `ApiResponse` struct, line 384: Result of an authenticated request to the account server (see Api). 'ok' is
+- `ScoreEntry` struct, line 393: One row of a server leaderboard: the player's name, their score, and their
+- `Provider` enum, line 405: Which backend signs players in.
+- `AccountService` class, line 411: A client-side account service. Construct it with a config directory (where a
+- `DefaultConfigDir` function, line 1246: Best-effort per-user config directory for launcher data: %APPDATA%/OkaySpace
 
 ## `engine/include/okay/Platform/Achievements.hpp`
 
@@ -78,7 +79,9 @@ Back to the [code index](../code_index.md). 29 headers, 231 names.
 
 - `Friend` struct, line 31
 - `FriendEvent` struct, line 50
-- `Friends` class, line 58
+- `FeedLine` struct, line 60: One line of the friends' activity panel: the newest of a run of the same event (same person, same kind, same detail), how
+- `GroupFeed` function, line 65: The activity panel's lines from the feed (newest first): your own events are left out (the server's activity policy lets
+- `Friends` class, line 84
 
 ## `engine/include/okay/Platform/GameIpc.hpp`
 

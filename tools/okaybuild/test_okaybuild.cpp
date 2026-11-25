@@ -688,6 +688,11 @@ static void testWindowsHost() {
     check(std::string(fb).find("PE32+") != std::string::npos, "Windows okay-build is PE32+", fb);
     { string bytes = readFile(exe); // round 17: `okay-build script` has its own CreateProcessW pipe runner on Windows
       check(bytes.find("script: not done on Windows yet") == string::npos && bytes.find("Process terminated due to timeout") != string::npos, "the Windows okay-build has script mode (execute_process through CreateProcessW pipes)"); }
+    { string bytes = readFile(exe); // round 19: `okay-build ctest` on Windows, each test in a Job Object so a time-out ends what it started
+      check(bytes.find("ctest: not done on Windows yet") == string::npos, "the Windows okay-build has ctest");
+      check(bytes.find("CreateJobObjectW") != string::npos && bytes.find("AssignProcessToJobObject") != string::npos && bytes.find("TerminateJobObject") != string::npos,
+            "the Windows ctest puts each test in a Job Object (CreateJobObjectW, AssignProcessToJobObject, TerminateJobObject are imported)");
+      check(bytes.find("access violation") != string::npos, "the Windows ctest names a test that ended with an exception code (access violation)"); }
     if (!wineProblem().empty()) { skip(4, "okay-build.exe under wine: " + wineProblem()); return; }
     fresh("winhost");
     write("build.okay",
@@ -1140,6 +1145,38 @@ static void testMsvcFlags() {
     o = sh("-j1 --no-cache", &rc);
     args = readFile(gRoot / "argv.log");
     check(rc == 0 && args.find("/Fe") != string::npos, "cl.exe as the linker uses /Fe", args + o);
+}
+
+// Round 19: MSVC system folders as /external:I with /external:W0 (Microsoft's documented /external options, cl 19.29 and later),
+// and `external_includes = off` for an older cl.
+static void testMsvcExternalIncludes() {
+    printf("test: MSVC system include folders are /external:I with /external:W0\n");
+    fresh("msvcext");
+    write("fakecl", "#!/bin/sh\nprintf 'ARG %s\\n' \"$@\" >> argv.log\nout=\nfor a in \"$@\"; do case \"$a\" in /Fo*) out=${a#/Fo} ;; /Fe*) out=${a#/Fe} ;; /OUT:*) out=${a#/OUT:} ;; esac; done\n"
+                  "echo 'Note: including file: sys/s.h'\nif [ -n \"$out\" ]; then mkdir -p \"$(dirname \"$out\")\"; printf 'obj\\n' > \"$out\"; fi\nexit 0\n");
+    fs::permissions(gRoot / "fakecl", fs::perms::owner_all);
+    write("sys/s.h", "#define S 1\n"); write("inc/u.h", "#define U 1\n"); write("main.cpp", "int main(){return 0;}\n");
+    string tc = "toolchain msvc\n cc = ./fakecl\n cxx = ./fakecl\n ld = ./fakecl\n ar = ./fakecl\n";
+    string tg = "target app exe\n sources = main.cpp\n include = inc\n system_include = sys sys2\nend\n";
+    write("build.okay", tc + "end\n" + tg);
+    int rc; string o = sh("-j1 --no-cache", &rc);
+    string args = readFile(gRoot / "argv.log");
+    check(rc == 0, "fake cl.exe build with system folders exits 0", o);
+    size_t w0 = args.find("ARG /external:W0\n"), e1 = args.find("ARG /external:I\nARG sys\n"), e2 = args.find("ARG /external:I\nARG sys2\n"), pi = args.find("ARG /Iinc\n");
+    check(w0 != string::npos && e1 != string::npos && e2 != string::npos, "system folders are /external:I DIR, with /external:W0", args);
+    check(pi != string::npos && w0 != string::npos && pi < w0 && w0 < e1 && e1 < e2, "the plain /I folders come first, then /external:W0, then the system folders in order", args);
+    check(args.find("ARG /Isys\n") == string::npos, "a system folder is not also a plain /I folder", args);
+    write("sys/s.h", "#define S 2\n");
+    o = sh("-j1 --no-cache", &rc);
+    check(rc == 0 && ran(o) >= 1, "a header in an external folder is still a dependency (/showIncludes lists it)", o);
+    fs::remove(gRoot / "argv.log");
+    write("build.okay", tc + " external_includes = off\nend\n" + tg);
+    o = sh("-j1 --no-cache", &rc); args = readFile(gRoot / "argv.log");
+    check(rc == 0 && args.find("ARG /Isys\n") != string::npos && args.find("/external:") == string::npos, "external_includes = off gives plain /I (for cl older than 19.29)", args + o);
+    write("build.okay", "target app exe\n sources = main.cpp\n system_include = sys\nend\n");
+    o = sh("compdb --toolchain okay-ms", &rc);
+    string db = readFile(gRoot / "compile_commands.json");
+    check(db.find("external") == string::npos, "our own okay-cl keeps plain /I for system folders", db + o);
 }
 
 static void testGraphTargets() {
@@ -2896,6 +2933,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
+        if (string(only) == "r19") { testMsvcExternalIncludes(); testWindowsHost(); printf("okaybuild tests (round 19 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "r18") { testCmakeCompileOrder(); testCompareRebuildsScript(); testScriptRunsItself(); printf("okaybuild tests (round 18 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "r17") { testMissingHeader(); testExecutePipelines(); testCtestEndStates(); testWindowsHost(); printf("okaybuild tests (round 17 only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
         if (string(only) == "asset") { testImporterTool(); printf("okaybuild tests (asset only): %d checks passed, %d failed, %d skipped\n", gPass, gFail, gSkip); return gFail ? 1 : 0; }
@@ -2904,7 +2942,7 @@ int main(int argc, char** argv) {
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testMsvcExternalIncludes(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
     testRestoredObjectsStayTrusted();
     testImporters();
     testPerConfigDirsAndTrace();

@@ -9019,6 +9019,15 @@ int MktKindIndex(const std::string& k) {
     for (int i = 0; i < kMktKindN; ++i) if (k == kMktKinds[i].key) return i;
     return 0;   // unknown / empty -> game
 }
+// The marketplace listings this viewer may see, counted per kind (the filter rail open and folded both show these counts).
+// Returns the total; counts gets one entry per kind.
+static int MktVisibleCounts(const std::vector<okay::WorkshopItem>& items, const std::string& meName, bool staff, std::vector<int>& counts) {
+    counts.assign((std::size_t)kMktKindN, 0);
+    int all = 0;
+    for (const auto& w : items)
+        if (okay::launcherlayout::MarketListingVisible(w.status, !meName.empty() && w.author == meName, staff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++all; }
+    return all;
+}
 // Publish in the background: upload the file (if any) to the workshop bucket,
 // then create the listing.
 struct MktPublishJob { std::string title, desc, kind, url, file; long editId = 0; };   // editId: update that listing
@@ -18472,10 +18481,8 @@ int main(int argc, char** argv) {
                         if (PanelToggle("##mktfold", true, "the filters", fd, okaytheme::Ink(18), cDim, cText)) { g_mktRailFolded = true; SavePrefs(); }
                     }
                     ImGui::Dummy(ImVec2(0, UiPx(12.0f)));
-                    std::vector<int> counts((std::size_t)kMktKindN, 0);
-                    int allN = 0;
-                    for (const auto& w : wCache)
-                        if (PL::MarketListingVisible(w.status, !meName.empty() && w.author == meName, mktStaff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++allN; }
+                    std::vector<int> counts;
+                    const int allN = MktVisibleCounts(wCache, meName, mktStaff, counts);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const float rowH = lh + UiPx(14.0f);
                     auto railRow = [&](const char* id, const char* label, int count, ImU32 dot, bool on) {
@@ -18548,10 +18555,8 @@ int main(int argc, char** argv) {
                     std::vector<bool> div;
                     for (auto e : ent) div.push_back(e == PL::MarketRail::Divider);
                     const float railW = mp.rail.w, S = UiPx(38.0f);
-                    std::vector<int> counts((std::size_t)kMktKindN, 0);
-                    int allN = 0;
-                    for (const auto& w : wCache)
-                        if (PL::MarketListingVisible(w.status, !meName.empty() && w.author == meName, mktStaff)) { counts[(std::size_t)MktKindIndex(w.kind)]++; ++allN; }
+                    std::vector<int> counts;
+                    const int allN = MktVisibleCounts(wCache, meName, mktStaff, counts);
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
                     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
                     ImGui::BeginChild("##mktrailicons", ImVec2(railW, bodyH), false);

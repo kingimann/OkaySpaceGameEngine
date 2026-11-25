@@ -227,6 +227,25 @@ public:
     /// The engine world that runs the scene (made on the first step; nullptr before that). For advanced use, such as an
     /// active ragdoll that sets joint drive targets directly.
     phys::World* EngineWorld();
+    /// Engine code that keeps bodies of its own in the engine world (a ragdoll's limbs) is a guest of the scene's
+    /// physics: the world steps its bodies with everything else, and the guest says what they pass through.
+    class EngineGuest {
+    public:
+        virtual ~EngineGuest() = default;
+        /// May this guest's colliders meet that scene collider?
+        virtual bool GuestCollides(const Collider3D* other) const = 0;
+        /// The solver iterations the guest needs now (the world uses the larger of this and solverIterations; 0 = no
+        /// wish). A ragdoll's limbs are light against its chest: with too few iterations a body landing on a leg
+        /// pushes the leg into what is under it.
+        virtual int GuestSolverIterations() const { return 0; }
+    };
+    /// The engine world for a guest, made now if the scene has not stepped yet. The guest writes GuestUser(guest) into
+    /// ColliderDef::user of every collider it adds. `alive` expires when the world is destroyed (Clear): from then
+    /// on the guest's ids are dead and it must not touch the world or call LeaveEngineWorld.
+    phys::World* JoinEngineWorld(EngineGuest* guest, std::weak_ptr<void>& alive);
+    /// The guest is going away (it has removed its bodies).
+    void LeaveEngineWorld(EngineGuest* guest);
+    static std::uint64_t GuestUser(const EngineGuest* guest) { return (std::uint64_t)(std::uintptr_t)guest; }
     /// The engine body of a Rigidbody3D (0xFFFFFFFF when it has none yet).
     std::uint32_t EngineBody(const Rigidbody3D* rb) const;
     /// The engine joint of a Joint3D (0xFFFFFFFF when it has none).

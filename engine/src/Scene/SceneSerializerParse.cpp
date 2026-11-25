@@ -3069,12 +3069,18 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
                 } else if (field == "ragdoll") {
+                    // The old Verlet Ragdoll (before 2026-11-25). It loads into the one Ragdoll: going limp on death and
+                    // reacting to hits carry over; the particle settings (gravity, damping, friction, skin, iterations,
+                    // speed cap, push sizes, recover time) have no meaning on the physics core and are dropped.
+                    // Animated until it dies, as it was (no stumbling). An `activeragdoll` record of the same object,
+                    // written after this one, fills this Ragdoll (its Adder) instead of adding a second one.
                     auto* rd = go->AddComponent<Ragdoll>();
+                    rd->fromLegacyRecord = true;
+                    rd->mode = 0;
+                    rd->stumble = false;
                     KvIn k(in);
-                    k.f("grav", rd->gravity); k.f("damp", rd->damping); k.f("fric", rd->friction);
-                    k.f("radius", rd->radius); k.i("iters", rd->iterations); k.f("maxSpeed", rd->maxSpeed);
-                    k.b("onDeath", rd->ragdollOnDeath); k.f("deathPush", rd->deathImpulse);
-                    k.b("hits", rd->hitReactions); k.f("hitPush", rd->hitImpulse); k.f("recover", rd->hitRecover);
+                    k.b("onDeath", rd->limpOnDeath);
+                    k.b("hits", rd->reactToDamage);
                 } else if (field == "fpstance" || field == "pcfirststance" || field == "tpstance" || field == "pcthirdstance") {
                     // Stance options for the controller declared just above (crouch/prone body).
                     KvIn k(in);
@@ -5362,11 +5368,16 @@ bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (pos >= 0) siblingHints[idx] = pos;
                 } else if (field == "compoff") {
                     std::string key = ReadQuoted(in); int occ = 0; in >> occ;
+                    if (key == "ActiveRagdoll") key = "Ragdoll";   // (one component since 2026-11-25)
                     compOff.push_back({key, occ});
                 } else if (field == "comporder") {
                     std::string rest; std::getline(in, rest);
                     std::istringstream ls(rest);
-                    while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
+                    while (ls >> std::ws && ls.peek() == '"') {
+                        std::string key = ReadQuoted(ls);
+                        if (key == "ActiveRagdoll") key = "Ragdoll";   // (one component since 2026-11-25)
+                        compOrder.push_back(key);
+                    }
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);

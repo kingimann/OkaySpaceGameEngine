@@ -2180,15 +2180,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go, const ObjectNumber
         if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
-    for (auto* rd : go->GetComponents<Ragdoll>()) {
-        out << "  ragdoll";
-        KvOut k{out};
-        k("grav", rd->gravity)("damp", rd->damping)("fric", rd->friction)("radius", rd->radius)
-         ("iters", rd->iterations)("maxSpeed", rd->maxSpeed).b("onDeath", rd->ragdollOnDeath)
-         ("deathPush", rd->deathImpulse).b("hits", rd->hitReactions)("hitPush", rd->hitImpulse)
-         ("recover", rd->hitRecover);
-        out << "\n";
-    }
+    // (Ragdoll: its `activeragdoll` record comes from the PropertyRegistry; the old `ragdoll` record is only read.)
     for (auto* pc : go->GetComponents<Platformer25DController>()) {
         out << "  p25ctrl";
         KvOut k{out};

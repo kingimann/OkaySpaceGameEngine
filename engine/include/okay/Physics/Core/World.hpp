@@ -78,6 +78,11 @@ struct ColliderDef {
     float restitution = 0.0f;
     float rollingResistance = 0.0f;   // 0..1: how much a rolling round body is slowed (stops a ball rolling forever)
     float contactOffset = 0.0f;       // the collider counts as this much thicker (rests this far off what it touches)
+    /// Share of an overlap its contacts remove per position iteration (0 = the world's positionCorrection); a touching
+    /// pair uses the larger of its two. A light body held by stiff joints (a ragdoll's limb) needs more than the
+    /// world's 0.2: the joints' position pass corrects in full, so with 0.2 a limb pressed into a table by its joints
+    /// stays in it.
+    float positionCorrection = 0.0f;
     bool sensor = false;              // reports overlaps, never pushes
     std::uint32_t layer = 0;          // 0..31
     std::uint32_t mask = 0xFFFFFFFFu; // layers it collides with
@@ -129,6 +134,10 @@ struct JointDef {
     float linearFrequency = 2.0f, linearDampingRatio = 1.0f, linearMaxForce = 1e30f;
     /// Break when the joint needs more than this to hold (N, N*m). Infinite by default.
     float breakForce = 1e30f, breakTorque = 1e30f;
+    /// Share of the joint's drift (anchor gap, limit overshoot) the position pass removes per iteration (1 = all of it).
+    /// A ragdoll's joints use less: corrected in full they push a limb back into a table or the floor faster than its
+    /// contacts push it out (see CoreRagdoll).
+    float positionCorrection = 1.0f;
     std::uint64_t user = 0;
 };
 /// Fill the per-axis settings for a joint type (Fixed: all locked; Ball: angular free; Hinge: twist free;
@@ -220,6 +229,9 @@ public:
     void Wake(BodyId id);
     void Sleep(BodyId id);
     std::uint64_t GetUser(BodyId id) const;
+    /// Two bodies that never collide with each other, whatever their layers (limbs of one ragdoll that overlap in its
+    /// build pose). `collide` true takes the pair off the list again. A destroyed body's pairs are forgotten.
+    void SetBodiesCollide(BodyId a, BodyId b, bool collide);
     /// The pose of the body part way between the last two steps (alpha 0 = previous step, 1 = latest).
     Xf InterpolatedTransform(BodyId id, float alpha) const;
 

@@ -35,20 +35,13 @@ const char* PunctName(int p) {
 }
 
 bool IsReserved(const std::u16string& s) {
-    static const char* const words[] = {
-        "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else",
-        "export", "extends", "false", "finally", "for", "function", "if", "import", "in", "instanceof", "new",
-        "null", "return", "super", "switch", "this", "throw", "true", "try", "typeof", "var", "void", "while",
-        "with", "yield", "let", "static", "implements", "interface", "package", "private", "protected", "public",
-        "enum",
-    };
-    for (const char* w : words) {
+    for (int i = 0; i < kReservedCount; ++i) {
+        const char* w = kKeywords[i];
         std::size_t n = std::strlen(w);
         if (s.size() != n) continue;
-        bool eq = true;
-        for (std::size_t k = 0; k < n; ++k)
-            if (s[k] != (char16_t)w[k]) { eq = false; break; }
-        if (eq) return true;
+        std::size_t k = 0;
+        while (k < n && s[k] == (char16_t)w[k]) ++k;
+        if (k == n) return true;
     }
     return false;
 }

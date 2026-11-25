@@ -14,7 +14,6 @@
 #include "JsInternal.hpp"
 #include "okay/Scripting/ScriptBindings.hpp"
 #include "../Script/ScriptInternal.hpp"
-#include "../Script/CheckerInternal.hpp"   // EditDistance for the lint's "did you mean"
 #include "../Scripting/ScriptLanguageGlue.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -259,13 +258,14 @@ vs::VsValue ToVs(js::Runtime& rt, const Value& v) {
     if (IsHost(v, I.kObj)) return vs::VsValue::Object(H(v)->id);
     if (IsHost(v, I.kComp)) return CompHandle(v);
     if (v.IsObj() && !v.O()->IsCallable() && v.O()->cls == js::Cls::Ordinary) {   // {r, g, b[, a]}: a colour
-        js::Object* o = v.O();
-        auto num = [&](const char* k, double def) {
-            js::Prop* p = o->FindRaw(rt.Intern(k));
-            return p && p->v.IsNum() ? p->v.n : def;
+        struct Fields { js::Runtime* rt; js::Object* o; } f{&rt, v.O()};
+        vs::VsValue c;
+        auto field = [](void* ctx, const char* k, double fallback) {
+            Fields* x = static_cast<Fields*>(ctx);
+            js::Prop* p = x->o->FindRaw(x->rt->Intern(k));
+            return p && p->v.IsNum() ? p->v.n : fallback;
         };
-        if (num("r", -1) >= 0 || num("g", -1) >= 0 || num("b", -1) >= 0)
-            return vs::VsValue::Color((float)num("r", 0), (float)num("g", 0), (float)num("b", 0), (float)num("a", 1));
+        if (glue::ColorFromFields(field, &f, c)) return c;
     }
     return vs::VsValue{};
 }
@@ -337,20 +337,15 @@ Value ApiCall(js::Runtime& rt, js::CallArgs& a) {
         expected += (expected.empty() ? "" : " or ") + sig.substr(0, sig.find(" ->"));
         if ((int)m.params.size() != a.argc) continue;
         std::vector<sc::Value> args(m.params.size());
-        bool ok = true;
-        for (std::size_t i = 0; i < m.params.size() && ok; ++i) {
-            std::string w;
-            if (!FromJs(rt, a[(int)i], m.params[i], args[i], w)) {
-                why = "argument " + std::to_string(i + 1) + ": " + w;
-                ok = false;
-            } else if (m.checkLiteral) {
-                if (auto* s = std::get_if<std::string>(&args[i])) {
-                    std::string msg = m.checkLiteral((int)i, *s);
-                    if (!msg.empty()) rt.ThrowError(js::ErrorType::Error, t.name + "." + name + ": " + msg);
-                }
+        std::size_t converted = 0;
+        for (std::string w; converted < m.params.size(); ++converted)
+            if (!FromJs(rt, a[(int)converted], m.params[converted], args[converted], w)) {
+                why = "argument " + std::to_string(converted + 1) + ": " + w;
+                break;
             }
-        }
-        if (!ok) continue;
+        if (converted < m.params.size()) continue;
+        std::string literal = glue::LiteralProblem(t, m, args);
+        if (!literal.empty()) rt.ThrowError(js::ErrorType::Error, literal);
         Prepare(rt);
         sc::Value r;
         try {
@@ -377,9 +372,7 @@ Value BoundMethod(js::Runtime& rt, int typeIdx, bool isStatic, const std::string
 }
 
 bool HasMethod(const sc::ApiType& t, const std::vector<sc::ApiMethod>& list, const std::string& name) {
-    for (const auto& m : list)
-        if (m.name == name && !glue::IsDenied(t, m)) return true;
-    return false;
+    return glue::HasCallable(t, list, name);
 }
 
 // ---- the generated binding layer (Scripting/ScriptBindings): handles go through ToVs / FromVs
@@ -389,13 +382,7 @@ bool HandleOf(js::Runtime& rt, const Value& self, vs::VsValue& out) {
     if (!IsHost(self, I.kObj)) return false;
     int typeIdx = H(self)->i32;
     if (typeIdx < 0 || typeIdx >= (int)Api().types.size()) return false;
-    const scriptbind::ClassBinding* cls = scriptbind::FindClass(Api().types[(std::size_t)typeIdx].name);
-    if (!cls) return false;
-    GameObject* g = ResolveObj(rt, self);
-    Component* c = scriptbind::FindComponent(*g, *cls, 0);
-    if (!c) return false;
-    out = scriptbind::MakeHandle(c, cls);
-    return true;
+    return glue::HandleOnObject(*ResolveObj(rt, self), Api().types[(std::size_t)typeIdx].name, out);
 }
 
 Value BindCall(js::Runtime& rt, js::CallArgs& a) {   // slots {method name}
@@ -413,18 +400,6 @@ Value BindCall(js::Runtime& rt, js::CallArgs& a) {   // slots {method name}
     return FromVs(rt, out);
 }
 
-bool HasBoundMethod(const vs::VsValue& h, const std::string& name) {
-    const scriptbind::ClassBinding* cls = nullptr;
-    Component* c = scriptbind::Resolve(h, &cls);
-    if (!c) return false;
-    for (const scriptbind::ClassBinding* k : {cls, scriptbind::ClassOf(*c)}) {
-        if (!k) continue;
-        for (const auto& m : k->methods)
-            if (name == m.name) return true;
-    }
-    return false;
-}
-
 bool BindIndex(js::Runtime& rt, const Value& self, const std::string& key, Value& out) {
     vs::VsValue h;
     if (!HandleOf(rt, self, h)) return false;
@@ -436,7 +411,7 @@ bool BindIndex(js::Runtime& rt, const Value& self, const std::string& key, Value
         out = key == "gameObject" ? MakeObj(rt, v.AsObjectId(), Api().gameObject) : FromVs(rt, v);
         return true;
     }
-    if (!HasBoundMethod(h, key)) return false;
+    if (!glue::HandleHasMethod(h, key)) return false;
     Impl& I = Ctx(rt);
     std::string ck = "bind:" + key;
     auto it = I.methodRefs.find(ck);
@@ -918,8 +893,7 @@ bool JavaScriptVM::Run(const std::string& engineName, const std::vector<vs::VsVa
         }
         ++m_errorCount;
         m_lastError = err;
-        const GameObject* g = m_impl->ctx.self;
-        Log::Error("Script on '", g ? g->name : std::string("?"), "', ", msg);
+        glue::ReportHandlerError(m_impl->ctx.self, msg);
     }
     return true;
 }
@@ -1052,11 +1026,6 @@ const char* const kGlobals[] = {"console", "Math", "JSON", "Object", "Array", "S
                                 "SyntaxError", "Reflect", "parseInt", "parseFloat", "isNaN", "isFinite", "globalThis",
                                 "queueMicrotask", "GetComponent", "Destroy", "gameObject", "transform", "this",
                                 "undefined", "null", "NaN", "Infinity", "console.log"};
-const char* const kJsWords[] = {"await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
-                                "delete", "do", "else", "export", "extends", "false", "finally", "for", "function", "if",
-                                "in", "instanceof", "let", "new", "null", "of", "return", "static", "super", "switch",
-                                "this", "throw", "true", "try", "typeof", "var", "void", "while", "yield", "async",
-                                "get", "set", "undefined"};
 
 std::vector<std::string> Words(const char* s) {
     std::vector<std::string> out;
@@ -1071,17 +1040,11 @@ std::vector<std::string> Words(const char* s) {
     return out;
 }
 
-void AddTypeMembers(const sc::ApiType& t, bool statics, std::set<std::string>& out) {
-    if (statics) {
-        for (auto& p : t.staticProps) out.insert(p.name);
-        for (auto& m : t.staticMethods) out.insert(m.name);
-    } else {
-        for (auto& p : t.props) out.insert(p.name);
-        for (auto& m : t.methods) out.insert(m.name);
-    }
+bool IsJsKeyword(const std::string& w) {
+    for (int i = 0; i < js::kKeywordCount; ++i)
+        if (w == js::kKeywords[i]) return true;
+    return false;
 }
-
-using script::checker_detail::EditDistance;
 
 struct LintTok {
     std::string text;
@@ -1129,27 +1092,18 @@ std::vector<LintTok> LintTokens(const std::string& s) {
 
 std::vector<std::string> JavaScriptVM::CompletionNames() {
     std::set<std::string> names;
-    for (const char* k : kJsWords) names.insert(k);
+    for (int i = 0; i < js::kKeywordCount; ++i) names.insert(js::kKeywords[i]);
     for (const char* g : kGlobals) names.insert(g);
     for (const auto& lib : kLibMembers)
         for (const std::string& w : Words(lib[1])) names.insert(std::string(lib[0]) + "." + w);
-    for (const sc::ApiType& t : Api().types) {
-        if (Hidden(t)) continue;
-        names.insert(t.name);
-        for (auto& p : t.props) names.insert(p.name);
-        for (auto& m : t.methods) names.insert(m.name);
-        for (auto& p : t.staticProps) names.insert(t.name + "." + p.name);
-        for (auto& m : t.staticMethods) names.insert(t.name + "." + m.name);
-    }
-    for (const std::string& h : glue::LifecycleHandlers()) names.insert(h);
+    glue::AddApiNames(names, Hidden);
     return {names.begin(), names.end()};
 }
 
 std::vector<std::string> JavaScriptVM::BuiltinNames() const { return CompletionNames(); }
 
 std::string JavaScriptVM::CompletionDoc(const std::string& name) {
-    for (const char* k : kJsWords)
-        if (name == k) return "JavaScript keyword";
+    if (IsJsKeyword(name)) return "JavaScript keyword";
     for (const auto& lib : kLibMembers)
         if (name == lib[0]) return std::string("JavaScript library ") + lib[0] + ": " + lib[1];
     std::string h = glue::HandlerDoc(name);
@@ -1157,100 +1111,40 @@ std::string JavaScriptVM::CompletionDoc(const std::string& name) {
     if (name == "GetComponent") return "GetComponent(\"Rigidbody\") or obj.GetComponent(\"Rigidbody\"): a component of the object, or null";
     if (name == "Destroy") return "Destroy(obj): removes an object from the scene";
     if (name == "console.log") return "console.log(...values): writes a line to the Console";
-    const auto& api = Api();
-    std::size_t dot = name.find('.');
-    if (dot != std::string::npos) {
-        int idx = FindType(name.substr(0, dot));
-        if (idx < 0) return "";
-        const sc::ApiType& t = api.types[(std::size_t)idx];
-        const std::string m = name.substr(dot + 1);
-        for (const auto& p : t.staticProps) if (p.name == m) return t.name + "." + p.name + ": " + glue::TypeWord(p.type) + ". " + p.doc;
-        for (const auto& f : t.staticMethods) if (f.name == m) return glue::Signature(t.name, ".", f) + ". " + f.doc;
-        return "";
-    }
-    int idx = FindType(name);
-    if (idx >= 0) return "engine type " + name + ": " + api.types[(std::size_t)idx].doc;
-    for (const sc::ApiType& t : api.types) {
-        if (Hidden(t)) continue;
-        for (const auto& p : t.props) if (p.name == name) return t.name + "." + p.name + ": " + glue::TypeWord(p.type) + ". " + p.doc;
-        for (const auto& f : t.methods) if (f.name == name) return glue::Signature(t.name, ".", f) + ". " + f.doc;
-    }
-    for (const sc::ApiType& t : api.types) {
-        if (Hidden(t)) continue;
-        for (const auto& p : t.staticProps) if (p.name == name) return t.name + "." + p.name + ": " + glue::TypeWord(p.type) + ". " + p.doc;
-        for (const auto& f : t.staticMethods) if (f.name == name) return glue::Signature(t.name, ".", f) + ". " + f.doc;
-    }
-    return "";
+    return glue::ApiDoc(name, ".", Hidden);
 }
 
 std::vector<std::string> JavaScriptVM::CompletionMembers(const std::string& receiver) {
-    std::string last = receiver;
-    std::size_t d = last.find_last_of('.');
-    if (d != std::string::npos) last = last.substr(d + 1);
     std::set<std::string> out;
-    const auto& api = Api();
     for (const auto& lib : kLibMembers)
         if (receiver == lib[0])
             for (const std::string& w : Words(lib[1])) out.insert(w);
-    if (!out.empty()) return {out.begin(), out.end()};
-    int idx = FindType(receiver);
-    if (idx >= 0) {
-        AddTypeMembers(api.types[(std::size_t)idx], true, out);
-    } else if (receiver == "this") {
-        out.insert("gameObject");
-        out.insert("transform");
-    } else if (last == "transform") {
-        AddTypeMembers(api.types[(std::size_t)api.transform], false, out);
-        out.insert("GetComponent");
-    } else if (last == "gameObject" || last == "other") {
-        AddTypeMembers(api.types[(std::size_t)api.gameObject], false, out);
-        out.insert("GetComponent");
-    } else {
-        bool vec = false;
-        for (const sc::ApiType& t : api.types)
-            for (const sc::ApiProperty& p : t.props)
-                if (p.name == last && p.type.kind == sc::TK::Vector3) vec = true;
-        if (vec)
+    if (out.empty()) {
+        if (receiver == "this") {
+            out.insert("gameObject");
+            out.insert("transform");
+        } else if (glue::ApiReceiverMembers(receiver, Hidden, out) == 3) {
             for (const char* n : {"x", "y", "z", "magnitude", "normalized", "sqrMagnitude", "add", "sub", "scale", "div",
                                   "negate", "equals", "clone", "set"})
                 out.insert(n);
+        }
     }
     return {out.begin(), out.end()};
 }
 
 std::vector<ScriptDiagnostic> JavaScriptVM::Lint(const std::string& source) {
     std::vector<ScriptDiagnostic> out;
-    const auto& api = Api();
     std::vector<LintTok> t = LintTokens(source);
+    static const std::vector<std::string> kExtra = {"prototype", "name", "length"};
+    // Type.member on an engine type with static members
     for (std::size_t i = 0; i + 2 < t.size(); ++i) {
-        // Type.member on an engine type with static members
         if (t[i + 1].text != "." || (i > 0 && t[i - 1].text == ".")) continue;
-        int idx = FindType(t[i].text);
-        if (idx < 0) continue;
-        const sc::ApiType& ty = api.types[(std::size_t)idx];
-        if (ty.staticProps.empty() && ty.staticMethods.empty() && idx != api.vector3) continue;
-        const std::string& m = t[i + 2].text;
-        if (!(std::isalpha((unsigned char)m[0]) || m[0] == '_')) continue;
-        std::set<std::string> names;
-        AddTypeMembers(ty, true, names);
-        for (const char* n : {"prototype", "name", "length"}) names.insert(n);
-        if (names.count(m)) continue;
-        std::string best;
-        int bestD = 3;
-        for (const std::string& n : names) {
-            int dd = EditDistance(m, n);
-            if (dd < bestD) { bestD = dd; best = n; }
-        }
-        std::string msg = ty.name + " has no member '" + m + "'";
-        if (!best.empty()) msg += ". Did you mean " + best + "?";
-        out.push_back(ScriptDiagnostic{t[i + 2].line, msg, 1, t[i + 2].col});
+        std::string msg = glue::StaticMemberProblem(t[i].text, t[i + 2].text, Hidden, kExtra);
+        if (!msg.empty()) out.push_back(ScriptDiagnostic{t[i + 2].line, msg, 1, t[i + 2].col});
     }
-    // a method or function whose name is close to a handler's: Name( ... ) {
+    // a function or method definition whose name is close to a handler's: `function Name(` or `Name(...) {`
     for (std::size_t i = 0; i + 1 < t.size(); ++i) {
-        if (t[i + 1].text != "(") continue;
-        const std::string& n = t[i].text;
-        if (!(std::isalpha((unsigned char)n[0]))) continue;
-        // a definition: "function Name(" or a method "Name(...) {" (the ')' is followed by '{')
+        if (t[i + 1].text != "(" || !std::isalpha((unsigned char)t[i].text[0])) continue;
         bool def = i > 0 && t[i - 1].text == "function";
         if (!def && (i == 0 || t[i - 1].text != ".")) {
             int depth = 0;
@@ -1263,17 +1157,8 @@ std::vector<ScriptDiagnostic> JavaScriptVM::Lint(const std::string& source) {
             }
         }
         if (!def) continue;
-        bool known = false;
-        std::string nearName;
-        for (const std::string& h : glue::LifecycleHandlers()) {
-            if (n == h) { known = true; break; }
-            std::string lower = h;
-            for (char& ch : lower) ch = (char)std::tolower((unsigned char)ch);
-            if (n == lower) { known = true; break; }
-            if (nearName.empty() && EditDistance(n, h) <= 2 && n.size() >= 4) nearName = h;
-        }
-        if (!known && !nearName.empty())
-            out.push_back(ScriptDiagnostic{t[i].line, n + " is never called by the engine. Did you mean " + nearName + "? (names are case-sensitive)", 1, t[i].col});
+        std::string msg = glue::HandlerTypo(t[i].text);
+        if (!msg.empty()) out.push_back(ScriptDiagnostic{t[i].line, msg, 1, t[i].col});
     }
     std::stable_sort(out.begin(), out.end(), [](const ScriptDiagnostic& a, const ScriptDiagnostic& b) { return a.line < b.line; });
     return out;
@@ -1303,14 +1188,7 @@ std::vector<JavaScriptVM::Setting> JavaScriptVM::Settings(const std::string& sou
             st.type = "Vector3";
             st.defaultText = "Vector3(" + num(p.x) + ", " + num(p.y) + ", " + num(p.z) + ")";
         } else continue;
-        std::size_t pos = std::string::npos;
-        for (std::size_t at = source.find(n); at != std::string::npos; at = source.find(n, at + 1)) {
-            bool startOk = at == 0 || !(std::isalnum((unsigned char)source[at - 1]) || source[at - 1] == '_' || source[at - 1] == '$');
-            std::size_t e = at + n.size();
-            bool endOk = e >= source.size() || !(std::isalnum((unsigned char)source[e]) || source[e] == '_' || source[e] == '$');
-            if (startOk && endOk) { pos = at; break; }
-        }
-        found.push_back({pos, st});
+        found.push_back({glue::FirstWordPos(source, n), st});
     }
     std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     for (auto& f : found) out.push_back(f.second);

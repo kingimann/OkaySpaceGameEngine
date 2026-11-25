@@ -54,6 +54,7 @@ public:
     std::vector<std::string> GlobalNames() const override;
     // dup-allow-end
 
+    // dup-allow-begin: the statics every text-language backend gives the editor (LuaScriptVM declares the same set)
     /// The last runtime error ("script:12: TypeError: message"), empty if none.
     const std::string& LastError() const { return m_lastError; }
     int ErrorCount() const { return m_errorCount; }
@@ -80,6 +81,7 @@ public:
     /// Re-indent by brackets ({ [ ( open a level, } ] ) close one), 4 spaces a level; the inside of
     /// multi-line strings and template literals is kept as it is.
     static std::string Format(const std::string& source);
+    // dup-allow-end
 
     struct Impl;   ///< internal (engine/src/JavaScript/JavaScriptVM.cpp)
 private:

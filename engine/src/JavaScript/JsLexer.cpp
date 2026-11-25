@@ -10,12 +10,17 @@
 
 namespace okay::js {
 
+// The reserved words of 12.7.2 (strict mode code included) come first, then the contextual words the
+// editor colours too; the parser treats only the first kReservedCount as reserved.
 const char* const kKeywords[] = {
-    "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
-    "else", "export", "extends", "false", "finally", "for", "function", "if", "import", "in", "instanceof",
-    "let", "new", "null", "return", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
-    "var", "void", "while", "with", "yield", "async", "of", "get", "set", "undefined", "NaN", "Infinity",
+    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "enum",
+    "export", "extends", "false", "finally", "for", "function", "if", "import", "in", "instanceof", "new", "null",
+    "return", "super", "switch", "this", "throw", "true", "try", "typeof", "var", "void", "while", "with", "yield",
+    "let", "static", "implements", "interface", "package", "private", "protected", "public",
+    // contextual
+    "await", "async", "of", "get", "set", "undefined", "NaN", "Infinity",
 };
+const int kReservedCount = 45;
 const int kKeywordCount = (int)(sizeof(kKeywords) / sizeof(kKeywords[0]));
 
 std::u16string AsciiTo16(const char* s) {

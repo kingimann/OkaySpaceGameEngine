@@ -25,11 +25,6 @@ Value Str(Runtime& rt, std::u16string s) {
     return Value::Str(rt.NewString(std::move(s)));
 }
 
-bool IsTrimSpace(char16_t c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0B || c == 0x0C || c == 0xA0 || c == 0xFEFF ||
-           c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F ||
-           c == 0x3000;
-}
 
 char16_t Lower(char16_t c) {
     if (c >= 'A' && c <= 'Z') return (char16_t)(c + 32);
@@ -292,20 +287,20 @@ void InstallStringLib(Runtime& rt) {
     DefNative(rt, sp, "trim", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "trim");
         std::size_t b = 0, e = s.size();
-        while (b < e && IsTrimSpace(s[b])) ++b;
-        while (e > b && IsTrimSpace(s[e - 1])) --e;
+        while (b < e && IsJsSpace(s[b])) ++b;
+        while (e > b && IsJsSpace(s[e - 1])) --e;
         return Str(rt, s.substr(b, e - b));
     }, 0);
     DefNative(rt, sp, "trimStart", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "trimStart");
         std::size_t b = 0;
-        while (b < s.size() && IsTrimSpace(s[b])) ++b;
+        while (b < s.size() && IsJsSpace(s[b])) ++b;
         return Str(rt, s.substr(b));
     }, 0);
     DefNative(rt, sp, "trimEnd", [](Runtime& rt, CallArgs& a) {
         std::u16string s = ThisStr(rt, a, "trimEnd");
         std::size_t e = s.size();
-        while (e > 0 && IsTrimSpace(s[e - 1])) --e;
+        while (e > 0 && IsJsSpace(s[e - 1])) --e;
         return Str(rt, s.substr(0, e));
     }, 0);
     DefNative(rt, sp, "padStart", [](Runtime& rt, CallArgs& a) {

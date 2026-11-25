@@ -170,9 +170,7 @@ std::string Joined(Runtime& rt, CallArgs& a) {
 Value ParseIntImpl(Runtime& rt, const Value& sv, const Value& rv) {
     std::u16string s = rt.ToU16(sv);
     std::size_t i = 0;
-    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' || s[i] == 0x0B || s[i] == 0x0C ||
-                            s[i] == 0xA0 || s[i] == 0xFEFF || s[i] == 0x2028 || s[i] == 0x2029))
-        ++i;
+    while (i < s.size() && IsJsSpace(s[i])) ++i;
     bool neg = false;
     if (i < s.size() && (s[i] == '+' || s[i] == '-')) neg = s[i++] == '-';
     std::int32_t r = rt.ToInt32(rv);
@@ -456,7 +454,7 @@ void InstallGlobalLib(Runtime& rt) {
     DefNative(rt, g, "parseFloat", [](Runtime& rt, CallArgs& a) {   // 19.2.4: the longest prefix that is a decimal literal
         std::u16string s = rt.ToU16(a[0]);
         std::size_t i = 0;
-        while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r' || s[i] == 0xA0 || s[i] == 0xFEFF)) ++i;
+        while (i < s.size() && IsJsSpace(s[i])) ++i;
         std::string t;
         std::size_t j = i;
         if (j < s.size() && (s[j] == '+' || s[j] == '-')) t += (char)s[j++];

@@ -40,6 +40,10 @@ struct Token {
 /// Tokenize the whole source (templates are split into pieces; regular expression
 /// literals are not supported and come out as '/' tokens the parser rejects).
 bool Tokenize(const std::string& src, std::vector<Token>& out, SyntaxError& err);
+/// kKeywords[0 .. kReservedCount) are the reserved words (12.7.2); the rest are contextual.
+extern const int kReservedCount;
+/// WhiteSpace and LineTerminator code units (12.2, 12.3): what trim and the number readers skip.
+bool IsJsSpace(char16_t c);
 
 // ============================================================ syntax tree (ch. 13-16)
 enum class NK : std::uint8_t {

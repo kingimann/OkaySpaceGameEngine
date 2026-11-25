@@ -63,10 +63,13 @@ std::size_t KeyHash::operator()(const Value& v) const {
         }
         case Tag::String: {
             String* s = v.S();
-            if (!s->hash) {
-                std::uint32_t h = 2166136261u;
-                for (char16_t c : s->s) h = (h ^ c) * 16777619u;
-                s->hash = h ? h : 1;
+            if (!s->hash) {   // our own: a polynomial over the code units, then a final mix
+                std::uint64_t h = s->s.size();
+                for (char16_t c : s->s) h = h * 131 + c;
+                h ^= h >> 29;
+                h *= 0x9E3779B97F4A7C15ull;
+                h ^= h >> 32;
+                s->hash = (std::uint32_t)h ? (std::uint32_t)h : 1;
             }
             return s->hash;
         }
@@ -416,17 +419,20 @@ bool Runtime::ToBoolean(const Value& v) const {
     }
 }
 
-static bool IsStrWhite(char16_t c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0B || c == 0x0C || c == 0xA0 || c == 0xFEFF ||
-           c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F ||
-           c == 0x3000;
+bool IsJsSpace(char16_t c) {
+    switch (c) {
+        case ' ': case '\t': case '\n': case '\r': case 0x0B: case 0x0C: case 0xA0: case 0xFEFF: case 0x1680:
+        case 0x2028: case 0x2029: case 0x202F: case 0x205F: case 0x3000:
+            return true;
+        default: return c >= 0x2000 && c <= 0x200A;
+    }
 }
 
 // 7.1.4.1.1 StringToNumber: the StringNumericLiteral grammar, checked by hand, then strtod on the ASCII text.
 double Runtime::StringToNumber(const std::u16string& s) {
     std::size_t a = 0, b = s.size();
-    while (a < b && IsStrWhite(s[a])) ++a;
-    while (b > a && IsStrWhite(s[b - 1])) --b;
+    while (a < b && IsJsSpace(s[a])) ++a;
+    while (b > a && IsJsSpace(s[b - 1])) --b;
     if (a == b) return 0;
     std::string t;
     for (std::size_t i = a; i < b; ++i) {

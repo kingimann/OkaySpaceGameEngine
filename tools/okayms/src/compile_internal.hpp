@@ -44,6 +44,8 @@ struct Token {
     // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
     // function, one copy per file.
     bool inl = false;
+    // `thread_local` was written here: the token is `static` and the variable gets storage per thread.
+    bool tls = false;
 };
 
 // The names of the enumerations read so far (Type::enum_id indexes it).
@@ -232,6 +234,9 @@ struct Global {
     // A virtual table: the type information object of its class, whose address is in the slot just before the first
     // function (the table pointer of an object points at the first function). Empty for none.
     std::string rtti;
+    // thread_local ([basic.stc.thread]): kept in the .tls$ section, one copy per thread made by the Windows loader from
+    // the image's TLS template; reached through the thread's TLS array (gs:[0x58]) and _tls_index.
+    bool tls = false;
 };
 
 inline Type peel_array(const Type& type) {

@@ -1177,7 +1177,10 @@ bool Parser::parse_unary(Node* out) {
             const size_t first = name.find("::");
             const size_t last = name.rfind("::");
             const std::string suffix = name.substr(last + 2);
-            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) name = suffix;
+            // An ordinary function of that full name (std::filesystem::remove beside the algorithm std::remove) is the
+            // one called ([namespace.qual]); okay-ms keeps templates by their bare names only.
+            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0 && ovl.count(name) == 0)
+                name = suffix;
         }
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // std::string("abc"): a class of a namespace is registered by its bare name, as in a declaration.
@@ -1407,14 +1410,19 @@ bool Parser::parse_unary(Node* out) {
             Type ty = functional_cast_type(name);
             next();
             Node inner;
-            if (is(TRParen)) {
+            // The list may be a pack expansion, T(a...) with T bound to a scalar ([temp.variadic]): it must give one
+            // value, or none.
+            std::vector<Node> list;
+            if (!parse_call_args(&list)) return false;
+            if (list.empty()) {
                 // T(): a value-initialised scalar is zero ([expr.type.conv]).
-                next();
                 inner.kind = Node::IntLit;
                 inner.type.base = 1;
+            } else if (list.size() == 1) {
+                inner = std::move(list[0]);
             } else {
-                if (!parse_expr(0, &inner)) return false;
-                if (!expect(TRParen, "')'")) return false;
+                error = "a cast to " + name + " takes one value";
+                return false;
             }
             if (!convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && ty.base == 1 && !ty.is_bool) {
@@ -1465,6 +1473,12 @@ bool Parser::parse_unary(Node* out) {
             out->number = enum_values[name];
             out->type.base = 1;
             out->type.enum_id = enum_id_of(name);
+            {
+                // A template value parameter of a 64-bit type (mt19937_64's a = 0xb5026f5aa96619e9): a value that does
+                // not fit in an int keeps all 64 bits.
+                const long long v = static_cast<long long>(out->number);
+                if (v < -2147483647LL - 1 || v > 2147483647LL) out->type.wide = true;
+            }
         } else if (class_enumerator(name, &out->number)) {
             // In::P1: an enumerator of an unscoped enumeration declared in class In ([class.member.lookup]); enumerators are
             // kept in one table here.

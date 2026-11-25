@@ -262,6 +262,20 @@ struct Parser {
         bool want_name = false;
         for (size_t i = 0; i < tokens.size(); ++i) {
             const Token& t = tokens[i];
+            if (t.kind == TIdent && t.text == "thread_local") {
+                // thread_local ([dcl.stc] 4): at block scope it implies static; here it is a `static` that says so.
+                if (!out.empty() && out.back().kind == TStatic) {
+                    out.back().tls = true;
+                } else {
+                    Token st = t;
+                    st.kind = TStatic;
+                    st.text = "static";
+                    st.tls = true;
+                    out.push_back(st);
+                }
+                continue;
+            }
+            if (t.kind == TStatic && !out.empty() && out.back().kind == TStatic && out.back().tls) continue;  // thread_local static
             if (t.kind == TIdent && t.text == "constexpr") {
                 Token c = t;
                 c.kind = TConst;
@@ -1038,7 +1052,18 @@ struct Parser {
 
     const Token& cur() const { return tokens[at]; }
     bool is(Tok k) const { return cur().kind == k; }
-    void next() { if (at + 1 < tokens.size()) ++at; }
+    void next() {
+        if (tokens[at].kind == TStatic && tokens[at].tls) pending_tls = true;
+        if (at + 1 < tokens.size()) ++at;
+    }
+    // A thread_local was read for the declaration being parsed; the variable it makes takes it (and clears it).
+    bool pending_tls = false;
+    bool local_decl_tls = false;  // the block-scope declaration being read is thread_local
+    bool take_tls() {
+        const bool t = pending_tls;
+        pending_tls = false;
+        return t;
+    }
     bool accept(Tok k) {
         if (!is(k)) return false;
         next();
@@ -3670,7 +3695,9 @@ struct Parser {
         const auto alias_bound = bind_params(alias, alias_args);
         const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
         unbind_params(alias_bound);
-        at = resume;
+        // A failure outside a template instance stops the compile: the error then names the line it happened on, not
+        // the end of the class (an instance's member may fail harmlessly and is set aside, see unusable_members).
+        if (ok || !inst_base_name.empty()) at = resume;
         if (!ok) return false;
         structs[static_cast<size_t>(sid)].methods[mi].tok_body = m.body_at;
         structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
@@ -4405,11 +4432,18 @@ struct Parser {
                 error = "too few template arguments";
                 return false;
             }
+            // A default argument may name the parameters before it (class C = vector<T>, [temp.param] 14): they are
+            // bound to the arguments read so far while it is read.
+            TDecl head = td;
+            head.params.resize(std::min(idx, out->size()));
+            const std::vector<TArg> head_args(out->begin(), out->begin() + static_cast<std::ptrdiff_t>(head.params.size()));
+            const auto bound = bind_params(head, head_args);
             const size_t saved = at;
             at = td.params[idx].def_at;
             TArg a;
             const bool ok = parse_one_arg(td.params[idx], &a);
             at = saved;
+            unbind_params(bound);
             if (!ok) return false;
             out->push_back(std::move(a));
         }
@@ -6442,11 +6476,13 @@ struct Parser {
             bool is_static = false;
             bool is_const = false;
             const size_t decl_begin = at;
+            pending_tls = false;
             while (is(TTypedef) || is(TStatic) || is(TConst)) {
                 if (accept(TTypedef)) is_typedef = true;
                 else if (accept(TStatic)) is_static = true;
                 else if (accept(TConst)) is_const = true;
             }
+            const bool decl_tls = take_tls();
             bool imported = false;
             bool exported = false;
             Type type;
@@ -6653,6 +6689,11 @@ struct Parser {
             }
             decl.type.is_const = is_const;
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
+                if (decl_tls) {
+                    error = "a thread_local object with a constructor or destructor at namespace scope is not supported "
+                            "yet (" + decl.name + ")";
+                    return false;
+                }
                 Node ginit;
                 bool has_ginit = false;
                 if (!decl.type.is_array() && !gctor_args && is(TAssign) && at + 1 < tokens.size() &&
@@ -6714,6 +6755,7 @@ struct Parser {
                     // A const object at namespace scope and anything in an unnamed namespace has internal linkage
                     // ([basic.link]): every file keeps its own copy, so two files may use the same name.
                     global.is_static = is_static || decl.type.is_const || anon_depth > 0;
+                    global.tls = decl_tls;
                     if (accept(TAssign)) {
                         Node init;
                         if (!parse_init(&init)) return false;

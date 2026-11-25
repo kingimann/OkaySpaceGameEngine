@@ -625,7 +625,9 @@ bool Parser::operator_call(Node* object, std::vector<Node> args, bool* done) {
     Type t;
     if (!class_object_type(*object, &t)) return true;
     const Method* m = find_method(t.struct_id, "operator()", args.size(), &args, t.is_const || t.pconst ? 1 : 0);
-    if (m == nullptr) return true;
+    int tmpl_owner = -1;
+    // template <class G> T operator()(G& g) (a distribution of <random>): a member template call ([temp.mem]).
+    if (m == nullptr && find_member_tmpl(t.struct_id, "operator()", &tmpl_owner) == nullptr) return true;
     Node result;
     if (!method_call(&result, std::move(*object), false, "operator()", {}, &args)) return false;
     *object = std::move(result);

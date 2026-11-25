@@ -128,6 +128,8 @@ bool Parser::static_guard_block(const std::string& symbol, Node* then_block) {
     guard.type.base = 1;
     guard.bss = true;
     guard.is_static = true;
+    for (const Global& g : globals)
+        if (g.name == symbol) guard.tls = g.tls;  // each thread initializes its own copy once ([stmt.dcl] 3)
     globals.push_back(guard);
     then_block->kind = Node::Block;
     for (Node& n : stmt_pre) then_block->kids.push_back(std::move(n));
@@ -728,11 +730,13 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         bool is_typedef = false;
         bool is_static = false;
         bool is_const = false;
+        pending_tls = false;
         while (is(TTypedef) || is(TStatic) || is(TConst)) {
             if (accept(TTypedef)) is_typedef = true;
             else if (accept(TStatic)) is_static = true;
             else if (accept(TConst)) is_const = true;
         }
+        local_decl_tls = take_tls();
         Type type;
         bool imp = false;
         bool exp = false;
@@ -975,6 +979,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             if (!flatten_dyn(decl.type, init, &global, &static_leaves)) return false;
             has_init = false;
         }
+        global.tls = local_decl_tls;
         local.symbol = global.name;
         globals.push_back(global);
     }

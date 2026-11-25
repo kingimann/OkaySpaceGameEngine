@@ -6900,13 +6900,15 @@ private:
 };
 
 
+// Token tests shared by the token-stream passes below (namespace aliases, thread_local, friends).
+static bool punct(const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; }
+static bool word(const Token& t, const char* s) { return t.isName() && t.text == s; }
+
 // Namespace aliases ([namespace.alias]): "namespace fs = std::filesystem;" is taken out, and every
 // later "fs ::" (a name followed by '::', not after '.', '->' or '::') becomes "std :: filesystem ::".
 // The alias holds from its declaration to the end of the file, wherever it was declared (a
 // simplification: block scope is not kept).
 static std::vector<Token> expandNamespaceAliases(const std::vector<Token>& in) {
-    auto punct = [](const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; };
-    auto word = [](const Token& t, const char* s) { return t.isName() && t.text == s; };
     std::map<std::string, std::vector<Token>> alias;
     std::vector<Token> out;
     out.reserve(in.size());
@@ -6958,8 +6960,6 @@ static std::vector<Token> expandNamespaceAliases(const std::vector<Token>& in) {
 // class "thread_local" means "static" (block scope: [dcl.stc] p4 makes it static there too); at
 // namespace scope, and next to "static" or "extern", the word is dropped.
 static std::vector<Token> threadLocalsAsStatic(const std::vector<Token>& in) {
-    auto punct = [](const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; };
-    auto word = [](const Token& t, const char* s) { return t.isName() && t.text == s; };
     std::vector<bool> nsBrace;  // for each open '{': is it a namespace's (or extern "C"'s)?
     std::vector<Token> out;
     out.reserve(in.size());
@@ -7002,8 +7002,6 @@ static std::vector<Token> threadLocalsAsStatic(const std::vector<Token>& in) {
 // function, to just after the class's closing "};". (Name lookup differs from the standard's: the
 // moved function is found by ordinary lookup too, not only through its arguments' classes.)
 static std::vector<Token> hoistFriends(const std::vector<Token>& in) {
-    auto punct = [](const Token& t, const char* s) { return t.kind == Tok::Punct && t.text == s; };
-    auto word = [](const Token& t, const char* s) { return t.isName() && t.text == s; };
     // kinds of open braces: 'n' namespace or extern "C", 'c' class at namespace scope, 'C' a class
     // in a template or another class, 'o' other
     std::vector<char> kinds;

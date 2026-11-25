@@ -89,6 +89,7 @@ struct State {
     Index index;
     Index testBuilds;                                   // the test builds' list (empty while "Get test builds" is off)
     bool haveIndex = false;
+    bool listsWithTests = false;                        // the lists were read with "Get test builds" on (read again when the switch moves, here or in Settings)
     std::string running;                                // the editor a plain Open starts (Host::currentVersion, taken by Tick)
     Uint32 indexAt = 0;
     std::string requested;                              // --versions <version> (normalized)
@@ -388,9 +389,7 @@ void DrawChannel(const Host& h) {
     // "Get test builds" (the same setting as Settings > Behavior, off by default): test builds then show in Available to install, to install side by side.
     ImGui::Dummy(ImVec2(0, 6));
     if (okl::ToggleSwitch("##vertestbuilds", &set.testBuilds)) {
-        if (h.testBuildsChanged) h.testBuildsChanged(); else if (h.savePrefs) h.savePrefs();
-        st.testBuilds = Index{};
-        StartIndex(h);   // read the lists again, with or without the test builds
+        if (h.testBuildsChanged) h.testBuildsChanged(); else if (h.savePrefs) h.savePrefs();   // (DrawPage reads the lists again)
     }
     ImGui::SameLine(0, 10);
     ImGui::AlignTextToFramePadding();
@@ -731,6 +730,7 @@ void Tick(const Host& h) {
     if (st.indexJob && st.indexJob->done) {
         okay::thr::WaitThread(st.indexJob->th, nullptr);
         st.index = std::move(st.indexJob->result);
+        st.listsWithTests = st.indexJob->wantTestBuilds;
         st.testBuilds = GlobalSettings().testBuilds ? std::move(st.indexJob->testBuilds) : Index{};   // (switched off while it ran: nothing offered)
         st.indexJob.reset();
         st.haveIndex = true;
@@ -771,6 +771,11 @@ void Tick(const Host& h) {
 void DrawPage(const Host& h) {
     State& st = S();
     if (!st.haveIndex && !st.indexJob) StartIndex(h);
+    if (st.haveIndex && !st.indexJob && st.listsWithTests != GlobalSettings().testBuilds) {   // "Get test builds" moved: read the lists again
+        if (!GlobalSettings().testBuilds) st.testBuilds = Index{};
+        st.listsWithTests = GlobalSettings().testBuilds;   // (one try per change: a failed start does not retry every frame)
+        StartIndex(h);
+    }
     if (st.installedDirty || okay::platform::TicksMs32() - st.installedAt > 10000) RefreshInstalled(h);
     DrawRequestBanner(h);
     DrawThisVersion(h);
